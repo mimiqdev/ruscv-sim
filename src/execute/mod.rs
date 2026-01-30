@@ -210,7 +210,7 @@ impl Executor {
         &mut self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
-        mem: &dyn MemoryInterface,
+        mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         let (Some(rs1), Some(rs2), Some(imm), Some(funct3)) =
             (instr.rs1, instr.rs2, instr.imm, instr.funct3)
