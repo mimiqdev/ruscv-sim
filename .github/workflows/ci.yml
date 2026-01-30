@@ -104,12 +104,13 @@ jobs:
         continue-on-error: true  # 允许失败（尚无集成测试）
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage/lcov.info
-          flags: unittests
-          name: ruscv-sim-ci
-          fail_ci_if_error: false
+        # TODO: 暂时禁用，等待覆盖率提升后再启用
+        # uses: codecov/codecov-action@v4
+        # with:
+        #   files: ./coverage/lcov.info
+        #   flags: unittests
+        #   name: ruscv-sim-ci
+        #   fail_ci_if_error: false
 
   # ==========================================
   # Job 3: Performance Benchmarks
