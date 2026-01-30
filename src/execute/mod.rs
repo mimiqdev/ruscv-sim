@@ -1,6 +1,6 @@
 //! 执行模块
 //!
-//! 实现RV32I指令的执行逻辑
+//! RV32I instruction execution
 
 use crate::core::CoreState;
 use crate::decode::{DecodedInstruction, Funct3, Opcode};
@@ -10,17 +10,17 @@ use thiserror::Error;
 /// 执行错误
 #[derive(Error, Debug)]
 pub enum ExecuteError {
-    #[error("未对齐的内存访问: 地址 0x{0:08x}, 对齐要求 {1}")]
+    #[error("Misaligned memory access: addr 0x{0:08x}, alignment {1}")]
     MisalignedAccess(u32, u32),
-    #[error("无效的寄存器访问: x{0}")]
+    #[error("Invalid register access: x{0}")]
     InvalidRegister(u8),
-    #[error("无效的操作")]
+    #[error("Invalid operation")]
     InvalidOperation,
-    #[error("ECALL异常")]
+    #[error("ECALL exception")]
     Ecall,
-    #[error("EBREAK异常")]
+    #[error("EBREAK exception")]
     Ebreak,
-    #[error("内存访问错误: {0}")]
+    #[error("Memory access error: {0}")]
     MemoryError(#[from] MemoryError),
 }
 
@@ -53,7 +53,7 @@ impl Executor {
         }
     }
 
-    /// LUI (Load Upper Immediate)
+    /// LUI (Load Upper Immediate (LUI) (LUI))
     fn exec_lui(
         &self,
         instr: &DecodedInstruction,
@@ -69,7 +69,7 @@ impl Executor {
         }
     }
 
-    /// AUIPC (Add Upper Immediate to PC)
+    /// AUIPC (Add Upper Immediate to PC (AUIPC) (AUIPC))
     fn exec_auipc(
         &self,
         instr: &DecodedInstruction,
@@ -85,7 +85,7 @@ impl Executor {
         }
     }
 
-    /// JAL (Jump and Link)
+    /// JAL (Jump and Link (JAL) (JAL))
     fn exec_jal(
         &self,
         instr: &DecodedInstruction,
@@ -106,7 +106,7 @@ impl Executor {
         }
     }
 
-    /// JALR (Jump and Link Register)
+    /// JALR (Jump and Link (JAL) (JAL) Register)
     fn exec_jalr(
         &self,
         instr: &DecodedInstruction,
@@ -115,7 +115,7 @@ impl Executor {
         if let (Some(rd), Some(rs1), Some(imm)) = (instr.rd, instr.rs1, instr.imm) {
             let return_addr = state.pc.wrapping_add(4);
             let base = state.regs[rs1 as usize];
-            let target = (base.wrapping_add(imm)) & !1u32; // LSB清零
+            let target = (base.wrapping_add(imm)) & !1u32; // LSB cleared
 
             if rd != 0 {
                 state.regs[rd as usize] = return_addr;
@@ -146,21 +146,21 @@ impl Executor {
             Funct3::AddSub => rs1_val == rs2_val, // BEQ
             Funct3::Slt => rs1_val != rs2_val,    // BNE
             Funct3::Sltu => {
-                // BLT (有符号比较)
+                // BLT (signed comparison)
                 (rs1_val as i32) < (rs2_val as i32)
             }
             Funct3::Xor => {
-                // BGE (有符号比较)
+                // BGE (signed comparison)
                 (rs1_val as i32) >= (rs2_val as i32)
             }
             Funct3::SrlSra => {
-                // BLTU (无符号比较)
+                // BLTU (unsigned comparison)
                 rs1_val < rs2_val
             }
             _ => false,
         };
 
-        // 注意：实际的分支条件需要根据funct3值修正
+        // 注意：Branch conditions need correction based on funct3 value
         // BEQ=000, BNE=001, BLT=100, BGE=101, BLTU=110, BGEU=111
 
         if take_branch {
@@ -229,7 +229,7 @@ impl Executor {
         Ok(())
     }
 
-    /// R-type 操作指令
+    /// R-type operation instructions
     fn exec_op(
         &self,
         instr: &DecodedInstruction,
@@ -253,12 +253,12 @@ impl Executor {
                 result = rs1_val.wrapping_sub(rs2_val);
             }
         }
-        // SLL
+        // SLL (logical left shift)
         else if funct3 == Funct3::Sll {
             let shamt = (rs2_val & 0x1F) as u32;
             result = (rs1_val as u32).wrapping_shl(shamt) as i32;
         }
-        // SRL/SRA
+        // SRL/SRA (shift right logical/arithmetic)
         else if funct3 == Funct3::SrlSra {
             let shamt = (rs2_val & 0x1F) as u32;
             if funct7 == 0 {
@@ -267,11 +267,11 @@ impl Executor {
                 result = rs1_val.wrapping_shr(shamt);
             }
         }
-        // SLT
+        // SLT (set less than)
         else if funct3 == Funct3::Slt {
             result = if rs1_val < rs2_val { 1 } else { 0 };
         }
-        // SLTU
+        // SLT (set less than)U
         else if funct3 == Funct3::Sltu {
             let rs1_u = state.regs[rs1 as usize];
             let rs2_u = state.regs[rs2 as usize];

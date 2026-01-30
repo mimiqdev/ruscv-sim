@@ -1,6 +1,6 @@
 //! 指令译码模块
 //!
-//! 支持RV32I基础指令集的译码
+//! RV32I instruction decoder
 
 use num_enum::TryFromPrimitive;
 use thiserror::Error;
@@ -8,26 +8,26 @@ use thiserror::Error;
 /// 译码错误
 #[derive(Error, Debug)]
 pub enum DecodeError {
-    #[error("无效的指令编码: 0x{0:08x}")]
+    #[error("Invalid instruction encoding: 0x{0:08x}")]
     InvalidInstruction(u32),
-    #[error("保留指令")]
+    #[error("Reserved instruction")]
     ReservedInstruction,
-    #[error("未实现的指令")]
+    #[error("Unimplemented instruction")]
     UnimplementedInstruction,
 }
 
-/// RV32I 指令格式
+/// RV32I Instruction format
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstructionFormat {
-    RType, // 寄存器-寄存器
-    IType, // 立即数操作
-    SType, // 存储
-    BType, // 条件分支
-    UType, // 长立即数 (LUI, AUIPC)
-    JType, // 无条件跳转 (JAL)
+    RType, // Register-Register
+    IType, // Immediate operation
+    SType, // Store
+    BType, // Conditional branch
+    UType, // Long immediate (LUI, AUIPC)
+    JType, // Unconditional jump (JAL)
 }
 
-/// RV32I 操作码 (主要操作码)
+/// RV32I Opcode (primary)
 #[derive(Debug, Clone, Copy, TryFromPrimitive, PartialEq)]
 #[repr(u8)]
 pub enum Opcode {
@@ -46,7 +46,7 @@ pub enum Opcode {
     System = 0b111_0011,
 }
 
-/// RV32I 功能码 (funct3)
+/// RV32I Function code (funct3)
 #[derive(Debug, Clone, Copy, TryFromPrimitive, PartialEq)]
 #[repr(u8)]
 pub enum Funct3 {
@@ -65,17 +65,17 @@ pub enum Funct3 {
 pub struct DecodedInstruction {
     /// 原始指令编码
     pub raw: u32,
-    /// 指令格式
+    /// Instruction format
     pub format: InstructionFormat,
     /// 操作码
     pub opcode: Opcode,
-    /// funct3 (如果适用)
+    /// funct3 (if applicable)
     pub funct3: Option<Funct3>,
-    /// funct7 (如果适用)
+    /// funct7 (if applicable)
     pub funct7: Option<u8>,
-    /// 源寄存器1 (rs1)
+    /// Source register 1 (rs1)
     pub rs1: Option<u8>,
-    /// 源寄存器2 (rs2)
+    /// Source register 2 (rs2)
     pub rs2: Option<u8>,
     /// 目标寄存器 (rd)
     pub rd: Option<u8>,
@@ -126,12 +126,12 @@ impl InstructionDecoder {
             Opcode::Lui | Opcode::Auipc => {
                 decoded.format = InstructionFormat::UType;
                 decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
-                decoded.imm = Some(instruction & 0xFFFFF000); // 高20位立即数
+                decoded.imm = Some(instruction & 0xFFFFF000); // Upper 20-bit immediate
             }
             Opcode::Jal => {
                 decoded.format = InstructionFormat::JType;
                 decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
-                // J型立即数: imm[20|10:1|11|19:12]
+                // J-type immediate: imm[20|10:1|11|19:12]
                 let imm20 = ((instruction >> 31) & 1) << 20;
                 let imm101 = ((instruction >> 21) & 0x3FF) << 1;
                 let imm11 = ((instruction >> 20) & 1) << 11;
@@ -153,7 +153,7 @@ impl InstructionDecoder {
                 decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
                 decoded.funct3 =
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
-                // B型立即数: imm[12|10:5|4:1|11]
+                // B-type immediate: imm[12|10:5|4:1|11]
                 let imm12 = ((instruction >> 31) & 1) << 12;
                 let imm105 = ((instruction >> 25) & 0x3F) << 5;
                 let imm41 = ((instruction >> 8) & 0xF) << 1;

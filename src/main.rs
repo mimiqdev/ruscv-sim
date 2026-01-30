@@ -1,6 +1,6 @@
-//! RISC-V ISS 命令行工具
+//! RISC-V ISS command-line tool
 //!
-//! 用于测试和调试RISC-V模拟器
+//! For testing and debugging RISC-V simulator
 
 use ruscv_sim::{RiscvCore, SimpleMemory};
 use std::sync::{Arc, Mutex};
@@ -22,14 +22,14 @@ fn main() {
     let lui_instr: u32 = (0x12345u32 << 12) | (1u32 << 7) | 0b011_0111u32;
     let lui_instr_le = lui_instr.to_le();
 
-    println!("测试指令: LUI x1, 0x12345");
-    println!("指令编码: 0x{:08x}", lui_instr);
+    println!("Test instruction: LUI x1, 0x12345");
+    println!("Instruction encoding: 0x{:08x}", lui_instr);
 
     // 重置核心
     core.reset(0x0);
 
     // 执行几条指令
-    println!("\n执行测试:");
+    println!("\nExecute test:");
     let start = Instant::now();
 
     // 模拟执行
@@ -41,9 +41,9 @@ fn main() {
     let decoded = decoder.decode(lui_instr_le).unwrap();
     println!("译码结果: {:?}", decoded.opcode);
     println!("目标寄存器: {:?}", decoded.rd);
-    println!("立即数: 0x{:08x}", decoded.imm.unwrap());
+    println!("Immediate: 0x{:08x}", decoded.imm.unwrap());
 
     let elapsed = start.elapsed();
     println!("\n执行时间: {:?}", elapsed);
-    println!("\n模拟器初始化完成！");
+    println!("\nSimulator initialization complete!");
 }

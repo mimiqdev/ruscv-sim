@@ -1,40 +1,40 @@
-//! TLM2.0 接口抽象层
+//! TLM2.0 interface abstraction
 //!
-//! 提供SystemC TLM2.0风格的接口抽象，用于与外部组件通信
+//! Provide SystemC TLM2.0-style interface abstraction for external component communication
 
 use thiserror::Error;
 
-/// TLM 传输类型
+/// TLM transaction type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlmPhase {
-    BeginReq,  // 请求开始
-    EndReq,    // 请求结束
-    BeginResp, // 响应开始
-    EndResp,   // 响应结束
+    BeginReq,  // Request begin
+    EndReq,    // Request end
+    BeginResp, // Response begin
+    EndResp,   // Response end
 }
 
-/// TLM 响应状态
+/// TLM response status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlmResponseStatus {
-    Ok,              // 成功
-    AddressError,    // 地址错误
-    CommandError,    // 命令错误
-    BurstError,      // 突发错误
-    DataError,       // 数据错误
-    InvalidAddress,  // 无效地址
-    WaitRequest,     // 等待请求
-    WaitResponse,    // 等待响应
-    ReleaseRequired, // 需要释放
+    Ok,              // Success
+    AddressError,    // Address error
+    CommandError,    // Command error
+    BurstError,      // Burst error
+    DataError,       // Data error
+    InvalidAddress,  // Invalid address
+    WaitRequest,     // Wait request
+    WaitResponse,    // Wait response
+    ReleaseRequired, // Release required
 }
 
-/// TLM 命令类型
+/// TLM command type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlmCommand {
     Read,
     Write,
 }
 
-/// TLM 通用事务
+/// TLM generic transaction
 #[derive(Debug, Clone)]
 pub struct TlmGenericPayload {
     /// 命令
@@ -76,15 +76,15 @@ impl TlmGenericPayload {
     }
 }
 
-/// TLM 同步类型
+/// TLM synchronization type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlmSyncEnum {
-    Accept,  // 接受
-    Wait,    // 等待
-    Release, // 释放
+    Accept,  // Accept
+    Wait,    // Wait
+    Release, // Release
 }
 
-/// TLM 时间点
+/// TLM time point
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlmTime {
     /// 模拟时间（皮秒）
@@ -112,23 +112,23 @@ impl TlmTime {
     }
 }
 
-/// TLM 错误
+/// TLM error
 #[derive(Error, Debug)]
 pub enum TlmError {
-    #[error("无效的地址: 0x{0:08x}")]
+    #[error("Invalid address: 0x{0:08x}")]
     InvalidAddress(u32),
-    #[error("无效的传输长度: {0}")]
+    #[error("Invalid transaction length: {0}")]
     InvalidLength(usize),
-    #[error("传输超时")]
+    #[error("Transaction timeout")]
     Timeout,
-    #[error("总线忙")]
+    #[error("Bus busy")]
     Busy,
-    #[error("未实现")]
+    #[error("Not implemented")]
     NotImplemented,
 }
 
 /// TLM 发起者接口 (Initiator)
-/// 用于发起TLM事务
+/// Used to initiate TLM transactions
 pub trait TlmInitiatorInterface {
     /// 阻塞传输
     fn b_transport(
@@ -147,7 +147,7 @@ pub trait TlmInitiatorInterface {
 }
 
 /// TLM 目标接口 (Target)
-/// 用于响应TLM事务
+/// Used to respond to TLM transactions
 pub trait TlmTargetInterface {
     /// 阻塞传输回调
     fn b_transport_cb(
@@ -187,11 +187,11 @@ pub struct TlmBus {
 }
 
 impl TlmBus {
-    /// 创建新的TLM总线
+    /// Create new TLM bus
     pub fn new() -> Self {
         Self {
             memory_map: Vec::new(),
-            delay: TlmTime::Ns(10), // 默认10ns延迟
+            delay: TlmTime::Ns(10), // Default 10ns delay
         }
     }
 
@@ -207,7 +207,7 @@ impl Default for TlmBus {
     }
 }
 
-/// 简单内存 TLM 封装
+/// Simple memory TLM wrapper
 pub struct TlmSimpleMemory {
     /// 基础存储器
     memory: Vec<u8>,
@@ -220,7 +220,7 @@ pub struct TlmSimpleMemory {
 }
 
 impl TlmSimpleMemory {
-    /// 创建新的TLM简单存储器
+    /// Create new TLM simple memory
     pub fn new(base_addr: u32, size: usize) -> Self {
         Self {
             memory: vec![0; size],
@@ -271,7 +271,7 @@ impl TlmInterface for TlmSimpleMemory {
     }
 }
 
-/// 调试 TLM 接口
+/// Debug TLM interface
 pub struct DebugTlmInterface;
 
 impl TlmInterface for DebugTlmInterface {

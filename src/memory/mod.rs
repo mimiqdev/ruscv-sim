@@ -8,15 +8,15 @@ use thiserror::Error;
 /// 存储器错误
 #[derive(Error, Debug)]
 pub enum MemoryError {
-    #[error("无效的内存地址: 0x{0:08x}")]
+    #[error("Invalid memory address: 0x{0:08x}")]
     InvalidAddress(u32),
-    #[error("未对齐访问: 地址 0x{0:08x}, 需要 {1}-字节对齐")]
+    #[error("Misaligned access: addr 0x{0:08x}, requires {1}-byte alignment")]
     Misaligned(u32, u32),
-    #[error("内存访问越界")]
+    #[error("Memory access out of bounds")]
     OutOfBounds,
 }
 
-/// 存储器接口 Trait
+/// Memory interface trait
 pub trait MemoryInterface {
     /// 读取字 (4字节)
     fn read_word(&self, addr: u32) -> Result<u32, MemoryError>;

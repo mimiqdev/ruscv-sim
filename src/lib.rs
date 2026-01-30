@@ -1,4 +1,4 @@
-//! RISC-V 模拟器主模块
+//! RISC-V simulator main module
 
 pub mod core;
 pub mod decode;
