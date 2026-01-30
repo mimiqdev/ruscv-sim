@@ -4,9 +4,9 @@
 
 use crate::decode::InstructionDecoder;
 use crate::execute::Executor;
-use crate::memory::MemoryInterface;
+use crate::memory::{MemoryInterface, SimpleMemory};
 use crate::tlm::TlmInterface;
-use anyhow::{Result, bail};
+use anyhow::Result;
 use std::sync::{Arc, Mutex};
 
 /// RISC-V 特权模式
@@ -54,10 +54,10 @@ impl Default for CoreState {
 pub struct RiscvCore {
     /// 核心状态
     state: CoreState,
-    /// 指令存储器接口
-    instruction_mem: Arc<dyn MemoryInterface + Send + Sync>,
-    /// 数据存储器接口
-    data_mem: Arc<dyn MemoryInterface + Send + Sync>,
+    /// 指令存储器
+    instruction_mem: Arc<Mutex<SimpleMemory>>,
+    /// 数据存储器
+    data_mem: Arc<Mutex<SimpleMemory>>,
     /// 指令译码器
     decoder: InstructionDecoder,
     /// 执行器
@@ -69,8 +69,8 @@ pub struct RiscvCore {
 impl RiscvCore {
     /// 创建新的核心实例
     pub fn new(
-        instruction_mem: Arc<dyn MemoryInterface + Send + Sync>,
-        data_mem: Arc<dyn MemoryInterface + Send + Sync>,
+        instruction_mem: Arc<Mutex<SimpleMemory>>,
+        data_mem: Arc<Mutex<SimpleMemory>>,
     ) -> Self {
         Self {
             state: CoreState::default(),
@@ -80,6 +80,12 @@ impl RiscvCore {
             executor: Executor::new(),
             tlm_interface: None,
         }
+    }
+
+    /// 使用相同存储器创建核心（指令+数据共用）
+    pub fn new_with_memory(mem_size: usize) -> Self {
+        let mem = Arc::new(Mutex::new(SimpleMemory::new(mem_size)));
+        Self::new(mem.clone(), mem)
     }
 
     /// 设置TLM接口
@@ -100,13 +106,19 @@ impl RiscvCore {
     /// 单步执行
     pub fn step(&mut self) -> Result<()> {
         // 1. 取指
-        let instruction = self.fetch_instruction()?;
+        let instruction = {
+            let mem = self.instruction_mem.lock().map_err(|_| anyhow::anyhow!("Failed to lock instruction memory"))?;
+            mem.read_word(self.state.pc)?
+        };
         
         // 2. 译码
         let decoded = self.decoder.decode(instruction)?;
         
         // 3. 执行
-        self.executor.execute(&decoded, &mut self.state, self.data_mem.as_ref())?;
+        {
+            let mut mem = self.data_mem.lock().map_err(|_| anyhow::anyhow!("Failed to lock data memory"))?;
+            self.executor.execute(&decoded, &mut self.state, &mut *mem)?;
+        }
         
         // 4. 更新PC（由执行器处理，除非发生异常）
         if !decoded.branch_taken {
@@ -114,12 +126,6 @@ impl RiscvCore {
         }
         
         Ok(())
-    }
-
-    /// 取指
-    fn fetch_instruction(&mut self) -> Result<u32> {
-        let instruction = self.instruction_mem.read_word(self.state.pc)?;
-        Ok(instruction.to_le())
     }
 
     /// 重置核心
@@ -142,11 +148,10 @@ impl RiscvCore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::SimpleMemory;
 
     #[test]
     fn test_core_initialization() {
-        let mem = Arc::new(SimpleMemory::new(0x1000));
+        let mem = Arc::new(Mutex::new(SimpleMemory::new(0x1000)));
         let core = RiscvCore::new(mem.clone(), mem);
         
         assert_eq!(core.state.pc, 0);
@@ -156,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_core_reset() {
-        let mem = Arc::new(SimpleMemory::new(0x1000));
+        let mem = Arc::new(Mutex::new(SimpleMemory::new(0x1000)));
         let mut core = RiscvCore::new(mem.clone(), mem);
         
         core.state.pc = 0x100;

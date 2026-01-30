@@ -47,7 +47,7 @@ pub enum Opcode {
 }
 
 /// RV32I 功能码 (funct3)
-#[derive(Debug, Clone, Copy, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, TryFromPrimitive, PartialEq)]
 #[repr(u8)]
 pub enum Funct3 {
     AddSub = 0b000,

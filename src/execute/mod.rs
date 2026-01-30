@@ -4,7 +4,7 @@
 
 use crate::core::{CoreState, PrivilegeMode};
 use crate::decode::{DecodedInstruction, Funct3, Opcode};
-use crate::memory::MemoryInterface;
+use crate::memory::{MemoryInterface, MemoryError};
 use thiserror::Error;
 
 /// 执行错误
@@ -20,6 +20,8 @@ pub enum ExecuteError {
     Ecall,
     #[error("EBREAK异常")]
     Ebreak,
+    #[error("内存访问错误: {0}")]
+    MemoryError(#[from] MemoryError),
 }
 
 /// 执行器
@@ -33,10 +35,10 @@ impl Executor {
 
     /// 执行译码后的指令
     pub fn execute(
-        &self,
+        &mut self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
-        mem: &dyn MemoryInterface,
+        mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         match instr.opcode {
             Opcode::Lui => self.exec_lui(instr, state),
@@ -175,7 +177,7 @@ impl Executor {
     }
 
     /// 存储指令
-    fn exec_store(&self, instr: &DecodedInstruction, state: &mut CoreState, mem: &dyn MemoryInterface) -> Result<(), ExecuteError> {
+    fn exec_store(&mut self, instr: &DecodedInstruction, state: &mut CoreState, mem: &dyn MemoryInterface) -> Result<(), ExecuteError> {
         let (Some(rs1), Some(rs2), Some(imm), Some(funct3)) = (instr.rs1, instr.rs2, instr.imm, instr.funct3) else {
             return Err(ExecuteError::InvalidOperation);
         };

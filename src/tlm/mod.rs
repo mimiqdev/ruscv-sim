@@ -62,7 +62,7 @@ impl TlmGenericPayload {
         Self {
             command,
             address,
-            data,
+            data: data.clone(),
             byte_enable: None,
             byte_enable_length: 0,
             data_length: data.len(),
@@ -171,11 +171,11 @@ pub trait TlmInterface: Send + Sync {
     /// 读操作 (阻塞)
     fn read(&self, addr: u32, size: usize) -> Result<Vec<u8>, TlmError>;
     /// 写操作 (阻塞)
-    fn write(&self, addr: u32, data: &[u8]) -> Result<(), TlmError>;
+    fn write(&mut self, addr: u32, data: &[u8]) -> Result<(), TlmError>;
     /// 获取延迟
     fn get_delay(&self) -> TlmTime;
     /// 设置延迟
-    fn set_delay(&self, delay: TlmTime);
+    fn set_delay(&mut self, delay: TlmTime);
 }
 
 /// TLM 总线 (连接多个TLM组件)
@@ -251,7 +251,7 @@ impl TlmInterface for TlmSimpleMemory {
         Ok(self.memory[offset..offset + size].to_vec())
     }
 
-    fn write(&self, addr: u32, data: &[u8]) -> Result<(), TlmError> {
+    fn write(&mut self, addr: u32, data: &[u8]) -> Result<(), TlmError> {
         if addr < self.base_addr || addr as usize + data.len() > self.base_addr as usize + self.size {
             return Err(TlmError::InvalidAddress(addr));
         }
@@ -265,8 +265,8 @@ impl TlmInterface for TlmSimpleMemory {
         self.delay
     }
 
-    fn set_delay(&self, delay: TlmTime) {
-        // 简单实现，忽略
+    fn set_delay(&mut self, delay: TlmTime) {
+        self.delay = delay;
     }
 }
 
@@ -274,11 +274,11 @@ impl TlmInterface for TlmSimpleMemory {
 pub struct DebugTlmInterface;
 
 impl TlmInterface for DebugTlmInterface {
-    fn read(&self, addr: u32, size: usize) -> Result<Vec<u8>, TlmError> {
+    fn read(&self, _addr: u32, size: usize) -> Result<Vec<u8>, TlmError> {
         Ok(vec![0xCC; size])
     }
 
-    fn write(&self, _addr: u32, _data: &[u8]) -> Result<(), TlmError> {
+    fn write(&mut self, _addr: u32, _data: &[u8]) -> Result<(), TlmError> {
         Ok(())
     }
 
@@ -286,7 +286,7 @@ impl TlmInterface for DebugTlmInterface {
         TlmTime::Ns(0)
     }
 
-    fn set_delay(&self, _delay: TlmTime) {}
+    fn set_delay(&mut self, _delay: TlmTime) {}
 }
 
 #[cfg(test)]
