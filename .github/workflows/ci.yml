@@ -145,7 +145,6 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cargo bench --all-features -- --measurement-time 1
           cargo bench --all-features -- --test-threads=1
 
   # ==========================================
