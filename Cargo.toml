@@ -1,0 +1,28 @@
+[package]
+name = "ruscv-sim"
+version = "0.1.0"
+edition = "2021"
+description = "RISC-V ISS with SystemC TLM2.0 interface"
+authors = ["RISC-V Virtual Platform Team"]
+
+[dependencies]
+# 基础依赖
+anyhow = "1.0"
+thiserror = "2.0"
+log = "0.4"
+env_logger = "0.11"
+
+# 序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 枚举转换
+num_enum = "0.7"
+
+# 测试
+[dev-dependencies]
+proptest = "1.0"
+
+[features]
+default = []
+tlm = []  # SystemC TLM2.0 接口支持
