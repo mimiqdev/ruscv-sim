@@ -326,6 +326,43 @@ _trans.rs | src/mmu/ | 地址转换流程 |
 
 ---
 
+## 4.1 技术重构阶段 (Tech Debt Sprint)
+
+在 Sprint 2-4 之间安排技术重构，提高代码质量：
+
+### Sprint 2.5: 指令查找优化
+- **目标**: 设计高效的 decode → execute 映射
+- **任务**:
+  - 设计 O(1) 查找表 (HashMap/数组)
+  - 实现指令分发机制
+  - 工时: 16h
+
+### Sprint 3.5: 模块化重构
+- **目标**: 按指令类型拆分 execute 模块
+- **任务**:
+  - 拆分 r_type.rs, i_type.rs, s_type.rs, b_type.rs, u_type.rs, j_type.rs
+  - 每个文件独立测试
+  - 工时: 24h
+
+### Sprint 4.5: 代码生成工具
+- **目标**: 评估并实现代码生成
+- **任务**:
+  - 评估 proc-macro 工具
+  - 实现模板生成重复代码
+  - 工时: 16h
+
+### Sprint 15: 语言统一 (Code Cleanup)
+- **目标**: 全局英文统一
+- **任务**:
+  - 移除所有中文注释
+  - 统一错误消息为英文
+  - 工时: 4h
+
+### Code Review Comments 参考
+详细技术评论见: [docs/code-review.md](./code-review.md)
+
+---
+
 ## 5. 风险评估与缓解 (v3.2)
 
 ### 5.1 风险清单
