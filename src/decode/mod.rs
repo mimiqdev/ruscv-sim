@@ -28,7 +28,7 @@ pub enum InstructionFormat {
 }
 
 /// RV32I 操作码 (主要操作码)
-#[derive(Debug, Clone, Copy, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, TryFromPrimitive, PartialEq)]
 #[repr(u8)]
 pub enum Opcode {
     Load = 0b000_0011,
