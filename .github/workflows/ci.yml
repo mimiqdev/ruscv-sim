@@ -20,7 +20,7 @@ jobs:
   # ==========================================
   check:
     name: Check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, cpu-arm64]
     timeout-minutes: 15
 
     steps:
@@ -62,7 +62,7 @@ jobs:
   # ==========================================
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, cpu-arm64]
     timeout-minutes: 30
     needs: check
 
@@ -108,7 +108,7 @@ jobs:
   # ==========================================
   bench:
     name: Bench
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, cpu-arm64]
     timeout-minutes: 30
     needs: test
 
@@ -144,7 +144,7 @@ jobs:
   # ==========================================
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, cpu-arm64]
     timeout-minutes: 30
     needs: test
 
@@ -194,7 +194,7 @@ jobs:
   # ==========================================
   smoke-test:
     name: Smoke Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, cpu-arm64]
     timeout-minutes: 10
     needs: build
 
@@ -229,7 +229,7 @@ jobs:
   # ==========================================
   summary:
     name: Summary
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, cpu-arm64]
     timeout-minutes: 5
     needs: [check, test, build, smoke-test]
 
