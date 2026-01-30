@@ -331,7 +331,7 @@ mod tests {
         let executor = Executor::new();
         let mut mem = SimpleMemory::new(0x1000);
         executor.execute(&instr, &mut state, &mut mem).unwrap();
-        
+
         assert_eq!(state.regs[1], 0x12345000);
     }
 
@@ -340,7 +340,7 @@ mod tests {
         let mut state = CoreState::default();
         state.regs[1] = 10;
         state.regs[2] = 20;
-        
+
         let instr = DecodedInstruction {
             raw: 0,
             format: crate::decode::InstructionFormat::RType,
@@ -353,7 +353,7 @@ mod tests {
             imm: None,
             branch_taken: false,
         };
-        
+
         let executor = Executor::new();
         let mut mem = SimpleMemory::new(0x1000);
         executor.execute(&instr, &mut state, &mem).unwrap();
