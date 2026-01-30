@@ -1,73 +1,24 @@
 #!/bin/bash
 # Pre-commit Hook for RISC-V ISS Simulator
-# =========================================
-# 在 commit 前自动运行：
-# 1. cargo fmt (格式化)
-# 2. cargo check (编译检查)
-# 3. cargo clippy (代码质量检查，仅警告)
 
 set -e
-
-echo "Running pre-commit checks..."
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_ROOT"
 
-# 检查 Rust 是否安装
+# 检查 Rust
 if ! command -v cargo &> /dev/null; then
-    echo "WARNING: Rust not found. Please install Rust first."
-    echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
-    exit 1
+    echo "Rust not found. Skip checks."
+    exit 0
 fi
 
-echo ""
-echo "Project: $(basename "$PROJECT_ROOT")"
-echo ""
+echo "Pre-commit: cargo fmt"
+cargo fmt --all -- --check 2>/dev/null || cargo fmt --all
 
-# Step 1: cargo fmt
-echo "----------------------------------"
-echo "Step 1/3: cargo fmt --check"
-echo "----------------------------------"
-if cargo fmt --all -- --check 2>/dev/null; then
-    echo "OK: Code formatting is correct"
-else
-    echo "INFO: Code formatting issues found. Auto-fixing..."
-    cargo fmt --all
-    echo "OK: Code formatted"
-fi
-echo ""
+echo "Pre-commit: cargo check"
+cargo check --all-features
 
-# Step 2: cargo check
-echo "----------------------------------"
-echo "Step 2/3: cargo check"
-echo "----------------------------------"
-if cargo check --all-features; then
-    echo "OK: Compilation check passed"
-else
-    echo "ERROR: Compilation check failed!"
-    echo "Please fix the errors above before committing."
-    exit 1
-fi
-echo ""
+echo "Pre-commit: cargo clippy (warnings only)"
+cargo clippy --all-features --all-targets 2>&1 | head -30 || true
 
-# Step 3: cargo clippy (warnings only, non-blocking)
-echo "----------------------------------"
-echo "Step 3/3: cargo clippy (warnings only)"
-echo "----------------------------------"
-CLIPPY_OUTPUT=$(cargo clippy --all-features --all-targets 2>&1)
-if echo "$CLIPPY_OUTPUT" | grep -q "^error:"; then
-    echo "WARN: Clippy found issues (non-blocking in pre-commit)"
-    echo "$CLIPPY_OUTPUT" | grep -E "^error" | head -10
-    echo ""
-    echo "INFO: CI will enforce strict clippy checks."
-else
-    echo "OK: Clippy check passed"
-fi
-echo ""
-
-echo "----------------------------------"
-echo "All pre-commit checks passed!"
-echo "Ready to commit!"
-echo ""
-
-exit 0
+echo "Pre-commit checks done."
