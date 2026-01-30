@@ -226,13 +226,13 @@ mod tests {
 
     #[test]
     fn test_load_program() {
-        let mem = SimpleMemory::new(1024);
+        let mem = SimpleMemory::new(0x2000); // 8KB，足以容纳 0x1000 地址
         let program = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 
         mem.load_program(&program, 0x1000);
 
         assert_eq!(mem.read_byte(0x1000).unwrap(), 0x01);
         assert_eq!(mem.read_byte(0x1007).unwrap(), 0x08);
-        assert_eq!(mem.read_word(0x1000).unwrap(), 0x08070605); // 小端
+        assert_eq!(mem.read_word(0x1000).unwrap(), 0x04030201); // 小端: 0x04+0x03*256+0x02*65536+0x01*16777216
     }
 }
