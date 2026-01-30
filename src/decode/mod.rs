@@ -136,7 +136,7 @@ impl InstructionDecoder {
                 let imm101 = ((instruction >> 21) & 0x3FF) << 1;
                 let imm11 = ((instruction >> 20) & 1) << 11;
                 let imm1912 = ((instruction >> 12) & 0xFF) << 12;
-                decoded.imm = Some((imm20 | imm1912 | imm11 | imm101) as u32);
+                decoded.imm = Some(imm20 | imm1912 | imm11 | imm101);
             }
             Opcode::Jalr => {
                 decoded.format = InstructionFormat::IType;
@@ -144,7 +144,7 @@ impl InstructionDecoder {
                 decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
                 decoded.funct3 =
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
-                decoded.imm = Some(((instruction >> 20) as i32 as i32 as u32) & 0xFFF);
+                decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
                 // 符号扩展
             }
             Opcode::Branch => {
@@ -158,7 +158,7 @@ impl InstructionDecoder {
                 let imm105 = ((instruction >> 25) & 0x3F) << 5;
                 let imm41 = ((instruction >> 8) & 0xF) << 1;
                 let imm11 = ((instruction >> 7) & 1) << 11;
-                decoded.imm = Some((imm12 | imm105 | imm41 | imm11) as u32);
+                decoded.imm = Some(imm12 | imm105 | imm41 | imm11);
             }
             Opcode::Load | Opcode::Store => {
                 decoded.format = if matches!(opcode, Opcode::Load) {
@@ -179,7 +179,7 @@ impl InstructionDecoder {
                 };
                 decoded.funct3 =
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
-                decoded.imm = Some(((instruction >> 20) as i32 as i32 as u32) & 0xFFF);
+                decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
             }
             Opcode::Op => {
                 decoded.format = InstructionFormat::RType;
@@ -230,7 +230,7 @@ mod tests {
     fn test_add_decode() {
         // ADD x1, x2, x3
         // 格式: funct7 | rs2 | rs1 | funct3 | rd | opcode
-        let instruction = (0 << 25) | (3 << 20) | (2 << 15) | (0 << 12) | (1 << 7) | 0b011_0011;
+        let instruction = (3 << 20) | (2 << 15) | (1 << 7) | 0b011_0011;
         let decoder = InstructionDecoder::new();
         let decoded = decoder.decode(instruction).unwrap();
 

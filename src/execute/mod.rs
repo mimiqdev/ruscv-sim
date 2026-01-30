@@ -2,7 +2,7 @@
 //!
 //! 实现RV32I指令的执行逻辑
 
-use crate::core::{CoreState, PrivilegeMode};
+use crate::core::CoreState;
 use crate::decode::{DecodedInstruction, Funct3, Opcode};
 use crate::memory::{MemoryError, MemoryInterface};
 use thiserror::Error;
@@ -163,11 +163,8 @@ impl Executor {
         // 注意：实际的分支条件需要根据funct3值修正
         // BEQ=000, BNE=001, BLT=100, BGE=101, BLTU=110, BGEU=111
 
-        if let Some(branch_taken) = state.pc.checked_add(4) {
-            // 临时存储，在调用者中更新
-            if take_branch {
-                state.pc = state.pc.wrapping_add(imm);
-            }
+        if take_branch {
+            state.pc = state.pc.wrapping_add(imm);
         }
 
         Ok(())

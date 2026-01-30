@@ -88,7 +88,7 @@ impl MemoryInterface for SimpleMemory {
         if addr + 4 > self.size {
             return Err(MemoryError::InvalidAddress(addr as u32));
         }
-        if addr % 4 != 0 {
+        if !addr.is_multiple_of(4) {
             return Err(MemoryError::Misaligned(addr as u32, 4));
         }
 
@@ -106,7 +106,7 @@ impl MemoryInterface for SimpleMemory {
         if addr + 2 > self.size {
             return Err(MemoryError::InvalidAddress(addr as u32));
         }
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             return Err(MemoryError::Misaligned(addr as u32, 2));
         }
 
@@ -146,7 +146,7 @@ impl MemoryInterface for SimpleMemory {
         if addr + 4 > self.size {
             return Err(MemoryError::InvalidAddress(addr as u32));
         }
-        if addr % 4 != 0 {
+        if !addr.is_multiple_of(4) {
             return Err(MemoryError::Misaligned(addr as u32, 4));
         }
 
@@ -164,7 +164,7 @@ impl MemoryInterface for SimpleMemory {
         if addr + 2 > self.size {
             return Err(MemoryError::InvalidAddress(addr as u32));
         }
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             return Err(MemoryError::Misaligned(addr as u32, 2));
         }
 
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_load_program() {
-        let mut mem = SimpleMemory::new(1024);
+        let mem = SimpleMemory::new(1024);
         let program = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 
         mem.load_program(&program, 0x1000);

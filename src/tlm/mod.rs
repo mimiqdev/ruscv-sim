@@ -2,7 +2,6 @@
 //!
 //! 提供SystemC TLM2.0风格的接口抽象，用于与外部组件通信
 
-use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 /// TLM 传输类型
@@ -179,6 +178,7 @@ pub trait TlmInterface: Send + Sync {
 }
 
 /// TLM 总线 (连接多个TLM组件)
+#[allow(dead_code)]
 pub struct TlmBus {
     /// 存储器映射
     memory_map: Vec<Box<dyn TlmInterface + Send + Sync>>,
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_tlm_payload() {
-        let mut payload = TlmGenericPayload::new(TlmCommand::Read, 0x1000, vec![0; 4]);
+        let payload = TlmGenericPayload::new(TlmCommand::Read, 0x1000, vec![0; 4]);
         assert_eq!(payload.command, TlmCommand::Read);
         assert_eq!(payload.address, 0x1000);
         assert_eq!(payload.data_length, 4);
