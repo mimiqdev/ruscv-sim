@@ -1,39 +1,44 @@
 #!/bin/bash
-# Install Pre-commit Hook
-# =======================
-# 将 pre-commit hook 安装到 .git/hooks/
+# Install Git Hooks
+# =================
+# 将 hooks 安装到 .git/hooks/
 
 set -e
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-HOOK_SOURCE="$PROJECT_ROOT/scripts/hook/pre-commit"
-HOOK_DEST="$PROJECT_ROOT/.git/hooks/pre-commit"
 
-echo "🔧 Installing pre-commit hook..."
+echo "🔧 Installing git hooks..."
 echo ""
 
-# 检查是否存在
-if [ -f "$HOOK_DEST" ]; then
-    echo "⚠️  Pre-commit hook already exists."
-    echo "   Backup to .git/hooks/pre-commit.bak"
-    cp "$HOOK_DEST" "$HOOK_DEST.bak"
+# 安装 pre-commit
+PRE_COMMIT_SRC="$PROJECT_ROOT/scripts/hook/pre-commit"
+PRE_COMMIT_DEST="$PROJECT_ROOT/.git/hooks/pre-commit"
+
+if [ -f "$PRE_COMMIT_DEST" ]; then
+    echo "⚠️  Pre-commit hook exists. Backup to .git/hooks/pre-commit.bak"
+    cp "$PRE_COMMIT_DEST" "$PRE_COMMIT_DEST.bak"
 fi
+cp "$PRE_COMMIT_SRC" "$PRE_COMMIT_DEST"
+chmod +x "$PRE_COMMIT_DEST"
+echo "✅ Pre-commit hook installed"
 
-# 复制 hook
-cp "$HOOK_SOURCE" "$HOOK_DEST"
-chmod +x "$HOOK_DEST"
+# 安装 pre-push
+PRE_PUSH_SRC="$PROJECT_ROOT/scripts/hook/pre-push"
+PRE_PUSH_DEST="$PROJECT_ROOT/.git/hooks/pre-push"
 
-echo "✅ Pre-commit hook installed!"
-echo ""
-echo "The hook will run before each commit:"
-echo "  1. cargo fmt --check (format check)"
-echo "  2. cargo check (compilation check)"
-echo "  3. cargo clippy (code quality check)"
-echo ""
-echo "To bypass the hook, use: git commit --no-verify"
-echo ""
+if [ -f "$PRE_PUSH_DEST" ]; then
+    echo "⚠️  Pre-push hook exists. Backup to .git/hooks/pre-push.bak"
+    cp "$PRE_PUSH_DEST" "$PRE_PUSH_DEST.bak"
+fi
+cp "$PRE_PUSH_SRC" "$PRE_PUSH_DEST"
+chmod +x "$PRE_PUSH_DEST"
+echo "✅ Pre-push hook installed"
 
-# 提示用户设置执行权限
-echo "📝 Note: The hook is executable."
-echo "   If you have issues, try:"
-echo "   chmod +x $HOOK_DEST"
+echo ""
+echo "Installed hooks:"
+echo "  pre-commit: cargo fmt + cargo check"
+echo "  pre-push:   cargo clippy (strict)"
+echo ""
+echo "To bypass hooks:"
+echo "  git commit --no-verify"
+echo "  git push --no-verify"
