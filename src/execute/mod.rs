@@ -357,7 +357,7 @@ mod tests {
         let mut executor = Executor::new();
         let mut mem = SimpleMemory::new(0x1000);
         executor.execute(&instr, &mut state, &mut mem).unwrap();
-        
+
         assert_eq!(state.regs[3], 30);
     }
 }
