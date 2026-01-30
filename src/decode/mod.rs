@@ -1,9 +1,9 @@
 //! 指令译码模块
-//! 
+//!
 //! 支持RV32I基础指令集的译码
 
-use thiserror::Error;
 use num_enum::TryFromPrimitive;
+use thiserror::Error;
 
 /// 译码错误
 #[derive(Error, Debug)]
@@ -142,14 +142,17 @@ impl InstructionDecoder {
                 decoded.format = InstructionFormat::IType;
                 decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
                 decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
-                decoded.funct3 = Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
-                decoded.imm = Some(((instruction >> 20) as i32 as i32 as u32) & 0xFFF); // 符号扩展
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                decoded.imm = Some(((instruction >> 20) as i32 as i32 as u32) & 0xFFF);
+                // 符号扩展
             }
             Opcode::Branch => {
                 decoded.format = InstructionFormat::BType;
                 decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
                 decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
-                decoded.funct3 = Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
                 // B型立即数: imm[12|10:5|4:1|11]
                 let imm12 = ((instruction >> 31) & 1) << 12;
                 let imm105 = ((instruction >> 25) & 0x3F) << 5;
@@ -174,7 +177,8 @@ impl InstructionDecoder {
                 } else {
                     None
                 };
-                decoded.funct3 = Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
                 decoded.imm = Some(((instruction >> 20) as i32 as i32 as u32) & 0xFFF);
             }
             Opcode::Op => {
@@ -182,7 +186,8 @@ impl InstructionDecoder {
                 decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
                 decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
                 decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
-                decoded.funct3 = Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
                 decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
             }
             Opcode::MiscMem | Opcode::System => {
@@ -215,7 +220,7 @@ mod tests {
         let instruction = (0x12345 << 12) | (1 << 7) | 0b011_0111;
         let decoder = InstructionDecoder::new();
         let decoded = decoder.decode(instruction).unwrap();
-        
+
         assert_eq!(decoded.opcode, Opcode::Lui);
         assert_eq!(decoded.rd, Some(1));
         assert_eq!(decoded.imm, Some(0x12345000));
@@ -228,7 +233,7 @@ mod tests {
         let instruction = (0 << 25) | (3 << 20) | (2 << 15) | (0 << 12) | (1 << 7) | 0b011_0011;
         let decoder = InstructionDecoder::new();
         let decoded = decoder.decode(instruction).unwrap();
-        
+
         assert_eq!(decoded.opcode, Opcode::Op);
         assert_eq!(decoded.rd, Some(1));
         assert_eq!(decoded.rs1, Some(2));

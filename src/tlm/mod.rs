@@ -2,30 +2,30 @@
 //!
 //! 提供SystemC TLM2.0风格的接口抽象，用于与外部组件通信
 
-use thiserror::Error;
 use std::sync::{Arc, Mutex};
+use thiserror::Error;
 
 /// TLM 传输类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlmPhase {
-    BeginReq,   // 请求开始
-    EndReq,     // 请求结束
-    BeginResp,  // 响应开始
-    EndResp,    // 响应结束
+    BeginReq,  // 请求开始
+    EndReq,    // 请求结束
+    BeginResp, // 响应开始
+    EndResp,   // 响应结束
 }
 
 /// TLM 响应状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlmResponseStatus {
-    Ok,                     // 成功
-    AddressError,           // 地址错误
-    CommandError,           // 命令错误
-    BurstError,             // 突发错误
-    DataError,              // 数据错误
-    InvalidAddress,         // 无效地址
-    WaitRequest,            // 等待请求
-    WaitResponse,           // 等待响应
-    ReleaseRequired,        // 需要释放
+    Ok,              // 成功
+    AddressError,    // 地址错误
+    CommandError,    // 命令错误
+    BurstError,      // 突发错误
+    DataError,       // 数据错误
+    InvalidAddress,  // 无效地址
+    WaitRequest,     // 等待请求
+    WaitResponse,    // 等待响应
+    ReleaseRequired, // 需要释放
 }
 
 /// TLM 命令类型
@@ -80,9 +80,9 @@ impl TlmGenericPayload {
 /// TLM 同步类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlmSyncEnum {
-    Accept,     // 接受
-    Wait,       // 等待
-    Release,    // 释放
+    Accept,  // 接受
+    Wait,    // 等待
+    Release, // 释放
 }
 
 /// TLM 时间点
@@ -246,16 +246,17 @@ impl TlmInterface for TlmSimpleMemory {
         if addr < self.base_addr || addr as usize + size > self.base_addr as usize + self.size {
             return Err(TlmError::InvalidAddress(addr));
         }
-        
+
         let offset = (addr - self.base_addr) as usize;
         Ok(self.memory[offset..offset + size].to_vec())
     }
 
     fn write(&mut self, addr: u32, data: &[u8]) -> Result<(), TlmError> {
-        if addr < self.base_addr || addr as usize + data.len() > self.base_addr as usize + self.size {
+        if addr < self.base_addr || addr as usize + data.len() > self.base_addr as usize + self.size
+        {
             return Err(TlmError::InvalidAddress(addr));
         }
-        
+
         let offset = (addr - self.base_addr) as usize;
         self.memory[offset..offset + data.len()].copy_from_slice(data);
         Ok(())
@@ -305,7 +306,7 @@ mod tests {
     fn test_tlm_simple_memory() {
         let mut mem = TlmSimpleMemory::new(0x1000, 1024);
         mem.load(&[0x01, 0x02, 0x03, 0x04], 0);
-        
+
         let data = mem.read(0x1000, 4).unwrap();
         assert_eq!(data, vec![0x01, 0x02, 0x03, 0x04]);
     }

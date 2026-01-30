@@ -1,5 +1,5 @@
 //! RISC-V RV32I 核心模块
-//! 
+//!
 //! 实现RISC-V处理器核心的取指-译码-执行循环
 
 use crate::decode::InstructionDecoder;
@@ -107,24 +107,31 @@ impl RiscvCore {
     pub fn step(&mut self) -> Result<()> {
         // 1. 取指
         let instruction = {
-            let mem = self.instruction_mem.lock().map_err(|_| anyhow::anyhow!("Failed to lock instruction memory"))?;
+            let mem = self
+                .instruction_mem
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Failed to lock instruction memory"))?;
             mem.read_word(self.state.pc)?
         };
-        
+
         // 2. 译码
         let decoded = self.decoder.decode(instruction)?;
-        
+
         // 3. 执行
         {
-            let mut mem = self.data_mem.lock().map_err(|_| anyhow::anyhow!("Failed to lock data memory"))?;
-            self.executor.execute(&decoded, &mut self.state, &mut *mem)?;
+            let mut mem = self
+                .data_mem
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Failed to lock data memory"))?;
+            self.executor
+                .execute(&decoded, &mut self.state, &mut *mem)?;
         }
-        
+
         // 4. 更新PC（由执行器处理，除非发生异常）
         if !decoded.branch_taken {
             self.state.pc += 4;
         }
-        
+
         Ok(())
     }
 
@@ -153,7 +160,7 @@ mod tests {
     fn test_core_initialization() {
         let mem = Arc::new(Mutex::new(SimpleMemory::new(0x1000)));
         let core = RiscvCore::new(mem.clone(), mem);
-        
+
         assert_eq!(core.state.pc, 0);
         assert_eq!(core.state.regs[0], 0); // x0 始终为0
         assert_eq!(core.state.privilege, PrivilegeMode::Machine);
@@ -163,12 +170,12 @@ mod tests {
     fn test_core_reset() {
         let mem = Arc::new(Mutex::new(SimpleMemory::new(0x1000)));
         let mut core = RiscvCore::new(mem.clone(), mem);
-        
+
         core.state.pc = 0x100;
         core.state.regs[1] = 42;
-        
+
         core.reset(0x200);
-        
+
         assert_eq!(core.state.pc, 0x200);
         assert_eq!(core.state.regs[1], 0); // reset后regs被清零
     }

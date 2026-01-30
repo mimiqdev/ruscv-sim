@@ -6,8 +6,8 @@ pub mod execute;
 pub mod memory;
 pub mod tlm;
 
-pub use core::{RiscvCore, CoreState, PrivilegeMode};
-pub use decode::{InstructionDecoder, DecodedInstruction, InstructionFormat, DecodeError};
-pub use execute::{Executor, ExecuteError};
-pub use memory::{MemoryInterface, SimpleMemory, MemoryError};
-pub use tlm::{TlmInterface, TlmGenericPayload, TlmCommand, TlmPhase, TlmTime, TlmResponseStatus};
+pub use core::{CoreState, PrivilegeMode, RiscvCore};
+pub use decode::{DecodeError, DecodedInstruction, InstructionDecoder, InstructionFormat};
+pub use execute::{ExecuteError, Executor};
+pub use memory::{MemoryError, MemoryInterface, SimpleMemory};
+pub use tlm::{TlmCommand, TlmGenericPayload, TlmInterface, TlmPhase, TlmResponseStatus, TlmTime};

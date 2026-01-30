@@ -32,14 +32,14 @@ pub trait MemoryInterface {
     fn read_half_sext(&self, addr: u32) -> Result<u32, MemoryError>;
     /// 读取字节 (符号扩展)
     fn read_byte_sext(&self, addr: u32) -> Result<u32, MemoryError>;
-    
+
     /// 写入字 (4字节)
     fn write_word(&mut self, addr: u32, value: u32) -> Result<(), MemoryError>;
     /// 写入半字 (2字节)
     fn write_half(&mut self, addr: u32, value: u16) -> Result<(), MemoryError>;
     /// 写入字节 (1字节)
     fn write_byte(&mut self, addr: u32, value: u8) -> Result<(), MemoryError>;
-    
+
     /// 获取存储器大小
     fn size(&self) -> usize;
 }
@@ -69,7 +69,7 @@ impl SimpleMemory {
             size,
         }
     }
-    
+
     /// 加载程序数据 (小端序)
     pub fn load_program(&self, data: &[u8], base_addr: u32) {
         let mut mem = self.data.write().unwrap();
@@ -91,7 +91,7 @@ impl MemoryInterface for SimpleMemory {
         if addr % 4 != 0 {
             return Err(MemoryError::Misaligned(addr as u32, 4));
         }
-        
+
         let data = self.data.read().unwrap();
         Ok(u32::from_le_bytes([
             data[addr],
@@ -109,7 +109,7 @@ impl MemoryInterface for SimpleMemory {
         if addr % 2 != 0 {
             return Err(MemoryError::Misaligned(addr as u32, 2));
         }
-        
+
         let data = self.data.read().unwrap();
         Ok(u16::from_le_bytes([data[addr], data[addr + 1]]))
     }
@@ -149,7 +149,7 @@ impl MemoryInterface for SimpleMemory {
         if addr % 4 != 0 {
             return Err(MemoryError::Misaligned(addr as u32, 4));
         }
-        
+
         let mut data = self.data.write().unwrap();
         let bytes = value.to_le_bytes();
         data[addr] = bytes[0];
@@ -167,7 +167,7 @@ impl MemoryInterface for SimpleMemory {
         if addr % 2 != 0 {
             return Err(MemoryError::Misaligned(addr as u32, 2));
         }
-        
+
         let mut data = self.data.write().unwrap();
         let bytes = value.to_le_bytes();
         data[addr] = bytes[0];
@@ -197,15 +197,15 @@ mod tests {
     #[test]
     fn test_memory_read_write() {
         let mut mem = SimpleMemory::new(1024);
-        
+
         // 写入并读取字
         mem.write_word(0x100, 0x12345678).unwrap();
         assert_eq!(mem.read_word(0x100).unwrap(), 0x12345678);
-        
+
         // 写入并读取半字
         mem.write_half(0x200, 0xABCD).unwrap();
         assert_eq!(mem.read_half(0x200).unwrap(), 0xABCD);
-        
+
         // 写入并读取字节
         mem.write_byte(0x300, 0x42).unwrap();
         assert_eq!(mem.read_byte(0x300).unwrap(), 0x42);
@@ -214,11 +214,11 @@ mod tests {
     #[test]
     fn test_memory_misaligned() {
         let mut mem = SimpleMemory::new(1024);
-        
+
         // 未对齐的字访问
         assert!(mem.read_word(0x101).is_err());
         assert!(mem.write_word(0x101, 0).is_err());
-        
+
         // 未对齐的半字访问
         assert!(mem.read_half(0x101).is_err());
         assert!(mem.write_half(0x101, 0).is_err());
@@ -228,9 +228,9 @@ mod tests {
     fn test_load_program() {
         let mut mem = SimpleMemory::new(1024);
         let program = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-        
+
         mem.load_program(&program, 0x1000);
-        
+
         assert_eq!(mem.read_byte(0x1000).unwrap(), 0x01);
         assert_eq!(mem.read_byte(0x1007).unwrap(), 0x08);
         assert_eq!(mem.read_word(0x1000).unwrap(), 0x08070605); // 小端
