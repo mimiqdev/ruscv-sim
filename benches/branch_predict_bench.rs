@@ -6,35 +6,35 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::Rng;
 
 /// Simple branch predictor: always not taken
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct AlwaysNotTakenPredictor;
 
-impl AlwaysNotTakenPredictor {
-    pub fn predict(&self, _pc: u32) -> bool {
+impl Predictor for AlwaysNotTakenPredictor {
+    fn predict(&self, _pc: u32) -> bool {
         false
     }
 
-    pub fn update(&mut self, _pc: u32, _taken: bool) {
+    fn update(&mut self, _pc: u32, _taken: bool) {
         // No state to update
     }
 }
 
 /// Simple branch predictor: always taken
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct AlwaysTakenPredictor;
 
-impl AlwaysTakenPredictor {
-    pub fn predict(&self, _pc: u32) -> bool {
+impl Predictor for AlwaysTakenPredictor {
+    fn predict(&self, _pc: u32) -> bool {
         true
     }
 
-    pub fn update(&mut self, _pc: u32, _taken: bool) {
+    fn update(&mut self, _pc: u32, _taken: bool) {
         // No state to update
     }
 }
 
 /// 1-bit branch predictor
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OneBitPredictor {
     table: Vec<bool>,
     size: usize,
@@ -47,20 +47,25 @@ impl OneBitPredictor {
             size,
         }
     }
+}
 
-    pub fn predict(&self, pc: u32) -> bool {
+impl Predictor for OneBitPredictor {
+    fn predict(&self, pc: u32) -> bool {
         let index = (pc as usize) % self.size;
         self.table[index]
     }
 
-    pub fn update(&mut self, pc: u32, taken: bool) {
+    fn update(&mut self, pc: u32, taken: bool) {
         let index = (pc as usize) % self.size;
+        self.table[index] = taken;
+    }
+}
         self.table[index] = taken;
     }
 }
 
 /// 2-bit saturating counter predictor
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TwoBitPredictor {
     table: Vec<u8>, // 0-3: 0=strongly not taken, 1=weakly not taken, 2=weakly taken, 3=strongly taken
     size: usize,
@@ -73,13 +78,15 @@ impl TwoBitPredictor {
             size,
         }
     }
+}
 
-    pub fn predict(&self, pc: u32) -> bool {
+impl Predictor for TwoBitPredictor {
+    fn predict(&self, pc: u32) -> bool {
         let index = (pc as usize) % self.size;
         self.table[index] >= 2
     }
 
-    pub fn update(&mut self, pc: u32, taken: bool) {
+    fn update(&mut self, pc: u32, taken: bool) {
         let index = (pc as usize) % self.size;
         let current = self.table[index];
         if taken {
@@ -91,7 +98,7 @@ impl TwoBitPredictor {
 }
 
 /// Branch instruction with known outcome for testing
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BranchInstruction {
     pc: u32,
     target: u32,
