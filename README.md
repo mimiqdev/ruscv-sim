@@ -26,7 +26,7 @@
 | CSR 框架 | ✅ 完成 | Sprint 4 |
 | RV64F 浮点单元 | ✅ 完成 | Sprint 6 |
 | 陷阱处理 | ✅ 完成 | Sprint 5 |
-| **测试覆盖** | ✅ **200+ tests** | 全部通过 |
+| **测试覆盖** | ✅ **~100 tests** | 全部通过 |
 
 ## 项目结构
 
@@ -42,7 +42,7 @@ ruscv-sim/
 │   ├── tlm/                # TLM2.0 接口抽象
 │   ├── fpu/                # 浮点运算单元 (RV64F)
 │   ├── csr/                # CSR 寄存器框架
-│   └── trap/               # 陷阱处理
+│   └── trap/               # 陷阱处理 (集成在 core/)
 ├── tests/                  # 集成测试
 ├── docs/                   # 文档
 │   ├── architecture.md     # 架构设计
