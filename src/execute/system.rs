@@ -1,7 +1,7 @@
 //! System instruction execution
 //!
-use crate::csr::machine;
 use crate::core::PrivilegeMode;
+use crate::csr::machine;
 
 use crate::core::CoreState;
 use crate::decode::DecodedInstruction;
