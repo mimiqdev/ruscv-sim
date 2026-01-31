@@ -3,7 +3,7 @@
 //! J-type (Jump-type) instructions perform unconditional jumps.
 
 use crate::core::CoreState;
-use crate::decode::{DecodedInstruction, InstructionFormat, Opcode};
+use crate::decode::{DecodedInstruction, Opcode};
 use crate::execute::ExecuteError;
 use crate::memory::SimpleMemory;
 
@@ -64,7 +64,7 @@ mod tests {
     fn create_test_instr_j_type(opcode: Opcode, rd: u8, imm: u32) -> DecodedInstruction {
         DecodedInstruction {
             raw: 0,
-            format: InstructionFormat::JType,
+            format: crate::decode::InstructionFormat::JType,
             opcode,
             funct3: None,
             funct7: None,
@@ -184,5 +184,83 @@ mod tests {
 
         assert_eq!(state.regs[3], 0x10004);
         assert_eq!(state.pc, 0xFFFFF000u32.wrapping_add(0x1000) & !1u32);
+    }
+
+    #[test]
+    fn test_jalr_negative_offset() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 0x2000;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::Jalr,
+            funct3: None,
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-16i32) as u32), // -16 offset
+            branch_taken: false,
+        };
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_jalr(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0x1004); // return address
+        assert_eq!(state.pc, 0x1FF0); // 0x2000 - 16 = 0x1FF0
+    }
+
+    #[test]
+    fn test_jalr_lsb_clearing() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 0x2011; // LSB is set
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::Jalr,
+            funct3: None,
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(0),
+            branch_taken: false,
+        };
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_jalr(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0x1004); // return address
+        assert_eq!(state.pc, 0x2010); // LSB should be cleared
+    }
+
+    #[test]
+    fn test_jalr_wrapping() {
+        let mut state = CoreState::default();
+        state.pc = 0xFFFFFFF0;
+        state.regs[1] = 0x20;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::Jalr,
+            funct3: None,
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(1),
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_jalr(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[1], 0xFFFFFFF4); // return address
+        assert_eq!(state.pc, 0x40); // 0x20 + 0x20 = 0x40
     }
 }

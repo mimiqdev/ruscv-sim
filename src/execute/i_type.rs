@@ -382,4 +382,231 @@ mod tests {
 
         assert_eq!(state.regs[2], 0x12345678);
     }
+
+    #[test]
+    fn test_ori_with_zero() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::Or),
+            None,
+            Some(1),
+            Some(2),
+            Some(0),
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0x12345678);
+    }
+
+    #[test]
+    fn test_ori_with_all_ones() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::Or),
+            None,
+            Some(1),
+            Some(2),
+            Some((-1i32) as u32), // 0xFFFFFFFF
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0xFFFFFFFF);
+    }
+
+    #[test]
+    fn test_andi_with_zero() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::And),
+            None,
+            Some(1),
+            Some(2),
+            Some(0),
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0);
+    }
+
+    #[test]
+    fn test_andi_with_all_ones() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::And),
+            None,
+            Some(1),
+            Some(2),
+            Some((-1i32) as u32), // 0xFFFFFFFF
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0x12345678);
+    }
+
+    #[test]
+    fn test_slli_large_shift() {
+        let mut state = CoreState::default();
+        state.regs[1] = 1;
+
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::Sll),
+            None,
+            Some(1),
+            Some(2),
+            Some(8), // shamt = 8
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 256);
+    }
+
+    #[test]
+    fn test_srli_with_negative_value() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0xFFFFFFF0; // Large unsigned value
+
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::SrlSra),
+            Some(0x00), // SRLI
+            Some(1),
+            Some(2),
+            Some(4), // shamt = 4
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        // 0xFFFFFFF0 >> 4 = 0x0FFFFFFF
+        assert_eq!(state.regs[2], 0x0FFFFFFF);
+    }
+
+    #[test]
+    fn test_srai_with_positive_value() {
+        let mut state = CoreState::default();
+        state.regs[1] = 256; // Positive value
+
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::SrlSra),
+            Some(0x20), // SRAI
+            Some(1),
+            Some(2),
+            Some(4), // shamt = 4
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        // 256 >> 4 = 16
+        assert_eq!(state.regs[2], 16);
+    }
+
+    #[test]
+    fn test_xori_with_negative_immediate() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0xFFFFFFFF; // -1 as i32
+
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::Xor),
+            None,
+            Some(1),
+            Some(2),
+            Some((-1i32) as u32), // 0xFFFFFFFF
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        // 0xFFFFFFFF ^ 0xFFFFFFFF = 0
+        assert_eq!(state.regs[2], 0);
+    }
+
+    #[test]
+    fn test_slti_negative_immediate() {
+        let mut state = CoreState::default();
+        state.regs[1] = 10;
+
+        // SLTI x2, x1, -5 (should be false since 10 > -5)
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::Slt),
+            None,
+            Some(1),
+            Some(2),
+            Some((-5i32) as u32),
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0);
+    }
+
+    #[test]
+    fn test_sltiu_negative_rs1() {
+        let mut state = CoreState::default();
+        state.regs[1] = (-1i32) as u32; // 0xFFFFFFFF (large unsigned)
+
+        // SLTIU x2, x1, 5 (should be false since 0xFFFFFFFF > 5)
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::Sltu),
+            None,
+            Some(1),
+            Some(2),
+            Some(5),
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0);
+    }
+
+    #[test]
+    fn test_sltiu_negative_immediate() {
+        let mut state = CoreState::default();
+        state.regs[1] = 10;
+
+        // SLTIU x2, x1, -5 (0xFFFFFFFB)
+        // In unsigned comparison, 10 < 0xFFFFFFFB is true
+        let instr = create_test_instr_i_type(
+            Opcode::OpImm,
+            Some(Funct3::Sltu),
+            None,
+            Some(1),
+            Some(2),
+            Some((-5i32) as u32),
+        );
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_op_imm(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 1);
+    }
 }
