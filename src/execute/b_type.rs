@@ -53,9 +53,9 @@ pub fn exec_branch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::Funct3;
     use crate::decode::{InstructionFormat, Opcode};
     use crate::memory::SimpleMemory;
-    use crate::decode::Funct3;
 
     fn create_test_instr_b_type(funct3: Funct3, rs1: u8, rs2: u8, imm: u32) -> DecodedInstruction {
         DecodedInstruction {
