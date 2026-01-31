@@ -46,6 +46,7 @@ pub enum Opcode {
     Jalr = 0b110_0111,
     Jal = 0b110_1111,
     System = 0b111_0011,
+    Amo = 0b010_1111,
 }
 
 /// RV32I Function code (funct3)
@@ -213,6 +214,15 @@ impl InstructionDecoder {
                 // For SYSTEM: bits [31:20] is the imm field
                 let imm_20_0 = (instruction >> 20) & 0xFFF;
                 decoded.imm = Some(imm_20_0);
+            }
+            Opcode::Amo => {
+                decoded.format = InstructionFormat::RType;
+                decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
+                decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
             }
             _ => {
                 return Err(DecodeError::ReservedInstruction);

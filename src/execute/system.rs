@@ -332,3 +332,342 @@ mod tests {
         assert_eq!(state.regs[10], 0x00FF);
     }
 }
+
+/// MRET - Return from Machine mode trap
+///
+/// Reads the saved PC from MEPC, restores MIE from MPIE,
+/// and restores the previous privilege mode from MPP.
+///
+/// # Operation
+/// PC = MEPC
+/// MIE = MPIE
+/// MPP = [previous mode]
+#[inline]
+pub fn exec_mret(
+    _instr: &DecodedInstruction,
+    state: &mut CoreState,
+    _mem: &mut dyn crate::memory::MemoryInterface,
+) -> Result<u32, ExecuteError> {
+    // Read current mstatus
+    let mstatus = state
+        .csr
+        .read(machine::MSTATUS)
+        .map_err(ExecuteError::CsrError)?;
+
+    // Extract MPIE (bit 7) and MPP (bits 12:11)
+    let mpie = (mstatus >> 7) & 1;
+    let mpp = (mstatus >> 11) & 0b11;
+
+    // Check if we're allowed to return from M-mode
+    // In a real implementation, we would check privilege levels
+    // For now, we assume mret is allowed from M-mode
+
+    // Read MEPC for the return address
+    let mepc = state
+        .csr
+        .read(machine::MEPC)
+        .map_err(ExecuteError::CsrError)?;
+
+    // Restore MIE from MPIE
+    let new_mstatus = (mstatus & !0x8) | (mpie << 3);
+
+    // Clear MPP bits
+    let new_mstatus = new_mstatus & !(0b11 << 11);
+
+    // Write back the new mstatus
+    state
+        .csr
+        .write(machine::MSTATUS, new_mstatus)
+        .map_err(ExecuteError::CsrError)?;
+
+    // Set privilege mode based on MPP
+    state.privilege = match mpp {
+        0b00 => PrivilegeMode::User,
+        0b01 => PrivilegeMode::Supervisor,
+        0b11 => PrivilegeMode::Machine,
+        _ => PrivilegeMode::Machine, // Reserved, default to M-mode
+    };
+
+    // Return the new PC (MEPC value)
+    Ok(mepc)
+}
+
+/// SRET - Return from Supervisor mode trap
+///
+/// Reads the saved PC from SEPC, restores SIE from SPIE,
+/// and restores the previous privilege mode from SPP.
+///
+/// # Operation
+/// PC = SEPC
+/// SIE = SPIE
+/// SPP = [previous mode]
+#[inline]
+pub fn exec_sret(
+    _instr: &DecodedInstruction,
+    state: &mut CoreState,
+    _mem: &mut dyn crate::memory::MemoryInterface,
+) -> Result<u32, ExecuteError> {
+    use crate::core::PrivilegeMode;
+    use crate::csr::supervisor;
+
+    // Read current sstatus (or mstatus with SSTATUS bits)
+    let sstatus = state
+        .csr
+        .read(supervisor::SSTATUS)
+        .map_err(ExecuteError::CsrError)?;
+
+    // Extract SPIE (bit 5) and SPP (bit 8)
+    let spie = (sstatus >> 5) & 1;
+    let spp = (sstatus >> 8) & 1;
+
+    // Check if we can execute sret (requires S-mode or M-mode)
+    if state.privilege == PrivilegeMode::User {
+        return Err(ExecuteError::InvalidOperation);
+    }
+
+    // Read SEPC for the return address
+    let sepc = state
+        .csr
+        .read(supervisor::SEPC)
+        .map_err(ExecuteError::CsrError)?;
+
+    // Restore SIE from SPIE
+    let new_sstatus = (sstatus & !0x2) | (spie << 1);
+
+    // Clear SPP bit
+    let new_sstatus = new_sstatus & !(1 << 8);
+
+    // Write back the new sstatus
+    state
+        .csr
+        .write(supervisor::SSTATUS, new_sstatus)
+        .map_err(ExecuteError::CsrError)?;
+
+    // Set privilege mode based on SPP
+    state.privilege = if spp == 1 {
+        PrivilegeMode::Supervisor
+    } else {
+        PrivilegeMode::User
+    };
+
+    // Return the new PC (SEPC value)
+    Ok(sepc)
+}
+
+/// URET - Return from User mode trap (not implemented in RISC-V base)
+///
+/// This instruction is not part of the standard RISC-V privilege spec.
+/// It would be used for returning to user mode from a higher privilege level.
+#[inline]
+pub fn exec_uret(
+    _instr: &DecodedInstruction,
+    state: &mut CoreState,
+    _mem: &mut dyn crate::memory::MemoryInterface,
+) -> Result<u32, ExecuteError> {
+    // URET is not defined in standard RISC-V
+    // Some implementations may use it as a custom instruction
+    Err(ExecuteError::InvalidOperation)
+}
+
+#[cfg(test)]
+mod mret_sret_tests {
+    use super::*;
+    use crate::core::PrivilegeMode;
+    use crate::csr::supervisor;
+
+    fn create_mret_instr() -> DecodedInstruction {
+        DecodedInstruction {
+            raw: 0x30200073, // MRET instruction encoding
+            format: InstructionFormat::RType,
+            opcode: Opcode::System,
+            funct3: None,
+            funct7: Some(0b001_1000),
+            rs1: None,
+            rs2: Some(0b00010), // rs2 = 2 for MRET
+            rd: None,
+            imm: None,
+            branch_taken: false,
+        }
+    }
+
+    fn create_sret_instr() -> DecodedInstruction {
+        DecodedInstruction {
+            raw: 0x10200073, // SRET instruction encoding
+            format: InstructionFormat::RType,
+            opcode: Opcode::System,
+            funct3: None,
+            funct7: Some(0b000_1000),
+            rs1: None,
+            rs2: Some(0b00010), // rs2 = 2 for SRET
+            rd: None,
+            imm: None,
+            branch_taken: false,
+        }
+    }
+
+    #[test]
+    fn test_mret_basic() {
+        let mut state = CoreState::default();
+
+        // Set up MEPC and mstatus
+        state.csr.write(machine::MEPC, 0x1000).unwrap();
+        state
+            .csr
+            .write(machine::MSTATUS, 0x0000_0080) // MPIE = 1
+            .unwrap();
+
+        let instr = create_mret_instr();
+        let mut mem = SimpleMemory::new(0x1000);
+
+        let result = exec_mret(&instr, &mut state, &mut mem);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0x1000);
+
+        // Check that MIE was restored from MPIE
+        let mstatus = state.csr.read(machine::MSTATUS).unwrap();
+        assert_eq!((mstatus >> 3) & 1, 1); // MIE = 1
+    }
+
+    #[test]
+    fn test_mret_restore_mpp() {
+        let mut state = CoreState::default();
+
+        // Set up MEPC and mstatus with MPP = Supervisor
+        state.csr.write(machine::MEPC, 0x2000).unwrap();
+        state
+            .csr
+            .write(machine::MSTATUS, 0x0000_0880) // MPIE = 1, MPP = 01 (S-mode)
+            .unwrap();
+
+        let instr = create_mret_instr();
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_mret(&instr, &mut state, &mut mem).unwrap();
+
+        // Check that privilege mode was restored to Supervisor
+        assert_eq!(state.privilege, PrivilegeMode::Supervisor);
+    }
+
+    #[test]
+    fn test_mret_from_s_mode() {
+        let mut state = CoreState::default();
+        state.privilege = PrivilegeMode::Supervisor;
+
+        // Set up MEPC and mstatus with MPP = Machine
+        state.csr.write(machine::MEPC, 0x3000).unwrap();
+        state
+            .csr
+            .write(machine::MSTATUS, 0x0000_1880) // MPIE = 1, MPP = 11 (M-mode)
+            .unwrap();
+
+        let instr = create_mret_instr();
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_mret(&instr, &mut state, &mut mem).unwrap();
+
+        // Check that privilege mode was restored to Machine
+        assert_eq!(state.privilege, PrivilegeMode::Machine);
+    }
+
+    #[test]
+    fn test_sret_basic() {
+        let mut state = CoreState::default();
+        state.privilege = PrivilegeMode::Supervisor;
+
+        // Set up SEPC and sstatus
+        state.csr.write(supervisor::SEPC, 0x1000).unwrap();
+        state
+            .csr
+            .write(supervisor::SSTATUS, 0x0000_0020) // SPIE = 1
+            .unwrap();
+
+        let instr = create_sret_instr();
+        let mut mem = SimpleMemory::new(0x1000);
+
+        let result = exec_sret(&instr, &mut state, &mut mem);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0x1000);
+
+        // Check that SIE was restored from SPIE
+        let sstatus = state.csr.read(supervisor::SSTATUS).unwrap();
+        assert_eq!((sstatus >> 1) & 1, 1); // SIE = 1
+    }
+
+    #[test]
+    fn test_sret_restore_spp() {
+        let mut state = CoreState::default();
+        state.privilege = PrivilegeMode::Supervisor;
+
+        // Set up SEPC and sstatus with SPP = User
+        state.csr.write(supervisor::SEPC, 0x2000).unwrap();
+        state
+            .csr
+            .write(supervisor::SSTATUS, 0x0000_0120) // SPIE = 1, SPP = 0 (U-mode)
+            .unwrap();
+
+        let instr = create_sret_instr();
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_sret(&instr, &mut state, &mut mem).unwrap();
+
+        // Check that privilege mode was restored to User
+        assert_eq!(state.privilege, PrivilegeMode::User);
+    }
+
+    #[test]
+    fn test_sret_from_machine_mode() {
+        let mut state = CoreState::default();
+        state.privilege = PrivilegeMode::Machine;
+
+        // Set up SEPC and sstatus with SPP = Supervisor
+        state.csr.write(supervisor::SEPC, 0x3000).unwrap();
+        state
+            .csr
+            .write(supervisor::SSTATUS, 0x0000_0120) // SPIE = 1, SPP = 1 (S-mode)
+            .unwrap();
+
+        let instr = create_sret_instr();
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_sret(&instr, &mut state, &mut mem).unwrap();
+
+        // Check that privilege mode was restored to Supervisor
+        assert_eq!(state.privilege, PrivilegeMode::Supervisor);
+    }
+
+    #[test]
+    fn test_sret_from_user_mode_fails() {
+        let mut state = CoreState::default();
+        state.privilege = PrivilegeMode::User;
+
+        let instr = create_sret_instr();
+        let mut mem = SimpleMemory::new(0x1000);
+
+        let result = exec_sret(&instr, &mut state, &mut mem);
+
+        assert!(matches!(result, Err(ExecuteError::InvalidOperation)));
+    }
+
+    #[test]
+    fn test_mret_clears_mie() {
+        let mut state = CoreState::default();
+
+        // Set up with MPIE = 0 (interrupts disabled when trap was taken)
+        state.csr.write(machine::MEPC, 0x1000).unwrap();
+        state
+            .csr
+            .write(machine::MSTATUS, 0x0000_0000) // MPIE = 0
+            .unwrap();
+
+        let instr = create_mret_instr();
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_mret(&instr, &mut state, &mut mem).unwrap();
+
+        // Check that MIE was restored from MPIE (which was 0)
+        let mstatus = state.csr.read(machine::MSTATUS).unwrap();
+        assert_eq!((mstatus >> 3) & 1, 0); // MIE = 0
+    }
+}

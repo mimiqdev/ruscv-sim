@@ -2,6 +2,7 @@
 //!
 //! Implements RISC-V processor core fetch-decode-execute cycle
 
+pub mod trap;
 use crate::csr::CsrFile;
 use crate::decode::InstructionDecoder;
 use crate::execute::Executor;
@@ -9,6 +10,7 @@ use crate::memory::{MemoryInterface, SimpleMemory};
 use crate::tlm::TlmInterface;
 use anyhow::Result;
 use std::sync::{Arc, Mutex};
+pub use trap::{ExceptionCause, InterruptCause, Trap, TrapContext, TrapDelegation, TrapHandler};
 
 /// RISC-V privilege mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

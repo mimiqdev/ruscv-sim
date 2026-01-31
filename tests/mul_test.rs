@@ -1,0 +1,464 @@
+//! RV64M Multiply instruction tests
+//!
+//! Tests for MUL, MULH, MULHU, MULHSU instructions
+
+use ruscv::core::CoreState;
+use ruscv::decode::{DecodedInstruction, InstructionFormat, Opcode};
+use ruscv::memory::SimpleMemory;
+
+fn create_mul_instr(rs1: u8, rs2: u8, rd: u8, funct7: u8) -> DecodedInstruction {
+    let raw = ((funct7 as u32) << 25)
+        | ((rs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | ((rd as u32) << 7)
+        | 0b011_0011;
+    DecodedInstruction {
+        raw,
+        format: InstructionFormat::RType,
+        opcode: Opcode::Op,
+        funct3: Some(0),
+        funct7: Some(funct7),
+        rs1: Some(rs1),
+        rs2: Some(rs2),
+        rd: Some(rd),
+        imm: None,
+        branch_taken: false,
+    }
+}
+
+// ========================================
+// MUL Tests (funct7 = 0b0000_001)
+// ========================================
+
+#[test]
+fn test_mul_basic_positive() {
+    let mut state = CoreState::default();
+    state.regs[1] = 10;
+    state.regs[2] = 20;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 200);
+}
+
+#[test]
+fn test_mul_negative_positive() {
+    let mut state = CoreState::default();
+    state.regs[1] = (-5i32) as u32;
+    state.regs[2] = 6;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3] as i32, -30);
+}
+
+#[test]
+fn test_mul_negative_negative() {
+    let mut state = CoreState::default();
+    state.regs[1] = (-5i32) as u32;
+    state.regs[2] = (-6i32) as u32;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3] as i32, 30);
+}
+
+#[test]
+fn test_mul_zero() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0;
+    state.regs[2] = 12345;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 0);
+}
+
+#[test]
+fn test_mul_one() {
+    let mut state = CoreState::default();
+    state.regs[1] = 1;
+    state.regs[2] = 999;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 999);
+}
+
+#[test]
+fn test_mul_max_values() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0x7FFF_FFFF;
+    state.regs[2] = 2;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    // 2147483647 * 2 = 4294967294
+    assert_eq!(state.regs[3], 0xFFFE_FFFE);
+}
+
+#[test]
+fn test_mul_min_values() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0x8000_0000;
+    state.regs[2] = 2;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    // -2147483648 * 2 = -4294967296 = 0 as u32 (lower 32 bits)
+    assert_eq!(state.regs[3], 0);
+}
+
+#[test]
+fn test_mul_x0_dest() {
+    let mut state = CoreState::default();
+    state.regs[1] = 10;
+    state.regs[2] = 20;
+
+    let instr = create_mul_instr(1, 2, 0, 0b0000_001);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[0], 0);
+}
+
+#[test]
+fn test_mul_same_register() {
+    let mut state = CoreState::default();
+    state.regs[1] = 15;
+
+    let instr = create_mul_instr(1, 1, 2, 0b0000_001);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[2], 225);
+}
+
+// ========================================
+// MULH Tests (funct7 = 0b0000_010)
+// ========================================
+
+#[test]
+fn test_mulh_basic() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0x0001_0000;
+    state.regs[2] = 0x0001_0000;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 1);
+}
+
+#[test]
+fn test_mulh_small_result() {
+    let mut state = CoreState::default();
+    state.regs[1] = 3;
+    state.regs[2] = 4;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 0);
+}
+
+#[test]
+fn test_mulh_negative_result() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0x8000_0000; // -2147483648
+    state.regs[2] = 2;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 0xFFFF_FFFF); // Upper 32 bits of -4294967296
+}
+
+#[test]
+fn test_mulh_zero() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0;
+    state.regs[2] = 0xFFFF_FFFF;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 0);
+}
+
+#[test]
+fn test_mulh_both_negative() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0x8000_0000; // -2147483648
+    state.regs[2] = 0x8000_0000;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+    // (-2^31) * (-2^31) = 2^62
+    // Upper 32 bits of 2^62 = 0x3FFF_FFFF
+    assert_eq!(state.regs[3], 0x3FFF_FFFF);
+}
+
+// ========================================
+// MULHU Tests (funct7 = 0b0000_011)
+// ========================================
+
+#[test]
+fn test_mulhu_basic() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0x8000_0000;
+    state.regs[2] = 2;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_011);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
+    // 2^31 * 2 = 2^32 = 0x1_0000_0000
+    // Upper 32 bits = 1
+    assert_eq!(state.regs[3], 1);
+}
+
+#[test]
+fn test_mulhu_small_result() {
+    let mut state = CoreState::default();
+    state.regs[1] = 3;
+    state.regs[2] = 4;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_011);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 0);
+}
+
+#[test]
+fn test_mulhu_both_large() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0xFFFF_FFFF;
+    state.regs[2] = 0xFFFF_FFFF;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_011);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
+    // (2^32-1)^2 = 2^64 - 2^33 + 1
+    // Upper 32 bits = 0xFFFF_FFFE
+    assert_eq!(state.regs[3], 0xFFFF_FFFE);
+}
+
+#[test]
+fn test_mulhu_zero() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0;
+    state.regs[2] = 0xFFFF_FFFF;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_011);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 0);
+}
+
+// ========================================
+// MULHSU Tests (funct7 = 0b0000_010)
+// ========================================
+
+#[test]
+fn test_mulhsu_basic() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0x8000_0000; // -2147483648 signed
+    state.regs[2] = 0x8000_0000; // 2147483648 unsigned
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
+    // (-2^31) * 2^32 = -2^63
+    // Upper 32 bits = 0xFFFF_FFFF
+    assert_eq!(state.regs[3], 0xFFFF_FFFF);
+}
+
+#[test]
+fn test_mulhsu_positive_signed() {
+    let mut state = CoreState::default();
+    state.regs[1] = 0x0001_0000;
+    state.regs[2] = 0x0001_0000;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 1);
+}
+
+#[test]
+fn test_mulhsu_negative_signed() {
+    let mut state = CoreState::default();
+    state.regs[1] = (-1i32) as u32; // -1 signed
+    state.regs[2] = 0x8000_0000; // Large unsigned
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
+    // (-1) * 2^32 = -2^32
+    // Upper 32 bits = 0xFFFF_FFFF
+    assert_eq!(state.regs[3], 0xFFFF_FFFF);
+}
+
+#[test]
+fn test_mulhsu_small_result() {
+    let mut state = CoreState::default();
+    state.regs[1] = 5;
+    state.regs[2] = 3;
+
+    let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+    let mut mem = SimpleMemory::new(0x1000);
+
+    ruscv::execute::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
+    assert_eq!(state.regs[3], 0);
+}
+
+// ========================================
+// Edge Cases and Comprehensive Tests
+// ========================================
+
+#[test]
+fn test_mul_random_values() {
+    let test_cases: [(u32, u32, u32); 10] = [
+        (123, 456, 56088),
+        (0xFF, 0xAA, 0xFF * 0xAA),
+        (0x1234, 0x5678, 0x1234 * 0x5678),
+        (1, 1, 1),
+        (1, 0, 0),
+        (0xFFFF, 0xFFFF, 0xFFFE_0001),
+        (1000, 1000, 1000000),
+        (0x7FFF_FFFF, 1, 0x7FFF_FFFF),
+        (0x8000_0000, 1, 0x8000_0000),
+        (0x4000_0000, 2, 0x8000_0000),
+    ];
+
+    for (rs1, rs2, expected) in test_cases {
+        let mut state = CoreState::default();
+        state.regs[1] = rs1;
+        state.regs[2] = rs2;
+
+        let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+        assert_eq!(state.regs[3], expected, "Failed for {} * {}", rs1, rs2);
+    }
+}
+
+#[test]
+fn test_mulh_corner_cases() {
+    // Test edge cases where upper bits are significant
+    let test_cases: [(i32, i32, i32); 5] = [
+        (0x4000_0000, 2, 0),                     // 2^30 * 2 = 2^31, upper = 0
+        (0x4000_0000, 4, 1),                     // 2^30 * 4 = 2^32, upper = 1
+        (-0x4000_0000, 4, -1),                   // -2^30 * 4 = -2^32, upper = -1
+        (0x2000_0000, 0x2000_0000, 0x1000_0000), // (2^29)^2 = 2^58, upper = 2^30
+        (-1, -1, 0),                             // (-1) * (-1) = 1, upper = 0
+    ];
+
+    for (rs1, rs2, expected) in test_cases {
+        let mut state = CoreState::default();
+        state.regs[1] = rs1 as u32;
+        state.regs[2] = rs2 as u32;
+
+        let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        ruscv::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+        assert_eq!(
+            state.regs[3] as i32, expected,
+            "Failed for {:?} * {:?}",
+            rs1, rs2
+        );
+    }
+}
+
+#[test]
+fn test_mul_property_distributive() {
+    // Test (a + b) * c = a*c + b*c
+    for &c in &[1u32, 2, 3, 7, 0xFF, 0xFFFF] {
+        for &a in &[0u32, 1, 100, 0x8000_0000] {
+            for &b in &[0u32, 1, 100, 0x8000_0000] {
+                // (a + b) * c
+                let mut state1 = CoreState::default();
+                state1.regs[1] = a.wrapping_add(b);
+                state1.regs[2] = c;
+                let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+                let mut mem = SimpleMemory::new(0x1000);
+                ruscv::execute::mul::exec_mul(&instr, &mut state1, &mut mem).unwrap();
+                let result1 = state1.regs[3];
+
+                // a * c + b * c
+                let mut state2 = CoreState::default();
+                state2.regs[1] = a;
+                state2.regs[2] = c;
+                let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+                let mut mem = SimpleMemory::new(0x1000);
+                ruscv::execute::mul::exec_mul(&instr, &mut state2, &mut mem).unwrap();
+                let ac = state2.regs[3];
+
+                state2.regs[1] = b;
+                let instr = create_mul_instr(1, 2, 4, 0b0000_001);
+                let mut mem = SimpleMemory::new(0x1000);
+                ruscv::execute::mul::exec_mul(&instr, &mut state2, &mut mem).unwrap();
+                let result2 = ac.wrapping_add(state2.regs[4]);
+
+                assert_eq!(
+                    result1, result2,
+                    "Distributive property failed: ({} + {}) * {}",
+                    a, b, c
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_mul_different_registers() {
+    // Test multiplication with various register combinations
+    let registers = [1u8, 5, 10, 15, 31];
+
+    for &rs1 in &registers {
+        for &rs2 in &registers {
+            for &rd in &registers {
+                if rd != rs1 && rd != rs2 {
+                    let mut state = CoreState::default();
+                    state.regs[rs1 as usize] = 7;
+                    state.regs[rs2 as usize] = 8;
+
+                    let instr = create_mul_instr(rs1, rs2, rd, 0b0000_001);
+                    let mut mem = SimpleMemory::new(0x1000);
+
+                    ruscv::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+                    assert_eq!(state.regs[rd as usize], 56);
+                }
+            }
+        }
+    }
+}

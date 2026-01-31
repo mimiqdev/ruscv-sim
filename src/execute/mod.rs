@@ -4,13 +4,17 @@
 //! RV32I instruction execution - refactored by instruction type
 
 // Re-export sub-modules
+pub mod amo;
 pub mod b_type; // Branch instructions
+pub mod div; // RV64M divide instructions
 pub mod i_type; // I-type instructions
 pub mod j_type; // Jump instructions
+pub mod lr_sc; // RV64A load-reserved/store-conditional instructions
+pub mod mul; // RV64M multiply instructions
 pub mod r_type; // R-type instructions
 pub mod s_type; // S-type instructions
 pub mod system; // System instructions
-pub mod u_type; // U-type instructions
+pub mod u_type; // U-type instructions // RV64A atomic memory operation instructions
 
 use crate::core::CoreState;
 use crate::csr::CsrError;
@@ -41,9 +45,16 @@ pub enum ExecuteError {
     CsrError(#[from] CsrError),
 }
 
+pub use self::amo::{
+    exec_amoadd, exec_amoand, exec_amomax, exec_amomaxu, exec_amomin, exec_amominu, exec_amoor,
+    exec_amoxor,
+};
 pub use self::b_type::exec_branch;
+pub use self::div::{exec_div, exec_divu, exec_rem, exec_remu};
 pub use self::i_type::{exec_load, exec_op_imm};
 pub use self::j_type::{exec_jal, exec_jalr};
+pub use self::lr_sc::{clear_reservation, exec_lr, exec_lr_w, exec_sc, exec_sc_w};
+pub use self::mul::{exec_mul, exec_mulh, exec_mulhsu, exec_mulhu};
 pub use self::r_type::exec_op;
 pub use self::s_type::exec_store;
 pub use self::system::exec_system;
@@ -77,6 +88,53 @@ impl Executor {
             Opcode::OpImm => exec_op_imm(instr, state, mem),
             Opcode::Op => exec_op(instr, state, mem),
             Opcode::System => exec_system(instr, state, mem),
+            Opcode::Amo => self.execute_amo(instr, state, mem),
+            _ => Err(ExecuteError::InvalidOperation),
+        }
+    }
+
+    /// Execute AMO (Atomic Memory Operation) instructions
+    fn execute_amo(
+        &self,
+        instr: &DecodedInstruction,
+        state: &mut CoreState,
+        mem: &mut dyn MemoryInterface,
+    ) -> Result<(), ExecuteError> {
+        let funct5 = (instr.raw >> 27) as u8;
+
+        match funct5 {
+            // LR/SC (Load-Reserved / Store-Conditional)
+            0b00010 => {
+                // LR or LR.W
+                let aq = ((instr.raw >> 26) & 1) as u8;
+                let rl = ((instr.raw >> 25) & 1) as u8;
+                if instr.rs2 == Some(0) {
+                    // LR or LR.W (rs2 = 0)
+                    if instr.funct3 == Some(0b010) {
+                        exec_lr(instr, state, mem)
+                    } else {
+                        exec_lr_w(instr, state, mem)
+                    }
+                } else {
+                    // SC or SC.W (rs2 != 0)
+                    if instr.funct3 == Some(0b010) {
+                        exec_sc(instr, state, mem)
+                    } else {
+                        exec_sc_w(instr, state, mem)
+                    }
+                }
+            }
+            0b00011 => exec_sc(instr, state, mem), // SC (fallback)
+
+            // AMO operations
+            0b00001 => exec_amoadd(instr, state, mem), // AMOADD
+            0b00011 => exec_amoand(instr, state, mem), // AMOAND
+            0b00100 => exec_amoxor(instr, state, mem), // AMOXOR
+            0b00110 => exec_amoor(instr, state, mem),  // AMOOR
+            0b01000 => exec_amomin(instr, state, mem), // AMOMIN
+            0b01001 => exec_amominu(instr, state, mem), // AMOMINU
+            0b01010 => exec_amomax(instr, state, mem), // AMOMAX
+            0b01011 => exec_amomaxu(instr, state, mem), // AMOMAXU
             _ => Err(ExecuteError::InvalidOperation),
         }
     }
