@@ -17,7 +17,7 @@ pub enum PipelineStage {
 }
 
 /// Instruction in the pipeline
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PipelineInstruction {
     pub pc: u32,
     pub stage: PipelineStage,

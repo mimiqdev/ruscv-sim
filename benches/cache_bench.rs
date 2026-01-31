@@ -103,7 +103,7 @@ pub fn generate_sequential_accesses(count: usize, base: u64, stride: usize) -> V
 pub fn generate_random_accesses(count: usize, base: u64, range: usize) -> Vec<u64> {
     let mut rng = rand::thread_rng();
     (0..count)
-        .map(|_| base + rng.gen::<usize>() % range as u64)
+        .map(|_| base + (rng.gen::<usize>() % range) as u64)
         .collect()
 }
 
