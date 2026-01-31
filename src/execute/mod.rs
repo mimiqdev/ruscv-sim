@@ -273,6 +273,11 @@ impl Executor {
                 let rs1_val = state.regs[rs1 as usize];
                 (rs1_val ^ imm) as i32
             }
+            // ORI (or immediate)
+            Funct3::Or => {
+                let rs1_val = state.regs[rs1 as usize];
+                (rs1_val | imm) as i32
+            }
             _ => return Err(ExecuteError::InvalidOperation),
         };
 
@@ -646,5 +651,84 @@ mod tests {
 
         // 0xFFFFFFFF ^ 0xFFFFFFFF = 0
         assert_eq!(state.regs[2], 0);
+    }
+
+    #[test]
+    fn test_ori_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0b1100_0000; // 192
+
+        // ORI x2, x1, 0b1010_1010 (0xAA)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Or),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(0b1010_1010), // 0xAA
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 0b1100_0000 | 0b1010_1010 = 0b1110_1010 = 0xEA = 234
+        assert_eq!(state.regs[2], 0b1110_1010);
+    }
+
+    #[test]
+    fn test_ori_with_zero() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        // ORI x2, x1, 0 (should keep the value)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Or),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(0),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0x12345678);
+    }
+
+    #[test]
+    fn testori_with_all_ones() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        // ORI x2, x1, -1 (0xFFFFFFFF) should result in all 1s
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Or),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-1i32) as u32), // 0xFFFFFFFF
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0xFFFFFFFF);
     }
 }
