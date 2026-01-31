@@ -534,7 +534,7 @@ mod tests {
 
     #[test]
     fn test_instruction_key_from_instr() {
-        use crate::decode::{InstructionDecoder, InstructionFormat, Opcode};
+        use crate::decode::InstructionDecoder;
 
         let raw = 0x00_00_00_33u32; // ADD x0, x0, x0 (simplified)
         let decoder = InstructionDecoder::new();
