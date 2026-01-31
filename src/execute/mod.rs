@@ -5,7 +5,6 @@
 use crate::core::CoreState;
 use crate::decode::{DecodedInstruction, Funct3, Opcode};
 use crate::memory::{MemoryError, MemoryInterface};
-use std::collections::HashMap;
 use thiserror::Error;
 
 /// Instruction executor function type
@@ -33,47 +32,83 @@ pub enum ExecuteError {
     MemoryError(#[from] MemoryError),
 }
 
+/*
+ * OPTIMIZATION STRATEGY: Instruction Dispatch Lookup Table
+ * -------------------------------------------------------
+ * This implementation uses an array-based dispatch table for O(1) instruction lookup.
+ *
+ * Why Array over HashMap?
+ * - Opcode enum values are stable u8 representations (0x03, 0x07, 0x13, etc.)
+ * - Array lookup is a single bounds check + index (no hashing)
+ * - No heap allocation (stack-allocated fixed-size array)
+ * - Better cache locality (small, contiguous memory)
+ * - Compiler can optimize array access with bounds-check elimination
+ *
+ * Dispatch Table Layout:
+ * - Index: opcode as u8 (0-255)
+ * - Value: Option<ExecutorFn> (Some(fn) if opcode is supported, None otherwise)
+ * - Size: 256 entries (one per possible u8 opcode value)
+ *
+ * Performance Benefits:
+ * - Single bounds check + array access vs. hash computation + lookup
+ * - #[inline] hints on executor functions enable aggressive inlining
+ * - Monomorphization eliminates dynamic dispatch overhead
+ *
+ * Future Optimization:
+ * - Could use match statement with exhaustive opcode coverage
+ * - Or const fn array for compile-time initialization
+ */
 /// 执行器
 pub struct Executor {
-    /// Opcode to executor function lookup table
-    dispatch_table: HashMap<Opcode, ExecutorFn>,
+    /// Opcode to executor function lookup table (array-based for O(1) access)
+    dispatch_table: [Option<ExecutorFn>; 256],
 }
 
 impl Executor {
     /// 创建新的执行器
     pub fn new() -> Self {
-        let mut dispatch_table: HashMap<Opcode, ExecutorFn> = HashMap::new();
+        // Initialize dispatch table with None (256 entries for all possible u8 opcodes)
+        let mut dispatch_table: [Option<ExecutorFn>; 256] = [None; 256];
 
-        // Initialize dispatch table with function pointers
-        dispatch_table.insert(Opcode::Lui, Executor::exec_lui);
-        dispatch_table.insert(Opcode::Auipc, Executor::exec_auipc);
-        dispatch_table.insert(Opcode::Jal, Executor::exec_jal);
-        dispatch_table.insert(Opcode::Jalr, Executor::exec_jalr);
-        dispatch_table.insert(Opcode::Branch, Executor::exec_branch);
-        dispatch_table.insert(Opcode::Load, Executor::exec_load);
-        dispatch_table.insert(Opcode::Store, Executor::exec_store);
-        dispatch_table.insert(Opcode::OpImm, Executor::exec_op_imm);
-        dispatch_table.insert(Opcode::Op, Executor::exec_op);
-        dispatch_table.insert(Opcode::System, Executor::exec_system);
+        // Populate dispatch table with supported opcodes
+        // This uses direct array indexing for O(1) lookup without hashing
+        dispatch_table[Opcode::Load as u8 as usize] = Some(Executor::exec_load);
+        dispatch_table[Opcode::LoadFp as u8 as usize] = None; // Not implemented
+        dispatch_table[Opcode::Store as u8 as usize] = Some(Executor::exec_store);
+        dispatch_table[Opcode::StoreFp as u8 as usize] = None; // Not implemented
+        dispatch_table[Opcode::MiscMem as u8 as usize] = None; // Not implemented
+        dispatch_table[Opcode::OpImm as u8 as usize] = Some(Executor::exec_op_imm);
+        dispatch_table[Opcode::Op as u8 as usize] = Some(Executor::exec_op);
+        dispatch_table[Opcode::Op32 as u8 as usize] = None; // Not implemented (RV64M)
+        dispatch_table[Opcode::Lui as u8 as usize] = Some(Executor::exec_lui);
+        dispatch_table[Opcode::Auipc as u8 as usize] = Some(Executor::exec_auipc);
+        dispatch_table[Opcode::Branch as u8 as usize] = Some(Executor::exec_branch);
+        dispatch_table[Opcode::Jalr as u8 as usize] = Some(Executor::exec_jalr);
+        dispatch_table[Opcode::Jal as u8 as usize] = Some(Executor::exec_jal);
+        dispatch_table[Opcode::System as u8 as usize] = Some(Executor::exec_system);
 
         Self { dispatch_table }
     }
 
     /// 执行译码后的指令
+    #[inline]
     pub fn execute(
         &mut self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
         mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
-        // O(1) HashMap lookup for instruction dispatch
-        match self.dispatch_table.get(&instr.opcode) {
+        // O(1) array-based instruction dispatch
+        // Direct array indexing is faster than HashMap lookup (no hashing)
+        let opcode_idx = instr.opcode as u8 as usize;
+        match self.dispatch_table[opcode_idx] {
             Some(executor_fn) => executor_fn(self, instr, state, mem),
             None => Err(ExecuteError::InvalidOperation),
         }
     }
 
     /// LUI (Load Upper Immediate (LUI) (LUI))
+    #[inline]
     fn exec_lui(
         &self,
         instr: &DecodedInstruction,
@@ -91,6 +126,7 @@ impl Executor {
     }
 
     /// AUIPC (Add Upper Immediate to PC (AUIPC) (AUIPC))
+    #[inline]
     fn exec_auipc(
         &self,
         instr: &DecodedInstruction,
@@ -108,6 +144,7 @@ impl Executor {
     }
 
     /// JAL (Jump and Link (JAL) (JAL))
+    #[inline]
     fn exec_jal(
         &self,
         instr: &DecodedInstruction,
@@ -130,6 +167,7 @@ impl Executor {
     }
 
     /// JALR (Jump and Link (JAL) (JAL) Register)
+    #[inline]
     fn exec_jalr(
         &self,
         instr: &DecodedInstruction,
@@ -161,6 +199,7 @@ impl Executor {
     /// - BGE (101): Branch if Greater or Equal (signed)
     /// - BLTU (110): Branch if Less Than Unsigned
     /// - BGEU (111): Branch if Greater or Equal Unsigned
+    #[inline]
     fn exec_branch(
         &self,
         instr: &DecodedInstruction,
@@ -197,6 +236,7 @@ impl Executor {
     }
 
     /// 加载指令
+    #[inline]
     fn exec_load(
         &self,
         instr: &DecodedInstruction,
@@ -229,6 +269,7 @@ impl Executor {
     }
 
     /// 存储指令
+    #[inline]
     fn exec_store(
         &self,
         instr: &DecodedInstruction,
@@ -256,6 +297,7 @@ impl Executor {
     }
 
     /// I-type operation instructions
+    #[inline]
     fn exec_op_imm(
         &self,
         instr: &DecodedInstruction,
@@ -338,6 +380,7 @@ impl Executor {
     }
 
     /// R-type operation instructions
+    #[inline]
     fn exec_op(
         &self,
         instr: &DecodedInstruction,
@@ -407,6 +450,7 @@ impl Executor {
     }
 
     /// System instructions (ECALL, EBREAK)
+    #[inline]
     fn exec_system(
         &self,
         instr: &DecodedInstruction,
