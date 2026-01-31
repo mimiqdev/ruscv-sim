@@ -48,6 +48,7 @@ impl Executor {
             Opcode::Branch => self.exec_branch(instr, state),
             Opcode::Load => self.exec_load(instr, state, mem),
             Opcode::Store => self.exec_store(instr, state, mem),
+            Opcode::OpImm => self.exec_op_imm(instr, state),
             Opcode::Op => self.exec_op(instr, state),
             _ => Err(ExecuteError::InvalidOperation),
         }
@@ -229,6 +230,39 @@ impl Executor {
         Ok(())
     }
 
+    /// I-type operation instructions
+    fn exec_op_imm(
+        &self,
+        instr: &DecodedInstruction,
+        state: &mut CoreState,
+    ) -> Result<(), ExecuteError> {
+        let (Some(rd), Some(rs1), Some(imm), Some(funct3)) =
+            (instr.rd, instr.rs1, instr.imm, instr.funct3)
+        else {
+            return Err(ExecuteError::InvalidOperation);
+        };
+
+        let rs1_val = state.regs[rs1 as usize] as i32;
+        let imm_val = imm as i32;
+        let mut result: i32 = 0;
+
+        // ADDI (add immediate)
+        if funct3 == Funct3::AddSub {
+            result = rs1_val.wrapping_add(imm_val);
+        }
+        // Other OpImm instructions (SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI)
+        // can be added here in the future
+        else {
+            return Err(ExecuteError::InvalidOperation);
+        }
+
+        if rd != 0 {
+            state.regs[rd as usize] = result as u32;
+        }
+
+        Ok(())
+    }
+
     /// R-type operation instructions
     fn exec_op(
         &self,
@@ -356,5 +390,56 @@ mod tests {
         executor.execute(&instr, &mut state, &mut mem).unwrap();
 
         assert_eq!(state.regs[3], 30);
+    }
+
+    #[test]
+    fn test_addi_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 10;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::AddSub),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(5),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 15);
+    }
+
+    #[test]
+    fn test_addi_negative_immediate() {
+        let mut state = CoreState::default();
+        state.regs[1] = 10;
+
+        // ADDI x2, x1, -3
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::AddSub),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-3i32) as u32),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2] as i32, 7);
     }
 }

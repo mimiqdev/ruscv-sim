@@ -36,6 +36,7 @@ pub enum Opcode {
     Store = 0b010_0011,
     StoreFp = 0b010_0111,
     MiscMem = 0b000_1111,
+    OpImm = 0b001_0011,
     Op = 0b011_0011,
     Op32 = 0b011_1011,
     Lui = 0b011_0111,
@@ -177,6 +178,14 @@ impl InstructionDecoder {
                 } else {
                     None
                 };
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
+            }
+            Opcode::OpImm => {
+                decoded.format = InstructionFormat::IType;
+                decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
                 decoded.funct3 =
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
                 decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
