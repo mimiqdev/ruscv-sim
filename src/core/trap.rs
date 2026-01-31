@@ -142,7 +142,7 @@ impl InterruptCause {
 }
 
 /// Trap delegation configuration
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TrapDelegation {
     /// Exception delegation to supervisor
     pub medeleg: u32,
@@ -187,7 +187,7 @@ impl Default for TrapDelegation {
 }
 
 /// Trap handling context
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TrapContext {
     /// Program counter at time of trap
     pub epc: u32,
@@ -365,7 +365,7 @@ impl Default for TrapHandler {
 }
 
 /// Wrapper for core state to provide trap-specific methods
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CoreStateWrapper<'a> {
     /// Reference to CSR file
     pub csr: &'a mut CsrFile,

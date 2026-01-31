@@ -17,6 +17,7 @@ pub mod system; // System instructions
 pub mod u_type; // U-type instructions // RV64A atomic memory operation instructions
 
 use crate::core::CoreState;
+use crate::decode::Funct3;
 use crate::csr::CsrError;
 use crate::decode::{DecodedInstruction, Opcode};
 use crate::memory::{MemoryError, MemoryInterface};
@@ -110,14 +111,14 @@ impl Executor {
                 let rl = ((instr.raw >> 25) & 1) as u8;
                 if instr.rs2 == Some(0) {
                     // LR or LR.W (rs2 = 0)
-                    if instr.funct3 == Some(0b010) {
+                    if instr.funct3 == Some(Funct3::Slt) {
                         exec_lr(instr, state, mem)
                     } else {
                         exec_lr_w(instr, state, mem)
                     }
                 } else {
                     // SC or SC.W (rs2 != 0)
-                    if instr.funct3 == Some(0b010) {
+                    if instr.funct3 == Some(Funct3::Slt) {
                         exec_sc(instr, state, mem)
                     } else {
                         exec_sc_w(instr, state, mem)

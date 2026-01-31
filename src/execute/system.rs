@@ -1,6 +1,9 @@
 //! System instruction execution
 //!
 //! System instructions handle system-level operations including CSR access.
+use crate::csr::machine;
+use crate::core::PrivilegeMode;
+use crate::csr::supervisor;
 
 use crate::core::CoreState;
 use crate::decode::DecodedInstruction;
