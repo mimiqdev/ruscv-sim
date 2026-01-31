@@ -4,26 +4,22 @@
 //! RV32I instruction execution - refactored by instruction type
 
 // Re-export sub-modules
-pub mod b_type;  // Branch instructions
-pub mod i_type;  // I-type instructions
-pub mod j_type;  // Jump instructions
-pub mod r_type;  // R-type instructions
-pub mod s_type;  // S-type instructions
-pub mod system;  // System instructions
-pub mod u_type;  // U-type instructions
+pub mod b_type; // Branch instructions
+pub mod i_type; // I-type instructions
+pub mod j_type; // Jump instructions
+pub mod r_type; // R-type instructions
+pub mod s_type; // S-type instructions
+pub mod system; // System instructions
+pub mod u_type; // U-type instructions
 
 use crate::core::CoreState;
-use crate::decode::{DecodedInstruction, Funct3, Opcode};
-use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
+use crate::decode::{DecodedInstruction, Opcode};
+use crate::memory::{MemoryError, MemoryInterface};
 use thiserror::Error;
 
 /// Instruction executor function type
-pub type ExecutorFn = fn(
-    &Executor,
-    &DecodedInstruction,
-    &mut CoreState,
-    &mut dyn MemoryInterface,
-) -> Result<(), ExecuteError>;
+pub type ExecutorFn =
+    fn(&DecodedInstruction, &mut CoreState, &mut dyn MemoryInterface) -> Result<(), ExecuteError>;
 
 /// Execution error
 #[derive(Error, Debug)]
@@ -42,15 +38,14 @@ pub enum ExecuteError {
     MemoryError(#[from] MemoryError),
 }
 
-use self::b_type::exec_branch;
-use self::i_type::{exec_load, exec_op_imm};
-use self::j_type::{exec_jal, exec_jalr};
-use self::r_type::exec_op;
-use self::s_type::exec_store;
-use self::system::exec_system;
-use self::u_type::{exec_auipc, exec_lui};
-
-use crate::memory::MemoryInterface;
+// Re-export executor functions from sub-modules
+pub use self::b_type::exec_branch;
+pub use self::i_type::{exec_load, exec_op_imm};
+pub use self::j_type::{exec_jal, exec_jalr};
+pub use self::r_type::exec_op;
+pub use self::s_type::exec_store;
+pub use self::system::exec_system;
+pub use self::u_type::{exec_auipc, exec_lui};
 
 /// Executor
 #[derive(Debug)]

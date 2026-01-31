@@ -9,7 +9,11 @@ use std::collections::HashMap;
 
 use crate::core::CoreState;
 use crate::decode::DecodedInstruction;
-use crate::execute::{ExecuteError, Executor, ExecutorFn};
+use crate::execute::{
+    exec_auipc, exec_branch, exec_jal, exec_jalr, exec_load, exec_lui, exec_op, exec_op_imm,
+    exec_store, exec_system,
+};
+use crate::execute::{ExecuteError, ExecutorFn};
 use crate::memory::MemoryInterface;
 
 /// Instruction dispatch key
@@ -149,7 +153,6 @@ impl Dispatcher {
     /// Main dispatch function
     pub fn dispatch(
         &mut self,
-        executor: &Executor,
         instr: &DecodedInstruction,
         state: &mut CoreState,
         mem: &mut dyn MemoryInterface,
@@ -158,14 +161,14 @@ impl Dispatcher {
 
         // Step 1: Check LRU cache
         if let Some(exec_fn) = self.cache.get(&key) {
-            return exec_fn(executor, instr, state, mem);
+            return exec_fn(instr, state, mem);
         }
 
         // Step 2: Lookup main table
         if let Some(exec_fn) = self.dispatch_table.get(&key).copied() {
             // Step 3: Update cache
             self.cache.insert(key, exec_fn);
-            return exec_fn(executor, instr, state, mem);
+            return exec_fn(instr, state, mem);
         }
 
         Err(ExecuteError::InvalidOperation)
@@ -190,7 +193,7 @@ impl Dispatcher {
                 funct3: 0,
                 funct7: 0,
             },
-            Executor::exec_lui,
+            exec_lui,
         );
 
         // AUIPC (opcode=0x17, funct3=0, funct7=0)
@@ -200,7 +203,7 @@ impl Dispatcher {
                 funct3: 0,
                 funct7: 0,
             },
-            Executor::exec_auipc,
+            exec_auipc,
         );
 
         // JAL (opcode=0x6F, funct3=0, funct7=0)
@@ -210,7 +213,7 @@ impl Dispatcher {
                 funct3: 0,
                 funct7: 0,
             },
-            Executor::exec_jal,
+            exec_jal,
         );
 
         // JALR (opcode=0x67, funct3=0, funct7=0)
@@ -220,7 +223,7 @@ impl Dispatcher {
                 funct3: 0,
                 funct7: 0,
             },
-            Executor::exec_jalr,
+            exec_jalr,
         );
 
         // BRANCH: BEQ, BNE, BLT, BGE, BLTU, BGEU (opcode=0x63)
@@ -230,7 +233,7 @@ impl Dispatcher {
                 funct3: 0b000,
                 funct7: 0,
             },
-            Executor::exec_branch,
+            exec_branch,
         );
         table.insert(
             InstructionKey {
@@ -238,7 +241,7 @@ impl Dispatcher {
                 funct3: 0b001,
                 funct7: 0,
             },
-            Executor::exec_branch,
+            exec_branch,
         );
         table.insert(
             InstructionKey {
@@ -246,7 +249,7 @@ impl Dispatcher {
                 funct3: 0b100,
                 funct7: 0,
             },
-            Executor::exec_branch,
+            exec_branch,
         );
         table.insert(
             InstructionKey {
@@ -254,7 +257,7 @@ impl Dispatcher {
                 funct3: 0b101,
                 funct7: 0,
             },
-            Executor::exec_branch,
+            exec_branch,
         );
         table.insert(
             InstructionKey {
@@ -262,7 +265,7 @@ impl Dispatcher {
                 funct3: 0b110,
                 funct7: 0,
             },
-            Executor::exec_branch,
+            exec_branch,
         );
         table.insert(
             InstructionKey {
@@ -270,7 +273,7 @@ impl Dispatcher {
                 funct3: 0b111,
                 funct7: 0,
             },
-            Executor::exec_branch,
+            exec_branch,
         );
 
         // LOAD: LB, LH, LW, LBU, LHU (opcode=0x03)
@@ -280,7 +283,7 @@ impl Dispatcher {
                 funct3: 0b000,
                 funct7: 0,
             },
-            Executor::exec_load,
+            exec_load,
         );
         table.insert(
             InstructionKey {
@@ -288,7 +291,7 @@ impl Dispatcher {
                 funct3: 0b001,
                 funct7: 0,
             },
-            Executor::exec_load,
+            exec_load,
         );
         table.insert(
             InstructionKey {
@@ -296,7 +299,7 @@ impl Dispatcher {
                 funct3: 0b010,
                 funct7: 0,
             },
-            Executor::exec_load,
+            exec_load,
         );
         table.insert(
             InstructionKey {
@@ -304,7 +307,7 @@ impl Dispatcher {
                 funct3: 0b100,
                 funct7: 0,
             },
-            Executor::exec_load,
+            exec_load,
         );
         table.insert(
             InstructionKey {
@@ -312,7 +315,7 @@ impl Dispatcher {
                 funct3: 0b101,
                 funct7: 0,
             },
-            Executor::exec_load,
+            exec_load,
         );
 
         // STORE: SB, SH, SW (opcode=0x23)
@@ -322,7 +325,7 @@ impl Dispatcher {
                 funct3: 0b000,
                 funct7: 0,
             },
-            Executor::exec_store,
+            exec_store,
         );
         table.insert(
             InstructionKey {
@@ -330,7 +333,7 @@ impl Dispatcher {
                 funct3: 0b001,
                 funct7: 0,
             },
-            Executor::exec_store,
+            exec_store,
         );
         table.insert(
             InstructionKey {
@@ -338,7 +341,7 @@ impl Dispatcher {
                 funct3: 0b010,
                 funct7: 0,
             },
-            Executor::exec_store,
+            exec_store,
         );
 
         // OP-IMM (opcode=0x13)
@@ -348,7 +351,7 @@ impl Dispatcher {
                 funct3: 0b000,
                 funct7: 0,
             },
-            Executor::exec_op_imm,
+            exec_op_imm,
         );
         table.insert(
             InstructionKey {
@@ -356,7 +359,7 @@ impl Dispatcher {
                 funct3: 0b010,
                 funct7: 0,
             },
-            Executor::exec_op_imm,
+            exec_op_imm,
         );
         table.insert(
             InstructionKey {
@@ -364,7 +367,7 @@ impl Dispatcher {
                 funct3: 0b011,
                 funct7: 0,
             },
-            Executor::exec_op_imm,
+            exec_op_imm,
         );
         table.insert(
             InstructionKey {
@@ -372,7 +375,7 @@ impl Dispatcher {
                 funct3: 0b100,
                 funct7: 0,
             },
-            Executor::exec_op_imm,
+            exec_op_imm,
         );
         table.insert(
             InstructionKey {
@@ -380,7 +383,7 @@ impl Dispatcher {
                 funct3: 0b110,
                 funct7: 0,
             },
-            Executor::exec_op_imm,
+            exec_op_imm,
         );
         table.insert(
             InstructionKey {
@@ -388,7 +391,7 @@ impl Dispatcher {
                 funct3: 0b111,
                 funct7: 0,
             },
-            Executor::exec_op_imm,
+            exec_op_imm,
         );
         table.insert(
             InstructionKey {
@@ -396,7 +399,7 @@ impl Dispatcher {
                 funct3: 0b001,
                 funct7: 0,
             },
-            Executor::exec_op_imm,
+            exec_op_imm,
         );
         table.insert(
             InstructionKey {
@@ -404,7 +407,7 @@ impl Dispatcher {
                 funct3: 0b101,
                 funct7: 0b0000000,
             },
-            Executor::exec_op_imm,
+            exec_op_imm,
         );
         table.insert(
             InstructionKey {
@@ -412,7 +415,7 @@ impl Dispatcher {
                 funct3: 0b101,
                 funct7: 0b0100000,
             },
-            Executor::exec_op_imm,
+            exec_op_imm,
         );
 
         // OP (opcode=0x33)
@@ -422,7 +425,7 @@ impl Dispatcher {
                 funct3: 0b000,
                 funct7: 0b0000000,
             },
-            Executor::exec_op,
+            exec_op,
         );
         table.insert(
             InstructionKey {
@@ -430,7 +433,7 @@ impl Dispatcher {
                 funct3: 0b000,
                 funct7: 0b0100000,
             },
-            Executor::exec_op,
+            exec_op,
         );
         table.insert(
             InstructionKey {
@@ -438,7 +441,7 @@ impl Dispatcher {
                 funct3: 0b001,
                 funct7: 0,
             },
-            Executor::exec_op,
+            exec_op,
         );
         table.insert(
             InstructionKey {
@@ -446,7 +449,7 @@ impl Dispatcher {
                 funct3: 0b010,
                 funct7: 0,
             },
-            Executor::exec_op,
+            exec_op,
         );
         table.insert(
             InstructionKey {
@@ -454,7 +457,7 @@ impl Dispatcher {
                 funct3: 0b011,
                 funct7: 0,
             },
-            Executor::exec_op,
+            exec_op,
         );
         table.insert(
             InstructionKey {
@@ -462,7 +465,7 @@ impl Dispatcher {
                 funct3: 0b100,
                 funct7: 0,
             },
-            Executor::exec_op,
+            exec_op,
         );
         table.insert(
             InstructionKey {
@@ -470,7 +473,7 @@ impl Dispatcher {
                 funct3: 0b101,
                 funct7: 0b0000000,
             },
-            Executor::exec_op,
+            exec_op,
         );
         table.insert(
             InstructionKey {
@@ -478,7 +481,7 @@ impl Dispatcher {
                 funct3: 0b101,
                 funct7: 0b0100000,
             },
-            Executor::exec_op,
+            exec_op,
         );
         table.insert(
             InstructionKey {
@@ -486,7 +489,7 @@ impl Dispatcher {
                 funct3: 0b110,
                 funct7: 0,
             },
-            Executor::exec_op,
+            exec_op,
         );
         table.insert(
             InstructionKey {
@@ -494,7 +497,7 @@ impl Dispatcher {
                 funct3: 0b111,
                 funct7: 0,
             },
-            Executor::exec_op,
+            exec_op,
         );
 
         // SYSTEM (opcode=0x73)
@@ -504,7 +507,7 @@ impl Dispatcher {
                 funct3: 0,
                 funct7: 0,
             },
-            Executor::exec_system,
+            exec_system,
         );
         table.insert(
             InstructionKey {
@@ -512,7 +515,7 @@ impl Dispatcher {
                 funct3: 0,
                 funct7: 0b0010000,
             },
-            Executor::exec_system,
+            exec_system,
         );
     }
 }
@@ -560,7 +563,7 @@ mod tests {
         };
 
         // Insert entries
-        let dummy_executor: ExecutorFn = |_, _, _, _| Ok(());
+        let dummy_executor: ExecutorFn = |_, _, _| Ok(());
         cache.insert(key1, dummy_executor);
         cache.insert(key2, dummy_executor);
 
@@ -593,7 +596,7 @@ mod tests {
             funct7: 0,
         };
 
-        let dummy_executor: ExecutorFn = |_, _, _, _| Ok(());
+        let dummy_executor: ExecutorFn = |_, _, _| Ok(());
 
         // Fill cache
         cache.insert(key1, dummy_executor);
@@ -620,7 +623,7 @@ mod tests {
             funct3: 0,
             funct7: 0,
         };
-        let dummy_executor: ExecutorFn = |_, _, _, _| Ok(());
+        let dummy_executor: ExecutorFn = |_, _, _| Ok(());
 
         cache.insert(key, dummy_executor);
         assert_eq!(cache.len(), 1);
@@ -648,7 +651,7 @@ mod tests {
     fn test_register_instruction() {
         let mut dispatcher = Dispatcher::with_default_cache();
 
-        let dummy_executor: ExecutorFn = |_, _, _, _| Ok(());
+        let dummy_executor: ExecutorFn = |_, _, _| Ok(());
 
         // Register custom instruction
         dispatcher.register(0x10, 0, 0, dummy_executor);

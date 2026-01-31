@@ -3,7 +3,7 @@
 //! B-type (Branch-type) instructions perform conditional branches.
 
 use crate::core::CoreState;
-use crate::decode::{DecodedInstruction, Funct3};
+use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 
 /// Branch instructions (exec_branch)
