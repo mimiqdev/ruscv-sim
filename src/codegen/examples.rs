@@ -1,5 +1,4 @@
 //! Example usage of instruction generation macros
-//! Example usage of instruction generation macros
 //!
 //! This module demonstrates how to use the proc-macros to generate
 //! instruction implementations with minimal boilerplate.

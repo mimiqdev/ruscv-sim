@@ -167,7 +167,6 @@ fn bench_always_taken(c: &mut Criterion) {
 
 /// Benchmark: 1-bit predictor
 fn bench_one_bit_predictor(c: &mut Criterion) {
-    let _predictor = OneBitPredictor::new(1024);
     let branches = generate_branch_sequence(1000, 0.5);
 
     c.bench_function("one_bit_predictor_1000", |b| {

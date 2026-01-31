@@ -367,9 +367,10 @@ fn bench_multilevel_cache(c: &mut Criterion) {
             let mut total_latency = 0;
 
             for &addr in &accesses {
-                // Check L1 first
+                // Check L1 first - track misses before access to detect L1 miss
+                let misses_before = l1.misses;
                 let l1_latency = l1.access(addr);
-                if l1.hits == 0 && l1.misses == 1 {
+                if l1.misses > misses_before {
                     // L1 miss - check L2
                     let l2_latency = l2.access(addr);
                     total_latency += l1_latency + l2_latency;
