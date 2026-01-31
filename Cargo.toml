@@ -19,10 +19,26 @@ serde_json = "1.0"
 # 枚举转换
 num_enum = "0.7"
 
+# 代码生成
+ruscv-macros = { path = "ruscv-macros" }
+
 # 测试
 [dev-dependencies]
 proptest = "1.0"
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [features]
 default = []
 tlm = []  # SystemC TLM2.0 接口支持
+
+[[bench]]
+name = "decode_bench"
+harness = false
+
+[[bench]]
+name = "execute_bench"
+harness = false
+
+[[bench]]
+name = "memory_bench"
+harness = false

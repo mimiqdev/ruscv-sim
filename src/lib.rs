@@ -1,5 +1,6 @@
 //! RISC-V simulator main module
 
+pub mod codegen;
 pub mod core;
 pub mod csr;
 pub mod decode;
