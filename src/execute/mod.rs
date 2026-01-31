@@ -278,6 +278,11 @@ impl Executor {
                 let rs1_val = state.regs[rs1 as usize];
                 (rs1_val | imm) as i32
             }
+            // ANDI (and immediate)
+            Funct3::And => {
+                let rs1_val = state.regs[rs1 as usize];
+                (rs1_val & imm) as i32
+            }
             _ => return Err(ExecuteError::InvalidOperation),
         };
 
@@ -730,5 +735,84 @@ mod tests {
         executor.execute(&instr, &mut state, &mut mem).unwrap();
 
         assert_eq!(state.regs[2], 0xFFFFFFFF);
+    }
+
+    #[test]
+    fn test_andi_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0b1111_1111_0000_0000; // 0xFF00
+
+        // ANDI x2, x1, 0b1010_1010_1010_1010 (0xAAAA)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::And),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(0b1010_1010_1010_1010), // 0xAAAA
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 0xFF00 & 0xAAAA = 0xAA00
+        assert_eq!(state.regs[2], 0xAA00);
+    }
+
+    #[test]
+    fn test_andi_with_zero() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        // ANDI x2, x1, 0 (should clear the value)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::And),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(0),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0);
+    }
+
+    #[test]
+    fn test_andi_with_all_ones() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        // ANDI x2, x1, -1 (0xFFFFFFFF) should keep the value
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::And),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-1i32) as u32), // 0xFFFFFFFF
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0x12345678);
     }
 }
