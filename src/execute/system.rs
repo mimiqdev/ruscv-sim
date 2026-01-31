@@ -27,3 +27,47 @@ pub fn exec_system(
         _ => Err(ExecuteError::InvalidOperation),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decode::{DecodedInstruction, InstructionFormat, Opcode};
+    use crate::memory::SimpleMemory;
+
+    fn create_test_instr_system(imm: u32) -> DecodedInstruction {
+        DecodedInstruction {
+            raw: 0,
+            format: InstructionFormat::IType,
+            opcode: Opcode::System,
+            funct3: None,
+            funct7: None,
+            rs1: None,
+            rs2: None,
+            rd: None,
+            imm: Some(imm),
+            branch_taken: false,
+        }
+    }
+
+    #[test]
+    fn test_ecall() {
+        let mut state = CoreState::default();
+        let instr = create_test_instr_system(0);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        let result = exec_system(&instr, &mut state, &mut mem);
+
+        assert!(matches!(result, Err(ExecuteError::Ecall)));
+    }
+
+    #[test]
+    fn test_ebreak() {
+        let mut state = CoreState::default();
+        let instr = create_test_instr_system(1);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        let result = exec_system(&instr, &mut state, &mut mem);
+
+        assert!(matches!(result, Err(ExecuteError::Ebreak)));
+    }
+}

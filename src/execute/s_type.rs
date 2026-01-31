@@ -38,3 +38,69 @@ pub fn exec_store(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::CoreState;
+    use crate::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
+    use crate::execute::ExecuteError;
+    use crate::memory::{MemoryInterface, SimpleMemory};
+
+    fn create_test_instr_s_type(funct3: Funct3, rs1: u8, rs2: u8, imm: u32) -> DecodedInstruction {
+        DecodedInstruction {
+            raw: 0,
+            format: InstructionFormat::SType,
+            opcode: Opcode::Store,
+            funct3: Some(funct3),
+            funct7: None,
+            rs1: Some(rs1),
+            rs2: Some(rs2),
+            rd: None,
+            imm: Some(imm),
+            branch_taken: false,
+        }
+    }
+
+    #[test]
+    fn test_sw_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x100;
+        state.regs[2] = 0x12345678;
+
+        let mut mem = SimpleMemory::new(0x1000);
+        let instr = create_test_instr_s_type(Funct3::AddSub, 1, 2, 4);
+
+        exec_store(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(mem.read_word(0x104).unwrap(), 0x12345678);
+    }
+
+    #[test]
+    fn test_sh_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x100;
+        state.regs[2] = 0x12345678;
+
+        let mut mem = SimpleMemory::new(0x1000);
+        let instr = create_test_instr_s_type(Funct3::Sll, 1, 2, 4);
+
+        exec_store(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(mem.read_half(0x104).unwrap(), 0x5678);
+    }
+
+    #[test]
+    fn test_sb_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x100;
+        state.regs[2] = 0x12345678;
+
+        let mut mem = SimpleMemory::new(0x1000);
+        let instr = create_test_instr_s_type(Funct3::Slt, 1, 2, 4);
+
+        exec_store(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(mem.read_byte(0x104).unwrap(), 0x78);
+    }
+}

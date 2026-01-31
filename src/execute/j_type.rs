@@ -3,8 +3,9 @@
 //! J-type (Jump-type) instructions perform unconditional jumps.
 
 use crate::core::CoreState;
-use crate::decode::DecodedInstruction;
+use crate::decode::{DecodedInstruction, InstructionFormat, Opcode};
 use crate::execute::ExecuteError;
+use crate::memory::SimpleMemory;
 
 /// JAL (Jump and Link)
 ///
