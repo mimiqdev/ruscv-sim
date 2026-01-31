@@ -10,14 +10,17 @@ use std::fmt;
 pub use fcsr::{Fcsr, FpFlags, RoundingMode};
 
 /// Floating point register type (f0-f31)
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Fpr(u64);
 
 impl Fpr {
+    /// NaN box marker: upper 32 bits set to all 1s
+    const NAN_BOX_MASK: u64 = 0xFFFF_FFFF_0000_0000u64;
+
     /// Create a new FPR with NaN-boxed value
     pub fn new(value: f32) -> Self {
         // NaN box the 32-bit float: store in lower 32 bits, set upper 32 bits to 1s
-        let bits = value.to_bits() as u64 | 0xFFFF_FFFF_0000_0000u64;
+        let bits = Self::NAN_BOX_MASK | value.to_bits() as u64;
         Self(bits)
     }
 
@@ -50,12 +53,19 @@ impl Fpr {
     /// Get the canonical NaN (for NaN propagation)
     pub fn canonical_nan() -> Self {
         // IEEE 754 canonical NaN: quiet NaN with MSB of significand set
-        Self::from_bits(0x7FC0_0000_FFFF_FFFFu64)
+        // NaN boxed: upper 32 bits = 0xFFFF_FFFF, lower 32 bits = 0x7FC0_0000
+        Self::from_bits((0xFFFF_FFFFu64 << 32) | 0x7FC0_0000u64)
     }
 
     /// Get the default NaN (for addition/multiplication)
     pub fn default_nan() -> Self {
-        Self::from_bits(0x7FC0_0000_FFFF_FFFFu64)
+        Self::canonical_nan()
+    }
+}
+
+impl Default for Fpr {
+    fn default() -> Self {
+        Self(Self::NAN_BOX_MASK)
     }
 }
 
