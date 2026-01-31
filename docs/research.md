@@ -707,3 +707,528 @@ pub enum TlmSyncEnum {
 ### 测试资源
 9. RISC-V testsuite: https://github.com/riscv/riscv-tests
 10. RISC-V compliance tests: https://github.com/riscv/riscv-compliance
+
+---
+
+## 9. 内存模型优化技术研究 (Memory Optimization Research)
+
+**文档版本**: v2.0
+**调研日期**: 2026-01-31
+**调研范围**: FastModels、Spike、QEMU、指令缓存优化、TLB 优化
+
+### 9.1 执行摘要
+
+本节针对 RISC-V ISS 的内存模型优化技术进行深入调研，分析了以下关键技术：
+
+- **指令缓存优化** (Instruction Cache)
+- **TLB 优化** (Translation Lookaside Buffer)
+- **解码缓存** (Decode Cache)
+- **Translation Block 优化** (QEMU TB Chaining)
+
+**核心发现**：
+- QEMU 的 TB caching + block chaining 可实现 18-43% 性能提升
+- Shade simulator 证明了指令集模拟器可通过 binary translation 达到接近原生性能
+- FastModels 采用 Zero-Time Transaction (ZIT) 优化内存访问
+- Spike 使用分层 TLB + 页表遍历实现高效地址转换
+
+---
+
+### 9.2 FastModels 内存优化技术
+
+#### 9.2.1 Zero-Time Transaction (ZIT)
+
+**技术原理**：
+- ZIT 是 ARM FastModels 的核心优化技术，用于减少内存访问延迟
+- 通过事务预测和预取，将某些内存访问标记为"零时间"
+- 适用于可预测的内存访问模式（如指令获取、栈访问）
+
+**应用场景**：
+- 指令缓存未命中时的预取
+- 周期性外设访问 (如定时器)
+- 可预测的数据访问模式
+
+**对 ruscv-sim 的启示**：
+```rust
+// 可实现的 ZIT 优化
+pub struct ZeroTimeTransactionCache {
+    // 预测表：记录可零时间访问的地址范围
+    predictive_regions: Vec<(u64, u64)>, // (start, end)
+
+    // 访问模式统计
+    access_pattern: LRUCache<u64, AccessPattern>,
+}
+
+impl ZeroTimeTransactionCache {
+    pub fn is_zero_time_access(&self, addr: u64) -> bool {
+        // 检查是否在可预测区域内
+        self.predictive_regions.iter()
+            .any(|(start, end)| addr >= *start && addr <= *end)
+    }
+
+    pub fn record_access(&mut self, addr: u64, pattern: AccessPattern) {
+        // 记录访问模式用于预测
+        self.access_pattern.put(addr, pattern);
+    }
+}
+```
+
+#### 9.2.2 指令缓存建模 (Instruction Cache Modeling)
+
+**FastModels 方法**：
+- 提供 ICACHE 模型，可配置大小、行大小、关联度
+- 支持 PV (Programmer's View) 和 VP (Verification View) 模式
+- PV 模式：功能验证，无时序
+- VP 模式：时序精确，包含缓存行为
+
+**优化策略**：
+1. **分离 I-Cache 和 D-Cache**：避免取指和访存冲突
+2. **预取优化**：基于 PC 的顺序预取
+3. **行填充优化**：批量获取连续指令
+
+---
+
+### 9.3 QEMU 内存优化技术
+
+#### 9.3.1 Translation Block (TB) Caching
+
+**核心原理**：
+- QEMU 将 guest 代码动态翻译为 host 代码块
+- 每个 TB 包含一个或多个基本块
+- 翻译后的代码缓存在 16 MB 的 code cache 中
+
+**优化技术**：
+
+1. **Block Chaining**：
+   - 将多个 TB 链接在一起，减少间接跳转
+   - 使用原子补丁 (atomic patching) 修改跳转目标
+   - 性能提升：**18-43%** (基于研究论文)
+
+2. **Trace Cache**：
+   - 将热路径 (hot path) 上的多个 TB 合并为单个 trace
+   - 允许跨基本块优化
+   - HQEMU 实现了多线程 trace 优化
+
+3. **TLB (Translation Lookaside Buffer)**：
+   - 缓存虚拟地址到物理地址的映射
+   - 避免每次内存访问都进行完整的页表遍历
+   - 使用 SoftMMU 实现软件 TLB
+
+**代码示例**：
+```rust
+// TB 结构设计 (参考 QEMU)
+pub struct TranslationBlock {
+    pc: u64,              // 起始 PC
+    code: Vec<u8>,        // 翻译后的机器码
+    next: Option<Box<TranslationBlock>>, // 链接到下一个 TB
+    jumps: Vec<(u64, usize)>, // 跳转目标 (target_pc, offset)
+}
+
+pub struct CodeCache {
+    blocks: HashMap<u64, TranslationBlock>, // PC -> TB 映射
+    lru: LRUCache<u64, ()>,                 // LRU 淘汰策略
+    capacity: usize,                        // 缓存容量 (如 16MB)
+}
+
+impl CodeCache {
+    pub fn lookup_or_translate(&mut self, pc: u64) -> &TranslationBlock {
+        if !self.blocks.contains_key(&pc) {
+            let tb = self.translate(pc);
+            self.optimize_and_chain(&tb);
+            self.blocks.insert(pc, tb);
+        }
+        self.blocks.get(&pc).unwrap()
+    }
+
+    fn optimize_and_chain(&mut self, tb: &TranslationBlock) {
+        // Block chaining 优化
+        for (target_pc, _) in &tb.jumps {
+            if let Some(target_tb) = self.blocks.get(target_pc) {
+                // 直接链接到目标 TB，避免间接跳转
+                self.chain_blocks(tb, target_tb);
+            }
+        }
+    }
+}
+```
+
+#### 9.3.2 性能数据
+
+| 优化技术 | 性能提升 | 来源 |
+|---------|---------|------|
+| Code Cache 优化 | 18% 翻译减少 | [Code Cache Optimization Schemes](https://crad.ict.ac.cn/en/article/doi/10.7544/issn1000-1239.202330856) |
+| TB Chaining | 43% 块刷新减少 | 同上 |
+| HQEMU 多线程 | 2-4x 整体加速 | [HQEMU Paper](https://www.cs.nthu.edu.tw/~ychung/Conference/2012-CGO-HQEMU.pdf) |
+
+---
+
+### 9.4 Spike 内存模型分析
+
+#### 9.4.1 TLB 实现
+
+**架构**：
+```cpp
+// Spike 的 TLB 实现
+class mmu_t {
+    // TLB 条目
+    struct tlb_entry_t {
+        char* host_addr;
+        reg_t target_addr;
+        bool valid;
+    };
+
+    tlb_entry_t tlb[TLB_ENTRIES];  // 通常 16-64 条目
+    reg_t tlb_insn_tag[TLB_ENTRIES];
+    reg_t tlb_data_tag[TLB_ENTRIES];
+};
+```
+
+**优化特点**：
+1. **分离 I-TLB 和 D-TLB**：取指和访存使用独立 TLB
+2. **快速路径优化**：TLB 命中时直接访问，无函数调用开销
+3. **页表遍历缓存**：避免重复的树形查找
+
+#### 9.4.2 内存访问流程
+
+```
+虚拟地址
+    ↓
+TLB 查找
+    ├─ 命中 → 直接访问 host 内存
+    └─ 未命中 → 页表遍历
+                    ↓
+                更新 TLB
+                    ↓
+                访问内存
+```
+
+**性能特征**：
+- TLB 命中率：通常 > 95%
+- 页表遍历延迟：3-4 次内存访问 (Sv39)
+- TLB 淘汰策略：FIFO 或 LRU
+
+---
+
+### 9.5 Instruction Cache 优化技术
+
+#### 9.5.1 Shade Simulator 技术
+
+**Shade: A Fast Instruction-Set Simulator** (Cmelik & Keppel, 1993)
+
+**核心创新**：
+- 使用 binary translation 而非解释执行
+- 直接在 host 上执行翻译后的代码
+- 性能接近原生 (5-10x 比解释执行)
+
+**对 ruscv-sim 的启示**：
+```rust
+// 可实现的指令缓存优化
+pub struct InstructionCache {
+    // 解码后的指令缓存
+    decoded_instructions: LRUCache<u64, DecodedInstruction>,
+
+    // 执行函数缓存 (避免每次查找)
+    execution_cache: HashMap<Opcode, Box<dyn Fn(&Instruction) -> ExecutionResult>>,
+}
+
+impl InstructionCache {
+    pub fn fetch_decode(&mut self, pc: u64, memory: &impl MemoryInterface) -> &DecodedInstruction {
+        if !self.decoded_instructions.contains(&pc) {
+            let raw_insn = memory.read_word(pc).unwrap();
+            let decoded = self.decode(raw_insn);
+            self.decoded_instructions.put(pc, decoded);
+        }
+        self.decoded_instructions.get(&pc).unwrap()
+    }
+}
+```
+
+#### 9.5.2 指令预取优化
+
+**技术要点**：
+1. **顺序预取**：预测 PC+4 的指令
+2. **分支预测**：基于历史记录预测分支目标
+3. **批量获取**：一次读取缓存行 (如 64 字节)
+
+**实现示例**：
+```rust
+pub struct InstructionPrefetcher {
+    prefetch_buffer: VecDeque<(u64, u32)>, // (pc, raw_insn)
+    buffer_size: usize,
+}
+
+impl InstructionPrefetcher {
+    pub fn prefetch(&mut self, pc: u64, memory: &impl MemoryInterface) {
+        // 预取后续 4 条指令
+        for i in 0..4 {
+            let prefetch_pc = pc + i * 4;
+            if let Ok(insn) = memory.read_word(prefetch_pc) {
+                self.prefetch_buffer.push_back((prefetch_pc, insn));
+            }
+        }
+    }
+}
+```
+
+---
+
+### 9.6 RISC-V VP 的 TLM2.0 优化
+
+#### 9.6.1 时间解耦 (Temporal Decoupling)
+
+**技术原理**：
+- 使用 quantum keeper 本地累积时间
+- 定期同步到全局时间
+- 减少同步开销
+
+**实现**：
+```rust
+pub struct TlmQuantumKeeper {
+    local_time: TlmTime,
+    quantum: TlmTime,  // 如 1000ms
+}
+
+impl TlmQuantumKeeper {
+    pub fn inc(&mut self, delta: TlmTime) {
+        self.local_time += delta;
+    }
+
+    pub fn need_sync(&self) -> bool {
+        self.local_time >= self.quantum
+    }
+
+    pub fn sync(&mut self) {
+        // 同步到全局时间
+        self.local_time = TlmTime::from(0);
+    }
+}
+```
+
+#### 9.6.2 总线优化
+
+**TLM2.0 特性**：
+- Generic Payload 标准化事务格式
+- Direct Memory Access (DMA) 支持
+- 多个 initiator 共享总线
+
+---
+
+### 9.7 ruscv-sim 优化建议
+
+#### 9.7.1 短期优化 (Sprint 14)
+
+| 优化项 | 预期提升 | 实现复杂度 | 优先级 |
+|--------|---------|-----------|--------|
+| **指令解码缓存** | 15-25% | 低 | 🔴 高 |
+| **TLB 实现** | 10-20% | 中 | 🔴 高 |
+| **执行函数查找表** | 5-10% | 低 | 🟡 中 |
+| **批量内存访问** | 5-15% | 低 | 🟡 中 |
+
+#### 9.7.2 中期优化 (Post v1.0)
+
+| 优化项 | 预期提升 | 实现复杂度 | 优先级 |
+|--------|---------|-----------|--------|
+| **Translation Block Chaining** | 18-43% | 高 | 🟡 中 |
+| **Trace Cache** | 20-30% | 高 | 🟢 低 |
+| **Multi-threaded Execution** | 2-4x | 很高 | 🟢 低 |
+
+#### 9.7.3 具体实现建议
+
+**1. 指令解码缓存** (Sprint 14)
+```rust
+// src/execute/decode_cache.rs
+use lru::LruCache;
+
+pub struct DecodeCache {
+    cache: LruCache<u64, DecodedInstruction>,
+    hits: AtomicU64,
+    misses: AtomicU64,
+}
+
+impl DecodeCache {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            cache: LruCache::new(capacity),
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+        }
+    }
+
+    pub fn get_or_decode(&mut self, pc: u64, raw_insn: u32) -> &DecodedInstruction {
+        if !self.cache.contains(&pc) {
+            self.misses.fetch_add(1, Ordering::Relaxed);
+            let decoded = decode_instruction(raw_insn);
+            self.cache.put(pc, decoded);
+        } else {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+        }
+        self.cache.get(&pc).unwrap()
+    }
+
+    pub fn hit_rate(&self) -> f64 {
+        let hits = self.hits.load(Ordering::Relaxed);
+        let misses = self.misses.load(Ordering::Relaxed);
+        hits as f64 / (hits + misses) as f64
+    }
+}
+```
+
+**2. TLB 优化** (Sprint 14)
+```rust
+// src/mmu/tlb.rs
+const TLB_ENTRIES: usize = 64;
+
+pub struct TLBEntry {
+    vaddr: u64,
+    paddr: u64,
+    valid: bool,
+    permission: Permission,
+}
+
+pub struct TLB {
+    entries: [TLBEntry; TLB_ENTRIES],
+    lru_counter: [u64; TLB_ENTRIES],
+}
+
+impl TLB {
+    pub fn lookup(&mut self, vaddr: u64) -> Option<u64> {
+        let page_num = vaddr / PAGE_SIZE;
+
+        for (i, entry) in self.entries.iter().enumerate() {
+            if entry.valid && entry.vaddr == page_num {
+                self.update_lru(i);
+                return Some(entry.paddr + (vaddr % PAGE_SIZE));
+            }
+        }
+        None
+    }
+
+    pub fn insert(&mut self, vaddr: u64, paddr: u64, permission: Permission) {
+        let idx = self.find_victim();
+        self.entries[idx] = TLBEntry {
+            vaddr: vaddr / PAGE_SIZE,
+            paddr: paddr / PAGE_SIZE * PAGE_SIZE,
+            valid: true,
+            permission,
+        };
+        self.update_lru(idx);
+    }
+
+    fn find_victim(&self) -> usize {
+        // LRU 替换策略
+        self.lru_counter.iter()
+            .enumerate()
+            .min_by_key(|(_, &count)| count)
+            .map(|(i, _)| i)
+            .unwrap()
+    }
+}
+```
+
+**3. 执行函数查找表** (Sprint 2.5)
+```rust
+// src/execute/opcodes.rs
+use once_cell::sync::Lazy;
+
+static EXECUTE_TABLE: Lazy<Box<[fn(&Instruction) -> ExecutionResult; 256]>> =
+    Lazy::new(|| {
+        let mut table: Box<[fn(&Instruction) -> ExecutionResult; 256]> =
+            Box::new([|_| panic!("Invalid opcode"); 256]);
+
+        table[Opcode::ADD as usize] = execute_add;
+        table[Opcode::SUB as usize] = execute_sub;
+        table[Opcode::MUL as usize] = execute_mul;
+        // ...
+
+        table
+    });
+
+pub fn dispatch_instruction(insn: &Instruction) -> ExecutionResult {
+    let opcode = (insn.raw >> 7) & 0x7F;
+    EXECUTE_TABLE[opcode as usize](insn)
+}
+```
+
+---
+
+### 9.8 性能基准和测量
+
+#### 9.8.1 测量指标
+
+| 指标 | 测量方法 | 目标值 |
+|------|---------|--------|
+| **CPI (Cycles Per Instruction)** | cycle_count / instruction_count | < 1.2 (Zero-timing) |
+| **TLB 命中率** | hits / (hits + misses) | > 95% |
+| **解码缓存命中率** | hits / (hits + misses) | > 90% |
+| **平均取指延迟** | 总取指时间 / 取指次数 | < 10ns |
+
+#### 9.8.2 Benchmark 工具
+
+```rust
+// benches/memory_bench.rs
+use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+
+fn benchmark_decode_cache(c: &mut Criterion) {
+    let mut group = c.benchmark_group("decode_cache");
+
+    for size in [1024, 4096, 16384].iter() {
+        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
+            let mut cache = DecodeCache::new(size);
+            let insn = 0x00000513; // ADDI x1, x0, 1
+
+            b.iter(|| {
+                cache.get_or_decode(black_box(0x8000), black_box(insn))
+            });
+        });
+    }
+    group.finish();
+}
+
+fn benchmark_tlb(c: &mut Criterion) {
+    let mut tlb = TLB::new();
+
+    c.bench_function("tlb_hit", |b| {
+        tlb.insert(0x1000, 0x80001000, Permission::READ);
+        b.iter(|| {
+            tlb.lookup(black_box(0x1000))
+        });
+    });
+
+    c.bench_function("tlb_miss", |b| {
+        b.iter(|| {
+            tlb.lookup(black_box(0x2000))
+        });
+    });
+}
+
+criterion_group!(benches, benchmark_decode_cache, benchmark_tlb);
+criterion_main!(benches);
+```
+
+---
+
+### 9.9 参考文献
+
+### 内存优化研究
+1. Shade: A Fast Instruction-Set Simulator: https://pages.cs.wisc.edu/~remzi/Classes/838/Spring2013/Papers/cmelik93shade.pdf
+2. Techniques for Fast Instruction Cache Performance Evaluation: https://www.cs.fsu.edu/~whalley/papers/spe93.pdf
+3. Fast Instruction Cache Performance Evaluation: https://dl.acm.org/doi/pdf/10.1145/133057.133081
+4. Translation Caching: Skip, Don't Walk: https://dl.acm.org/doi/pdf/10.1145/1815961.1815970
+
+### QEMU 优化
+5. QEMU TCG Internals: https://www.qemu.org/docs/master/devel/tcg.html
+6. Code Cache Optimization Schemes (43% improvement): https://crad.ict.ac.cn/en/article/doi/10.7544/issn1000-1239.202330856
+7. HQEMU: Multi-Threaded Dynamic Binary Translator: https://www.cs.nthu.edu.tw/~ychung/Conference/2012-CGO-HQEMU.pdf
+8. A General Persistent Code Caching Framework: https://www.usenix.org/system/files/conference/atc16/atc16_paper-wang.pdf
+9. QEMU: A Fast and Portable Dynamic Translator: https://scispace.com/pdf/qemu-a-fast-and-portable-dynamic-translator-xpb07ophlg.pdf
+
+### TLB 和地址转换
+10. Translation Lookaside Buffer: https://en.wikipedia.org/wiki/Translation_lookaside_buffer
+11. Breaking the Address Translation Wall: https://www.cs.yale.edu/homes/abhishek/abhishek-toppicks18.pdf
+12. Energy-Efficient Address Translation: https://cgi.di.uoa.gr/~vkarakos/papers/hpca16_energy_efficient_address_translation.pdf
+
+### Spike 和 RISC-V
+13. Spike RISC-V Simulator Source: https://github.com/riscv-software-src/riscv-isa-sim
+14. RISC-V Core Optimization (Spike mentioned): https://www.scribd.com/document/596887572/RISC-V-core-optimization-in-22nm-FD-SOI-technology-Thesis-Max-Doblas-Font-2021
+
+### ARM FastModels
+15. Fast Models User Guide: https://documentation-service.arm.com/static/68274dd40aae2a5d8f044dd9?token=
