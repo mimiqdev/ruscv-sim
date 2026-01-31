@@ -173,8 +173,8 @@ pub fn exec_fcvt_s_l(
     let rd = instr.rd.expect("FCVT.S.L requires rd");
 
     // Combine rs1 and rs1+1 for 64-bit value
-    let low = state.regs[rs1 as usize] as u32;
-    let high = state.regs[(rs1 + 1) as usize] as u32;
+    let low = state.regs[rs1 as usize];
+    let high = state.regs[(rs1 + 1) as usize];
     let val = ((high as i64) << 32) | (low as i64);
     let result = val as f32;
 
@@ -192,7 +192,7 @@ pub fn exec_fcvt_s_wu(
     let rs1 = instr.rs1.expect("FCVT.S.WU requires rs1");
     let rd = instr.rd.expect("FCVT.S.WU requires rd");
 
-    let val = state.regs[rs1 as usize] as u32;
+    let val = state.regs[rs1 as usize];
     let result = fcvt_u32_to_f32(val);
 
     state.fpr.write(rd as usize, Fpr::new(result));
@@ -209,8 +209,8 @@ pub fn exec_fcvt_s_lu(
     let rs1 = instr.rs1.expect("FCVT.S.LU requires rs1");
     let rd = instr.rd.expect("FCVT.S.LU requires rd");
 
-    let low = state.regs[rs1 as usize] as u32;
-    let high = state.regs[(rs1 + 1) as usize] as u32;
+    let low = state.regs[rs1 as usize];
+    let high = state.regs[(rs1 + 1) as usize];
     let val = ((high as u64) << 32) | (low as u64);
     let result = val as f32;
 

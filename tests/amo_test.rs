@@ -24,6 +24,7 @@ fn create_amo_instr(rs1: u8, rs2: u8, rd: u8, funct5: u8, _aq: u8, _rl: u8) -> D
         funct7: None,
         rs1: Some(rs1),
         rs2: Some(rs2),
+        rs3: None,
         rd: Some(rd),
         imm: None,
         branch_taken: false,

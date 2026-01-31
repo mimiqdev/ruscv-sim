@@ -5,10 +5,10 @@
 //! FSD stores the lower 32 bits of a floating-point register.
 
 use crate::core::CoreState;
-use crate::decode::InstructionFormat;
-use crate::decode::{DecodedInstruction, Opcode};
+use crate::decode::DecodedInstruction;
+use crate::execute::ExecuteError;
 use crate::fpu::Fpr;
-use crate::memory::{MemoryError, MemoryInterface};
+use crate::memory::MemoryInterface;
 
 /// Execute FLW (Load 32-bit Float from Memory)
 /// Format: I-type (Load)
@@ -17,7 +17,7 @@ pub fn exec_flw(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     mem: &mut dyn MemoryInterface,
-) -> Result<(), MemoryError> {
+) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FLW requires rs1");
     let rd = instr.rd.expect("FLW requires rd");
     let imm = instr.imm.expect("FLW requires imm") as i32;
@@ -43,7 +43,7 @@ pub fn exec_fsd(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     mem: &mut dyn MemoryInterface,
-) -> Result<(), MemoryError> {
+) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FSD requires rs1");
     let rs2 = instr.rs2.expect("FSD requires rs2");
     let imm = instr.imm.expect("FSD requires imm") as i32;
@@ -62,7 +62,7 @@ pub fn exec_fsd(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fpu::FpuRegisterFile;
+    use crate::decode::{DecodedInstruction, InstructionFormat, Opcode};
     use crate::memory::SimpleMemory;
 
     #[test]
@@ -87,6 +87,7 @@ mod tests {
             funct7: None,
             rs1: Some(1),
             rs2: None,
+            rs3: None,
             rd: Some(2),
             imm: Some(0),
             branch_taken: false,
@@ -122,6 +123,7 @@ mod tests {
             funct7: None,
             rs1: Some(1),
             rs2: Some(3),
+            rs3: None,
             rd: None,
             imm: Some(0),
             branch_taken: false,
@@ -155,6 +157,7 @@ mod tests {
             funct7: None,
             rs1: Some(1),
             rs2: None,
+            rs3: None,
             rd: Some(2),
             imm: Some(16),
             branch_taken: false,
@@ -181,6 +184,7 @@ mod tests {
             funct7: None,
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: None,
             imm: Some(0),
             branch_taken: false,

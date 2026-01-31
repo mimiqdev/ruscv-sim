@@ -256,7 +256,7 @@ impl InstructionDecoder {
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
                 // S-type immediate: imm[11:5] | imm[4:0]
                 let imm11_5 = ((instruction >> 25) & 0x7F) << 5;
-                let imm4_0 = ((instruction >> 7) & 0x1F) as u32;
+                let imm4_0 = (instruction >> 7) & 0x1F;
                 decoded.imm = Some(imm11_5 | imm4_0);
             }
             Opcode::OpFp => {

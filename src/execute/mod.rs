@@ -155,8 +155,6 @@ impl Executor {
             (0x78, 0) => exec_fcvt_s_w(instr, state, mem), // Placeholder
             // FEQ.S, FLT.S, FLE.S
             (0x50, 0) => exec_feq_s(instr, state, mem),
-            // FMADD.S
-            (0x00, 0) => exec_fmadd_s(instr, state, mem), // Same as FADD, handled by rs3
             // FMSUB.S
             (0x01, 0) => exec_fmsub_s(instr, state, mem),
             // FNMSUB.S

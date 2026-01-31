@@ -278,6 +278,7 @@ mod tests {
             funct7: None,
             rs1: Some(rs1),
             rs2: Some(0), // 0 for LR
+            rs3: None,
             rd: Some(rd),
             imm: None,
             branch_taken: false,
@@ -305,6 +306,7 @@ mod tests {
             funct7: None,
             rs1: Some(rs1),
             rs2: Some(rs2),
+            rs3: None,
             rd: Some(rd),
             imm: None,
             branch_taken: false,

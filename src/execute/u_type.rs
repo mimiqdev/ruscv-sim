@@ -61,6 +61,7 @@ mod tests {
             funct7: None,
             rs1: None,
             rs2: None,
+            rs3: None,
             rd: Some(rd),
             imm: Some(imm),
             branch_taken: false,

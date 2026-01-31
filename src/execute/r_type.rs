@@ -107,6 +107,7 @@ mod tests {
             funct7,
             rs1,
             rs2,
+            rs3: None,
             rd,
             imm: None,
             branch_taken: false,

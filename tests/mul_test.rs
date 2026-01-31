@@ -20,6 +20,7 @@ fn create_mul_instr(rs1: u8, rs2: u8, rd: u8, funct7: u8) -> DecodedInstruction 
         funct7: Some(funct7),
         rs1: Some(rs1),
         rs2: Some(rs2),
+        rs3: None,
         rd: Some(rd),
         imm: None,
         branch_taken: false,

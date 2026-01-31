@@ -22,6 +22,7 @@ fn create_csr_instr(funct3: u8, rd: u8, rs1: u8, csr: u16) -> DecodedInstruction
         funct7: None,
         rs1: Some(rs1),
         rs2: None,
+        rs3: None,
         rd: Some(rd),
         imm: Some(csr as u32),
         branch_taken: false,

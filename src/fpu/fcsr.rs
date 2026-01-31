@@ -93,7 +93,7 @@ impl Fcsr {
     /// Read FCSR value
     pub fn read(&self) -> u32 {
         let flags: u8 = self.flags.bits();
-        (self.reserved as u32) << 8 | (flags as u32) << 3 | (self.frm as u32)
+        self.reserved << 8 | (flags as u32) << 3 | (self.frm as u32)
     }
 
     /// Write FCSR value
