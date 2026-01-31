@@ -98,6 +98,7 @@ impl Predictor for TwoBitPredictor {
 #[derive(Debug, Clone)]
 pub struct BranchInstruction {
     pc: u32,
+    #[allow(dead_code)]
     target: u32,
     taken: bool,
 }
@@ -136,7 +137,7 @@ pub fn generate_branch_sequence(count: usize, taken_rate: f64) -> Vec<BranchInst
 
 /// Benchmark: Always not taken predictor
 fn bench_always_not_taken(c: &mut Criterion) {
-    let predictor = AlwaysNotTakenPredictor::default();
+    let predictor = AlwaysNotTakenPredictor;
     let branches = generate_branch_sequence(1000, 0.5);
 
     c.bench_function("always_not_taken_1000", |b| {
@@ -151,7 +152,7 @@ fn bench_always_not_taken(c: &mut Criterion) {
 
 /// Benchmark: Always taken predictor
 fn bench_always_taken(c: &mut Criterion) {
-    let predictor = AlwaysTakenPredictor::default();
+    let predictor = AlwaysTakenPredictor;
     let branches = generate_branch_sequence(1000, 0.5);
 
     c.bench_function("always_taken_1000", |b| {
@@ -166,7 +167,7 @@ fn bench_always_taken(c: &mut Criterion) {
 
 /// Benchmark: 1-bit predictor
 fn bench_one_bit_predictor(c: &mut Criterion) {
-    let mut predictor = OneBitPredictor::new(1024);
+    let _predictor = OneBitPredictor::new(1024);
     let branches = generate_branch_sequence(1000, 0.5);
 
     c.bench_function("one_bit_predictor_1000", |b| {
@@ -196,7 +197,7 @@ fn bench_two_bit_predictor(c: &mut Criterion) {
 /// Benchmark: Predictor accuracy at different taken rates
 fn bench_predictor_accuracy(c: &mut Criterion) {
     let rates = [0.0, 0.25, 0.5, 0.75, 1.0];
-    let predictor = TwoBitPredictor::new(1024);
+    let _predictor = TwoBitPredictor::new(1024);
 
     for rate in rates {
         let branches = generate_branch_sequence(10000, rate);

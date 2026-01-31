@@ -26,7 +26,7 @@ impl Default for CacheParams {
 }
 
 /// Simple cache simulator
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SimpleCache {
     params: CacheParams,
     sets: Vec<Vec<u64>>, // tag -> address tag

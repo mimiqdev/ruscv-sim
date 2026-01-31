@@ -3,6 +3,7 @@
 //! This module benchmarks pipeline stage performance and pipeline hazards.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use rand::Rng;
 use std::collections::VecDeque;
 
 /// Pipeline stages
@@ -16,7 +17,7 @@ pub enum PipelineStage {
 }
 
 /// Instruction in the pipeline
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PipelineInstruction {
     pub pc: u32,
     pub stage: PipelineStage,
@@ -73,7 +74,7 @@ impl SimplePipeline {
         self.cycles += 1;
 
         // Write back stage
-        if let Some(instr) = self.stages[4].take() {
+        if let Some(_instr) = self.stages[4].take() {
             self.instructions_completed += 1;
         }
 
@@ -314,11 +315,11 @@ fn bench_pipeline_depth(c: &mut Criterion) {
             let mut pipeline = SimplePipeline::new();
 
             // Simulate deeper pipeline with more stages
-            for depth in 0..10 {
+            for _depth in 0..10 {
                 pipeline.tick();
             }
 
-            black_box(depth);
+            black_box(pipeline.cycles);
         })
     });
 }
@@ -341,14 +342,14 @@ fn bench_out_of_order(c: &mut Criterion) {
 
                 // Execute ready instructions
                 let mut executed = Vec::new();
-                for (i, rs) in reservation_stations.iter_mut().enumerate() {
+                for (i, _rs) in reservation_stations.iter_mut().enumerate() {
                     // Simplified: all instructions are ready
                     executed.push(i);
                 }
 
                 // Remove executed instructions
                 for i in executed.iter().rev() {
-                    reorder_buffer.push_back(reservation_stations.remove(*i).unwrap());
+                    reorder_buffer.push_back(reservation_stations.remove(*i));
                     completed += 1;
                 }
 
