@@ -185,3 +185,116 @@ impl fmt::Display for Fcsr {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fcsr_new() {
+        let fcsr = Fcsr::new();
+        assert_eq!(fcsr.rounding_mode(), 0);
+        assert!(!fcsr.has_flags());
+    }
+
+    #[test]
+    fn test_fcsr_reset() {
+        let mut fcsr = Fcsr::new();
+        fcsr.set_rounding_mode(3);
+        fcsr.set_flag(FpFlags::NV);
+        fcsr.reset();
+        assert_eq!(fcsr.rounding_mode(), 0);
+        assert!(!fcsr.has_flags());
+    }
+
+    #[test]
+    fn test_fcsr_rounding_mode() {
+        let mut fcsr = Fcsr::new();
+        fcsr.set_rounding_mode(4);
+        assert_eq!(fcsr.rounding_mode(), 4);
+
+        // Test that only lower 3 bits are used
+        fcsr.set_rounding_mode(0xFF);
+        assert_eq!(fcsr.rounding_mode(), 7);
+    }
+
+    #[test]
+    fn test_fcsr_flags() {
+        let mut fcsr = Fcsr::new();
+
+        fcsr.set_flag(FpFlags::NV);
+        assert!(fcsr.flags().contains(FpFlags::NV));
+        assert!(fcsr.has_flags());
+
+        fcsr.set_flag(FpFlags::DZ);
+        assert!(fcsr.flags().contains(FpFlags::DZ));
+
+        fcsr.clear_flags();
+        assert!(!fcsr.has_flags());
+    }
+
+    #[test]
+    fn test_fcsr_read_write() {
+        let mut fcsr = Fcsr::new();
+        fcsr.set_rounding_mode(3);
+        fcsr.set_flag(FpFlags::NV | FpFlags::NX);
+
+        let value = fcsr.read();
+
+        let mut fcsr2 = Fcsr::new();
+        fcsr2.write(value);
+
+        assert_eq!(fcsr2.rounding_mode(), 3);
+        assert!(fcsr2.flags().contains(FpFlags::NV));
+        assert!(fcsr2.flags().contains(FpFlags::NX));
+    }
+
+    #[test]
+    fn test_fcsr_default_nan() {
+        let fcsr = Fcsr::new();
+        let nan = fcsr.default_nan();
+        assert_eq!(nan, 0x7FC0_0000_FFFF_FFFFu64);
+    }
+
+    #[test]
+    fn test_rounding_mode_from_frm() {
+        assert_eq!(RoundingMode::from_frm(0), RoundingMode::RNE);
+        assert_eq!(RoundingMode::from_frm(1), RoundingMode::RTZ);
+        assert_eq!(RoundingMode::from_frm(2), RoundingMode::RDN);
+        assert_eq!(RoundingMode::from_frm(3), RoundingMode::RUP);
+        assert_eq!(RoundingMode::from_frm(4), RoundingMode::RMM);
+        assert_eq!(RoundingMode::from_frm(5), RoundingMode::RNE); // Reserved
+        assert_eq!(RoundingMode::from_frm(7), RoundingMode::RNE); // Reserved
+    }
+
+    #[test]
+    fn test_rounding_mode_apply() {
+        assert_eq!(RoundingMode::RNE.apply(2.5), 2.5);
+        assert_eq!(RoundingMode::RTZ.apply(2.7), 2.0);
+        assert_eq!(RoundingMode::RTZ.apply(-2.7), -2.0);
+        assert_eq!(RoundingMode::RDN.apply(2.7), 2.0);
+        assert_eq!(RoundingMode::RDN.apply(-2.7), -3.0);
+        assert_eq!(RoundingMode::RUP.apply(2.2), 3.0);
+        assert_eq!(RoundingMode::RUP.apply(-2.7), -2.0);
+        assert_eq!(RoundingMode::RMM.apply(2.5), 2.5);
+    }
+
+    #[test]
+    fn test_fcsr_display_no_flags() {
+        let fcsr = Fcsr::new();
+        let output = format!("{}", fcsr);
+        assert!(output.contains("none"));
+    }
+
+    #[test]
+    fn test_fcsr_display_with_flags() {
+        let mut fcsr = Fcsr::new();
+        fcsr.set_flag(FpFlags::NV | FpFlags::DZ | FpFlags::OF | FpFlags::UF | FpFlags::NX);
+        let output = format!("{}", fcsr);
+        assert!(output.contains("NV"));
+        assert!(output.contains("DZ"));
+        assert!(output.contains("OF"));
+        assert!(output.contains("UF"));
+        assert!(output.contains("NX"));
+    }
+}

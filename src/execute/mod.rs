@@ -6,6 +6,13 @@
 // Re-export sub-modules
 pub mod amo;
 pub mod b_type; // Branch instructions
+pub mod d_arith; // RV64D arithmetic instructions
+pub mod d_classify; // RV64D classification instruction
+pub mod d_compare; // RV64D comparison instructions
+pub mod d_convert; // RV64D conversion instructions
+pub mod d_div_sqrt; // RV64D division and square root
+pub mod d_load_store; // RV64D load/store instructions
+pub mod d_madd; // RV64D fused multiply-add instructions
 pub mod div; // RV64M divide instructions
 pub mod f_arith; // RV64F arithmetic instructions
 pub mod f_classify; // RV64F classification instruction
@@ -58,6 +65,16 @@ pub use self::amo::{
     exec_amoxor,
 };
 pub use self::b_type::exec_branch;
+pub use self::d_arith::{exec_fadd_d, exec_fmul_d, exec_fsub_d};
+pub use self::d_classify::exec_fclass_d;
+pub use self::d_compare::{exec_feq_d, exec_fle_d, exec_flt_d};
+pub use self::d_convert::{
+    exec_fcvt_d_l, exec_fcvt_d_lu, exec_fcvt_d_s, exec_fcvt_d_w, exec_fcvt_d_wu, exec_fcvt_l_d,
+    exec_fcvt_lu_d, exec_fcvt_s_d, exec_fcvt_w_d, exec_fcvt_wu_d,
+};
+pub use self::d_div_sqrt::{exec_fdiv_d, exec_fsqrt_d};
+pub use self::d_load_store::{exec_fld, exec_fsd as exec_fsd_d};
+pub use self::d_madd::{exec_fmadd_d, exec_fmsub_d, exec_fnmadd_d, exec_fnmsub_d};
 pub use self::div::{exec_div, exec_divu, exec_rem, exec_remu};
 pub use self::f_arith::{exec_fadd_s, exec_fmul_s, exec_fsub_s};
 pub use self::f_classify::exec_fclass_s;
@@ -103,8 +120,8 @@ impl Executor {
             Opcode::Branch => exec_branch(instr, state, mem),
             Opcode::Load => exec_load(instr, state, mem),
             Opcode::Store => exec_store(instr, state, mem),
-            Opcode::LoadFp => exec_flw(instr, state, mem),
-            Opcode::StoreFp => exec_fsd(instr, state, mem),
+            Opcode::LoadFp => self.execute_fpload(instr, state, mem),
+            Opcode::StoreFp => self.execute_fpstore(instr, state, mem),
             Opcode::OpImm => exec_op_imm(instr, state, mem),
             Opcode::Op => exec_op(instr, state, mem),
             Opcode::OpFp => self.execute_fpu(instr, state, mem),
@@ -123,44 +140,104 @@ impl Executor {
     ) -> Result<(), ExecuteError> {
         let funct7 = instr.funct7.unwrap_or(0);
         let funct3 = instr.funct3.map(|f| f as u8).unwrap_or(0);
+        let is_d_extension = (funct7 & 0x20) != 0; // Bit 5 set for D extension
 
-        match (funct7, funct3) {
-            // FADD.S
-            (0x00, 0) => exec_fadd_s(instr, state, mem),
-            // FSUB.S
-            (0x04, 0) => exec_fsub_s(instr, state, mem),
-            // FMUL.S
-            (0x08, 0) => exec_fmul_s(instr, state, mem),
-            // FDIV.S
-            (0x0C, 0) => exec_fdiv_s(instr, state, mem),
-            // FSQRT.S
-            (0x2C, 0) => exec_fsqrt_s(instr, state, mem),
-            // FSGNJ.S, FSGNJN.S, FSGNJX.S
-            (0x10, 0) => exec_fadd_s(instr, state, mem), // Placeholder
-            // FMIN.S, FMAX.S
-            (0x14, 0) => exec_fadd_s(instr, state, mem), // Placeholder
-            // FCVT.W.S, FCVT.L.S
-            (0x60, 0) => exec_fcvt_w_s(instr, state, mem),
-            // FCVT.WU.S, FCVT.LU.S
-            (0x61, 0) => exec_fcvt_wu_s(instr, state, mem),
-            // FMV.X.W
-            (0x70, 0) => exec_fcvt_w_s(instr, state, mem), // Placeholder
-            // FCLASS.S
-            (0x70, 1) => exec_fclass_s(instr, state, mem),
-            // FCVT.S.W, FCVT.S.L
-            (0x68, 0) => exec_fcvt_s_w(instr, state, mem),
-            // FCVT.S.WU, FCVT.S.LU
-            (0x69, 0) => exec_fcvt_s_wu(instr, state, mem),
-            // FMV.W.X
-            (0x78, 0) => exec_fcvt_s_w(instr, state, mem), // Placeholder
-            // FEQ.S, FLT.S, FLE.S
-            (0x50, 0) => exec_feq_s(instr, state, mem),
-            // FMSUB.S
-            (0x01, 0) => exec_fmsub_s(instr, state, mem),
-            // FNMSUB.S
-            (0x02, 0) => exec_fnmsub_s(instr, state, mem),
-            // FNMADD.S
-            (0x03, 0) => exec_fnmadd_s(instr, state, mem),
+        match (funct7 & 0x1F, funct3, is_d_extension) {
+            // FADD.S / FADD.D
+            (0x00, 0, false) => exec_fadd_s(instr, state, mem),
+            (0x00, 0, true) => exec_fadd_d(instr, state, mem),
+            // FSUB.S / FSUB.D
+            (0x04, 0, false) => exec_fsub_s(instr, state, mem),
+            (0x04, 0, true) => exec_fsub_d(instr, state, mem),
+            // FMUL.S / FMUL.D
+            (0x08, 0, false) => exec_fmul_s(instr, state, mem),
+            (0x08, 0, true) => exec_fmul_d(instr, state, mem),
+            // FDIV.S / FDIV.D
+            (0x0C, 0, false) => exec_fdiv_s(instr, state, mem),
+            (0x0C, 0, true) => exec_fdiv_d(instr, state, mem),
+            // FSQRT.S / FSQRT.D
+            (0x2C, 0, false) => exec_fsqrt_s(instr, state, mem),
+            (0x2C, 0, true) => exec_fsqrt_d(instr, state, mem),
+            // FCLASS.S / FCLASS.D
+            (0x70, 1, false) => exec_fclass_s(instr, state, mem),
+            (0x70, 1, true) => exec_fclass_d(instr, state, mem),
+            // FCVT.W.S / FCVT.L.S / FCVT.W.D / FCVT.L.D
+            (0x60, 0, false) => exec_fcvt_w_s(instr, state, mem),
+            (0x60, 0, true) => exec_fcvt_l_d(instr, state, mem),
+            // FCVT.WU.S / FCVT.LU.S / FCVT.WU.D / FCVT.LU.D
+            (0x61, 0, false) => exec_fcvt_wu_s(instr, state, mem),
+            (0x61, 0, true) => exec_fcvt_lu_d(instr, state, mem),
+            // FCVT.S.W / FCVT.S.L / FCVT.D.W / FCVT.D.L
+            (0x68, 0, false) => exec_fcvt_s_w(instr, state, mem),
+            (0x68, 0, true) => exec_fcvt_d_l(instr, state, mem),
+            // FCVT.S.WU / FCVT.S.LU / FCVT.D.WU / FCVT.D.LU
+            (0x69, 0, false) => exec_fcvt_s_wu(instr, state, mem),
+            (0x69, 0, true) => exec_fcvt_d_lu(instr, state, mem),
+            // FCVT.S.D (Single from Double) / FCVT.D.S (Double from Single)
+            (0x40, 0, false) => exec_fcvt_s_d(instr, state, mem),
+            (0x40, 0, true) => exec_fcvt_d_s(instr, state, mem),
+            // FCVT.W.D / FCVT.L.D
+            (0x41, 0, false) => exec_fcvt_w_s(instr, state, mem), // Not used
+            (0x41, 0, true) => exec_fcvt_w_d(instr, state, mem),
+            // FCVT.WU.D / FCVT.LU.D
+            #[allow(unreachable_patterns)]
+            (0x41, 0, false) => exec_fcvt_wu_s(instr, state, mem), // Not used
+            #[allow(unreachable_patterns)]
+            (0x41, 0, true) => exec_fcvt_wu_d(instr, state, mem),
+            // FCVT.D.W / FCVT.D.WU
+            (0x43, 0, false) => exec_fcvt_s_w(instr, state, mem), // Not used
+            (0x43, 0, true) => exec_fcvt_d_w(instr, state, mem),
+            // FCVT.D.W / FCVT.D.WU
+            (0x42, 0, false) => exec_fcvt_s_wu(instr, state, mem), // Not used
+            (0x42, 0, true) => exec_fcvt_d_wu(instr, state, mem),
+            // FEQ.S / FLT.S / FLE.S / FEQ.D / FLT.D / FLE.D
+            (0x50, 0, false) => exec_feq_s(instr, state, mem),
+            (0x50, 0, true) => exec_feq_d(instr, state, mem),
+            // FMSUB.S / FMSUB.D
+            (0x01, 0, false) => exec_fmsub_s(instr, state, mem),
+            (0x01, 0, true) => exec_fmsub_d(instr, state, mem),
+            // FNMSUB.S / FNMSUB.D
+            (0x02, 0, false) => exec_fnmsub_s(instr, state, mem),
+            (0x02, 0, true) => exec_fnmsub_d(instr, state, mem),
+            // FNMADD.S / FNMADD.D
+            (0x03, 0, false) => exec_fnmadd_s(instr, state, mem),
+            (0x03, 0, true) => exec_fnmadd_d(instr, state, mem),
+            _ => Err(ExecuteError::InvalidOperation),
+        }
+    }
+
+    /// Execute Floating-Point Load instructions
+    fn execute_fpload(
+        &self,
+        instr: &DecodedInstruction,
+        state: &mut CoreState,
+        mem: &mut dyn MemoryInterface,
+    ) -> Result<(), ExecuteError> {
+        let funct3 = instr.funct3.map(|f| f as u8).unwrap_or(0);
+
+        match funct3 {
+            // FLW (Load 32-bit float)
+            0x02 => exec_flw(instr, state, mem),
+            // FLD (Load 64-bit double)
+            0x03 => exec_fld(instr, state, mem),
+            _ => Err(ExecuteError::InvalidOperation),
+        }
+    }
+
+    /// Execute Floating-Point Store instructions
+    fn execute_fpstore(
+        &self,
+        instr: &DecodedInstruction,
+        state: &mut CoreState,
+        mem: &mut dyn MemoryInterface,
+    ) -> Result<(), ExecuteError> {
+        let funct3 = instr.funct3.map(|f| f as u8).unwrap_or(0);
+
+        match funct3 {
+            // FSW (Store 32-bit float)
+            0x02 => exec_fsd(instr, state, mem),
+            // FSD (Store 64-bit double)
+            0x03 => exec_fsd_d(instr, state, mem),
             _ => Err(ExecuteError::InvalidOperation),
         }
     }
