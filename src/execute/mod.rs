@@ -8,7 +8,7 @@ use crate::memory::{MemoryError, MemoryInterface};
 use thiserror::Error;
 
 /// Instruction executor function type
-type ExecutorFn = fn(
+pub type ExecutorFn = fn(
     &Executor,
     &DecodedInstruction,
     &mut CoreState,
@@ -109,7 +109,7 @@ impl Executor {
 
     /// LUI (Load Upper Immediate (LUI) (LUI))
     #[inline]
-    fn exec_lui(
+    pub fn exec_lui(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
@@ -127,7 +127,7 @@ impl Executor {
 
     /// AUIPC (Add Upper Immediate to PC (AUIPC) (AUIPC))
     #[inline]
-    fn exec_auipc(
+    pub fn exec_auipc(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
@@ -145,7 +145,7 @@ impl Executor {
 
     /// JAL (Jump and Link (JAL) (JAL))
     #[inline]
-    fn exec_jal(
+    pub fn exec_jal(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
@@ -168,7 +168,7 @@ impl Executor {
 
     /// JALR (Jump and Link (JAL) (JAL) Register)
     #[inline]
-    fn exec_jalr(
+    pub fn exec_jalr(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
@@ -200,7 +200,7 @@ impl Executor {
     /// - BLTU (110): Branch if Less Than Unsigned
     /// - BGEU (111): Branch if Greater or Equal Unsigned
     #[inline]
-    fn exec_branch(
+    pub fn exec_branch(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
@@ -237,7 +237,7 @@ impl Executor {
 
     /// 加载指令
     #[inline]
-    fn exec_load(
+    pub fn exec_load(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
@@ -270,7 +270,7 @@ impl Executor {
 
     /// 存储指令
     #[inline]
-    fn exec_store(
+    pub fn exec_store(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
@@ -298,7 +298,7 @@ impl Executor {
 
     /// I-type operation instructions
     #[inline]
-    fn exec_op_imm(
+    pub fn exec_op_imm(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
@@ -381,7 +381,7 @@ impl Executor {
 
     /// R-type operation instructions
     #[inline]
-    fn exec_op(
+    pub fn exec_op(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
@@ -451,7 +451,7 @@ impl Executor {
 
     /// System instructions (ECALL, EBREAK)
     #[inline]
-    fn exec_system(
+    pub fn exec_system(
         &self,
         instr: &DecodedInstruction,
         _state: &mut CoreState,

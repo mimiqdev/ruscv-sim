@@ -2,6 +2,7 @@
 
 pub mod core;
 pub mod decode;
+pub mod dispatch;
 pub mod execute;
 pub mod memory;
 pub mod tlm;
