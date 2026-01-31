@@ -50,6 +50,7 @@ impl Executor {
             Opcode::Store => self.exec_store(instr, state, mem),
             Opcode::OpImm => self.exec_op_imm(instr, state),
             Opcode::Op => self.exec_op(instr, state),
+            Opcode::System => self.exec_system(instr, state),
             _ => Err(ExecuteError::InvalidOperation),
         }
     }
@@ -377,6 +378,23 @@ impl Executor {
         }
 
         Ok(())
+    }
+
+    /// System instructions (ECALL, EBREAK)
+    fn exec_system(
+        &self,
+        instr: &DecodedInstruction,
+        _state: &mut CoreState,
+    ) -> Result<(), ExecuteError> {
+        let Some(imm) = instr.imm else {
+            return Err(ExecuteError::InvalidOperation);
+        };
+
+        match imm {
+            0 => Err(ExecuteError::Ecall),
+            1 => Err(ExecuteError::Ebreak),
+            _ => Err(ExecuteError::InvalidOperation),
+        }
     }
 }
 
@@ -993,5 +1011,51 @@ mod tests {
 
         // 256 >> 4 = 16
         assert_eq!(state.regs[2], 16);
+    }
+
+    #[test]
+    fn test_ecall() {
+        let mut state = CoreState::default();
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::System,
+            funct3: None,
+            funct7: None,
+            rs1: None,
+            rs2: None,
+            rd: None,
+            imm: Some(0), // ECALL
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        let result = executor.execute(&instr, &mut state, &mut mem);
+
+        assert!(matches!(result, Err(ExecuteError::Ecall)));
+    }
+
+    #[test]
+    fn test_ebreak() {
+        let mut state = CoreState::default();
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::System,
+            funct3: None,
+            funct7: None,
+            rs1: None,
+            rs2: None,
+            rd: None,
+            imm: Some(1), // EBREAK
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        let result = executor.execute(&instr, &mut state, &mut mem);
+
+        assert!(matches!(result, Err(ExecuteError::Ebreak)));
     }
 }

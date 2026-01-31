@@ -200,9 +200,18 @@ impl InstructionDecoder {
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
                 decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
             }
-            Opcode::MiscMem | Opcode::System => {
-                // 简化处理 - 暂时返回未实现
+            Opcode::MiscMem => {
                 return Err(DecodeError::UnimplementedInstruction);
+            }
+            Opcode::System => {
+                decoded.format = InstructionFormat::IType;
+                // ECALL: imm[20:0] = 0, EBREAK: imm[20:0] = 1
+                // Extract imm[20:0] from bits [31:20] (funct12) shifted
+                // ECALL: funct7=0, rs2=0, funct3=0, rd=0 -> imm[20:0] = funct7 << 14 | rs2 << 9 | funct3 << 6 | rd << 1
+                // Actually simpler: the imm[20:0] field is in bits [31:20] (12-bit funct7 in upper, etc)
+                // For SYSTEM: bits [31:20] is the imm field
+                let imm_20_0 = (instruction >> 20) & 0xFFF;
+                decoded.imm = Some(imm_20_0);
             }
             _ => {
                 return Err(DecodeError::ReservedInstruction);
@@ -249,5 +258,29 @@ mod tests {
         assert_eq!(decoded.rs1, Some(2));
         assert_eq!(decoded.rs2, Some(3));
         assert_eq!(decoded.funct3, Some(Funct3::AddSub));
+    }
+
+    #[test]
+    fn test_ecall_decode() {
+        // ECALL: 0b0000000_00000_000_00000_1110011
+        // funct7=0, rs2=0, funct3=0, rd=0, opcode=SYSTEM
+        let instruction = 0x00000073;
+        let decoder = InstructionDecoder::new();
+        let decoded = decoder.decode(instruction).unwrap();
+
+        assert_eq!(decoded.opcode, Opcode::System);
+        assert_eq!(decoded.imm, Some(0));
+    }
+
+    #[test]
+    fn test_ebreak_decode() {
+        // EBREAK: 0b0000000_00001_000_00000_1110011
+        // funct7=0, rs2=1, funct3=0, rd=0, opcode=SYSTEM
+        let instruction = 0x00100073;
+        let decoder = InstructionDecoder::new();
+        let decoded = decoder.decode(instruction).unwrap();
+
+        assert_eq!(decoded.opcode, Opcode::System);
+        assert_eq!(decoded.imm, Some(1));
     }
 }
