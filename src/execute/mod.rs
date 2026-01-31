@@ -1064,8 +1064,10 @@ mod tests {
 
     #[test]
     fn test_beq_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 10;
         state.regs[2] = 10;
 
@@ -1091,8 +1093,10 @@ mod tests {
 
     #[test]
     fn test_beq_not_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 10;
         state.regs[2] = 20;
 
@@ -1118,8 +1122,10 @@ mod tests {
 
     #[test]
     fn test_bne_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 10;
         state.regs[2] = 20;
 
@@ -1145,8 +1151,10 @@ mod tests {
 
     #[test]
     fn test_bne_not_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 10;
         state.regs[2] = 10;
 
@@ -1172,8 +1180,10 @@ mod tests {
 
     #[test]
     fn test_blt_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = -5i32 as u32; // 0xFFFFFFFB
         state.regs[2] = 10;
 
@@ -1199,8 +1209,10 @@ mod tests {
 
     #[test]
     fn test_blt_not_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 10;
         state.regs[2] = 5;
 
@@ -1226,8 +1238,10 @@ mod tests {
 
     #[test]
     fn test_blt_negative_vs_positive() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = -10i32 as u32; // 0xFFFFFFF6
         state.regs[2] = 5;
 
@@ -1254,8 +1268,10 @@ mod tests {
 
     #[test]
     fn test_bge_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 10;
         state.regs[2] = 5;
 
@@ -1281,8 +1297,10 @@ mod tests {
 
     #[test]
     fn test_bge_equal() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 10;
         state.regs[2] = 10;
 
@@ -1309,8 +1327,10 @@ mod tests {
 
     #[test]
     fn test_bge_not_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 5;
         state.regs[2] = 10;
 
@@ -1336,8 +1356,10 @@ mod tests {
 
     #[test]
     fn test_bgeu_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 10;
         state.regs[2] = 5;
 
@@ -1363,8 +1385,10 @@ mod tests {
 
     #[test]
     fn test_bgeu_large_unsigned() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 0xFFFFFFFE; // Large unsigned (treated as -2 signed)
         state.regs[2] = 5;
 
@@ -1391,8 +1415,10 @@ mod tests {
 
     #[test]
     fn test_bgeu_not_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 5;
         state.regs[2] = 10;
 
@@ -1418,8 +1444,10 @@ mod tests {
 
     #[test]
     fn test_bltu_taken() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 5;
         state.regs[2] = 10;
 
@@ -1445,8 +1473,10 @@ mod tests {
 
     #[test]
     fn test_bltu_not_taken_large_unsigned() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 0xFFFFFFFE; // Large unsigned
         state.regs[2] = 5;
 
@@ -1473,8 +1503,10 @@ mod tests {
 
     #[test]
     fn test_bltu_negative_vs_positive() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = -1i32 as u32; // 0xFFFFFFFF
         state.regs[2] = 5;
 
@@ -1501,8 +1533,10 @@ mod tests {
 
     #[test]
     fn test_bltu_small_vs_large() {
-        let mut state = CoreState::default();
-        state.pc = 0x1000;
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         state.regs[1] = 5;
         state.regs[2] = 0xFFFFFFFF;
 
