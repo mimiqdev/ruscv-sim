@@ -244,17 +244,13 @@ impl Executor {
 
         let rs1_val = state.regs[rs1 as usize] as i32;
         let imm_val = imm as i32;
-        let mut result: i32 = 0;
 
         // ADDI (add immediate)
-        if funct3 == Funct3::AddSub {
-            result = rs1_val.wrapping_add(imm_val);
-        }
-        // Other OpImm instructions (SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI)
-        // can be added here in the future
-        else {
+        if funct3 != Funct3::AddSub {
             return Err(ExecuteError::InvalidOperation);
         }
+
+        let result = rs1_val.wrapping_add(imm_val);
 
         if rd != 0 {
             state.regs[rd as usize] = result as u32;
