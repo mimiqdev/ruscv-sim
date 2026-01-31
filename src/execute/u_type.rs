@@ -3,9 +3,8 @@
 //! U-type (Upper Immediate-type) instructions operate on upper immediates.
 
 use crate::core::CoreState;
-use crate::decode::{DecodedInstruction, InstructionFormat, Opcode};
+use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
-use crate::memory::SimpleMemory;
 
 /// LUI (Load Upper Immediate)
 ///
@@ -50,6 +49,8 @@ pub fn exec_auipc(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::{InstructionFormat, Opcode};
+    use crate::memory::SimpleMemory;
 
     fn create_test_instr_u_type(opcode: Opcode, rd: u8, imm: u32) -> DecodedInstruction {
         DecodedInstruction {
@@ -89,5 +90,44 @@ mod tests {
         exec_auipc(&instr, &mut state, &mut mem).unwrap();
 
         assert_eq!(state.regs[1], 0x2000);
+    }
+
+    #[test]
+    fn test_lui_rd_zero() {
+        let mut state = CoreState::default();
+        let instr = create_test_instr_u_type(Opcode::Lui, 0, 0x12345000);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_lui(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[0], 0);
+    }
+
+    #[test]
+    fn test_auipc_rd_zero() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        let instr = create_test_instr_u_type(Opcode::Auipc, 0, 0x12345000);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_auipc(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[0], 0);
+    }
+
+    #[test]
+    fn test_auipc_large_offset() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        let instr = create_test_instr_u_type(Opcode::Auipc, 1, 0x12345000);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_auipc(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[1], 0x1000 + 0x12345000);
     }
 }

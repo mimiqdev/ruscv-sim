@@ -3,9 +3,8 @@
 //! B-type (Branch-type) instructions perform conditional branches.
 
 use crate::core::CoreState;
-use crate::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
+use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
-use crate::memory::SimpleMemory;
 
 /// Branch instructions (exec_branch)
 ///
@@ -54,6 +53,8 @@ pub fn exec_branch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::{InstructionFormat, Opcode};
+    use crate::memory::SimpleMemory;
     use crate::decode::Funct3;
 
     fn create_test_instr_b_type(funct3: Funct3, rs1: u8, rs2: u8, imm: u32) -> DecodedInstruction {
@@ -183,6 +184,176 @@ mod tests {
         state.regs[2] = 5;
 
         let instr = create_test_instr_b_type(Funct3::And, 1, 2, 0x20);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_branch(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bne_not_taken() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        state.regs[1] = 10;
+        state.regs[2] = 10;
+
+        let instr = create_test_instr_b_type(Funct3::Sll, 1, 2, 0x20);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_branch(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_blt_not_taken() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        state.regs[1] = 10;
+        state.regs[2] = 5;
+
+        let instr = create_test_instr_b_type(Funct3::Xor, 1, 2, 0x20);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_branch(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_blt_negative_vs_positive() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        state.regs[1] = (-10i32) as u32;
+        state.regs[2] = 5;
+
+        let instr = create_test_instr_b_type(Funct3::Xor, 1, 2, 0x20);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_branch(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bge_equal() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        state.regs[1] = 10;
+        state.regs[2] = 10;
+
+        let instr = create_test_instr_b_type(Funct3::SrlSra, 1, 2, 0x20);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_branch(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bge_not_taken() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        state.regs[1] = 5;
+        state.regs[2] = 10;
+
+        let instr = create_test_instr_b_type(Funct3::SrlSra, 1, 2, 0x20);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_branch(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_bgeu_large_unsigned() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        state.regs[1] = 0xFFFFFFFE;
+        state.regs[2] = 5;
+
+        let instr = create_test_instr_b_type(Funct3::And, 1, 2, 0x20);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_branch(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bgeu_not_taken() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        state.regs[1] = 5;
+        state.regs[2] = 10;
+
+        let instr = create_test_instr_b_type(Funct3::And, 1, 2, 0x20);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_branch(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_bltu_not_taken_large_unsigned() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        state.regs[1] = 0xFFFFFFFE;
+        state.regs[2] = 5;
+
+        let instr = create_test_instr_b_type(Funct3::Or, 1, 2, 0x20);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_branch(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_bltu_negative_vs_positive() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        state.regs[1] = (-1i32) as u32;
+        state.regs[2] = 5;
+
+        let instr = create_test_instr_b_type(Funct3::Or, 1, 2, 0x20);
+        let mut mem = SimpleMemory::new(0x1000);
+
+        exec_branch(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_bltu_small_vs_large() {
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
+        state.regs[1] = 5;
+        state.regs[2] = 0xFFFFFFFF;
+
+        let instr = create_test_instr_b_type(Funct3::Or, 1, 2, 0x20);
         let mut mem = SimpleMemory::new(0x1000);
 
         exec_branch(&instr, &mut state, &mut mem).unwrap();

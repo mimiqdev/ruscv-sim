@@ -3,9 +3,8 @@
 //! J-type (Jump-type) instructions perform unconditional jumps.
 
 use crate::core::CoreState;
-use crate::decode::{DecodedInstruction, InstructionFormat, Opcode};
+use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
-use crate::memory::SimpleMemory;
 
 /// JAL (Jump and Link)
 ///
@@ -62,6 +61,8 @@ pub fn exec_jalr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::{InstructionFormat, Opcode};
+    use crate::memory::SimpleMemory;
 
     fn create_test_instr_j_type(opcode: Opcode, rd: u8, imm: u32) -> DecodedInstruction {
         DecodedInstruction {

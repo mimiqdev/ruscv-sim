@@ -44,7 +44,6 @@ mod tests {
     use super::*;
     use crate::core::CoreState;
     use crate::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
-    use crate::execute::ExecuteError;
     use crate::memory::{MemoryInterface, SimpleMemory};
 
     fn create_test_instr_s_type(funct3: Funct3, rs1: u8, rs2: u8, imm: u32) -> DecodedInstruction {

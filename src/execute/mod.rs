@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_executor_creation() {
-        let executor = Executor::new();
+        let _executor = Executor::new();
         // Can't test execution without valid instruction
         assert!(true);
     }
