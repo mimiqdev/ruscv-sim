@@ -17,7 +17,7 @@ use crate::decode::{DecodedInstruction, Opcode};
 use crate::memory::{MemoryError, MemoryInterface};
 use thiserror::Error;
 
-/// Instruction executor function type
+/// Instruction executor function type (3 args - no Executor needed)
 pub type ExecutorFn =
     fn(&DecodedInstruction, &mut CoreState, &mut dyn MemoryInterface) -> Result<(), ExecuteError>;
 
@@ -38,7 +38,6 @@ pub enum ExecuteError {
     MemoryError(#[from] MemoryError),
 }
 
-// Re-export executor functions from sub-modules
 pub use self::b_type::exec_branch;
 pub use self::i_type::{exec_load, exec_op_imm};
 pub use self::j_type::{exec_jal, exec_jalr};
@@ -88,12 +87,9 @@ impl Default for Executor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_executor_creation() {
-        let _executor = Executor::new();
-        // Can't test execution without valid instruction
-        assert!(true);
+        // Just verify the Executor struct can be created
+        let _ = super::Executor::new();
     }
 }
