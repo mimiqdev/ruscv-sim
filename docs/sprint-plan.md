@@ -391,7 +391,7 @@ pub fn decode(insn: u32) -> Option<Instruction> {
 - [x] 集成测试：特权模式切换正常 (M→S→U) ✅
 - [x] 代码质量：覆盖率 > 85%，所有测试通过 (191/191) ✅
 - [x] 集成验收：与 RV64I 指令正确对接 (CSRRW/CSRRC 等) ✅
-- [ ] 性能测试：CSR 访问 < 50ns (延迟到 Sprint 4.5)
+- [ ] 性能测试：CSR 访问 < 50ns (移至 Sprint 4.5)
 
 ### Sprint 完成检查清单
 - [x] 所有验收标准 ✅
@@ -412,7 +412,6 @@ pub fn decode(insn: u32) -> Option<Instruction> {
 | 实现 satp | 24h | ✅ 完成 | 10 个 S-mode CSR |
 | 实现 time/timeh | 8h | ✅ 完成 | 3 个计数器 CSR |
 | 实现特权模式切换 | 24h | ✅ 完成 | 19 个特权测试通过 |
-| 实现陷阱处理 | 24h | ⏸️ 延迟 | **移至 Sprint 5** |
 | CSR 测试 | 24h | ✅ 完成 | 94 个新测试 |
 
 **设计决策**:
@@ -420,7 +419,6 @@ pub fn decode(insn: u32) -> Option<Instruction> {
 - ✅ 基于 HashMap 的注册表，支持动态 CSR 查找
 - ✅ 原子读-修改-写操作 (CSRRS/CSRRC)
 - ✅ 只读 CSR 强制保护 (hartid, mvendorid 等)
-- ⚠️ **陷阱处理移至 Sprint 5** (与 trap handling 一起实现)
 
 **CSR 框架设计**:
 
@@ -491,11 +489,9 @@ pub enum FieldAttr {
 
 ### 3.5 Sprint 5: 陷阱处理 + RV64M/A 指令
 
-**目标**: 实现陷阱处理机制 (MRET/SRET)，实现乘除指令、原子操作指令
+**目标**: 实现陷阱处理机制 (MRET/SRET + Trap Handling + CSR 副作用)，实现乘除指令、原子操作指令
 
 **背景**: Sprint 4 成功实现 CSR 框架，现需补充陷阱处理机制以完成特权模式完整支持
-
-**优先级调整**: 根据 PR #4 反馈，陷阱处理从 Sprint 4 移至此 Sprint，优先于 RV64M/A 指令
 
 ### 产出物清单
 | 类型 | 产出 | 文件路径 | 验收标准 |
@@ -538,6 +534,7 @@ pub enum FieldAttr {
 |------|------|------|--------|
 | **实现陷阱处理框架** | 24h | Sprint 4 CSR | **P0** |
 | **实现 MRET/SRET** | 16h | 陷阱处理 | **P0** |
+| **实现 CSR 副作用处理** | 16h | 陷阱处理 | **P0** |
 | **陷阱处理测试** | 16h | MRET/SRET | **P0** |
 | 实现 MUL 乘法 | 16h | RV64I | P1 |
 | 实现 MULH/MULHU/MULHSU | 16h | MUL | P1 |
@@ -1115,3 +1112,7 @@ pub enum FieldAttr {
 | | | | - 新增 94 个测试，总计 191 个测试通过 |
 | | | | - 调整 Sprint 5: 陷阱处理优先于 RV64M/A |
 | | | | - 陷阱处理从 Sprint 4 延迟至 Sprint 5 |
+| v3.3 | 2026-01-31 | - | **清理延迟任务标记** |
+| | | | - 移除 Sprint 4 中的 "⏸️ 延迟" 和 "⚠️" 标记 |
+| | | | - 规范化 Sprint 5 目标和任务 |
+| | | | - 新增 Sprint 5 任务: CSR 副作用处理 (P0) |
