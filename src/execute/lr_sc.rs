@@ -359,6 +359,9 @@ mod tests {
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
 
+        // Write initial value to memory first so read succeeds
+        mem.write_word(0x400, 0x0000_0000).unwrap();
+
         // Try SC without LR first - should fail
         state.regs[1] = 0x400;
         state.regs[2] = 0x1234_5678;
@@ -369,7 +372,7 @@ mod tests {
         assert_ne!(state.regs[3], 0); // Failure
 
         // Memory should be unchanged
-        assert!(mem.read_word(0x400).is_err());
+        assert_eq!(mem.read_word(0x400).unwrap(), 0x0000_0000);
     }
 
     #[test]

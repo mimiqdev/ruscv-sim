@@ -105,8 +105,8 @@ fn test_mul_max_values() {
     let mut mem = SimpleMemory::new(0x1000);
 
     ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
-    // 2147483647 * 2 = 4294967294
-    assert_eq!(state.regs[3], 0xFFFE_FFFE);
+    // 2147483647 * 2 = 4294967294 = 0xFFFFFFFE
+    assert_eq!(state.regs[3], 0xFFFF_FFFE);
 }
 
 #[test]
@@ -215,8 +215,8 @@ fn test_mulh_both_negative() {
 
     ruscv_sim::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
     // (-2^31) * (-2^31) = 2^62
-    // Upper 32 bits of 2^62 = 0x3FFF_FFFF
-    assert_eq!(state.regs[3], 0x3FFF_FFFF);
+    // Upper 32 bits of 2^62 = 2^30 = 0x4000_0000
+    assert_eq!(state.regs[3], 0x4000_0000);
 }
 
 // ========================================
@@ -293,9 +293,9 @@ fn test_mulhsu_basic() {
     let mut mem = SimpleMemory::new(0x1000);
 
     ruscv_sim::execute::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
-    // (-2^31) * 2^32 = -2^63
-    // Upper 32 bits = 0xFFFF_FFFF
-    assert_eq!(state.regs[3], 0xFFFF_FFFF);
+    // (-2^31) * 2^31 = -2^62
+    // Upper 32 bits = 0xC000_0000
+    assert_eq!(state.regs[3], 0xC000_0000);
 }
 
 #[test]
@@ -378,7 +378,7 @@ fn test_mulh_corner_cases() {
         (0x4000_0000, 2, 0),                     // 2^30 * 2 = 2^31, upper = 0
         (0x4000_0000, 4, 1),                     // 2^30 * 4 = 2^32, upper = 1
         (-0x4000_0000, 4, -1),                   // -2^30 * 4 = -2^32, upper = -1
-        (0x2000_0000, 0x2000_0000, 0x1000_0000), // (2^29)^2 = 2^58, upper = 2^30
+        (0x2000_0000, 0x2000_0000, 0x0400_0000), // (2^29)^2 = 2^58, upper = 2^26
         (-1, -1, 0),                             // (-1) * (-1) = 1, upper = 0
     ];
 
@@ -450,13 +450,20 @@ fn test_mul_different_registers() {
                 if rd != rs1 && rd != rs2 {
                     let mut state = CoreState::default();
                     state.regs[rs1 as usize] = 7;
-                    state.regs[rs2 as usize] = 8;
+                    // When rs1 == rs2, use same value; otherwise use different value
+                    if rs1 == rs2 {
+                        state.regs[rs2 as usize] = 8; // Will overwrite rs1, so use 8
+                    } else {
+                        state.regs[rs2 as usize] = 8;
+                    }
 
                     let instr = create_mul_instr(rs1, rs2, rd, 0b000_0001);
                     let mut mem = SimpleMemory::new(0x1000);
 
                     ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
-                    assert_eq!(state.regs[rd as usize], 56);
+                    let result = state.regs[rd as usize];
+                    let expected = if rs1 == rs2 { 64 } else { 56 }; // 8*8=64 when rs1==rs2, else 7*8=56
+                    assert_eq!(result, expected, "Failed for rs1={}, rs2={}, rd={}", rs1, rs2, rd);
                 }
             }
         }

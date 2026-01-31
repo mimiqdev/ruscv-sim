@@ -613,7 +613,7 @@ mod mret_sret_tests {
         state.csr.write(supervisor::SEPC, 0x2000).unwrap();
         state
             .csr
-            .write(supervisor::SSTATUS, 0x0000_0120) // SPIE = 1, SPP = 0 (U-mode)
+            .write(supervisor::SSTATUS, 0x0000_0020) // SPIE = 1, SPP = 0 (U-mode)
             .unwrap();
 
         let instr = create_sret_instr();

@@ -42,7 +42,9 @@ pub fn exec_div(
         (dividend / divisor) as u32
     };
 
-    state.regs[rd] = result;
+    if rd != 0 {
+        state.regs[rd] = result;
+    }
     Ok(())
 }
 
@@ -73,7 +75,9 @@ pub fn exec_divu(
         dividend / divisor
     };
 
-    state.regs[rd] = result;
+    if rd != 0 {
+        state.regs[rd] = result;
+    }
     Ok(())
 }
 
@@ -107,7 +111,9 @@ pub fn exec_rem(
         (dividend % divisor) as u32
     };
 
-    state.regs[rd] = result;
+    if rd != 0 {
+        state.regs[rd] = result;
+    }
     Ok(())
 }
 
@@ -138,7 +144,9 @@ pub fn exec_remu(
         dividend % divisor
     };
 
-    state.regs[rd] = result;
+    if rd != 0 {
+        state.regs[rd] = result;
+    }
     Ok(())
 }
 
@@ -466,15 +474,15 @@ mod tests {
     #[test]
     fn test_rem_x0_dest() {
         let mut state = CoreState::default();
-        state.regs[1] = 43;
-        state.regs[2] = 6;
+        state.regs[1] = 100;
+        state.regs[2] = 30;
 
         let instr = create_div_instr(1, 2, 0, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_rem(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        assert_eq!(state.regs[0], 0);
+        assert_eq!(state.regs[0], 0); // x0 always reads as 0
     }
 
     #[test]
