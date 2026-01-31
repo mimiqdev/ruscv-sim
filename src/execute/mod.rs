@@ -131,6 +131,14 @@ impl Executor {
     }
 
     /// 分支指令
+    ///
+    /// Branch instruction encoding (funct3 field):
+    /// - BEQ (000): Branch if Equal
+    /// - BNE (001): Branch if Not Equal
+    /// - BLT (100): Branch if Less Than (signed)
+    /// - BGE (101): Branch if Greater or Equal (signed)
+    /// - BLTU (110): Branch if Less Than Unsigned
+    /// - BGEU (111): Branch if Greater or Equal Unsigned
     fn exec_branch(
         &self,
         instr: &DecodedInstruction,
@@ -144,26 +152,19 @@ impl Executor {
 
         let rs1_val = state.regs[rs1 as usize];
         let rs2_val = state.regs[rs2 as usize];
-        let take_branch = match funct3 {
-            Funct3::AddSub => rs1_val == rs2_val, // BEQ
-            Funct3::Slt => rs1_val != rs2_val,    // BNE
-            Funct3::Sltu => {
-                // BLT (signed comparison)
-                (rs1_val as i32) < (rs2_val as i32)
-            }
-            Funct3::Xor => {
-                // BGE (signed comparison)
-                (rs1_val as i32) >= (rs2_val as i32)
-            }
-            Funct3::SrlSra => {
-                // BLTU (unsigned comparison)
-                rs1_val < rs2_val
-            }
+
+        // Extract raw funct3 value (3 bits) for branch instruction decoding
+        // Branch instructions use specific funct3 codes: 000=BEQ, 001=BNE, 100=BLT, 101=BGE, 110=BLTU, 111=BGEU
+        let funct3_val = funct3 as u8;
+        let take_branch = match funct3_val {
+            0b000 => rs1_val == rs2_val,                   // BEQ
+            0b001 => rs1_val != rs2_val,                   // BNE
+            0b100 => (rs1_val as i32) < (rs2_val as i32),  // BLT (signed)
+            0b101 => (rs1_val as i32) >= (rs2_val as i32), // BGE (signed)
+            0b110 => rs1_val < rs2_val,                    // BLTU (unsigned)
+            0b111 => rs1_val >= rs2_val,                   // BGEU (unsigned)
             _ => false,
         };
-
-        // 注意：Branch conditions need correction based on funct3 value
-        // BEQ=000, BNE=001, BLT=100, BGE=101, BLTU=110, BGEU=111
 
         if take_branch {
             state.pc = state.pc.wrapping_add(imm);
@@ -1057,5 +1058,472 @@ mod tests {
         let result = executor.execute(&instr, &mut state, &mut mem);
 
         assert!(matches!(result, Err(ExecuteError::Ebreak)));
+    }
+
+    // Branch instruction tests
+
+    #[test]
+    fn test_beq_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 10;
+        state.regs[2] = 10;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::AddSub), // BEQ (funct3=000)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20), // Branch offset
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_beq_not_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 10;
+        state.regs[2] = 20;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::AddSub), // BEQ (funct3=000)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000); // PC unchanged
+    }
+
+    #[test]
+    fn test_bne_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 10;
+        state.regs[2] = 20;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::Sll), // BNE (funct3=001)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bne_not_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 10;
+        state.regs[2] = 10;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::Sll), // BNE (funct3=001)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_blt_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = -5i32 as u32; // 0xFFFFFFFB
+        state.regs[2] = 10;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::Xor), // BLT (funct3=100)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_blt_not_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 10;
+        state.regs[2] = 5;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::Xor), // BLT (funct3=100)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_blt_negative_vs_positive() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = -10i32 as u32; // 0xFFFFFFF6
+        state.regs[2] = 5;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::Xor), // BLT (funct3=100)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // -10 < 5, so branch should be taken
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bge_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 10;
+        state.regs[2] = 5;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::SrlSra), // BGE (funct3=101)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bge_equal() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 10;
+        state.regs[2] = 10;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::SrlSra), // BGE (funct3=101)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 10 >= 10, so branch should be taken
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bge_not_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 5;
+        state.regs[2] = 10;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::SrlSra), // BGE (funct3=101)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_bgeu_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 10;
+        state.regs[2] = 5;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::And), // BGEU (funct3=111)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bgeu_large_unsigned() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 0xFFFFFFFE; // Large unsigned (treated as -2 signed)
+        state.regs[2] = 5;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::And), // BGEU (funct3=111)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 0xFFFFFFFE >= 5 as unsigned, branch should be taken
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bgeu_not_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 5;
+        state.regs[2] = 10;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::And), // BGEU (funct3=111)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_bltu_taken() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 5;
+        state.regs[2] = 10;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::Or), // BLTU (funct3=110)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.pc, 0x1020);
+    }
+
+    #[test]
+    fn test_bltu_not_taken_large_unsigned() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 0xFFFFFFFE; // Large unsigned
+        state.regs[2] = 5;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::Or), // BLTU (funct3=110)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 0xFFFFFFFE is not < 5 as unsigned
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_bltu_negative_vs_positive() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = -1i32 as u32; // 0xFFFFFFFF
+        state.regs[2] = 5;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::Or), // BLTU (funct3=110)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 0xFFFFFFFF is not < 5 as unsigned (it's larger)
+        assert_eq!(state.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_bltu_small_vs_large() {
+        let mut state = CoreState::default();
+        state.pc = 0x1000;
+        state.regs[1] = 5;
+        state.regs[2] = 0xFFFFFFFF;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::BType,
+            opcode: Opcode::Branch,
+            funct3: Some(Funct3::Or), // BLTU (funct3=110)
+            funct7: None,
+            rs1: Some(1),
+            rs2: Some(2),
+            rd: None,
+            imm: Some(0x20),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 5 < 0xFFFFFFFF as unsigned
+        assert_eq!(state.pc, 0x1020);
     }
 }
