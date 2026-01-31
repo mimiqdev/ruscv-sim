@@ -33,7 +33,7 @@ fn test_fdiv_basic() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute_fdiv_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::execute::exec_fdiv_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(3).get();
     assert!((result - 5.0).abs() < 1e-5);
@@ -61,7 +61,7 @@ fn test_fdiv_by_zero() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute_fdiv_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::execute::exec_fdiv_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(3).get();
     assert!(result.is_infinite());
@@ -88,7 +88,7 @@ fn test_fsqrt_basic() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute_fsqrt_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::execute::exec_fsqrt_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(2).get();
     assert!((result - 4.0).abs() < 1e-5);
@@ -115,7 +115,7 @@ fn test_fsqrt_negative() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute_fsqrt_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::execute::exec_fsqrt_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(2).get();
     assert!(result.is_nan());

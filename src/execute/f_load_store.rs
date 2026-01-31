@@ -72,12 +72,12 @@ mod tests {
         state.regs[1] = 0x100; // Base address
 
         // Write a float value to memory
-        let test_value: f32 = 3.14159;
+        let test_value: f32 = std::f32::consts::PI;
         mem.write_word(0x100, test_value.to_bits()).unwrap();
 
         // Create FLW instruction: FLW f1, 0(x1)
         // imm=0, rs1=1, rd=2 (f1), funct3=010, opcode=LoadFp
-        let flw_instr = (0u32 << 20) | (1u32 << 15) | (0b010u32 << 12) | (2u32 << 7) | 0b000_0111;
+        let flw_instr = (1u32 << 15) | (0b010u32 << 12) | (2u32 << 7) | 0b000_0111;
 
         let decoded = DecodedInstruction {
             raw: flw_instr,
@@ -108,12 +108,12 @@ mod tests {
         state.regs[1] = 0x100; // Base address
 
         // Write a float value to FPR (NaN-boxed)
-        let test_value: f32 = 2.71828;
+        let test_value: f32 = std::f32::consts::E;
         state.fpr.write(3, Fpr::new(test_value));
 
         // Create FSD instruction: FSD f3, 0(x1)
         // imm=0, rs2=3, rs1=1, funct3=010, opcode=StoreFp
-        let fsd_instr = (0u32 << 25) | (3u32 << 20) | (1u32 << 15) | (0b010u32 << 12) | 0b010_0111;
+        let fsd_instr = (3u32 << 20) | (1u32 << 15) | (0b010u32 << 12) | 0b010_0111;
 
         let decoded = DecodedInstruction {
             raw: fsd_instr,

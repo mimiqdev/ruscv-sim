@@ -7,7 +7,7 @@ use ruscv_sim::CoreState;
 
 #[test]
 fn test_fpr_nan_boxing() {
-    let value: f32 = 3.14159;
+    let value: f32 = std::f32::consts::PI;
     let fpr = Fpr::new(value);
 
     assert!((fpr.get() - value).abs() < 1e-5);
@@ -16,7 +16,7 @@ fn test_fpr_nan_boxing() {
 
 #[test]
 fn test_fpr_bits() {
-    let value: f32 = 2.71828;
+    let value: f32 = std::f32::consts::E;
     let fpr = Fpr::new(value);
 
     let bits = fpr.bits();
@@ -142,8 +142,8 @@ fn test_core_state_fpr_integration() {
     let mut state = CoreState::default();
 
     // FPR should be accessible
-    state.fpr.write(1, Fpr::new(3.14));
-    assert!((state.fpr.read(1).get() - 3.14).abs() < 1e-5);
+    state.fpr.write(1, Fpr::new(std::f32::consts::PI));
+    assert!((state.fpr.read(1).get() - std::f32::consts::PI).abs() < 1e-5);
 }
 
 #[test]

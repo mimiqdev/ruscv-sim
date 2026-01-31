@@ -35,7 +35,7 @@ fn test_fmadd_basic() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute_fmadd_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::execute::exec_fmadd_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(4).get();
     assert!((result - 7.0).abs() < 1e-5);
@@ -65,7 +65,7 @@ fn test_fmsub_basic() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute_fmsub_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::execute::exec_fmsub_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(4).get();
     assert!((result - 5.0).abs() < 1e-5);
@@ -95,7 +95,7 @@ fn test_fnmsub_basic() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute_fnmsub_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::execute::exec_fnmsub_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(4).get();
     assert!((result - (-5.0)).abs() < 1e-5);
@@ -125,7 +125,7 @@ fn test_fnmadd_basic() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute_fnmadd_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::execute::exec_fnmadd_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(4).get();
     assert!((result - (-7.0)).abs() < 1e-5);
@@ -155,7 +155,7 @@ fn test_fmadd_zero() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute_fmadd_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::execute::exec_fmadd_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(4).get();
     assert!((result - 3.0).abs() < 1e-5);
