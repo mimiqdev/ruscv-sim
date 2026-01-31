@@ -72,6 +72,108 @@ impl AddiInstruction {
 - `execute()`: Execute instruction with immediate
 - `decode()`: Decode and sign-extend immediate
 
+#### `#[derive(STypeExecutor)]`
+
+Generates execution logic for S-type instructions (store operations).
+
+**S-type format**: `imm[11:5] rs2[24:20] rs1[19:15] funct3[14:12] imm[4:0] opcode[6:0]`
+
+**Usage**:
+```rust
+#[derive(STypeExecutor)]
+struct SwInstruction {
+    rs1: u8,
+    rs2: u8,
+    imm: i16,
+}
+```
+
+**Generated code**:
+- `execute()`: Execute store instruction with address calculation
+- `decode()`: Decode and combine immediate bits
+- `store()`: Store value to memory (stub for override)
+
+#### `#[derive(BTypeExecutor)]`
+
+Generates execution logic for B-type instructions (branch operations).
+
+**B-type format**: `imm[12|10:5] rs2[24:20] rs1[19:15] funct3[14:12] imm[4:0|11] opcode[6:0]`
+
+**Usage**:
+```rust
+#[derive(BTypeExecutor)]
+struct BeqInstruction {
+    rs1: u8,
+    rs2: u8,
+    imm: i32,
+}
+```
+
+**Generated code**:
+- `execute()`: Execute branch with condition evaluation
+- `decode()`: Decode and sign-extend branch offset
+- `evaluate_condition()`: Evaluate branch condition (stub for override)
+
+#### `#[derive(UTypeExecutor)]`
+
+Generates execution logic for U-type instructions (upper immediate operations).
+
+**U-type format**: `imm[31:12] rd[11:7] opcode[6:0]`
+
+**Usage**:
+```rust
+#[derive(UTypeExecutor)]
+struct LuiInstruction {
+    rd: u8,
+    imm: u32,
+}
+```
+
+**Generated code**:
+- `execute()`: Execute U-type instruction
+- `decode()`: Decode upper immediate
+- `compute()`: Compute result (stub for override)
+
+#### `#[derive(JTypeExecutor)]`
+
+Generates execution logic for J-type instructions (jump operations).
+
+**J-type format**: `imm[20|10:1|11|19:12] rd[11:7] opcode[6:0]`
+
+**Usage**:
+```rust
+#[derive(JTypeExecutor)]
+struct JalInstruction {
+    rd: u8,
+    imm: i32,
+}
+```
+
+**Generated code**:
+- `execute()`: Execute jump and link
+- `decode()`: Decode and sign-extend jump offset
+
+#### `#[derive(InstructionTest)]`
+
+Generates automatic unit tests for instructions.
+
+**Usage**:
+```rust
+#[derive(InstructionTest)]
+struct AddTest {
+    rd: u8,
+    rs1: u8,
+    rs2: u8,
+}
+```
+
+**Generated tests**:
+- `test_basic_execution()`: Basic functionality test
+- `test_zero_operands()`: Edge case with zeros
+- `test_max_values()`: Maximum value boundary
+- `test_min_values()`: Minimum value boundary
+- `test_random_values()`: 100 random test cases
+
 #### `instruction_batch!` macro (planned)
 
 Generate multiple related instructions at once:
@@ -201,13 +303,16 @@ let inst = custom.encode(1, 2, 3);
 - ✅ Template system
 - ✅ Examples and tests
 
-### Phase 2 (Planned)
-- [ ] Full instruction_batch! macro
-- [ ] Full instruction_set! macro
-- [ ] S-type, B-type, U-type, J-type derives
-- [ ] Automatic test generation
+### Phase 2 (Completed)
+- ✅ S-type derive macro (`STypeExecutor`)
+- ✅ B-type derive macro (`BTypeExecutor`)
+- ✅ U-type derive macro (`UTypeExecutor`)
+- ✅ J-type derive macro (`JTypeExecutor`)
+- ✅ Automatic test generation (`InstructionTest`)
 
 ### Phase 3 (Future)
+- [ ] Full instruction_batch! macro
+- [ ] Full instruction_set! macro
 - [ ] Instruction fusion detection
 - [ ] Optimization hints
 - [ ] Vectorization support

@@ -108,14 +108,12 @@ Benchmarks should be run:
 - During sprint reviews
 - Before releases
 
-## Future Benchmarks
+## Future Benchmarks (Completed)
 
-Planned additions:
-- Branch prediction performance
-- Pipeline simulation
-- Cache simulation
-- Interrupt handling latency
-- Multi-core scaling
+The following benchmarks have been added:
+- ✅ Branch prediction performance (`branch_predict_bench.rs`)
+- ✅ Pipeline simulation (`pipeline_bench.rs`)
+- ✅ Cache simulation (`cache_bench.rs`)
 
 ## CI Integration
 
