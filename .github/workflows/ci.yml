@@ -102,8 +102,7 @@ jobs:
           toolchain: stable
 
       - name: Run benchmarks
-        run: |
-          cargo bench --all-features -- --test-threads=1
+        run: cargo bench --all-features -- --bench
 
   # ==========================================
   # Job 4: Release Build
