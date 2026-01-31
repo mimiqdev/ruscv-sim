@@ -1089,6 +1089,73 @@ pub enum FieldAttr {
 
 ---
 
+## 8. 未来改进 (Future Improvements)
+
+以下功能超出 v1.0 范围，计划在后续版本中实现：
+
+### 8.1 64位原子操作 (64-bit AMO Support)
+
+**状态**: 未实现  
+**优先级**: 中  
+**影响指令**: 14 条
+
+| 指令 | funct5 | 描述 |
+|------|--------|------|
+| LR.D | 00010 | Load-Reserved 64-bit |
+| SC.D | 00011 | Store-Conditional 64-bit |
+| AMOSWAP.D | 00001 | Atomic Swap 64-bit |
+| AMOADD.D | 00001 | Atomic Add 64-bit |
+| AMOXOR.D | 00100 | Atomic XOR 64-bit |
+| AMOAND.D | 00011 | Atomic AND 64-bit |
+| AMOOR.D | 00110 | Atomic OR 64-bit |
+| AMOMIN.D | 01000 | Atomic Min (signed) 64-bit |
+| AMOMAX.D | 01010 | Atomic Max (signed) 64-bit |
+| AMOMINU.D | 01001 | Atomic Min (unsigned) 64-bit |
+| AMOMAXU.D | 01011 | Atomic Max (unsigned) 64-bit |
+
+**依赖**: 64位内存读写接口 (read_double/write_double)  
+**估计工时**: 24h
+
+### 8.2 可选指令 (Optional Instructions)
+
+#### WRS.NT / WRS.ST
+- **状态**: 未实现  
+- **优先级**: 低  
+- **描述**: Wait for Register Supply (optional RVA23)
+- **RISC-V Spec**: Section X.X (TBD)
+- **估计工时**: 8h
+
+#### 其他可选指令
+- SFENCE.VMA (已在 CSR 框架考虑)
+- HFENCE.GVMA (虚拟化扩展)
+
+### 8.3 多核支持 (Multi-core Support)
+
+**状态**: 已知限制  
+**优先级**: 移出 v1.0
+
+当前限制：
+- 全局 reservation singleton 不支持多 hart
+- 共享内存模型未实现
+- 缓存一致性协议未实现
+
+**参考**: `src/execute/lr_sc.rs` 注释说明
+
+### 8.4 测试增强 (Testing Enhancements)
+
+#### Proptest 集成
+- **状态**: 建议实现  
+- **优先级**: 低  
+- **描述**: 属性测试用于算术指令 (交换性、溢出行为)
+- **依赖**: proptest crate
+- **估计工时**: 16h
+
+#### 模糊测试 (Fuzz Testing)
+- 使用 libFuzzer 进行边界条件测试
+- 估计工时: 8h
+
+---
+
 ## 7. 变更日志
 
 | 版本 | 日期 | 作者 | 变更说明 |

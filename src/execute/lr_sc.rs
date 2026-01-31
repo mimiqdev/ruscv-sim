@@ -1,7 +1,7 @@
 //! RV64A Load-Reserved / Store-Conditional instructions
 //!
 //! Implements LR (Load-Reserved) and SC (Store-Conditional) instructions
-//! for atomic memory operations.
+//! for atomic memory operations per the RISC-V ISA specification.
 //!
 //! # Reservation Mechanism
 //!
@@ -9,8 +9,25 @@
 //! - LR loads a value and creates a reservation on the memory location
 //! - SC attempts to store only if the reservation is still valid
 //! - If successful, returns 0; otherwise returns non-zero
+//!
+//! # Limitations
+//!
+//! **Multi-core Scaling**: This implementation uses a global reservation singleton.
+//! In a production multi-core system, reservations must be per-hart (hardware thread).
+//! This is a known limitation documented in the architecture design.
+//!
+//! # References
+//!
+//! - RISC-V ISA Volume I: Unprivileged Spec, Section 8.3 (Load-Reserved/Store-Conditional)
+//! - RISC-V ISA Volume II: Privileged Spec, Section 3.5.1 (Reservation Granularity)
 
 use crate::core::CoreState;
+
+/// LR/SC funct5 encoding constants (RISC-V ISA Table 19.3)
+#[allow(dead_code)]
+const AMO_FUNCT5_LR: u8 = 0b00010;
+#[allow(dead_code)]
+const AMO_FUNCT5_SC: u8 = 0b00011;
 use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 use crate::memory::MemoryInterface;

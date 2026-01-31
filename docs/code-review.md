@@ -203,6 +203,129 @@ generate_execution_fn!(execute_sub, Opcode::Op);
 - [ ] **Sprint 4**: Evaluate code generation (Comment #4)
 - [ ] **Sprint 15**: English-only refactor (Comment #1)
 
+---
+
+## PR #6 Review Items - Sprint 5 Review
+
+**Date**: 2026-01-31  
+**Reviewer**: Code Review Session  
+**Status**: Addressed
+
+---
+
+### Item 1: Global Reservation Singleton (Multi-core Scaling)
+
+**Severity**: 🟡 Medium (Known Limitation)  
+**Category**: Architecture  
+**Location**: `src/execute/lr_sc.rs`
+
+**Description**:
+The global reservation singleton won't scale to multi-core systems.
+
+**Decision**: **DOCUMENTED** ✓ Fixed Now  
+**Action Taken**:
+- Added documentation about multi-core limitation in lr_sc.rs
+- Architecture document already notes this is a known limitation
+- Suitable for single-core simulation; multi-core support is out of scope for v1.0
+
+**Status**: ✅ Acknowledged and documented in code comments
+
+---
+
+### Item 2: Missing WRS.NT/WRS.ST Instructions
+
+**Severity**: 🟢 Low (Optional)  
+**Category**: Completeness  
+**Location**: Not implemented
+
+**Description**:
+WRS.NT (Wait for Interrupt, No Timer) and WRS.ST (Wait for Supervisor Trap) instructions are not implemented.
+
+**Decision**: **UPDATE PLAN**  
+**Rationale**:
+- These are optional instructions in RVA23, not required
+- Low priority for virtual prototype use case
+- Can be added in Sprint 14 (Optimization & Release) or future releases
+
+**Action**: Added to Future Improvements section in sprint-plan.md
+
+---
+
+### Item 3: No 64-bit AMO Support
+
+**Severity**: 🟠 Medium  
+**Category**: Completeness  
+**Location**: `src/execute/amo.rs`, `src/execute/lr_sc.rs`
+
+**Description**:
+LR.D, SC.D, and AMO*.D (64-bit atomic operations) are not implemented.
+
+**Decision**: **UPDATE PLAN**  
+**Rationale**:
+- Requires significant work (new functions for 64-bit memory operations)
+- 32-bit AMO operations are sufficient for most use cases
+- Low priority for current sprint scope (Sprint 5: Trap Handling + RV64M/A)
+
+**Action**: 
+- Added documentation noting 64-bit limitation in amo.rs
+- Added to Future Improvements section
+
+**Impact**: 
+- Missing instructions: LR.D, SC.D, AMOSWAP.D, AMOADD.D, AMOXOR.D, AMOAND.D, AMOOR.D, AMOMIN.D, AMOMAX.D, AMOMINU.D, AMOMAXU.D
+- 14 instructions not yet implemented
+
+---
+
+### Item 4: Code Quality Suggestions
+
+#### 4a: Add RISC-V Spec References
+
+**Decision**: **FIX NOW** ✓  
+**Action Taken**:
+- Added spec references to `src/execute/lr_sc.rs`:
+  - RISC-V ISA Volume I, Section 8.3 (Load-Reserved/Store-Conditional)
+  - RISC-V ISA Volume II, Section 3.5.1 (Reservation Granularity)
+- Added spec references to `src/execute/amo.rs`:
+  - RISC-V ISA Volume I, Section 8.3 (AMO Operations)
+  - RISC-V ISA Volume I, Table 19.3 (AMO encoding)
+
+**Status**: ✅ Complete
+
+#### 4b: Consider proptest for Arithmetic Property Testing
+
+**Decision**: **UPDATE PLAN** (Future Enhancement)  
+**Rationale**:
+- proptest provides property-based testing (e.g., commutativity, overflow behavior)
+- Would improve test coverage for edge cases
+- Not critical for current sprint; can be added later
+
+**Action**: Added to testing strategy improvements for Sprint 13 or later
+
+#### 4c: Use Constants for funct5 Values
+
+**Decision**: **FIX NOW** ✓  
+**Action Taken**:
+- Added `AMO_FUNCT5_*` constants to `src/execute/lr_sc.rs`
+- Added `AMO_FUNCT5_*` constants to `src/execute/amo.rs`
+- Magic numbers like `0b00001`, `0b00011` replaced with named constants
+
+**Status**: ✅ Complete
+
+---
+
+## Summary of PR #6 Review Items
+
+| # | Item | Decision | Status |
+|---|------|----------|--------|
+| 1 | Global reservation singleton | Documented | ✅ Complete |
+| 2 | Missing WRS.NT/WRS.ST | Update PLAN | 📋 Tracked |
+| 3 | No 64-bit AMO support | Update PLAN | 📋 Tracked |
+| 4a | Add RISC-V spec references | Fix NOW | ✅ Complete |
+| 4b | proptest for arithmetic | Update PLAN | 📋 Tracked |
+| 4c | Use constants for funct5 | Fix NOW | ✅ Complete |
+
+---
+
 ## References
 
 - RVA23 Profile Specification

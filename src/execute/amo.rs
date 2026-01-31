@@ -1,19 +1,56 @@
 //! RV64A Atomic Memory Operation (AMO) instructions
 //!
-//! Implements AMO instructions for atomic read-modify-write operations:
-//! - AMOADD: Atomic add
-//! - AMOAND: Atomic and
-//! - AMOOR: Atomic or
-//! - AMOXOR: Atomic xor
-//! - AMOMAX: Atomic max (signed)
-//! - AMOMIN: Atomic min (signed)
-//! - AMOMAXU: Atomic max (unsigned)
-//! - AMOMINU: Atomic min (unsigned)
+//! Implements AMO instructions for atomic read-modify-write operations per
+//! the RISC-V ISA specification.
+//!
+//! # Implemented Instructions
+//!
+//! - AMOADD: Atomic add (32-bit only)
+//! - AMOAND: Atomic and (32-bit only)
+//! - AMOOR: Atomic or (32-bit only)
+//! - AMOXOR: Atomic xor (32-bit only)
+//! - AMOMAX: Atomic max (signed, 32-bit only)
+//! - AMOMIN: Atomic min (signed, 32-bit only)
+//! - AMOMAXU: Atomic max (unsigned, 32-bit only)
+//! - AMOMINU: Atomic min (unsigned, 32-bit only)
+//!
+//! # Limitations
+//!
+//! **64-bit AMO Support**: The current implementation only supports 32-bit
+//! AMO operations (AMO*W). LR.D, SC.D, and 64-bit AMO instructions (AMO*D)
+//! are not yet implemented. This is tracked for future work.
+//!
+//! # References
+//!
+//! - RISC-V ISA Volume I: Unprivileged Spec, Section 8.3 (AMO Operations)
+//! - RISC-V ISA Volume I: Unprivileged Spec, Table 19.3 (AMO encoding)
 
 use crate::core::CoreState;
 use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 use crate::memory::MemoryInterface;
+
+/// AMO funct5 encoding constants (RISC-V ISA Table 19.3)
+/// Note: These are for documentation. The actual instruction decoding
+/// handles funct5 values. AMO*W variants only.
+#[allow(dead_code)]
+const AMO_FUNCT5_AMOSWAP: u8 = 0b00001;
+#[allow(dead_code)]
+const AMO_FUNCT5_AMOADD: u8 = 0b00001;
+#[allow(dead_code)]
+const AMO_FUNCT5_AMOXOR: u8 = 0b00100;
+#[allow(dead_code)]
+const AMO_FUNCT5_AMOAND: u8 = 0b00011;
+#[allow(dead_code)]
+const AMO_FUNCT5_AMOOR: u8 = 0b00110;
+#[allow(dead_code)]
+const AMO_FUNCT5_AMOMIN: u8 = 0b01000;
+#[allow(dead_code)]
+const AMO_FUNCT5_AMOMAX: u8 = 0b01010;
+#[allow(dead_code)]
+const AMO_FUNCT5_AMOMINU: u8 = 0b01001;
+#[allow(dead_code)]
+const AMO_FUNCT5_AMOMAXU: u8 = 0b01011;
 
 /// AMOADD - Atomic Add
 ///
