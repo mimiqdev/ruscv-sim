@@ -17,8 +17,8 @@ pub mod system; // System instructions
 pub mod u_type; // U-type instructions // RV64A atomic memory operation instructions
 
 use crate::core::CoreState;
-use crate::decode::Funct3;
 use crate::csr::CsrError;
+use crate::decode::Funct3;
 use crate::decode::{DecodedInstruction, Opcode};
 use crate::memory::{MemoryError, MemoryInterface};
 use thiserror::Error;
