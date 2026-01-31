@@ -43,25 +43,13 @@ impl Default for PipelineInstruction {
 }
 
 /// Simple 5-stage pipeline simulator
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SimplePipeline {
     stages: [Option<PipelineInstruction>; 5],
     pub cycles: u64,
     pub instructions_completed: u64,
     pub stalls: u64,
     pub flushes: u64,
-}
-
-impl Default for SimplePipeline {
-    fn default() -> Self {
-        Self {
-            stages: [None; 5],
-            cycles: 0,
-            instructions_completed: 0,
-            stalls: 0,
-            flushes: 0,
-        }
-    }
 }
 
 impl SimplePipeline {
@@ -104,12 +92,10 @@ impl SimplePipeline {
 
     /// Check for data hazards (RAW, WAR, WAW)
     pub fn detect_data_hazard(&self, instr: &PipelineInstruction) -> bool {
-        for stage in &self.stages {
-            if let Some(staged) = stage {
-                // RAW hazard check
-                if instr.rs1 == staged.rd || instr.rs2 == staged.rd {
-                    return true;
-                }
+        for staged in self.stages.iter().flatten() {
+            // RAW hazard check
+            if instr.rs1 == staged.rd || instr.rs2 == staged.rd {
+                return true;
             }
         }
         false
@@ -187,9 +173,9 @@ fn bench_pipeline_throughput(c: &mut Criterion) {
             let mut pc = 0;
 
             // Simulate for enough cycles to complete all instructions
-            for cycle in 0..(instrs.len() + 5) {
+            for _cycle in 0..(instrs.len() + 5) {
                 if pc < instrs.len() {
-                    pipeline.fetch(instrs[pc].clone());
+                    pipeline.fetch(instrs[pc]);
                     pc += 1;
                 }
                 pipeline.tick();
@@ -214,10 +200,10 @@ fn bench_pipeline_with_hazards(c: &mut Criterion) {
                 let mut completed = 0;
                 let mut pc = 0;
 
-                for cycle in 0..(instrs.len() + 20) {
+                for _cycle in 0..(instrs.len() + 20) {
                     if pc < instrs.len() {
                         if !pipeline.detect_data_hazard(&instrs[pc]) {
-                            pipeline.fetch(instrs[pc].clone());
+                            pipeline.fetch(instrs[pc]);
                             pc += 1;
                         } else {
                             pipeline.insert_stall();
@@ -247,7 +233,7 @@ fn bench_pipeline_cpi(c: &mut Criterion) {
 
                 while pipeline.instructions_completed < count as u64 {
                     if pc < instrs.len() {
-                        pipeline.fetch(instrs[pc].clone());
+                        pipeline.fetch(instrs[pc]);
                         pc += 1;
                     }
                     pipeline.tick();
@@ -267,7 +253,7 @@ fn bench_pipeline_stalls(c: &mut Criterion) {
             let mut pipeline = SimplePipeline::new();
             let mut rng = rand::thread_rng();
 
-            for i in 0..1000 {
+            for _i in 0..1000 {
                 let stall_count = if rng.gen::<f64>() < 0.3 { 1 } else { 0 };
                 for _ in 0..stall_count {
                     pipeline.insert_stall();
@@ -354,9 +340,8 @@ fn bench_out_of_order(c: &mut Criterion) {
                 }
 
                 // Retire completed instructions
-                while let Some(instr) = reorder_buffer.pop_front() {
+                if let Some(instr) = reorder_buffer.pop_front() {
                     black_box(instr);
-                    break;
                 }
             }
 

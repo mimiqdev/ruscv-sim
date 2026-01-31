@@ -142,7 +142,6 @@ fn bench_cache_sequential(c: &mut Criterion) {
         line_size: 64,
         associativity: 4,
         latency: 4,
-        ..Default::default()
     });
     let accesses = generate_sequential_accesses(10000, 0x1000, 8);
 
@@ -165,7 +164,6 @@ fn bench_cache_random(c: &mut Criterion) {
         line_size: 64,
         associativity: 4,
         latency: 4,
-        ..Default::default()
     });
     let accesses = generate_random_accesses(10000, 0x1000, 64 * 1024);
 
@@ -210,7 +208,6 @@ fn bench_cache_working_set(c: &mut Criterion) {
         line_size: 64,
         associativity: 4,
         latency: 4,
-        ..Default::default()
     });
     let accesses = generate_working_set_accesses(10000, 512, 8192);
 
@@ -237,7 +234,6 @@ fn bench_cache_size_impact(c: &mut Criterion) {
             line_size: 64,
             associativity: 4,
             latency: 4,
-            ..Default::default()
         });
         let name = format!("cache_size_{}", size / 1024);
 
@@ -265,7 +261,6 @@ fn bench_cache_line_size_impact(c: &mut Criterion) {
             line_size,
             associativity: 4,
             latency: 4,
-            ..Default::default()
         });
         let name = format!("cache_line_size_{}", line_size);
 
@@ -293,7 +288,6 @@ fn bench_cache_associativity_impact(c: &mut Criterion) {
             line_size: 64,
             associativity: assoc,
             latency: 4,
-            ..Default::default()
         });
         let name = format!("cache_assoc_{}", assoc);
 
@@ -336,9 +330,8 @@ fn bench_cache_miss_penalty(c: &mut Criterion) {
                 line_size: 64,
                 associativity: 1,
                 latency: 4,
-                ..Default::default()
             });
-            let accesses = generate_random_accesses(1000, 0x1000, 1 * 1024 * 1024);
+            let accesses = generate_random_accesses(1000, 0x1000, 1024 * 1024);
 
             let mut total_latency = 0;
             for &addr in &accesses {
