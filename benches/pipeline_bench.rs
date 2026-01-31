@@ -152,7 +152,7 @@ pub fn generate_instruction_sequence(count: usize) -> Vec<PipelineInstruction> {
 /// Generate instruction sequence with data hazards
 pub fn generate_hazard_sequence(count: usize, hazard_rate: f64) -> Vec<PipelineInstruction> {
     let mut rng = rand::thread_rng();
-    let mut instrs = Vec::with_capacity(count);
+    let mut instrs: Vec<PipelineInstruction> = Vec::with_capacity(count);
 
     for i in 0..count {
         let has_hazard = rng.gen::<f64>() < hazard_rate;
