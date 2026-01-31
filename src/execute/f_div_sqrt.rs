@@ -6,9 +6,9 @@
 use crate::core::CoreState;
 use crate::decode::InstructionFormat;
 use crate::decode::{DecodedInstruction, Opcode};
+use crate::execute::ExecuteError;
 use crate::fpu::fcsr::{FpFlags, RoundingMode};
 use crate::fpu::Fpr;
-use crate::execute::ExecuteError;
 use crate::memory::{MemoryError, MemoryInterface};
 
 /// Apply rounding mode to result
@@ -75,7 +75,11 @@ pub fn exec_fdiv_s(
 
     // Handle division by zero result (inf or -inf)
     if val2 == 0.0 && !val1.is_infinite() {
-        let signed_result = if val1.signum() < 0.0 { -f32::INFINITY } else { f32::INFINITY };
+        let signed_result = if val1.signum() < 0.0 {
+            -f32::INFINITY
+        } else {
+            f32::INFINITY
+        };
         state.fpr.write(rd as usize, Fpr::new(signed_result));
     } else {
         state.fpr.write(rd as usize, Fpr::new(rounded));

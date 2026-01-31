@@ -117,8 +117,13 @@ impl FpuRegisterFile {
     }
 
     /// Get mutable reference to FCSR field for rounding mode
-    pub fn fcsr_bits(&self) -> u32 {
-        0 // Placeholder - will be updated when FCSR is integrated
+    pub fn fcsr(&self) -> &Fcsr {
+        unimplemented!("FCSR is stored in CoreState, not FpuRegisterFile")
+    }
+
+    /// Get mutable reference to FCSR field
+    pub fn fcsr_mut(&mut self) -> &mut Fcsr {
+        unimplemented!("FCSR is stored in CoreState, not FpuRegisterFile")
     }
 
     /// Check if register is valid (0-31)

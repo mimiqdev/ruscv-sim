@@ -6,19 +6,18 @@
 use crate::core::CoreState;
 use crate::decode::InstructionFormat;
 use crate::decode::{DecodedInstruction, Opcode};
-use crate::fpu::fcsr::{FpFlags, RoundingMode};
-use crate::fpu::Fpr;
 use crate::execute::ExecuteError;
-use crate::memory::{MemoryError, MemoryInterface};
+use crate::fpu::fcsr::FpFlags;
+use crate::fpu::Fpr;
+use crate::fpu::Fcsr;
 
 /// Apply rounding mode to result
-fn apply_rounding(result: f32, rm: RoundingMode) -> f32 {
+fn apply_rounding(result: f32, rm: u8) -> f32 {
     match rm {
-        RoundingMode::RNE => result, // Rust f32 already uses round-to-nearest
-        RoundingMode::RTZ => result.trunc(),
-        RoundingMode::RDN => result.floor(),
-        RoundingMode::RUP => result.ceil(),
-        RoundingMode::RMM => result, // Same as RNE for most cases
+        1 => result.trunc(),  // RTZ
+        2 => result.floor(),  // RDN
+        3 => result.ceil(),   // RUP
+        _ => result,          // RNE or others
     }
 }
 
@@ -33,25 +32,25 @@ pub fn exec_fadd_s(
     let rs1 = instr.rs1.expect("FADD.S requires rs1");
     let rs2 = instr.rs2.expect("FADD.S requires rs2");
     let rd = instr.rd.expect("FADD.S requires rd");
-    let rm = state.fpr.fcsr.rounding_mode();
+    let rm = state.fcsr.rounding_mode();
 
     let val1 = state.fpr.read(rs1 as usize).get();
     let val2 = state.fpr.read(rs2 as usize).get();
 
     let result = val1 + val2;
-    let rounded = apply_rounding(result, RoundingMode::from_frm(rm));
+    let rounded = apply_rounding(result, rm);
 
     // Check for inexact result
     if result != rounded {
-        state.fpr.fcsr.set_flag(FpFlags::NX);
+        state.fcsr.set_flag(FpFlags::NX);
     }
 
     // Check for overflow/underflow
     if result.is_infinite() && !val1.is_infinite() && !val2.is_infinite() {
-        state.fpr.fcsr.set_flag(FpFlags::OF);
+        state.fcsr.set_flag(FpFlags::OF);
     }
     if result.is_normal() && !val1.is_normal() && !val2.is_normal() {
-        state.fpr.fcsr.set_flag(FpFlags::UF);
+        state.fcsr.set_flag(FpFlags::UF);
     }
 
     state.fpr.write(rd as usize, Fpr::new(rounded));
@@ -66,18 +65,18 @@ pub fn exec_fsub_s(
     _mem: &mut dyn MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FSUB.S requires rs1");
-    let rs2 = instr.rs2.expect("FSUB.S requires rs2");
+ = instr.rs2.expect("FSUB    let rs2.S requires rs2");
     let rd = instr.rd.expect("FSUB.S requires rd");
-    let rm = state.fpr.fcsr.rounding_mode();
+    let rm = state.fcsr.rounding_mode();
 
     let val1 = state.fpr.read(rs1 as usize).get();
     let val2 = state.fpr.read(rs2 as usize).get();
 
     let result = val1 - val2;
-    let rounded = apply_rounding(result, RoundingMode::from_frm(rm));
+    let rounded = apply_rounding(result, rm);
 
     if result != rounded {
-        state.fpr.fcsr.set_flag(FpFlags::NX);
+        state.fcsr.set_flag(FpFlags::NX);
     }
 
     state.fpr.write(rd as usize, Fpr::new(rounded));
@@ -94,7 +93,7 @@ pub fn exec_fmul_s(
     let rs1 = instr.rs1.expect("FMUL.S requires rs1");
     let rs2 = instr.rs2.expect("FMUL.S requires rs2");
     let rd = instr.rd.expect("FMUL.S requires rd");
-    let rm = state.fpr.fcsr.rounding_mode();
+    let rm = state.fcsr.rounding_mode();
 
     let val1 = state.fpr.read(rs1 as usize).get();
     let val2 = state.fpr.read(rs2 as usize).get();
@@ -110,14 +109,14 @@ pub fn exec_fmul_s(
     }
 
     if !flags.is_empty() {
-        state.fpr.fcsr.set_flag(flags);
+        state.fcsr.set_flag(flags);
     }
 
     let result = val1 * val2;
-    let rounded = apply_rounding(result, RoundingMode::from_frm(rm));
+    let rounded = apply_rounding(result, rm);
 
     if result != rounded {
-        state.fpr.fcsr.set_flag(FpFlags::NX);
+        state.fcsr.set_flag(FpFlags::NX);
     }
 
     state.fpr.write(rd as usize, Fpr::new(rounded));
@@ -127,6 +126,7 @@ pub fn exec_fmul_s(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SimpleMemory;
 
     fn create_test_state() -> CoreState {
         CoreState::default()
@@ -148,6 +148,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -175,6 +176,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -202,6 +204,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -229,6 +232,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -256,6 +260,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,

@@ -7,17 +7,16 @@
 use crate::core::CoreState;
 use crate::decode::InstructionFormat;
 use crate::decode::{DecodedInstruction, Opcode};
+use crate::execute::ExecuteError;
 use crate::fpu::fcsr::FpFlags;
 use crate::fpu::Fpr;
-use crate::execute::ExecuteError;
-use crate::memory::{MemoryError, MemoryInterface};
 
 /// Execute FEQ.S (Floating-point Equal Single)
 /// Writes 1 to rd if rs1 equals rs2, 0 otherwise.
 pub fn exec_feq_s(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FEQ.S requires rs1");
     let rs2 = instr.rs2.expect("FEQ.S requires rs2");
@@ -28,7 +27,7 @@ pub fn exec_feq_s(
 
     // Check for NaN comparisons
     if val1.is_nan() || val2.is_nan() {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = 0;
     } else {
         state.regs[rd as usize] = if val1 == val2 { 1 } else { 0 };
@@ -42,7 +41,7 @@ pub fn exec_feq_s(
 pub fn exec_flt_s(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FLT.S requires rs1");
     let rs2 = instr.rs2.expect("FLT.S requires rs2");
@@ -53,7 +52,7 @@ pub fn exec_flt_s(
 
     // Check for NaN comparisons
     if val1.is_nan() || val2.is_nan() {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = 0;
     } else {
         state.regs[rd as usize] = if val1 < val2 { 1 } else { 0 };
@@ -67,7 +66,7 @@ pub fn exec_flt_s(
 pub fn exec_fle_s(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FLE.S requires rs1");
     let rs2 = instr.rs2.expect("FLE.S requires rs2");
@@ -78,7 +77,7 @@ pub fn exec_fle_s(
 
     // Check for NaN comparisons
     if val1.is_nan() || val2.is_nan() {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = 0;
     } else {
         state.regs[rd as usize] = if val1 <= val2 { 1 } else { 0 };
@@ -90,6 +89,7 @@ pub fn exec_fle_s(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SimpleMemory;
 
     fn create_test_state() -> CoreState {
         CoreState::default()
@@ -111,6 +111,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -137,6 +138,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -163,6 +165,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -189,6 +192,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -215,6 +219,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -241,6 +246,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -267,6 +273,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -275,7 +282,7 @@ mod tests {
         exec_feq_s(&decoded, &mut state, &mut mem).unwrap();
 
         assert_eq!(state.regs[3], 0);
-        assert!(state.fpr.fcsr.flags().contains(FpFlags::NV));
+        assert!(state.fcsr.flags().contains(FpFlags::NV));
     }
 
     #[test]
@@ -294,6 +301,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,

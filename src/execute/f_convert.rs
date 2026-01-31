@@ -6,10 +6,9 @@
 use crate::core::CoreState;
 use crate::decode::InstructionFormat;
 use crate::decode::{DecodedInstruction, Opcode};
-use crate::fpu::fcsr::{FpFlags, RoundingMode};
-use crate::fpu::Fpr;
 use crate::execute::ExecuteError;
-use crate::memory::{MemoryError, MemoryInterface};
+use crate::fpu::fcsr::FpFlags;
+use crate::fpu::Fpr;
 
 /// Convert i32 to f32
 fn fcvt_i32_to_f32(val: i32) -> f32 {
@@ -26,35 +25,35 @@ fn fcvt_u32_to_f32(val: u32) -> f32 {
 pub fn exec_fcvt_w_s(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FCVT.W.S requires rs1");
     let rd = instr.rd.expect("FCVT.W.S requires rd");
-    let _rm = state.fpr.fcsr.rounding_mode();
+    let _rm = state.fcsr.rounding_mode();
 
     let val = state.fpr.read(rs1 as usize).get();
 
     // Check for special cases
     if val.is_nan() {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = 0x7FFFFFFF; // Max i32
         return Ok(());
     }
 
     if val.is_infinite() {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = if val < 0.0 { 0x80000000 } else { 0x7FFFFFFF };
         return Ok(());
     }
 
     // Check if value is out of range for i32
     if val > (i32::MAX as f32) {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = 0x7FFFFFFF;
         return Ok(());
     }
     if val < (i32::MIN as f32) {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = 0x80000000;
         return Ok(());
     }
@@ -70,7 +69,7 @@ pub fn exec_fcvt_w_s(
 pub fn exec_fcvt_l_s(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FCVT.L.S requires rs1");
     let rd = instr.rd.expect("FCVT.L.S requires rd");
@@ -79,7 +78,7 @@ pub fn exec_fcvt_l_s(
 
     // Check for special cases
     if val.is_nan() || val.is_infinite() {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = 0x7FFFFFFF;
         return Ok(());
     }
@@ -96,7 +95,7 @@ pub fn exec_fcvt_l_s(
 pub fn exec_fcvt_wu_s(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FCVT.WU.S requires rs1");
     let rd = instr.rd.expect("FCVT.WU.S requires rd");
@@ -105,14 +104,14 @@ pub fn exec_fcvt_wu_s(
 
     // Check for special cases
     if val.is_nan() || val.is_infinite() || val < 0.0 {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = u32::MAX;
         return Ok(());
     }
 
     // Check if value is out of range for u32
     if val > (u32::MAX as f32) {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = u32::MAX;
         return Ok(());
     }
@@ -128,7 +127,7 @@ pub fn exec_fcvt_wu_s(
 pub fn exec_fcvt_lu_s(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FCVT.LU.S requires rs1");
     let rd = instr.rd.expect("FCVT.LU.S requires rd");
@@ -136,7 +135,7 @@ pub fn exec_fcvt_lu_s(
     let val = state.fpr.read(rs1 as usize).get();
 
     if val.is_nan() || val.is_infinite() || val < 0.0 {
-        state.fpr.fcsr.set_flag(FpFlags::NV);
+        state.fcsr.set_flag(FpFlags::NV);
         state.regs[rd as usize] = u32::MAX;
         return Ok(());
     }
@@ -152,7 +151,7 @@ pub fn exec_fcvt_lu_s(
 pub fn exec_fcvt_s_w(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FCVT.S.W requires rs1");
     let rd = instr.rd.expect("FCVT.S.W requires rd");
@@ -169,7 +168,7 @@ pub fn exec_fcvt_s_w(
 pub fn exec_fcvt_s_l(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FCVT.S.L requires rs1");
     let rd = instr.rd.expect("FCVT.S.L requires rd");
@@ -189,7 +188,7 @@ pub fn exec_fcvt_s_l(
 pub fn exec_fcvt_s_wu(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FCVT.S.WU requires rs1");
     let rd = instr.rd.expect("FCVT.S.WU requires rd");
@@ -206,7 +205,7 @@ pub fn exec_fcvt_s_wu(
 pub fn exec_fcvt_s_lu(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FCVT.S.LU requires rs1");
     let rd = instr.rd.expect("FCVT.S.LU requires rd");
@@ -223,6 +222,7 @@ pub fn exec_fcvt_s_lu(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SimpleMemory;
 
     fn create_test_state() -> CoreState {
         CoreState::default()
@@ -243,6 +243,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -269,6 +270,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -295,6 +297,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -320,6 +323,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -328,7 +332,7 @@ mod tests {
         exec_fcvt_w_s(&decoded, &mut state, &mut mem).unwrap();
 
         assert_eq!(state.regs[2], 0x7FFFFFFF);
-        assert!(state.fpr.fcsr.flags().contains(FpFlags::NV));
+        assert!(state.fcsr.flags().contains(FpFlags::NV));
     }
 
     #[test]
@@ -346,6 +350,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -354,7 +359,7 @@ mod tests {
         exec_fcvt_wu_s(&decoded, &mut state, &mut mem).unwrap();
 
         assert_eq!(state.regs[2], u32::MAX);
-        assert!(state.fpr.fcsr.flags().contains(FpFlags::NV));
+        assert!(state.fcsr.flags().contains(FpFlags::NV));
     }
 
     #[test]
@@ -372,6 +377,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,

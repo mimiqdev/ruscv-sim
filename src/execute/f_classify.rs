@@ -6,9 +6,8 @@
 use crate::core::CoreState;
 use crate::decode::InstructionFormat;
 use crate::decode::{DecodedInstruction, Opcode};
-use crate::fpu::Fpr;
 use crate::execute::ExecuteError;
-use crate::memory::{MemoryError, MemoryInterface};
+use crate::fpu::Fpr;
 
 /// FCLASS.S result values (bit positions):
 /// 0: -inf, 1: -normal, 2: -subnormal, 3: -zero, 4: +zero, 5: +subnormal, 6: +normal, 7: +inf, 8: NaN, 9: NaN (quiet/signaling)
@@ -18,7 +17,7 @@ use crate::memory::{MemoryError, MemoryInterface};
 pub fn exec_fclass_s(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn MemoryInterface,
+    _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FCLASS.S requires rs1");
     let rd = instr.rd.expect("FCLASS.S requires rd");
@@ -52,6 +51,7 @@ pub fn exec_fclass_s(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SimpleMemory;
 
     fn create_test_state() -> CoreState {
         CoreState::default()
@@ -72,6 +72,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -97,6 +98,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -122,6 +124,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -147,6 +150,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -172,6 +176,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -197,6 +202,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -222,6 +228,7 @@ mod tests {
             funct7: Some(0),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,

@@ -8,9 +8,9 @@
 use crate::core::CoreState;
 use crate::decode::InstructionFormat;
 use crate::decode::{DecodedInstruction, Opcode};
+use crate::execute::ExecuteError;
 use crate::fpu::fcsr::{FpFlags, RoundingMode};
 use crate::fpu::Fpr;
-use crate::execute::ExecuteError;
 use crate::memory::{MemoryError, MemoryInterface};
 
 /// Apply rounding mode to result

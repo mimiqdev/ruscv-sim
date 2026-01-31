@@ -21,7 +21,6 @@
 /// - 011: RUP (Round Up, towards +∞)
 /// - 100: RMM (Round to Nearest, ties to Max Magnitude)
 /// - 101-111: Reserved (raise invalid operation exception)
-
 use crate::execute::ExecuteError;
 use bitflags::bitflags;
 use std::fmt;
