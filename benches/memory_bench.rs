@@ -15,9 +15,7 @@ fn memory_read_single(c: &mut Criterion) {
     });
 
     group.bench_function("read_halfword", |b| {
-        b.iter(|| {
-            mem.read_half(black_box(0x100)).unwrap()
-        })
+        b.iter(|| mem.read_half(black_box(0x100)).unwrap())
     });
 
     group.bench_function("read_word", |b| {
@@ -41,10 +39,7 @@ fn memory_write_single(c: &mut Criterion) {
     group.bench_function("write_halfword", |b| {
         b.iter_batched(
             || SimpleMemory::new(8192),
-            |mut mem| {
-                mem.write_half(black_box(0x100), black_box(0x1234))
-                    .unwrap()
-            },
+            |mut mem| mem.write_half(black_box(0x100), black_box(0x1234)).unwrap(),
             criterion::BatchSize::SmallInput,
         )
     });
