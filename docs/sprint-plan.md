@@ -335,21 +335,40 @@ _trans.rs | src/mmu/ | 地址转换流程 |
 - **任务**:
   - 设计 O(1) 查找表 (HashMap/数组)
   - 实现指令分发机制
-  - 工时: 16h
+  - **指令解码优化** (PR Review):
+    - 评估位操作优化 (bit manipulation)
+    - 考虑查找表预计算
+    - 实现指令缓存机制
+  - **工时**: 32h (16h 基础 + 16h 优化)
 
-### Sprint 3.5: 模块化重构
-- **目标**: 按指令类型拆分 execute 模块
+### Sprint 3.5: 模块化重构 + RV64I 规划
+- **目标**: 按指令类型拆分 execute 模块，规划 RV64I 扩展
 - **任务**:
   - 拆分 r_type.rs, i_type.rs, s_type.rs, b_type.rs, u_type.rs, j_type.rs
   - 每个文件独立测试
-  - 工时: 24h
+  - **RV64I 扩展规划** (PR Review):
+    - 分析 RV32I 与 RV64I 差异
+    - 识别需要扩展的指令 (ADDIW, SLLIW, SRLIW, SRAIW, ADDW, SUBW, SLLW, SRLW, SRAW)
+    - 添加 64 位专用指令测试规划
+  - **文档增强** (PR Review - 持续任务):
+    - 为所有公共 API 添加 examples
+    - 添加模块级文档说明设计决策
+  - **工时**: 56h (24h 重构 + 24h RV64I 规划 + 8h 文档)
 
-### Sprint 4.5: 代码生成工具
-- **目标**: 评估并实现代码生成
+### Sprint 4.5: 代码生成工具 + 性能基准
+- **目标**: 评估并实现代码生成，建立性能基线
 - **任务**:
   - 评估 proc-macro 工具
   - 实现模板生成重复代码
-  - 工时: 16h
+  - **性能基准测试** (PR Review):
+    - 实现 benchmarks/ 目录
+    - 使用 `criterion` 或 custom benchmarks
+    - 测量: CPI、译码延迟、执行延迟
+    - 集成到 CI (仅 self-hosted runner)
+  - **文档增强** (PR Review - 持续任务):
+    - 创建 architecture diagrams
+    - 完善模块级文档
+  - **工时**: 48h (16h 代码生成 + 24h 性能基准 + 8h 文档)
 
 ### Sprint 15: 语言统一 (Code Cleanup)
 - **目标**: 全局英文统一
@@ -477,50 +496,27 @@ _trans.rs | src/mmu/ | 地址转换流程 |
 | | | | - 添加外部依赖风险小节 (Rust 1.80 固定版本) |
 | | | | - SDK 设计提前至 Sprint 10 |
 | | | | - 24h 稳定性测试移至 Sprint 14 |
+| v3.3 | 2026-01-31 | - | 整合 Sprint 3.5 PR Review 建议： |
+| | | | - Sprint 2.5: 添加指令解码优化（位操作、查找表、缓存） |
+| | | | - Sprint 3.5: 添加 RV64I 扩展规划和文档增强任务 |
+| | | | - Sprint 4.5: 添加性能基准测试和架构图文档 |
+| | | | - 移除 Section 8 (Future Improvements)，改进已整合到各 Sprint |
+| | | | - 更新技术重构阶段工时估算 |
 
 ---
 
-## 8. Future Improvements
+## 8. 总结
 
-基于 Sprint 3.5 PR Review 建议 (2026-01-31):
+本开发计划已整合 PR Review 建议（2026-01-31）：
 
-### 8.1 指令解码优化
-- **目标**: 提高 decode 阶段性能
-- **方案**:
-  - 评估位操作优化 (bit manipulation)
-  - 考虑查找表预计算
-  - 实现指令缓存机制
-- **工时**: 16h
-- **依赖**: Sprint 2-3 完成
+### 已整合改进
+- ✅ **Sprint 2.5**: 指令解码优化（位操作、查找表预计算、指令缓存）
+- ✅ **Sprint 3.5**: RV64I 扩展规划 + 文档增强（API examples、模块文档）
+- ✅ **Sprint 4.5**: 性能基准测试 + 架构图 + 文档完善
+- ✅ **Sprint 15**: 语言统一（移除中文注释、英文错误消息）
 
-### 8.2 性能基准测试
-- **目标**: 建立性能基线，监控性能变化
-- **方案**:
-  - 实现 benchmarks/ 目录
-  - 使用 `criterion` 或 custom benchmarks
-  - 测量: CPI、译码延迟、执行延迟
-  - 集成到 CI (仅 self-hosted runner)
-- **工时**: 24h
-- **依赖**: Sprint 2-3 完成
-
-### 8.3 文档增强
-- **目标**: 提升代码可读性和可维护性
-- **方案**:
-  - 为所有公共 API 添加 examples
-  - 添加模块级文档说明设计决策
-  - 创建 architecture diagrams
-- **工时**: 16h
-- **依赖**: 无
-
-### 8.4 RV64I 扩展规划
-- **目标**: 支持 RV64I (64位整数指令)
-- **方案**:
-  - 分析 RV32I 与 RV64I 差异
-  - 识别需要扩展的指令 (ADDIW, SLLIW, etc.)
-  - 添加 64位专用指令测试
-- **工时**: 24h
-- **依赖**: Sprint 2-3 完成
-
-### 8.5 后续技术债务
-- **Sprint 4.5**: 代码生成工具 (proc-macro)
-- **Sprint 15**: 语言统一 (英文注释)
+### 技术债务管理
+所有技术债务已分配到合适的 Sprint，确保：
+- 代码质量持续改进
+- 性能可观测性建立
+- 文档与代码同步更新
