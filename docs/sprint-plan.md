@@ -576,6 +576,67 @@ pub enum FieldAttr {
 - [ ] 性能测试：FADD < 50ns，FDIV < 200ns
 - [ ] 代码质量：覆盖率 > 80%，NaN 处理正确
 - [ ] 集成验收：与内存子系统正确对接 (FLW/FSD)
+- [ ] **代码审查跟进**:
+  - [ ] RISC-V spec 引用已添加到代码注释（参考 Section 11-12）
+  - [ ] NaN 传播测试已添加（见测试文件）
+  - [ ] proptest 集成（可选，后续优化）
+
+#### 代码审查跟进 - Sprint 6 Review Follow-up
+
+**RISC-V ISA Spec 引用** (RV64F, Volume I):
+
+| 指令 | Spec Section | 说明 |
+|------|-------------|------|
+| FLW/FSD | 11.3 | 加载存储指令 |
+| FADD.S/FSUB.S | 11.4 | 算术指令 |
+| FMUL.S/FDIV.S/FSQRT.S | 11.5 | 乘除指令 |
+| FMADD.S/FMSUB.S/FNMADD.S/FNMSUB.S | 11.6 | 融合乘加 |
+| FSQRT.S | 11.5.1 | 平方根 |
+| FCVT.X.F/FCVT.F.X | 11.7 | 浮点转换 |
+| FCVT.W.S/FCVT.L.S | 11.7.1 | Float→Int |
+| FCVT.S.W/FCVT.S.L | 11.7.2 | Int→Float |
+| FEQ.S/FLT.S/FLE.S | 11.8 | 比较指令 |
+| FCLASS.S | 11.9 | 分类指令 |
+| FCSR (FRM/FFLAGS) | 11.10-11.11 | 控制寄存器 |
+
+**NaN 传播测试场景** (建议添加):
+
+```
+测试文件: tests/f_*_test.rs 或 src/execute/f_*_test.rs
+- quiet NaN 传播 (0x7FC00000)
+- signaling NaN 处理
+- min/max NaN 操作
+- NaN 比较结果 (always false)
+- 非规格化数处理
+- 无穷运算 (∞ + ∞, ∞ - ∞, etc.)
+```
+
+**proptest 集成策略** (可选，后续 Sprint):
+
+```rust
+// 在 f_arith_test.rs 中添加
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn test_fadd_associativity(a: f32, b: f32, c: f32) {
+        // (a + b) + c ≈ a + (b + c)
+        let result1 = (a + b) + c;
+        let result2 = a + (b + c);
+        prop_assert!((result1 - result2).abs() < 1e-6 || result1.is_nan() && result2.is_nan());
+    }
+}
+```
+
+**性能优化备注**:
+
+| 优化项 | 目标 | 策略 |
+|--------|------|------|
+| FADD.S | 50ns→40ns | 快速路径 (非 NaN/Inf) |
+| FMUL.S | 60ns→50ns | 流水线优化 |
+| FDIV.S | 200ns→150ns | 近似算法 |
+
+---
 
 ### Sprint 完成检查清单
 - [ ] 所有验收标准 ✅
