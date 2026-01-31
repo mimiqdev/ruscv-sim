@@ -2,6 +2,7 @@
 //!
 //! Implements RISC-V processor core fetch-decode-execute cycle
 
+use crate::csr::CsrFile;
 use crate::decode::InstructionDecoder;
 use crate::execute::Executor;
 use crate::memory::{MemoryInterface, SimpleMemory};
@@ -26,13 +27,15 @@ pub struct CoreState {
     pub regs: [u32; 32],
     /// privilege mode
     pub privilege: PrivilegeMode,
-    /// 机器状态寄存器 (简化版)
+    /// CSR file
+    pub csr: CsrFile,
+    /// 机器状态寄存器 (简化版) - deprecated, use csr field
     pub mstatus: u32,
-    /// 异常程序计数器
+    /// 异常程序计数器 - deprecated, use csr field
     pub mepc: u32,
-    /// 异常原因
+    /// 异常原因 - deprecated, use csr field
     pub mcause: u32,
-    /// 异常值
+    /// 异常值 - deprecated, use csr field
     pub mtval: u32,
 }
 
@@ -42,6 +45,7 @@ impl Default for CoreState {
             pc: 0x0000_0000,
             regs: [0; 32],
             privilege: PrivilegeMode::Machine,
+            csr: CsrFile::default(),
             mstatus: 0,
             mepc: 0,
             mcause: 0,

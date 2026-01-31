@@ -13,6 +13,7 @@ pub mod system; // System instructions
 pub mod u_type; // U-type instructions
 
 use crate::core::CoreState;
+use crate::csr::CsrError;
 use crate::decode::{DecodedInstruction, Opcode};
 use crate::memory::{MemoryError, MemoryInterface};
 use thiserror::Error;
@@ -36,6 +37,8 @@ pub enum ExecuteError {
     Ebreak,
     #[error("Memory error: {0}")]
     MemoryError(#[from] MemoryError),
+    #[error("CSR error: {0}")]
+    CsrError(#[from] CsrError),
 }
 
 pub use self::b_type::exec_branch;
