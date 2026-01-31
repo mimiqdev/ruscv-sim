@@ -6,12 +6,11 @@
 //! R4-type format: | funct2=rm | rs3 | rs2 | rs1 | funct3 | rd | opcode=OpFp(1000011) |
 
 use crate::core::CoreState;
-use crate::decode::InstructionFormat;
-use crate::decode::{DecodedInstruction, Opcode};
+use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 use crate::fpu::fcsr::{FpFlags, RoundingMode};
 use crate::fpu::Fpr;
-use crate::memory::{MemoryError, MemoryInterface};
+use crate::MemoryInterface;
 
 /// Apply rounding mode to result
 fn apply_rounding(result: f32, rm: RoundingMode) -> f32 {
@@ -35,7 +34,7 @@ pub fn exec_fmadd_s(
     let rs2 = instr.rs2.expect("FMADD.S requires rs2");
     let rs3 = instr.rs3.expect("FMADD.S requires rs3");
     let rd = instr.rd.expect("FMADD.S requires rd");
-    let rm = state.fpr.fcsr.rounding_mode();
+    let rm = state.fcsr.rounding_mode();
 
     let val1 = state.fpr.read(rs1 as usize).get();
     let val2 = state.fpr.read(rs2 as usize).get();
@@ -52,7 +51,7 @@ pub fn exec_fmadd_s(
     }
 
     if !flags.is_empty() {
-        state.fpr.fcsr.set_flag(flags);
+        state.fcsr.set_flag(flags);
     }
 
     // Fused multiply-add: (rs1 × rs2) + rs3
@@ -60,7 +59,7 @@ pub fn exec_fmadd_s(
     let rounded = apply_rounding(result, RoundingMode::from_frm(rm));
 
     if result != rounded {
-        state.fpr.fcsr.set_flag(FpFlags::NX);
+        state.fcsr.set_flag(FpFlags::NX);
     }
 
     state.fpr.write(rd as usize, Fpr::new(rounded));
@@ -78,7 +77,7 @@ pub fn exec_fmsub_s(
     let rs2 = instr.rs2.expect("FMSUB.S requires rs2");
     let rs3 = instr.rs3.expect("FMSUB.S requires rs3");
     let rd = instr.rd.expect("FMSUB.S requires rd");
-    let rm = state.fpr.fcsr.rounding_mode();
+    let rm = state.fcsr.rounding_mode();
 
     let val1 = state.fpr.read(rs1 as usize).get();
     let val2 = state.fpr.read(rs2 as usize).get();
@@ -95,7 +94,7 @@ pub fn exec_fmsub_s(
     }
 
     if !flags.is_empty() {
-        state.fpr.fcsr.set_flag(flags);
+        state.fcsr.set_flag(flags);
     }
 
     // Fused multiply-subtract: (rs1 × rs2) - rs3
@@ -103,7 +102,7 @@ pub fn exec_fmsub_s(
     let rounded = apply_rounding(result, RoundingMode::from_frm(rm));
 
     if result != rounded {
-        state.fpr.fcsr.set_flag(FpFlags::NX);
+        state.fcsr.set_flag(FpFlags::NX);
     }
 
     state.fpr.write(rd as usize, Fpr::new(rounded));
@@ -121,7 +120,7 @@ pub fn exec_fnmsub_s(
     let rs2 = instr.rs2.expect("FNMSUB.S requires rs2");
     let rs3 = instr.rs3.expect("FNMSUB.S requires rs3");
     let rd = instr.rd.expect("FNMSUB.S requires rd");
-    let rm = state.fpr.fcsr.rounding_mode();
+    let rm = state.fcsr.rounding_mode();
 
     let val1 = state.fpr.read(rs1 as usize).get();
     let val2 = state.fpr.read(rs2 as usize).get();
@@ -138,7 +137,7 @@ pub fn exec_fnmsub_s(
     }
 
     if !flags.is_empty() {
-        state.fpr.fcsr.set_flag(flags);
+        state.fcsr.set_flag(flags);
     }
 
     // Negative multiply-subtract: -(rs1 × rs2) + rs3
@@ -146,7 +145,7 @@ pub fn exec_fnmsub_s(
     let rounded = apply_rounding(result, RoundingMode::from_frm(rm));
 
     if result != rounded {
-        state.fpr.fcsr.set_flag(FpFlags::NX);
+        state.fcsr.set_flag(FpFlags::NX);
     }
 
     state.fpr.write(rd as usize, Fpr::new(rounded));
@@ -164,7 +163,7 @@ pub fn exec_fnmadd_s(
     let rs2 = instr.rs2.expect("FNMADD.S requires rs2");
     let rs3 = instr.rs3.expect("FNMADD.S requires rs3");
     let rd = instr.rd.expect("FNMADD.S requires rd");
-    let rm = state.fpr.fcsr.rounding_mode();
+    let rm = state.fcsr.rounding_mode();
 
     let val1 = state.fpr.read(rs1 as usize).get();
     let val2 = state.fpr.read(rs2 as usize).get();
@@ -181,7 +180,7 @@ pub fn exec_fnmadd_s(
     }
 
     if !flags.is_empty() {
-        state.fpr.fcsr.set_flag(flags);
+        state.fcsr.set_flag(flags);
     }
 
     // Negative multiply-add: -(rs1 × rs2) - rs3
@@ -189,7 +188,7 @@ pub fn exec_fnmadd_s(
     let rounded = apply_rounding(result, RoundingMode::from_frm(rm));
 
     if result != rounded {
-        state.fpr.fcsr.set_flag(FpFlags::NX);
+        state.fcsr.set_flag(FpFlags::NX);
     }
 
     state.fpr.write(rd as usize, Fpr::new(rounded));
@@ -199,6 +198,9 @@ pub fn exec_fnmadd_s(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::{InstructionFormat, Opcode};
+    use crate::fpu::Fpr;
+    use crate::SimpleMemory;
 
     fn create_test_state() -> CoreState {
         CoreState::default()

@@ -4,8 +4,7 @@
 //! and 32/64-bit integer types.
 
 use crate::core::CoreState;
-use crate::decode::InstructionFormat;
-use crate::decode::{DecodedInstruction, Opcode};
+use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 use crate::fpu::fcsr::FpFlags;
 use crate::fpu::Fpr;
@@ -222,6 +221,8 @@ pub fn exec_fcvt_s_lu(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::{InstructionFormat, Opcode};
+    use crate::fpu::Fpr;
     use crate::SimpleMemory;
 
     fn create_test_state() -> CoreState {

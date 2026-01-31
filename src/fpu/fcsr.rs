@@ -21,7 +21,6 @@
 /// - 011: RUP (Round Up, towards +∞)
 /// - 100: RMM (Round to Nearest, ties to Max Magnitude)
 /// - 101-111: Reserved (raise invalid operation exception)
-use crate::execute::ExecuteError;
 use bitflags::bitflags;
 use std::fmt;
 
@@ -38,7 +37,7 @@ bitflags! {
 }
 
 /// FCSR Register
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct Fcsr {
     /// Rounding mode (bits 2:0)
     frm: u8,
@@ -100,7 +99,7 @@ impl Fcsr {
     /// Write FCSR value
     pub fn write(&mut self, value: u32) {
         self.frm = (value & 0x7) as u8;
-        self.flags = FpFlags::from_bits((value >> 3) as u8 & 0x1F);
+        self.flags = FpFlags::from_bits((value >> 3) as u8).expect("Invalid FCSR flags");
         self.reserved = value >> 8;
     }
 

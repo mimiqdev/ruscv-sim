@@ -4,20 +4,19 @@
 //! arithmetic operations.
 
 use crate::core::CoreState;
-use crate::decode::InstructionFormat;
-use crate::decode::{DecodedInstruction, Opcode};
+use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 use crate::fpu::fcsr::FpFlags;
 use crate::fpu::Fpr;
-use crate::fpu::Fcsr;
+use crate::MemoryInterface;
 
 /// Apply rounding mode to result
 fn apply_rounding(result: f32, rm: u8) -> f32 {
     match rm {
-        1 => result.trunc(),  // RTZ
-        2 => result.floor(),  // RDN
-        3 => result.ceil(),   // RUP
-        _ => result,          // RNE or others
+        1 => result.trunc(), // RTZ
+        2 => result.floor(), // RDN
+        3 => result.ceil(),  // RUP
+        _ => result,         // RNE or others
     }
 }
 
@@ -65,7 +64,7 @@ pub fn exec_fsub_s(
     _mem: &mut dyn MemoryInterface,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FSUB.S requires rs1");
- = instr.rs2.expect("FSUB    let rs2.S requires rs2");
+    let rs2 = instr.rs2.expect("FSUB.S requires rs2");
     let rd = instr.rd.expect("FSUB.S requires rd");
     let rm = state.fcsr.rounding_mode();
 
@@ -126,6 +125,8 @@ pub fn exec_fmul_s(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::{InstructionFormat, Opcode};
+    use crate::fpu::Fpr;
     use crate::SimpleMemory;
 
     fn create_test_state() -> CoreState {

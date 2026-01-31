@@ -5,9 +5,6 @@
 
 pub mod fcsr;
 
-use crate::decode::InstructionFormat;
-use crate::execute::ExecuteError;
-use crate::memory::{MemoryError, MemoryInterface};
 use std::fmt;
 
 pub use fcsr::{Fcsr, FpFlags, RoundingMode};
@@ -152,10 +149,7 @@ pub fn effective_operand(rs3: Fpr, subtract: bool) -> Fpr {
 
 /// Helper function to get effective sign for NMADD/NMSUB
 pub fn effective_sign(rs1: Fpr, rs2: Fpr, add: bool) -> (f32, f32) {
-    let mut val1 = rs1.get();
-    let mut val2 = rs2.get();
-    if !add {
-        val2 = -val2;
-    }
+    let val1 = rs1.get();
+    let val2 = if add { rs2.get() } else { -rs2.get() };
     (val1, val2)
 }

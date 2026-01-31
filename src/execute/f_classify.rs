@@ -4,14 +4,12 @@
 //! Returns a 10-bit mask indicating the classification of the value.
 
 use crate::core::CoreState;
-use crate::decode::InstructionFormat;
-use crate::decode::{DecodedInstruction, Opcode};
+use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
-use crate::fpu::Fpr;
 
 /// FCLASS.S result values (bit positions):
 /// 0: -inf, 1: -normal, 2: -subnormal, 3: -zero, 4: +zero, 5: +subnormal, 6: +normal, 7: +inf, 8: NaN, 9: NaN (quiet/signaling)
-
+///
 /// Execute FCLASS.S (Classify Single Precision)
 /// Writes a 10-bit mask to rd indicating the classification of rs1
 pub fn exec_fclass_s(
@@ -51,6 +49,8 @@ pub fn exec_fclass_s(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::{InstructionFormat, Opcode};
+    use crate::fpu::Fpr;
     use crate::SimpleMemory;
 
     fn create_test_state() -> CoreState {

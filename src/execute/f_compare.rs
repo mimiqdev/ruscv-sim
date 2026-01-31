@@ -5,11 +5,9 @@
 //! 0 otherwise, and can raise invalid operation exceptions.
 
 use crate::core::CoreState;
-use crate::decode::InstructionFormat;
-use crate::decode::{DecodedInstruction, Opcode};
+use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 use crate::fpu::fcsr::FpFlags;
-use crate::fpu::Fpr;
 
 /// Execute FEQ.S (Floating-point Equal Single)
 /// Writes 1 to rd if rs1 equals rs2, 0 otherwise.
@@ -89,6 +87,8 @@ pub fn exec_fle_s(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::{InstructionFormat, Opcode};
+    use crate::fpu::Fpr;
     use crate::SimpleMemory;
 
     fn create_test_state() -> CoreState {

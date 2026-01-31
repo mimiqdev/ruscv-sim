@@ -4,12 +4,11 @@
 //! division and square root operations.
 
 use crate::core::CoreState;
-use crate::decode::InstructionFormat;
-use crate::decode::{DecodedInstruction, Opcode};
+use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 use crate::fpu::fcsr::{FpFlags, RoundingMode};
 use crate::fpu::Fpr;
-use crate::memory::{MemoryError, MemoryInterface};
+use crate::MemoryInterface;
 
 /// Apply rounding mode to result
 fn apply_rounding(result: f32, rm: RoundingMode) -> f32 {
@@ -33,7 +32,7 @@ pub fn exec_fdiv_s(
     let rs1 = instr.rs1.expect("FDIV.S requires rs1");
     let rs2 = instr.rs2.expect("FDIV.S requires rs2");
     let rd = instr.rd.expect("FDIV.S requires rd");
-    let rm = state.fpr.fcsr.rounding_mode();
+    let rm = state.fcsr.rounding_mode();
 
     let val1 = state.fpr.read(rs1 as usize).get();
     let val2 = state.fpr.read(rs2 as usize).get();
@@ -62,7 +61,7 @@ pub fn exec_fdiv_s(
     }
 
     if !flags.is_empty() {
-        state.fpr.fcsr.set_flag(flags);
+        state.fcsr.set_flag(flags);
     }
 
     let result = val1 / val2;
@@ -70,7 +69,7 @@ pub fn exec_fdiv_s(
 
     // Check for inexact result
     if result != rounded {
-        state.fpr.fcsr.set_flag(FpFlags::NX);
+        state.fcsr.set_flag(FpFlags::NX);
     }
 
     // Handle division by zero result (inf or -inf)
@@ -98,7 +97,7 @@ pub fn exec_fsqrt_s(
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.expect("FSQRT.S requires rs1");
     let rd = instr.rd.expect("FSQRT.S requires rd");
-    let rm = state.fpr.fcsr.rounding_mode();
+    let rm = state.fcsr.rounding_mode();
 
     let val1 = state.fpr.read(rs1 as usize).get();
 
@@ -111,14 +110,14 @@ pub fn exec_fsqrt_s(
     }
 
     if !flags.is_empty() {
-        state.fpr.fcsr.set_flag(flags);
+        state.fcsr.set_flag(flags);
     }
 
     let result = val1.sqrt();
     let rounded = apply_rounding(result, RoundingMode::from_frm(rm));
 
     if result != rounded {
-        state.fpr.fcsr.set_flag(FpFlags::NX);
+        state.fcsr.set_flag(FpFlags::NX);
     }
 
     state.fpr.write(rd as usize, Fpr::new(rounded));
@@ -128,6 +127,9 @@ pub fn exec_fsqrt_s(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode::{InstructionFormat, Opcode};
+    use crate::fpu::Fpr;
+    use crate::SimpleMemory;
 
     fn create_test_state() -> CoreState {
         CoreState::default()
@@ -149,6 +151,7 @@ mod tests {
             funct7: Some(0x0C),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -176,6 +179,7 @@ mod tests {
             funct7: Some(0x0C),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -185,7 +189,7 @@ mod tests {
 
         let result = state.fpr.read(3).get();
         assert!(result.is_infinite());
-        assert!(state.fpr.fcsr.flags().contains(FpFlags::DZ));
+        assert!(state.fcsr.flags().contains(FpFlags::DZ));
     }
 
     #[test]
@@ -203,6 +207,7 @@ mod tests {
             funct7: Some(0x2C),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -229,6 +234,7 @@ mod tests {
             funct7: Some(0x2C),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -255,6 +261,7 @@ mod tests {
             funct7: Some(0x2C),
             rs1: Some(1),
             rs2: Some(0),
+            rs3: None,
             rd: Some(2),
             imm: None,
             branch_taken: false,
@@ -264,7 +271,7 @@ mod tests {
 
         let result = state.fpr.read(2).get();
         assert!(result.is_nan());
-        assert!(state.fpr.fcsr.flags().contains(FpFlags::NV));
+        assert!(state.fcsr.flags().contains(FpFlags::NV));
     }
 
     #[test]
@@ -283,6 +290,7 @@ mod tests {
             funct7: Some(0x0C),
             rs1: Some(1),
             rs2: Some(2),
+            rs3: None,
             rd: Some(3),
             imm: None,
             branch_taken: false,
@@ -292,6 +300,6 @@ mod tests {
 
         let result = state.fpr.read(3).get();
         assert!(result.is_nan());
-        assert!(state.fpr.fcsr.flags().contains(FpFlags::NV));
+        assert!(state.fcsr.flags().contains(FpFlags::NV));
     }
 }

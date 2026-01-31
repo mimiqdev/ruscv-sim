@@ -47,6 +47,7 @@ pub enum Opcode {
     Jal = 0b110_1111,
     System = 0b111_0011,
     Amo = 0b010_1111,
+    OpFp = 0b101_0011,
 }
 
 /// RV32I Function code (funct3)
