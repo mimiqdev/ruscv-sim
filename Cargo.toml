@@ -23,6 +23,9 @@ num_enum = "0.7"
 # 代码生成
 ruscv-macros = { path = "ruscv-macros" }
 
+# FPU support
+bitflags = "2"
+
 # 测试
 [dev-dependencies]
 proptest = "1.0"

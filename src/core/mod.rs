@@ -6,6 +6,7 @@ pub mod trap;
 use crate::csr::CsrFile;
 use crate::decode::InstructionDecoder;
 use crate::execute::Executor;
+use crate::fpu::{Fcsr, FpuRegisterFile};
 use crate::memory::{MemoryInterface, SimpleMemory};
 use crate::tlm::TlmInterface;
 use anyhow::Result;
@@ -31,6 +32,10 @@ pub struct CoreState {
     pub privilege: PrivilegeMode,
     /// CSR file
     pub csr: CsrFile,
+    /// FPU register file (f0-f31)
+    pub fpr: FpuRegisterFile,
+    /// FCSR (Floating-Point Control and Status Register)
+    pub fcsr: Fcsr,
     /// 机器状态寄存器 (简化版) - deprecated, use csr field
     pub mstatus: u32,
     /// 异常程序计数器 - deprecated, use csr field
@@ -48,6 +53,8 @@ impl Default for CoreState {
             regs: [0; 32],
             privilege: PrivilegeMode::Machine,
             csr: CsrFile::default(),
+            fpr: FpuRegisterFile::new(),
+            fcsr: Fcsr::new(),
             mstatus: 0,
             mepc: 0,
             mcause: 0,

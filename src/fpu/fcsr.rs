@@ -22,8 +22,6 @@
 /// - 100: RMM (Round to Nearest, ties to Max Magnitude)
 /// - 101-111: Reserved (raise invalid operation exception)
 
-use crate::core::PrivilegeMode;
-use crate::csr::{Csr, CsrFile};
 use crate::execute::ExecuteError;
 use bitflags::bitflags;
 use std::fmt;
@@ -122,57 +120,6 @@ impl Default for Fcsr {
         }
     }
 }
-
-/// FCSR CSR implementation
-pub const FCSR: Csr = Csr {
-    addr: 0x003,
-    name: "fcsr",
-    read: |_, csr| {
-        let fcsr: &Fcsr = csr.read_custom();
-        Ok(fcsr.read() as u64)
-    },
-    write: |_, csr, value| {
-        let fcsr: &mut Fcsr = csr.write_custom();
-        fcsr.write(value as u32);
-        Ok(())
-    },
-};
-
-/// FRM CSR (Floating-Point Rounding Mode, addr 0x002)
-pub const FRM: Csr = Csr {
-    addr: 0x002,
-    name: "frm",
-    read: |_, csr| {
-        let fcsr: &Fcsr = csr.read_custom();
-        Ok(fcsr.rounding_mode() as u64)
-    },
-    write: |_, csr, value| {
-        let fcsr: &mut Fcsr = csr.write_custom();
-        fcsf.set_rounding_mode(value as u8);
-        Ok(())
-    },
-};
-
-/// FFLAGS CSR (Floating-Point Accrued Exceptions, addr 0x001)
-pub const FFLAGS: Csr = Csr {
-    addr: 0x001,
-    name: "fflags",
-    read: |_, csr| {
-        let fcsr: &Fcsr = csr.read_custom();
-        Ok(fcsr.flags().bits() as u64)
-    },
-    write: |_, csr, value| {
-        let fcsr: &mut Fcsr = csr.write_custom();
-        let mut flags = FpFlags::from_bits(value as u8 & 0x1F);
-        flags.set(FpFlags::NV, value & 1 != 0);
-        flags.set(FpFlags::DZ, value & 2 != 0);
-        flags.set(FpFlags::OF, value & 4 != 0);
-        flags.set(FpFlags::UF, value & 8 != 0);
-        flags.set(FpFlags::NX, value & 16 != 0);
-        fcsr.set_flag(flags);
-        Ok(())
-    },
-};
 
 /// Rounding mode enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -736,6 +736,7 @@ name = "ruscv-sim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "criterion",
  "env_logger",
  "log",

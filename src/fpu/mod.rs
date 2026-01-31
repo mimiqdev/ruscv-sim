@@ -3,14 +3,14 @@
 //! Implements 32 floating-point registers (f0-f31) for RV64F extension.
 //! Uses NaN boxing: 32-bit float stored in lower 32 bits, upper 32 bits set to all 1s.
 
-use crate::core::CoreError;
+pub mod fcsr;
+
 use crate::decode::InstructionFormat;
 use crate::execute::ExecuteError;
-use crate::fpu::fcsr::Fcsr;
 use crate::memory::{MemoryError, MemoryInterface};
-use crate::CsrFile;
-use rustversion::version;
 use std::fmt;
+
+pub use fcsr::{Fcsr, FpFlags, RoundingMode};
 
 /// Floating point register type (f0-f31)
 #[derive(Clone, Copy, Default)]

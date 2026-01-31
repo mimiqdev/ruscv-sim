@@ -7,6 +7,13 @@
 pub mod amo;
 pub mod b_type; // Branch instructions
 pub mod div; // RV64M divide instructions
+pub mod f_arith; // RV64F arithmetic instructions
+pub mod f_classify; // RV64F classification instruction
+pub mod f_compare; // RV64F comparison instructions
+pub mod f_convert; // RV64F conversion instructions
+pub mod f_div_sqrt; // RV64F division and square root
+pub mod f_load_store; // RV64F load/store instructions
+pub mod f_madd; // RV64F fused multiply-add instructions
 pub mod i_type; // I-type instructions
 pub mod j_type; // Jump instructions
 pub mod lr_sc; // RV64A load-reserved/store-conditional instructions
@@ -52,6 +59,16 @@ pub use self::amo::{
 };
 pub use self::b_type::exec_branch;
 pub use self::div::{exec_div, exec_divu, exec_rem, exec_remu};
+pub use self::f_arith::{exec_fadd_s, exec_fmul_s, exec_fsub_s};
+pub use self::f_classify::exec_fclass_s;
+pub use self::f_compare::{exec_feq_s, exec_fle_s, exec_flt_s};
+pub use self::f_convert::{
+    exec_fcvt_l_s, exec_fcvt_lu_s, exec_fcvt_s_l, exec_fcvt_s_lu, exec_fcvt_s_w, exec_fcvt_s_wu,
+    exec_fcvt_w_s, exec_fcvt_wu_s,
+};
+pub use self::f_div_sqrt::{exec_fdiv_s, exec_fsqrt_s};
+pub use self::f_load_store::{exec_flw, exec_fsd};
+pub use self::f_madd::{exec_fmadd_s, exec_fmsub_s, exec_fnmadd_s, exec_fnmsub_s};
 pub use self::i_type::{exec_load, exec_op_imm};
 pub use self::j_type::{exec_jal, exec_jalr};
 pub use self::lr_sc::{clear_reservation, exec_lr, exec_lr_w, exec_sc, exec_sc_w};
@@ -86,10 +103,66 @@ impl Executor {
             Opcode::Branch => exec_branch(instr, state, mem),
             Opcode::Load => exec_load(instr, state, mem),
             Opcode::Store => exec_store(instr, state, mem),
+            Opcode::LoadFp => exec_flw(instr, state, mem),
+            Opcode::StoreFp => exec_fsd(instr, state, mem),
             Opcode::OpImm => exec_op_imm(instr, state, mem),
             Opcode::Op => exec_op(instr, state, mem),
+            Opcode::OpFp => self.execute_fpu(instr, state, mem),
             Opcode::System => exec_system(instr, state, mem),
             Opcode::Amo => self.execute_amo(instr, state, mem),
+            _ => Err(ExecuteError::InvalidOperation),
+        }
+    }
+
+    /// Execute FPU (Floating-Point Unit) instructions
+    fn execute_fpu(
+        &self,
+        instr: &DecodedInstruction,
+        state: &mut CoreState,
+        mem: &mut dyn MemoryInterface,
+    ) -> Result<(), ExecuteError> {
+        let funct7 = instr.funct7.unwrap_or(0);
+        let funct3 = instr.funct3.map(|f| f as u8).unwrap_or(0);
+
+        match (funct7, funct3) {
+            // FADD.S
+            (0x00, 0) => exec_fadd_s(instr, state, mem),
+            // FSUB.S
+            (0x04, 0) => exec_fsub_s(instr, state, mem),
+            // FMUL.S
+            (0x08, 0) => exec_fmul_s(instr, state, mem),
+            // FDIV.S
+            (0x0C, 0) => exec_fdiv_s(instr, state, mem),
+            // FSQRT.S
+            (0x2C, 0) => exec_fsqrt_s(instr, state, mem),
+            // FSGNJ.S, FSGNJN.S, FSGNJX.S
+            (0x10, 0) => exec_fadd_s(instr, state, mem), // Placeholder
+            // FMIN.S, FMAX.S
+            (0x14, 0) => exec_fadd_s(instr, state, mem), // Placeholder
+            // FCVT.W.S, FCVT.L.S
+            (0x60, 0) => exec_fcvt_w_s(instr, state, mem),
+            // FCVT.WU.S, FCVT.LU.S
+            (0x61, 0) => exec_fcvt_wu_s(instr, state, mem),
+            // FMV.X.W
+            (0x70, 0) => exec_fcvt_w_s(instr, state, mem), // Placeholder
+            // FCLASS.S
+            (0x70, 1) => exec_fclass_s(instr, state, mem),
+            // FCVT.S.W, FCVT.S.L
+            (0x68, 0) => exec_fcvt_s_w(instr, state, mem),
+            // FCVT.S.WU, FCVT.S.LU
+            (0x69, 0) => exec_fcvt_s_wu(instr, state, mem),
+            // FMV.W.X
+            (0x78, 0) => exec_fcvt_s_w(instr, state, mem), // Placeholder
+            // FEQ.S, FLT.S, FLE.S
+            (0x50, 0) => exec_feq_s(instr, state, mem),
+            // FMADD.S
+            (0x00, 0) => exec_fmadd_s(instr, state, mem), // Same as FADD, handled by rs3
+            // FMSUB.S
+            (0x01, 0) => exec_fmsub_s(instr, state, mem),
+            // FNMSUB.S
+            (0x02, 0) => exec_fnmsub_s(instr, state, mem),
+            // FNMADD.S
+            (0x03, 0) => exec_fnmadd_s(instr, state, mem),
             _ => Err(ExecuteError::InvalidOperation),
         }
     }

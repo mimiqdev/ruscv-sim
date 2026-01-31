@@ -63,6 +63,17 @@ pub enum Funct3 {
     And = 0b111,
 }
 
+/// F extension rounding mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FPRoundingMode {
+    RNE = 0, // Round to Nearest, ties to Even
+    RTZ = 1, // Round Towards Zero
+    RDN = 2, // Round Down (towards -∞)
+    RUP = 3, // Round Up (towards +∞)
+    RMM = 4, // Round to Nearest, ties to Max Magnitude
+    DYN = 7, // Dynamic rounding mode
+}
+
 /// 译码后的指令
 #[derive(Debug, Clone)]
 pub struct DecodedInstruction {
@@ -80,6 +91,8 @@ pub struct DecodedInstruction {
     pub rs1: Option<u8>,
     /// Source register 2 (rs2)
     pub rs2: Option<u8>,
+    /// Source register 3 (rs3) - for R4-type instructions (FMADD/FMSUB/etc)
+    pub rs3: Option<u8>,
     /// 目标寄存器 (rd)
     pub rd: Option<u8>,
     /// 立即数
@@ -99,6 +112,7 @@ impl DecodedInstruction {
             funct7: None,
             rs1: None,
             rs2: None,
+            rs3: None,
             rd: None,
             imm: None,
             branch_taken: false,
@@ -223,6 +237,51 @@ impl InstructionDecoder {
                 decoded.funct3 =
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
                 decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
+            }
+            // F extension opcodes
+            Opcode::LoadFp => {
+                decoded.format = InstructionFormat::IType;
+                decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
+                decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
+            }
+            Opcode::StoreFp => {
+                decoded.format = InstructionFormat::SType;
+                decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
+                decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                // S-type immediate: imm[11:5] | imm[4:0]
+                let imm11_5 = ((instruction >> 25) & 0x7F) << 5;
+                let imm4_0 = ((instruction >> 7) & 0x1F) as u32;
+                decoded.imm = Some(imm11_5 | imm4_0);
+            }
+            Opcode::OpFp => {
+                // Check if this is an R4-type instruction (FMADD/FMSUB/FNMSUB/FNMADD)
+                // R4-type has rs3 field in bits [31:27]
+                let rs3_bits = (instruction >> 27) & 0x1F;
+                if rs3_bits <= 4 {
+                    // R4-type for FMA instructions
+                    decoded.format = InstructionFormat::RType;
+                    decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                    decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
+                    decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
+                    decoded.rs3 = Some(((instruction >> 27) & 0x1F) as u8);
+                    decoded.funct3 =
+                        Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                    decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
+                } else {
+                    // Standard R-type for other FPU operations
+                    decoded.format = InstructionFormat::RType;
+                    decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                    decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
+                    decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
+                    decoded.funct3 =
+                        Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                    decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
+                }
             }
             _ => {
                 return Err(DecodeError::ReservedInstruction);
