@@ -84,11 +84,14 @@ jobs:
   # ==========================================
   # Job 3: Performance Benchmarks
   # ==========================================
+  # Non-blocking baseline data collection
+  # Failures won't block PR merges
   bench:
     name: Bench
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
     needs: test
+    continue-on-error: true
 
     steps:
       - name: Checkout repository
@@ -103,6 +106,7 @@ jobs:
 
       - name: Run benchmarks
         run: cargo bench --all-features
+        continue-on-error: true
 
   # ==========================================
   # Job 4: Release Build
@@ -176,7 +180,7 @@ jobs:
     name: Summary
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
-    needs: [check, test, build, smoke-test]
+    needs: [check, test, bench, build, smoke-test]
 
     if: always()
     steps:
@@ -199,6 +203,15 @@ jobs:
             echo "❌ Tests Failed" >> $GITHUB_STEP_SUMMARY
           fi
           
+          echo "### Benchmark Status" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.bench.result }}" == "success" ]; then
+            echo "✅ Benchmarks Passed (baseline data)" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.bench.result }}" == "failure" ]; then
+            echo "⚠️  Benchmarks Failed (non-blocking)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️  Benchmarks Skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+          
           echo "### Build Status" >> $GITHUB_STEP_SUMMARY
           if [ "${{ needs.build.result }}" == "success" ]; then
             echo "✅ Build Passed" >> $GITHUB_STEP_SUMMARY
@@ -215,6 +228,8 @@ jobs:
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "_Note: Benchmarks are non-blocking and for baseline data collection only_" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "Workflow completed at: $(date -u)" >> $GITHUB_STEP_SUMMARY
 
 # ==========================================
