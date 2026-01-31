@@ -60,9 +60,6 @@ impl Predictor for OneBitPredictor {
         self.table[index] = taken;
     }
 }
-        self.table[index] = taken;
-    }
-}
 
 /// 2-bit saturating counter predictor
 #[derive(Debug, Clone)]
