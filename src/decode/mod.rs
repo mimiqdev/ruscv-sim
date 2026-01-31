@@ -188,6 +188,7 @@ impl InstructionDecoder {
                 decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
                 decoded.funct3 =
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8); // Needed for SLLI/SRLI/SRAI
                 decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
             }
             Opcode::Op => {
