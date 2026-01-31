@@ -51,11 +51,7 @@ pub fn exec_auipc(
 mod tests {
     use super::*;
 
-    fn create_test_instr_u_type(
-        opcode: Opcode,
-        rd: u8,
-        imm: u32,
-    ) -> DecodedInstruction {
+    fn create_test_instr_u_type(opcode: Opcode, rd: u8, imm: u32) -> DecodedInstruction {
         DecodedInstruction {
             raw: 0,
             format: InstructionFormat::UType,
@@ -83,7 +79,10 @@ mod tests {
 
     #[test]
     fn test_auipc_execution() {
-        let mut state = CoreState { pc: 0x1000, ..Default::default() };
+        let mut state = CoreState {
+            pc: 0x1000,
+            ..Default::default()
+        };
         let instr = create_test_instr_u_type(Opcode::Auipc, 1, 0x00001000);
         let mut mem = SimpleMemory::new(0x1000);
 
