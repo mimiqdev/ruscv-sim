@@ -5,7 +5,16 @@
 use crate::core::CoreState;
 use crate::decode::{DecodedInstruction, Funct3, Opcode};
 use crate::memory::{MemoryError, MemoryInterface};
+use std::collections::HashMap;
 use thiserror::Error;
+
+/// Instruction executor function type
+type ExecutorFn = fn(
+    &Executor,
+    &DecodedInstruction,
+    &mut CoreState,
+    &mut dyn MemoryInterface,
+) -> Result<(), ExecuteError>;
 
 /// 执行错误
 #[derive(Error, Debug)]
@@ -25,12 +34,29 @@ pub enum ExecuteError {
 }
 
 /// 执行器
-pub struct Executor {}
+pub struct Executor {
+    /// Opcode to executor function lookup table
+    dispatch_table: HashMap<Opcode, ExecutorFn>,
+}
 
 impl Executor {
     /// 创建新的执行器
     pub fn new() -> Self {
-        Self {}
+        let mut dispatch_table: HashMap<Opcode, ExecutorFn> = HashMap::new();
+
+        // Initialize dispatch table with function pointers
+        dispatch_table.insert(Opcode::Lui, Executor::exec_lui);
+        dispatch_table.insert(Opcode::Auipc, Executor::exec_auipc);
+        dispatch_table.insert(Opcode::Jal, Executor::exec_jal);
+        dispatch_table.insert(Opcode::Jalr, Executor::exec_jalr);
+        dispatch_table.insert(Opcode::Branch, Executor::exec_branch);
+        dispatch_table.insert(Opcode::Load, Executor::exec_load);
+        dispatch_table.insert(Opcode::Store, Executor::exec_store);
+        dispatch_table.insert(Opcode::OpImm, Executor::exec_op_imm);
+        dispatch_table.insert(Opcode::Op, Executor::exec_op);
+        dispatch_table.insert(Opcode::System, Executor::exec_system);
+
+        Self { dispatch_table }
     }
 
     /// 执行译码后的指令
@@ -40,18 +66,10 @@ impl Executor {
         state: &mut CoreState,
         mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
-        match instr.opcode {
-            Opcode::Lui => self.exec_lui(instr, state),
-            Opcode::Auipc => self.exec_auipc(instr, state),
-            Opcode::Jal => self.exec_jal(instr, state),
-            Opcode::Jalr => self.exec_jalr(instr, state),
-            Opcode::Branch => self.exec_branch(instr, state),
-            Opcode::Load => self.exec_load(instr, state, mem),
-            Opcode::Store => self.exec_store(instr, state, mem),
-            Opcode::OpImm => self.exec_op_imm(instr, state),
-            Opcode::Op => self.exec_op(instr, state),
-            Opcode::System => self.exec_system(instr, state),
-            _ => Err(ExecuteError::InvalidOperation),
+        // O(1) HashMap lookup for instruction dispatch
+        match self.dispatch_table.get(&instr.opcode) {
+            Some(executor_fn) => executor_fn(self, instr, state, mem),
+            None => Err(ExecuteError::InvalidOperation),
         }
     }
 
@@ -60,6 +78,7 @@ impl Executor {
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
+        _mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         if let (Some(rd), Some(imm)) = (instr.rd, instr.imm) {
             if rd != 0 {
@@ -76,6 +95,7 @@ impl Executor {
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
+        _mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         if let (Some(rd), Some(imm)) = (instr.rd, instr.imm) {
             if rd != 0 {
@@ -92,6 +112,7 @@ impl Executor {
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
+        _mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         if let (Some(rd), Some(imm)) = (instr.rd, instr.imm) {
             let return_addr = state.pc.wrapping_add(4);
@@ -113,6 +134,7 @@ impl Executor {
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
+        _mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         if let (Some(rd), Some(rs1), Some(imm)) = (instr.rd, instr.rs1, instr.imm) {
             let return_addr = state.pc.wrapping_add(4);
@@ -143,6 +165,7 @@ impl Executor {
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
+        _mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         let (Some(rs1), Some(rs2), Some(imm), Some(funct3)) =
             (instr.rs1, instr.rs2, instr.imm, instr.funct3)
@@ -178,7 +201,7 @@ impl Executor {
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
-        mem: &dyn MemoryInterface,
+        mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         let (Some(rd), Some(rs1), Some(imm), Some(funct3)) =
             (instr.rd, instr.rs1, instr.imm, instr.funct3)
@@ -207,7 +230,7 @@ impl Executor {
 
     /// 存储指令
     fn exec_store(
-        &mut self,
+        &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
         mem: &mut dyn MemoryInterface,
@@ -237,6 +260,7 @@ impl Executor {
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
+        _mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         let (Some(rd), Some(rs1), Some(imm), Some(funct3)) =
             (instr.rd, instr.rs1, instr.imm, instr.funct3)
@@ -318,6 +342,7 @@ impl Executor {
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
+        _mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         let (Some(rd), Some(rs1), Some(rs2), Some(funct3), Some(funct7)) =
             (instr.rd, instr.rs1, instr.rs2, instr.funct3, instr.funct7)
@@ -386,6 +411,7 @@ impl Executor {
         &self,
         instr: &DecodedInstruction,
         _state: &mut CoreState,
+        _mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
         let Some(imm) = instr.imm else {
             return Err(ExecuteError::InvalidOperation);

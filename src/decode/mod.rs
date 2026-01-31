@@ -3,6 +3,7 @@
 //! RV32I instruction decoder
 
 use num_enum::TryFromPrimitive;
+use std::hash::Hash;
 use thiserror::Error;
 
 /// 译码错误
@@ -28,7 +29,7 @@ pub enum InstructionFormat {
 }
 
 /// RV32I Opcode (primary)
-#[derive(Debug, Clone, Copy, TryFromPrimitive, PartialEq)]
+#[derive(Debug, Clone, Copy, TryFromPrimitive, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Opcode {
     Load = 0b000_0011,
