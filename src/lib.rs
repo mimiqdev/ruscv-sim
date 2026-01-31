@@ -9,6 +9,7 @@ pub mod execute;
 pub mod memory;
 pub mod tlm;
 
+pub use ruscv_macros::*;
 pub use core::{CoreState, PrivilegeMode, RiscvCore};
 pub use csr::{CsrError, CsrFile};
 pub use decode::{DecodeError, DecodedInstruction, InstructionDecoder, InstructionFormat};

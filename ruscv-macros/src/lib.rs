@@ -28,7 +28,7 @@ pub fn derive_rtype_executor(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         impl #name {
             /// Execute R-type instruction
-            pub fn execute(&self, core: &mut crate::core::Core) -> Result<(), crate::core::CoreError> {
+            pub fn execute(&self, core: &mut crate::RiscvCore) -> anyhow::Result<()> {
                 let rs1_val = core.read_register(self.rs1 as usize)?;
                 let rs2_val = core.read_register(self.rs2 as usize)?;
                 let result = self.compute(rs1_val, rs2_val);
@@ -71,7 +71,7 @@ pub fn derive_itype_executor(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         impl #name {
             /// Execute I-type instruction
-            pub fn execute(&self, core: &mut crate::core::Core) -> Result<(), crate::core::CoreError> {
+            pub fn execute(&self, core: &mut crate::RiscvCore) -> anyhow::Result<()> {
                 let rs1_val = core.read_register(self.rs1 as usize)?;
                 let imm_val = self.imm as i64;
                 let result = self.compute(rs1_val, imm_val);
