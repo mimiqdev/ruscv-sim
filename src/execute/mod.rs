@@ -48,7 +48,9 @@ impl Executor {
             Opcode::Branch => self.exec_branch(instr, state),
             Opcode::Load => self.exec_load(instr, state, mem),
             Opcode::Store => self.exec_store(instr, state, mem),
+            Opcode::OpImm => self.exec_op_imm(instr, state),
             Opcode::Op => self.exec_op(instr, state),
+            Opcode::System => self.exec_system(instr, state),
             _ => Err(ExecuteError::InvalidOperation),
         }
     }
@@ -229,6 +231,87 @@ impl Executor {
         Ok(())
     }
 
+    /// I-type operation instructions
+    fn exec_op_imm(
+        &self,
+        instr: &DecodedInstruction,
+        state: &mut CoreState,
+    ) -> Result<(), ExecuteError> {
+        let (Some(rd), Some(rs1), Some(imm), Some(funct3)) =
+            (instr.rd, instr.rs1, instr.imm, instr.funct3)
+        else {
+            return Err(ExecuteError::InvalidOperation);
+        };
+
+        // Extract shamt from imm[25:20] (lower 5 bits) for shift instructions
+        // For shift instructions, shamt is in imm[4:0]
+        let shamt = imm & 0x1F;
+
+        let result: i32 = match funct3 {
+            // ADDI (add immediate)
+            Funct3::AddSub => {
+                let rs1_val = state.regs[rs1 as usize] as i32;
+                let imm_val = imm as i32;
+                rs1_val.wrapping_add(imm_val)
+            }
+            // SLLI (shift left logical immediate)
+            Funct3::Sll => {
+                let rs1_val = state.regs[rs1 as usize];
+                (rs1_val.wrapping_shl(shamt)) as i32
+            }
+            // SLTI (set less than immediate)
+            Funct3::Slt => {
+                let rs1_val = state.regs[rs1 as usize] as i32;
+                let imm_val = imm as i32;
+                if rs1_val < imm_val {
+                    1
+                } else {
+                    0
+                }
+            }
+            // SLTIU (set less than immediate unsigned)
+            Funct3::Sltu => {
+                let rs1_val = state.regs[rs1 as usize];
+                if rs1_val < imm {
+                    1
+                } else {
+                    0
+                }
+            }
+            // XORI (exclusive or immediate)
+            Funct3::Xor => {
+                let rs1_val = state.regs[rs1 as usize];
+                (rs1_val ^ imm) as i32
+            }
+            // SRLI/SRAI (shift right logical/arithmetic immediate)
+            Funct3::SrlSra => {
+                let rs1_val = state.regs[rs1 as usize];
+                // Distinguish SRLI (funct7=0x00) vs SRAI (funct7=0x20)
+                match instr.funct7 {
+                    Some(0x00) => (rs1_val.wrapping_shr(shamt)) as i32, // SRLI
+                    Some(0x20) => (rs1_val as i32).wrapping_shr(shamt), // SRAI
+                    _ => return Err(ExecuteError::InvalidOperation),
+                }
+            }
+            // ORI (or immediate)
+            Funct3::Or => {
+                let rs1_val = state.regs[rs1 as usize];
+                (rs1_val | imm) as i32
+            }
+            // ANDI (and immediate)
+            Funct3::And => {
+                let rs1_val = state.regs[rs1 as usize];
+                (rs1_val & imm) as i32
+            }
+        };
+
+        if rd != 0 {
+            state.regs[rd as usize] = result as u32;
+        }
+
+        Ok(())
+    }
+
     /// R-type operation instructions
     fn exec_op(
         &self,
@@ -296,6 +379,23 @@ impl Executor {
 
         Ok(())
     }
+
+    /// System instructions (ECALL, EBREAK)
+    fn exec_system(
+        &self,
+        instr: &DecodedInstruction,
+        _state: &mut CoreState,
+    ) -> Result<(), ExecuteError> {
+        let Some(imm) = instr.imm else {
+            return Err(ExecuteError::InvalidOperation);
+        };
+
+        match imm {
+            0 => Err(ExecuteError::Ecall),
+            1 => Err(ExecuteError::Ebreak),
+            _ => Err(ExecuteError::InvalidOperation),
+        }
+    }
 }
 
 impl Default for Executor {
@@ -356,5 +456,606 @@ mod tests {
         executor.execute(&instr, &mut state, &mut mem).unwrap();
 
         assert_eq!(state.regs[3], 30);
+    }
+
+    #[test]
+    fn test_addi_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 10;
+
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::AddSub),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(5),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 15);
+    }
+
+    #[test]
+    fn test_addi_negative_immediate() {
+        let mut state = CoreState::default();
+        state.regs[1] = 10;
+
+        // ADDI x2, x1, -3
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::AddSub),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-3i32) as u32),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2] as i32, 7);
+    }
+
+    #[test]
+    fn test_slti_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 3;
+
+        // SLTI x2, x1, 5
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Slt),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(5),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 1);
+    }
+
+    #[test]
+    fn test_slti_negative_immediate() {
+        let mut state = CoreState::default();
+        state.regs[1] = 10;
+
+        // SLTI x2, x1, -5 (should be false since 10 > -5)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Slt),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-5i32) as u32),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0);
+    }
+
+    #[test]
+    fn test_sltiu_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 3;
+
+        // SLTIU x2, x1, 5
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Sltu),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(5),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 1);
+    }
+
+    #[test]
+    fn test_sltiu_negative_rs1() {
+        let mut state = CoreState::default();
+        state.regs[1] = (-1i32) as u32; // 0xFFFFFFFF (large unsigned)
+
+        // SLTIU x2, x1, 5 (should be false since 0xFFFFFFFF > 5)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Sltu),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(5),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0);
+    }
+
+    #[test]
+    fn test_sltiu_negative_immediate() {
+        let mut state = CoreState::default();
+        state.regs[1] = 10;
+
+        // SLTIU x2, x1, -5 (0xFFFFFFFB)
+        // In unsigned comparison, 10 < 0xFFFFFFFB is true
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Sltu),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-5i32) as u32),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 1);
+    }
+
+    #[test]
+    fn test_xori_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0b1100_0000; // 192
+
+        // XORI x2, x1, 0b1010_1010 (0xAA)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Xor),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(0b1010_1010), // 0xAA
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 0b1100_0000 ^ 0b1010_1010 = 0b0110_1010 = 0x6A = 106
+        assert_eq!(state.regs[2], 0b0110_1010);
+    }
+
+    #[test]
+    fn test_xori_with_negative_immediate() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0xFFFFFFFF; // -1 as i32
+
+        // XORI x2, x1, -1 (0xFFFFFFFF)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Xor),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-1i32) as u32), // 0xFFFFFFFF
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 0xFFFFFFFF ^ 0xFFFFFFFF = 0
+        assert_eq!(state.regs[2], 0);
+    }
+
+    #[test]
+    fn test_ori_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0b1100_0000; // 192
+
+        // ORI x2, x1, 0b1010_1010 (0xAA)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Or),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(0b1010_1010), // 0xAA
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 0b1100_0000 | 0b1010_1010 = 0b1110_1010 = 0xEA = 234
+        assert_eq!(state.regs[2], 0b1110_1010);
+    }
+
+    #[test]
+    fn test_ori_with_zero() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        // ORI x2, x1, 0 (should keep the value)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Or),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(0),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0x12345678);
+    }
+
+    #[test]
+    fn testori_with_all_ones() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        // ORI x2, x1, -1 (0xFFFFFFFF) should result in all 1s
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Or),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-1i32) as u32), // 0xFFFFFFFF
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0xFFFFFFFF);
+    }
+
+    #[test]
+    fn test_andi_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0b1111_1111_0000_0000; // 0xFF00
+
+        // ANDI x2, x1, 0b1010_1010_1010_1010 (0xAAAA)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::And),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(0b1010_1010_1010_1010), // 0xAAAA
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 0xFF00 & 0xAAAA = 0xAA00
+        assert_eq!(state.regs[2], 0xAA00);
+    }
+
+    #[test]
+    fn test_andi_with_zero() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        // ANDI x2, x1, 0 (should clear the value)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::And),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(0),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0);
+    }
+
+    #[test]
+    fn test_andi_with_all_ones() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0x12345678;
+
+        // ANDI x2, x1, -1 (0xFFFFFFFF) should keep the value
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::And),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-1i32) as u32), // 0xFFFFFFFF
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0x12345678);
+    }
+
+    #[test]
+    fn test_slli_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0b0000_0001; // 1
+
+        // SLLI x2, x1, 4 (shift left by 4)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Sll),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(4), // shamt = 4
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 1 << 4 = 16
+        assert_eq!(state.regs[2], 16);
+    }
+
+    #[test]
+    fn test_slli_large_shift() {
+        let mut state = CoreState::default();
+        state.regs[1] = 1;
+
+        // SLLI x2, x1, 8 (shift left by 8)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Sll),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(8), // shamt = 8
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 256);
+    }
+
+    #[test]
+    fn test_srli_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0b1_0000_0000; // 256
+
+        // SRLI x2, x1, 4 (shift right logical by 4)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::SrlSra),
+            funct7: Some(0x00), // SRLI
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(4), // shamt = 4
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 256 >> 4 = 16
+        assert_eq!(state.regs[2], 16);
+    }
+
+    #[test]
+    fn test_srli_with_negative_value() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0xFFFFFFF0; // Large unsigned value
+
+        // SRLI x2, x1, 4 (shift right logical by 4)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::SrlSra),
+            funct7: Some(0x00), // SRLI
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(4), // shamt = 4
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 0xFFFFFFF0 >> 4 = 0x0FFFFFFF
+        assert_eq!(state.regs[2], 0x0FFFFFFF);
+    }
+
+    #[test]
+    fn test_srai_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 0xFFFFFFF0; // -16 as i32
+
+        // SRAI x2, x1, 4 (shift right arithmetic by 4)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::SrlSra),
+            funct7: Some(0x20), // SRAI
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(4), // shamt = 4
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // -16 >> 4 = -1 (0xFFFFFFFF) - sign extension preserves the sign bit
+        assert_eq!(state.regs[2] as i32, -1);
+    }
+
+    #[test]
+    fn test_srai_with_positive_value() {
+        let mut state = CoreState::default();
+        state.regs[1] = 256; // Positive value
+
+        // SRAI x2, x1, 4 (shift right arithmetic by 4)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::SrlSra),
+            funct7: Some(0x20), // SRAI
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(4), // shamt = 4
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        // 256 >> 4 = 16
+        assert_eq!(state.regs[2], 16);
+    }
+
+    #[test]
+    fn test_ecall() {
+        let mut state = CoreState::default();
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::System,
+            funct3: None,
+            funct7: None,
+            rs1: None,
+            rs2: None,
+            rd: None,
+            imm: Some(0), // ECALL
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        let result = executor.execute(&instr, &mut state, &mut mem);
+
+        assert!(matches!(result, Err(ExecuteError::Ecall)));
+    }
+
+    #[test]
+    fn test_ebreak() {
+        let mut state = CoreState::default();
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::System,
+            funct3: None,
+            funct7: None,
+            rs1: None,
+            rs2: None,
+            rd: None,
+            imm: Some(1), // EBREAK
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        let result = executor.execute(&instr, &mut state, &mut mem);
+
+        assert!(matches!(result, Err(ExecuteError::Ebreak)));
     }
 }
