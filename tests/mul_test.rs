@@ -463,7 +463,11 @@ fn test_mul_different_registers() {
                     ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
                     let result = state.regs[rd as usize];
                     let expected = if rs1 == rs2 { 64 } else { 56 }; // 8*8=64 when rs1==rs2, else 7*8=56
-                    assert_eq!(result, expected, "Failed for rs1={}, rs2={}, rd={}", rs1, rs2, rd);
+                    assert_eq!(
+                        result, expected,
+                        "Failed for rs1={}, rs2={}, rd={}",
+                        rs1, rs2, rd
+                    );
                 }
             }
         }
