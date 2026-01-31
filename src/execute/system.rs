@@ -1,6 +1,7 @@
 //! System instruction execution
 //!
 use crate::core::PrivilegeMode;
+use crate::csr::supervisor;
 use crate::csr::machine;
 
 use crate::core::CoreState;
@@ -409,6 +410,8 @@ pub fn exec_sret(
     _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<u32, ExecuteError> {
     use crate::core::PrivilegeMode;
+use crate::csr::supervisor;
+use crate::csr::supervisor;
 
     // Read current sstatus (or mstatus with SSTATUS bits)
     let sstatus = state
@@ -473,6 +476,8 @@ pub fn exec_uret(
 mod mret_sret_tests {
     use super::*;
     use crate::core::PrivilegeMode;
+use crate::csr::supervisor;
+use crate::csr::supervisor;
 
     fn create_mret_instr() -> DecodedInstruction {
         DecodedInstruction {
