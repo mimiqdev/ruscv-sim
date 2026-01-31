@@ -360,7 +360,6 @@ fn bench_multilevel_cache(c: &mut Criterion) {
                 line_size: 64,
                 associativity: 4,
                 latency: 4,
-                ..Default::default()
             });
 
             // L2 cache: larger, slower
@@ -369,7 +368,6 @@ fn bench_multilevel_cache(c: &mut Criterion) {
                 line_size: 64,
                 associativity: 8,
                 latency: 12,
-                ..Default::default()
             });
 
             let accesses = generate_random_accesses(10000, 0x1000, 1024 * 1024);
