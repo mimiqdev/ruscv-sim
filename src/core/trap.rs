@@ -244,7 +244,7 @@ impl TrapHandler {
         state: &mut CoreStateWrapper,
     ) -> u32 {
         // Determine which mode handles this trap
-        let (target_mode, delegatable) = match trap {
+        let (target_mode, _delegatable) = match trap {
             Trap::Exception(cause) => {
                 let delegatable = self.delegation.should_delegate_exception(cause);
                 if delegatable && state.privilege != PrivilegeMode::Machine {
@@ -277,7 +277,7 @@ impl TrapHandler {
 
                 // Update mstatus: set MPIE = MIE, set MIE = 0, set MPP = current mode
                 let mstatus = state.csr.read(machine::MSTATUS).unwrap_or(0);
-                let mpie = (mstatus >> 7) & 1;
+                let _mpie = (mstatus >> 7) & 1;
                 let mie = (mstatus >> 3) & 1;
                 let mpp = state.privilege as u32;
 
@@ -299,7 +299,7 @@ impl TrapHandler {
 
                 // Update sstatus: set SPIE = SIE, set SIE = 0, set SPP = current mode
                 let sstatus = state.csr.read(supervisor::SSTATUS).unwrap_or(0);
-                let spie = (sstatus >> 5) & 1;
+                let _spie = (sstatus >> 5) & 1;
                 let sie = (sstatus >> 1) & 1;
                 let spp = if state.privilege == PrivilegeMode::Supervisor {
                     1
@@ -327,7 +327,7 @@ impl TrapHandler {
     }
 
     /// Calculate vectored trap address
-    fn vector_trap(&self, tvec: u32, cause: u64) -> u32 {
+    pub(crate) fn vector_trap(&self, tvec: u32, cause: u64) -> u32 {
         let mode = tvec & 0x3;
         let base = tvec & !0x3;
 

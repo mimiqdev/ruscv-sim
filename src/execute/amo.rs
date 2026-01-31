@@ -38,16 +38,14 @@ pub fn exec_amoadd(
     let value = state.regs[rs2];
 
     // Read the current value
-    let old_value = mem
-        .read_word(addr)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+    let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
 
     // Compute new value
     let new_value = old_value.wrapping_add(value);
 
     // Write back
     mem.write_word(addr, new_value)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+        .map_err(ExecuteError::MemoryError)?;
 
     // Return old value to rd
     if rd != 0 {
@@ -79,13 +77,11 @@ pub fn exec_amoand(
     let addr = state.regs[rs1];
     let value = state.regs[rs2];
 
-    let old_value = mem
-        .read_word(addr)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+    let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = old_value & value;
 
     mem.write_word(addr, new_value)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+        .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
         state.regs[rd] = old_value;
@@ -116,13 +112,11 @@ pub fn exec_amoor(
     let addr = state.regs[rs1];
     let value = state.regs[rs2];
 
-    let old_value = mem
-        .read_word(addr)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+    let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = old_value | value;
 
     mem.write_word(addr, new_value)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+        .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
         state.regs[rd] = old_value;
@@ -153,13 +147,11 @@ pub fn exec_amoxor(
     let addr = state.regs[rs1];
     let value = state.regs[rs2];
 
-    let old_value = mem
-        .read_word(addr)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+    let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = old_value ^ value;
 
     mem.write_word(addr, new_value)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+        .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
         state.regs[rd] = old_value;
@@ -190,9 +182,7 @@ pub fn exec_amomax(
     let addr = state.regs[rs1];
     let value = state.regs[rs2];
 
-    let old_value = mem
-        .read_word(addr)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+    let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = if (old_value as i32) > (value as i32) {
         old_value
     } else {
@@ -200,7 +190,7 @@ pub fn exec_amomax(
     };
 
     mem.write_word(addr, new_value)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+        .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
         state.regs[rd] = old_value;
@@ -231,9 +221,7 @@ pub fn exec_amomin(
     let addr = state.regs[rs1];
     let value = state.regs[rs2];
 
-    let old_value = mem
-        .read_word(addr)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+    let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = if (old_value as i32) < (value as i32) {
         old_value
     } else {
@@ -241,7 +229,7 @@ pub fn exec_amomin(
     };
 
     mem.write_word(addr, new_value)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+        .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
         state.regs[rd] = old_value;
@@ -272,13 +260,11 @@ pub fn exec_amomaxu(
     let addr = state.regs[rs1];
     let value = state.regs[rs2];
 
-    let old_value = mem
-        .read_word(addr)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+    let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = if old_value > value { old_value } else { value };
 
     mem.write_word(addr, new_value)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+        .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
         state.regs[rd] = old_value;
@@ -309,13 +295,11 @@ pub fn exec_amominu(
     let addr = state.regs[rs1];
     let value = state.regs[rs2];
 
-    let old_value = mem
-        .read_word(addr)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+    let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = if old_value < value { old_value } else { value };
 
     mem.write_word(addr, new_value)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+        .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
         state.regs[rd] = old_value;
@@ -335,8 +319,8 @@ mod tests {
         rs2: u8,
         rd: u8,
         funct5: u8,
-        aq: u8,
-        rl: u8,
+        _aq: u8,
+        _rl: u8,
     ) -> DecodedInstruction {
         let raw = ((funct5 as u32) << 27)
             | ((rs2 as u32) << 20)

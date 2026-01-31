@@ -740,6 +740,7 @@ dependencies = [
  "env_logger",
  "log",
  "num_enum",
+ "once_cell",
  "proptest",
  "rand 0.8.5",
  "ruscv-macros",

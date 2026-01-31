@@ -77,8 +77,8 @@ pub fn exec_mulhu(
     let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    let a = state.regs[rs1] as u32 as u64;
-    let b = state.regs[rs2] as u32 as u64;
+    let a = state.regs[rs1] as u64;
+    let b = state.regs[rs2] as u64;
     let result = ((a * b) >> 32) as u32;
 
     state.regs[rd] = result;
@@ -103,7 +103,7 @@ pub fn exec_mulhsu(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let a = state.regs[rs1] as i32;
-    let b = state.regs[rs2] as u32 as u64;
+    let b = state.regs[rs2] as u64;
     let result = ((a as i64 * b as i64) >> 32) as u32;
 
     state.regs[rd] = result;
@@ -113,7 +113,8 @@ pub fn exec_mulhsu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode::{DecodedInstruction, InstructionFormat, Opcode};
+    use crate::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
+    use crate::memory::SimpleMemory;
 
     fn create_mul_instr(rs1: u8, rs2: u8, rd: u8, funct7: u8) -> DecodedInstruction {
         let raw = ((funct7 as u32) << 25)
@@ -125,7 +126,7 @@ mod tests {
             raw,
             format: InstructionFormat::RType,
             opcode: Opcode::Op,
-            funct3: Some(0),
+            funct3: Some(Funct3::AddSub),
             funct7: Some(funct7),
             rs1: Some(rs1),
             rs2: Some(rs2),
@@ -145,7 +146,7 @@ mod tests {
         state.regs[1] = 6;
         state.regs[2] = 7;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mul(&instr, &mut state, &mut mem);
@@ -159,7 +160,7 @@ mod tests {
         state.regs[1] = (-6i32) as u32; // -6
         state.regs[2] = 7;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mul(&instr, &mut state, &mut mem);
@@ -173,7 +174,7 @@ mod tests {
         state.regs[1] = 0xFFFF_FFFF; // -1
         state.regs[2] = 0xFFFF_FFFF; // -1
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mul(&instr, &mut state, &mut mem);
@@ -187,7 +188,7 @@ mod tests {
         state.regs[1] = 100;
         state.regs[2] = 0;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mul(&instr, &mut state, &mut mem);
@@ -201,7 +202,7 @@ mod tests {
         state.regs[1] = 6;
         state.regs[2] = 7;
 
-        let instr = create_mul_instr(1, 2, 0, 0b0000_001);
+        let instr = create_mul_instr(1, 2, 0, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mul(&instr, &mut state, &mut mem);
@@ -219,7 +220,7 @@ mod tests {
         state.regs[1] = 0x0001_0000; // 65536
         state.regs[2] = 0x0001_0000; // 65536
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulh(&instr, &mut state, &mut mem);
@@ -233,7 +234,7 @@ mod tests {
         state.regs[1] = 0x8000_0000; // -2147483648
         state.regs[2] = 2;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulh(&instr, &mut state, &mut mem);
@@ -247,7 +248,7 @@ mod tests {
         state.regs[1] = 3;
         state.regs[2] = 4;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulh(&instr, &mut state, &mut mem);
@@ -265,7 +266,7 @@ mod tests {
         state.regs[1] = 0x8000_0000; // Large unsigned
         state.regs[2] = 0x8000_0000;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_011);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0011);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulhu(&instr, &mut state, &mut mem);
@@ -280,7 +281,7 @@ mod tests {
         state.regs[1] = 0x0001_0000;
         state.regs[2] = 0x0001_0000;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_011);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0011);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulhu(&instr, &mut state, &mut mem);
@@ -298,7 +299,7 @@ mod tests {
         state.regs[1] = (-1i32) as u32; // -1 signed
         state.regs[2] = 0x8000_0000; // Large unsigned
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulhsu(&instr, &mut state, &mut mem);
@@ -314,11 +315,11 @@ mod tests {
         state.regs[2] = 0x0001_0000; // Unsigned
 
         // Using MULH encoding but MULHSU uses same funct7
-        let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
 
         // Note: This is actually testing MULH behavior, need to use correct funct7
-        // MULHSU should have funct7 = 0b0000_010, same as MULH
+        // MULHSU should have funct7 = 0b000_0010, same as MULH
         // The difference is in how rs1 is interpreted (signed vs unsigned)
         let result = exec_mulhsu(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
@@ -335,7 +336,7 @@ mod tests {
         state.regs[1] = 0x7FFF_FFFF; // MAX i32
         state.regs[2] = 0x7FFF_FFFF;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mul(&instr, &mut state, &mut mem);
@@ -351,7 +352,7 @@ mod tests {
         state.regs[1] = 0x8000_0000; // MIN i32 (-2147483648)
         state.regs[2] = 0x8000_0000;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mul(&instr, &mut state, &mut mem);
@@ -367,7 +368,7 @@ mod tests {
         state.regs[1] = 0x1234_5678;
         state.regs[2] = 0x9ABC_DEF0;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_001);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mul(&instr, &mut state, &mut mem);
@@ -383,7 +384,7 @@ mod tests {
         state.regs[1] = 0x1234_5678;
         state.regs[2] = 0x9ABC_DEF0;
 
-        let instr = create_mul_instr(1, 2, 3, 0b0000_010);
+        let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulh(&instr, &mut state, &mut mem);

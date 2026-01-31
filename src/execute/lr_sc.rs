@@ -99,9 +99,7 @@ pub fn exec_lr(
     let addr = state.regs[rs1];
 
     // Read the value from memory
-    let value = mem
-        .read_word(addr)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+    let value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
 
     // Create reservation
     let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
@@ -135,9 +133,7 @@ pub fn exec_lr_w(
     let addr = state.regs[rs1];
 
     // Read 32-bit value from memory
-    let value = mem
-        .read_word(addr)
-        .map_err(|e| ExecuteError::MemoryError(e))?;
+    let value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
 
     // Sign-extend to 64 bits (but we store in u32 for now)
     let value = value as i32 as u64 as u32;
@@ -190,7 +186,7 @@ pub fn exec_sc(
     if success {
         // Store the value
         mem.write_word(addr, value)
-            .map_err(|e| ExecuteError::MemoryError(e))?;
+            .map_err(ExecuteError::MemoryError)?;
         state.regs[rd] = 0; // Success
     } else {
         state.regs[rd] = 1; // Failure (non-zero)
@@ -225,7 +221,7 @@ pub fn exec_sc_w(
     if success {
         // Store the lower 32 bits
         mem.write_word(addr, value)
-            .map_err(|e| ExecuteError::MemoryError(e))?;
+            .map_err(ExecuteError::MemoryError)?;
         state.regs[rd] = 0; // Success
     } else {
         state.regs[rd] = 1; // Failure
@@ -246,9 +242,10 @@ pub fn clear_reservation() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode::{DecodedInstruction, InstructionFormat, Opcode};
+    use crate::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
+    use crate::memory::SimpleMemory;
 
-    fn create_lr_instr(rs1: u8, rd: u8, funct5: u8, aq: u8, rl: u8) -> DecodedInstruction {
+    fn create_lr_instr(rs1: u8, rd: u8, funct5: u8, _aq: u8, rl: u8) -> DecodedInstruction {
         // LR: funct5 = 00010, rs2 = 00000
         // SC: funct5 = 00011, rs2 = source register
         let raw = ((funct5 as u32) << 27)
@@ -260,7 +257,7 @@ mod tests {
             raw,
             format: InstructionFormat::RType,
             opcode: Opcode::Amo,
-            funct3: Some(0b010), // width = 32-bit
+            funct3: Some(Funct3::Slt), // width = 32-bit
             funct7: None,
             rs1: Some(rs1),
             rs2: Some(0), // 0 for LR
@@ -270,7 +267,14 @@ mod tests {
         }
     }
 
-    fn create_sc_instr(rs1: u8, rs2: u8, rd: u8, funct5: u8, aq: u8, rl: u8) -> DecodedInstruction {
+    fn create_sc_instr(
+        rs1: u8,
+        rs2: u8,
+        rd: u8,
+        funct5: u8,
+        _aq: u8,
+        _rl: u8,
+    ) -> DecodedInstruction {
         let raw = ((funct5 as u32) << 27)
             | ((rs2 as u32) << 20)
             | ((rs1 as u32) << 15)
@@ -280,7 +284,7 @@ mod tests {
             raw,
             format: InstructionFormat::RType,
             opcode: Opcode::Amo,
-            funct3: Some(0b010),
+            funct3: Some(Funct3::Slt),
             funct7: None,
             rs1: Some(rs1),
             rs2: Some(rs2),
@@ -338,7 +342,7 @@ mod tests {
         exec_lr(&lr_instr, &mut state, &mut mem).unwrap();
 
         // Now SC should succeed
-        state.regs[3] = 0xABCD_EFGI;
+        state.regs[3] = 0xABCDEFFF;
         let sc_instr = create_sc_instr(1, 3, 4, 0b00011, 0, 0);
         let result = exec_sc(&sc_instr, &mut state, &mut mem);
 
@@ -346,7 +350,7 @@ mod tests {
         assert_eq!(state.regs[4], 0); // Success
 
         // Check memory was updated
-        assert_eq!(mem.read_word(0x300).unwrap(), 0xABCD_EFGI);
+        assert_eq!(mem.read_word(0x300).unwrap(), 0xABCDEFFF);
     }
 
     #[test]
@@ -384,7 +388,7 @@ mod tests {
         clear_reservation();
 
         // Now SC should fail
-        state.regs[3] = 0xABCD_EFGI;
+        state.regs[3] = 0xABCDEFFF;
         let sc_instr = create_sc_instr(1, 3, 4, 0b00011, 0, 0);
         let result = exec_sc(&sc_instr, &mut state, &mut mem);
 

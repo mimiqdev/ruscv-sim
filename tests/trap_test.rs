@@ -6,11 +6,11 @@
 //! - MRET/SRET instructions
 //! - CSR trap register interactions
 
-use ruscv::core::PrivilegeMode;
-use ruscv::core::{ExceptionCause, InterruptCause, Trap, TrapDelegation, TrapHandler};
-use ruscv::csr::machine;
-use ruscv::csr::supervisor;
-use ruscv::csr::CsrFile;
+use ruscv_sim::core::PrivilegeMode;
+use ruscv_sim::core::{ExceptionCause, InterruptCause, Trap, TrapDelegation, TrapHandler};
+use ruscv_sim::csr::machine;
+use ruscv_sim::csr::supervisor;
+use ruscv_sim::csr::CsrFile;
 
 // Helper function to create a trap context wrapper
 struct TestTrapContext {
@@ -373,7 +373,7 @@ fn test_undelegated_exception_stays_in_machine() {
 
 #[test]
 fn test_trap_context_creation() {
-    let ctx = ruscv::core::TrapContext::new(
+    let ctx = ruscv_sim::core::TrapContext::new(
         0x1000,
         ExceptionCause::IllegalInstruction.code(),
         0xBAD0,
@@ -388,7 +388,7 @@ fn test_trap_context_creation() {
 
 #[test]
 fn test_trap_context_interrupt() {
-    let ctx = ruscv::core::TrapContext::new(
+    let ctx = ruscv_sim::core::TrapContext::new(
         0x2000,
         InterruptCause::MachineExternal.code(),
         0,

@@ -63,8 +63,8 @@ pub fn exec_divu(
     let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    let dividend = state.regs[rs1] as u32;
-    let divisor = state.regs[rs2] as u32;
+    let dividend = state.regs[rs1];
+    let divisor = state.regs[rs2];
 
     let result = if divisor == 0 {
         // Division by zero: all ones
@@ -128,8 +128,8 @@ pub fn exec_remu(
     let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    let dividend = state.regs[rs1] as u32;
-    let divisor = state.regs[rs2] as u32;
+    let dividend = state.regs[rs1];
+    let divisor = state.regs[rs2];
 
     let result = if divisor == 0 {
         // Division by zero: dividend
@@ -145,7 +145,8 @@ pub fn exec_remu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode::{DecodedInstruction, InstructionFormat, Opcode};
+    use crate::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
+    use crate::memory::SimpleMemory;
 
     fn create_div_instr(rs1: u8, rs2: u8, rd: u8, funct7: u8) -> DecodedInstruction {
         let raw = ((funct7 as u32) << 25)
@@ -157,7 +158,7 @@ mod tests {
             raw,
             format: InstructionFormat::RType,
             opcode: Opcode::Op,
-            funct3: Some(0),
+            funct3: Some(Funct3::AddSub),
             funct7: Some(funct7),
             rs1: Some(rs1),
             rs2: Some(rs2),
@@ -177,7 +178,7 @@ mod tests {
         state.regs[1] = 42;
         state.regs[2] = 6;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_div(&instr, &mut state, &mut mem);
@@ -191,7 +192,7 @@ mod tests {
         state.regs[1] = (-42i32) as u32;
         state.regs[2] = 6;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_div(&instr, &mut state, &mut mem);
@@ -205,7 +206,7 @@ mod tests {
         state.regs[1] = 42;
         state.regs[2] = 0;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_div(&instr, &mut state, &mut mem);
@@ -219,7 +220,7 @@ mod tests {
         state.regs[1] = 0x8000_0000; // -2147483648
         state.regs[2] = 0xFFFF_FFFF; // -1
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_div(&instr, &mut state, &mut mem);
@@ -233,7 +234,7 @@ mod tests {
         state.regs[1] = 43;
         state.regs[2] = 6;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_div(&instr, &mut state, &mut mem);
@@ -251,7 +252,7 @@ mod tests {
         state.regs[1] = 42;
         state.regs[2] = 6;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_divu(&instr, &mut state, &mut mem);
@@ -265,7 +266,7 @@ mod tests {
         state.regs[1] = 0xFFFF_FFFF;
         state.regs[2] = 2;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_divu(&instr, &mut state, &mut mem);
@@ -279,7 +280,7 @@ mod tests {
         state.regs[1] = 42;
         state.regs[2] = 0;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_divu(&instr, &mut state, &mut mem);
@@ -297,7 +298,7 @@ mod tests {
         state.regs[1] = 43;
         state.regs[2] = 6;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_rem(&instr, &mut state, &mut mem);
@@ -311,7 +312,7 @@ mod tests {
         state.regs[1] = (-43i32) as u32;
         state.regs[2] = 6;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_rem(&instr, &mut state, &mut mem);
@@ -325,7 +326,7 @@ mod tests {
         state.regs[1] = 42;
         state.regs[2] = 0;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_rem(&instr, &mut state, &mut mem);
@@ -339,7 +340,7 @@ mod tests {
         state.regs[1] = 0x8000_0000; // -2147483648
         state.regs[2] = 0xFFFF_FFFF; // -1
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_rem(&instr, &mut state, &mut mem);
@@ -357,7 +358,7 @@ mod tests {
         state.regs[1] = 43;
         state.regs[2] = 6;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_remu(&instr, &mut state, &mut mem);
@@ -371,7 +372,7 @@ mod tests {
         state.regs[1] = 0xFFFF_FFFF;
         state.regs[2] = 1000;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_remu(&instr, &mut state, &mut mem);
@@ -385,7 +386,7 @@ mod tests {
         state.regs[1] = 42;
         state.regs[2] = 0;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_remu(&instr, &mut state, &mut mem);
@@ -403,7 +404,7 @@ mod tests {
         state.regs[1] = 42;
         state.regs[2] = 1;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         exec_div(&instr, &mut state, &mut mem).unwrap();
@@ -416,7 +417,7 @@ mod tests {
         state.regs[1] = 42;
         state.regs[2] = 0xFFFF_FFFFu32 as u32; // -1
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         exec_div(&instr, &mut state, &mut mem).unwrap();
@@ -429,7 +430,7 @@ mod tests {
         state.regs[1] = 100;
         state.regs[2] = 10;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         exec_div(&instr, &mut state, &mut mem).unwrap();
@@ -442,7 +443,7 @@ mod tests {
         state.regs[1] = 43;
         state.regs[2] = 0xFFFF_FFFAu32 as u32; // -6
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         exec_rem(&instr, &mut state, &mut mem).unwrap();
@@ -455,7 +456,7 @@ mod tests {
         state.regs[1] = 1;
         state.regs[2] = 0x8000_0000; // Interpreted as 2^31 unsigned
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         exec_divu(&instr, &mut state, &mut mem).unwrap();
@@ -468,7 +469,7 @@ mod tests {
         state.regs[1] = 43;
         state.regs[2] = 6;
 
-        let instr = create_div_instr(1, 2, 0, 0b0000_001);
+        let instr = create_div_instr(1, 2, 0, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_rem(&instr, &mut state, &mut mem);
@@ -482,7 +483,7 @@ mod tests {
         state.regs[1] = 0x8000_0000; // -2147483648
         state.regs[2] = 2;
 
-        let instr = create_div_instr(1, 2, 3, 0b0000_001);
+        let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         exec_div(&instr, &mut state, &mut mem).unwrap();

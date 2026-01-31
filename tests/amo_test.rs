@@ -3,12 +3,12 @@
 //! Tests AMOADD, AMOAND, AMOOR, AMOXOR, AMOMAX, AMOMIN, AMOMAXU, AMOMINU
 
 use ruscv_sim::core::CoreState;
-use ruscv_sim::decode::{DecodedInstruction, InstructionFormat, Opcode};
+use ruscv_sim::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
 use ruscv_sim::execute::amo::{
     exec_amoadd, exec_amoand, exec_amomax, exec_amomaxu, exec_amomin, exec_amominu, exec_amoor,
     exec_amoxor,
 };
-use ruscv_sim::memory::{Memory, MemoryInterface};
+use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 
 fn create_amo_instr(rs1: u8, rs2: u8, rd: u8, funct5: u8, aq: u8, rl: u8) -> DecodedInstruction {
     let raw = ((funct5 as u32) << 27)
@@ -20,7 +20,7 @@ fn create_amo_instr(rs1: u8, rs2: u8, rd: u8, funct5: u8, aq: u8, rl: u8) -> Dec
         raw,
         format: InstructionFormat::RType,
         opcode: Opcode::Amo,
-        funct3: Some(0b010),
+        funct3: Some(Funct3::Slt),
         funct7: None,
         rs1: Some(rs1),
         rs2: Some(rs2),
@@ -37,7 +37,7 @@ fn create_amo_instr(rs1: u8, rs2: u8, rd: u8, funct5: u8, aq: u8, rl: u8) -> Dec
 #[test]
 fn test_amoadd_basic() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleSimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 10).unwrap();
     state.regs[1] = 0x100;
@@ -54,7 +54,7 @@ fn test_amoadd_basic() {
 #[test]
 fn test_amoadd_wrapping() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0xFFFF_FFFE).unwrap();
     state.regs[1] = 0x100;
@@ -71,7 +71,7 @@ fn test_amoadd_wrapping() {
 #[test]
 fn test_amoadd_zero() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 100).unwrap();
     state.regs[1] = 0x100;
@@ -88,7 +88,7 @@ fn test_amoadd_zero() {
 #[test]
 fn test_amoadd_negative_value() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 50).unwrap();
     state.regs[1] = 0x100;
@@ -105,7 +105,7 @@ fn test_amoadd_negative_value() {
 #[test]
 fn test_amoadd_large_numbers() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0x8000_0000).unwrap();
     state.regs[1] = 0x100;
@@ -122,7 +122,7 @@ fn test_amoadd_large_numbers() {
 #[test]
 fn test_amoadd_x0_dest() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 10).unwrap();
     state.regs[1] = 0x100;
@@ -139,7 +139,7 @@ fn test_amoadd_x0_dest() {
 #[test]
 fn test_amoadd_sequence() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0).unwrap();
     state.regs[1] = 0x100;
@@ -157,7 +157,7 @@ fn test_amoadd_sequence() {
 #[test]
 fn test_amoadd_max_values() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0x7FFF_FFFF).unwrap();
     state.regs[1] = 0x100;
@@ -174,7 +174,7 @@ fn test_amoadd_max_values() {
 #[test]
 fn test_amoadd_min_values() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 1).unwrap();
     state.regs[1] = 0x100;
@@ -195,7 +195,7 @@ fn test_amoadd_min_values() {
 #[test]
 fn test_amoand_basic() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0xFF).unwrap();
     state.regs[1] = 0x100;
@@ -212,7 +212,7 @@ fn test_amoand_basic() {
 #[test]
 fn test_amoand_all_ones() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0xFFFF_FFFF).unwrap();
     state.regs[1] = 0x100;
@@ -229,7 +229,7 @@ fn test_amoand_all_ones() {
 #[test]
 fn test_amoand_zero_mask() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0x1234_5678).unwrap();
     state.regs[1] = 0x100;
@@ -246,7 +246,7 @@ fn test_amoand_zero_mask() {
 #[test]
 fn test_amoand_preserves_bits() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0xFFFF_0000).unwrap();
     state.regs[1] = 0x100;
@@ -267,7 +267,7 @@ fn test_amoand_preserves_bits() {
 #[test]
 fn test_amoor_basic() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0x0F).unwrap();
     state.regs[1] = 0x100;
@@ -284,7 +284,7 @@ fn test_amoor_basic() {
 #[test]
 fn test_amoor_zero_operand() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0x1234_5678).unwrap();
     state.regs[1] = 0x100;
@@ -301,7 +301,7 @@ fn test_amoor_zero_operand() {
 #[test]
 fn test_amoor_all_ones() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0x0000_0000).unwrap();
     state.regs[1] = 0x100;
@@ -322,7 +322,7 @@ fn test_amoor_all_ones() {
 #[test]
 fn test_amoxor_basic() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0xFF).unwrap();
     state.regs[1] = 0x100;
@@ -339,7 +339,7 @@ fn test_amoxor_basic() {
 #[test]
 fn test_amoxor_toggle() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0).unwrap();
     state.regs[1] = 0x100;
@@ -359,7 +359,7 @@ fn test_amoxor_toggle() {
 #[test]
 fn test_amoxor_zero() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0x1234_5678).unwrap();
     state.regs[1] = 0x100;
@@ -380,7 +380,7 @@ fn test_amoxor_zero() {
 #[test]
 fn test_amomax_basic() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 10).unwrap();
     state.regs[1] = 0x100;
@@ -397,7 +397,7 @@ fn test_amomax_basic() {
 #[test]
 fn test_amomax_keeps_larger() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 100).unwrap();
     state.regs[1] = 0x100;
@@ -414,7 +414,7 @@ fn test_amomax_keeps_larger() {
 #[test]
 fn test_amomax_negative() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, (-10i32) as u32).unwrap();
     state.regs[1] = 0x100;
@@ -436,7 +436,7 @@ fn test_amomax_negative() {
 #[test]
 fn test_amomin_basic() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 20).unwrap();
     state.regs[1] = 0x100;
@@ -453,7 +453,7 @@ fn test_amomin_basic() {
 #[test]
 fn test_amomin_keeps_smaller() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 50).unwrap();
     state.regs[1] = 0x100;
@@ -470,7 +470,7 @@ fn test_amomin_keeps_smaller() {
 #[test]
 fn test_amomin_negative() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, (-10i32) as u32).unwrap();
     state.regs[1] = 0x100;
@@ -492,7 +492,7 @@ fn test_amomin_negative() {
 #[test]
 fn test_amomaxu_basic() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 10).unwrap();
     state.regs[1] = 0x100;
@@ -509,7 +509,7 @@ fn test_amomaxu_basic() {
 #[test]
 fn test_amomaxu_unsigned_comparison() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     // 0x8000_0000 as unsigned is 2147483648
     // 0x7FFF_FFFF as unsigned is 2147483647
@@ -533,7 +533,7 @@ fn test_amomaxu_unsigned_comparison() {
 #[test]
 fn test_amominu_basic() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 20).unwrap();
     state.regs[1] = 0x100;
@@ -550,7 +550,7 @@ fn test_amominu_basic() {
 #[test]
 fn test_amominu_unsigned_comparison() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     // 0x8000_0000 as unsigned is 2147483648
     // 0x7FFF_FFFF as unsigned is 2147483647
@@ -577,7 +577,7 @@ fn test_amo_comparison_signed_vs_unsigned() {
     // Unsigned: 0x8000_0000 is positive (2147483648)
 
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 0x8000_0000).unwrap();
     state.regs[1] = 0x100;
@@ -600,7 +600,7 @@ fn test_amo_comparison_signed_vs_unsigned() {
 #[test]
 fn test_amo_all_return_original() {
     let mut state = CoreState::default();
-    let mut mem = Memory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 42).unwrap();
     state.regs[1] = 0x100;

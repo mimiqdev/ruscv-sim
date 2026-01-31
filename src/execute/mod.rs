@@ -107,8 +107,8 @@ impl Executor {
             // LR/SC (Load-Reserved / Store-Conditional)
             0b00010 => {
                 // LR or LR.W
-                let aq = ((instr.raw >> 26) & 1) as u8;
-                let rl = ((instr.raw >> 25) & 1) as u8;
+                let _aq = ((instr.raw >> 26) & 1) as u8;
+                let _rl = ((instr.raw >> 25) & 1) as u8;
                 if instr.rs2 == Some(0) {
                     // LR or LR.W (rs2 = 0)
                     if instr.funct3 == Some(Funct3::Slt) {
@@ -129,7 +129,7 @@ impl Executor {
 
             // AMO operations
             0b00001 => exec_amoadd(instr, state, mem), // AMOADD
-            0b00011 => exec_amoand(instr, state, mem), // AMOAND
+            0b00111 => exec_amoand(instr, state, mem), // AMOAND
             0b00100 => exec_amoxor(instr, state, mem), // AMOXOR
             0b00110 => exec_amoor(instr, state, mem),  // AMOOR
             0b01000 => exec_amomin(instr, state, mem), // AMOMIN
