@@ -244,13 +244,19 @@ impl Executor {
 
         let rs1_val = state.regs[rs1 as usize] as i32;
         let imm_val = imm as i32;
-
-        // ADDI (add immediate)
-        if funct3 != Funct3::AddSub {
-            return Err(ExecuteError::InvalidOperation);
-        }
-
-        let result = rs1_val.wrapping_add(imm_val);
+        let result: i32 = match funct3 {
+            // ADDI (add immediate)
+            Funct3::AddSub => rs1_val.wrapping_add(imm_val),
+            // SLTI (set less than immediate)
+            Funct3::Slt => {
+                if rs1_val < imm_val {
+                    1
+                } else {
+                    0
+                }
+            }
+            _ => return Err(ExecuteError::InvalidOperation),
+        };
 
         if rd != 0 {
             state.regs[rd as usize] = result as u32;
@@ -437,5 +443,57 @@ mod tests {
         executor.execute(&instr, &mut state, &mut mem).unwrap();
 
         assert_eq!(state.regs[2] as i32, 7);
+    }
+
+    #[test]
+    fn test_slti_execution() {
+        let mut state = CoreState::default();
+        state.regs[1] = 3;
+
+        // SLTI x2, x1, 5
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Slt),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some(5),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 1);
+    }
+
+    #[test]
+    fn test_slti_negative_immediate() {
+        let mut state = CoreState::default();
+        state.regs[1] = 10;
+
+        // SLTI x2, x1, -5 (should be false since 10 > -5)
+        let instr = DecodedInstruction {
+            raw: 0,
+            format: crate::decode::InstructionFormat::IType,
+            opcode: Opcode::OpImm,
+            funct3: Some(Funct3::Slt),
+            funct7: None,
+            rs1: Some(1),
+            rs2: None,
+            rd: Some(2),
+            imm: Some((-5i32) as u32),
+            branch_taken: false,
+        };
+
+        let mut executor = Executor::new();
+        let mut mem = SimpleMemory::new(0x1000);
+        executor.execute(&instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[2], 0);
     }
 }
