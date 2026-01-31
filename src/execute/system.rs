@@ -554,8 +554,10 @@ mod mret_sret_tests {
 
     #[test]
     fn test_mret_from_s_mode() {
-        let mut state = CoreState::default();
-        state.privilege = PrivilegeMode::Supervisor;
+        let mut state = CoreState {
+            privilege: PrivilegeMode::Supervisor,
+            ..Default::default()
+        };
 
         // Set up MEPC and mstatus with MPP = Machine
         state.csr.write(machine::MEPC, 0x3000).unwrap();
@@ -575,8 +577,10 @@ mod mret_sret_tests {
 
     #[test]
     fn test_sret_basic() {
-        let mut state = CoreState::default();
-        state.privilege = PrivilegeMode::Supervisor;
+        let mut state = CoreState {
+            privilege: PrivilegeMode::Supervisor,
+            ..Default::default()
+        };
 
         // Set up SEPC and sstatus
         state.csr.write(supervisor::SEPC, 0x1000).unwrap();
@@ -600,8 +604,10 @@ mod mret_sret_tests {
 
     #[test]
     fn test_sret_restore_spp() {
-        let mut state = CoreState::default();
-        state.privilege = PrivilegeMode::Supervisor;
+        let mut state = CoreState {
+            privilege: PrivilegeMode::Supervisor,
+            ..Default::default()
+        };
 
         // Set up SEPC and sstatus with SPP = User
         state.csr.write(supervisor::SEPC, 0x2000).unwrap();
@@ -621,8 +627,10 @@ mod mret_sret_tests {
 
     #[test]
     fn test_sret_from_machine_mode() {
-        let mut state = CoreState::default();
-        state.privilege = PrivilegeMode::Machine;
+        let mut state = CoreState {
+            privilege: PrivilegeMode::Machine,
+            ..Default::default()
+        };
 
         // Set up SEPC and sstatus with SPP = Supervisor
         state.csr.write(supervisor::SEPC, 0x3000).unwrap();
@@ -642,8 +650,10 @@ mod mret_sret_tests {
 
     #[test]
     fn test_sret_from_user_mode_fails() {
-        let mut state = CoreState::default();
-        state.privilege = PrivilegeMode::User;
+        let mut state = CoreState {
+            privilege: PrivilegeMode::User,
+            ..Default::default()
+        };
 
         let instr = create_sret_instr();
         let mut mem = SimpleMemory::new(0x1000);

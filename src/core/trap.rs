@@ -20,7 +20,7 @@
 //! - Machine external interrupt (MEI)
 //! - Supervisor software/timer/external interrupts
 
-use crate::core::PrivilegeMode;
+use crate::core::{CoreState, PrivilegeMode};
 use crate::csr::machine;
 use crate::csr::supervisor;
 use crate::csr::CsrFile;
@@ -236,13 +236,7 @@ impl TrapHandler {
     ///
     /// # Returns
     /// The new PC to jump to (from mtvec/stvec)
-    pub fn handle_trap(
-        &mut self,
-        trap: Trap,
-        epc: u32,
-        tval: u32,
-        state: &mut CoreStateWrapper,
-    ) -> u32 {
+    pub fn handle_trap(&mut self, trap: Trap, epc: u32, tval: u32, state: &mut CoreState) -> u32 {
         // Determine which mode handles this trap
         let (target_mode, _delegatable) = match trap {
             Trap::Exception(cause) => {
@@ -327,7 +321,7 @@ impl TrapHandler {
     }
 
     /// Calculate vectored trap address
-    pub(crate) fn vector_trap(&self, tvec: u32, cause: u64) -> u32 {
+    pub fn vector_trap(&self, tvec: u32, cause: u64) -> u32 {
         let mode = tvec & 0x3;
         let base = tvec & !0x3;
 

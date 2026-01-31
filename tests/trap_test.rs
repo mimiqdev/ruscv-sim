@@ -7,29 +7,11 @@
 //! - CSR trap register interactions
 
 use ruscv_sim::core::PrivilegeMode;
-use ruscv_sim::core::{ExceptionCause, InterruptCause, Trap, TrapDelegation, TrapHandler};
+use ruscv_sim::core::{
+    CoreState, ExceptionCause, InterruptCause, Trap, TrapDelegation, TrapHandler,
+};
 use ruscv_sim::csr::machine;
 use ruscv_sim::csr::supervisor;
-use ruscv_sim::csr::CsrFile;
-
-// Helper function to create a trap context wrapper
-struct TestTrapContext {
-    csr: CsrFile,
-    privilege: PrivilegeMode,
-}
-
-impl TestTrapContext {
-    fn new() -> Self {
-        Self {
-            csr: CsrFile::new(0),
-            privilege: PrivilegeMode::Machine,
-        }
-    }
-
-    fn privilege(&self) -> PrivilegeMode {
-        self.privilege
-    }
-}
 
 // ========================================
 // Exception Cause Tests
@@ -171,6 +153,14 @@ fn test_trap_handler_creation() {
         .should_delegate_exception(ExceptionCause::IllegalInstruction));
 }
 
+// Helper to create a test context
+fn create_test_context() -> CoreState {
+    CoreState {
+        privilege: PrivilegeMode::Machine,
+        ..Default::default()
+    }
+}
+
 #[test]
 fn test_vector_trap_direct_mode() {
     let handler = TrapHandler::new();
@@ -218,7 +208,7 @@ fn test_vector_trap_vectored_mode_wrapping() {
 #[test]
 fn test_handle_illegal_instruction_exception() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     let trap = Trap::Exception(ExceptionCause::IllegalInstruction);
     let new_pc = handler.handle_trap(trap, 0x1000, 0xBAD0_1234, &mut context);
@@ -239,7 +229,7 @@ fn test_handle_illegal_instruction_exception() {
 #[test]
 fn test_handle_ecall_exception() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     let trap = Trap::Exception(ExceptionCause::EcallM);
     let new_pc = handler.handle_trap(trap, 0x2000, 0, &mut context);
@@ -252,7 +242,7 @@ fn test_handle_ecall_exception() {
 #[test]
 fn test_handle_exception_updates_mstatus() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     // Set up initial mstatus
     context.csr.write(machine::MSTATUS, 0x0000_0008).unwrap(); // MIE = 1
@@ -274,7 +264,7 @@ fn test_handle_exception_updates_mstatus() {
 #[test]
 fn test_handle_machine_timer_interrupt() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     let trap = Trap::Interrupt(InterruptCause::MachineTimer);
     let new_pc = handler.handle_trap(trap, 0x1000, 0, &mut context);
@@ -290,10 +280,10 @@ fn test_handle_machine_timer_interrupt() {
 #[test]
 fn test_handle_machine_external_interrupt() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     let trap = Trap::Interrupt(InterruptCause::MachineExternal);
-    let new_pc = handler.handle_trap(trap, 0x3000, 0, &mut context);
+    handler.handle_trap(trap, 0x3000, 0, &mut context);
 
     assert_eq!(context.csr.read(machine::MEPC).unwrap(), 0x3000);
 
@@ -308,7 +298,7 @@ fn test_handle_machine_external_interrupt() {
 #[test]
 fn test_delegated_exception_to_supervisor() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     // Delegate illegal instruction to supervisor
     handler
@@ -335,7 +325,7 @@ fn test_delegated_exception_to_supervisor() {
 #[test]
 fn test_delegated_interrupt_to_supervisor() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     // Delegate supervisor timer interrupt
     handler
@@ -356,7 +346,7 @@ fn test_delegated_interrupt_to_supervisor() {
 #[test]
 fn test_undelegated_exception_stays_in_machine() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     // Don't delegate store access fault
     let trap = Trap::Exception(ExceptionCause::StoreAccessFault);
@@ -414,7 +404,7 @@ fn test_privilege_modes() {
 #[test]
 fn test_trap_preserves_privilege_in_mpp() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
     context.privilege = PrivilegeMode::Supervisor;
 
     let trap = Trap::Exception(ExceptionCause::IllegalInstruction);
@@ -459,7 +449,7 @@ fn test_vectored_mode_interrupt_offsets() {
 #[test]
 fn test_mtvec_direct_mode() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     context.csr.write(machine::MTVEC, 0x8000_0000).unwrap();
 
@@ -472,7 +462,7 @@ fn test_mtvec_direct_mode() {
 #[test]
 fn test_mtvec_vectored_mode() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     context
         .csr
@@ -489,7 +479,7 @@ fn test_mtvec_vectored_mode() {
 #[test]
 fn test_mepc_stores_trap_pc() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     let trap = Trap::Exception(ExceptionCause::Breakpoint);
     handler.handle_trap(trap, 0x1234_5678, 0, &mut context);
@@ -500,7 +490,7 @@ fn test_mepc_stores_trap_pc() {
 #[test]
 fn test_mcause_stores_trap_info() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     let trap = Trap::Exception(ExceptionCause::LoadPageFault);
     handler.handle_trap(trap, 0x1000, 0xABCD, &mut context);
@@ -512,7 +502,7 @@ fn test_mcause_stores_trap_info() {
 #[test]
 fn test_mtval_stores_fault_value() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     let trap = Trap::Exception(ExceptionCause::LoadAddressMisaligned);
     handler.handle_trap(trap, 0x1000, 0xFFFF_FFFC, &mut context);
@@ -527,7 +517,7 @@ fn test_mtval_stores_fault_value() {
 #[test]
 fn test_multiple_traps_sequential() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
 
     // First trap
     let trap1 = Trap::Exception(ExceptionCause::IllegalInstruction);
@@ -544,7 +534,7 @@ fn test_multiple_traps_sequential() {
 #[test]
 fn test_interrupt_trap_with_privilege_change() {
     let mut handler = TrapHandler::new();
-    let mut context = TestTrapContext::new();
+    let mut context = create_test_context();
     context.privilege = PrivilegeMode::Supervisor;
 
     let trap = Trap::Interrupt(InterruptCause::MachineTimer);

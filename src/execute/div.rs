@@ -415,7 +415,7 @@ mod tests {
     fn test_div_minus_one() {
         let mut state = CoreState::default();
         state.regs[1] = 42;
-        state.regs[2] = 0xFFFF_FFFFu32 as u32; // -1
+        state.regs[2] = 0xFFFF_FFFF_u32; // -1
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
@@ -441,7 +441,7 @@ mod tests {
     fn test_rem_negative_divisor() {
         let mut state = CoreState::default();
         state.regs[1] = 43;
-        state.regs[2] = 0xFFFF_FFFAu32 as u32; // -6
+        state.regs[2] = 0xFFFF_FFFA_u32; // -6
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);

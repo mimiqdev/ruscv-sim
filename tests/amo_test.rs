@@ -10,7 +10,7 @@ use ruscv_sim::execute::amo::{
 };
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 
-fn create_amo_instr(rs1: u8, rs2: u8, rd: u8, funct5: u8, aq: u8, rl: u8) -> DecodedInstruction {
+fn create_amo_instr(rs1: u8, rs2: u8, rd: u8, funct5: u8, _aq: u8, _rl: u8) -> DecodedInstruction {
     let raw = ((funct5 as u32) << 27)
         | ((rs2 as u32) << 20)
         | ((rs1 as u32) << 15)
@@ -37,7 +37,7 @@ fn create_amo_instr(rs1: u8, rs2: u8, rd: u8, funct5: u8, aq: u8, rl: u8) -> Dec
 #[test]
 fn test_amoadd_basic() {
     let mut state = CoreState::default();
-    let mut mem = SimpleSimpleMemory::new(0x10000);
+    let mut mem = SimpleMemory::new(0x10000);
 
     mem.write_word(0x100, 10).unwrap();
     state.regs[1] = 0x100;
