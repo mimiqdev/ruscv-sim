@@ -90,14 +90,16 @@ jobs:
   # ==========================================
   # Job 3: Performance Benchmarks
   # ==========================================
+  # Only run on push to main/master, not during PRs
   # Non-blocking baseline data collection
-  # Failures won't block PR merges
   bench:
     name: Bench
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
     needs: test
     continue-on-error: true
+    # Only run when pushing to main/master, skip for PRs
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
 
     steps:
       - name: Checkout repository
