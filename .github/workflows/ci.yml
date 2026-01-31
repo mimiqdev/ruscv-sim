@@ -14,6 +14,12 @@ on:
   pull_request:
     branches: [master, main]
 
+# 避免单个 runner 被长时间占用
+# 取消同一 PR/分支的旧运行，让新提交优先
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
