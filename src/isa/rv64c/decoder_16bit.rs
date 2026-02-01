@@ -105,13 +105,13 @@ impl CompressedDecoder {
 
         match funct3 {
             0b000 => self.decode_c_addi4spn(inst),
-            0b001 => self.decode_c_fld(inst),  // C.FLD (RV64D)
-            0b010 => self.decode_c_lw(inst),   // C.LW
-            0b011 => self.decode_c_flw(inst),  // C.FLW (RV64F)
+            0b001 => self.decode_c_fld(inst), // C.FLD (RV64D)
+            0b010 => self.decode_c_lw(inst),  // C.LW
+            0b011 => self.decode_c_flw(inst), // C.FLW (RV64F)
             0b100 => Err(DecodeError::ReservedInstruction),
-            0b101 => self.decode_c_fsd(inst),  // C.FSD (RV64D)
-            0b110 => self.decode_c_sw(inst),   // C.SW
-            0b111 => self.decode_c_fsw(inst),  // C.FSW (RV64F)
+            0b101 => self.decode_c_fsd(inst), // C.FSD (RV64D)
+            0b110 => self.decode_c_sw(inst),  // C.SW
+            0b111 => self.decode_c_fsw(inst), // C.FSW (RV64F)
             _ => Err(DecodeError::ReservedInstruction),
         }
     }
@@ -247,7 +247,7 @@ impl CompressedDecoder {
                    ((inst << 1) & 0x0C0)) as u32; // inst[6:5] -> imm[7:6]
 
         let rs1_prime = ((inst >> 7) & 0x7) as u8 + 8; // rs1' = 8-15
-        let rd_prime = ((inst >> 2) & 0x7) as u8 + 8;  // rd' = 8-15 (FP register)
+        let rd_prime = ((inst >> 2) & 0x7) as u8 + 8; // rd' = 8-15 (FP register)
 
         // Build 32-bit FLD: fld rd', imm(rs1')
         // FLD is I-type: opcode=000_0111 (LoadFp), funct3=011 (D)
@@ -265,7 +265,7 @@ impl CompressedDecoder {
                    ((inst << 1) & 0x080)) as u32; // bit 5 -> bit 7
 
         let rs1_prime = ((inst >> 7) & 0x7) as u8 + 8; // rs1' = 8-15
-        let rd_prime = ((inst >> 2) & 0x7) as u8 + 8;  // rd' = 8-15 (FP register)
+        let rd_prime = ((inst >> 2) & 0x7) as u8 + 8; // rd' = 8-15 (FP register)
 
         // Build 32-bit FLW: flw rd', imm(rs1')
         // FLW is I-type: opcode=000_0111 (LoadFp), funct3=010 (W)
