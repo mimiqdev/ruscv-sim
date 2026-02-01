@@ -190,7 +190,7 @@ fn test_divu_by_zero() {
     let mut mem = SimpleMemory::new(0x1000);
 
     ruscv_sim::execute::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
-    assert_eq!(state.regs[3], 0xFFFF_FFFF); // All ones
+    assert_eq!(state.regs[3], u64::MAX); // All ones in 64-bit
 }
 
 #[test]
@@ -291,8 +291,8 @@ fn test_rem_by_zero() {
 #[test]
 fn test_rem_overflow() {
     let mut state = CoreState::default();
-    state.regs[1] = 0x8000_0000; // MIN i32
-    state.regs[2] = 0xFFFF_FFFF; // -1
+    state.regs[1] = 0xFFFF_FFFF_8000_0000; // MIN i32 sign-extended to i64
+    state.regs[2] = 0xFFFF_FFFF_FFFF_FFFF; // -1 in two's complement
 
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
@@ -451,17 +451,17 @@ fn test_divu_remu_property() {
 #[test]
 fn test_div_edge_cases() {
     // Test various edge cases
-    let test_cases: Vec<(i32, i32)> = vec![
-        (i32::MAX, 1),
-        (i32::MIN, -1),
-        (i32::MIN, 1),
-        (1, i32::MAX),
+    let test_cases: Vec<(i64, i64)> = vec![
+        (i64::MAX, 1),
+        (i64::MIN, -1),  // True overflow case for RV64
+        (i64::MIN, 1),
+        (1, i64::MAX),
         (-1, 1),
         (10, -1),
         (0, 1),
         (0, -1),
-        (i32::MAX, i32::MAX),
-        (i32::MIN, i32::MIN),
+        (i64::MAX, i64::MAX),
+        (i64::MIN, i64::MIN),
     ];
 
     for (a, b) in test_cases {
@@ -473,15 +473,18 @@ fn test_div_edge_cases() {
         let mut mem = SimpleMemory::new(0x1000);
         let result = ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem);
 
-        if b == 0 || (a == i32::MIN && b == -1) {
+        if b == 0 || (a == i64::MIN && b == -1) {
             // Division by zero or overflow
             assert!(result.is_ok());
-            assert_eq!(state.regs[3], 0xFFFF_FFFF);
+            // Division by zero: returns -1 (all ones = u64::MAX)
+            // Overflow (i64::MIN / -1): returns i64::MIN per RISC-V spec
+            let expected = if b == 0 { u64::MAX } else { i64::MIN as u64 };
+            assert_eq!(state.regs[3], expected);
         } else {
             assert!(result.is_ok());
             let expected = a / b;
             assert_eq!(
-                state.regs[3] as i32, expected,
+                state.regs[3] as i64, expected,
                 "Division failed: {} / {}",
                 a, b
             );

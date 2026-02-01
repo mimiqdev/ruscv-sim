@@ -113,15 +113,16 @@ fn test_mul_max_values() {
 #[test]
 fn test_mul_min_values() {
     let mut state = CoreState::default();
-    state.regs[1] = 0x8000_0000;
+    // RV64: 0x8000_0000 is sign-extended to 0xFFFF_FFFF_8000_0000
+    state.regs[1] = 0xFFFF_FFFF_8000_0000;
     state.regs[2] = 2;
 
     let instr = create_mul_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
     ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
-    // -2147483648 * 2 = -4294967296 = 0 as u32 (lower 32 bits)
-    assert_eq!(state.regs[3], 0);
+    // MUL returns low 64 bits: 0xFFFF_FFFF_8000_0000 * 2 = 0xFFFF_FFFF_0000_0000
+    assert_eq!(state.regs[3], 0xFFFF_FFFF_0000_0000);
 }
 
 #[test]
