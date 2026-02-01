@@ -68,7 +68,7 @@ pub fn exec_c_lw(
     let effective_addr = base_addr.wrapping_add(offset as u64);
 
     // Check alignment
-    if effective_addr % 4 != 0 {
+    if !effective_addr.is_multiple_of(4) {
         return Err(ExecuteError::MisalignedAccess(effective_addr, 4));
     }
 
@@ -108,7 +108,7 @@ pub fn exec_c_ld(
     let effective_addr = base_addr.wrapping_add(offset as u64);
 
     // Check alignment
-    if effective_addr % 8 != 0 {
+    if !effective_addr.is_multiple_of(8) {
         return Err(ExecuteError::MisalignedAccess(effective_addr, 8));
     }
 
@@ -147,7 +147,7 @@ pub fn exec_c_sw(
     let effective_addr = base_addr.wrapping_add(offset as u64);
 
     // Check alignment
-    if effective_addr % 4 != 0 {
+    if !effective_addr.is_multiple_of(4) {
         return Err(ExecuteError::MisalignedAccess(effective_addr, 4));
     }
 
@@ -186,7 +186,7 @@ pub fn exec_c_sd(
     let effective_addr = base_addr.wrapping_add(offset as u64);
 
     // Check alignment
-    if effective_addr % 8 != 0 {
+    if !effective_addr.is_multiple_of(8) {
         return Err(ExecuteError::MisalignedAccess(effective_addr, 8));
     }
 

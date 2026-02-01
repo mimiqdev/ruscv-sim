@@ -33,7 +33,7 @@ pub fn exec_c_jr(rs1: u8, state: &mut CoreState) -> Result<(), ExecuteError> {
     let target = state.regs[rs1 as usize];
 
     // Set PC to target address (must be aligned to 2 bytes)
-    if target % 2 != 0 {
+    if !target.is_multiple_of(2) {
         return Err(ExecuteError::MisalignedAccess(target, 2));
     }
 
@@ -69,7 +69,7 @@ pub fn exec_c_jalr(rs1: u8, state: &mut CoreState) -> Result<(), ExecuteError> {
     let target = state.regs[rs1 as usize];
 
     // Check alignment (must be aligned to 2 bytes)
-    if target % 2 != 0 {
+    if !target.is_multiple_of(2) {
         return Err(ExecuteError::MisalignedAccess(target, 2));
     }
 

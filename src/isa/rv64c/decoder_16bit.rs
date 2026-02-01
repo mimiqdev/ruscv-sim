@@ -612,11 +612,11 @@ impl CompressedDecoder {
     fn build_s_type(&self, opcode: Opcode, rs1: u8, rs2: u8, funct3: Funct3, imm: u32) -> u32 {
         let imm_11_5 = (imm >> 5) & 0x7F;
         let imm_4_0 = imm & 0x1F;
-        ((imm_11_5 as u32) << 25)
+        (imm_11_5 << 25)
             | ((rs2 as u32) << 20)
             | ((rs1 as u32) << 15)
             | ((funct3 as u32) << 12)
-            | ((imm_4_0 as u32) << 7)
+            | (imm_4_0 << 7)
             | (opcode as u32)
     }
 
@@ -627,13 +627,13 @@ impl CompressedDecoder {
         let imm_4_1 = (imm >> 1) & 0xF;
         let imm_11 = (imm >> 11) & 1;
 
-        ((imm_12 as u32) << 31)
-            | ((imm_10_5 as u32) << 25)
+        (imm_12 << 31)
+            | (imm_10_5 << 25)
             | ((rs2 as u32) << 20)
             | ((rs1 as u32) << 15)
             | ((funct3 as u32) << 12)
-            | ((imm_4_1 as u32) << 8)
-            | ((imm_11 as u32) << 7)
+            | (imm_4_1 << 8)
+            | (imm_11 << 7)
             | (opcode as u32)
     }
 
@@ -649,10 +649,10 @@ impl CompressedDecoder {
         let imm_11 = (imm >> 11) & 1;
         let imm_19_12 = (imm >> 12) & 0xFF;
 
-        ((imm_20 as u32) << 31)
-            | ((imm_19_12 as u32) << 12)
-            | ((imm_11 as u32) << 20)
-            | ((imm_10_1 as u32) << 21)
+        (imm_20 << 31)
+            | (imm_19_12 << 12)
+            | (imm_11 << 20)
+            | (imm_10_1 << 21)
             | ((rd as u32) << 7)
             | (opcode as u32)
     }
