@@ -7,6 +7,7 @@ pub mod decode;
 pub mod dispatch;
 pub mod execute;
 pub mod fpu;
+pub mod isa;
 pub mod memory;
 pub mod tlm;
 
