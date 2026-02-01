@@ -1150,7 +1150,78 @@ proptest! {
 
 ---
 
-## 8. 未来改进 (Future Improvements)
+## 8. Code Review 决策记录 (Code Review Decisions)
+
+### 8.1 文件大小标准调整
+
+**日期**: 2026-02-01  
+**来源**: Code Review - Issue #1  
+**决策**: ✅ **接受 - 更新目标为 < 600 行**
+
+| 文件 | 当前行数 | 决策 | 理由 |
+|------|----------|------|------|
+| `src/isa/rv64i/system.rs` | 528 | 保持 | CSR/系统指令功能多样，当前规模合理 |
+| `src/isa/rv64d/convert.rs` | 885 | 保持 | 浮点转换需要大量模式匹配 |
+| `src/isa/rv64a/amo.rs` | 798 | 保持 | 原子操作逻辑复杂 |
+
+**新标准**:
+- 一般模块: < 300 行 (保持)
+- 复杂指令模块 (浮点/原子/CSR): < 600 行 (放宽)
+- 代码生成文件: < 1000 行 (特殊情况)
+
+---
+
+### 8.2 文档增强任务
+
+**日期**: 2026-02-01  
+**来源**: Code Review - Issue #2  
+**决策**: ✅ **接受 - 添加到 Sprint 8.5 任务**
+
+**任务**: 为 `rv64i/mod.rs` 添加模块级示例文档  
+**参考**: 参照 `rv64c/mod.rs` 的示例格式 (第 55-66 行)  
+**优先级**: 低  
+**估计工时**: 2h
+
+**示例目标**:
+```rust
+//! ## Usage
+//!
+//! ```rust
+//! use ruscv_sim::isa::rv64i::execute;
+//!
+//! // Example: Execute LUI instruction
+//! let instr = DecodedInstruction { ... };
+//! execute(&instr, &mut state, &mut mem)?;
+//! ```
+```
+
+---
+
+### 8.3 提交信息规范
+
+**日期**: 2026-02-01  
+**来源**: Code Review - Issue #3 (commit `9821174`)  
+**决策**: ✅ **接受 - 添加开发规范提醒**
+
+**规范要求**:
+1. 提交消息必须包含描述性正文 (body)，不能为空
+2. 格式遵循: `type(scope): subject` + 空行 + body
+3. Body 应说明 "what" 和 "why"，不只是 "how"
+
+**正确示例**:
+```
+csr: implement mstatus register with MPP/SPP fields
+
+- Add mstatus CSR with MPP (Machine Previous Privilege) field
+- Add SPP (Supervisor Previous Privilege) field support
+- Implement read/write/set/clear operations
+
+This enables privilege mode switching between M/S/U modes.
+```
+
+---
+
+## 9. 未来改进 (Future Improvements)
 
 以下功能超出 v1.0 范围，计划在后续版本中实现：
 
@@ -1260,3 +1331,7 @@ proptest! {
 | | | | - 移除 Sprint 4 中的 "⏸️ 延迟" 和 "⚠️" 标记 |
 | | | | - 规范化 Sprint 5 目标和任务 |
 | | | | - 新增 Sprint 5 任务: CSR 副作用处理 (P0) |
+| v3.4 | 2026-02-01 | - | **Code Review 决策记录** |
+| | | | - 文件大小标准: < 300行 → < 600行 (复杂模块) |
+| | | | - 添加 rv64i/mod.rs 文档增强任务 |
+| | | | - 添加提交信息规范要求 |

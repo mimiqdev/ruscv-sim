@@ -326,8 +326,89 @@ LR.D, SC.D, and AMO*.D (64-bit atomic operations) are not implemented.
 
 ---
 
+## Appendix A: 文件大小标准 (File Size Guidelines)
+
+**最后更新**: 2026-02-01  
+**状态**: ✅ 已更新
+
+### 标准定义
+
+| 模块类型 | 目标行数 | 最大行数 | 说明 |
+|----------|----------|----------|------|
+| 简单模块 | < 200 | 300 | 基础工具函数、常量定义 |
+| 一般模块 | < 300 | 400 | 标准指令实现、测试模块 |
+| 复杂模块 | < 500 | 600 | 浮点转换、原子操作、CSR系统 |
+| 生成代码 | < 800 | 1000 | 自动生成的指令表、匹配代码 |
+
+### 当前超标文件 (已豁免)
+
+| 文件 | 行数 | 类型 | 豁免理由 |
+|------|------|------|----------|
+| `src/isa/rv64i/system.rs` | 528 | 复杂模块 | CSR/系统指令功能多样 |
+| `src/isa/rv64d/convert.rs` | 885 | 生成代码 | 浮点转换大量模式匹配 |
+| `src/isa/rv64a/amo.rs` | 798 | 复杂模块 | 原子操作逻辑复杂 |
+
+### 拆分建议
+
+未来如需要拆分，优先考虑:
+1. `rv64d/convert.rs` → `ftoi.rs` + `itof.rs` + `float_conv.rs`
+2. `rv64a/amo.rs` → 按操作类型拆分 (add/and/or/xor/max/min)
+
+---
+
+## Appendix B: 提交信息规范 (Commit Message Guidelines)
+
+**最后更新**: 2026-02-01  
+**状态**: ✅ 已生效
+
+### 要求
+
+1. **必须包含消息体**: 禁止空 body (参考 commit `9821174` 问题)
+2. **格式规范**:
+   ```
+   type(scope): subject
+   
+   body (required)
+   
+   footer (optional)
+   ```
+3. **Body 要求**: 说明 "what" 和 "why"，不只是 "how"
+
+### 类型定义
+
+| Type | 用途 |
+|------|------|
+| feat | 新功能 |
+| fix | 修复 |
+| docs | 文档 |
+| style | 格式调整 |
+| refactor | 重构 |
+| test | 测试 |
+| chore | 构建/工具 |
+
+### 示例
+
+**正确**:
+```
+csr: implement mstatus register with MPP/SPP fields
+
+- Add mstatus CSR with MPP (Machine Previous Privilege) field
+- Add SPP (Supervisor Previous Privilege) field support
+- Implement read/write/set/clear operations
+
+This enables privilege mode switching between M/S/U modes.
+```
+
+**错误** (空 body):
+```
+fix: bug fix
+```
+
+---
+
 ## References
 
 - RVA23 Profile Specification
 - RISC-V ISA Manual
 - Rust proc-macro book
+- [Conventional Commits](https://www.conventionalcommits.org/)
