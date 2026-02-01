@@ -802,31 +802,56 @@ proptest! {
 
 ---
 
-### 3.10 Sprint 10: 内存子系统
+### 3.10 Sprint 10: 内存子系统 (v1.1 - 更新版)
 
-**目标**: 实现 MMU、TLB、页表遍历
+**目标**: 实现 MMU、TLB、页表遍历 (Sv39/Sv48)
+
+**状态**: 🔄 设计中 (设计文档已完成)
+
+**完成时间**: Week 19-20  
+**设计文档**: [docs/memory-arch.md](./memory-arch.md)  
+**对比分析**: [docs/memory-comparison.md](./memory-comparison.md)
 
 ### 产出物清单
-| 类型 | 产出 | 文件路径 | 验收标准 |
-|------|------|----------|----------|
-| 代码 | physical_mem.rs | src/mmu/ | 物理内存管理 |
-| 代码 | sv39.rs | src/mmu/ | Sv39 页表实现 |
-| 代码 | sv48.rs | src/mmu/ | Sv48 页表实现 |
-| 代码 | tlb.rs | src/mmu/ | TLB 缓存 |
-| 代码 | address_trans.rs | src/mmu/ | 地址转换流程 |
-| 代码 | mmio.rs | src/mmu/ | MMIO 支持 |
-| 代码 | mem_protect.rs | src/mmu/ | 内存保护检查 |
-| 文档 | memory-arch.md | docs/ | 内存架构文档 |
-| 测试 | tlb_test.rs | src/tests/ | 40 tests pass |
-| 测试 | page_table_test.rs | src/tests/ | 50 tests pass |
-| 测试 | address_trans_test.rs | src/tests/ | 30 tests pass |
+
+#### 核心代码 (P0 - 必须实现)
+| 类型 | 产出 | 文件路径 | 验收标准 | 优先级 |
+|------|------|----------|----------|--------|
+| 代码 | mod.rs | src/mmu/mod.rs | 模块入口和 trait 定义 | P0 |
+| 代码 | physical.rs | src/mmu/physical.rs | 物理内存管理 | P0 |
+| 代码 | pte.rs | src/mmu/pte.rs | 页表项定义和操作 | P0 |
+| 代码 | sv39.rs | src/mmu/sv39.rs | Sv39 页表实现 | P0 |
+| 代码 | tlb.rs | src/mmu/tlb.rs | TLB 缓存 (64 entries, 4-way) | P0 |
+| 代码 | translator.rs | src/mmu/translator.rs | 地址转换引擎 | P0 |
+
+#### 扩展代码 (P1 - 重要)
+| 类型 | 产出 | 文件路径 | 验收标准 | 优先级 |
+|------|------|----------|----------|--------|
+| 代码 | sv48.rs | src/mmu/sv48.rs | Sv48 页表实现 | P1 |
+| 代码 | pmp.rs | src/mmu/pmp.rs | PMP 内存保护 (16 entries) | P1 |
+| 代码 | mmio.rs | src/mmu/mmio.rs | MMIO 支持框架 | P1 |
+
+#### 文档 (P0)
+| 类型 | 产出 | 文件路径 | 验收标准 | 优先级 |
+|------|------|----------|----------|--------|
+| 文档 | memory-arch.md | docs/memory-arch.md | 架构设计文档 | P0 ✅ |
+| 文档 | memory-comparison.md | docs/memory-comparison.md | 参考对比分析 | P0 ✅ |
+
+#### 测试 (P0)
+| 类型 | 产出 | 文件路径 | 验收标准 | 优先级 |
+|------|------|----------|----------|--------|
+| 测试 | tlb_test.rs | tests/tlb_test.rs | TLB 命中/未命中/刷新测试 | P0 |
+| 测试 | sv39_test.rs | tests/sv39_test.rs | Sv39 页表遍历测试 | P0 |
+| 测试 | translation_test.rs | tests/translation_test.rs | 地址转换集成测试 | P0 |
+| 测试 | pmp_test.rs | tests/pmp_test.rs | PMP 权限检查测试 | P1 |
 
 ### 验收标准
-- [ ] 功能测试：Sv39/Sv48 页表遍历正常
-- [ ] 集成测试：TLB 命中率 > 90%
-- [ ] 性能测试：TLB 查找 < 5ns，页表遍历 < 100ns
-- [ ] 代码质量：覆盖率 > 85%
+- [ ] 功能测试：Sv39 页表遍历正常，支持 4KB/2MB/1GB 页
+- [ ] 集成测试：TLB 命中率 > 90% (测试程序)
+- [ ] 性能测试：TLB 查找 < 10ns，页表遍历 < 200ns
+- [ ] 代码质量：覆盖率 > 85%，Clippy 无警告
 - [ ] 集成验收：与加载存储指令正确对接
+- [ ] 文档验收：memory-arch.md 和 memory-comparison.md 完成
 
 ### Sprint 完成检查清单
 - [ ] 所有验收标准 ✅
@@ -835,18 +860,87 @@ proptest! {
 - [ ] 文档完整 ✅
 - [ ] 技术债务清理 ✅
 
-**任务分解**:
+### 任务分解 (详细)
 
-| 任务 | 工时 | 依赖 |
-|------|------|------|
-| 设计内存模型 | 16h | - |
-| 实现物理内存 | 24h | - |
-| 实现 Sv39 页表 | 32h | - |
-| 实现 Sv48 页表 | 24h | Sv39 |
-| 实现 TLB | 32h | 页表 |
-| 实现地址转换 | 24h | TLB |
-| 实现 MMIO | 16h | 内存 |
-| 内存测试 | 24h | 全部实现 |
+#### Phase 1: 基础架构 (Milestone 1 - Week 19 前半)
+| 任务 | 工时 | 依赖 | 负责人 | 输出 |
+|------|------|------|--------|------|
+| 创建 mmu 模块目录 | 1h | - | - | src/mmu/ 目录 |
+| 定义核心 trait | 4h | - | - | mod.rs |
+| 实现物理内存接口 | 8h | trait | - | physical.rs |
+| 实现页表项 (PTE) | 6h | trait | - | pte.rs |
+| 实现 Sv39 页表 | 16h | PTE | - | sv39.rs |
+| 编写基础单元测试 | 8h | Sv39 | - | sv39_test.rs |
+| **Milestone 1 合计** | **43h** | | | |
+
+#### Phase 2: TLB 和地址转换 (Milestone 2 - Week 19 后半)
+| 任务 | 工时 | 依赖 | 负责人 | 输出 |
+|------|------|------|--------|------|
+| 实现 TLB 数据结构 | 8h | - | - | tlb.rs (struct) |
+| 实现 LRU 替换策略 | 4h | TLB struct | - | tlb.rs (LRU) |
+| 实现 TLB 查找/插入 | 6h | LRU | - | tlb.rs (ops) |
+| 实现地址转换引擎 | 12h | TLB, Sv39 | - | translator.rs |
+| 实现 TLB 刷新 (SFENCE.VMA) | 4h | TLB | - | translator.rs |
+| 集成测试 | 8h | 全部 | - | translation_test.rs |
+| **Milestone 2 合计** | **42h** | | | |
+
+#### Phase 3: 扩展功能 (Milestone 3 - Week 20 前半)
+| 任务 | 工时 | 依赖 | 负责人 | 输出 |
+|------|------|------|--------|------|
+| 实现 Sv48 页表 | 12h | Sv39 | - | sv48.rs |
+| 实现 PMP 检查 | 10h | - | - | pmp.rs |
+| 实现 MMIO 框架 | 8h | physical | - | mmio.rs |
+| 扩展测试 | 8h | 全部 | - | pmp_test.rs |
+| **Milestone 3 合计** | **38h** | | | |
+
+#### Phase 4: 集成与优化 (Milestone 4 - Week 20 后半)
+| 任务 | 工时 | 依赖 | 负责人 | 输出 |
+|------|------|------|--------|------|
+| 与加载存储指令集成 | 8h | translator | - | execute/mod.rs 更新 |
+| 性能基准测试 | 4h | 集成 | - | benches/mmu_bench.rs |
+| 文档完善 | 4h | 全部 | - | 文档更新 |
+| 代码审查修复 | 4h | 审查 | - | 修复 |
+| **Milestone 4 合计** | **20h** | | | |
+
+### 总工作量: ~143 工时 (~18 工作日，符合 2 周 Sprint)
+
+### 依赖关系图
+
+```
+mod.rs (trait)
+    │
+    ├──► physical.rs ──────┐
+    │                       │
+    ├──► pte.rs ────────┐   │
+    │                    │   │
+    ├──► sv39.rs ◄───────┘   │
+    │       │                │
+    │       ▼                │
+    ├──► tlb.rs              │
+    │       │                │
+    │       ▼                │
+    └──► translator.rs ◄─────┘
+                │
+                ├──► sv48.rs (P1)
+                ├──► pmp.rs (P1)
+                └──► mmio.rs (P1)
+```
+
+### 风险评估
+
+| 风险 | 可能性 | 影响 | 缓解措施 |
+|-----|--------|------|---------|
+| Sv48 实现复杂度 | 中 | 中 | 作为 P1，可选实现 |
+| TLB 性能不达标 | 低 | 中 | 预留优化时间 |
+| 与现有内存接口冲突 | 中 | 高 | 提前设计接口兼容层 |
+| 测试覆盖不足 | 中 | 中 | TDD 模式，持续测试 |
+
+### 参考资源
+
+- 设计文档: [docs/memory-arch.md](./memory-arch.md)
+- 对比分析: [docs/memory-comparison.md](./memory-comparison.md)
+- 参考实现: Spike (riscv-isa-sim), riscv crate
+- 规范: RISC-V Privileged Spec v1.12
 
 ---
 
