@@ -215,11 +215,13 @@ fn test_c_integration_addi16sp() {
 
 #[test]
 fn test_c_integration_jump() {
-    let mut state = CoreState::default();
+    let mut state = CoreState {
+        pc: 0x100,
+        ..Default::default()
+    };
 
     // Set up jump target
     state.regs[5] = 0x1000;
-    state.pc = 0x100;
 
     // C.JR x5
     exec_c_jr(5, &mut state).unwrap();
@@ -228,11 +230,13 @@ fn test_c_integration_jump() {
 
 #[test]
 fn test_c_integration_jump_link() {
-    let mut state = CoreState::default();
+    let mut state = CoreState {
+        pc: 0x100,
+        ..Default::default()
+    };
 
     // Set up jump target
     state.regs[5] = 0x2000;
-    state.pc = 0x100;
 
     // C.JALR x5
     exec_c_jalr(5, &mut state).unwrap();
@@ -316,10 +320,10 @@ fn test_c_integration_nop() {
 
 #[test]
 fn test_c_integration_jump_unconditional() {
-    let mut state = CoreState::default();
-
-    // Set up initial PC
-    state.pc = 0x100;
+    let mut state = CoreState {
+        pc: 0x100,
+        ..Default::default()
+    };
 
     // C.J 128 (unconditional jump forward 128 bytes)
     exec_c_j(128, &mut state).unwrap();
@@ -330,11 +334,15 @@ fn test_c_integration_jump_unconditional() {
 
 #[test]
 fn test_c_integration_branch_equal_zero() {
-    let mut state = CoreState::default();
-
-    // Set up initial state
-    state.regs[8] = 0; // Zero value
-    state.pc = 0x100;
+    let mut state = CoreState {
+        regs: {
+            let mut r = [0; 32];
+            r[8] = 0; // Zero value
+            r
+        },
+        pc: 0x100,
+        ..Default::default()
+    };
 
     // C.BEQZ x8, 32 (branch if x8 == 0)
     exec_c_beqz(8, 32, &mut state).unwrap();
@@ -345,11 +353,15 @@ fn test_c_integration_branch_equal_zero() {
 
 #[test]
 fn test_c_integration_branch_not_equal_zero() {
-    let mut state = CoreState::default();
-
-    // Set up initial state
-    state.regs[8] = 42; // Non-zero value
-    state.pc = 0x100;
+    let mut state = CoreState {
+        regs: {
+            let mut r = [0; 32];
+            r[8] = 42; // Non-zero value
+            r
+        },
+        pc: 0x100,
+        ..Default::default()
+    };
 
     // C.BNEZ x8, 32 (branch if x8 != 0)
     exec_c_bnez(8, 32, &mut state).unwrap();
@@ -360,18 +372,30 @@ fn test_c_integration_branch_not_equal_zero() {
 
 #[test]
 fn test_c_integration_branch_not_taken() {
-    let mut state = CoreState::default();
-
     // Test C.BEQZ not taken
-    state.regs[8] = 42; // Non-zero value
-    state.pc = 0x100;
+    let mut state = CoreState {
+        regs: {
+            let mut r = [0; 32];
+            r[8] = 42; // Non-zero value
+            r
+        },
+        pc: 0x100,
+        ..Default::default()
+    };
 
     exec_c_beqz(8, 32, &mut state).unwrap();
     assert_eq!(state.pc, 0x100); // PC unchanged (branch not taken)
 
     // Test C.BNEZ not taken
-    state.regs[8] = 0; // Zero value
-    state.pc = 0x100;
+    let mut state = CoreState {
+        regs: {
+            let mut r = [0; 32];
+            r[8] = 0; // Zero value
+            r
+        },
+        pc: 0x100,
+        ..Default::default()
+    };
 
     exec_c_bnez(8, 32, &mut state).unwrap();
     assert_eq!(state.pc, 0x100); // PC unchanged (branch not taken)
@@ -379,11 +403,16 @@ fn test_c_integration_branch_not_taken() {
 
 #[test]
 fn test_c_integration_conditional_loop() {
-    let mut state = CoreState::default();
-
     // Simulate: for (int i = 5; i != 0; i--)
-    state.regs[8] = 5; // Loop counter
-    state.pc = 0x100; // Loop start
+    let mut state = CoreState {
+        regs: {
+            let mut r = [0; 32];
+            r[8] = 5; // Loop counter
+            r
+        },
+        pc: 0x100, // Loop start
+        ..Default::default()
+    };
 
     // Iteration 1: C.BNEZ taken (5 != 0)
     exec_c_bnez(8, 16, &mut state).unwrap();
