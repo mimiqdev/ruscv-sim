@@ -4,7 +4,7 @@
 
 use ruscv_sim::core::CoreState;
 use ruscv_sim::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
-use ruscv_sim::execute::amo::{
+use ruscv_sim::isa::rv64a::amo::{
     exec_amoadd, exec_amoand, exec_amomax, exec_amomaxu, exec_amomin, exec_amominu, exec_amoor,
     exec_amoxor,
 };

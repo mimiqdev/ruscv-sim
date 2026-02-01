@@ -35,7 +35,7 @@ fn test_fcvt_d_s_positive() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(2).bits());
     assert!((result - std::f64::consts::PI).abs() < 1e-5);
@@ -62,7 +62,7 @@ fn test_fcvt_d_s_zero() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(2).bits());
     assert_eq!(result, 0.0);
@@ -89,7 +89,7 @@ fn test_fcvt_d_s_negative() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_s(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(2).bits());
     assert!((result - (-5.0)).abs() < 1e-5);
@@ -120,7 +120,7 @@ fn test_fcvt_s_d_positive() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_s_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_s_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(2).get();
     assert!((result - std::f32::consts::PI).abs() < 1e-5);
@@ -147,7 +147,7 @@ fn test_fcvt_s_d_zero() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_s_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_s_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(2).get();
     assert_eq!(result, 0.0f32);
@@ -177,7 +177,7 @@ fn test_fcvt_s_d_precision_loss() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_s_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_s_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(2).get();
     // Converting back to f64 should show precision loss
@@ -207,7 +207,7 @@ fn test_fcvt_s_d_infinity() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_s_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_s_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(2).get();
     assert_eq!(result, f32::INFINITY);
@@ -236,7 +236,7 @@ fn test_fcvt_d_w_positive() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_w(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_w(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(2).bits());
     assert!((result - 42.0).abs() < 1e-10);
@@ -263,7 +263,7 @@ fn test_fcvt_d_w_negative() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_w(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_w(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(2).bits());
     assert!((result - (-2.0)).abs() < 1e-10);
@@ -290,7 +290,7 @@ fn test_fcvt_d_w_zero() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_w(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_w(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(2).bits());
     assert_eq!(result, 0.0);
@@ -319,7 +319,7 @@ fn test_fcvt_w_d_positive() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[2], 42);
 }
 
@@ -344,7 +344,7 @@ fn test_fcvt_w_d_negative() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[2] as i32, -10);
 }
 
@@ -369,7 +369,7 @@ fn test_fcvt_w_d_nan() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[2], 0x7FFFFFFF);
 }
 
@@ -394,7 +394,7 @@ fn test_fcvt_w_d_positive_infinity() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[2], 0x7FFFFFFF);
 }
 
@@ -421,7 +421,7 @@ fn test_fcvt_w_d_negative_infinity() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[2], 0x80000000);
 }
 
@@ -449,7 +449,7 @@ fn test_fcvt_w_d_overflow() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[2], 0x7FFFFFFF);
 }
 
@@ -477,7 +477,7 @@ fn test_fcvt_w_d_underflow() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_w_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[2], 0x80000000);
 }
 
@@ -504,7 +504,7 @@ fn test_fcvt_d_wu_positive() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_wu(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_wu(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(2).bits());
     assert!((result - 100.0).abs() < 1e-10);
@@ -531,7 +531,7 @@ fn test_fcvt_d_wu_large() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_wu(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_wu(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(2).bits());
     assert!((result - 4294967295.0).abs() < 1.0);
@@ -560,7 +560,7 @@ fn test_fcvt_wu_d_positive() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_wu_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_wu_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 100);
 }
 
@@ -585,7 +585,7 @@ fn test_fcvt_wu_d_negative() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_wu_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_wu_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], u32::MAX as u64);
 }
 
@@ -610,7 +610,7 @@ fn test_fcvt_wu_d_nan() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_wu_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_wu_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], u32::MAX as u64);
 }
 
@@ -638,7 +638,7 @@ fn test_fcvt_wu_d_overflow() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_wu_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_wu_d(&decoded, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], u32::MAX as u64);
 }
 
@@ -666,7 +666,7 @@ fn test_fcvt_d_l_positive() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_l(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_l(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - 4294967296.0).abs() < 1.0);
@@ -694,7 +694,7 @@ fn test_fcvt_d_l_negative() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_l(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_l(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - (-2.0)).abs() < 1.0);
@@ -726,7 +726,7 @@ fn test_fcvt_l_d_positive() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_l_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_l_d(&decoded, &mut state, &mut mem).unwrap();
     // RV64: result is in single 64-bit register
     assert_eq!(state.regs[2], 0x100000000_u64); // 2^32
 }
@@ -752,7 +752,7 @@ fn test_fcvt_l_d_nan() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_l_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_l_d(&decoded, &mut state, &mut mem).unwrap();
     // RV64: NaN converts to INT64_MAX
     assert_eq!(state.regs[2], i64::MAX as u64);
 }
@@ -781,7 +781,7 @@ fn test_fcvt_d_lu_positive() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_d_lu(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_d_lu(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - 4294967296.0).abs() < 1.0);
@@ -813,7 +813,7 @@ fn test_fcvt_lu_d_positive() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_lu_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_lu_d(&decoded, &mut state, &mut mem).unwrap();
     // RV64: result is in single 64-bit register
     assert_eq!(state.regs[2], 0x100000000_u64); // 2^32
 }
@@ -839,7 +839,7 @@ fn test_fcvt_lu_d_negative() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fcvt_lu_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::convert::exec_fcvt_lu_d(&decoded, &mut state, &mut mem).unwrap();
     // RV64: negative converts to 0 per RISC-V spec, but our impl uses u64::MAX for invalid
     // (implementation-defined behavior for out-of-range values)
     assert_eq!(state.regs[2], u64::MAX);

@@ -1,34 +1,10 @@
 //!
 //! Execute module
 //!
-//! RV32I instruction execution - refactored by instruction type
+//! Instruction execution dispatcher with re-exports from ISA modules.
 
-// Re-export sub-modules
-pub mod amo;
-pub mod b_type; // Branch instructions
-pub mod d_arith; // RV64D arithmetic instructions
-pub mod d_classify; // RV64D classification instruction
-pub mod d_compare; // RV64D comparison instructions
-pub mod d_convert; // RV64D conversion instructions
-pub mod d_div_sqrt; // RV64D division and square root
-pub mod d_load_store; // RV64D load/store instructions
-pub mod d_madd; // RV64D fused multiply-add instructions
-pub mod div; // RV64M divide instructions
-pub mod f_arith; // RV64F arithmetic instructions
-pub mod f_classify; // RV64F classification instruction
-pub mod f_compare; // RV64F comparison instructions
-pub mod f_convert; // RV64F conversion instructions
-pub mod f_div_sqrt; // RV64F division and square root
-pub mod f_load_store; // RV64F load/store instructions
-pub mod f_madd; // RV64F fused multiply-add instructions
-pub mod i_type; // I-type instructions
-pub mod j_type; // Jump instructions
-pub mod lr_sc; // RV64A load-reserved/store-conditional instructions
-pub mod mul; // RV64M multiply instructions
-pub mod r_type; // R-type instructions
-pub mod s_type; // S-type instructions
-pub mod system; // System instructions
-pub mod u_type; // U-type instructions // RV64A atomic memory operation instructions
+// Re-export LR/SC module (re-export pattern from isa::rv64a)
+pub mod lr_sc;
 
 use crate::core::CoreState;
 use crate::csr::CsrError;
@@ -65,6 +41,7 @@ pub use crate::isa::rv64a::{
     clear_reservation, exec_amoadd, exec_amoand, exec_amomax, exec_amomaxu, exec_amomin,
     exec_amominu, exec_amoor, exec_amoxor, exec_lr, exec_lr_w, exec_sc, exec_sc_w,
 };
+
 // RV64I re-exports (from isa::rv64i)
 pub use crate::isa::rv64i::{
     exec_auipc, exec_branch, exec_jal, exec_jalr, exec_load, exec_lui, exec_op, exec_op_imm,

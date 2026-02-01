@@ -5,7 +5,7 @@
 use ruscv_sim::core::{CoreState, PrivilegeMode};
 use ruscv_sim::csr::machine;
 use ruscv_sim::decode::{DecodedInstruction, InstructionFormat, Opcode};
-use ruscv_sim::execute::ExecuteError;
+use ruscv_sim::ExecuteError;
 use ruscv_sim::memory::SimpleMemory;
 
 fn create_csr_instr(funct3: u8, rd: u8, rs1: u8, csr: u16) -> DecodedInstruction {
@@ -34,7 +34,7 @@ fn exec_system(
     state: &mut CoreState,
     mem: &mut dyn ruscv_sim::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
-    ruscv_sim::execute::system::exec_system(instr, state, mem)
+    ruscv_sim::isa::rv64i::system::exec_system(instr, state, mem)
 }
 
 // CSRRW Tests

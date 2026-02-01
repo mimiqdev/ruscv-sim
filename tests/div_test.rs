@@ -40,7 +40,7 @@ fn test_div_basic() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 10);
 }
 
@@ -53,7 +53,7 @@ fn test_div_negative_positive() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3] as i32, -10);
 }
 
@@ -66,7 +66,7 @@ fn test_div_positive_negative() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3] as i32, -10);
 }
 
@@ -79,7 +79,7 @@ fn test_div_negative_negative() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3] as i32, 10);
 }
 
@@ -92,7 +92,7 @@ fn test_div_by_zero() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
     // RV64: div by zero returns -1 (all 64 ones)
     assert_eq!(state.regs[3], u64::MAX);
 }
@@ -107,7 +107,7 @@ fn test_div_overflow() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
     // RV64: overflow returns dividend (INT64_MIN)
     assert_eq!(state.regs[3], i64::MIN as u64);
 }
@@ -121,7 +121,7 @@ fn test_div_one() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 12345);
 }
 
@@ -133,7 +133,7 @@ fn test_div_self() {
     let instr = create_div_instr(1, 1, 2, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[2], 1);
 }
 
@@ -146,7 +146,7 @@ fn test_div_remainder_truncated() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 3); // 100 / 30 = 3.33... truncated to 3
 }
 
@@ -163,7 +163,7 @@ fn test_divu_basic() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 10);
 }
 
@@ -176,7 +176,7 @@ fn test_divu_large_unsigned() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0x7FFF_FFFF);
 }
 
@@ -189,7 +189,7 @@ fn test_divu_by_zero() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], u64::MAX); // All ones in 64-bit
 }
 
@@ -202,7 +202,7 @@ fn test_divu_high_bit_set() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0x4000_0000); // 2^30
 }
 
@@ -215,7 +215,7 @@ fn test_divu_small_by_large() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0);
 }
 
@@ -232,7 +232,7 @@ fn test_rem_basic() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 10); // 100 % 30 = 10
 }
 
@@ -245,7 +245,7 @@ fn test_rem_negative_positive() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3] as i32, -10); // (-100) % 30 = -10
 }
 
@@ -258,7 +258,7 @@ fn test_rem_positive_negative() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3] as i32, 10); // 100 % (-30) = 10
 }
 
@@ -271,7 +271,7 @@ fn test_rem_negative_negative() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3] as i32, -10); // (-100) % (-30) = -10
 }
 
@@ -284,7 +284,7 @@ fn test_rem_by_zero() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 100); // Dividend unchanged
 }
 
@@ -297,7 +297,7 @@ fn test_rem_overflow() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0); // Remainder is 0
 }
 
@@ -310,7 +310,7 @@ fn test_rem_exact_division() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0); // 100 % 10 = 0
 }
 
@@ -327,7 +327,7 @@ fn test_remu_basic() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 10);
 }
 
@@ -340,7 +340,7 @@ fn test_remu_large_unsigned() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0xFFFF_FFFF % 1000);
 }
 
@@ -353,7 +353,7 @@ fn test_remu_by_zero() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 100); // Dividend unchanged
 }
 
@@ -366,7 +366,7 @@ fn test_remu_high_bit_set() {
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0x8000_0000 % 1000);
 }
 
@@ -396,12 +396,12 @@ fn test_div_mul_property() {
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
-        ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+        ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
         let div_result = state.regs[3] as i32;
 
         let instr = create_div_instr(1, 2, 4, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
-        ruscv_sim::execute::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
+        ruscv_sim::isa::rv64m::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
         let rem_result = state.regs[4] as i32;
 
         let computed = div_result.wrapping_mul(b).wrapping_add(rem_result);
@@ -431,12 +431,12 @@ fn test_divu_remu_property() {
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
-        ruscv_sim::execute::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
+        ruscv_sim::isa::rv64m::div::exec_divu(&instr, &mut state, &mut mem).unwrap();
         let div_result = state.regs[3];
 
         let instr = create_div_instr(1, 2, 4, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
-        ruscv_sim::execute::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
+        ruscv_sim::isa::rv64m::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
         let rem_result = state.regs[4];
 
         let computed = div_result.wrapping_mul(b as u64).wrapping_add(rem_result);
@@ -471,7 +471,7 @@ fn test_div_edge_cases() {
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
-        let result = ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem);
+        let result = ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem);
 
         if b == 0 || (a == i64::MIN && b == -1) {
             // Division by zero or overflow
@@ -515,7 +515,7 @@ fn test_rem_edge_cases() {
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
-        let result = ruscv_sim::execute::div::exec_rem(&instr, &mut state, &mut mem);
+        let result = ruscv_sim::isa::rv64m::div::exec_rem(&instr, &mut state, &mut mem);
 
         if b == 0 {
             // Division by zero - remainder is dividend
@@ -546,7 +546,7 @@ fn test_div_x0_dest() {
     let instr = create_div_instr(1, 2, 0, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_div(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[0], 0);
 }
 
@@ -559,6 +559,6 @@ fn test_rem_x0_dest() {
     let instr = create_div_instr(1, 2, 0, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::div::exec_rem(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[0], 0);
 }

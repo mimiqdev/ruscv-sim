@@ -36,7 +36,7 @@ fn test_fadd_d_basic() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - (std::f64::consts::PI + 1.0)).abs() < 1e-10);
@@ -64,7 +64,7 @@ fn test_fadd_d_negative() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - (-2.0)).abs() < 1e-10);
@@ -92,7 +92,7 @@ fn test_fadd_d_zero() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - 5.0).abs() < 1e-10);
@@ -120,7 +120,7 @@ fn test_fsub_d_basic() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fsub_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fsub_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - 6.5).abs() < 1e-10);
@@ -148,7 +148,7 @@ fn test_fsub_d_negative_result() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fsub_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fsub_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - (-3.0)).abs() < 1e-10);
@@ -176,7 +176,7 @@ fn test_fmul_d_basic() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - 10.0).abs() < 1e-10);
@@ -204,7 +204,7 @@ fn test_fmul_d_zero() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert_eq!(result, 0.0);
@@ -232,7 +232,7 @@ fn test_fmul_d_by_one() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - 7.0).abs() < 1e-10);
@@ -260,7 +260,7 @@ fn test_fadd_d_infinity() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert_eq!(result, f64::INFINITY);
@@ -288,7 +288,7 @@ fn test_fsub_d_infinity() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fsub_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fsub_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!(result.is_nan());
@@ -316,7 +316,7 @@ fn test_fmul_d_infinity() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert_eq!(result, f64::INFINITY);
@@ -346,7 +346,7 @@ fn test_fmul_d_negative_infinity() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert_eq!(result, f64::NEG_INFINITY);
@@ -374,7 +374,7 @@ fn test_fadd_d_negative_zero() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - 1.0).abs() < 1e-10);
@@ -402,7 +402,7 @@ fn test_fsub_d_negative_infinity() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fsub_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fsub_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!(result.is_nan());
@@ -432,7 +432,7 @@ fn test_fadd_d_opposite_infinities() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!(result.is_nan());
@@ -460,7 +460,7 @@ fn test_result_stored_as_double() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = state.fpr.read(3);
     // Result should be a valid double (no NaN boxing needed)
@@ -493,7 +493,7 @@ fn test_chained_operations() {
         imm: None,
         branch_taken: false,
     };
-    ruscv_sim::execute::exec_fadd_d(&add_dec, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fadd_d(&add_dec, &mut state, &mut mem).unwrap();
 
     // Multiply
     let mul_dec = DecodedInstruction {
@@ -509,7 +509,7 @@ fn test_chained_operations() {
         imm: None,
         branch_taken: false,
     };
-    ruscv_sim::execute::exec_fmul_d(&mul_dec, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fmul_d(&mul_dec, &mut state, &mut mem).unwrap();
 
     // Subtract
     let sub_dec = DecodedInstruction {
@@ -525,7 +525,7 @@ fn test_chained_operations() {
         imm: None,
         branch_taken: false,
     };
-    ruscv_sim::execute::exec_fsub_d(&sub_dec, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fsub_d(&sub_dec, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(7).bits());
     assert!((result - 5.0).abs() < 1e-10);
@@ -553,7 +553,7 @@ fn test_small_decimal_values() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fadd_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - 0.3).abs() < 1e-15);
@@ -581,7 +581,7 @@ fn test_negative_multiply() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert!((result - (-6.0)).abs() < 1e-10);
@@ -609,7 +609,7 @@ fn test_very_large_numbers() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     assert_eq!(result, f64::INFINITY);
@@ -637,7 +637,7 @@ fn test_very_small_numbers() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64d::arith::exec_fmul_d(&decoded, &mut state, &mut mem).unwrap();
 
     let result = f64::from_bits(state.fpr.read(3).bits());
     // 1e-200 * 1e-200 = 1e-400, which underflows to 0 (smallest f64 is ~1e-324)

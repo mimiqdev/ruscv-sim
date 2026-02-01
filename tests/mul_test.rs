@@ -40,7 +40,7 @@ fn test_mul_basic_positive() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 200);
 }
 
@@ -53,7 +53,7 @@ fn test_mul_negative_positive() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3] as i32, -30);
 }
 
@@ -66,7 +66,7 @@ fn test_mul_negative_negative() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3] as i32, 30);
 }
 
@@ -79,7 +79,7 @@ fn test_mul_zero() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0);
 }
 
@@ -92,7 +92,7 @@ fn test_mul_one() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 999);
 }
 
@@ -105,7 +105,7 @@ fn test_mul_max_values() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
     // 2147483647 * 2 = 4294967294 = 0xFFFFFFFE
     assert_eq!(state.regs[3], 0xFFFF_FFFE);
 }
@@ -120,7 +120,7 @@ fn test_mul_min_values() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
     // MUL returns low 64 bits: 0xFFFF_FFFF_8000_0000 * 2 = 0xFFFF_FFFF_0000_0000
     assert_eq!(state.regs[3], 0xFFFF_FFFF_0000_0000);
 }
@@ -134,7 +134,7 @@ fn test_mul_x0_dest() {
     let instr = create_mul_instr(1, 2, 0, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[0], 0);
 }
 
@@ -146,7 +146,7 @@ fn test_mul_same_register() {
     let instr = create_mul_instr(1, 1, 2, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[2], 225);
 }
 
@@ -163,7 +163,7 @@ fn test_mulh_basic() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0010);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
     // RV64: 65536 * 65536 = 4294967296, 128-bit product is 0x00000000_00000001_00000000_00000000
     // Upper 64 bits = 0
     assert_eq!(state.regs[3], 0);
@@ -178,7 +178,7 @@ fn test_mulh_small_result() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0010);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0);
 }
 
@@ -191,7 +191,7 @@ fn test_mulh_negative_result() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0010);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
     // RV64: 0x8000_0000 * 2 = 0x1_0000_0000, 128-bit product is 0x00000000_00000000_00000001_00000000
     // Upper 64 bits = 0
     assert_eq!(state.regs[3], 0);
@@ -206,7 +206,7 @@ fn test_mulh_zero() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0010);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0);
 }
 
@@ -219,7 +219,7 @@ fn test_mulh_both_negative() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0010);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
     // RV64: 2^31 * 2^31 = 2^62, 128-bit product is 0x00000000_00000003_ffffffff_80000000
     // Wait, let me recalculate: 0x8000_0000 * 0x8000_0000 = 0x4000_0000_0000_0000
     // 128-bit product is 0x00000000_00000000_40000000_00000000
@@ -240,7 +240,7 @@ fn test_mulhu_basic() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0011);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
     // 2^31 * 2 = 2^32 = 0x1_0000_0000
     // 128-bit product is 0x00000000_00000000_00000001_00000000
     // Upper 64 bits = 0
@@ -256,7 +256,7 @@ fn test_mulhu_small_result() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0011);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0);
 }
 
@@ -269,7 +269,7 @@ fn test_mulhu_both_large() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0011);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
     // (2^32-1)^2 = 2^64 - 2^33 + 1 = 0xFFFF_FFFE_0000_0001
     // 128-bit product is 0x00000000_00000000_FFFFFFFE_00000001
     // Upper 64 bits = 0
@@ -285,7 +285,7 @@ fn test_mulhu_zero() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0011);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulhu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0);
 }
 
@@ -302,7 +302,7 @@ fn test_mulhsu_basic() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0010);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
     // In RV64, 0x8000_0000 is positive (2^31), so 2^31 * 2^31 = 2^62
     // 128-bit product is 0x00000000_00000000_40000000_00000000
     // Upper 64 bits = 0
@@ -318,7 +318,7 @@ fn test_mulhsu_positive_signed() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0010);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
     // 65536 * 65536 = 4294967296 = 0x1_0000_0000
     // 128-bit product is 0x00000000_00000000_00000001_00000000
     // Upper 64 bits = 0
@@ -334,7 +334,7 @@ fn test_mulhsu_negative_signed() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0010);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
     // (-1) * 2^31 = -2^31 = 0xFFFF_FFFF_8000_0000
     // 128-bit product is 0xFFFFFFFF_FFFFFFFF_FFFFFFFF_80000000
     // Upper 64 bits = 0xFFFF_FFFF_FFFF_FFFF
@@ -350,7 +350,7 @@ fn test_mulhsu_small_result() {
     let instr = create_mul_instr(1, 2, 3, 0b000_0010);
     let mut mem = SimpleMemory::new(0x1000);
 
-    ruscv_sim::execute::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64m::mul::exec_mulhsu(&instr, &mut state, &mut mem).unwrap();
     assert_eq!(state.regs[3], 0);
 }
 
@@ -381,7 +381,7 @@ fn test_mul_random_values() {
         let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
-        ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+        ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
         assert_eq!(
             state.regs[3], expected as u64,
             "Failed for {} * {}",
@@ -409,7 +409,7 @@ fn test_mulh_corner_cases() {
         let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
 
-        ruscv_sim::execute::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
+        ruscv_sim::isa::rv64m::mul::exec_mulh(&instr, &mut state, &mut mem).unwrap();
         assert_eq!(
             state.regs[3] as i64, expected,
             "Failed for {:?} * {:?}",
@@ -430,7 +430,7 @@ fn test_mul_property_distributive() {
                 state1.regs[2] = c;
                 let instr = create_mul_instr(1, 2, 3, 0b000_0001);
                 let mut mem = SimpleMemory::new(0x1000);
-                ruscv_sim::execute::mul::exec_mul(&instr, &mut state1, &mut mem).unwrap();
+                ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state1, &mut mem).unwrap();
                 let result1 = state1.regs[3];
 
                 // a * c + b * c
@@ -439,13 +439,13 @@ fn test_mul_property_distributive() {
                 state2.regs[2] = c;
                 let instr = create_mul_instr(1, 2, 3, 0b000_0001);
                 let mut mem = SimpleMemory::new(0x1000);
-                ruscv_sim::execute::mul::exec_mul(&instr, &mut state2, &mut mem).unwrap();
+                ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state2, &mut mem).unwrap();
                 let ac = state2.regs[3];
 
                 state2.regs[1] = b;
                 let instr = create_mul_instr(1, 2, 4, 0b000_0001);
                 let mut mem = SimpleMemory::new(0x1000);
-                ruscv_sim::execute::mul::exec_mul(&instr, &mut state2, &mut mem).unwrap();
+                ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state2, &mut mem).unwrap();
                 let result2 = ac.wrapping_add(state2.regs[4]);
 
                 assert_eq!(
@@ -479,7 +479,7 @@ fn test_mul_different_registers() {
                     let instr = create_mul_instr(rs1, rs2, rd, 0b000_0001);
                     let mut mem = SimpleMemory::new(0x1000);
 
-                    ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
+                    ruscv_sim::isa::rv64m::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
                     let result = state.regs[rd as usize];
                     let expected = if rs1 == rs2 { 64 } else { 56 }; // 8*8=64 when rs1==rs2, else 7*8=56
                     assert_eq!(

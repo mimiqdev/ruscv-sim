@@ -33,7 +33,7 @@ fn test_feq_equal() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_feq_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64f::compare::exec_feq_s(&decoded, &mut state, &mut mem).unwrap();
 
     assert_eq!(state.regs[3], 1);
 }
@@ -60,7 +60,7 @@ fn test_feq_not_equal() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_feq_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64f::compare::exec_feq_s(&decoded, &mut state, &mut mem).unwrap();
 
     assert_eq!(state.regs[3], 0);
 }
@@ -87,7 +87,7 @@ fn test_flt_less() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_flt_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64f::compare::exec_flt_s(&decoded, &mut state, &mut mem).unwrap();
 
     assert_eq!(state.regs[3], 1);
 }
@@ -114,7 +114,7 @@ fn test_flt_greater() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_flt_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64f::compare::exec_flt_s(&decoded, &mut state, &mut mem).unwrap();
 
     assert_eq!(state.regs[3], 0);
 }
@@ -141,7 +141,7 @@ fn test_fle_less_or_equal() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fle_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64f::compare::exec_fle_s(&decoded, &mut state, &mut mem).unwrap();
 
     assert_eq!(state.regs[3], 1);
 }
@@ -168,7 +168,7 @@ fn test_fle_equal() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_fle_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64f::compare::exec_fle_s(&decoded, &mut state, &mut mem).unwrap();
 
     assert_eq!(state.regs[3], 1);
 }
@@ -195,7 +195,7 @@ fn test_feq_nan() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_feq_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64f::compare::exec_feq_s(&decoded, &mut state, &mut mem).unwrap();
 
     assert_eq!(state.regs[3], 0);
 }
@@ -222,7 +222,7 @@ fn test_flt_negative() {
         branch_taken: false,
     };
 
-    ruscv_sim::execute::exec_flt_s(&decoded, &mut state, &mut mem).unwrap();
+    ruscv_sim::isa::rv64f::compare::exec_flt_s(&decoded, &mut state, &mut mem).unwrap();
 
     assert_eq!(state.regs[3], 1);
 }

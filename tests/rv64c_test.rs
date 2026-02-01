@@ -246,7 +246,7 @@ fn test_c_integration_ebreak() {
     let result = exec_c_ebreak(&mut state);
     assert!(matches!(
         result,
-        Err(ruscv_sim::execute::ExecuteError::Ebreak)
+        Err(ruscv_sim::ExecuteError::Ebreak)
     ));
 }
 
