@@ -230,13 +230,13 @@ impl TrapHandler {
     ///
     /// # Arguments
     /// * `trap` - The trap that occurred
-    /// * `epc` - Current program counter
+    /// * `epc` - Current program counter (64-bit for RV64)
     /// * `tval` - Trap value (faulting address/instruction)
     /// * `state` - Core state to update
     ///
     /// # Returns
     /// The new PC to jump to (from mtvec/stvec)
-    pub fn handle_trap(&mut self, trap: Trap, epc: u32, tval: u32, state: &mut CoreState) -> u32 {
+    pub fn handle_trap(&mut self, trap: Trap, epc: u64, tval: u64, state: &mut CoreState) -> u64 {
         // Determine which mode handles this trap
         let (target_mode, _delegatable) = match trap {
             Trap::Exception(cause) => {
@@ -266,14 +266,14 @@ impl TrapHandler {
         match target_mode {
             PrivilegeMode::Machine => {
                 state.csr.write(machine::MEPC, epc).ok();
-                state.csr.write(machine::MCAUSE, cause_value as u32).ok();
+                state.csr.write(machine::MCAUSE, cause_value).ok();
                 state.csr.write(machine::MTVAL, tval).ok();
 
                 // Update mstatus: set MPIE = MIE, set MIE = 0, set MPP = current mode
                 let mstatus = state.csr.read(machine::MSTATUS).unwrap_or(0);
                 let _mpie = (mstatus >> 7) & 1;
                 let mie = (mstatus >> 3) & 1;
-                let mpp = state.privilege as u32;
+                let mpp = state.privilege as u64;
 
                 let new_mstatus = (mstatus & !0x1888) // Clear MIE, MPIE, MPP
                     | (mie << 7)      // MPIE = old MIE
@@ -288,7 +288,7 @@ impl TrapHandler {
             }
             PrivilegeMode::Supervisor => {
                 state.csr.write(supervisor::SEPC, epc).ok();
-                state.csr.write(supervisor::SCAUSE, cause_value as u32).ok();
+                state.csr.write(supervisor::SCAUSE, cause_value).ok();
                 state.csr.write(supervisor::STVAL, tval).ok();
 
                 // Update sstatus: set SPIE = SIE, set SIE = 0, set SPP = current mode
@@ -321,7 +321,7 @@ impl TrapHandler {
     }
 
     /// Calculate vectored trap address
-    pub fn vector_trap(&self, tvec: u32, cause: u64) -> u32 {
+    pub fn vector_trap(&self, tvec: u64, cause: u64) -> u64 {
         let mode = tvec & 0x3;
         let base = tvec & !0x3;
 
@@ -334,7 +334,7 @@ impl TrapHandler {
                 // Vectored mode: add cause * 4 to base
                 // For exceptions: cause = exception code
                 // For interrupts: cause = interrupt code | 0x8000_0000_0000_0000
-                let offset = (cause as u32 & 0x7F) << 2;
+                let offset = (cause & 0x7F) << 2;
                 base.wrapping_add(offset)
             }
             _ => base, // Reserved, use direct mode

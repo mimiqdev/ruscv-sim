@@ -65,7 +65,8 @@ fn test_amoadd_wrapping() {
     let result = exec_amoadd(&instr, &mut state, &mut mem);
 
     assert!(result.is_ok());
-    assert_eq!(state.regs[3], 0xFFFF_FFFE);
+    // AMO.W sign-extends 32-bit value to 64 bits: 0xFFFF_FFFE becomes 0xFFFF_FFFF_FFFF_FFFE
+    assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_FFFE_u64);
     assert_eq!(mem.read_word(0x100).unwrap(), 3); // Wrapped
 }
 
@@ -93,7 +94,7 @@ fn test_amoadd_negative_value() {
 
     mem.write_word(0x100, 50).unwrap();
     state.regs[1] = 0x100;
-    state.regs[2] = (-10i32) as u32;
+    state.regs[2] = (-10i64) as u64;
 
     let instr = create_amo_instr(1, 2, 3, 0b00001, 0, 0);
     let result = exec_amoadd(&instr, &mut state, &mut mem);
@@ -116,7 +117,8 @@ fn test_amoadd_large_numbers() {
     let result = exec_amoadd(&instr, &mut state, &mut mem);
 
     assert!(result.is_ok());
-    assert_eq!(state.regs[3], 0x8000_0000);
+    // AMO.W sign-extends 32-bit value: 0x8000_0000 becomes 0xFFFF_FFFF_8000_0000
+    assert_eq!(state.regs[3], 0xFFFF_FFFF_8000_0000_u64);
     assert_eq!(mem.read_word(0x100).unwrap(), 0); // 0x8000_0000 + 0x8000_0000 = 0 (mod 2^32)
 }
 
@@ -149,7 +151,7 @@ fn test_amoadd_sequence() {
         state.regs[2] = 1;
         let instr = create_amo_instr(1, 2, 3, 0b00001, 0, 0);
         exec_amoadd(&instr, &mut state, &mut mem).unwrap();
-        assert_eq!(state.regs[3], i as u32); // Returns previous value
+        assert_eq!(state.regs[3], i as u64); // Returns previous value
     }
 
     assert_eq!(mem.read_word(0x100).unwrap(), 10);
@@ -223,7 +225,8 @@ fn test_amoand_all_ones() {
     let result = exec_amoand(&instr, &mut state, &mut mem);
 
     assert!(result.is_ok());
-    assert_eq!(state.regs[3], 0xFFFF_FFFF);
+    // AMO.W sign-extends 32-bit value: 0xFFFF_FFFF becomes 0xFFFF_FFFF_FFFF_FFFF
+    assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_FFFF_u64);
     assert_eq!(mem.read_word(0x100).unwrap(), 0xAAAA_AAAA);
 }
 
@@ -257,7 +260,8 @@ fn test_amoand_preserves_bits() {
     let result = exec_amoand(&instr, &mut state, &mut mem);
 
     assert!(result.is_ok());
-    assert_eq!(state.regs[3], 0xFFFF_0000);
+    // AMO.W sign-extends 32-bit value: 0xFFFF_0000 becomes 0xFFFF_FFFF_FFFF_0000
+    assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_0000_u64);
     assert_eq!(mem.read_word(0x100).unwrap(), 0x00FF_0000);
 }
 
@@ -522,7 +526,8 @@ fn test_amomaxu_unsigned_comparison() {
     let result = exec_amomaxu(&instr, &mut state, &mut mem);
 
     assert!(result.is_ok());
-    assert_eq!(state.regs[3], 0x8000_0000);
+    // AMO.W sign-extends 32-bit value: 0x8000_0000 becomes 0xFFFF_FFFF_8000_0000
+    assert_eq!(state.regs[3], 0xFFFF_FFFF_8000_0000_u64);
     // Unsigned: 2147483648 > 2147483647, so 0x8000_0000 wins
     assert_eq!(mem.read_word(0x100).unwrap(), 0x8000_0000);
 }
@@ -563,7 +568,8 @@ fn test_amominu_unsigned_comparison() {
     let result = exec_amominu(&instr, &mut state, &mut mem);
 
     assert!(result.is_ok());
-    assert_eq!(state.regs[3], 0x8000_0000);
+    // AMO.W sign-extends 32-bit value: 0x8000_0000 becomes 0xFFFF_FFFF_8000_0000
+    assert_eq!(state.regs[3], 0xFFFF_FFFF_8000_0000_u64);
     // Unsigned: 2147483648 > 2147483647, so 0x7FFF_FFFF wins (smaller)
     assert_eq!(mem.read_word(0x100).unwrap(), 0x7FFF_FFFF);
 }

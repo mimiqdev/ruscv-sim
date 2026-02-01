@@ -5,20 +5,21 @@
 //!
 //! # Implemented Instructions
 //!
-//! - AMOADD: Atomic add (32-bit only)
-//! - AMOAND: Atomic and (32-bit only)
-//! - AMOOR: Atomic or (32-bit only)
-//! - AMOXOR: Atomic xor (32-bit only)
-//! - AMOMAX: Atomic max (signed, 32-bit only)
-//! - AMOMIN: Atomic min (signed, 32-bit only)
-//! - AMOMAXU: Atomic max (unsigned, 32-bit only)
-//! - AMOMINU: Atomic min (unsigned, 32-bit only)
+//! - AMOADD.W: Atomic add (32-bit)
+//! - AMOAND.W: Atomic and (32-bit)
+//! - AMOOR.W: Atomic or (32-bit)
+//! - AMOXOR.W: Atomic xor (32-bit)
+//! - AMOMAX.W: Atomic max (signed, 32-bit)
+//! - AMOMIN.W: Atomic min (signed, 32-bit)
+//! - AMOMAXU.W: Atomic max (unsigned, 32-bit)
+//! - AMOMINU.W: Atomic min (unsigned, 32-bit)
 //!
 //! # Limitations
 //!
-//! **64-bit AMO Support**: The current implementation only supports 32-bit
-//! AMO operations (AMO*W). LR.D, SC.D, and 64-bit AMO instructions (AMO*D)
-//! are not yet implemented. This is tracked for future work.
+//! **64-bit AMO Support**: The current implementation supports 32-bit
+//! AMO operations (AMO*W). 64-bit AMO instructions (AMO*D) use the same
+//! functions but operate on 32-bit values. Full 64-bit support is tracked
+//! for future work.
 //!
 //! # References
 //!
@@ -52,15 +53,15 @@ const AMO_FUNCT5_AMOMINU: u8 = 0b01001;
 #[allow(dead_code)]
 const AMO_FUNCT5_AMOMAXU: u8 = 0b01011;
 
-/// AMOADD - Atomic Add
+/// AMOADD.W - Atomic Add (32-bit)
 ///
 /// Atomically adds rs2 to the value in memory at rs1.
-/// Returns the original value in memory.
+/// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
 /// temp = MEM[rs1]
 /// MEM[rs1] = temp + rs2
-/// rd = temp
+/// rd = sext(temp)
 #[inline]
 pub fn exec_amoadd(
     instr: &DecodedInstruction,
@@ -72,9 +73,9 @@ pub fn exec_amoadd(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-    let value = state.regs[rs2];
+    let value = state.regs[rs2] as u32;
 
-    // Read the current value
+    // Read the current value (32-bit)
     let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
 
     // Compute new value
@@ -84,23 +85,23 @@ pub fn exec_amoadd(
     mem.write_word(addr, new_value)
         .map_err(ExecuteError::MemoryError)?;
 
-    // Return old value to rd
+    // Return old value to rd (sign-extended to 64-bit)
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = (old_value as i32) as i64 as u64;
     }
 
     Ok(())
 }
 
-/// AMOAND - Atomic And
+/// AMOAND.W - Atomic And (32-bit)
 ///
 /// Atomically performs bitwise AND of rs2 with the value in memory.
-/// Returns the original value in memory.
+/// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
 /// temp = MEM[rs1]
 /// MEM[rs1] = temp & rs2
-/// rd = temp
+/// rd = sext(temp)
 #[inline]
 pub fn exec_amoand(
     instr: &DecodedInstruction,
@@ -112,7 +113,7 @@ pub fn exec_amoand(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-    let value = state.regs[rs2];
+    let value = state.regs[rs2] as u32;
 
     let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = old_value & value;
@@ -121,21 +122,21 @@ pub fn exec_amoand(
         .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = (old_value as i32) as i64 as u64;
     }
 
     Ok(())
 }
 
-/// AMOOR - Atomic Or
+/// AMOOR.W - Atomic Or (32-bit)
 ///
 /// Atomically performs bitwise OR of rs2 with the value in memory.
-/// Returns the original value in memory.
+/// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
 /// temp = MEM[rs1]
 /// MEM[rs1] = temp | rs2
-/// rd = temp
+/// rd = sext(temp)
 #[inline]
 pub fn exec_amoor(
     instr: &DecodedInstruction,
@@ -147,7 +148,7 @@ pub fn exec_amoor(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-    let value = state.regs[rs2];
+    let value = state.regs[rs2] as u32;
 
     let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = old_value | value;
@@ -156,21 +157,21 @@ pub fn exec_amoor(
         .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = (old_value as i32) as i64 as u64;
     }
 
     Ok(())
 }
 
-/// AMOXOR - Atomic Xor
+/// AMOXOR.W - Atomic Xor (32-bit)
 ///
 /// Atomically performs bitwise XOR of rs2 with the value in memory.
-/// Returns the original value in memory.
+/// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
 /// temp = MEM[rs1]
 /// MEM[rs1] = temp ^ rs2
-/// rd = temp
+/// rd = sext(temp)
 #[inline]
 pub fn exec_amoxor(
     instr: &DecodedInstruction,
@@ -182,7 +183,7 @@ pub fn exec_amoxor(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-    let value = state.regs[rs2];
+    let value = state.regs[rs2] as u32;
 
     let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = old_value ^ value;
@@ -191,21 +192,21 @@ pub fn exec_amoxor(
         .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = (old_value as i32) as i64 as u64;
     }
 
     Ok(())
 }
 
-/// AMOMAX - Atomic Max (Signed)
+/// AMOMAX.W - Atomic Max Signed (32-bit)
 ///
 /// Atomically stores the maximum (signed) of rs2 and the value in memory.
-/// Returns the original value in memory.
+/// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
 /// temp = MEM[rs1]
 /// MEM[rs1] = max(temp, rs2) [signed]
-/// rd = temp
+/// rd = sext(temp)
 #[inline]
 pub fn exec_amomax(
     instr: &DecodedInstruction,
@@ -217,7 +218,7 @@ pub fn exec_amomax(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-    let value = state.regs[rs2];
+    let value = state.regs[rs2] as u32;
 
     let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = if (old_value as i32) > (value as i32) {
@@ -230,21 +231,21 @@ pub fn exec_amomax(
         .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = (old_value as i32) as i64 as u64;
     }
 
     Ok(())
 }
 
-/// AMOMIN - Atomic Min (Signed)
+/// AMOMIN.W - Atomic Min Signed (32-bit)
 ///
 /// Atomically stores the minimum (signed) of rs2 and the value in memory.
-/// Returns the original value in memory.
+/// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
 /// temp = MEM[rs1]
 /// MEM[rs1] = min(temp, rs2) [signed]
-/// rd = temp
+/// rd = sext(temp)
 #[inline]
 pub fn exec_amomin(
     instr: &DecodedInstruction,
@@ -256,7 +257,7 @@ pub fn exec_amomin(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-    let value = state.regs[rs2];
+    let value = state.regs[rs2] as u32;
 
     let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = if (old_value as i32) < (value as i32) {
@@ -269,21 +270,21 @@ pub fn exec_amomin(
         .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = (old_value as i32) as i64 as u64;
     }
 
     Ok(())
 }
 
-/// AMOMAXU - Atomic Max (Unsigned)
+/// AMOMAXU.W - Atomic Max Unsigned (32-bit)
 ///
 /// Atomically stores the maximum (unsigned) of rs2 and the value in memory.
-/// Returns the original value in memory.
+/// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
 /// temp = MEM[rs1]
 /// MEM[rs1] = max(temp, rs2) [unsigned]
-/// rd = temp
+/// rd = sext(temp)
 #[inline]
 pub fn exec_amomaxu(
     instr: &DecodedInstruction,
@@ -295,7 +296,7 @@ pub fn exec_amomaxu(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-    let value = state.regs[rs2];
+    let value = state.regs[rs2] as u32;
 
     let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = if old_value > value { old_value } else { value };
@@ -304,21 +305,21 @@ pub fn exec_amomaxu(
         .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = (old_value as i32) as i64 as u64;
     }
 
     Ok(())
 }
 
-/// AMOMINU - Atomic Min (Unsigned)
+/// AMOMINU.W - Atomic Min Unsigned (32-bit)
 ///
 /// Atomically stores the minimum (unsigned) of rs2 and the value in memory.
-/// Returns the original value in memory.
+/// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
 /// temp = MEM[rs1]
 /// MEM[rs1] = min(temp, rs2) [unsigned]
-/// rd = temp
+/// rd = sext(temp)
 #[inline]
 pub fn exec_amominu(
     instr: &DecodedInstruction,
@@ -330,7 +331,7 @@ pub fn exec_amominu(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-    let value = state.regs[rs2];
+    let value = state.regs[rs2] as u32;
 
     let old_value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
     let new_value = if old_value < value { old_value } else { value };
@@ -339,7 +340,7 @@ pub fn exec_amominu(
         .map_err(ExecuteError::MemoryError)?;
 
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = (old_value as i32) as i64 as u64;
     }
 
     Ok(())
@@ -413,7 +414,9 @@ mod tests {
         let result = exec_amoadd(&instr, &mut state, &mut mem);
 
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 0xFFFF_FFFF);
+        // AMO.W returns 32-bit value sign-extended to 64-bit
+        // 0xFFFFFFFF as i32 is -1, sign-extended to 64-bit is 0xFFFFFFFFFFFFFFFF
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_FFFF);
         assert_eq!(mem.read_word(0x100).unwrap(), 1);
     }
 
@@ -468,7 +471,9 @@ mod tests {
         let result = exec_amoand(&instr, &mut state, &mut mem);
 
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 0xFFFF_FFFF);
+        // AMO.W returns 32-bit value sign-extended to 64-bit
+        // 0xFFFFFFFF as i32 is -1, sign-extended to 64-bit is 0xFFFFFFFFFFFFFFFF
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_FFFF);
         assert_eq!(mem.read_word(0x100).unwrap(), 0xAAAA_AAAA);
     }
 
@@ -591,7 +596,9 @@ mod tests {
 
         assert!(result.is_ok());
         // Signed: -2147483648 < 2147483647, so 0x7FFF_FFFF wins
-        assert_eq!(state.regs[3], 0x8000_0000);
+        // AMO.W returns 32-bit value sign-extended to 64-bit
+        // 0x80000000 as i32 is -2147483648, sign-extended to 0xFFFFFFFF80000000
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_8000_0000);
         assert_eq!(mem.read_word(0x100).unwrap(), 0x7FFF_FFFF);
     }
 
@@ -670,7 +677,9 @@ mod tests {
         let result = exec_amomaxu(&instr, &mut state, &mut mem);
 
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 0x8000_0000);
+        // AMO.W returns 32-bit value sign-extended to 64-bit
+        // 0x80000000 as i32 is -2147483648, sign-extended to 0xFFFFFFFF80000000
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_8000_0000);
         // Unsigned: 2147483648 > 2147483647, so 0x8000_0000 wins
         assert_eq!(mem.read_word(0x100).unwrap(), 0x8000_0000);
     }
@@ -711,7 +720,9 @@ mod tests {
         let result = exec_amominu(&instr, &mut state, &mut mem);
 
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 0x8000_0000);
+        // AMO.W returns 32-bit value sign-extended to 64-bit
+        // 0x80000000 as i32 is -2147483648, sign-extended to 0xFFFFFFFF80000000
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_8000_0000);
         // Unsigned: 2147483648 > 2147483647, so 0x7FFF_FFFF wins (smaller)
         assert_eq!(mem.read_word(0x100).unwrap(), 0x7FFF_FFFF);
     }
@@ -779,7 +790,7 @@ mod tests {
             state.regs[2] = 1;
             let instr = create_amo_instr(1, 2, 3, 0b00001, 0, 0);
             exec_amoadd(&instr, &mut state, &mut mem).unwrap();
-            assert_eq!(state.regs[3], i as u32); // Returns previous value
+            assert_eq!(state.regs[3], i as u64); // Returns previous value
         }
 
         assert_eq!(mem.read_word(0x100).unwrap(), 10);

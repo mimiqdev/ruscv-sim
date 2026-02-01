@@ -22,9 +22,9 @@ pub fn exec_flw(
     let rd = instr.rd.expect("FLW requires rd");
     let imm = instr.imm.expect("FLW requires imm") as i32;
 
-    // Calculate effective address
-    let base = state.regs[rs1 as usize] as u64;
-    let addr = (base as i64 + imm as i64) as u32;
+    // Calculate effective address (64-bit)
+    let base = state.regs[rs1 as usize];
+    let addr = (base as i64).wrapping_add(imm as i64) as u64;
 
     // Load 32-bit float from memory
     let value = mem.read_word(addr)?;
@@ -36,21 +36,21 @@ pub fn exec_flw(
     Ok(())
 }
 
-/// Execute FSD (Store 32-bit Float to Memory)
+/// Execute FSW (Store 32-bit Float to Memory)
 /// Format: S-type (Store)
 /// Encoding: | imm[11:5] | rs2 | rs1 | funct3=010 | imm[4:0] | opcode=StoreFp(0100111) |
-pub fn exec_fsd(
+pub fn exec_fsw(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     mem: &mut dyn MemoryInterface,
 ) -> Result<(), ExecuteError> {
-    let rs1 = instr.rs1.expect("FSD requires rs1");
-    let rs2 = instr.rs2.expect("FSD requires rs2");
-    let imm = instr.imm.expect("FSD requires imm") as i32;
+    let rs1 = instr.rs1.expect("FSW requires rs1");
+    let rs2 = instr.rs2.expect("FSW requires rs2");
+    let imm = instr.imm.expect("FSW requires imm") as i32;
 
-    // Calculate effective address
-    let base = state.regs[rs1 as usize] as u64;
-    let addr = (base as i64 + imm as i64) as u32;
+    // Calculate effective address (64-bit)
+    let base = state.regs[rs1 as usize];
+    let addr = (base as i64).wrapping_add(imm as i64) as u64;
 
     // Read lower 32 bits from FPR and store to memory
     let value = state.fpr.read_u32(rs2 as usize);
@@ -102,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fsd_basic() {
+    fn test_fsw_basic() {
         let mut mem = SimpleMemory::new(0x1000);
         let mut state = CoreState::default();
         state.regs[1] = 0x100; // Base address
@@ -111,12 +111,12 @@ mod tests {
         let test_value: f32 = std::f32::consts::E;
         state.fpr.write(3, Fpr::new(test_value));
 
-        // Create FSD instruction: FSD f3, 0(x1)
+        // Create FSW instruction: FSW f3, 0(x1)
         // imm=0, rs2=3, rs1=1, funct3=010, opcode=StoreFp
-        let fsd_instr = (3u32 << 20) | (1u32 << 15) | (0b010u32 << 12) | 0b010_0111;
+        let fsw_instr = (3u32 << 20) | (1u32 << 15) | (0b010u32 << 12) | 0b010_0111;
 
         let decoded = DecodedInstruction {
-            raw: fsd_instr,
+            raw: fsw_instr,
             format: InstructionFormat::SType,
             opcode: Opcode::StoreFp,
             funct3: None,
@@ -129,7 +129,7 @@ mod tests {
             branch_taken: false,
         };
 
-        exec_fsd(&decoded, &mut state, &mut mem).unwrap();
+        exec_fsw(&decoded, &mut state, &mut mem).unwrap();
 
         // Verify the value was stored correctly
         let stored = mem.read_word(0x100).unwrap();
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fsd_zero_register() {
+    fn test_fsw_zero_register() {
         let mut mem = SimpleMemory::new(0x1000);
         let mut state = CoreState::default();
         state.regs[1] = 0x100;
@@ -190,7 +190,7 @@ mod tests {
             branch_taken: false,
         };
 
-        exec_fsd(&decoded, &mut state, &mut mem).unwrap();
+        exec_fsw(&decoded, &mut state, &mut mem).unwrap();
 
         // Memory should still be 0 (not written)
         assert_eq!(mem.read_word(0x100).unwrap(), 0);

@@ -1,4 +1,4 @@
-//! J-type instruction execution
+//! J-type instruction execution (RV64I)
 //!
 //! J-type (Jump-type) instructions perform unconditional jumps.
 
@@ -6,7 +6,7 @@ use crate::core::CoreState;
 use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 
-/// JAL (Jump and Link)
+/// JAL (Jump and Link) - RV64I
 ///
 /// JAL performs an unconditional jump with a 20-bit signed offset,
 /// storing the return address (PC + 4) in the destination register.
@@ -18,7 +18,9 @@ pub fn exec_jal(
 ) -> Result<(), ExecuteError> {
     if let (Some(rd), Some(imm)) = (instr.rd, instr.imm) {
         let return_addr = state.pc.wrapping_add(4);
-        let target = state.pc.wrapping_add(imm);
+        // Sign-extend the 21-bit immediate to 64 bits
+        let imm_sext = ((imm as i32) << 11 >> 11) as i64 as u64;
+        let target = state.pc.wrapping_add(imm_sext);
 
         if rd != 0 {
             state.regs[rd as usize] = return_addr;
@@ -31,7 +33,7 @@ pub fn exec_jal(
     }
 }
 
-/// JALR (Jump and Link Register)
+/// JALR (Jump and Link Register) - RV64I
 ///
 /// JALR performs an unconditional jump to the address in a register,
 /// with an optional immediate offset, storing the return address in a register.
@@ -43,7 +45,9 @@ pub fn exec_jalr(
 ) -> Result<(), ExecuteError> {
     if let (Some(rd), Some(rs1), Some(imm)) = (instr.rd, instr.rs1, instr.imm) {
         let return_addr = state.pc.wrapping_add(4);
-        let target = (state.regs[rs1 as usize].wrapping_add(imm)) & !1u32;
+        // Sign-extend the 12-bit immediate to 64 bits
+        let imm_sext = ((imm as i32) << 20 >> 20) as i64 as u64;
+        let target = (state.regs[rs1 as usize].wrapping_add(imm_sext)) & !1u64;
 
         if rd != 0 {
             state.regs[rd as usize] = return_addr;
@@ -173,7 +177,8 @@ mod tests {
             pc: 0x10000,
             ..Default::default()
         };
-        state.regs[1] = 0xFFFFF000;
+        // Use a 64-bit address
+        state.regs[1] = 0x0000_FFFF_FFFF_F000;
         let instr = DecodedInstruction {
             raw: 0,
             format: InstructionFormat::IType,
@@ -184,7 +189,7 @@ mod tests {
             rs2: None,
             rs3: None,
             rd: Some(3),
-            imm: Some(0x1000),
+            imm: Some(0x100), // positive offset
             branch_taken: false,
         };
         let mut mem = SimpleMemory::new(0x1000);
@@ -192,6 +197,7 @@ mod tests {
         exec_jalr(&instr, &mut state, &mut mem).unwrap();
 
         assert_eq!(state.regs[3], 0x10004);
-        assert_eq!(state.pc, 0xFFFFF000u32.wrapping_add(0x1000) & !1u32);
+        // (0x0000_FFFF_FFFF_F000 + 0x100) & !1 = 0x0000_FFFF_FFFF_F100
+        assert_eq!(state.pc, 0x0000_FFFF_FFFF_F100);
     }
 }

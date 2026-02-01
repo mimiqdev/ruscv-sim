@@ -47,7 +47,7 @@ fn test_div_basic() {
 #[test]
 fn test_div_negative_positive() {
     let mut state = CoreState::default();
-    state.regs[1] = (-100i32) as u32;
+    state.regs[1] = (-100i64) as u64;
     state.regs[2] = 10;
 
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
@@ -61,7 +61,7 @@ fn test_div_negative_positive() {
 fn test_div_positive_negative() {
     let mut state = CoreState::default();
     state.regs[1] = 100;
-    state.regs[2] = (-10i32) as u32;
+    state.regs[2] = (-10i64) as u64;
 
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
@@ -73,8 +73,8 @@ fn test_div_positive_negative() {
 #[test]
 fn test_div_negative_negative() {
     let mut state = CoreState::default();
-    state.regs[1] = (-100i32) as u32;
-    state.regs[2] = (-10i32) as u32;
+    state.regs[1] = (-100i64) as u64;
+    state.regs[2] = (-10i64) as u64;
 
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
@@ -93,20 +93,23 @@ fn test_div_by_zero() {
     let mut mem = SimpleMemory::new(0x1000);
 
     ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
-    assert_eq!(state.regs[3], 0xFFFF_FFFF); // All ones
+    // RV64: div by zero returns -1 (all 64 ones)
+    assert_eq!(state.regs[3], u64::MAX);
 }
 
 #[test]
 fn test_div_overflow() {
     let mut state = CoreState::default();
-    state.regs[1] = 0x8000_0000; // MIN i32
-    state.regs[2] = 0xFFFF_FFFF; // -1
+    // RV64: use i64::MIN
+    state.regs[1] = i64::MIN as u64;
+    state.regs[2] = (-1i64) as u64; // -1
 
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
 
     ruscv_sim::execute::div::exec_div(&instr, &mut state, &mut mem).unwrap();
-    assert_eq!(state.regs[3], 0xFFFF_FFFF); // All ones (overflow)
+    // RV64: overflow returns dividend (INT64_MIN)
+    assert_eq!(state.regs[3], i64::MIN as u64);
 }
 
 #[test]
@@ -236,7 +239,7 @@ fn test_rem_basic() {
 #[test]
 fn test_rem_negative_positive() {
     let mut state = CoreState::default();
-    state.regs[1] = (-100i32) as u32;
+    state.regs[1] = (-100i64) as u64;
     state.regs[2] = 30;
 
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
@@ -250,7 +253,7 @@ fn test_rem_negative_positive() {
 fn test_rem_positive_negative() {
     let mut state = CoreState::default();
     state.regs[1] = 100;
-    state.regs[2] = (-30i32) as u32;
+    state.regs[2] = (-30i64) as u64;
 
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
@@ -262,8 +265,8 @@ fn test_rem_positive_negative() {
 #[test]
 fn test_rem_negative_negative() {
     let mut state = CoreState::default();
-    state.regs[1] = (-100i32) as u32;
-    state.regs[2] = (-30i32) as u32;
+    state.regs[1] = (-100i64) as u64;
+    state.regs[2] = (-30i64) as u64;
 
     let instr = create_div_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
@@ -388,8 +391,8 @@ fn test_div_mul_property() {
 
     for (a, b) in test_cases {
         let mut state = CoreState::default();
-        state.regs[1] = a as u32;
-        state.regs[2] = b as u32;
+        state.regs[1] = a as u64;
+        state.regs[2] = b as u64;
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
@@ -423,8 +426,8 @@ fn test_divu_remu_property() {
 
     for (a, b) in test_cases {
         let mut state = CoreState::default();
-        state.regs[1] = a;
-        state.regs[2] = b;
+        state.regs[1] = a as u64;
+        state.regs[2] = b as u64;
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
@@ -436,9 +439,9 @@ fn test_divu_remu_property() {
         ruscv_sim::execute::div::exec_remu(&instr, &mut state, &mut mem).unwrap();
         let rem_result = state.regs[4];
 
-        let computed = div_result.wrapping_mul(b).wrapping_add(rem_result);
+        let computed = div_result.wrapping_mul(b as u64).wrapping_add(rem_result);
         assert_eq!(
-            computed, a,
+            computed, a as u64,
             "Property failed: ({} / {}) * {} + ({} % {}) = {}",
             a, b, b, a, b, computed
         );
@@ -463,8 +466,8 @@ fn test_div_edge_cases() {
 
     for (a, b) in test_cases {
         let mut state = CoreState::default();
-        state.regs[1] = a as u32;
-        state.regs[2] = b as u32;
+        state.regs[1] = a as u64;
+        state.regs[2] = b as u64;
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
@@ -504,8 +507,8 @@ fn test_rem_edge_cases() {
 
     for (a, b) in test_cases {
         let mut state = CoreState::default();
-        state.regs[1] = a as u32;
-        state.regs[2] = b as u32;
+        state.regs[1] = a as u64;
+        state.regs[2] = b as u64;
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
@@ -514,7 +517,7 @@ fn test_rem_edge_cases() {
         if b == 0 {
             // Division by zero - remainder is dividend
             assert!(result.is_ok());
-            assert_eq!(state.regs[3], a as u32);
+            assert_eq!(state.regs[3], a as u64);
         } else if a == i32::MIN && b == -1 {
             // Overflow case
             assert!(result.is_ok());

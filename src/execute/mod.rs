@@ -44,8 +44,8 @@ pub type ExecutorFn =
 /// Execution error
 #[derive(Error, Debug)]
 pub enum ExecuteError {
-    #[error("Misaligned memory access: addr 0x{0:08x}, alignment {1}")]
-    MisalignedAccess(u32, u32),
+    #[error("Misaligned memory access: addr 0x{0:016x}, alignment {1}")]
+    MisalignedAccess(u64, u32),
     #[error("Invalid register access: x{0}")]
     InvalidRegister(u8),
     #[error("Invalid operation")]
@@ -84,7 +84,7 @@ pub use self::f_convert::{
     exec_fcvt_w_s, exec_fcvt_wu_s,
 };
 pub use self::f_div_sqrt::{exec_fdiv_s, exec_fsqrt_s};
-pub use self::f_load_store::{exec_flw, exec_fsd};
+pub use self::f_load_store::{exec_flw, exec_fsw};
 pub use self::f_madd::{exec_fmadd_s, exec_fmsub_s, exec_fnmadd_s, exec_fnmsub_s};
 pub use self::i_type::{exec_load, exec_op_imm};
 pub use self::j_type::{exec_jal, exec_jalr};
@@ -235,7 +235,7 @@ impl Executor {
 
         match funct3 {
             // FSW (Store 32-bit float)
-            0x02 => exec_fsd(instr, state, mem),
+            0x02 => exec_fsw(instr, state, mem),
             // FSD (Store 64-bit double)
             0x03 => exec_fsd_d(instr, state, mem),
             _ => Err(ExecuteError::InvalidOperation),

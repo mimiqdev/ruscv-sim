@@ -71,30 +71,31 @@ pub fn exec_fcvt_w_d(
     // Check for special cases
     if val.is_nan() {
         state.fcsr.set_flag(FpFlags::NV);
-        state.regs[rd as usize] = 0x7FFFFFFF;
+        state.regs[rd as usize] = 0x7FFFFFFF_u64;
         return Ok(());
     }
 
     if val.is_infinite() {
         state.fcsr.set_flag(FpFlags::NV);
-        state.regs[rd as usize] = if val < 0.0 { 0x80000000 } else { 0x7FFFFFFF };
+        state.regs[rd as usize] = if val < 0.0 { 0x80000000_u64 } else { 0x7FFFFFFF_u64 };
         return Ok(());
     }
 
     // Check if value is out of range for i32
     if val > (i32::MAX as f64) {
         state.fcsr.set_flag(FpFlags::NV);
-        state.regs[rd as usize] = 0x7FFFFFFF;
+        state.regs[rd as usize] = 0x7FFFFFFF_u64;
         return Ok(());
     }
     if val < (i32::MIN as f64) {
         state.fcsr.set_flag(FpFlags::NV);
-        state.regs[rd as usize] = 0x80000000;
+        state.regs[rd as usize] = 0x80000000_u64;
         return Ok(());
     }
 
+    // Result is sign-extended to 64 bits
     let result = val as i32;
-    state.regs[rd as usize] = result as u32;
+    state.regs[rd as usize] = result as i64 as u64;
 
     Ok(())
 }
@@ -114,14 +115,12 @@ pub fn exec_fcvt_l_d(
     // Check for special cases
     if val.is_nan() || val.is_infinite() {
         state.fcsr.set_flag(FpFlags::NV);
-        state.regs[rd as usize] = 0x7FFFFFFF;
-        state.regs[(rd + 1) as usize] = 0x7FFFFFFF;
+        state.regs[rd as usize] = 0x7FFFFFFF_FFFFFFFF_u64;
         return Ok(());
     }
 
     let result = val as i64;
-    state.regs[rd as usize] = result as u32;
-    state.regs[(rd + 1) as usize] = (result >> 32) as u32;
+    state.regs[rd as usize] = result as u64;
 
     Ok(())
 }
@@ -141,19 +140,19 @@ pub fn exec_fcvt_wu_d(
     // Check for special cases
     if val.is_nan() || val.is_infinite() || val < 0.0 {
         state.fcsr.set_flag(FpFlags::NV);
-        state.regs[rd as usize] = u32::MAX;
+        state.regs[rd as usize] = u32::MAX as u64;
         return Ok(());
     }
 
     // Check if value is out of range for u32
     if val > (u32::MAX as f64) {
         state.fcsr.set_flag(FpFlags::NV);
-        state.regs[rd as usize] = u32::MAX;
+        state.regs[rd as usize] = u32::MAX as u64;
         return Ok(());
     }
 
     let result = val as u32;
-    state.regs[rd as usize] = result;
+    state.regs[rd as usize] = result as u64;
 
     Ok(())
 }
@@ -172,14 +171,12 @@ pub fn exec_fcvt_lu_d(
 
     if val.is_nan() || val.is_infinite() || val < 0.0 {
         state.fcsr.set_flag(FpFlags::NV);
-        state.regs[rd as usize] = u32::MAX;
-        state.regs[(rd + 1) as usize] = u32::MAX;
+        state.regs[rd as usize] = u64::MAX;
         return Ok(());
     }
 
     let result = val as u64;
-    state.regs[rd as usize] = result as u32;
-    state.regs[(rd + 1) as usize] = (result >> 32) as u32;
+    state.regs[rd as usize] = result;
 
     Ok(())
 }
@@ -213,10 +210,8 @@ pub fn exec_fcvt_d_l(
     let rs1 = instr.rs1.expect("FCVT.D.L requires rs1");
     let rd = instr.rd.expect("FCVT.D.L requires rd");
 
-    // Combine rs1 and rs1+1 for 64-bit value
-    let low = state.regs[rs1 as usize];
-    let high = state.regs[(rs1 + 1) as usize];
-    let val = ((high as i64) << 32) | (low as i64);
+    // In RV64, register is already 64-bit
+    let val = state.regs[rs1 as usize] as i64;
     let result = val as f64;
 
     state
@@ -235,7 +230,8 @@ pub fn exec_fcvt_d_wu(
     let rs1 = instr.rs1.expect("FCVT.D.WU requires rs1");
     let rd = instr.rd.expect("FCVT.D.WU requires rd");
 
-    let val = state.regs[rs1 as usize];
+    // Take lower 32 bits as unsigned
+    let val = state.regs[rs1 as usize] as u32;
     let result = val as f64;
 
     state
@@ -254,9 +250,8 @@ pub fn exec_fcvt_d_lu(
     let rs1 = instr.rs1.expect("FCVT.D.LU requires rs1");
     let rd = instr.rd.expect("FCVT.D.LU requires rd");
 
-    let low = state.regs[rs1 as usize];
-    let high = state.regs[(rs1 + 1) as usize];
-    let val = ((high as u64) << 32) | (low as u64);
+    // In RV64, register is already 64-bit
+    let val = state.regs[rs1 as usize];
     let result = val as f64;
 
     state
@@ -405,7 +400,7 @@ mod tests {
         };
 
         exec_fcvt_wu_d(&decoded, &mut state, &mut mem).unwrap();
-        assert_eq!(state.regs[3], u32::MAX);
+        assert_eq!(state.regs[3], u32::MAX as u64);
         assert!(state.fcsr.flags().contains(FpFlags::NV));
     }
 
@@ -441,7 +436,7 @@ mod tests {
         let mut state = create_test_state();
         let mut mem = SimpleMemory::new(0x1000);
 
-        state.regs[1] = 0xFFFFFFFEu32; // -2 as i32
+        state.regs[1] = 0xFFFFFFFEu64; // -2 as i32
 
         let decoded = DecodedInstruction {
             raw: 0,
@@ -749,7 +744,7 @@ mod tests {
         };
 
         exec_fcvt_wu_d(&decoded, &mut state, &mut mem).unwrap();
-        assert_eq!(state.regs[3], u32::MAX);
+        assert_eq!(state.regs[3], u32::MAX as u64);
         assert!(state.fcsr.flags().contains(FpFlags::NV));
     }
 

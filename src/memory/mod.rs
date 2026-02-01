@@ -8,37 +8,45 @@ use thiserror::Error;
 /// 存储器错误
 #[derive(Error, Debug)]
 pub enum MemoryError {
-    #[error("Invalid memory address: 0x{0:08x}")]
-    InvalidAddress(u32),
-    #[error("Misaligned access: addr 0x{0:08x}, requires {1}-byte alignment")]
-    Misaligned(u32, u32),
+    #[error("Invalid memory address: 0x{0:016x}")]
+    InvalidAddress(u64),
+    #[error("Misaligned access: addr 0x{0:016x}, requires {1}-byte alignment")]
+    Misaligned(u64, u32),
     #[error("Memory access out of bounds")]
     OutOfBounds,
 }
 
-/// Memory interface trait
+/// Memory interface trait (supports RV64I with 64-bit addresses)
 pub trait MemoryInterface {
+    /// 读取双字 (8字节) - RV64I
+    fn read_dword(&self, addr: u64) -> Result<u64, MemoryError>;
     /// 读取字 (4字节)
-    fn read_word(&self, addr: u32) -> Result<u32, MemoryError>;
+    fn read_word(&self, addr: u64) -> Result<u32, MemoryError>;
     /// 读取半字 (2字节)
-    fn read_half(&self, addr: u32) -> Result<u16, MemoryError>;
+    fn read_half(&self, addr: u64) -> Result<u16, MemoryError>;
     /// 读取字节 (1字节)
-    fn read_byte(&self, addr: u32) -> Result<u8, MemoryError>;
-    /// 读取半字 (零扩展)
-    fn read_half_zext(&self, addr: u32) -> Result<u32, MemoryError>;
-    /// 读取字节 (零扩展)
-    fn read_byte_zext(&self, addr: u32) -> Result<u32, MemoryError>;
-    /// 读取半字 (符号扩展)
-    fn read_half_sext(&self, addr: u32) -> Result<u32, MemoryError>;
-    /// 读取字节 (符号扩展)
-    fn read_byte_sext(&self, addr: u32) -> Result<u32, MemoryError>;
+    fn read_byte(&self, addr: u64) -> Result<u8, MemoryError>;
+    /// 读取字 (零扩展到64位)
+    fn read_word_zext(&self, addr: u64) -> Result<u64, MemoryError>;
+    /// 读取半字 (零扩展到64位)
+    fn read_half_zext(&self, addr: u64) -> Result<u64, MemoryError>;
+    /// 读取字节 (零扩展到64位)
+    fn read_byte_zext(&self, addr: u64) -> Result<u64, MemoryError>;
+    /// 读取字 (符号扩展到64位)
+    fn read_word_sext(&self, addr: u64) -> Result<u64, MemoryError>;
+    /// 读取半字 (符号扩展到64位)
+    fn read_half_sext(&self, addr: u64) -> Result<u64, MemoryError>;
+    /// 读取字节 (符号扩展到64位)
+    fn read_byte_sext(&self, addr: u64) -> Result<u64, MemoryError>;
 
+    /// 写入双字 (8字节) - RV64I
+    fn write_dword(&mut self, addr: u64, value: u64) -> Result<(), MemoryError>;
     /// 写入字 (4字节)
-    fn write_word(&mut self, addr: u32, value: u32) -> Result<(), MemoryError>;
+    fn write_word(&mut self, addr: u64, value: u32) -> Result<(), MemoryError>;
     /// 写入半字 (2字节)
-    fn write_half(&mut self, addr: u32, value: u16) -> Result<(), MemoryError>;
+    fn write_half(&mut self, addr: u64, value: u16) -> Result<(), MemoryError>;
     /// 写入字节 (1字节)
-    fn write_byte(&mut self, addr: u32, value: u8) -> Result<(), MemoryError>;
+    fn write_byte(&mut self, addr: u64, value: u8) -> Result<(), MemoryError>;
 
     /// 获取存储器大小
     fn size(&self) -> usize;
@@ -71,7 +79,7 @@ impl SimpleMemory {
     }
 
     /// 加载程序数据 (小端序)
-    pub fn load_program(&self, data: &[u8], base_addr: u32) {
+    pub fn load_program(&self, data: &[u8], base_addr: u64) {
         let mut mem = self.data.write().unwrap();
         for (i, &byte) in data.iter().enumerate() {
             let addr = (base_addr as usize) + i;
@@ -83,13 +91,35 @@ impl SimpleMemory {
 }
 
 impl MemoryInterface for SimpleMemory {
-    fn read_word(&self, addr: u32) -> Result<u32, MemoryError> {
+    fn read_dword(&self, addr: u64) -> Result<u64, MemoryError> {
+        let addr = addr as usize;
+        if addr + 8 > self.size {
+            return Err(MemoryError::InvalidAddress(addr as u64));
+        }
+        if !addr.is_multiple_of(8) {
+            return Err(MemoryError::Misaligned(addr as u64, 8));
+        }
+
+        let data = self.data.read().unwrap();
+        Ok(u64::from_le_bytes([
+            data[addr],
+            data[addr + 1],
+            data[addr + 2],
+            data[addr + 3],
+            data[addr + 4],
+            data[addr + 5],
+            data[addr + 6],
+            data[addr + 7],
+        ]))
+    }
+
+    fn read_word(&self, addr: u64) -> Result<u32, MemoryError> {
         let addr = addr as usize;
         if addr + 4 > self.size {
-            return Err(MemoryError::InvalidAddress(addr as u32));
+            return Err(MemoryError::InvalidAddress(addr as u64));
         }
         if !addr.is_multiple_of(4) {
-            return Err(MemoryError::Misaligned(addr as u32, 4));
+            return Err(MemoryError::Misaligned(addr as u64, 4));
         }
 
         let data = self.data.read().unwrap();
@@ -101,53 +131,84 @@ impl MemoryInterface for SimpleMemory {
         ]))
     }
 
-    fn read_half(&self, addr: u32) -> Result<u16, MemoryError> {
+    fn read_half(&self, addr: u64) -> Result<u16, MemoryError> {
         let addr = addr as usize;
         if addr + 2 > self.size {
-            return Err(MemoryError::InvalidAddress(addr as u32));
+            return Err(MemoryError::InvalidAddress(addr as u64));
         }
         if !addr.is_multiple_of(2) {
-            return Err(MemoryError::Misaligned(addr as u32, 2));
+            return Err(MemoryError::Misaligned(addr as u64, 2));
         }
 
         let data = self.data.read().unwrap();
         Ok(u16::from_le_bytes([data[addr], data[addr + 1]]))
     }
 
-    fn read_byte(&self, addr: u32) -> Result<u8, MemoryError> {
+    fn read_byte(&self, addr: u64) -> Result<u8, MemoryError> {
         let addr = addr as usize;
         if addr >= self.size {
-            return Err(MemoryError::InvalidAddress(addr as u32));
+            return Err(MemoryError::InvalidAddress(addr as u64));
         }
         let data = self.data.read().unwrap();
         Ok(data[addr])
     }
 
-    fn read_half_zext(&self, addr: u32) -> Result<u32, MemoryError> {
-        Ok(self.read_half(addr)?.into())
+    fn read_word_zext(&self, addr: u64) -> Result<u64, MemoryError> {
+        Ok(self.read_word(addr)? as u64)
     }
 
-    fn read_byte_zext(&self, addr: u32) -> Result<u32, MemoryError> {
-        Ok(self.read_byte(addr)?.into())
+    fn read_half_zext(&self, addr: u64) -> Result<u64, MemoryError> {
+        Ok(self.read_half(addr)? as u64)
     }
 
-    fn read_half_sext(&self, addr: u32) -> Result<u32, MemoryError> {
+    fn read_byte_zext(&self, addr: u64) -> Result<u64, MemoryError> {
+        Ok(self.read_byte(addr)? as u64)
+    }
+
+    fn read_word_sext(&self, addr: u64) -> Result<u64, MemoryError> {
+        let val = self.read_word(addr)?;
+        Ok((val as i32) as i64 as u64)
+    }
+
+    fn read_half_sext(&self, addr: u64) -> Result<u64, MemoryError> {
         let val = self.read_half(addr)?;
-        Ok((val as i16) as i32 as u32)
+        Ok((val as i16) as i64 as u64)
     }
 
-    fn read_byte_sext(&self, addr: u32) -> Result<u32, MemoryError> {
+    fn read_byte_sext(&self, addr: u64) -> Result<u64, MemoryError> {
         let val = self.read_byte(addr)?;
-        Ok((val as i8) as i32 as u32)
+        Ok((val as i8) as i64 as u64)
     }
 
-    fn write_word(&mut self, addr: u32, value: u32) -> Result<(), MemoryError> {
+    fn write_dword(&mut self, addr: u64, value: u64) -> Result<(), MemoryError> {
+        let addr = addr as usize;
+        if addr + 8 > self.size {
+            return Err(MemoryError::InvalidAddress(addr as u64));
+        }
+        if !addr.is_multiple_of(8) {
+            return Err(MemoryError::Misaligned(addr as u64, 8));
+        }
+
+        let mut data = self.data.write().unwrap();
+        let bytes = value.to_le_bytes();
+        data[addr] = bytes[0];
+        data[addr + 1] = bytes[1];
+        data[addr + 2] = bytes[2];
+        data[addr + 3] = bytes[3];
+        data[addr + 4] = bytes[4];
+        data[addr + 5] = bytes[5];
+        data[addr + 6] = bytes[6];
+        data[addr + 7] = bytes[7];
+        Ok(())
+    }
+
+    fn write_word(&mut self, addr: u64, value: u32) -> Result<(), MemoryError> {
         let addr = addr as usize;
         if addr + 4 > self.size {
-            return Err(MemoryError::InvalidAddress(addr as u32));
+            return Err(MemoryError::InvalidAddress(addr as u64));
         }
         if !addr.is_multiple_of(4) {
-            return Err(MemoryError::Misaligned(addr as u32, 4));
+            return Err(MemoryError::Misaligned(addr as u64, 4));
         }
 
         let mut data = self.data.write().unwrap();
@@ -159,13 +220,13 @@ impl MemoryInterface for SimpleMemory {
         Ok(())
     }
 
-    fn write_half(&mut self, addr: u32, value: u16) -> Result<(), MemoryError> {
+    fn write_half(&mut self, addr: u64, value: u16) -> Result<(), MemoryError> {
         let addr = addr as usize;
         if addr + 2 > self.size {
-            return Err(MemoryError::InvalidAddress(addr as u32));
+            return Err(MemoryError::InvalidAddress(addr as u64));
         }
         if !addr.is_multiple_of(2) {
-            return Err(MemoryError::Misaligned(addr as u32, 2));
+            return Err(MemoryError::Misaligned(addr as u64, 2));
         }
 
         let mut data = self.data.write().unwrap();
@@ -175,10 +236,10 @@ impl MemoryInterface for SimpleMemory {
         Ok(())
     }
 
-    fn write_byte(&mut self, addr: u32, value: u8) -> Result<(), MemoryError> {
+    fn write_byte(&mut self, addr: u64, value: u8) -> Result<(), MemoryError> {
         let addr = addr as usize;
         if addr >= self.size {
-            return Err(MemoryError::InvalidAddress(addr as u32));
+            return Err(MemoryError::InvalidAddress(addr as u64));
         }
         let mut data = self.data.write().unwrap();
         data[addr] = value;

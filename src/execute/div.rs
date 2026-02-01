@@ -11,9 +11,9 @@ use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 use crate::memory::MemoryInterface;
 
-/// DIV - Divide Signed
+/// DIV - Divide Signed (RV64M)
 ///
-/// Divides rs1 by rs2 using 32-bit signed division.
+/// Divides rs1 by rs2 using 64-bit signed division.
 /// The quotient is written to rd.
 ///
 /// # Operation
@@ -28,18 +28,18 @@ pub fn exec_div(
     let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    let dividend = state.regs[rs1] as i32;
-    let divisor = state.regs[rs2] as i32;
+    let dividend = state.regs[rs1] as i64;
+    let divisor = state.regs[rs2] as i64;
 
     let result = if divisor == 0 {
         // Division by zero: all ones (-1)
-        -1i32 as u32
-    } else if dividend == i32::MIN && divisor == -1 {
-        // Overflow: -2^31 / -1 = 2^31, doesn't fit in 32-bit signed
-        // In RISC-V, this also results in all ones
-        -1i32 as u32
+        -1i64 as u64
+    } else if dividend == i64::MIN && divisor == -1 {
+        // Overflow: -2^63 / -1 = 2^63, doesn't fit in 64-bit signed
+        // In RISC-V, this results in -2^63
+        i64::MIN as u64
     } else {
-        (dividend / divisor) as u32
+        (dividend / divisor) as u64
     };
 
     if rd != 0 {
@@ -48,9 +48,9 @@ pub fn exec_div(
     Ok(())
 }
 
-/// DIVU - Divide Unsigned
+/// DIVU - Divide Unsigned (RV64M)
 ///
-/// Divides rs1 by rs2 using 32-bit unsigned division.
+/// Divides rs1 by rs2 using 64-bit unsigned division.
 /// The quotient is written to rd.
 ///
 /// # Operation
@@ -70,7 +70,7 @@ pub fn exec_divu(
 
     let result = if divisor == 0 {
         // Division by zero: all ones
-        u32::MAX
+        u64::MAX
     } else {
         dividend / divisor
     };
@@ -81,9 +81,9 @@ pub fn exec_divu(
     Ok(())
 }
 
-/// REM - Remainder Signed
+/// REM - Remainder Signed (RV64M)
 ///
-/// Computes the remainder of rs1 divided by rs2 using 32-bit signed division.
+/// Computes the remainder of rs1 divided by rs2 using 64-bit signed division.
 /// The remainder is written to rd.
 ///
 /// # Operation
@@ -98,17 +98,17 @@ pub fn exec_rem(
     let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    let dividend = state.regs[rs1] as i32;
-    let divisor = state.regs[rs2] as i32;
+    let dividend = state.regs[rs1] as i64;
+    let divisor = state.regs[rs2] as i64;
 
     let result = if divisor == 0 {
         // Division by zero: dividend
-        dividend as u32
-    } else if dividend == i32::MIN && divisor == -1 {
+        dividend as u64
+    } else if dividend == i64::MIN && divisor == -1 {
         // Overflow case: remainder is 0
         0
     } else {
-        (dividend % divisor) as u32
+        (dividend % divisor) as u64
     };
 
     if rd != 0 {
@@ -117,9 +117,9 @@ pub fn exec_rem(
     Ok(())
 }
 
-/// REMU - Remainder Unsigned
+/// REMU - Remainder Unsigned (RV64M)
 ///
-/// Computes the remainder of rs1 divided by rs2 using 32-bit unsigned division.
+/// Computes the remainder of rs1 divided by rs2 using 64-bit unsigned division.
 /// The remainder is written to rd.
 ///
 /// # Operation
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn test_div_negative() {
         let mut state = CoreState::default();
-        state.regs[1] = (-42i32) as u32;
+        state.regs[1] = (-42i64) as u64;
         state.regs[2] = 6;
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
@@ -220,21 +220,24 @@ mod tests {
 
         let result = exec_div(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 0xFFFF_FFFF); // All ones
+        // In RV64, all ones is 64-bit: 0xFFFFFFFFFFFFFFFF
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_FFFF);
     }
 
     #[test]
     fn test_div_overflow() {
         let mut state = CoreState::default();
-        state.regs[1] = 0x8000_0000; // -2147483648
-        state.regs[2] = 0xFFFF_FFFF; // -1
+        // In RV64, MIN i64 is 0x8000_0000_0000_0000
+        state.regs[1] = 0x8000_0000_0000_0000; // MIN i64
+        state.regs[2] = 0xFFFF_FFFF_FFFF_FFFF; // -1 in 64-bit
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_div(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 0xFFFF_FFFF); // All ones (overflow)
+        // MIN i64 / -1 overflows, result is MIN i64
+        assert_eq!(state.regs[3], 0x8000_0000_0000_0000);
     }
 
     #[test]
@@ -294,7 +297,8 @@ mod tests {
 
         let result = exec_divu(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 0xFFFF_FFFF); // All ones
+        // In RV64, all ones is 64-bit: 0xFFFFFFFFFFFFFFFF
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_FFFF);
     }
 
     // ========================================
@@ -318,7 +322,7 @@ mod tests {
     #[test]
     fn test_rem_negative() {
         let mut state = CoreState::default();
-        state.regs[1] = (-43i32) as u32;
+        state.regs[1] = (-43i64) as u64;
         state.regs[2] = 6;
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
@@ -346,8 +350,9 @@ mod tests {
     #[test]
     fn test_rem_overflow() {
         let mut state = CoreState::default();
-        state.regs[1] = 0x8000_0000; // -2147483648
-        state.regs[2] = 0xFFFF_FFFF; // -1
+        // In RV64, MIN i64 is 0x8000_0000_0000_0000
+        state.regs[1] = 0x8000_0000_0000_0000; // MIN i64
+        state.regs[2] = 0xFFFF_FFFF_FFFF_FFFF; // -1 in 64-bit
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
@@ -424,13 +429,13 @@ mod tests {
     fn test_div_minus_one() {
         let mut state = CoreState::default();
         state.regs[1] = 42;
-        state.regs[2] = 0xFFFF_FFFF_u32; // -1
+        state.regs[2] = 0xFFFF_FFFF_FFFF_FFFF; // -1 in 64-bit
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         exec_div(&instr, &mut state, &mut mem).unwrap();
-        assert_eq!(state.regs[3] as i32, -42);
+        assert_eq!(state.regs[3] as i64, -42);
     }
 
     #[test]
@@ -450,13 +455,13 @@ mod tests {
     fn test_rem_negative_divisor() {
         let mut state = CoreState::default();
         state.regs[1] = 43;
-        state.regs[2] = 0xFFFF_FFFA_u32; // -6
+        state.regs[2] = 0xFFFF_FFFF_FFFF_FFFA; // -6 in 64-bit
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         exec_rem(&instr, &mut state, &mut mem).unwrap();
-        assert_eq!(state.regs[3] as i32, 1); // 43 % -6 = 1
+        assert_eq!(state.regs[3] as i64, 1); // 43 % -6 = 1
     }
 
     #[test]
@@ -489,13 +494,16 @@ mod tests {
     #[test]
     fn test_div_min_dividend() {
         let mut state = CoreState::default();
-        state.regs[1] = 0x8000_0000; // -2147483648
+        // In RV64, MIN i64 is 0x8000_0000_0000_0000
+        state.regs[1] = 0x8000_0000_0000_0000; // MIN i64
         state.regs[2] = 2;
 
         let instr = create_div_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         exec_div(&instr, &mut state, &mut mem).unwrap();
-        assert_eq!(state.regs[3] as i32, -1073741824); // -2^30
+        // MIN i64 / 2 = -4611686018427387904 = 0xC000_0000_0000_0000
+        assert_eq!(state.regs[3], 0xC000_0000_0000_0000);
+        assert_eq!(state.regs[3] as i64, -4611686018427387904);
     }
 }

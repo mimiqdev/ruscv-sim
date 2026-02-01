@@ -95,24 +95,24 @@ impl CsrPermission {
 /// Control and Status Register File
 #[derive(Debug, Clone)]
 pub struct CsrFile {
-    /// CSR storage
-    csrs: HashMap<u16, u32>,
+    /// CSR storage (64-bit for RV64)
+    csrs: HashMap<u16, u64>,
     /// Current privilege mode
     privilege: PrivilegeMode,
     /// Hart ID (hardware thread ID)
     #[allow(dead_code)]
-    hart_id: u32,
+    hart_id: u64,
 }
 
 impl CsrFile {
     /// Create a new CSR file
-    pub fn new(hart_id: u32) -> Self {
+    pub fn new(hart_id: u64) -> Self {
         let mut csrs = HashMap::new();
 
         // Initialize Machine Mode CSRs with default values
         csrs.insert(machine::MHARTID, hart_id);
         csrs.insert(machine::MSTATUS, 0x0000_0000);
-        csrs.insert(machine::MISA, 0x4000_0100); // RV32I
+        csrs.insert(machine::MISA, 0x8000_0000_0010_0100); // RV64IMAC
         csrs.insert(machine::MEDELEG, 0x0000_0000);
         csrs.insert(machine::MIDELEG, 0x0000_0000);
         csrs.insert(machine::MIE, 0x0000_0000);
@@ -184,7 +184,7 @@ impl CsrFile {
     }
 
     /// Read CSR value
-    pub fn read(&self, addr: u16) -> Result<u32, CsrError> {
+    pub fn read(&self, addr: u16) -> Result<u64, CsrError> {
         self.check_privilege(addr)?;
 
         self.csrs
@@ -194,7 +194,7 @@ impl CsrFile {
     }
 
     /// Write CSR value
-    pub fn write(&mut self, addr: u16, value: u32) -> Result<(), CsrError> {
+    pub fn write(&mut self, addr: u16, value: u64) -> Result<(), CsrError> {
         self.check_privilege(addr)?;
 
         // Check if CSR is read-only
@@ -209,8 +209,9 @@ impl CsrFile {
                 return Err(CsrError::ReadOnly(addr));
             }
             machine::MSTATUS => {
-                // Mask reserved bits in MSTATUS
-                let masked = value & 0x8000_7FFF; // RV32 mstatus mask
+                // Mask reserved bits in MSTATUS for RV64
+                // Key writable bits: SD(63), SXL/UXL(35:32), MPP(12:11), MPIE(7), MIE(3), SPIE(5), SIE(1)
+                let masked = value & 0x8000_0003_000D_FFEA; // RV64 mstatus mask (includes MPP)
                 self.csrs.insert(addr, masked);
             }
             _ => {
@@ -222,7 +223,7 @@ impl CsrFile {
     }
 
     /// CSR read and set bits (atomic)
-    pub fn read_set(&mut self, addr: u16, mask: u32) -> Result<u32, CsrError> {
+    pub fn read_set(&mut self, addr: u16, mask: u64) -> Result<u64, CsrError> {
         let old_value = self.read(addr)?;
         if mask != 0 {
             self.write(addr, old_value | mask)?;
@@ -231,7 +232,7 @@ impl CsrFile {
     }
 
     /// CSR read and clear bits (atomic)
-    pub fn read_clear(&mut self, addr: u16, mask: u32) -> Result<u32, CsrError> {
+    pub fn read_clear(&mut self, addr: u16, mask: u64) -> Result<u64, CsrError> {
         let old_value = self.read(addr)?;
         if mask != 0 {
             self.write(addr, old_value & !mask)?;
@@ -240,7 +241,7 @@ impl CsrFile {
     }
 
     /// CSR read and write (atomic swap)
-    pub fn read_write(&mut self, addr: u16, value: u32) -> Result<u32, CsrError> {
+    pub fn read_write(&mut self, addr: u16, value: u64) -> Result<u64, CsrError> {
         let old_value = self.read(addr)?;
         self.write(addr, value)?;
         Ok(old_value)
@@ -276,8 +277,9 @@ mod tests {
         let mut csr = CsrFile::new(0);
         csr.write(machine::MSTATUS, 0x1234_5678).unwrap();
         let value = csr.read(machine::MSTATUS).unwrap();
-        // Check that reserved bits are masked
-        assert_eq!(value & 0x8000_7FFF, 0x1234_5678 & 0x8000_7FFF);
+        // Check that reserved bits are masked (RV64 mstatus mask includes MPP)
+        let rv64_mstatus_mask = 0x8000_0003_000D_FFEA_u64;
+        assert_eq!(value, 0x1234_5678 & rv64_mstatus_mask);
     }
 
     #[test]
@@ -300,24 +302,26 @@ mod tests {
     #[test]
     fn test_csr_read_set() {
         let mut csr = CsrFile::new(0);
-        csr.write(machine::MSTATUS, 0x1000).unwrap();
+        // Use MEPC instead of MSTATUS to avoid masking issues
+        csr.write(machine::MEPC, 0x1000).unwrap();
 
-        let old = csr.read_set(machine::MSTATUS, 0x0100).unwrap();
+        let old = csr.read_set(machine::MEPC, 0x0100).unwrap();
         assert_eq!(old, 0x1000);
 
-        let new = csr.read(machine::MSTATUS).unwrap();
+        let new = csr.read(machine::MEPC).unwrap();
         assert_eq!(new, 0x1100);
     }
 
     #[test]
     fn test_csr_read_clear() {
         let mut csr = CsrFile::new(0);
-        csr.write(machine::MSTATUS, 0x1111).unwrap();
+        // Use MEPC instead of MSTATUS to avoid masking issues
+        csr.write(machine::MEPC, 0x1111).unwrap();
 
-        let old = csr.read_clear(machine::MSTATUS, 0x0101).unwrap();
+        let old = csr.read_clear(machine::MEPC, 0x0101).unwrap();
         assert_eq!(old, 0x1111);
 
-        let new = csr.read(machine::MSTATUS).unwrap();
+        let new = csr.read(machine::MEPC).unwrap();
         assert_eq!(new, 0x1010);
     }
 

@@ -1,4 +1,4 @@
-//! U-type instruction execution
+//! U-type instruction execution (RV64I)
 //!
 //! U-type (Upper Immediate-type) instructions operate on upper immediates.
 
@@ -6,10 +6,10 @@ use crate::core::CoreState;
 use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 
-/// LUI (Load Upper Immediate)
+/// LUI (Load Upper Immediate) - RV64I
 ///
-/// LUI loads the upper 20 bits of a register with a immediate value,
-/// setting the lower 12 bits to zero.
+/// LUI loads the upper 20 bits of a register with an immediate value,
+/// setting the lower 12 bits to zero, then sign-extending to 64 bits.
 #[inline]
 pub fn exec_lui(
     instr: &DecodedInstruction,
@@ -18,7 +18,8 @@ pub fn exec_lui(
 ) -> Result<(), ExecuteError> {
     if let (Some(rd), Some(imm)) = (instr.rd, instr.imm) {
         if rd != 0 {
-            state.regs[rd as usize] = imm;
+            // Sign-extend the 32-bit value to 64 bits
+            state.regs[rd as usize] = (imm as i32) as i64 as u64;
         }
         Ok(())
     } else {
@@ -26,7 +27,7 @@ pub fn exec_lui(
     }
 }
 
-/// AUIPC (Add Upper Immediate to PC)
+/// AUIPC (Add Upper Immediate to PC) - RV64I
 ///
 /// AUIPC adds a 20-bit upper immediate to the current PC value,
 /// storing the result in a register.
@@ -38,7 +39,9 @@ pub fn exec_auipc(
 ) -> Result<(), ExecuteError> {
     if let (Some(rd), Some(imm)) = (instr.rd, instr.imm) {
         if rd != 0 {
-            state.regs[rd as usize] = state.pc.wrapping_add(imm);
+            // Sign-extend the immediate and add to PC
+            let imm_sext = (imm as i32) as i64 as u64;
+            state.regs[rd as usize] = state.pc.wrapping_add(imm_sext);
         }
         Ok(())
     } else {

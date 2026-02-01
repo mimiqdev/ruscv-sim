@@ -20,16 +20,12 @@ pub fn exec_fld(
     let rd = instr.rd.expect("FLD requires rd");
     let imm = instr.imm.expect("FLD requires imm") as i32;
 
-    // Calculate effective address
-    let base = state.regs[rs1 as usize] as u64;
-    let addr = (base as i64 + imm as i64) as u32;
+    // Calculate effective address (64-bit)
+    let base = state.regs[rs1 as usize];
+    let addr = (base as i64).wrapping_add(imm as i64) as u64;
 
-    // Load 64-bit double from memory (read two consecutive words)
-    let low = mem.read_word(addr)?;
-    let high = mem.read_word(addr + 4)?;
-
-    // Combine to form 64-bit value (little-endian)
-    let value = ((high as u64) << 32) | (low as u64);
+    // Load 64-bit double from memory
+    let value = mem.read_dword(addr)?;
 
     // Write to FPR (stored as raw bits, no NaN boxing needed for double)
     state
@@ -51,18 +47,15 @@ pub fn exec_fsd(
     let rs2 = instr.rs2.expect("FSD requires rs2");
     let imm = instr.imm.expect("FSD requires imm") as i32;
 
-    // Calculate effective address
-    let base = state.regs[rs1 as usize] as u64;
-    let addr = (base as i64 + imm as i64) as u32;
+    // Calculate effective address (64-bit)
+    let base = state.regs[rs1 as usize];
+    let addr = (base as i64).wrapping_add(imm as i64) as u64;
 
     // Read 64-bit value from FPR
     let bits = state.fpr.read(rs2 as usize).bits();
 
-    // Store to memory as two consecutive words (little-endian)
-    let low = bits as u32;
-    let high = (bits >> 32) as u32;
-    mem.write_word(addr, low)?;
-    mem.write_word(addr + 4, high)?;
+    // Store to memory as 64-bit value
+    mem.write_dword(addr, bits)?;
 
     Ok(())
 }

@@ -1,22 +1,22 @@
 //! RV64M Multiply instructions
 //!
 //! Implements RV64M multiplication instructions:
-//! - MUL: Multiply (lower 32 bits)
-//! - MULH: Multiply signed * signed, upper 32 bits
-//! - MULHU: Multiply unsigned * unsigned, upper 32 bits
-//! - MULHSU: Multiply signed * unsigned, upper 32 bits
+//! - MUL: Multiply (lower 64 bits)
+//! - MULH: Multiply signed * signed, upper 64 bits
+//! - MULHU: Multiply unsigned * unsigned, upper 64 bits
+//! - MULHSU: Multiply signed * unsigned, upper 64 bits
 
 use crate::core::CoreState;
 use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 use crate::memory::MemoryInterface;
 
-/// MUL - Multiply
+/// MUL - Multiply (RV64M)
 ///
-/// Multiplies two 32-bit signed values and returns the lower 32 bits.
+/// Multiplies two 64-bit signed values and returns the lower 64 bits.
 ///
 /// # Operation
-/// rd = rs1 * rs2 (32-bit signed multiplication)
+/// rd = rs1 * rs2 (64-bit signed multiplication)
 #[inline]
 pub fn exec_mul(
     instr: &DecodedInstruction,
@@ -27,9 +27,9 @@ pub fn exec_mul(
     let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    let a = state.regs[rs1] as i32;
-    let b = state.regs[rs2] as i32;
-    let result = (a as i64 * b as i64) as u32;
+    let a = state.regs[rs1] as i64;
+    let b = state.regs[rs2] as i64;
+    let result = a.wrapping_mul(b) as u64;
 
     if rd != 0 {
         state.regs[rd] = result;
@@ -37,13 +37,13 @@ pub fn exec_mul(
     Ok(())
 }
 
-/// MULH - Multiply Signed * Signed
+/// MULH - Multiply Signed * Signed (RV64M)
 ///
-/// Multiplies two 32-bit signed values and returns the upper 32 bits
-/// of the 64-bit result.
+/// Multiplies two 64-bit signed values and returns the upper 64 bits
+/// of the 128-bit result.
 ///
 /// # Operation
-/// rd = (rs1 * rs2) >> 32 (signed * signed)
+/// rd = (rs1 * rs2) >> 64 (signed * signed)
 #[inline]
 pub fn exec_mulh(
     instr: &DecodedInstruction,
@@ -54,9 +54,9 @@ pub fn exec_mulh(
     let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    let a = state.regs[rs1] as i32;
-    let b = state.regs[rs2] as i32;
-    let result = ((a as i64 * b as i64) >> 32) as u32;
+    let a = state.regs[rs1] as i64 as i128;
+    let b = state.regs[rs2] as i64 as i128;
+    let result = ((a * b) >> 64) as u64;
 
     if rd != 0 {
         state.regs[rd] = result;
@@ -64,13 +64,13 @@ pub fn exec_mulh(
     Ok(())
 }
 
-/// MULHU - Multiply Unsigned * Unsigned
+/// MULHU - Multiply Unsigned * Unsigned (RV64M)
 ///
-/// Multiplies two 32-bit unsigned values and returns the upper 32 bits
-/// of the 64-bit result.
+/// Multiplies two 64-bit unsigned values and returns the upper 64 bits
+/// of the 128-bit result.
 ///
 /// # Operation
-/// rd = (rs1 * rs2) >> 32 (unsigned * unsigned)
+/// rd = (rs1 * rs2) >> 64 (unsigned * unsigned)
 #[inline]
 pub fn exec_mulhu(
     instr: &DecodedInstruction,
@@ -81,9 +81,9 @@ pub fn exec_mulhu(
     let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    let a = state.regs[rs1] as u64;
-    let b = state.regs[rs2] as u64;
-    let result = ((a * b) >> 32) as u32;
+    let a = state.regs[rs1] as u128;
+    let b = state.regs[rs2] as u128;
+    let result = ((a * b) >> 64) as u64;
 
     if rd != 0 {
         state.regs[rd] = result;
@@ -91,13 +91,13 @@ pub fn exec_mulhu(
     Ok(())
 }
 
-/// MULHSU - Multiply Signed * Unsigned
+/// MULHSU - Multiply Signed * Unsigned (RV64M)
 ///
-/// Multiplies a 32-bit signed value with a 32-bit unsigned value and
-/// returns the upper 32 bits of the 64-bit result.
+/// Multiplies a 64-bit signed value with a 64-bit unsigned value and
+/// returns the upper 64 bits of the 128-bit result.
 ///
 /// # Operation
-/// rd = (rs1 * rs2) >> 32 (signed * unsigned)
+/// rd = (rs1 * rs2) >> 64 (signed * unsigned)
 #[inline]
 pub fn exec_mulhsu(
     instr: &DecodedInstruction,
@@ -108,9 +108,9 @@ pub fn exec_mulhsu(
     let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    let a = state.regs[rs1] as i32;
-    let b = state.regs[rs2] as u64;
-    let result = ((a as i64 * b as i64) >> 32) as u32;
+    let a = state.regs[rs1] as i64 as i128;
+    let b = state.regs[rs2] as u128;
+    let result = ((a as i128 * b as i128) >> 64) as u64;
 
     if rd != 0 {
         state.regs[rd] = result;
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn test_mul_negative() {
         let mut state = CoreState::default();
-        state.regs[1] = (-6i32) as u32; // -6
+        state.regs[1] = (-6i64) as u64; // -6
         state.regs[2] = 7;
 
         let instr = create_mul_instr(1, 2, 3, 0b000_0001);
@@ -180,8 +180,9 @@ mod tests {
     #[test]
     fn test_mul_overflow() {
         let mut state = CoreState::default();
-        state.regs[1] = 0xFFFF_FFFF; // -1
-        state.regs[2] = 0xFFFF_FFFF; // -1
+        // In RV64, -1 is 0xFFFFFFFFFFFFFFFF
+        state.regs[1] = 0xFFFF_FFFF_FFFF_FFFF; // -1 in 64-bit
+        state.regs[2] = 0xFFFF_FFFF_FFFF_FFFF; // -1 in 64-bit
 
         let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
@@ -226,29 +227,35 @@ mod tests {
     #[test]
     fn test_mulh_basic() {
         let mut state = CoreState::default();
-        state.regs[1] = 0x0001_0000; // 65536
-        state.regs[2] = 0x0001_0000; // 65536
+        // In RV64, MULH returns upper 64 bits of 128-bit product
+        // Use larger values to get non-zero upper bits
+        state.regs[1] = 0x0001_0000_0000_0000; // 2^48
+        state.regs[2] = 0x0001_0000_0000_0000; // 2^48
 
         let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulh(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 1); // (65536 * 65536) >> 32 = 1
+        // (2^48 * 2^48) >> 64 = 2^96 >> 64 = 2^32 = 0x1_0000_0000
+        assert_eq!(state.regs[3], 0x1_0000_0000);
     }
 
     #[test]
     fn test_mulh_negative_result() {
         let mut state = CoreState::default();
-        state.regs[1] = 0x8000_0000; // -2147483648
-        state.regs[2] = 2;
+        // In RV64, use proper 64-bit signed values
+        // -1 * 2^48 = -2^48, upper 64 bits of 128-bit result = -1
+        state.regs[1] = 0xFFFF_FFFF_FFFF_FFFF; // -1 in 64-bit
+        state.regs[2] = 0x0001_0000_0000_0000; // 2^48
 
         let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulh(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 0xFFFF_FFFF); // -1 (upper bits of -4294967296)
+        // (-1) * 2^48 = -2^48, upper 64 bits = 0xFFFFFFFFFFFFFFFF (-1)
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_FFFF);
     }
 
     #[test]
@@ -272,30 +279,33 @@ mod tests {
     #[test]
     fn test_mulhu_basic() {
         let mut state = CoreState::default();
-        state.regs[1] = 0x8000_0000; // Large unsigned
-        state.regs[2] = 0x8000_0000;
+        // In RV64, use proper 64-bit unsigned values
+        state.regs[1] = 0x8000_0000_0000_0000; // 2^63
+        state.regs[2] = 0x8000_0000_0000_0000; // 2^63
 
         let instr = create_mul_instr(1, 2, 3, 0b000_0011);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulhu(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        // (2^31 * 2^31) >> 32 = 2^62 >> 32 = 2^30 = 0x4000_0000
-        assert_eq!(state.regs[3], 0x4000_0000);
+        // (2^63 * 2^63) >> 64 = 2^126 >> 64 = 2^62 = 0x4000_0000_0000_0000
+        assert_eq!(state.regs[3], 0x4000_0000_0000_0000);
     }
 
     #[test]
     fn test_mulhu_positive() {
         let mut state = CoreState::default();
-        state.regs[1] = 0x0001_0000;
-        state.regs[2] = 0x0001_0000;
+        // In RV64, use proper 64-bit values for meaningful upper bits
+        state.regs[1] = 0x0001_0000_0000_0000; // 2^48
+        state.regs[2] = 0x0001_0000_0000_0000; // 2^48
 
         let instr = create_mul_instr(1, 2, 3, 0b000_0011);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulhu(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 1);
+        // (2^48 * 2^48) >> 64 = 2^96 >> 64 = 2^32 = 0x1_0000_0000
+        assert_eq!(state.regs[3], 0x1_0000_0000);
     }
 
     // ========================================
@@ -305,23 +315,24 @@ mod tests {
     #[test]
     fn test_mulhsu_basic() {
         let mut state = CoreState::default();
-        state.regs[1] = (-1i32) as u32; // -1 signed
-        state.regs[2] = 0x8000_0000; // Large unsigned
+        state.regs[1] = (-1i64) as u64; // -1 signed (64-bit)
+        state.regs[2] = 0x0001_0000_0000_0000; // 2^48 unsigned
 
         let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mulhsu(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        // (-1) * 2^32 = -2^32, upper 32 bits should be 0xFFFFFFFF
-        assert_eq!(state.regs[3], 0xFFFF_FFFF);
+        // (-1) * 2^48 = -2^48, upper 64 bits = 0xFFFFFFFFFFFFFFFF
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_FFFF);
     }
 
     #[test]
     fn test_mulhsu_positive_unsigned() {
         let mut state = CoreState::default();
-        state.regs[1] = 0x0001_0000; // Positive signed
-        state.regs[2] = 0x0001_0000; // Unsigned
+        // In RV64, use proper 64-bit values
+        state.regs[1] = 0x0001_0000_0000_0000; // 2^48 (positive signed)
+        state.regs[2] = 0x0001_0000_0000_0000; // 2^48 (unsigned)
 
         // Using MULH encoding but MULHSU uses same funct7
         let instr = create_mul_instr(1, 2, 3, 0b000_0010);
@@ -332,7 +343,8 @@ mod tests {
         // The difference is in how rs1 is interpreted (signed vs unsigned)
         let result = exec_mulhsu(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        assert_eq!(state.regs[3], 1);
+        // (2^48 * 2^48) >> 64 = 2^32 = 0x1_0000_0000
+        assert_eq!(state.regs[3], 0x1_0000_0000);
     }
 
     // ========================================
@@ -357,16 +369,16 @@ mod tests {
     #[test]
     fn test_mul_min_values() {
         let mut state = CoreState::default();
-        state.regs[1] = 0x8000_0000; // MIN i32 (-2147483648)
-        state.regs[2] = 0x8000_0000;
+        // In RV64, MIN i64 is 0x8000_0000_0000_0000 (-9223372036854775808)
+        state.regs[1] = 0x8000_0000_0000_0000; // MIN i64
+        state.regs[2] = 0x8000_0000_0000_0000;
 
         let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_mul(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
-        // (-2147483648) * (-2147483648) = 4611686018427387904
-        // Lower 32 bits = 0
+        // MIN_i64 * MIN_i64 = 2^126, lower 64 bits = 0
         assert_eq!(state.regs[3], 0);
     }
 
@@ -382,7 +394,7 @@ mod tests {
         let result = exec_mul(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
 
-        let expected = (0x1234_5678i64 * 0x9ABC_DEF0i64) as u32;
+        let expected = (0x1234_5678i64 * 0x9ABC_DEF0i64) as u64;
         assert_eq!(state.regs[3], expected);
     }
 
@@ -398,11 +410,11 @@ mod tests {
         let result = exec_mulh(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
 
-        // MULH: signed * signed, upper 32 bits
-        // Need to interpret as i32 first to get correct signed values
-        let a = 0x1234_5678u32 as i32 as i64;
-        let b = 0x9ABC_DEF0u32 as i32 as i64;
-        let expected = ((a * b) >> 32) as u32;
+        // MULH: signed * signed, upper 64 bits of 128-bit product
+        // In RV64, this is now 128-bit multiplication, upper 64 bits
+        let a = 0x1234_5678i64;
+        let b = 0x9ABC_DEF0u64 as i64;
+        let expected = (((a as i128) * (b as i128)) >> 64) as u64;
         assert_eq!(state.regs[3], expected);
     }
 }

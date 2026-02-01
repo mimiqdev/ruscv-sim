@@ -1,4 +1,4 @@
-//! R-type instruction execution
+//! R-type instruction execution (RV64I)
 //!
 //! R-type (Register-type) instructions operate on two source registers
 //! and write the result to a destination register.
@@ -7,7 +7,7 @@ use crate::core::CoreState;
 use crate::decode::{DecodedInstruction, Funct3};
 use crate::execute::ExecuteError;
 
-/// R-type operation instructions (exec_op)
+/// R-type operation instructions (exec_op) - RV64I
 ///
 /// Executes R-type instructions including:
 /// - ADD/SUB: Addition/Subtraction
@@ -29,9 +29,9 @@ pub fn exec_op(
         return Err(ExecuteError::InvalidOperation);
     };
 
-    let rs1_val = state.regs[rs1 as usize] as i32;
-    let rs2_val = state.regs[rs2 as usize] as i32;
-    let mut result: i32 = 0;
+    let rs1_val = state.regs[rs1 as usize] as i64;
+    let rs2_val = state.regs[rs2 as usize] as i64;
+    let mut result: i64 = 0;
 
     // ADD/SUB
     if funct3 == Funct3::AddSub {
@@ -41,16 +41,16 @@ pub fn exec_op(
             result = rs1_val.wrapping_sub(rs2_val);
         }
     }
-    // SLL (logical left shift)
+    // SLL (logical left shift) - RV64I uses lower 6 bits of rs2
     else if funct3 == Funct3::Sll {
-        let shamt = (rs2_val & 0x1F) as u32;
-        result = (rs1_val as u32).wrapping_shl(shamt) as i32;
+        let shamt = (rs2_val & 0x3F) as u32;
+        result = (state.regs[rs1 as usize].wrapping_shl(shamt)) as i64;
     }
-    // SRL/SRA (shift right logical/arithmetic)
+    // SRL/SRA (shift right logical/arithmetic) - RV64I uses lower 6 bits of rs2
     else if funct3 == Funct3::SrlSra {
-        let shamt = (rs2_val & 0x1F) as u32;
+        let shamt = (rs2_val & 0x3F) as u32;
         if funct7 == 0 {
-            result = (rs1_val as u32).wrapping_shr(shamt) as i32;
+            result = (state.regs[rs1 as usize].wrapping_shr(shamt)) as i64;
         } else {
             result = rs1_val.wrapping_shr(shamt);
         }
@@ -79,7 +79,7 @@ pub fn exec_op(
     }
 
     if rd != 0 {
-        state.regs[rd as usize] = result as u32;
+        state.regs[rd as usize] = result as u64;
     }
 
     Ok(())
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn test_slt_negative() {
         let mut state = CoreState::default();
-        state.regs[1] = (-5i32) as u32;
+        state.regs[1] = (-5i64) as u64;
         state.regs[2] = 10;
 
         let instr = create_test_instr(
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn test_sltu_negative_rs1() {
         let mut state = CoreState::default();
-        state.regs[1] = (-1i32) as u32;
+        state.regs[1] = (-1i64) as u64;
         state.regs[2] = 5;
 
         let instr = create_test_instr(
@@ -410,7 +410,8 @@ mod tests {
     #[test]
     fn test_sra_execution() {
         let mut state = CoreState::default();
-        state.regs[1] = 0xFFFFFFF0;
+        // In RV64, use 64-bit sign-extended -16: 0xFFFFFFFFFFFFFFF0
+        state.regs[1] = 0xFFFF_FFFF_FFFF_FFF0;
         state.regs[2] = 4;
 
         let instr = create_test_instr(
@@ -425,7 +426,9 @@ mod tests {
 
         exec_op(&instr, &mut state, &mut mem).unwrap();
 
-        assert_eq!(state.regs[3] as i32, -1);
+        // Arithmetic shift right preserves sign: 0xFFFFFFFFFFFFFFF0 >> 4 = 0xFFFFFFFFFFFFFFFF (-1)
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_FFFF);
+        assert_eq!(state.regs[3] as i64, -1);
     }
 
     #[test]
@@ -599,8 +602,10 @@ mod tests {
     #[test]
     fn test_srl_shamt_masking() {
         let mut state = CoreState::default();
-        state.regs[1] = 0xFFFFFFFF;
-        state.regs[2] = 0x12345628;
+        // In RV64, use full 64-bit value
+        state.regs[1] = 0xFFFF_FFFF_FFFF_FFFF;
+        // RV64I uses 6-bit shamt mask (0x3F), so 0x28 = 40 means shift by 40
+        state.regs[2] = 0x12345628; // lower 6 bits = 0x28 = 40
 
         let instr = create_test_instr(
             Opcode::Op,
@@ -614,14 +619,17 @@ mod tests {
 
         exec_op(&instr, &mut state, &mut mem).unwrap();
 
-        assert_eq!(state.regs[3], 0x00FFFFFF);
+        // 0xFFFFFFFFFFFFFFFF >> 40 = 0x00000000_00FFFFFF
+        assert_eq!(state.regs[3], 0x00FF_FFFF);
     }
 
     #[test]
     fn test_sra_shamt_masking() {
         let mut state = CoreState::default();
-        state.regs[1] = 0xFFFFFFF0;
-        state.regs[2] = 0x12345624;
+        // In RV64, use 64-bit sign-extended -16: 0xFFFFFFFFFFFFFFF0
+        state.regs[1] = 0xFFFF_FFFF_FFFF_FFF0;
+        // RV64I uses 6-bit shamt mask (0x3F), so 0x24 = 36 means shift by 36
+        state.regs[2] = 0x12345624; // lower 6 bits = 0x24 = 36
 
         let instr = create_test_instr(
             Opcode::Op,
@@ -635,6 +643,9 @@ mod tests {
 
         exec_op(&instr, &mut state, &mut mem).unwrap();
 
-        assert_eq!(state.regs[3] as i32, -1);
+        // Arithmetic shift right by 36, fills with sign bit
+        // 0xFFFFFFFFFFFFFFF0 >> 36 = 0xFFFFFFFFFFFFFFFF (-1)
+        assert_eq!(state.regs[3], 0xFFFF_FFFF_FFFF_FFFF);
+        assert_eq!(state.regs[3] as i64, -1);
     }
 }

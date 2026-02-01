@@ -47,7 +47,7 @@ fn test_mul_basic_positive() {
 #[test]
 fn test_mul_negative_positive() {
     let mut state = CoreState::default();
-    state.regs[1] = (-5i32) as u32;
+    state.regs[1] = (-5i64) as u64;
     state.regs[2] = 6;
 
     let instr = create_mul_instr(1, 2, 3, 0b000_0001);
@@ -60,8 +60,8 @@ fn test_mul_negative_positive() {
 #[test]
 fn test_mul_negative_negative() {
     let mut state = CoreState::default();
-    state.regs[1] = (-5i32) as u32;
-    state.regs[2] = (-6i32) as u32;
+    state.regs[1] = (-5i64) as u64;
+    state.regs[2] = (-6i64) as u64;
 
     let instr = create_mul_instr(1, 2, 3, 0b000_0001);
     let mut mem = SimpleMemory::new(0x1000);
@@ -315,7 +315,7 @@ fn test_mulhsu_positive_signed() {
 #[test]
 fn test_mulhsu_negative_signed() {
     let mut state = CoreState::default();
-    state.regs[1] = (-1i32) as u32; // -1 signed
+    state.regs[1] = (-1i64) as u64; // -1 signed
     state.regs[2] = 0x8000_0000; // Large unsigned
 
     let instr = create_mul_instr(1, 2, 3, 0b000_0010);
@@ -361,14 +361,14 @@ fn test_mul_random_values() {
 
     for (rs1, rs2, expected) in test_cases {
         let mut state = CoreState::default();
-        state.regs[1] = rs1;
-        state.regs[2] = rs2;
+        state.regs[1] = rs1 as u64;
+        state.regs[2] = rs2 as u64;
 
         let instr = create_mul_instr(1, 2, 3, 0b000_0001);
         let mut mem = SimpleMemory::new(0x1000);
 
         ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
-        assert_eq!(state.regs[3], expected, "Failed for {} * {}", rs1, rs2);
+        assert_eq!(state.regs[3], expected as u64, "Failed for {} * {}", rs1, rs2);
     }
 }
 
@@ -385,8 +385,8 @@ fn test_mulh_corner_cases() {
 
     for (rs1, rs2, expected) in test_cases {
         let mut state = CoreState::default();
-        state.regs[1] = rs1 as u32;
-        state.regs[2] = rs2 as u32;
+        state.regs[1] = rs1 as u64;
+        state.regs[2] = rs2 as u64;
 
         let instr = create_mul_instr(1, 2, 3, 0b000_0010);
         let mut mem = SimpleMemory::new(0x1000);
@@ -403,9 +403,9 @@ fn test_mulh_corner_cases() {
 #[test]
 fn test_mul_property_distributive() {
     // Test (a + b) * c = a*c + b*c
-    for &c in &[1u32, 2, 3, 7, 0xFF, 0xFFFF] {
-        for &a in &[0u32, 1, 100, 0x8000_0000] {
-            for &b in &[0u32, 1, 100, 0x8000_0000] {
+    for &c in &[1u64, 2, 3, 7, 0xFF, 0xFFFF] {
+        for &a in &[0u64, 1, 100, 0x8000_0000] {
+            for &b in &[0u64, 1, 100, 0x8000_0000] {
                 // (a + b) * c
                 let mut state1 = CoreState::default();
                 state1.regs[1] = a.wrapping_add(b);

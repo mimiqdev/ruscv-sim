@@ -1,4 +1,4 @@
-//! B-type instruction execution
+//! B-type instruction execution (RV64I)
 //!
 //! B-type (Branch-type) instructions perform conditional branches.
 
@@ -6,7 +6,7 @@ use crate::core::CoreState;
 use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 
-/// Branch instructions (exec_branch)
+/// Branch instructions (exec_branch) - RV64I
 ///
 /// Executes branch instructions including:
 /// - BEQ: Branch if Equal
@@ -36,15 +36,17 @@ pub fn exec_branch(
     let take_branch = match funct3_val {
         0b000 => rs1_val == rs2_val,                   // BEQ
         0b001 => rs1_val != rs2_val,                   // BNE
-        0b100 => (rs1_val as i32) < (rs2_val as i32),  // BLT (signed)
-        0b101 => (rs1_val as i32) >= (rs2_val as i32), // BGE (signed)
+        0b100 => (rs1_val as i64) < (rs2_val as i64),  // BLT (signed)
+        0b101 => (rs1_val as i64) >= (rs2_val as i64), // BGE (signed)
         0b110 => rs1_val < rs2_val,                    // BLTU (unsigned)
         0b111 => rs1_val >= rs2_val,                   // BGEU (unsigned)
         _ => false,
     };
 
     if take_branch {
-        state.pc = state.pc.wrapping_add(imm);
+        // Sign-extend the branch offset and add to PC
+        let imm_sext = ((imm as i32) << 19 >> 19) as i64 as u64;
+        state.pc = state.pc.wrapping_add(imm_sext);
     }
 
     Ok(())
@@ -130,7 +132,7 @@ mod tests {
             pc: 0x1000,
             ..Default::default()
         };
-        state.regs[1] = (-5i32) as u32;
+        state.regs[1] = (-5i64) as u64;
         state.regs[2] = 10;
 
         let instr = create_test_instr_b_type(Funct3::Xor, 1, 2, 0x20);
@@ -232,7 +234,7 @@ mod tests {
             pc: 0x1000,
             ..Default::default()
         };
-        state.regs[1] = (-10i32) as u32;
+        state.regs[1] = (-10i64) as u64;
         state.regs[2] = 5;
 
         let instr = create_test_instr_b_type(Funct3::Xor, 1, 2, 0x20);
@@ -334,7 +336,7 @@ mod tests {
             pc: 0x1000,
             ..Default::default()
         };
-        state.regs[1] = (-1i32) as u32;
+        state.regs[1] = (-1i64) as u64;
         state.regs[2] = 5;
 
         let instr = create_test_instr_b_type(Funct3::Or, 1, 2, 0x20);

@@ -16,7 +16,8 @@ fn test_mstatus_reset_value() {
 fn test_misa_reset_value() {
     let csr = CsrFile::new(0);
     let misa = csr.read(machine::MISA).unwrap();
-    assert_eq!(misa, 0x4000_0100); // RV32I
+    // RV64IMAC - MXL=10 (64-bit), I=1, M=1, A=1, C=1
+    assert_eq!(misa, 0x8000_0000_0010_0100_u64);
 }
 
 #[test]
@@ -243,10 +244,12 @@ fn test_vsscratch_read_write() {
 #[test]
 fn test_mstatus_reserved_bits_masked() {
     let mut csr = CsrFile::new(0);
-    csr.write(machine::MSTATUS, 0xFFFF_FFFF).unwrap();
+    csr.write(machine::MSTATUS, 0xFFFF_FFFF_FFFF_FFFF).unwrap();
     let value = csr.read(machine::MSTATUS).unwrap();
-    // Check that reserved bits are masked (bit 31 and bits [30:15] should be masked per spec)
-    assert_eq!(value & 0x8000_7FFF, 0x8000_7FFF);
+    // Check that value is masked according to RV64 mstatus writable bits
+    // The actual mask is 0x8000_0003_000D_FFEA for RV64
+    let rv64_mstatus_mask = 0x8000_0003_000D_FFEA_u64;
+    assert_eq!(value, 0xFFFF_FFFF_FFFF_FFFF & rv64_mstatus_mask);
 }
 
 // Multiple CSR access tests

@@ -43,7 +43,7 @@ fn test_fcvt_s_w_negative() {
     let mut state = create_test_state();
     let mut mem = SimpleMemory::new(0x1000);
 
-    state.regs[1] = 0xFFFFFFFEu32; // -2 as i32
+    state.regs[1] = 0xFFFFFFFEu64; // -2 as i32
 
     let decoded = DecodedInstruction {
         raw: 0,
@@ -140,7 +140,7 @@ fn test_fcvt_wu_s_negative() {
 
     ruscv_sim::execute::exec_fcvt_wu_s(&decoded, &mut state, &mut mem).unwrap();
 
-    assert_eq!(state.regs[2], u32::MAX);
+    assert_eq!(state.regs[2], u32::MAX as u64);
 }
 
 #[test]

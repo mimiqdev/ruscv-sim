@@ -105,7 +105,7 @@ pub fn exec_system(
         0b101 => {
             // CSRRWI - CSR Read-Write Immediate
             let csr_addr = (imm & 0xFFF) as u16;
-            let zimm = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as u32; // rs1 field holds zimm
+            let zimm = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as u64; // rs1 field holds zimm
             let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
             // Read old value and write immediate
@@ -123,7 +123,7 @@ pub fn exec_system(
         0b110 => {
             // CSRRSI - CSR Read-Set Immediate
             let csr_addr = (imm & 0xFFF) as u16;
-            let zimm = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as u32;
+            let zimm = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as u64;
             let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
             // Read old value and set bits with immediate
@@ -141,7 +141,7 @@ pub fn exec_system(
         0b111 => {
             // CSRRCI - CSR Read-Clear Immediate
             let csr_addr = (imm & 0xFFF) as u16;
-            let zimm = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as u32;
+            let zimm = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as u64;
             let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
             // Read old value and clear bits with immediate
@@ -247,8 +247,9 @@ mod tests {
     #[test]
     fn test_csrrs() {
         let mut state = CoreState::default();
-        state.csr.write(machine::MSTATUS, 0x1000).unwrap();
-        state.regs[5] = 0x0100;
+        // Use bits that are writable in MSTATUS (bit 7 = MPIE)
+        state.csr.write(machine::MSTATUS, 0x0080).unwrap(); // MPIE set
+        state.regs[5] = 0x0008; // Set MIE (bit 3)
 
         let instr = create_csr_instr(0b010, 10, 5, machine::MSTATUS);
         let mut mem = SimpleMemory::new(0x1000);
@@ -256,18 +257,20 @@ mod tests {
         let result = exec_system(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
 
-        // Check that bits were set
-        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), 0x1100);
+        // Check that bits were set (MPIE | MIE = 0x88)
+        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), 0x0088);
 
         // Check that x10 received the old value
-        assert_eq!(state.regs[10], 0x1000);
+        assert_eq!(state.regs[10], 0x0080);
     }
 
     #[test]
     fn test_csrrc() {
         let mut state = CoreState::default();
-        state.csr.write(machine::MSTATUS, 0x1111).unwrap();
-        state.regs[5] = 0x0101;
+        // Use bits that are writable in MSTATUS
+        // 0x88 = MPIE (bit 7) | MIE (bit 3)
+        state.csr.write(machine::MSTATUS, 0x0088).unwrap();
+        state.regs[5] = 0x0008; // Clear MIE (bit 3)
 
         let instr = create_csr_instr(0b011, 10, 5, machine::MSTATUS);
         let mut mem = SimpleMemory::new(0x1000);
@@ -275,11 +278,11 @@ mod tests {
         let result = exec_system(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
 
-        // Check that bits were cleared
-        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), 0x1010);
+        // Check that bits were cleared (0x88 & ~0x08 = 0x80)
+        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), 0x0080);
 
         // Check that x10 received the old value
-        assert_eq!(state.regs[10], 0x1111);
+        assert_eq!(state.regs[10], 0x0088);
     }
 
     #[test]
@@ -302,37 +305,42 @@ mod tests {
     #[test]
     fn test_csrrsi() {
         let mut state = CoreState::default();
-        state.csr.write(machine::MSTATUS, 0x1000).unwrap();
+        // Use bits that are writable in MSTATUS (bit 7 = MPIE)
+        state.csr.write(machine::MSTATUS, 0x0080).unwrap();
 
-        let instr = create_csr_instr(0b110, 10, 7, machine::MSTATUS); // zimm=7
+        // zimm=2 sets SIE (bit 1), which is writable
+        let instr = create_csr_instr(0b110, 10, 2, machine::MSTATUS);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_system(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
 
-        // Check that bits were set with immediate
-        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), 0x1007);
+        // Check that bits were set with immediate (0x80 | 0x02 = 0x82)
+        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), 0x0082);
 
         // Check that x10 received the old value
-        assert_eq!(state.regs[10], 0x1000);
+        assert_eq!(state.regs[10], 0x0080);
     }
 
     #[test]
     fn test_csrrci() {
         let mut state = CoreState::default();
-        state.csr.write(machine::MSTATUS, 0x00FF).unwrap();
+        // Use bits that are writable in MSTATUS
+        // 0xAA = bits 7,5,3,1 (MPIE, SPIE, MIE, SIE) - all writable
+        state.csr.write(machine::MSTATUS, 0x00AA).unwrap();
 
-        let instr = create_csr_instr(0b111, 10, 15, machine::MSTATUS); // zimm=15
+        // zimm=10 (0x0A) clears bits 3,1 (MIE, SIE)
+        let instr = create_csr_instr(0b111, 10, 10, machine::MSTATUS);
         let mut mem = SimpleMemory::new(0x1000);
 
         let result = exec_system(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
 
-        // Check that bits were cleared with immediate (0xFF & ~0x0F = 0xF0)
-        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), 0x00F0);
+        // Check that bits were cleared (0xAA & ~0x0A = 0xA0)
+        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), 0x00A0);
 
         // Check that x10 received the old value
-        assert_eq!(state.regs[10], 0x00FF);
+        assert_eq!(state.regs[10], 0x00AA);
     }
 }
 
@@ -350,7 +358,7 @@ pub fn exec_mret(
     _instr: &DecodedInstruction,
     state: &mut CoreState,
     _mem: &mut dyn crate::memory::MemoryInterface,
-) -> Result<u32, ExecuteError> {
+) -> Result<u64, ExecuteError> {
     // Read current mstatus
     let mstatus = state
         .csr
@@ -409,7 +417,7 @@ pub fn exec_sret(
     _instr: &DecodedInstruction,
     state: &mut CoreState,
     _mem: &mut dyn crate::memory::MemoryInterface,
-) -> Result<u32, ExecuteError> {
+) -> Result<u64, ExecuteError> {
     use crate::core::PrivilegeMode;
     use crate::csr::supervisor;
 
@@ -466,7 +474,7 @@ pub fn exec_uret(
     _instr: &DecodedInstruction,
     _state: &mut CoreState,
     _mem: &mut dyn crate::memory::MemoryInterface,
-) -> Result<u32, ExecuteError> {
+) -> Result<u64, ExecuteError> {
     // URET is not defined in standard RISC-V
     // Some implementations may use it as a custom instruction
     Err(ExecuteError::InvalidOperation)

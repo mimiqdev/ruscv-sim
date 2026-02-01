@@ -39,7 +39,7 @@ use crate::memory::MemoryInterface;
 #[derive(Debug, Clone)]
 pub struct ReservationSet {
     /// Reserved address, or None if no reservation
-    reserved_addr: Option<u32>,
+    reserved_addr: Option<u64>,
 }
 
 impl ReservationSet {
@@ -51,12 +51,12 @@ impl ReservationSet {
     }
 
     /// Check if we have a reservation for the given address
-    pub fn has_reservation(&self, addr: u32) -> bool {
+    pub fn has_reservation(&self, addr: u64) -> bool {
         self.reserved_addr == Some(addr)
     }
 
     /// Create a reservation for the given address
-    pub fn reserve(&mut self, addr: u32) {
+    pub fn reserve(&mut self, addr: u64) {
         self.reserved_addr = Some(addr);
     }
 
@@ -66,14 +66,14 @@ impl ReservationSet {
     }
 
     /// Clear reservation for a specific address (only if matching)
-    pub fn clear_if_matching(&mut self, addr: u32) {
+    pub fn clear_if_matching(&mut self, addr: u64) {
         if self.reserved_addr == Some(addr) {
             self.reserved_addr = None;
         }
     }
 
     /// Get the reserved address if any
-    pub fn reserved_address(&self) -> Option<u32> {
+    pub fn reserved_address(&self) -> Option<u64> {
         self.reserved_addr
     }
 }
@@ -93,9 +93,9 @@ use std::sync::Mutex;
 static GLOBAL_RESERVATION: Lazy<Mutex<ReservationSet>> =
     Lazy::new(|| Mutex::new(ReservationSet::new()));
 
-/// LR - Load-Reserved
+/// LR - Load-Reserved (64-bit)
 ///
-/// Loads a 32-bit value from memory and creates a reservation on that address.
+/// Loads a 64-bit value from memory and creates a reservation on that address.
 ///
 /// # Encoding
 /// - funct5 = 00010 for LR
@@ -115,8 +115,8 @@ pub fn exec_lr(
 
     let addr = state.regs[rs1];
 
-    // Read the value from memory
-    let value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
+    // Read the value from memory (64-bit)
+    let value = mem.read_dword(addr).map_err(ExecuteError::MemoryError)?;
 
     // Create reservation
     let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
@@ -130,7 +130,7 @@ pub fn exec_lr(
     Ok(())
 }
 
-/// LR.W - Load-Reserved 32-bit (RV64 specific)
+/// LR.W - Load-Reserved 32-bit (RV64A specific)
 ///
 /// Loads a 32-bit value from memory, sign-extending to 64 bits.
 /// Creates a reservation on the address.
@@ -152,8 +152,8 @@ pub fn exec_lr_w(
     // Read 32-bit value from memory
     let value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
 
-    // Sign-extend to 64 bits (but we store in u32 for now)
-    let value = value as i32 as u64 as u32;
+    // Sign-extend to 64 bits
+    let value = (value as i32) as i64 as u64;
 
     // Create reservation
     let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
@@ -167,9 +167,9 @@ pub fn exec_lr_w(
     Ok(())
 }
 
-/// SC - Store-Conditional
+/// SC - Store-Conditional (64-bit)
 ///
-/// Conditionally stores a 32-bit value to memory only if the reservation
+/// Conditionally stores a 64-bit value to memory only if the reservation
 /// is still valid.
 ///
 /// # Encoding
@@ -201,11 +201,13 @@ pub fn exec_sc(
     let success = reservation.has_reservation(addr);
 
     if success {
-        // Store the value
-        mem.write_word(addr, value)
+        // Store the value (64-bit)
+        mem.write_dword(addr, value)
             .map_err(ExecuteError::MemoryError)?;
-        state.regs[rd] = 0; // Success
-    } else {
+        if rd != 0 {
+            state.regs[rd] = 0; // Success
+        }
+    } else if rd != 0 {
         state.regs[rd] = 1; // Failure (non-zero)
     }
 
@@ -229,7 +231,7 @@ pub fn exec_sc_w(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-    let value = state.regs[rs2];
+    let value = state.regs[rs2] as u32;
 
     // Check reservation
     let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
@@ -239,8 +241,10 @@ pub fn exec_sc_w(
         // Store the lower 32 bits
         mem.write_word(addr, value)
             .map_err(ExecuteError::MemoryError)?;
-        state.regs[rd] = 0; // Success
-    } else {
+        if rd != 0 {
+            state.regs[rd] = 0; // Success
+        }
+    } else if rd != 0 {
         state.regs[rd] = 1; // Failure
     }
 

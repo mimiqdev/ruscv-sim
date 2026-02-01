@@ -1,4 +1,4 @@
-//! RISC-V RV32I core module
+//! RISC-V RV64I core module
 //!
 //! Implements RISC-V processor core fetch-decode-execute cycle
 
@@ -21,13 +21,13 @@ pub enum PrivilegeMode {
     Machine = 3,
 }
 
-/// RISC-V core state
+/// RISC-V core state (RV64I)
 #[derive(Debug, Clone)]
 pub struct CoreState {
-    /// 程序计数器
-    pub pc: u32,
-    /// General purpose registers x0-x31
-    pub regs: [u32; 32],
+    /// 程序计数器 (64-bit for RV64)
+    pub pc: u64,
+    /// General purpose registers x0-x31 (64-bit for RV64)
+    pub regs: [u64; 32],
     /// privilege mode
     pub privilege: PrivilegeMode,
     /// CSR file
@@ -37,19 +37,19 @@ pub struct CoreState {
     /// FCSR (Floating-Point Control and Status Register)
     pub fcsr: Fcsr,
     /// 机器状态寄存器 (简化版) - deprecated, use csr field
-    pub mstatus: u32,
+    pub mstatus: u64,
     /// 异常程序计数器 - deprecated, use csr field
-    pub mepc: u32,
+    pub mepc: u64,
     /// 异常原因 - deprecated, use csr field
-    pub mcause: u32,
+    pub mcause: u64,
     /// 异常值 - deprecated, use csr field
-    pub mtval: u32,
+    pub mtval: u64,
 }
 
 impl Default for CoreState {
     fn default() -> Self {
         Self {
-            pc: 0x0000_0000,
+            pc: 0x0000_0000_0000_0000,
             regs: [0; 32],
             privilege: PrivilegeMode::Machine,
             csr: CsrFile::default(),
@@ -118,13 +118,13 @@ impl RiscvCore {
 
     /// Step execute
     pub fn step(&mut self) -> Result<()> {
-        // 1. Fetch
+        // 1. Fetch (convert 64-bit PC to 32-bit address for memory access)
         let instruction = {
             let mem = self
                 .instruction_mem
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Failed to lock instruction memory"))?;
-            mem.read_word(self.state.pc)?
+            mem.read_word(self.state.pc as u64)?
         };
 
         // 2. Decode
@@ -149,7 +149,7 @@ impl RiscvCore {
     }
 
     /// Reset core
-    pub fn reset(&mut self, entry_point: u32) {
+    pub fn reset(&mut self, entry_point: u64) {
         self.state = CoreState::default();
         self.state.pc = entry_point;
     }
