@@ -110,12 +110,20 @@ mod tests {
 
     #[test]
     fn test_extract_vpn() {
-        // VPN[2] = bits 30-38
-        assert_eq!(AddressTranslator::extract_vpn(0x0000_0040_0000, 2), 1);
-        // VPN[1] = bits 21-29
+        // VPN[2] = bits 30-38 (0x4000_0000 has bit 30 set)
+        assert_eq!(AddressTranslator::extract_vpn(0x0000_4000_0000, 2), 1);
+        // VPN[1] = bits 21-29 (0x0020_0000 has bit 21 set)
         assert_eq!(AddressTranslator::extract_vpn(0x0000_0020_0000, 1), 1);
-        // VPN[0] = bits 12-20
+        // VPN[0] = bits 12-20 (0x0000_1000 has bit 12 set)
         assert_eq!(AddressTranslator::extract_vpn(0x0000_0000_1000, 0), 1);
+        
+        // Additional test: verify VPN extraction for different addresses
+        // 0x0040_0000 has bit 22 set, which falls in VPN[1] range (bit 22 - 21 = bit 1 of VPN[1])
+        assert_eq!(AddressTranslator::extract_vpn(0x0000_0040_0000, 1), 2);
+        // 0x0000_0080_0000 has bit 23 set, which falls in VPN[1] range (bit 23 - 21 = bit 2 of VPN[1])
+        assert_eq!(AddressTranslator::extract_vpn(0x0000_0080_0000, 1), 4);
+        // 0x0000_0000_2000 has bit 13 set, which falls in VPN[0] range (bit 13 - 12 = bit 1 of VPN[0])
+        assert_eq!(AddressTranslator::extract_vpn(0x0000_0000_2000, 0), 2);
     }
 
     #[test]
