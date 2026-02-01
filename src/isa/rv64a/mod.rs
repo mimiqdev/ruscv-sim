@@ -25,7 +25,7 @@ pub mod amo;
 pub mod lr_sc;
 
 // Re-export LR/SC functions
-pub use lr_sc::{clear_reservation, exec_lr, exec_lr_w, exec_sc, exec_sc_w};
+pub use lr_sc::{clear_reservation, exec_lr, exec_lr_w, exec_sc, exec_sc_w, ReservationSet};
 
 // Re-export AMO functions
 pub use amo::{

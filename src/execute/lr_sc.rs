@@ -1,7 +1,7 @@
 //! RV64A Load-Reserved / Store-Conditional instructions
 //!
-//! Implements LR (Load-Reserved) and SC (Store-Conditional) instructions
-//! for atomic memory operations per the RISC-V ISA specification.
+//! This module re-exports the LR/SC implementation from `isa::rv64a::lr_sc`
+//! and provides integration tests for the execute module.
 //!
 //! # Reservation Mechanism
 //!
@@ -10,259 +10,24 @@
 //! - SC attempts to store only if the reservation is still valid
 //! - If successful, returns 0; otherwise returns non-zero
 //!
-//! # Limitations
-//!
-//! **Multi-core Scaling**: This implementation uses a global reservation singleton.
-//! In a production multi-core system, reservations must be per-hart (hardware thread).
-//! This is a known limitation documented in the architecture design.
-//!
 //! # References
 //!
 //! - RISC-V ISA Volume I: Unprivileged Spec, Section 8.3 (Load-Reserved/Store-Conditional)
 //! - RISC-V ISA Volume II: Privileged Spec, Section 3.5.1 (Reservation Granularity)
 
-use crate::core::CoreState;
+// Re-export all public items from the canonical implementation in isa::rv64a
+pub use crate::isa::rv64a::{
+    clear_reservation, exec_lr, exec_lr_w, exec_sc, exec_sc_w, ReservationSet,
+};
 
-/// LR/SC funct5 encoding constants (RISC-V ISA Table 19.3)
-#[allow(dead_code)]
-const AMO_FUNCT5_LR: u8 = 0b00010;
-#[allow(dead_code)]
-const AMO_FUNCT5_SC: u8 = 0b00011;
-use crate::decode::DecodedInstruction;
-use crate::execute::ExecuteError;
+// Re-export for tests that need the MemoryInterface trait
+#[cfg(test)]
 use crate::memory::MemoryInterface;
-
-/// Reservation set for LR/SC operations
-///
-/// Tracks the address of the reservation for each hart.
-/// In a multi-core system, this would need to be per-hart.
-#[derive(Debug, Clone)]
-pub struct ReservationSet {
-    /// Reserved address, or None if no reservation
-    reserved_addr: Option<u64>,
-}
-
-impl ReservationSet {
-    /// Create a new reservation set
-    pub fn new() -> Self {
-        Self {
-            reserved_addr: None,
-        }
-    }
-
-    /// Check if we have a reservation for the given address
-    pub fn has_reservation(&self, addr: u64) -> bool {
-        self.reserved_addr == Some(addr)
-    }
-
-    /// Create a reservation for the given address
-    pub fn reserve(&mut self, addr: u64) {
-        self.reserved_addr = Some(addr);
-    }
-
-    /// Clear the reservation
-    pub fn clear(&mut self) {
-        self.reserved_addr = None;
-    }
-
-    /// Clear reservation for a specific address (only if matching)
-    pub fn clear_if_matching(&mut self, addr: u64) {
-        if self.reserved_addr == Some(addr) {
-            self.reserved_addr = None;
-        }
-    }
-
-    /// Get the reserved address if any
-    pub fn reserved_address(&self) -> Option<u64> {
-        self.reserved_addr
-    }
-}
-
-impl Default for ReservationSet {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-use once_cell::sync::Lazy;
-/// Global reservation set (singleton for single-core simulation)
-///
-/// In a real multi-core system, this would be per-hart.
-use std::sync::Mutex;
-
-static GLOBAL_RESERVATION: Lazy<Mutex<ReservationSet>> =
-    Lazy::new(|| Mutex::new(ReservationSet::new()));
-
-/// LR - Load-Reserved (64-bit)
-///
-/// Loads a 64-bit value from memory and creates a reservation on that address.
-///
-/// # Encoding
-/// - funct5 = 00010 for LR
-/// - rs2 = 00000 (no second source register)
-///
-/// # Operation
-/// rd = MEM[rs1]
-/// Create reservation on rs1
-#[inline]
-pub fn exec_lr(
-    instr: &DecodedInstruction,
-    state: &mut CoreState,
-    mem: &mut dyn MemoryInterface,
-) -> Result<(), ExecuteError> {
-    let rs1 = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as usize;
-    let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
-
-    let addr = state.regs[rs1];
-
-    // Read the value from memory (64-bit)
-    let value = mem.read_dword(addr).map_err(ExecuteError::MemoryError)?;
-
-    // Create reservation
-    let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
-    reservation.reserve(addr);
-
-    // Write result to rd (unless rd = x0)
-    if rd != 0 {
-        state.regs[rd] = value;
-    }
-
-    Ok(())
-}
-
-/// LR.W - Load-Reserved 32-bit (RV64A specific)
-///
-/// Loads a 32-bit value from memory, sign-extending to 64 bits.
-/// Creates a reservation on the address.
-///
-/// # Operation
-/// rd = sext(MEM[rs1][31:0])
-/// Create reservation on rs1
-#[inline]
-pub fn exec_lr_w(
-    instr: &DecodedInstruction,
-    state: &mut CoreState,
-    mem: &mut dyn MemoryInterface,
-) -> Result<(), ExecuteError> {
-    let rs1 = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as usize;
-    let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
-
-    let addr = state.regs[rs1];
-
-    // Read 32-bit value from memory
-    let value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
-
-    // Sign-extend to 64 bits
-    let value = (value as i32) as i64 as u64;
-
-    // Create reservation
-    let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
-    reservation.reserve(addr);
-
-    // Write result to rd
-    if rd != 0 {
-        state.regs[rd] = value;
-    }
-
-    Ok(())
-}
-
-/// SC - Store-Conditional (64-bit)
-///
-/// Conditionally stores a 64-bit value to memory only if the reservation
-/// is still valid.
-///
-/// # Encoding
-/// - funct5 = 00011 for SC
-/// - rs2 contains the value to store
-///
-/// # Operation
-/// if reservation valid:
-///   MEM[rs1] = rs2
-///   rd = 0
-/// else:
-///   rd = non-zero
-/// Clear reservation regardless of success
-#[inline]
-pub fn exec_sc(
-    instr: &DecodedInstruction,
-    state: &mut CoreState,
-    mem: &mut dyn MemoryInterface,
-) -> Result<(), ExecuteError> {
-    let rs1 = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as usize;
-    let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
-    let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
-
-    let addr = state.regs[rs1];
-    let value = state.regs[rs2];
-
-    // Check reservation
-    let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
-    let success = reservation.has_reservation(addr);
-
-    if success {
-        // Store the value (64-bit)
-        mem.write_dword(addr, value)
-            .map_err(ExecuteError::MemoryError)?;
-        if rd != 0 {
-            state.regs[rd] = 0; // Success
-        }
-    } else if rd != 0 {
-        state.regs[rd] = 1; // Failure (non-zero)
-    }
-
-    // Clear reservation regardless
-    reservation.clear();
-
-    Ok(())
-}
-
-/// SC.W - Store-Conditional 32-bit
-///
-/// Conditionally stores a 32-bit value to memory.
-#[inline]
-pub fn exec_sc_w(
-    instr: &DecodedInstruction,
-    state: &mut CoreState,
-    mem: &mut dyn MemoryInterface,
-) -> Result<(), ExecuteError> {
-    let rs1 = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as usize;
-    let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
-    let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
-
-    let addr = state.regs[rs1];
-    let value = state.regs[rs2] as u32;
-
-    // Check reservation
-    let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
-    let success = reservation.has_reservation(addr);
-
-    if success {
-        // Store the lower 32 bits
-        mem.write_word(addr, value)
-            .map_err(ExecuteError::MemoryError)?;
-        if rd != 0 {
-            state.regs[rd] = 0; // Success
-        }
-    } else if rd != 0 {
-        state.regs[rd] = 1; // Failure
-    }
-
-    // Clear reservation regardless
-    reservation.clear();
-
-    Ok(())
-}
-
-/// Clear global reservation (for testing)
-pub fn clear_reservation() {
-    let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
-    reservation.clear();
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::CoreState;
     use crate::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
     use crate::memory::SimpleMemory;
 
@@ -323,7 +88,7 @@ mod tests {
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
 
-        // Write a value to memory
+        // Write a value to memory (positive 32-bit value for consistent behavior)
         mem.write_word(0x100, 0x1234_5678).unwrap();
 
         state.regs[1] = 0x100;
@@ -347,9 +112,13 @@ mod tests {
         let instr = create_lr_instr(1, 2, 0b00010, 0, 0);
         exec_lr(&instr, &mut state, &mut mem).unwrap();
 
-        let reservation = GLOBAL_RESERVATION.lock().unwrap();
-        assert!(reservation.has_reservation(0x200));
-        assert_eq!(reservation.reserved_address(), Some(0x200));
+        // Verify reservation was created by checking SC succeeds
+        state.regs[3] = 0xCAFE_BABE;
+        let sc_instr = create_sc_instr(1, 3, 4, 0b00011, 0, 0);
+        exec_sc(&sc_instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[4], 0); // Success
+        assert_eq!(mem.read_word(0x200).unwrap(), 0xCAFE_BABE);
     }
 
     #[test]
