@@ -66,6 +66,7 @@
 //! }
 //! ```
 
+pub mod c0_float;
 pub mod c0_quadw;
 pub mod c1_addiw;
 pub mod c1_arith;
@@ -90,6 +91,7 @@ pub fn instruction_length(instruction: u32) -> u8 {
 }
 
 /// Re-export execution functions for compressed instructions
+pub use c0_float::{exec_c_fld, exec_c_flw, exec_c_fsd, exec_c_fsw};
 pub use c0_quadw::{exec_c_addi4spn, exec_c_ld, exec_c_lw, exec_c_sd, exec_c_sw};
 pub use c1_addiw::{exec_c_addiw, exec_c_addw, exec_c_subw};
 pub use c1_arith::{
