@@ -170,7 +170,7 @@ pub enum MmuError {
 
 /// Main MMU structure
 pub struct Mmu {
-    config: MmuConfig,
+    _config: MmuConfig,
     /// Instruction TLB
     itlb: Tlb,
     /// Data TLB
@@ -187,7 +187,7 @@ impl Mmu {
         let translator = AddressTranslator::new(config);
 
         Self {
-            config,
+            _config: config,
             itlb,
             dtlb,
             translator,

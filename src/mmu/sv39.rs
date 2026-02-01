@@ -26,7 +26,7 @@
 //! | 1     | 2MB       | Megapage |
 //! | 2     | 1GB       | Gigapage |
 
-use super::pte::{PagePermissions, PageTableEntry};
+use super::pte::PageTableEntry;
 use super::MmuError;
 
 /// Sv39 virtual address
@@ -67,10 +67,10 @@ impl VirtualAddress {
         // - Bit 38 is the sign bit
         // - Bits [63:39] (25 bits) must be sign extension of bit 38
         const HIGH_BITS_MASK: u64 = 0x1FFFFFF; // 25 ones
-        
+
         let sign_bit = (addr >> 38) & 1;
         let high_bits = (addr >> 39) & HIGH_BITS_MASK;
-        
+
         if sign_bit == 0 && high_bits != 0 {
             // Positive address but high bits not zero
             return Err(MmuError::InvalidVirtualAddress(addr));
@@ -114,7 +114,7 @@ impl VirtualAddress {
     }
 
     /// Get all VPNs as [VPN0, VPN1, VPN2]
-    /// 
+    ///
     /// Note: This ordering matches the level index used in page table walks
     /// - vpns[0] = VPN0 (level 0)
     /// - vpns[1] = VPN1 (level 1)  
@@ -194,7 +194,11 @@ impl Sv39 {
     ///
     /// # Returns
     /// The translated physical address
-    pub fn build_physical_address(pte: &PageTableEntry, vaddr: VirtualAddress, level: usize) -> u64 {
+    pub fn build_physical_address(
+        pte: &PageTableEntry,
+        vaddr: VirtualAddress,
+        level: usize,
+    ) -> u64 {
         let offset = vaddr.page_offset();
 
         match level {
@@ -222,7 +226,7 @@ impl Sv39 {
 
     /// Check if page size is valid for level
     pub const fn is_valid_page_size(level: usize) -> bool {
-        matches!(level, 0 | 1 | 2)
+        matches!(level, 0..=2)
     }
 
     /// Get page size for level
@@ -234,9 +238,9 @@ impl Sv39 {
     /// Page size in bytes
     pub const fn page_size(level: usize) -> u64 {
         match level {
-            0 => 4096,                    // 4KB
-            1 => 2 * 1024 * 1024,         // 2MB
-            2 => 1024 * 1024 * 1024,      // 1GB
+            0 => 4096,               // 4KB
+            1 => 2 * 1024 * 1024,    // 2MB
+            2 => 1024 * 1024 * 1024, // 1GB
             _ => panic!("Invalid level"),
         }
     }
@@ -298,29 +302,43 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
         // Walk from level 2 down to level 0
         for level in (0..VirtualAddress::LEVELS).rev() {
             let pte_addr = Sv39::pte_address(ppn, vpns[level]);
-            
+
             #[cfg(test)]
-            eprintln!("Walk level {}: ppn={:x}, vpn={:x}, pte_addr={:016x}", level, ppn, vpns[level], pte_addr);
+            eprintln!(
+                "Walk level {}: ppn={:x}, vpn={:x}, pte_addr={:016x}",
+                level, ppn, vpns[level], pte_addr
+            );
 
             // Read the PTE from physical memory
             let pte_val = match self.memory.read_dword(pte_addr) {
                 Ok(val) => {
                     #[cfg(test)]
-                    eprintln!("Read PTE at level {}: addr={:016x}, val={:016x}", level, pte_addr, val);
+                    eprintln!(
+                        "Read PTE at level {}: addr={:016x}, val={:016x}",
+                        level, pte_addr, val
+                    );
                     val
                 }
-                Err(e) => {
+                Err(_e) => {
                     #[cfg(test)]
-                    eprintln!("AccessFault at level {}: addr={:016x}, error={:?}", level, pte_addr, e);
+                    eprintln!(
+                        "AccessFault at level {}: addr={:016x}, error={:?}",
+                        level, pte_addr, e
+                    );
                     return WalkResult::AccessFault { level };
                 }
             };
 
             let pte = PageTableEntry::from_raw(pte_val);
-            
+
             #[cfg(test)]
-            eprintln!("PTE: valid={}, leaf={}, perms_ok={}, bits={:016x}", 
-                     pte.is_valid(), pte.is_leaf(), pte.has_valid_permissions(), pte.bits());
+            eprintln!(
+                "PTE: valid={}, leaf={}, perms_ok={}, bits={:016x}",
+                pte.is_valid(),
+                pte.is_leaf(),
+                pte.has_valid_permissions(),
+                pte.bits()
+            );
 
             // Check if valid
             if !pte.is_valid() {
@@ -539,44 +557,54 @@ mod tests {
     #[test]
     fn test_trait_object_access() {
         use crate::mmu::physical::PhysicalMemoryInterface;
-        
+
         let mut mem = PhysicalMemory::new(0x8000_0000, 0x10000);
-        
+
         // Write data through trait object
         let iface: &mut dyn PhysicalMemoryInterface = &mut mem;
-        iface.write_dword(0x8000_0000, 0x1234_5678_9ABC_DEF0).unwrap();
-        
+        iface
+            .write_dword(0x8000_0000, 0x1234_5678_9ABC_DEF0)
+            .unwrap();
+
         // Read back through trait object
         let val = iface.read_dword(0x8000_0000).unwrap();
         assert_eq!(val, 0x1234_5678_9ABC_DEF0);
     }
-    
+
     #[test]
     fn test_trait_object_address_passing() {
         use crate::mmu::physical::PhysicalMemoryInterface;
-        
+
         let mut mem = PhysicalMemory::new(0x8000_0000, 0x10000);
-        
+
         // Test address passing through trait object
         let iface: &dyn PhysicalMemoryInterface = &mem;
-        
+
         // Direct call
         let direct_result = mem.read_dword(0x8000_0000);
         println!("Direct call result: {:?}", direct_result);
-        
+
         // Trait object call with same address
         let trait_result = iface.read_dword(0x8000_0000);
         println!("Trait object call result: {:?}", trait_result);
-        
+
         // Both should succeed
-        assert!(direct_result.is_ok(), "Direct call failed: {:?}", direct_result);
-        assert!(trait_result.is_ok(), "Trait object call failed: {:?}", trait_result);
+        assert!(
+            direct_result.is_ok(),
+            "Direct call failed: {:?}",
+            direct_result
+        );
+        assert!(
+            trait_result.is_ok(),
+            "Trait object call failed: {:?}",
+            trait_result
+        );
     }
 
     #[test]
     fn test_page_table_walk_basic() {
         use crate::mmu::physical::PhysicalMemoryInterface;
-        
+
         // Set up physical memory with a simple page table
         let mut mem = PhysicalMemory::new(0x8000_0000, 0x10000);
 
@@ -652,11 +680,13 @@ mod tests {
 
         // Level 1 entry 0 -> level 0 table
         let level1_pte = PageTableEntry::new_pointer(level0_ppn);
-        mem.write_dword(level1_ppn << 12, level1_pte.bits()).unwrap();
+        mem.write_dword(level1_ppn << 12, level1_pte.bits())
+            .unwrap();
 
         // Level 0 entry 0 -> 4KB page at 0x9000_0000
         let level0_pte = PageTableEntry::new_leaf(0x90000, PagePermissions::rwx(), false);
-        mem.write_dword(level0_ppn << 12, level0_pte.bits()).unwrap();
+        mem.write_dword(level0_ppn << 12, level0_pte.bits())
+            .unwrap();
 
         let walker = PageTableWalker::new(&mem as &dyn PhysicalMemoryInterface, root_ppn);
 
@@ -700,7 +730,10 @@ mod tests {
         // Note: SSTATUS.SUM bit controls this, but we allow it by default
         match walker.walk_check_permissions(va, super::super::AccessType::Read, false) {
             WalkResult::Success { .. } => {}
-            other => panic!("Expected Success for supervisor read from user page, got {:?}", other),
+            other => panic!(
+                "Expected Success for supervisor read from user page, got {:?}",
+                other
+            ),
         }
     }
 }

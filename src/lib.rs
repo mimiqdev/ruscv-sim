@@ -18,6 +18,8 @@ pub use decode::{DecodeError, DecodedInstruction, InstructionDecoder, Instructio
 pub use execute::{ExecuteError, Executor};
 pub use fpu::{Fcsr, Fpr, FpuRegisterFile};
 pub use memory::{MemoryError, MemoryInterface, SimpleMemory};
-pub use mmu::{Mmu, MmuConfig, MmuError, AccessType, TranslationMode, Satp, Tlb, TlbEntry, TlbStats};
+pub use mmu::{
+    AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TlbEntry, TlbStats, TranslationMode,
+};
 pub use ruscv_macros::*;
 pub use tlm::{TlmCommand, TlmGenericPayload, TlmInterface, TlmPhase, TlmResponseStatus, TlmTime};

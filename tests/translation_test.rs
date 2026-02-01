@@ -22,11 +22,15 @@ fn setup_page_table(memory: &mut PhysicalMemory, root_ppn: u64) {
 
     // Level 2 (root) - pointer to level 1 at VPN[2]=0
     let root_pte = PageTableEntry::new_pointer(level1_ppn);
-    memory.write_dword((root_ppn << 12), root_pte.bits()).unwrap();
+    memory
+        .write_dword((root_ppn << 12), root_pte.bits())
+        .unwrap();
 
     // Level 1 - pointer to level 0 at VPN[1]=0
     let level1_pte = PageTableEntry::new_pointer(level0_ppn);
-    memory.write_dword((level1_ppn << 12), level1_pte.bits()).unwrap();
+    memory
+        .write_dword((level1_ppn << 12), level1_pte.bits())
+        .unwrap();
 
     // Level 0 - multiple entries
     // Entry 0: RWX page at PPN 0x90000 (address 0x9000_0000)
@@ -35,15 +39,21 @@ fn setup_page_table(memory: &mut PhysicalMemory, root_ppn: u64) {
 
     // Entry 1: RW page at PPN 0x90001 (address 0x9000_1000)
     let pte1 = PageTableEntry::new_leaf(0x90001, PagePermissions::rw(), false);
-    memory.write_dword((level0_ppn << 12) + 8, pte1.bits()).unwrap();
+    memory
+        .write_dword((level0_ppn << 12) + 8, pte1.bits())
+        .unwrap();
 
     // Entry 2: RX page at PPN 0x90002 (address 0x9000_2000)
     let pte2 = PageTableEntry::new_leaf(0x90002, PagePermissions::rx(), false);
-    memory.write_dword((level0_ppn << 12) + 16, pte2.bits()).unwrap();
+    memory
+        .write_dword((level0_ppn << 12) + 16, pte2.bits())
+        .unwrap();
 
     // Entry 3: User RWX page at PPN 0x90003 (address 0x9000_3000)
     let pte3 = PageTableEntry::new_leaf(0x90003, PagePermissions::user_rw(), false);
-    memory.write_dword((level0_ppn << 12) + 24, pte3.bits()).unwrap();
+    memory
+        .write_dword((level0_ppn << 12) + 24, pte3.bits())
+        .unwrap();
 }
 
 #[test]
@@ -512,7 +522,10 @@ fn test_sv48_not_supported() {
 
     let result = translator.translate_with_tlb(request, &mut tlb, &memory);
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), MmuError::UnsupportedMode(TranslationMode::Sv48)));
+    assert!(matches!(
+        result.unwrap_err(),
+        MmuError::UnsupportedMode(TranslationMode::Sv48)
+    ));
 }
 
 #[test]
@@ -537,7 +550,10 @@ fn test_translation_invalid_virtual_address() {
 
     let result = translator.translate_with_tlb(request, &mut tlb, &memory);
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), MmuError::InvalidVirtualAddress(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        MmuError::InvalidVirtualAddress(_)
+    ));
 }
 
 #[test]
@@ -546,7 +562,7 @@ fn test_translation_large_address() {
     let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
     // Root PPN: 0x80000 = address 0x8000_0000
     let root_ppn = 0x80000;
-    
+
     // Setup page table with high VPN
     // Level 1 and Level 0 at consecutive pages
     let level1_ppn = root_ppn + 1;
@@ -554,16 +570,22 @@ fn test_translation_large_address() {
 
     // Root entry for VPN[2] = 1
     let root_pte = PageTableEntry::new_pointer(level1_ppn);
-    memory.write_dword((root_ppn << 12) + 8, root_pte.bits()).unwrap();
+    memory
+        .write_dword((root_ppn << 12) + 8, root_pte.bits())
+        .unwrap();
 
     // Level 1 for VPN[1] = 2
     let level1_pte = PageTableEntry::new_pointer(level0_ppn);
-    memory.write_dword((level1_ppn << 12) + 16, level1_pte.bits()).unwrap();
+    memory
+        .write_dword((level1_ppn << 12) + 16, level1_pte.bits())
+        .unwrap();
 
     // Level 0 for VPN[0] = 3
     // Leaf at PPN 0xA0000 (address 0xA000_0000) - within memory range
     let level0_pte = PageTableEntry::new_leaf(0xA0000, PagePermissions::rwx(), false);
-    memory.write_dword((level0_ppn << 12) + 24, level0_pte.bits()).unwrap();
+    memory
+        .write_dword((level0_ppn << 12) + 24, level0_pte.bits())
+        .unwrap();
 
     let config = MmuConfig::default();
     let translator = AddressTranslator::new(config);

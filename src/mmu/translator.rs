@@ -7,7 +7,7 @@
 //! - Accessed/Dirty bit updates
 
 use super::physical::PhysicalMemoryInterface;
-use super::sv39::{PageTableWalker, Sv39, VirtualAddress, WalkResult};
+use super::sv39::{PageTableWalker, VirtualAddress, WalkResult};
 use super::tlb::{Tlb, TlbEntry};
 use super::{AccessType, MmuConfig, MmuError, PrivilegeMode, Satp, TranslationMode};
 
@@ -31,12 +31,12 @@ pub struct TranslationResult {
 
 /// Address translator
 pub struct AddressTranslator {
-    config: MmuConfig,
+    _config: MmuConfig,
 }
 
 impl AddressTranslator {
     pub fn new(config: MmuConfig) -> Self {
-        Self { config }
+        Self { _config: config }
     }
 
     /// Translate a virtual address to physical address with full TLB support
@@ -60,16 +60,8 @@ impl AddressTranslator {
                 // No translation - return virtual address as physical
                 Ok(request.vaddr)
             }
-            TranslationMode::Sv39 => {
-                self.translate_sv39_with_tlb(request, satp, tlb, memory)
-            }
-            TranslationMode::Sv48 => {
-                if self.config.enable_sv48 {
-                    Err(MmuError::UnsupportedMode(TranslationMode::Sv48))
-                } else {
-                    Err(MmuError::UnsupportedMode(TranslationMode::Sv48))
-                }
-            }
+            TranslationMode::Sv39 => self.translate_sv39_with_tlb(request, satp, tlb, memory),
+            TranslationMode::Sv48 => Err(MmuError::UnsupportedMode(TranslationMode::Sv48)),
             _ => Err(MmuError::UnsupportedMode(satp.mode())),
         }
     }
@@ -123,7 +115,7 @@ impl AddressTranslator {
                 "Page fault at level {} for address 0x{:016x}",
                 level, vaddr
             ))),
-            WalkResult::AccessFault { level } => Err(MmuError::AccessFault(vaddr)),
+            WalkResult::AccessFault { level: _ } => Err(MmuError::AccessFault(vaddr)),
         }
     }
 
@@ -149,7 +141,13 @@ impl AddressTranslator {
     }
 
     /// Create TLB entry from PTE
-    fn create_tlb_entry(&self, vpn: u64, pte: &super::pte::PageTableEntry, asid: u16, level: usize) -> TlbEntry {
+    fn create_tlb_entry(
+        &self,
+        vpn: u64,
+        pte: &super::pte::PageTableEntry,
+        asid: u16,
+        _level: usize,
+    ) -> TlbEntry {
         let ppn = pte.ppn();
         let perms = pte.permissions();
 
@@ -168,7 +166,7 @@ impl AddressTranslator {
     }
 
     /// Legacy translate method (for backward compatibility)
-    /// 
+    ///
     /// Note: This method does not support actual page table walking
     /// as it doesn't have access to physical memory. Use translate_with_tlb
     /// for full translation support.
@@ -202,7 +200,7 @@ impl AddressTranslator {
         memory: &M,
     ) -> Result<u64, MmuError> {
         let satp = Satp(satp);
-        
+
         if satp.mode() != TranslationMode::Sv39 {
             return Err(MmuError::UnsupportedMode(satp.mode()));
         }
@@ -289,10 +287,10 @@ mod tests {
         let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
 
         // Setup a simple 3-level page table
-        let root_ppn = 0x80000;   // Root at 0x8000_0000
+        let root_ppn = 0x80000; // Root at 0x8000_0000
         let level1_ppn = 0x80001; // Level 1 at 0x8000_1000
         let level0_ppn = 0x80002; // Level 0 at 0x8000_2000
-        let data_ppn = 0x90000;   // Data at 0x9000_0000
+        let data_ppn = 0x90000; // Data at 0x9000_0000
 
         // Root page table (level 2) - one entry pointing to level 1 table
         let root_pte = PageTableEntry::new_pointer(level1_ppn);
@@ -300,12 +298,16 @@ mod tests {
 
         // Level 1 page table - one entry pointing to level 0 table
         let level1_pte = PageTableEntry::new_pointer(level0_ppn);
-        memory.write_dword(level1_ppn << 12, level1_pte.bits()).unwrap();
+        memory
+            .write_dword(level1_ppn << 12, level1_pte.bits())
+            .unwrap();
 
         // Level 0 page table - leaf entry for VPN[0] = 1
         // PTE for VPN[0] = 1 is at offset 8 (8 bytes per PTE)
         let level0_pte = PageTableEntry::new_leaf(data_ppn, PagePermissions::rw(), false);
-        memory.write_dword((level0_ppn << 12) + 8, level0_pte.bits()).unwrap();
+        memory
+            .write_dword((level0_ppn << 12) + 8, level0_pte.bits())
+            .unwrap();
 
         // Create SATP value: Sv39 mode (8 << 60), ASID=0, PPN
         let satp = (8u64 << 60) | root_ppn;
@@ -325,7 +327,7 @@ mod tests {
 
         let result = translator.translate_with_tlb(request, &mut tlb, &memory);
         assert!(result.is_ok(), "Translation failed: {:?}", result.err());
-        
+
         // Expected: (data_ppn << 12) | offset = 0x9000_0000 | 0x0 = 0x9000_0000
         assert_eq!(result.unwrap(), 0x9000_0000);
 
@@ -372,8 +374,8 @@ mod tests {
         let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
 
         // Setup simple page table with read-only page (gigapage)
-        let root_ppn = 0x80000;   // Root at 0x8000_0000
-        let data_ppn = 0x90000;   // Data at 0x9000_0000
+        let root_ppn = 0x80000; // Root at 0x8000_0000
+        let data_ppn = 0x90000; // Data at 0x9000_0000
 
         // Leaf entry at root level (gigapage) - read/execute only
         let root_pte = PageTableEntry::new_leaf(data_ppn, PagePermissions::rx(), false);

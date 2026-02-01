@@ -262,7 +262,7 @@ fn test_tlb_statistics() {
     assert_eq!(stats.accesses, 10);
     assert_eq!(stats.hits, 5); // First 5 should hit
     assert_eq!(stats.misses, 5); // Last 5 should miss
-    
+
     let hit_rate = stats.hit_rate();
     assert!((hit_rate - 0.5).abs() < 0.01);
 }
@@ -292,7 +292,7 @@ fn test_tlb_lru_replacement() {
     // Insert a new entry that maps to set 1 (same as VPN 1)
     // VPN 5 % 4 = 1, so it will collide with VPN 1
     let new_entry = TlbEntry {
-        vpn: 5,  // Maps to set 1, same as VPN 1
+        vpn: 5, // Maps to set 1, same as VPN 1
         ppn: 200,
         asid: 0,
         global: false,
@@ -303,10 +303,10 @@ fn test_tlb_lru_replacement() {
 
     // Entry 1 should be replaced (it was LRU in set 1)
     assert!(tlb.lookup(1, 0).is_none());
-    
+
     // Entry 0 should still exist (was accessed recently, different set)
     assert!(tlb.lookup(0, 0).is_some());
-    
+
     // New entry should exist
     assert!(tlb.lookup(5, 0).is_some());
 }

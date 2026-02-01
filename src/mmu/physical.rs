@@ -43,7 +43,7 @@ pub struct MemoryRegion {
 }
 
 /// Physical memory interface
-/// 
+///
 /// This trait defines the interface for accessing physical memory.
 /// Used by the page table walker to read/write page table entries.
 pub trait PhysicalMemoryInterface: Send + Sync {
@@ -58,7 +58,7 @@ pub trait PhysicalMemoryInterface: Send + Sync {
 }
 
 /// Physical memory manager
-/// 
+///
 /// Manages physical RAM and provides access methods with alignment checking.
 pub struct PhysicalMemory {
     regions: Vec<MemoryRegion>,
@@ -79,10 +79,7 @@ impl PhysicalMemory {
     /// let mem = PhysicalMemory::new(0x8000_0000, 0x1000);
     /// ```
     pub fn new(ram_base: u64, ram_size: usize) -> Self {
-        let mut regions = Vec::new();
-
-        // Default RAM region
-        regions.push(MemoryRegion {
+        let regions = vec![MemoryRegion {
             start: ram_base,
             size: ram_size,
             region_type: MemoryRegionType::Ram,
@@ -91,7 +88,7 @@ impl PhysicalMemory {
                 bufferable: true,
                 device: false,
             },
-        });
+        }];
 
         Self {
             regions,
@@ -455,7 +452,7 @@ mod tests {
         assert!(mem.read_dword(0x8000_0001).is_err());
         assert!(mem.write_dword(0x8000_0001, 0).is_err());
         assert!(mem.read_dword(0x8000_0004).is_err()); // 4-byte aligned but not 8-byte aligned
-        assert!(mem.read_dword(0x8000_0008).is_ok());  // 8-byte aligned
+        assert!(mem.read_dword(0x8000_0008).is_ok()); // 8-byte aligned
     }
 
     #[test]
