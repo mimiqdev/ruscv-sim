@@ -193,22 +193,6 @@ impl CompressedDecoder {
         decoder.decode(expanded)
     }
 
-    /// C.LD - Load doubleword (RV64)
-    /// Expands to: ld rd', imm(rs1')
-    fn decode_c_ld(&self, inst: u16) -> Result<DecodedInstruction, DecodeError> {
-        // imm = { 4'b0, inst[6:5], inst[12:10], 3'b000 }
-        let imm = (((inst >> 7) & 0x038) | // inst[12:10] -> imm[5:3]
-                   ((inst << 1) & 0x0C0)) as u32; // inst[6:5] -> imm[7:6]
-
-        let rs1_prime = ((inst >> 7) & 0x7) as u8 + 8;
-        let rd_prime = ((inst >> 2) & 0x7) as u8 + 8;
-
-        // Build 32-bit LD: ld rd', imm(rs1')
-        let expanded = self.build_i_type(Opcode::Load, rd_prime, rs1_prime, Funct3::Slt, imm);
-        let decoder = crate::decode::InstructionDecoder::new();
-        decoder.decode(expanded)
-    }
-
     /// C.SW - Store word (compressed)
     /// Expands to: sw rs2', imm(rs1')
     fn decode_c_sw(&self, inst: u16) -> Result<DecodedInstruction, DecodeError> {
@@ -220,21 +204,6 @@ impl CompressedDecoder {
 
         // Build 32-bit SW: sw rs2', imm(rs1')
         let expanded = self.build_s_type(Opcode::Store, rs1_prime, rs2_prime, Funct3::Sll, imm);
-        let decoder = crate::decode::InstructionDecoder::new();
-        decoder.decode(expanded)
-    }
-
-    /// C.SD - Store doubleword (RV64)
-    /// Expands to: sd rs2', imm(rs1')
-    fn decode_c_sd(&self, inst: u16) -> Result<DecodedInstruction, DecodeError> {
-        // imm = { 4'b0, inst[6:5], inst[12:10], 3'b000 }
-        let imm = (((inst >> 7) & 0x038) | ((inst << 1) & 0x0C0)) as u32;
-
-        let rs1_prime = ((inst >> 7) & 0x7) as u8 + 8;
-        let rs2_prime = ((inst >> 2) & 0x7) as u8 + 8;
-
-        // Build 32-bit SD: sd rs2', imm(rs1')
-        let expanded = self.build_s_type(Opcode::Store, rs1_prime, rs2_prime, Funct3::Slt, imm);
         let decoder = crate::decode::InstructionDecoder::new();
         decoder.decode(expanded)
     }
