@@ -60,40 +60,37 @@ pub enum ExecuteError {
     CsrError(#[from] CsrError),
 }
 
-pub use self::amo::{
-    exec_amoadd, exec_amoand, exec_amomax, exec_amomaxu, exec_amomin, exec_amominu, exec_amoor,
-    exec_amoxor,
+// RV64A re-exports (from isa::rv64a)
+pub use crate::isa::rv64a::{
+    clear_reservation, exec_amoadd, exec_amoand, exec_amomax, exec_amomaxu, exec_amomin,
+    exec_amominu, exec_amoor, exec_amoxor, exec_lr, exec_lr_w, exec_sc, exec_sc_w,
 };
-pub use self::b_type::exec_branch;
-pub use self::d_arith::{exec_fadd_d, exec_fmul_d, exec_fsub_d};
-pub use self::d_classify::exec_fclass_d;
-pub use self::d_compare::{exec_feq_d, exec_fle_d, exec_flt_d};
-pub use self::d_convert::{
-    exec_fcvt_d_l, exec_fcvt_d_lu, exec_fcvt_d_s, exec_fcvt_d_w, exec_fcvt_d_wu, exec_fcvt_l_d,
-    exec_fcvt_lu_d, exec_fcvt_s_d, exec_fcvt_w_d, exec_fcvt_wu_d,
+// RV64I re-exports (from isa::rv64i)
+pub use crate::isa::rv64i::{
+    exec_auipc, exec_branch, exec_jal, exec_jalr, exec_load, exec_lui, exec_op, exec_op_imm,
+    exec_store, exec_system,
 };
-pub use self::d_div_sqrt::{exec_fdiv_d, exec_fsqrt_d};
-pub use self::d_load_store::{exec_fld, exec_fsd as exec_fsd_d};
-pub use self::d_madd::{exec_fmadd_d, exec_fmsub_d, exec_fnmadd_d, exec_fnmsub_d};
-pub use self::div::{exec_div, exec_divu, exec_rem, exec_remu};
-pub use self::f_arith::{exec_fadd_s, exec_fmul_s, exec_fsub_s};
-pub use self::f_classify::exec_fclass_s;
-pub use self::f_compare::{exec_feq_s, exec_fle_s, exec_flt_s};
-pub use self::f_convert::{
-    exec_fcvt_l_s, exec_fcvt_lu_s, exec_fcvt_s_l, exec_fcvt_s_lu, exec_fcvt_s_w, exec_fcvt_s_wu,
-    exec_fcvt_w_s, exec_fcvt_wu_s,
+
+// RV64D re-exports (from isa::rv64d)
+pub use crate::isa::rv64d::{
+    exec_fadd_d, exec_fclass_d, exec_fcvt_d_l, exec_fcvt_d_lu, exec_fcvt_d_s, exec_fcvt_d_w,
+    exec_fcvt_d_wu, exec_fcvt_l_d, exec_fcvt_lu_d, exec_fcvt_s_d, exec_fcvt_w_d, exec_fcvt_wu_d,
+    exec_fdiv_d, exec_feq_d, exec_fld, exec_fle_d, exec_flt_d, exec_fmadd_d, exec_fmsub_d,
+    exec_fmul_d, exec_fnmadd_d, exec_fnmsub_d, exec_fsd as exec_fsd_d, exec_fsqrt_d, exec_fsub_d,
 };
-pub use self::f_div_sqrt::{exec_fdiv_s, exec_fsqrt_s};
-pub use self::f_load_store::{exec_flw, exec_fsw};
-pub use self::f_madd::{exec_fmadd_s, exec_fmsub_s, exec_fnmadd_s, exec_fnmsub_s};
-pub use self::i_type::{exec_load, exec_op_imm};
-pub use self::j_type::{exec_jal, exec_jalr};
-pub use self::lr_sc::{clear_reservation, exec_lr, exec_lr_w, exec_sc, exec_sc_w};
-pub use self::mul::{exec_mul, exec_mulh, exec_mulhsu, exec_mulhu};
-pub use self::r_type::exec_op;
-pub use self::s_type::exec_store;
-pub use self::system::exec_system;
-pub use self::u_type::{exec_auipc, exec_lui};
+
+// RV64F re-exports (from isa::rv64f)
+pub use crate::isa::rv64f::{
+    exec_fadd_s, exec_fclass_s, exec_fcvt_l_s, exec_fcvt_lu_s, exec_fcvt_s_l, exec_fcvt_s_lu,
+    exec_fcvt_s_w, exec_fcvt_s_wu, exec_fcvt_w_s, exec_fcvt_wu_s, exec_fdiv_s, exec_feq_s,
+    exec_fle_s, exec_flt_s, exec_flw, exec_fmadd_s, exec_fmsub_s, exec_fmul_s, exec_fnmadd_s,
+    exec_fnmsub_s, exec_fsqrt_s, exec_fsub_s, exec_fsw,
+};
+
+// RV64M re-exports (from isa::rv64m)
+pub use crate::isa::rv64m::{
+    exec_div, exec_divu, exec_mul, exec_mulh, exec_mulhsu, exec_mulhu, exec_rem, exec_remu,
+};
 
 /// Executor
 #[derive(Debug)]

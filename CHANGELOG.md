@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+
+- **Sprint 8.5: 推广 C 指令模块化模式到所有指令集**
+  - 分析当前 C 指令的组织结构（src/isa/rv64c/）
+  - 设计重构方案：将 RV64I/RV64M/RV64A/RV64F/RV64D 按功能拆分成多个小文件
+  - 参考 C 指令的组织模式，保持 API 兼容性
+  - 规划文档: `docs/sprint-8.5-plan.md`
+  - 预计改动：新增 23 个文件，修改 3 个文件，删除 24 个文件
+  - 时间估算：7-11 小时
+
 ### Added
 
 - RV64I base instruction set support (64-bit integer operations)

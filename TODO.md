@@ -1,78 +1,88 @@
-# Sprint 1 TODO 列表
+# Sprint 8.5 TODO 列表
 
 ## 目标
-完成项目初始化和基础 ISS 框架，支持 RV32I 核心指令。
+推广 C 指令的模块化模式到所有指令集，建立统一的 ISA 模块结构。
 
 ## 任务清单
 
-### 1. 项目初始化 ✅
-- [x] 创建项目目录
-- [x] 初始化 Rust 项目
-- [x] 配置 Cargo.toml 依赖
-- [x] 创建模块结构
+### 1. 规划阶段 ✅
+- [x] 分析当前 C 指令组织结构
+- [x] 分析现有指令集模块结构
+- [x] 设计重构方案
+- [x] 编写详细规划文档
 
-### 2. 核心框架
-- [x] 实现 `CoreState` 核心状态结构
-- [x] 实现 `RiscvCore` 核心执行引擎
-- [x] 实现 `step()` 单步执行
-- [ ] 实现 `run()` 循环执行
-- [ ] 实现异常处理
+### 2. RV64I 重构
+- [ ] 创建 `src/isa/rv64i/` 目录结构
+- [ ] 实现 `mod.rs` 模块入口
+- [ ] 迁移 `r_type.rs` → `alu.rs` + `shift.rs`
+- [ ] 迁移 `i_type.rs` → `load.rs` + `alu.rs` (立即数部分)
+- [ ] 迁移 `s_type.rs` → `store.rs`
+- [ ] 迁移 `b_type.rs` → `branch.rs`
+- [ ] 迁移 `j_type.rs` → `jump.rs`
+- [ ] 迁移 `u_type.rs` → `lui_auipc.rs`
+- [ ] 迁移 `system.rs` → `system.rs`
+- [ ] 更新 `src/isa/mod.rs` 添加 rv64i 模块
 
-### 3. 指令译码
-- [x] 实现 `InstructionDecoder`
-- [x] 支持 R/I/S/B/U/J 格式
-- [x] 实现所有 RV32I 操作码
-- [ ] 添加指令验证
-- [ ] 优化译码性能
+### 3. RV64M 重构
+- [ ] 创建 `src/isa/rv64m/` 目录结构
+- [ ] 实现 `mod.rs` 模块入口
+- [ ] 迁移 `mul.rs` → `mul.rs`
+- [ ] 迁移 `div.rs` → `div.rs`
+- [ ] 更新 `src/isa/mod.rs` 添加 rv64m 模块
 
-### 4. 指令执行
-- [x] 实现 `Executor`
-- [x] 实现算术/逻辑指令 (ADD, SUB, AND, OR, XOR, SLL, SRL, SRA)
-- [x] 实现立即数指令
-- [x] 实现加载/存储指令
-- [x] 实现分支指令
-- [x] 实现跳转指令
-- [ ] 实现 CSR 指令
-- [ ] 实现系统指令 (ECALL, EBREAK)
+### 4. RV64A 重构
+- [ ] 创建 `src/isa/rv64a/` 目录结构
+- [ ] 实现 `mod.rs` 模块入口
+- [ ] 迁移 `lr_sc.rs` → `lr_sc.rs`
+- [ ] 迁移 `amo.rs` → `amo.rs`
+- [ ] 更新 `src/isa/mod.rs` 添加 rv64a 模块
 
-### 5. 存储器接口
-- [x] 实现 `MemoryInterface` Trait
-- [x] 实现 `SimpleMemory`
-- [x] 支持字节/半字/字访问
-- [ ] 实现对齐检查
-- [ ] 实现内存映射 I/O
+### 5. RV64F 重构
+- [ ] 创建 `src/isa/rv64f/` 目录结构
+- [ ] 实现 `mod.rs` 模块入口
+- [ ] 迁移 `f_arith.rs` → `arith.rs`
+- [ ] 迁移 `f_load_store.rs` → `load_store.rs`
+- [ ] 迁移 `f_compare.rs` → `compare.rs`
+- [ ] 迁移 `f_convert.rs` → `convert.rs`
+- [ ] 迁移 `f_classify.rs` → `classify.rs`
+- [ ] 迁移 `f_div_sqrt.rs` → `div_sqrt.rs`
+- [ ] 迁移 `f_madd.rs` → `madd.rs`
+- [ ] 更新 `src/isa/mod.rs` 添加 rv64f 模块
 
-### 6. TLM2.0 接口
-- [x] 实现 `TlmInterface`
-- [x] 实现 `TlmGenericPayload`
-- [x] 实现 `TlmSimpleMemory`
-- [ ] 实现阻塞传输 (b_transport)
-- [ ] 实现非阻塞传输 (nb_transport)
-- [ ] 实现时间建模
+### 6. RV64D 重构
+- [ ] 创建 `src/isa/rv64d/` 目录结构
+- [ ] 实现 `mod.rs` 模块入口
+- [ ] 迁移 `d_arith.rs` → `arith.rs`
+- [ ] 迁移 `d_load_store.rs` → `load_store.rs`
+- [ ] 迁移 `d_compare.rs` → `compare.rs`
+- [ ] 迁移 `d_convert.rs` → `convert.rs`
+- [ ] 迁移 `d_classify.rs` → `classify.rs`
+- [ ] 迁移 `d_div_sqrt.rs` → `div_sqrt.rs`
+- [ ] 迁移 `d_madd.rs` → `madd.rs`
+- [ ] 更新 `src/isa/mod.rs` 添加 rv64d 模块
 
-### 7. 测试覆盖
-- [x] 单元测试框架
-- [x] 译码测试
-- [x] 执行测试
-- [x] 存储器测试
-- [ ] TLM 测试
-- [ ] 集成测试
+### 7. 兼容层更新
+- [ ] 更新 `src/execute/mod.rs` 添加 re-exports
+- [ ] 验证所有现有 API 可用
+- [ ] 验证测试无需修改即可通过
 
-### 8. 文档和演示
-- [x] README.md
-- [x] 代码注释
-- [ ] API 文档
-- [ ] 原型演示程序
+### 8. 验证与清理
+- [ ] 运行 `cargo fmt` 格式化
+- [ ] 运行 `cargo clippy` 检查
+- [ ] 运行 `cargo test` 验证所有测试
+- [ ] 更新相关文档
+- [ ] 删除旧文件
 
 ## 验收标准
 
-1. 项目可成功构建 (`cargo build`)
-2. 所有单元测试通过 (`cargo test`)
-3. 可执行简单测试程序 (LUI, ADD 等)
-4. 代码覆盖率 > 80%
+1. [ ] 项目可成功构建 (`cargo build`)
+2. [ ] 所有单元测试通过 (`cargo test --lib`)
+3. [ ] 所有集成测试通过 (`cargo test --test '*'`)
+4. [ ] `cargo fmt` 检查通过
+5. [ ] `cargo clippy` 检查通过
+6. [ ] API 保持向后兼容
 
-## 下一阶段规划
+## 参考文档
 
-- Sprint 2: 完整 RV32I 实现 + 性能优化
-- Sprint 3: 中断/异常处理
-- Sprint 4: 外设模型集成
+- 详细规划文档: `docs/sprint-8.5-plan.md`
+- C 指令模块模式: `src/isa/rv64c/`
