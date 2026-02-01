@@ -23,6 +23,10 @@ pub enum COpcode {
     CLd,       // Load double (RV64)
     CSw,       // Store word
     CSd,       // Store double (RV64)
+    CFld,      // Load float double (RV64D)
+    CFlw,      // Load float word (RV64F)
+    CFsd,      // Store float double (RV64D)
+    CFsw,      // Store float word (RV64F)
     CAddi4Spn, // Add immediate to sp (scaled)
 
     // C1 Quadrant (01)
@@ -101,12 +105,13 @@ impl CompressedDecoder {
 
         match funct3 {
             0b000 => self.decode_c_addi4spn(inst),
-            0b001 => self.decode_c_ld(inst),
-            0b010 => self.decode_c_lw(inst),
-            0b011 => self.decode_c_ld(inst), // c.ld for RV64
-            0b101 => self.decode_c_sd(inst),
-            0b110 => self.decode_c_sw(inst),
-            0b111 => self.decode_c_sd(inst), // c.sd for RV64
+            0b001 => self.decode_c_fld(inst),  // C.FLD (RV64D)
+            0b010 => self.decode_c_lw(inst),   // C.LW
+            0b011 => self.decode_c_flw(inst),  // C.FLW (RV64F)
+            0b100 => Err(DecodeError::ReservedInstruction),
+            0b101 => self.decode_c_fsd(inst),  // C.FSD (RV64D)
+            0b110 => self.decode_c_sw(inst),   // C.SW
+            0b111 => self.decode_c_fsw(inst),  // C.FSW (RV64F)
             _ => Err(DecodeError::ReservedInstruction),
         }
     }
@@ -192,8 +197,8 @@ impl CompressedDecoder {
     /// Expands to: ld rd', imm(rs1')
     fn decode_c_ld(&self, inst: u16) -> Result<DecodedInstruction, DecodeError> {
         // imm = { 4'b0, inst[6:5], inst[12:10], 3'b000 }
-        let imm = (((inst >> 7) & 0x038) | // bits 5:3 -> bits 5:3
-                   ((inst >> 4) & 0x0C0)) as u32; // bits 7:6 -> bits 7:6
+        let imm = (((inst >> 7) & 0x038) | // inst[12:10] -> imm[5:3]
+                   ((inst << 1) & 0x0C0)) as u32; // inst[6:5] -> imm[7:6]
 
         let rs1_prime = ((inst >> 7) & 0x7) as u8 + 8;
         let rd_prime = ((inst >> 2) & 0x7) as u8 + 8;
@@ -223,13 +228,83 @@ impl CompressedDecoder {
     /// Expands to: sd rs2', imm(rs1')
     fn decode_c_sd(&self, inst: u16) -> Result<DecodedInstruction, DecodeError> {
         // imm = { 4'b0, inst[6:5], inst[12:10], 3'b000 }
-        let imm = (((inst >> 7) & 0x038) | ((inst >> 4) & 0x0C0)) as u32;
+        let imm = (((inst >> 7) & 0x038) | ((inst << 1) & 0x0C0)) as u32;
 
         let rs1_prime = ((inst >> 7) & 0x7) as u8 + 8;
         let rs2_prime = ((inst >> 2) & 0x7) as u8 + 8;
 
         // Build 32-bit SD: sd rs2', imm(rs1')
         let expanded = self.build_s_type(Opcode::Store, rs1_prime, rs2_prime, Funct3::Slt, imm);
+        let decoder = crate::decode::InstructionDecoder::new();
+        decoder.decode(expanded)
+    }
+
+    /// C.FLD - Load double-precision floating-point (compressed)
+    /// Expands to: fld rd', imm(rs1')
+    fn decode_c_fld(&self, inst: u16) -> Result<DecodedInstruction, DecodeError> {
+        // imm = { 4'b0, inst[6:5], inst[12:10], 3'b000 }
+        let imm = (((inst >> 7) & 0x038) | // inst[12:10] -> imm[5:3]
+                   ((inst << 1) & 0x0C0)) as u32; // inst[6:5] -> imm[7:6]
+
+        let rs1_prime = ((inst >> 7) & 0x7) as u8 + 8; // rs1' = 8-15
+        let rd_prime = ((inst >> 2) & 0x7) as u8 + 8;  // rd' = 8-15 (FP register)
+
+        // Build 32-bit FLD: fld rd', imm(rs1')
+        // FLD is I-type: opcode=000_0111 (LoadFp), funct3=011 (D)
+        let expanded = self.build_i_type(Opcode::LoadFp, rd_prime, rs1_prime, Funct3::Sltu, imm);
+        let decoder = crate::decode::InstructionDecoder::new();
+        decoder.decode(expanded)
+    }
+
+    /// C.FLW - Load single-precision floating-point (compressed)
+    /// Expands to: flw rd', imm(rs1')
+    fn decode_c_flw(&self, inst: u16) -> Result<DecodedInstruction, DecodeError> {
+        // imm = { 5'b0, inst[5], inst[12:10], inst[6], 2'b00 }
+        let imm = (((inst >> 4) & 0x40) |  // bit 6 -> becomes bit 6
+                   ((inst >> 7) & 0x038) | // bits 5:3 -> bits 5:3
+                   ((inst << 1) & 0x080)) as u32; // bit 5 -> bit 7
+
+        let rs1_prime = ((inst >> 7) & 0x7) as u8 + 8; // rs1' = 8-15
+        let rd_prime = ((inst >> 2) & 0x7) as u8 + 8;  // rd' = 8-15 (FP register)
+
+        // Build 32-bit FLW: flw rd', imm(rs1')
+        // FLW is I-type: opcode=000_0111 (LoadFp), funct3=010 (W)
+        let expanded = self.build_i_type(Opcode::LoadFp, rd_prime, rs1_prime, Funct3::Slt, imm);
+        let decoder = crate::decode::InstructionDecoder::new();
+        decoder.decode(expanded)
+    }
+
+    /// C.FSD - Store double-precision floating-point (compressed)
+    /// Expands to: fsd rs2', imm(rs1')
+    fn decode_c_fsd(&self, inst: u16) -> Result<DecodedInstruction, DecodeError> {
+        // imm = { 4'b0, inst[6:5], inst[12:10], 3'b000 }
+        let imm = (((inst >> 7) & 0x038) | // inst[12:10] -> imm[5:3]
+                   ((inst << 1) & 0x0C0)) as u32; // inst[6:5] -> imm[7:6]
+
+        let rs1_prime = ((inst >> 7) & 0x7) as u8 + 8; // rs1' = 8-15
+        let rs2_prime = ((inst >> 2) & 0x7) as u8 + 8; // rs2' = 8-15 (FP register)
+
+        // Build 32-bit FSD: fsd rs2', imm(rs1')
+        // FSD is S-type: opcode=010_0111 (StoreFp), funct3=011 (D)
+        let expanded = self.build_s_type(Opcode::StoreFp, rs1_prime, rs2_prime, Funct3::Sltu, imm);
+        let decoder = crate::decode::InstructionDecoder::new();
+        decoder.decode(expanded)
+    }
+
+    /// C.FSW - Store single-precision floating-point (compressed)
+    /// Expands to: fsw rs2', imm(rs1')
+    fn decode_c_fsw(&self, inst: u16) -> Result<DecodedInstruction, DecodeError> {
+        // imm = { 5'b0, inst[5], inst[12:10], inst[6], 2'b00 }
+        let imm = (((inst >> 4) & 0x40) |  // bit 6 -> becomes bit 6
+                   ((inst >> 7) & 0x038) | // bits 5:3 -> bits 5:3
+                   ((inst << 1) & 0x080)) as u32; // bit 5 -> bit 7
+
+        let rs1_prime = ((inst >> 7) & 0x7) as u8 + 8; // rs1' = 8-15
+        let rs2_prime = ((inst >> 2) & 0x7) as u8 + 8; // rs2' = 8-15 (FP register)
+
+        // Build 32-bit FSW: fsw rs2', imm(rs1')
+        // FSW is S-type: opcode=010_0111 (StoreFp), funct3=010 (W)
+        let expanded = self.build_s_type(Opcode::StoreFp, rs1_prime, rs2_prime, Funct3::Slt, imm);
         let decoder = crate::decode::InstructionDecoder::new();
         decoder.decode(expanded)
     }

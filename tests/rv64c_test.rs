@@ -4,12 +4,13 @@
 //! including decoding and execution.
 
 use ruscv_sim::core::CoreState;
+use ruscv_sim::fpu::Fpr;
 use ruscv_sim::isa::rv64c::{
     exec_c_add, exec_c_addi, exec_c_addi16sp, exec_c_addi4spn, exec_c_addiw, exec_c_addw,
-    exec_c_and, exec_c_andi, exec_c_beqz, exec_c_bnez, exec_c_ebreak, exec_c_j, exec_c_jalr,
-    exec_c_jr, exec_c_ld, exec_c_ldsp, exec_c_li, exec_c_lui, exec_c_lw, exec_c_mv,
-    exec_c_nop, exec_c_or, exec_c_sd, exec_c_sdsp, exec_c_slli, exec_c_srai, exec_c_srli,
-    exec_c_sub, exec_c_subw, exec_c_sw, exec_c_xor, CompressedDecoder,
+    exec_c_and, exec_c_andi, exec_c_beqz, exec_c_bnez, exec_c_ebreak, exec_c_fld, exec_c_flw,
+    exec_c_fsd, exec_c_fsw, exec_c_j, exec_c_jalr, exec_c_jr, exec_c_ld, exec_c_ldsp, exec_c_li,
+    exec_c_lui, exec_c_lw, exec_c_mv, exec_c_nop, exec_c_or, exec_c_sd, exec_c_sdsp, exec_c_slli,
+    exec_c_srai, exec_c_srli, exec_c_sub, exec_c_subw, exec_c_sw, exec_c_xor, CompressedDecoder,
 };
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 
@@ -409,4 +410,228 @@ fn test_c_integration_conditional_loop() {
     state.pc = 0x100;
     exec_c_bnez(8, 16, &mut state).unwrap();
     assert_eq!(state.pc, 0x100); // Branch not taken, exit loop
+}
+
+// ============== Floating-Point Compressed Instruction Tests ==============
+
+#[test]
+fn test_decode_c_fld() {
+    let decoder = CompressedDecoder::new();
+    // C.FLD f8, 8(x9): funct3=001, rs1'=001 (x9), rd'=000 (f8), offset=8
+    // Layout: [15:13]=funct3, [12:10]=offset[5:3], [9:7]=rs1', [6:5]=offset[7:6], [4:2]=rd', [1:0]=00
+    // Binary: 001_001_001_00_000_00 = 0x2480
+    let inst: u16 = 0x2480;
+    let result = decoder.decode_16bit(inst);
+    assert!(result.is_ok(), "Failed to decode C.FLD: {:?}", result);
+    let decoded = result.unwrap();
+    assert_eq!(decoded.opcode, ruscv_sim::decode::Opcode::LoadFp);
+    assert_eq!(decoded.rd, Some(8)); // f8
+    assert_eq!(decoded.rs1, Some(9)); // x9
+}
+
+#[test]
+fn test_decode_c_flw() {
+    let decoder = CompressedDecoder::new();
+    // C.FLW f9, 4(x8): funct3=011, rs1'=000 (x8), rd'=001 (f9), offset=4
+    // Layout: [15:13]=funct3, [12:10]=offset[4:2], [9:7]=rs1', [6:5]=?, [4:2]=rd', [1:0]=00
+    // Binary: 011_001_000_00_001_00 = 0x6404
+    let inst: u16 = 0x6404;
+    let result = decoder.decode_16bit(inst);
+    assert!(result.is_ok(), "Failed to decode C.FLW: {:?}", result);
+    let decoded = result.unwrap();
+    assert_eq!(decoded.opcode, ruscv_sim::decode::Opcode::LoadFp);
+    assert_eq!(decoded.rd, Some(9)); // f9
+    assert_eq!(decoded.rs1, Some(8)); // x8
+}
+
+#[test]
+fn test_decode_c_fsd() {
+    let decoder = CompressedDecoder::new();
+    // C.FSD f9, 16(x10): funct3=101, rs1'=010 (x10), rs2'=001 (f9), offset=16
+    // Layout: [15:13]=funct3, [12:10]=offset[5:3], [9:7]=rs1', [6:5]=offset[7:6], [4:2]=rs2', [1:0]=00
+    // offset=16=0b10000, offset[7:6]=00, offset[5:3]=010
+    // Binary: 101_010_010_00_001_00 = 0xA904
+    let inst: u16 = 0xA904;
+    let result = decoder.decode_16bit(inst);
+    assert!(result.is_ok(), "Failed to decode C.FSD: {:?}", result);
+    let decoded = result.unwrap();
+    assert_eq!(decoded.opcode, ruscv_sim::decode::Opcode::StoreFp);
+    assert_eq!(decoded.rs1, Some(10)); // x10
+    assert_eq!(decoded.rs2, Some(9)); // f9
+}
+
+#[test]
+fn test_decode_c_fsw() {
+    let decoder = CompressedDecoder::new();
+    // C.FSW f11, 8(x8): funct3=111, rs1'=000 (x8), rs2'=011 (f11), offset=8
+    // Layout: [15:13]=funct3, [12:10]=offset[5:3], [9:7]=rs1', [6:5]=offset[7:6], [4:2]=rs2', [1:0]=00
+    // offset=8=0b1000, offset[7:6]=00, offset[5:3]=001
+    // Binary: 111_001_000_00_011_00 = 0xE40C
+    let inst: u16 = 0xE40C;
+    let result = decoder.decode_16bit(inst);
+    assert!(result.is_ok(), "Failed to decode C.FSW: {:?}", result);
+    let decoded = result.unwrap();
+    assert_eq!(decoded.opcode, ruscv_sim::decode::Opcode::StoreFp);
+    assert_eq!(decoded.rs1, Some(8)); // x8
+    assert_eq!(decoded.rs2, Some(11)); // f11
+}
+
+#[test]
+fn test_c_fld_integration() {
+    let (mut state, mut mem) = setup_test();
+
+    // Set up base address
+    state.regs[8] = 0x1000;
+
+    // Write a double value to memory
+    let test_value: f64 = std::f64::consts::PI;
+    let bits = test_value.to_bits();
+    mem.write_word(0x1000, bits as u32).unwrap();
+    mem.write_word(0x1004, (bits >> 32) as u32).unwrap();
+
+    // Execute C.FLD f8, 0(x8)
+    exec_c_fld(0, 0, 0, &mut state, &mut mem).unwrap();
+
+    // Verify the value was loaded
+    let loaded_bits = state.fpr.read(8).bits();
+    assert_eq!(loaded_bits, test_value.to_bits());
+}
+
+#[test]
+fn test_c_flw_integration() {
+    let (mut state, mut mem) = setup_test();
+
+    // Set up base address
+    state.regs[9] = 0x1000;
+
+    // Write a float value to memory
+    let test_value: f32 = std::f32::consts::PI;
+    mem.write_word(0x1000, test_value.to_bits()).unwrap();
+
+    // Execute C.FLW f9, 0(x9)
+    exec_c_flw(1, 1, 0, &mut state, &mut mem).unwrap();
+
+    // Verify the value was loaded and NaN-boxed
+    let loaded = state.fpr.read(9).get();
+    assert!((loaded - test_value).abs() < 1e-5);
+    assert!(state.fpr.read(9).is_nan_boxed());
+}
+
+#[test]
+fn test_c_fsd_integration() {
+    let (mut state, mut mem) = setup_test();
+
+    // Set up registers
+    state.regs[8] = 0x1000; // base
+    let test_value: f64 = std::f64::consts::E;
+    state.fpr.write(9, Fpr::from_bits(test_value.to_bits())); // value to store
+
+    // Execute C.FSD f9, 0(x8)
+    exec_c_fsd(0, 1, 0, &mut state, &mut mem).unwrap();
+
+    // Verify memory
+    let low = mem.read_word(0x1000).unwrap();
+    let high = mem.read_word(0x1004).unwrap();
+    let stored_bits = ((high as u64) << 32) | (low as u64);
+    assert_eq!(stored_bits, test_value.to_bits());
+}
+
+#[test]
+fn test_c_fsw_integration() {
+    let (mut state, mut mem) = setup_test();
+
+    // Set up registers
+    state.regs[9] = 0x1000; // base
+    let test_value: f32 = std::f32::consts::E;
+    state.fpr.write(10, Fpr::new(test_value)); // value to store (NaN-boxed)
+
+    // Execute C.FSW f10, 0(x9)
+    exec_c_fsw(1, 2, 0, &mut state, &mut mem).unwrap();
+
+    // Verify memory
+    let stored = mem.read_word(0x1000).unwrap();
+    assert_eq!(stored, test_value.to_bits());
+}
+
+#[test]
+fn test_c_fld_fsd_roundtrip_integration() {
+    let (mut state, mut mem) = setup_test();
+
+    // Set up base address
+    state.regs[8] = 0x1000;
+
+    // Write a double value to FPR
+    let test_value: f64 = std::f64::consts::PI;
+    state.fpr.write(9, Fpr::from_bits(test_value.to_bits()));
+
+    // Store to memory using C.FSD
+    exec_c_fsd(0, 1, 0, &mut state, &mut mem).unwrap();
+
+    // Load from memory using C.FLD into different register
+    exec_c_fld(2, 0, 0, &mut state, &mut mem).unwrap();
+
+    // Verify the roundtrip preserved the value
+    let loaded_bits = state.fpr.read(10).bits(); // rd'=2 -> f10
+    assert_eq!(loaded_bits, test_value.to_bits());
+}
+
+#[test]
+fn test_c_flw_fsw_roundtrip_integration() {
+    let (mut state, mut mem) = setup_test();
+
+    // Set up base address
+    state.regs[8] = 0x1000;
+
+    // Write a float value to FPR
+    let test_value: f32 = std::f32::consts::PI;
+    state.fpr.write(9, Fpr::new(test_value));
+
+    // Store to memory using C.FSW
+    exec_c_fsw(0, 1, 0, &mut state, &mut mem).unwrap();
+
+    // Load from memory using C.FLW into different register
+    exec_c_flw(2, 0, 0, &mut state, &mut mem).unwrap();
+
+    // Verify the roundtrip preserved the value
+    let loaded = state.fpr.read(10).get(); // rd'=2 -> f10
+    assert!((loaded - test_value).abs() < 1e-5);
+}
+
+#[test]
+fn test_c_float_with_offset() {
+    let (mut state, mut mem) = setup_test();
+
+    // Set up base address
+    state.regs[8] = 0x1000;
+
+    // Test C.FLD with offset
+    let test_value: f64 = 1.23456789;
+    let bits = test_value.to_bits();
+    mem.write_word(0x1008, bits as u32).unwrap();
+    mem.write_word(0x100C, (bits >> 32) as u32).unwrap();
+
+    exec_c_fld(0, 0, 8, &mut state, &mut mem).unwrap();
+    assert_eq!(state.fpr.read(8).bits(), test_value.to_bits());
+
+    // Test C.FLW with offset
+    let test_value_f32: f32 = 9.876543;
+    mem.write_word(0x1010, test_value_f32.to_bits()).unwrap();
+
+    exec_c_flw(1, 0, 16, &mut state, &mut mem).unwrap();
+    assert!((state.fpr.read(9).get() - test_value_f32).abs() < 1e-5);
+}
+
+#[test]
+fn test_c_float_misaligned_access() {
+    let (mut state, mut mem) = setup_test();
+
+    // Test C.FLD misaligned (8-byte alignment required)
+    state.regs[8] = 0x1001;
+    let result = exec_c_fld(0, 0, 0, &mut state, &mut mem);
+    assert!(result.is_err());
+
+    // Reset and test C.FLW misaligned (4-byte alignment required)
+    state.regs[8] = 0x1001;
+    let result = exec_c_flw(0, 0, 0, &mut state, &mut mem);
+    assert!(result.is_err());
 }
