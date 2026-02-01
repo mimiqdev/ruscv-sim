@@ -1204,6 +1204,22 @@ proptest! {
 
 ### 8.4 测试增强 (Testing Enhancements)
 
+#### 64-bit 专用集成测试 (64-bit Integration Tests)
+- **状态**: PR #4 Review 提出  
+- **优先级**: 中  
+- **描述**: 针对 RV64I 64位特性的专项集成测试
+- **测试场景**:
+  - 64位地址空间边界测试 (0x0000_0000_0000_0000 到 0xFFFF_FFFF_FFFF_FFFF)
+  - 大立即数处理 (超过 32-bit 范围的立即数)
+  - 符号扩展行为验证 (32-bit 结果符号扩展到 64-bit)
+  - 64位算术溢出测试 (ADD/SUB 64-bit overflow)
+  - 大偏移量分支跳转 (超过 32-bit 寻址范围)
+  - 64位 CSR 读写测试 (mstatus 高 32 位，sxl/uxl 字段)
+  - 混合 32/64 位指令序列测试
+- **依赖**: RV64I 基础指令完成  
+- **估计工时**: 16h  
+- **参考**: PR #4 Review Feedback Item 4
+
 #### Proptest 集成
 - **状态**: 建议实现  
 - **优先级**: 低  

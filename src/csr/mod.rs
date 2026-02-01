@@ -209,9 +209,29 @@ impl CsrFile {
                 return Err(CsrError::ReadOnly(addr));
             }
             machine::MSTATUS => {
-                // Mask reserved bits in MSTATUS for RV64
-                // Key writable bits: SD(63), SXL/UXL(35:32), MPP(12:11), MPIE(7), MIE(3), SPIE(5), SIE(1)
-                let masked = value & 0x8000_0003_000D_FFEA; // RV64 mstatus mask (includes MPP)
+                // MSTATUS mask for RV64 - RISC-V Privileged Spec Section 3.1.6
+                //
+                // Mask value: 0x8000_0003_000D_FFEA
+                // Bit breakdown:
+                // - Bit 63 (SD):    0x8000_0000_0000_0000 - State Dirty (read-only, set by hardware)
+                // - Bits 35:34 (SXL): 0x0000_0002_0000_0000 - Supervisor XLEN (WARL)
+                // - Bits 33:32 (UXL): 0x0000_0001_0000_0000 - User XLEN (WARL)
+                // - Bit 22 (TSR):   0x0000_0000_0040_0000 - Trap SRET (writable)
+                // - Bit 21 (TW):    0x0000_0000_0020_0000 - Timeout Wait (writable)
+                // - Bit 20 (TVM):   0x0000_0000_0010_0000 - Trap Virtual Memory (writable)
+                // - Bit 18 (MXR):   0x0000_0000_0004_0000 - Make Executable Readable (writable)
+                // - Bit 17 (SUM):   0x0000_0000_0002_0000 - Supervisor User Memory (writable)
+                // - Bit 13 (FS):    0x0000_0000_0000_2000 - Floating-point State (writable)
+                // - Bits 12:11 (MPP): 0x0000_0000_0000_1800 - Machine Previous Privilege (writable)
+                // - Bit 8 (SPP):    0x0000_0000_0000_0100 - Supervisor Previous Privilege (writable)
+                // - Bit 7 (MPIE):   0x0000_0000_0000_0080 - Machine Previous Interrupt Enable (writable)
+                // - Bit 5 (SPIE):   0x0000_0000_0000_0020 - Supervisor Previous Interrupt Enable (writable)
+                // - Bit 3 (MIE):    0x0000_0000_0000_0008 - Machine Interrupt Enable (writable)
+                // - Bit 1 (SIE):    0x0000_0000_0000_0002 - Supervisor Interrupt Enable (writable)
+                //
+                // Reserved bits (not in mask): Bits 62:36, 31:23, 19, 16:14, 10:9, 6, 4, 2, 0
+                const MSTATUS_MASK_RV64: u64 = 0x8000_0003_000D_FFEA;
+                let masked = value & MSTATUS_MASK_RV64;
                 self.csrs.insert(addr, masked);
             }
             _ => {

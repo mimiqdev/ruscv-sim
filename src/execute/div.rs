@@ -32,11 +32,13 @@ pub fn exec_div(
     let divisor = state.regs[rs2] as i64;
 
     let result = if divisor == 0 {
-        // Division by zero: all ones (-1)
+        // Division by zero: return -1 (all ones)
+        // RISC-V Spec: "Division by zero returns all ones (i.e. -1)"
         -1i64 as u64
     } else if dividend == i64::MIN && divisor == -1 {
-        // Overflow: -2^63 / -1 = 2^63, doesn't fit in 64-bit signed
-        // In RISC-V, this results in -2^63
+        // Overflow case: -2^63 / -1 = 2^63, which doesn't fit in signed 64-bit
+        // RISC-V Spec (RV64): "The quotient of MIN_VALUE / -1 is MIN_VALUE"
+        // This matches x86 behavior and avoids undefined behavior from hardware
         i64::MIN as u64
     } else {
         (dividend / divisor) as u64
