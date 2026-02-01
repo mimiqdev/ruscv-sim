@@ -7,8 +7,8 @@ use ruscv_sim::core::CoreState;
 use ruscv_sim::isa::rv64c::{
     exec_c_add, exec_c_addi, exec_c_addi16sp, exec_c_addi4spn, exec_c_addiw, exec_c_addw,
     exec_c_and, exec_c_andi, exec_c_ebreak, exec_c_jalr, exec_c_jr, exec_c_ld, exec_c_ldsp,
-    exec_c_li, exec_c_lui, exec_c_lw, exec_c_lwsp, exec_c_mv, exec_c_or, exec_c_sd, exec_c_sdsp,
-    exec_c_slli, exec_c_srai, exec_c_srli, exec_c_sub, exec_c_subw, exec_c_sw, exec_c_swsp,
+    exec_c_li, exec_c_lui, exec_c_lw, exec_c_mv, exec_c_or, exec_c_sd, exec_c_sdsp,
+    exec_c_slli, exec_c_srai, exec_c_srli, exec_c_sub, exec_c_subw, exec_c_sw,
     exec_c_xor, CompressedDecoder,
 };
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
@@ -40,7 +40,7 @@ fn test_decode_c_addi() {
     let decoder = CompressedDecoder::new();
     // C.ADDI x5, 10: funct3=000, rd=00101, nzimm=01010, quadrant=01
     // Binary: 000_0_00101_01010_01 = 0x02A5
-    let inst: u16 = 0b000_0_00101_01010_01;
+    let inst: u16 = 0b0000_0010_1010_1001;
     let decoded = decoder.decode_16bit(inst).unwrap();
 
     assert_eq!(decoded.rd, Some(5));
@@ -51,7 +51,7 @@ fn test_decode_c_addi() {
 fn test_decode_c_lw() {
     let decoder = CompressedDecoder::new();
     // C.LW x8, 4(x9): funct3=010, rs1'=01001, rd'=000, offset
-    let inst: u16 = 0b010_0_01001_000_00_00;
+    let inst: u16 = 0b0100_0100_1000_0000;
     let result = decoder.decode_16bit(inst);
     assert!(result.is_ok());
 }

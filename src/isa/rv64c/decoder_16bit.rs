@@ -792,7 +792,7 @@ mod tests {
         // C.ADDI is in C1 quadrant (01)
         // Encoded: funct3=000, inst[12]=nzimm[5], inst[11:7]=rd, inst[6:2]=nzimm[4:0], inst[1:0]=01
         // Binary: 000_0_00001_00001_01 = 0x0085
-        let inst: u16 = 0b000_0_00001_00001_01;
+        let inst: u16 = 0b0000_0000_1000_0101;
         let result = decoder.decode_16bit(inst);
         assert!(result.is_ok());
         let decoded = result.unwrap();
