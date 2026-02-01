@@ -77,7 +77,11 @@ pub fn exec_fcvt_w_d(
 
     if val.is_infinite() {
         state.fcsr.set_flag(FpFlags::NV);
-        state.regs[rd as usize] = if val < 0.0 { 0x80000000_u64 } else { 0x7FFFFFFF_u64 };
+        state.regs[rd as usize] = if val < 0.0 {
+            0x80000000_u64
+        } else {
+            0x7FFFFFFF_u64
+        };
         return Ok(());
     }
 

@@ -83,7 +83,7 @@ pub fn exec_op_imm(
     // Sign-extend the 12-bit immediate to 64 bits
     let imm_sext = ((imm as i32) << 20 >> 20) as i64;
     // Extract shamt from imm[5:0] for shift instructions (RV64I uses 6-bit shamt)
-    let shamt = (imm & 0x3F) as u32;
+    let shamt = imm & 0x3F;
 
     let result: i64 = match funct3 {
         // ADDI (add immediate)

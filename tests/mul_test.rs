@@ -368,7 +368,11 @@ fn test_mul_random_values() {
         let mut mem = SimpleMemory::new(0x1000);
 
         ruscv_sim::execute::mul::exec_mul(&instr, &mut state, &mut mem).unwrap();
-        assert_eq!(state.regs[3], expected as u64, "Failed for {} * {}", rs1, rs2);
+        assert_eq!(
+            state.regs[3], expected as u64,
+            "Failed for {} * {}",
+            rs1, rs2
+        );
     }
 }
 

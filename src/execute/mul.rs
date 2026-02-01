@@ -110,7 +110,7 @@ pub fn exec_mulhsu(
 
     let a = state.regs[rs1] as i64 as i128;
     let b = state.regs[rs2] as u128;
-    let result = ((a as i128 * b as i128) >> 64) as u64;
+    let result = ((a * b as i128) >> 64) as u64;
 
     if rd != 0 {
         state.regs[rd] = result;

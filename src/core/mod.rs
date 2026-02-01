@@ -124,7 +124,7 @@ impl RiscvCore {
                 .instruction_mem
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Failed to lock instruction memory"))?;
-            mem.read_word(self.state.pc as u64)?
+            mem.read_word(self.state.pc)?
         };
 
         // 2. Decode
