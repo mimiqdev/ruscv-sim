@@ -3,9 +3,6 @@
 //!
 //! Instruction execution dispatcher with re-exports from ISA modules.
 
-// Re-export LR/SC module (re-export pattern from isa::rv64a)
-pub mod lr_sc;
-
 use crate::core::CoreState;
 use crate::csr::CsrError;
 use crate::decode::Funct3;
