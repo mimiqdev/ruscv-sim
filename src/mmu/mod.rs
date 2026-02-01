@@ -25,10 +25,11 @@
 //! # Example Usage
 //!
 //! ```rust
-//! use ruscv_sim::mmu::{Mmu, MmuConfig, TranslationRequest};
+//! use ruscv_sim::mmu::{Mmu, MmuConfig, TranslationRequest, AccessType};
+//! use ruscv_sim::core::PrivilegeMode;
 //!
 //! // Create MMU with default configuration
-//! let mut mmu = Mmu::new(MmuConfig::default());
+//! let mmu = Mmu::new(MmuConfig::default());
 //!
 //! // Perform address translation
 //! let request = TranslationRequest {
@@ -36,6 +37,7 @@
 //!     access_type: AccessType::Read,
 //!     privilege: PrivilegeMode::Supervisor,
 //!     satp: 0x8000_0000_0000_0000, // Sv39 mode
+//!     mstatus: 0,
 //! };
 //!
 //! match mmu.translate(request) {

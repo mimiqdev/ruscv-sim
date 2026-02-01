@@ -454,7 +454,8 @@ mod tests {
         // Doubleword alignment
         assert!(mem.read_dword(0x8000_0001).is_err());
         assert!(mem.write_dword(0x8000_0001, 0).is_err());
-        assert!(mem.read_dword(0x8000_0004).is_ok());
+        assert!(mem.read_dword(0x8000_0004).is_err()); // 4-byte aligned but not 8-byte aligned
+        assert!(mem.read_dword(0x8000_0008).is_ok());  // 8-byte aligned
     }
 
     #[test]
