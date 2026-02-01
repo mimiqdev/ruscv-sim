@@ -7,9 +7,8 @@ use ruscv_sim::core::CoreState;
 use ruscv_sim::isa::rv64c::{
     exec_c_add, exec_c_addi, exec_c_addi16sp, exec_c_addi4spn, exec_c_addiw, exec_c_addw,
     exec_c_and, exec_c_andi, exec_c_ebreak, exec_c_jalr, exec_c_jr, exec_c_ld, exec_c_ldsp,
-    exec_c_li, exec_c_lui, exec_c_lw, exec_c_mv, exec_c_or, exec_c_sd, exec_c_sdsp,
-    exec_c_slli, exec_c_srai, exec_c_srli, exec_c_sub, exec_c_subw, exec_c_sw,
-    exec_c_xor, CompressedDecoder,
+    exec_c_li, exec_c_lui, exec_c_lw, exec_c_mv, exec_c_or, exec_c_sd, exec_c_sdsp, exec_c_slli,
+    exec_c_srai, exec_c_srli, exec_c_sub, exec_c_subw, exec_c_sw, exec_c_xor, CompressedDecoder,
 };
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 
