@@ -347,9 +347,19 @@ mod tests {
         let instr = create_lr_instr(1, 2, 0b00010, 0, 0);
         exec_lr(&instr, &mut state, &mut mem).unwrap();
 
+        // Verify reservation was created by checking internal state
         let reservation = GLOBAL_RESERVATION.lock().unwrap();
         assert!(reservation.has_reservation(0x200));
         assert_eq!(reservation.reserved_address(), Some(0x200));
+        drop(reservation);
+
+        // Also verify by executing SC successfully
+        state.regs[3] = 0xCAFE_BABE;
+        let sc_instr = create_sc_instr(1, 3, 4, 0b00011, 0, 0);
+        exec_sc(&sc_instr, &mut state, &mut mem).unwrap();
+
+        assert_eq!(state.regs[4], 0); // Success
+        assert_eq!(mem.read_word(0x200).unwrap(), 0xCAFE_BABE);
     }
 
     #[test]
