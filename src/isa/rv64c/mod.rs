@@ -27,6 +27,7 @@
 //! - `C.LI` - Load immediate
 //! - `C.LUI` - Load upper immediate
 //! - `C.ADDI16SP` - Add immediate to stack pointer (16-bit scaled)
+//! - `C.NOP` - No operation
 //! - `C.SRLI` - Shift right logical immediate
 //! - `C.SRAI` - Shift right arithmetic immediate
 //! - `C.ANDI` - AND immediate
@@ -68,7 +69,10 @@
 pub mod c0_quadw;
 pub mod c1_addiw;
 pub mod c1_arith;
+pub mod c1_branch;
+pub mod c1_jump;
 pub mod c1_shift;
+pub mod c1_zero;
 pub mod c2_move;
 pub mod c2_stack;
 pub mod decoder_16bit;
@@ -92,7 +96,10 @@ pub use c1_arith::{
     exec_c_add, exec_c_addi, exec_c_addi16sp, exec_c_and, exec_c_andi, exec_c_li, exec_c_lui,
     exec_c_mv, exec_c_or, exec_c_sub, exec_c_xor,
 };
+pub use c1_branch::{exec_c_beqz, exec_c_bnez};
+pub use c1_jump::{exec_c_j, exec_c_jal};
 pub use c1_shift::{exec_c_srai, exec_c_srli};
+pub use c1_zero::exec_c_nop;
 pub use c2_move::{exec_c_ebreak, exec_c_jalr, exec_c_jr};
 pub use c2_stack::{exec_c_ldsp, exec_c_lwsp, exec_c_sdsp, exec_c_slli, exec_c_swsp};
 

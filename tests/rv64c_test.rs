@@ -6,9 +6,10 @@
 use ruscv_sim::core::CoreState;
 use ruscv_sim::isa::rv64c::{
     exec_c_add, exec_c_addi, exec_c_addi16sp, exec_c_addi4spn, exec_c_addiw, exec_c_addw,
-    exec_c_and, exec_c_andi, exec_c_ebreak, exec_c_jalr, exec_c_jr, exec_c_ld, exec_c_ldsp,
-    exec_c_li, exec_c_lui, exec_c_lw, exec_c_mv, exec_c_or, exec_c_sd, exec_c_sdsp, exec_c_slli,
-    exec_c_srai, exec_c_srli, exec_c_sub, exec_c_subw, exec_c_sw, exec_c_xor, CompressedDecoder,
+    exec_c_and, exec_c_andi, exec_c_beqz, exec_c_bnez, exec_c_ebreak, exec_c_j, exec_c_jalr,
+    exec_c_jr, exec_c_ld, exec_c_ldsp, exec_c_li, exec_c_lui, exec_c_lw, exec_c_mv,
+    exec_c_nop, exec_c_or, exec_c_sd, exec_c_sdsp, exec_c_slli, exec_c_srai, exec_c_srli,
+    exec_c_sub, exec_c_subw, exec_c_sw, exec_c_xor, CompressedDecoder,
 };
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 
@@ -294,4 +295,118 @@ fn test_c_integration_lui() {
     // C.LUI x5, 0x12345 -> x5 = 0x12345000
     exec_c_lui(5, 0x12345, &mut state).unwrap();
     assert_eq!(state.regs[5], 0x0000000012345000);
+}
+
+#[test]
+fn test_c_integration_nop() {
+    let (mut state, _mem) = setup_test();
+
+    // Set up initial state
+    state.pc = 0x100;
+    state.regs[5] = 0x123456789ABCDEF0;
+
+    // C.NOP should not change any state
+    exec_c_nop(&mut state).unwrap();
+
+    // Verify state is unchanged
+    assert_eq!(state.pc, 0x100);
+    assert_eq!(state.regs[5], 0x123456789ABCDEF0);
+}
+
+#[test]
+fn test_c_integration_jump_unconditional() {
+    let mut state = CoreState::default();
+
+    // Set up initial PC
+    state.pc = 0x100;
+
+    // C.J 128 (unconditional jump forward 128 bytes)
+    exec_c_j(128, &mut state).unwrap();
+
+    // PC should be updated to 0x180 (0x100 + 128)
+    assert_eq!(state.pc, 0x180);
+}
+
+#[test]
+fn test_c_integration_branch_equal_zero() {
+    let mut state = CoreState::default();
+
+    // Set up initial state
+    state.regs[8] = 0; // Zero value
+    state.pc = 0x100;
+
+    // C.BEQZ x8, 32 (branch if x8 == 0)
+    exec_c_beqz(8, 32, &mut state).unwrap();
+
+    // PC should be updated (branch taken)
+    assert_eq!(state.pc, 0x120);
+}
+
+#[test]
+fn test_c_integration_branch_not_equal_zero() {
+    let mut state = CoreState::default();
+
+    // Set up initial state
+    state.regs[8] = 42; // Non-zero value
+    state.pc = 0x100;
+
+    // C.BNEZ x8, 32 (branch if x8 != 0)
+    exec_c_bnez(8, 32, &mut state).unwrap();
+
+    // PC should be updated (branch taken)
+    assert_eq!(state.pc, 0x120);
+}
+
+#[test]
+fn test_c_integration_branch_not_taken() {
+    let mut state = CoreState::default();
+
+    // Test C.BEQZ not taken
+    state.regs[8] = 42; // Non-zero value
+    state.pc = 0x100;
+
+    exec_c_beqz(8, 32, &mut state).unwrap();
+    assert_eq!(state.pc, 0x100); // PC unchanged (branch not taken)
+
+    // Test C.BNEZ not taken
+    state.regs[8] = 0; // Zero value
+    state.pc = 0x100;
+
+    exec_c_bnez(8, 32, &mut state).unwrap();
+    assert_eq!(state.pc, 0x100); // PC unchanged (branch not taken)
+}
+
+#[test]
+fn test_c_integration_conditional_loop() {
+    let mut state = CoreState::default();
+
+    // Simulate: for (int i = 5; i != 0; i--)
+    state.regs[8] = 5; // Loop counter
+    state.pc = 0x100; // Loop start
+
+    // Iteration 1: C.BNEZ taken (5 != 0)
+    exec_c_bnez(8, 16, &mut state).unwrap();
+    assert_eq!(state.pc, 0x110); // Branch to loop body
+    state.regs[8] = 4; // Decrement
+
+    // Jump back to loop start
+    state.pc = 0x100;
+
+    // Iteration 2: C.BNEZ taken (4 != 0)
+    exec_c_bnez(8, 16, &mut state).unwrap();
+    assert_eq!(state.pc, 0x110);
+    state.regs[8] = 3;
+
+    // And so on... until counter reaches 0
+    state.pc = 0x100;
+    state.regs[8] = 1;
+
+    exec_c_bnez(8, 16, &mut state).unwrap();
+    assert_eq!(state.pc, 0x110);
+    state.regs[8] = 0;
+
+    // Final iteration: C.BNEZ not taken (0 == 0)
+    state.pc = 0x100;
+    exec_c_bnez(8, 16, &mut state).unwrap();
+    assert_eq!(state.pc, 0x100); // Branch not taken, exit loop
 }
