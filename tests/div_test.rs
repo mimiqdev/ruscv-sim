@@ -453,7 +453,7 @@ fn test_div_edge_cases() {
     // Test various edge cases
     let test_cases: Vec<(i64, i64)> = vec![
         (i64::MAX, 1),
-        (i64::MIN, -1),  // True overflow case for RV64
+        (i64::MIN, -1), // True overflow case for RV64
         (i64::MIN, 1),
         (1, i64::MAX),
         (-1, 1),

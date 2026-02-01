@@ -34,8 +34,11 @@ fn test_machine_mode_access_machine_csr() {
     let mut csr = CsrFile::new(0);
     csr.set_privilege(PrivilegeMode::Machine);
 
-    csr.write(machine::MSTATUS, 0x1234).unwrap();
-    assert_eq!(csr.read(machine::MSTATUS).unwrap(), 0x1234);
+    // Use a value that only sets writable bits in MSTATUS
+    // The mask 0x8000_0003_000D_FFEA defines writable bits for RV64
+    // 0x1220 sets MIE(3) and MPIE(7) bits
+    csr.write(machine::MSTATUS, 0x1220).unwrap();
+    assert_eq!(csr.read(machine::MSTATUS).unwrap(), 0x1220);
 }
 
 #[test]

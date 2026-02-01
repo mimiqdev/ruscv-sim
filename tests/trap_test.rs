@@ -193,12 +193,16 @@ fn test_vector_trap_vectored_mode() {
 #[test]
 fn test_vector_trap_vectored_mode_wrapping() {
     let handler = TrapHandler::new();
-    let tvec = 0xFFFF_FFFC; // Vectored mode near end of address space
+    // Use a vectored mode address near end of 32-bit address space
+    // 0xFFFF_FFFD has bits[1:0] = 01, which is vectored mode
+    let tvec = 0xFFFF_FFFD;
 
     // Test wrapping behavior
     let result = handler.vector_trap(tvec, 100);
-    // Should wrap around
-    assert!(result < 0xFFFF_FFFC);
+    // base = 0xFFFF_FFFD & !0x3 = 0xFFFF_FFFC
+    // offset = (100 & 0x7F) << 2 = 100 * 4 = 400 = 0x190
+    // result = 0xFFFF_FFFC + 0x190 = 0x1_0000_018C (wraps in 64-bit)
+    assert_eq!(result, 0x1_0000_018C);
 }
 
 // ========================================
@@ -271,10 +275,10 @@ fn test_handle_machine_timer_interrupt() {
 
     assert_eq!(new_pc, 0);
 
-    // Check that MCAUSE has interrupt bit set
+    // Check that MCAUSE has interrupt bit set (RV64 uses bit 63)
     let mcause = context.csr.read(machine::MCAUSE).unwrap();
-    assert!(mcause & 0x8000_0000 != 0); // Interrupt bit
-    assert_eq!(mcause & 0x7FFF_FFFF, 7); // Machine Timer cause
+    assert!(mcause & 0x8000_0000_0000_0000 != 0); // Interrupt bit
+    assert_eq!(mcause & 0x7FFF_FFFF_FFFF_FFFF, 7); // Machine Timer cause
 }
 
 #[test]
@@ -299,6 +303,10 @@ fn test_handle_machine_external_interrupt() {
 fn test_delegated_exception_to_supervisor() {
     let mut handler = TrapHandler::new();
     let mut context = create_test_context();
+
+    // Set privilege to Supervisor mode so delegation can work
+    // (delegation only works when not in Machine mode)
+    context.privilege = PrivilegeMode::Supervisor;
 
     // Delegate illegal instruction to supervisor
     handler
@@ -326,6 +334,10 @@ fn test_delegated_exception_to_supervisor() {
 fn test_delegated_interrupt_to_supervisor() {
     let mut handler = TrapHandler::new();
     let mut context = create_test_context();
+
+    // Set privilege to Supervisor mode so delegation can work
+    // (delegation only works when not in Machine mode)
+    context.privilege = PrivilegeMode::Supervisor;
 
     // Delegate supervisor timer interrupt
     handler
