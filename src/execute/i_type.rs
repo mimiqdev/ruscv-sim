@@ -403,7 +403,7 @@ mod tests {
         exec_load(&instr, &mut state, &mut mem).unwrap();
 
         // LW sign-extends 32-bit value to 64-bit; 0x12345678 is positive, so zero-extends
-        assert_eq!(state.regs[2], 0x0000_0000_12345678);
+        assert_eq!(state.regs[2], 0x0000_0000_1234_5678);
     }
 
     #[test]

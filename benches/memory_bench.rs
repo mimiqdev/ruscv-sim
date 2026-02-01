@@ -67,7 +67,7 @@ fn memory_sequential_access(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("read_words", count), count, |b, &count| {
             b.iter(|| {
                 for i in 0..count {
-                    let _ = mem.read_word(black_box((i * 4) as u32)).unwrap();
+                    let _ = mem.read_word(black_box((i * 4) as u32) as u64).unwrap();
                 }
             })
         });
@@ -82,7 +82,7 @@ fn memory_sequential_access(c: &mut Criterion) {
                     || SimpleMemory::new(8192),
                     |mut mem| {
                         for i in 0..count {
-                            mem.write_word(black_box((i * 4) as u32), black_box(i as u32))
+                            mem.write_word(black_box((i * 4) as u32) as u64, black_box(i as u32))
                                 .unwrap();
                         }
                     },
@@ -108,7 +108,7 @@ fn memory_random_access(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("read_words", count), count, |b, _| {
             b.iter(|| {
                 for &addr in addrs {
-                    let _ = mem.read_word(black_box(addr)).unwrap();
+                    let _ = mem.read_word(black_box(addr) as u64).unwrap();
                 }
             })
         });
@@ -122,7 +122,7 @@ fn memory_random_access(c: &mut Criterion) {
                 || SimpleMemory::new(8192),
                 |mut mem| {
                     for (i, &addr) in addrs.iter().enumerate() {
-                        mem.write_word(black_box(addr), black_box(i as u32))
+                        mem.write_word(black_box(addr) as u64, black_box(i as u32))
                             .unwrap();
                     }
                 },
@@ -180,7 +180,7 @@ fn memory_throughput(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     for i in 0..word_count {
-                        let _ = mem.read_word(black_box((i * 4) as u32)).unwrap();
+                        let _ = mem.read_word(black_box((i * 4) as u32) as u64).unwrap();
                     }
                 })
             },
@@ -194,7 +194,7 @@ fn memory_throughput(c: &mut Criterion) {
                     || SimpleMemory::new(size_kb * 1024),
                     |mut mem| {
                         for i in 0..word_count {
-                            mem.write_word(black_box((i * 4) as u32), black_box(i as u32))
+                            mem.write_word(black_box((i * 4) as u32) as u64, black_box(i as u32))
                                 .unwrap();
                         }
                     },

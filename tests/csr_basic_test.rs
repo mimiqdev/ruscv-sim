@@ -249,7 +249,7 @@ fn test_mstatus_reserved_bits_masked() {
     // Check that value is masked according to RV64 mstatus writable bits
     // The actual mask is 0x8000_0003_000D_FFEA for RV64
     let rv64_mstatus_mask = 0x8000_0003_000D_FFEA_u64;
-    assert_eq!(value, 0xFFFF_FFFF_FFFF_FFFF & rv64_mstatus_mask);
+    assert_eq!(value, rv64_mstatus_mask);
 }
 
 // Multiple CSR access tests
