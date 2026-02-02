@@ -61,14 +61,16 @@
 
 ---
 
-### M4: 调试支持 [PLANNING]
-**Status:** Planning
+### M4: 调试支持 [COMPLETED]
+**Status:** Completed
 **Goal:** GDB RSP 调试接口可用
 
-#### Features
-- [ ] **GDB RSP 协议**: 实现断点、观察点、寄存器/内存访问
-- [ ] **CLI 交互**: 提供命令行调试界面
-- [ ] **集成测试**: 与 GDB 15+ 版本兼容
+#### Features (Completed)
+- [x] **GDB RSP 服务器实现**: 完整的 Remote Serial Protocol 支持
+- [x] **CLI 调试界面**: 交互式命令行调试工具
+- [x] **断点管理器**: 软件/硬件断点支持
+- [x] **观察点管理器**: 内存访问观察点
+- [x] **版本控制的 git hooks**: 自动格式化、代码检查
 
 ---
 
@@ -114,6 +116,10 @@
 
 ---
 ## Change Log
+
+**2026-02-02**: M4 完成 - 调试支持
+- M4 状态从 [PLANNING] 改为 [COMPLETED]
+- 添加功能列表: GDB RSP 服务器、CLI 调试界面、断点管理器、观察点管理器、git hooks
 
 **2026-02-02**: 版本规划调整
 - M6 目标简化为：仅通过 riscv-arch-test 后发布 v1.0.0

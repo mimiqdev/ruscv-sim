@@ -28,6 +28,7 @@
 | 陷阱处理 | ✅ 完成 | Sprint 5 |
 | **MMU/TLB** | ✅ **完成** | **Sprint 10 - Sv39 页表, 4-way LRU TLB** |
 | **TLM2.0 + 外设** | ✅ **完成** | **Sprint 11 - CLINT, PLIC, UART 16550** |
+| **调试支持 (GDB RSP)** | ✅ **完成** | **M4 - GDB 远程调试 + CLI 调试器** |
 | **测试覆盖** | ✅ **90+ tests** | Sprint 11 新增，全部通过 |
 
 ## 项目结构
@@ -52,6 +53,11 @@ ruscv-sim/
 │   │   ├── clint.rs        # 本地中断控制器
 │   │   ├── plic.rs         # 平台级中断控制器
 │   │   └── uart16550.rs    # UART 串口
+│   ├── debug/              # 调试支持 (M4)
+│   │   ├── gdb_server.rs   # GDB RSP 服务器
+│   │   ├── debugger.rs     # CLI 调试界面
+│   │   ├── breakpoint.rs   # 断点管理器
+│   │   └── watchpoint.rs   # 观察点管理器
 │   ├── fpu/                # 浮点运算单元 (RV64F)
 │   ├── csr/                # CSR 寄存器框架
 │   └── trap/               # 陷阱处理 (集成在 core/)
@@ -290,6 +296,46 @@ Sprint 5 实现的 RV64A 原子指令：
   - MIN, MAX, MINU, MAXU
 - **释放一致性**: 支持 Acquire/Release 语义
 
+## 调试支持 (M4)
+
+本项目提供完整的调试支持，包括 GDB RSP 服务器和 CLI 调试界面。
+
+### GDB RSP 服务器
+
+通过 GDB Remote Serial Protocol (RSP) 协议提供远程调试能力：
+
+- **断点支持**: 软件断点、硬件断点
+- **观察点支持**: 读/写/访问观察点
+- **寄存器访问**: 读取/修改 CPU 和 CSR 寄存器
+- **内存访问**: 读取/修改任意内存地址
+- **单步执行**: 支持单指令/源码级单步
+
+### CLI 调试器
+
+交互式命令行调试工具 (`cargo run --bin debugger`):
+
+- 断点管理: `break`, `delete`, `list`
+- 观察点管理: `watch`, `rwatch`, `awatch`
+- 执行控制: `continue`, `step`, `next`, `finish`
+- 检查命令: `info registers`, `info memory`, `info breakpoints`
+- 源码浏览: `list`, `disassemble`
+
+### 使用示例
+
+```bash
+# 启动 GDB RSP 服务器 (默认端口 3333)
+cargo run --bin gdb-server -- program.elf
+
+# 或使用 CLI 调试器
+cargo run --bin debugger -- program.elf
+
+# 在另一个终端连接 GDB
+riscv64-unknown-elf-gdb program.elf
+(gdb) target remote localhost:3333
+(gdb) break main
+(gdb) continue
+```
+
 ## 依赖
 
 ### 构建依赖
@@ -318,4 +364,4 @@ MIT License
 
 ---
 
-最后更新: 2026-02-02 (Sprint 11 完成 - TLM2.0 + 外设)
+最后更新: 2026-02-02 (M4 完成 - 调试支持: GDB RSP + CLI 调试器)

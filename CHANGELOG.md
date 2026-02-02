@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M4: 调试支持**
+  - GDB RSP 服务器实现
+    - 完整的 Remote Serial Protocol 支持
+    - 断点/观察点/寄存器/内存访问
+  - CLI 调试界面
+    - 交互式命令行调试工具
+    - 支持源码级调试
+  - 断点管理器
+    - 软件断点 (breakpoint)
+    - 硬件断点 (hardware breakpoint)
+  - 观察点管理器
+    - 读观察点 (read watchpoint)
+    - 写观察点 (write watchpoint)
+    - 访问观察点 (access watchpoint)
+  - 版本控制 git hooks
+    - commit 前自动 fmt + check
+    - push 前自动 clippy
+
+### Changed
+
 - **Sprint 11: TLM2.0 + 外设**
   - TLM2.0 抽象层完整实现
     - TlmPhase: BEGIN_REQ, END_REQ, BEGIN_RESP, END_RESP 四阶段协议

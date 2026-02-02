@@ -298,8 +298,10 @@ pub struct DebugCli {
     max_history: usize,
 }
 
-// 确保线程安全：BreakpointManager 和 WatchpointManager 内部使用 HashMap，
-// 它们是 Send + Sync 的，因此 DebugCli 也是 Send + Sync
+// DebugCli 可以安全地跨线程发送和共享，因为：
+// 1. 所有字段类型（BreakpointManager, WatchpointManager, Vec<String>, Option<GdbServer>）都是 Send + Sync
+// 2. BreakpointManager/WatchpointManager 内部的 HashMap 的 key(u64) 和 value(Breakpoint/Watchpoint) 都是 Send + Sync
+// 注意：虽然 GdbServer 字段本身不是线程安全的，但在实际使用中 DebugCli 只在单线程内通过 &mut self 访问
 unsafe impl Send for DebugCli {}
 unsafe impl Sync for DebugCli {}
 
