@@ -228,16 +228,6 @@ impl RspProtocol {
         None
     }
 
-    /// 创建确认响应
-    pub fn ack() -> &'static str {
-        "+"
-    }
-
-    /// 创建否定响应
-    pub fn nack() -> &'static str {
-        "-"
-    }
-
     /// 创建停止响应
     pub fn stop_reply(reason: &super::StopReason) -> GdbPacket {
         GdbPacket::new(reason.to_stop_reply())

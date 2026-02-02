@@ -298,6 +298,11 @@ pub struct DebugCli {
     max_history: usize,
 }
 
+// 确保线程安全：BreakpointManager 和 WatchpointManager 内部使用 HashMap，
+// 它们是 Send + Sync 的，因此 DebugCli 也是 Send + Sync
+unsafe impl Send for DebugCli {}
+unsafe impl Sync for DebugCli {}
+
 impl Default for DebugCli {
     fn default() -> Self {
         Self::new()
@@ -652,17 +657,20 @@ impl DebugCli {
                 let reg_num = i * 4 + j;
                 if reg_num < 32 {
                     let offset = reg_num * 8;
-                    let val = u64::from_le_bytes([
-                        regs[offset],
-                        regs[offset + 1],
-                        regs[offset + 2],
-                        regs[offset + 3],
-                        regs[offset + 4],
-                        regs[offset + 5],
-                        regs[offset + 6],
-                        regs[offset + 7],
-                    ]);
-                    line.push_str(&format!(" x{:2}=0x{:016x}", reg_num, val));
+                    // Bounds check before accessing array
+                    if offset + 8 <= regs.len() {
+                        let val = u64::from_le_bytes([
+                            regs[offset],
+                            regs[offset + 1],
+                            regs[offset + 2],
+                            regs[offset + 3],
+                            regs[offset + 4],
+                            regs[offset + 5],
+                            regs[offset + 6],
+                            regs[offset + 7],
+                        ]);
+                        line.push_str(&format!(" x{:2}=0x{:016x}", reg_num, val));
+                    }
                 }
             }
             println!("{}", line);

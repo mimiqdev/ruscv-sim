@@ -2,6 +2,8 @@
 # Pre-commit Hook for RISC-V ISS Simulator
 # 快速检查：格式化 + 编译
 
+set -e  # Exit on error
+
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_ROOT"
 

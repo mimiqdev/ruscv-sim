@@ -31,7 +31,17 @@ impl BreakpointType {
         match self {
             BreakpointType::Software => 0,
             BreakpointType::Hardware => 1,
-            BreakpointType::Temporary => 0, // 临时断点使用软件断点代码
+            BreakpointType::Temporary => 0, // 临时断点使用软件断点代码（GDB 协议中无专门的临时断点类型）
+        }
+    }
+
+    /// 获取硬件断点计数（用于硬件限制检查）
+    /// 注意：Temporary 类型返回 0，因为它不占用硬件断点资源
+    pub fn hardware_count(&self) -> usize {
+        match self {
+            BreakpointType::Software => 0,
+            BreakpointType::Hardware => 1,
+            BreakpointType::Temporary => 0,
         }
     }
 }

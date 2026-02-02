@@ -172,7 +172,9 @@ impl GdbServer {
 
         let state = Arc::clone(&self.state);
         let running = Arc::clone(&self.running);
-        let listener = self.listener.take().unwrap();
+        let listener = self.listener.take().ok_or_else(|| {
+            DebugError::Io(std::io::Error::other("Listener not available"))
+        })?;
         let config = self.config.clone();
         let bp_mgr = Arc::clone(&self.breakpoint_manager);
         let wp_mgr = Arc::clone(&self.watchpoint_manager);
@@ -252,7 +254,7 @@ impl GdbServer {
                         match result {
                             Ok(packet) => {
                                 if self.config.ack_enabled {
-                                    stream.write_all(RspProtocol::ack().as_bytes())?;
+                                    stream.write_all(GdbPacket::ack().as_bytes())?;
                                 }
 
                                 let response = handler.process_packet(&packet, &target)?;
@@ -263,7 +265,7 @@ impl GdbServer {
                             Err(e) => {
                                 eprintln!("Packet parse error: {}", e);
                                 if self.config.ack_enabled {
-                                    stream.write_all(RspProtocol::nack().as_bytes())?;
+                                    stream.write_all(GdbPacket::nack().as_bytes())?;
                                 }
                             }
                         }
@@ -330,7 +332,7 @@ impl ClientHandler {
             'D' => self.handle_detach(),
             'k' => self.handle_kill(target),
             '!' => self.handle_extended_mode(),
-            _ => Ok(GdbPacket::empty()), // 不支持的命令返回空响应
+            _ => Ok(GdbPacket::error(0x01)), // 不支持的命令返回错误响应 E01
         }
     }
 
@@ -641,7 +643,7 @@ impl ClientHandler {
                         match result {
                             Ok(packet) => {
                                 if self.config.ack_enabled {
-                                    stream.write_all(RspProtocol::ack().as_bytes())?;
+                                    stream.write_all(GdbPacket::ack().as_bytes())?;
                                 }
 
                                 let response = self.process_packet(&packet, &target)?;
@@ -652,7 +654,7 @@ impl ClientHandler {
                             Err(e) => {
                                 eprintln!("Packet parse error: {}", e);
                                 if self.config.ack_enabled {
-                                    stream.write_all(RspProtocol::nack().as_bytes())?;
+                                    stream.write_all(GdbPacket::nack().as_bytes())?;
                                 }
                             }
                         }

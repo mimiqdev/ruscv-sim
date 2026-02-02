@@ -111,6 +111,9 @@ impl Watchpoint {
         }
 
         // 检查访问范围是否与观察点范围重叠
+        // 重叠检测逻辑：两个区间 [addr, addr+len) 和 [self.address, self.address+self.size) 重叠
+        // 当且仅当：addr < wp_end && access_end > self.address
+        // 这等价于：区间相交但不完全包含在对方之外
         let access_end = addr + len;
         let wp_end = self.address + self.size;
         let overlaps = addr < wp_end && access_end > self.address;
