@@ -68,6 +68,7 @@ impl GdbPacket {
             });
         }
 
+        // 返回从 '$' 开始到校验和结束的整个包长度
         Ok((Self::new(data), pos + 2 - start))
     }
 
@@ -419,7 +420,9 @@ mod tests {
         let input = "xx$OK#9a";
         let (packet, consumed) = GdbPacket::parse(input).unwrap();
         assert_eq!(packet.data, "OK");
-        assert_eq!(consumed, 8); // 整个字符串
+        // consumed 是从 '$' 开始到校验和结束的长度
+        // 对于 "xx$OK#9a"，'$' 在位置 2，'#' 在位置 5，跳过后 pos=6，所以是 6 + 2 - 2 = 6
+        assert_eq!(consumed, 6);
     }
 
     #[test]
