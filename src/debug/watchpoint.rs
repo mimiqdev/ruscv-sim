@@ -38,14 +38,14 @@ impl WatchpointType {
 
     /// 检查给定的访问类型是否匹配此观察点类型
     pub fn matches_access(self, access: WatchpointAccess) -> bool {
-        match (self, access) {
-            (WatchpointType::Read, WatchpointAccess::Read) => true,
-            (WatchpointType::Read, WatchpointAccess::ReadWrite) => true,
-            (WatchpointType::Write, WatchpointAccess::Write) => true,
-            (WatchpointType::Write, WatchpointAccess::ReadWrite) => true,
-            (WatchpointType::Access, _) => true,
-            _ => false,
-        }
+        matches!(
+            (self, access),
+            (WatchpointType::Read, WatchpointAccess::Read)
+                | (WatchpointType::Read, WatchpointAccess::ReadWrite)
+                | (WatchpointType::Write, WatchpointAccess::Write)
+                | (WatchpointType::Write, WatchpointAccess::ReadWrite)
+                | (WatchpointType::Access, _)
+        )
     }
 }
 

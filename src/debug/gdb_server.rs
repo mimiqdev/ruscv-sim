@@ -3,7 +3,7 @@
 //! 实现基于 TCP 的 GDB 远程串行协议服务器，支持多连接和异步处理。
 
 use super::{
-    BreakpointManager, BreakpointType, DebugError, DebugTarget, GdbPacket, RspProtocol, StopReason,
+    BreakpointManager, BreakpointType, DebugError, DebugTarget, GdbPacket, RspProtocol,
     WatchpointManager, WatchpointType,
 };
 use std::io::{Read, Write};
@@ -736,14 +736,14 @@ mod tests {
             self.pc.store(pc, Ordering::SeqCst);
         }
 
-        fn continue_execution(&mut self) -> Result<StopReason, DebugError> {
+        fn continue_execution(&mut self) -> Result<DebugError> {
             self.running.store(true, Ordering::SeqCst);
             // 模拟执行后停止
             self.running.store(false, Ordering::SeqCst);
             Ok(StopReason::StepDone)
         }
 
-        fn step(&mut self) -> Result<StopReason, DebugError> {
+        fn step(&mut self) -> Result<DebugError> {
             let pc = self.pc.load(Ordering::SeqCst);
             self.pc.store(pc + 4, Ordering::SeqCst);
             Ok(StopReason::StepDone)

@@ -109,7 +109,7 @@ impl GdbPacket {
 
     /// 将十六进制字符串解码为二进制数据
     pub fn decode_hex(hex: &str) -> Result<Vec<u8>, DebugError> {
-        if hex.len() % 2 != 0 {
+        if !hex.len().is_multiple_of(2) {
             return Err(DebugError::Encoding(
                 "Hex string length must be even".into(),
             ));

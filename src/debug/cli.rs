@@ -178,7 +178,7 @@ impl DebugCommand {
         let var = parts[1].to_lowercase();
         if var.starts_with('$') {
             // 设置寄存器
-            let reg = &var[1..];
+            let reg = var.strip_prefix('$').unwrap();
             if let Ok(val) = Self::parse_value(parts[2]) {
                 Self::SetRegister(reg.to_string(), val)
             } else {
@@ -187,7 +187,7 @@ impl DebugCommand {
         } else if var.starts_with("*0x") || var.starts_with('*') {
             // 设置内存
             let addr = if var.starts_with("*0x") {
-                u64::from_str_radix(&var[3..], 16)
+                u64::from_str_radix(var.strip_prefix("*0x").unwrap(), 16)
             } else {
                 u64::from_str_radix(&var[1..], 16)
             };
