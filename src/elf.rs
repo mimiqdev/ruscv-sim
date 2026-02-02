@@ -692,56 +692,48 @@ impl ElfLoader {
         }
     }
 
-    /// Load segment data into memory
-    pub fn load_segment_data<R: Read + Seek>(
-        &self,
-        reader: &mut R,
-        mem: &mut [u8],
-        seg: &Elf64Phdr,
-    ) -> Result<(), ElfError> {
-        let mem_start = seg.p_vaddr as usize;
-        let mem_size = seg.p_memsz as usize;
-        let file_offset = seg.p_offset as usize;
-        let file_size = seg.p_filesz as usize;
-
-        if mem_start + mem_size > mem.len() {
-            return Err(ElfError::SegmentOutOfBounds);
-        }
-
-        if file_offset + file_size > self.file_size as usize {
-            return Err(ElfError::SegmentOutOfBounds);
-        }
-
-        // Read segment data from file
-        reader
-            .seek(SeekFrom::Start(file_offset as u64))
-            .map_err(|e| ElfError::IoError(e.to_string()))?;
-
-        let mut file_data = vec![0u8; file_size];
-        reader
-            .read_exact(&mut file_data)
-            .map_err(|e| ElfError::IoError(e.to_string()))?;
-
-        // Copy to memory (zero-initialized memory first)
-        for i in 0..mem_size {
-            if i < file_size {
-                mem[mem_start + i] = file_data[i];
-            } else {
-                mem[mem_start + i] = 0;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Load all segments into memory
+    /// Memory buffer should be allocated starting from min_addr (from memory_footprint)
     pub fn load_into_memory<R: Read + Seek>(
         &self,
         reader: &mut R,
         mem: &mut [u8],
     ) -> Result<(), ElfError> {
+        let (min_addr, _) = self.memory_footprint();
+
         for seg in &self.load_segments {
-            self.load_segment_data(reader, mem, seg)?;
+            // Calculate offset from the start of memory buffer
+            let mem_offset = (seg.p_vaddr - min_addr) as usize;
+            let mem_size = seg.p_memsz as usize;
+            let file_offset = seg.p_offset as usize;
+            let file_size = seg.p_filesz as usize;
+
+            if mem_offset + mem_size > mem.len() {
+                return Err(ElfError::SegmentOutOfBounds);
+            }
+
+            if file_offset + file_size > self.file_size as usize {
+                return Err(ElfError::SegmentOutOfBounds);
+            }
+
+            // Read segment data from file
+            reader
+                .seek(SeekFrom::Start(file_offset as u64))
+                .map_err(|e| ElfError::IoError(e.to_string()))?;
+
+            let mut file_data = vec![0u8; file_size];
+            reader
+                .read_exact(&mut file_data)
+                .map_err(|e| ElfError::IoError(e.to_string()))?;
+
+            // Copy to memory (zero-initialized memory first)
+            for i in 0..mem_size {
+                if i < file_size {
+                    mem[mem_offset + i] = file_data[i];
+                } else {
+                    mem[mem_offset + i] = 0;
+                }
+            }
         }
         Ok(())
     }
@@ -916,7 +908,11 @@ mod tests {
         let (entry, mem, sig, tohost) = load_elf_file(&elf_data).unwrap();
 
         assert_eq!(entry, 0x8000_0000);
-        assert!(mem.len() >= 0x8000_0200);
+        // Memory should be large enough to hold all segments (0x300 bytes range)
+        assert!(mem.len() >= 0x300);
+        // Verify data was loaded correctly
+        assert_eq!(mem[0], 0x13); // .text at offset 0
+        assert_eq!(mem[0x100], 0x42); // .data at offset 0x100
         assert!(sig.is_none()); // No signature section in test ELF
         assert!(tohost.is_none()); // No tohost section in test ELF
     }
