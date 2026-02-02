@@ -885,13 +885,15 @@ proptest! {
 | **Milestone 2 合计** | **42h** | | | |
 
 #### Phase 3: 扩展功能 (Milestone 3 - Week 20 前半)
-| 任务 | 工时 | 依赖 | 负责人 | 输出 |
-|------|------|------|--------|------|
-| 实现 Sv48 页表 | 12h | Sv39 | - | sv48.rs |
-| 实现 PMP 检查 | 10h | - | - | pmp.rs |
-| 实现 MMIO 框架 | 8h | physical | - | mmio.rs |
-| 扩展测试 | 8h | 全部 | - | pmp_test.rs |
-| **Milestone 3 合计** | **38h** | | | |
+| 任务 | 工时 | 依赖 | 负责人 | 输出 | 状态 |
+|------|------|------|--------|------|------|
+| 实现 Sv48 页表 | 12h | Sv39 | - | sv48.rs | ⏸️ 移至后续 Sprint (见 8.4 节) |
+| 实现 PMP 检查 | 10h | - | - | pmp.rs | |
+| 实现 MMIO 框架 | 8h | physical | - | mmio.rs | |
+| 扩展测试 | 8h | 全部 | - | pmp_test.rs | |
+| **Milestone 3 合计** | **38h** | | | | |
+
+**注**: Sv48 实现已从 Sprint 10 移出，详细分析见 [8.4 Sv48/Sv57 虚拟内存支持](#84-sv48sv57-虚拟内存支持)。建议作为独立任务在 Sprint 11 或后续实现。
 
 #### Phase 4: 集成与优化 (Milestone 4 - Week 20 后半)
 | 任务 | 工时 | 依赖 | 负责人 | 输出 |
@@ -1181,6 +1183,8 @@ mod.rs (trait)
 | **指令实现遗漏** | 中 | 高 | 🔴 高 | TDD + testsuite |
 | **多核支持复杂** | 中 | 高 | 🔴 高 | 移出 v1.0 范围 |
 | **Rust TLM 性能** | 低 | 中 | 🟡 中 | 原型验证 |
+| **Sv48 实现复杂度** | 低 | 低 | 🟢 低 | 分析完成，依赖 Sv39 |
+| **RV32I 架构重构** | 高 | 中 | 🟡 中 | 移至 v1.1+，方案待确定 |
 
 ### 5.2 缓解策略
 
@@ -1367,7 +1371,243 @@ This enables privilege mode switching between M/S/U modes.
 
 **参考**: `src/execute/lr_sc.rs` 注释说明
 
-### 8.4 测试增强 (Testing Enhancements)
+### 8.4 Sv48/Sv57 虚拟内存支持
+
+**状态**: 部分准备中 (TranslationMode 常量已定义，实现待完成)  
+**优先级**: P1 (重要但不紧急)  
+**建议 Sprint**: Sprint 10 后续或 Sprint 11  
+
+#### 技术差异分析
+
+| 特性 | Sv39 | Sv48 | Sv57 |
+|------|------|------|------|
+| 虚拟地址位数 | 39 bits | 48 bits | 57 bits |
+| 页表层级 | 3级 | 4级 | 5级 |
+| VPN 字段 | VPN[2:0] (9 bits x3) | VPN[3:0] (9 bits x4) | VPN[4:0] (9 bits x5) |
+| 页偏移 | 12 bits | 12 bits | 12 bits |
+| 最大虚拟地址空间 | 512 GB | 256 TB | 128 PB |
+| PPN 位数 | 44 bits | 44 bits | 44 bits |
+| SATP 模式值 | 8 | 9 | 10 |
+| 超级页支持 | 2MB, 1GB | 2MB, 1GB, 512GB | 2MB, 1GB, 512GB, 256TB |
+
+#### 与现有 Sv39 代码复用度
+
+| 模块 | 复用度 | 说明 |
+|------|--------|------|
+| `pte.rs` (页表项) | 90% | PTE 格式相同，仅需添加 PPN3/PPN4 提取方法 |
+| `tlb.rs` (TLB) | 95% | 完全复用，VPN 作为查找 key |
+| `physical.rs` (物理内存) | 100% | 无需修改 |
+| `translator.rs` | 70% | 添加 Sv48/Sv57 翻译路径 |
+| 新增 `sv48.rs` | - | 类比 `sv39.rs` 实现，修改层级和地址验证 |
+
+#### 实现复杂度分析
+
+**Sv48 实现要点:**
+1. **VirtualAddress48**: 48-bit 地址验证 (bits [63:48] 必须符号扩展)
+2. **4级页表遍历**: VPN[3] → VPN[2] → VPN[1] → VPN[0]
+3. **超级页支持**: Level 3 (512GB), Level 2 (1GB), Level 1 (2MB), Level 0 (4KB)
+4. **物理地址构建**: 根据 level 合并不同 VPN 字段到 offset
+
+**Sv57 实现要点:**
+1. **VirtualAddress57**: 57-bit 地址验证 (bits [63:57] 必须符号扩展)
+2. **5级页表遍历**: VPN[4] → VPN[3] → VPN[2] → VPN[1] → VPN[0]
+3. **超级页支持**: 增加 Level 4 (256TB) 超级页
+4. **实现基础**: 基于 Sv48 代码，增加一级即可
+
+#### 工作量估算
+
+| 任务 | 工时 | 依赖 |
+|------|------|------|
+| 实现 `sv48.rs` 模块 | 12h | Sv39 完成 |
+| 更新 `pte.rs` (PPN3 提取) | 2h | - |
+| 更新 `translator.rs` (Sv48 路径) | 6h | sv48.rs |
+| Sv48 单元测试 | 6h | 实现完成 |
+| 实现 `sv57.rs` 模块 | 8h | Sv48 完成 |
+| 更新 `pte.rs` (PPN4 提取) | 2h | - |
+| 更新 `translator.rs` (Sv57 路径) | 4h | sv57.rs |
+| Sv57 单元测试 | 4h | 实现完成 |
+| 集成测试与文档 | 4h | 全部实现 |
+| **总计** | **48h (~6 工作日)** | |
+
+#### 优先级和依赖关系
+
+```
+Sprint 10 (MMU Sv39)
+    │
+    ▼
+Sv48 实现 [P1]
+    │
+    ▼
+Sv57 实现 [P2] (可选)
+```
+
+**建议策略:**
+- **Sv48**: 推荐在 v1.0 中实现，满足大内存应用需求
+- **Sv57**: 可延后到 v1.1+，目前硬件支持有限
+
+---
+
+### 8.5 纯 32 位仿真支持 (RV32I)
+
+**状态**: 待分析  
+**优先级**: P2 (低)  
+**建议 Sprint**: v1.1+ (超出当前 RVA23 范围)  
+
+#### 技术差异分析
+
+| 特性 | RV64I | RV32I | 影响程度 |
+|------|-------|-------|----------|
+| **寄存器宽度** | 64-bit (u64) | 32-bit (u32) | 🔴 高 |
+| **虚拟地址** | 64-bit | 32-bit | 🔴 高 |
+| **页表格式** | Sv39/Sv48/Sv57 | Sv32 | 🔴 高 |
+| **页表层级** | 3-5级 | 2级 | 🟡 中 |
+| **指令编码** | 相同 | 相同 | 🟢 低 |
+| **CSR 格式** | 64-bit | 32-bit (部分不同) | 🟡 中 |
+| **立即数处理** | 符号扩展到 64-bit | 符号扩展到 32-bit | 🟡 中 |
+
+#### RV32I 与 RV64I 指令差异
+
+**完全相同 (可直接复用):**
+- 所有控制流指令 (JAL, JALR, Branch)
+- 所有Load/Store 指令 (LB, LH, LW, SB, SH, SW)
+- 所有 CSR 指令
+- 系统指令 (ECALL, EBREAK, MRET, SRET)
+
+**需要修改:**
+| 指令 | RV64I 行为 | RV32I 行为 | 修改方式 |
+|------|-----------|-----------|----------|
+| `ADD` | 64-bit 加法 | 32-bit 加法 | 泛型化 ALU |
+| `SUB` | 64-bit 减法 | 32-bit 减法 | 泛型化 ALU |
+| `SLL` | 64-bit 移位 | 32-bit 移位 | 泛型化移位 |
+| `SRL/SRA` | 64-bit 移位 | 32-bit 移位 | 泛型化移位 |
+| `LUI` | 64-bit 结果 | 32-bit 结果 | 泛型化 |
+| `AUIPC` | 64-bit PC + imm | 32-bit PC + imm | 泛型化 |
+| `ADDIW` | 32-bit 加，符号扩展 | N/A | RV32 不需要 |
+| `ADDW/SUBW/...` | 32-bit 操作，符号扩展 | N/A | RV32 不需要 |
+| `LD/SD` | 64-bit 访存 | N/A | RV32 不支持 |
+| `LWU` | 无符号扩展到 64-bit | N/A | RV32 不需要 |
+
+#### 页表格式差异 (Sv32 vs Sv39)
+
+| 特性 | Sv39 | Sv32 |
+|------|------|------|
+| 虚拟地址位数 | 39 bits | 32 bits |
+| 页表层级 | 3级 | 2级 |
+| VPN 字段 | VPN[2:0] | VPN[1:0] |
+| PTE 大小 | 64 bits | 32 bits |
+| PPN 位数 | 44 bits | 22 bits (PPN[1:0]) |
+| 超级页 | 1GB, 2MB | 4MB |
+| satp 格式 | MODE(4) + ASID(16) + PPN(44) | MODE(1) + ASID(9) + PPN(22) |
+
+#### 中断/异常处理差异
+
+| 特性 | RV64 | RV32 |
+|------|------|------|
+| `mcause` | 64-bit | 32-bit |
+| `mepc` | 64-bit (bit 0 始终为 0) | 32-bit (bit 0 始终为 0) |
+| `mtval` | 64-bit | 32-bit |
+| 异常码 | 相同 | 相同 |
+
+**注意**: RV32 的 `mstatus` 与 RV64 字段位置不同 (如 MPP 字段在 RV32 是 bits [12:11]，RV64 是 bits [12:11] 相同)
+
+#### 实现方案分析
+
+**方案 A: 编译时泛型 (推荐)**
+
+```rust
+pub trait Xlen {
+    type Reg: Sized + Copy;
+    type Vaddr: Sized + Copy;
+    const XLEN: u32;
+}
+
+pub struct Xlen64;
+impl Xlen for Xlen64 {
+    type Reg = u64;
+    type Vaddr = u64;
+    const XLEN: u32 = 64;
+}
+
+pub struct Xlen32;
+impl Xlen for Xlen32 {
+    type Reg = u32;
+    type Vaddr = u32;
+    const XLEN: u32 = 32;
+}
+
+pub struct CoreState<X: Xlen> {
+    pub pc: X::Vaddr,
+    pub regs: [X::Reg; 32],
+    pub privilege: PrivilegeMode,
+    pub csr: CsrFile<X>,
+}
+```
+
+**优点:**
+- 编译时确定位宽，零运行时开销
+- 类型安全，避免运行时错误
+
+**缺点:**
+- 代码复杂度增加
+- 需要大量模块修改
+
+**需要修改的模块:**
+
+| 模块 | 修改内容 | 预估工时 |
+|------|----------|----------|
+| `core/mod.rs` | CoreState 泛型化 | 8h |
+| `isa/rv64i/alu.rs` | ALU 操作泛型化 | 8h |
+| `isa/rv64i/shift.rs` | 移位操作泛型化 | 4h |
+| `isa/rv64i/load.rs` | 加载指令适配 | 6h |
+| `isa/rv64i/store.rs` | 存储指令适配 | 6h |
+| `isa/rv64i/lui_auipc.rs` | 立即数处理 | 4h |
+| `mmu/` | Sv32 实现 + 泛型化 | 16h |
+| `csr/` | CSR 格式适配 | 8h |
+| `decode/` | 解码器适配 | 4h |
+| `execute/` | 执行器泛型化 | 8h |
+| 测试 | RV32 测试用例 | 16h |
+| **总计** | | **88h (~11 工作日)** |
+
+#### 工作量估算
+
+| 阶段 | 工时 | 说明 |
+|------|------|------|
+| 架构设计 | 8h | 确定泛型方案，定义 Xlen trait |
+| 核心状态泛型化 | 16h | CoreState, CsrFile, FpuRegisterFile |
+| 指令执行适配 | 24h | ALU, Shift, Load/Store, Branch |
+| 内存子系统适配 | 16h | Sv32 实现，地址宽度泛型化 |
+| CSR 框架适配 | 8h | 32-bit CSR 格式 |
+| 测试与验证 | 16h | RV32 测试用例，回归测试 |
+| **总计** | **88h (~11 工作日)** | 约 1.5 Sprint |
+
+#### 优先级和依赖关系
+
+```
+当前 RV64I 实现 (Sprint 2-3)
+        │
+        ▼
+   v1.0 发布
+        │
+        ▼
+RV32I 支持 (v1.1+) [P2]
+        │
+        ▼
+   架构重构
+        │
+        ├──► CoreState 泛型化
+        ├──► 指令执行泛型化
+        ├──► MMU Sv32 实现
+        └──► CSR 适配
+```
+
+**建议策略:**
+- 当前项目目标为 RVA23 (RV64IMAFDC)，RV32I 超出范围
+- 建议在 v1.0 发布后考虑 RV32I 支持
+- 可作为独立分支或特性开关实现
+
+---
+
+### 8.6 测试增强 (Testing Enhancements)
 
 #### 64-bit 专用集成测试 (64-bit Integration Tests)
 - **状态**: PR #4 Review 提出  
@@ -1429,3 +1669,10 @@ This enables privilege mode switching between M/S/U modes.
 | | | | - 文件大小标准: < 300行 → < 600行 (复杂模块) |
 | | | | - 添加 rv64i/mod.rs 文档增强任务 |
 | | | | - 添加提交信息规范要求 |
+| v3.5 | 2026-02-02 | - | **需求分析: Sv48/Sv57 + RV32I** |
+| | | | - 添加 Sv48/Sv57 技术分析 (8.4 节) |
+| | | | - 添加 RV32I 纯32位仿真技术分析 (8.5 节) |
+| | | | - Sv48 工作量估算: 48h (~6 工作日) |
+| | | | - RV32I 工作量估算: 88h (~11 工作日) |
+| | | | - Sprint 10 更新: Sv48 移至后续 Sprint |
+| | | | - 风险评估更新: 添加 Sv48/RV32I 风险项 |
