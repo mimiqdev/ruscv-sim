@@ -22,9 +22,7 @@ fn setup_page_table(memory: &mut PhysicalMemory, root_ppn: u64) {
 
     // Level 2 (root) - pointer to level 1 at VPN[2]=0
     let root_pte = PageTableEntry::new_pointer(level1_ppn);
-    memory
-        .write_dword(root_ppn << 12, root_pte.bits())
-        .unwrap();
+    memory.write_dword(root_ppn << 12, root_pte.bits()).unwrap();
 
     // Level 1 - pointer to level 0 at VPN[1]=0
     let level1_pte = PageTableEntry::new_pointer(level0_ppn);
