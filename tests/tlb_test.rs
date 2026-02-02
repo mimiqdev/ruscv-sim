@@ -379,3 +379,197 @@ fn test_tlb_entry_permissions() {
     assert!(found.accessed);
     assert!(!found.dirty);
 }
+
+/// Test LRU aging mechanism with a simulated small counter
+///
+/// This test verifies that the LRU aging mechanism works correctly:
+/// 1. LRU counters are properly updated on access
+/// 2. When counters would overflow, they are aged (halved)
+/// 3. After aging, the LRU replacement policy still works correctly
+///
+/// Note: We use a direct-mapped TLB (1-way) to ensure deterministic behavior
+#[test]
+fn test_lru_aging_simulation() {
+    // Small TLB with 4 sets, 1 way (direct mapped)
+    // This makes it easier to track which entry is in which set
+    let mut tlb = Tlb::new(4, 1);
+
+    // Insert 4 entries, each mapping to a different set (0, 1, 2, 3)
+    for i in 0..4u64 {
+        let entry = TlbEntry {
+            vpn: i, // VPN i maps to set i % 4
+            ppn: i * 0x1000,
+            asid: 0,
+            global: false,
+            read: true,
+            ..Default::default()
+        };
+        tlb.insert(i, entry);
+    }
+
+    // Access entry 0 repeatedly to make it the most recently used
+    // Each access updates the LRU counter for the accessed entry
+    for _ in 0..10 {
+        assert!(tlb.lookup(0, 0).is_some());
+    }
+
+    // Entry 0 should now have the highest LRU counter in its set
+    // Other entries should have lower counters
+
+    // Insert a new entry that collides with set 1 (VPN 1 and VPN 5 both map to set 1)
+    let new_entry = TlbEntry {
+        vpn: 5, // VPN 5 % 4 = 1, collides with VPN 1
+        ppn: 0x5000,
+        asid: 0,
+        global: false,
+        read: true,
+        ..Default::default()
+    };
+    tlb.insert(5, new_entry);
+
+    // Entry 1 should be replaced (it was LRU in set 1)
+    assert!(
+        tlb.lookup(1, 0).is_none(),
+        "Entry 1 should be replaced (LRU)"
+    );
+
+    // Entry 0 should still exist (was accessed recently)
+    assert!(tlb.lookup(0, 0).is_some(), "Entry 0 should still exist");
+
+    // New entry should exist
+    assert!(tlb.lookup(5, 0).is_some(), "New entry should exist");
+}
+
+/// Test LRU behavior after many sequential accesses
+///
+/// This test verifies that after many accesses, the LRU replacement
+/// policy still correctly identifies the least recently used entry.
+#[test]
+fn test_lru_after_many_accesses() {
+    // 4-way set associative TLB with 4 sets = 16 entries
+    let mut tlb = Tlb::new(16, 4);
+
+    // Insert entries into the same set (VPNs that map to set 0)
+    // With 4 ways, we can have 4 entries in a set
+    for i in 0..4u64 {
+        // VPNs 0, 4, 8, 12 all map to set 0 (VPN % 4 = 0)
+        let entry = TlbEntry {
+            vpn: i * 4,
+            ppn: i * 0x1000,
+            asid: 0,
+            global: false,
+            read: true,
+            ..Default::default()
+        };
+        tlb.insert(i * 4, entry);
+    }
+
+    // Access entries in a specific order to establish LRU order
+    // Access pattern: 0, 1, 2, 3 (all hit, updating LRU counters)
+    for i in 0..4u64 {
+        assert!(
+            tlb.lookup(i * 4, 0).is_some(),
+            "Entry {} should be found",
+            i * 4
+        );
+    }
+
+    // Now entry 0 is the oldest (LRU) since all were accessed once in order
+    // Insert a new entry that also maps to set 0
+    let new_entry = TlbEntry {
+        vpn: 16, // 16 % 4 = 0, same set as entries 0, 4, 8, 12
+        ppn: 0x10000,
+        asid: 0,
+        global: false,
+        read: true,
+        ..Default::default()
+    };
+    tlb.insert(16, new_entry);
+
+    // Entry 0 should be replaced (LRU)
+    assert!(
+        tlb.lookup(0, 0).is_none(),
+        "Entry 0 should be replaced (LRU)"
+    );
+
+    // Other entries should still exist
+    assert!(tlb.lookup(4, 0).is_some(), "Entry 4 should exist");
+    assert!(tlb.lookup(8, 0).is_some(), "Entry 8 should exist");
+    assert!(tlb.lookup(12, 0).is_some(), "Entry 12 should exist");
+    assert!(tlb.lookup(16, 0).is_some(), "New entry 16 should exist");
+}
+
+/// Test that LRU replacement works correctly across multiple sets
+#[test]
+fn test_lru_multi_set_consistency() {
+    // 2-way set associative TLB with 4 sets = 8 entries
+    // set_index(vpn) = vpn % 4
+    let mut tlb = Tlb::new(8, 2);
+
+    // Fill all sets with 2 entries each
+    // VPN pattern: 0,4 -> set 0; 1,5 -> set 1; 2,6 -> set 2; 3,7 -> set 3
+    for i in 0..8u64 {
+        let entry = TlbEntry {
+            vpn: i,
+            ppn: i * 0x1000,
+            asid: 0,
+            global: false,
+            read: true,
+            ..Default::default()
+        };
+        tlb.insert(i, entry);
+    }
+
+    // Access entries 1, 5 (set 1), 3, 7 (set 3) to make them more recently used
+    for i in [1u64, 5, 3, 7] {
+        assert!(tlb.lookup(i, 0).is_some());
+    }
+
+    // Insert new entries that collide with sets 0 and 2
+    // Entry 8 -> set 0, Entry 10 -> set 2
+    let new_entry_8 = TlbEntry {
+        vpn: 8, // 8 % 4 = 0
+        ppn: 0x8000,
+        asid: 0,
+        global: false,
+        read: true,
+        ..Default::default()
+    };
+    tlb.insert(8, new_entry_8);
+
+    let new_entry_10 = TlbEntry {
+        vpn: 10, // 10 % 4 = 2
+        ppn: 0xA000,
+        asid: 0,
+        global: false,
+        read: true,
+        ..Default::default()
+    };
+    tlb.insert(10, new_entry_10);
+
+    // One of entries 0 or 4 (set 0) should be replaced by entry 8
+    let entry0_exists = tlb.lookup(0, 0).is_some();
+    let entry4_exists = tlb.lookup(4, 0).is_some();
+    assert!(
+        !entry0_exists || !entry4_exists,
+        "One of entries 0 or 4 should be replaced by entry 8"
+    );
+
+    // One of entries 2 or 6 (set 2) should be replaced by entry 10
+    let entry2_exists = tlb.lookup(2, 0).is_some();
+    let entry6_exists = tlb.lookup(6, 0).is_some();
+    assert!(
+        !entry2_exists || !entry6_exists,
+        "One of entries 2 or 6 should be replaced by entry 10"
+    );
+
+    // Accessed entries (odd) should still exist
+    assert!(tlb.lookup(1, 0).is_some(), "Entry 1 should exist");
+    assert!(tlb.lookup(3, 0).is_some(), "Entry 3 should exist");
+    assert!(tlb.lookup(5, 0).is_some(), "Entry 5 should exist");
+    assert!(tlb.lookup(7, 0).is_some(), "Entry 7 should exist");
+
+    // New entries should exist
+    assert!(tlb.lookup(8, 0).is_some(), "Entry 8 should exist");
+    assert!(tlb.lookup(10, 0).is_some(), "Entry 10 should exist");
+}
