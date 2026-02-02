@@ -49,7 +49,7 @@ fn test_sv39_4kb_page_translation() {
     let vpn = [1u64, 0, 0];
     setup_4kb_page_table(&mut memory, root_ppn, data_ppn, vpn);
 
-    let walker = PageTableWalker::new(&memory, root_ppn);
+    let walker = PageTableWalker::new(&mut memory, root_ppn);
     let va = VirtualAddress::new(0x1000).unwrap();
 
     match walker.walk(va) {
@@ -72,7 +72,7 @@ fn test_sv39_4kb_page_with_offset() {
     let vpn = [5u64, 0, 0];
     setup_4kb_page_table(&mut memory, root_ppn, data_ppn, vpn);
 
-    let walker = PageTableWalker::new(&memory, root_ppn);
+    let walker = PageTableWalker::new(&mut memory, root_ppn);
     // VA = (5 << 12) | 0xABC = 0x5000 + 0xABC = 0x5ABC
     let va = VirtualAddress::new(0x5ABC).unwrap();
 
@@ -104,7 +104,7 @@ fn test_sv39_2mb_megapage() {
         .write_dword((level1_ppn << 12) + 8, level1_pte.bits())
         .unwrap(); // VPN[1] = 1
 
-    let walker = PageTableWalker::new(&memory, root_ppn);
+    let walker = PageTableWalker::new(&mut memory, root_ppn);
     // VA with VPN[2]=0, VPN[1]=1, VPN[0]=3, offset=0xABC
     // VA = (1 << 21) | (3 << 12) | 0xABC = 0x0020_0000 + 0x3000 + 0xABC = 0x0020_3ABC
     let va = VirtualAddress::new(0x0020_3ABC).unwrap();
@@ -135,7 +135,7 @@ fn test_sv39_1gb_gigapage() {
         .write_dword((root_ppn << 12) + 16, root_pte.bits())
         .unwrap(); // VPN[2] = 2
 
-    let walker = PageTableWalker::new(&memory, root_ppn);
+    let walker = PageTableWalker::new(&mut memory, root_ppn);
     // VA with VPN[2]=2, VPN[1]=5, VPN[0]=3, offset=0xABC
     // VA = (2 << 30) | (5 << 21) | (3 << 12) | 0xABC = 0x8000_0000 + 0x00A0_0000 + 0x3000 + 0xABC
     let va = VirtualAddress::new((2 << 30) | (5 << 21) | (3 << 12) | 0xABC).unwrap();
@@ -161,7 +161,7 @@ fn test_sv39_invalid_pte() {
     // PTE = 0 means invalid (V bit not set)
     memory.write_dword(root_ppn << 12, 0).unwrap();
 
-    let walker = PageTableWalker::new(&memory, root_ppn);
+    let walker = PageTableWalker::new(&mut memory, root_ppn);
     let va = VirtualAddress::new(0x1000).unwrap();
 
     match walker.walk(va) {
@@ -185,7 +185,7 @@ fn test_sv39_reserved_permission() {
         .write_dword(root_ppn << 12, reserved_pte.bits())
         .unwrap();
 
-    let walker = PageTableWalker::new(&memory, root_ppn);
+    let walker = PageTableWalker::new(&mut memory, root_ppn);
     let va = VirtualAddress::new(0x1000).unwrap();
 
     match walker.walk(va) {
@@ -222,7 +222,7 @@ fn test_sv39_walk_all_levels_no_leaf() {
         .write_dword(level0_ppn << 12, level0_pte.bits())
         .unwrap();
 
-    let walker = PageTableWalker::new(&memory, root_ppn);
+    let walker = PageTableWalker::new(&mut memory, root_ppn);
     let va = VirtualAddress::new(0x1000).unwrap();
 
     // Should page fault after walking all levels without finding a leaf
@@ -245,7 +245,7 @@ fn test_sv39_permission_check_read() {
     let root_pte = PageTableEntry::new_leaf(data_ppn, PagePermissions::rx(), false);
     memory.write_dword(root_ppn << 12, root_pte.bits()).unwrap();
 
-    let walker = PageTableWalker::new(&memory, root_ppn);
+    let walker = PageTableWalker::new(&mut memory, root_ppn);
     let va = VirtualAddress::new(0x1000).unwrap();
 
     // Read access should succeed
@@ -272,7 +272,7 @@ fn test_sv39_permission_check_user() {
     let root_pte = PageTableEntry::new_leaf(data_ppn, PagePermissions::rwx(), false);
     memory.write_dword(root_ppn << 12, root_pte.bits()).unwrap();
 
-    let walker = PageTableWalker::new(&memory, root_ppn);
+    let walker = PageTableWalker::new(&mut memory, root_ppn);
     let va = VirtualAddress::new(0x1000).unwrap();
 
     // Supervisor access should succeed
@@ -302,7 +302,7 @@ fn test_sv39_user_page() {
     let root_pte = PageTableEntry::new_leaf(data_ppn, PagePermissions::user_rw(), false);
     memory.write_dword(root_ppn << 12, root_pte.bits()).unwrap();
 
-    let walker = PageTableWalker::new(&memory, root_ppn);
+    let walker = PageTableWalker::new(&mut memory, root_ppn);
     let va = VirtualAddress::new(0x1000).unwrap();
 
     // User access should succeed

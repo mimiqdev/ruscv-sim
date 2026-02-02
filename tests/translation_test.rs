@@ -67,7 +67,7 @@ fn test_mmu_creation() {
 #[test]
 fn test_bare_mode_translation() {
     // Memory: base 0x8000_0000, size 0x1001_0000 (covers up to 0x9001_0000)
-    let memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
+    let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
     let config = MmuConfig::default();
     let translator = AddressTranslator::new(config);
     let mut tlb = Tlb::new(64, 4);
@@ -81,7 +81,7 @@ fn test_bare_mode_translation() {
         mstatus: 0,
     };
 
-    let result = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let result = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 0x8000_0000); // Identity mapping in bare mode
 }
@@ -110,7 +110,7 @@ fn test_sv39_translation_with_tlb_miss() {
     };
 
     // First access - TLB miss
-    let result = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let result = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert!(result.is_ok());
     // PPN 0x90001 -> address 0x9000_1000
     assert_eq!(result.unwrap(), 0x9000_1000);
@@ -143,10 +143,10 @@ fn test_sv39_translation_with_tlb_hit() {
     };
 
     // First access - TLB miss
-    let _ = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
 
     // Second access - TLB hit
-    let result = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let result = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 0x9000_1000);
 
@@ -165,7 +165,7 @@ fn test_translation_instruction_vs_data() {
     setup_page_table(&mut memory, root_ppn);
 
     let config = MmuConfig::default();
-    let mmu = Mmu::new(config);
+    let mut mmu = Mmu::new(config);
 
     let satp = (8u64 << 60) | root_ppn;
 
@@ -187,14 +187,15 @@ fn test_translation_instruction_vs_data() {
         mstatus: 0,
     };
 
-    // Both should succeed
-    let result1 = mmu.translate(ifetch_request);
-    let result2 = mmu.translate(read_request);
+    // Both should succeed with full translation
+    let result1 = mmu.translate(ifetch_request, &mut memory);
+    let result2 = mmu.translate(read_request, &mut memory);
 
-    // Note: Current MMU.translate doesn't use physical memory for translation
-    // This tests the API - full translation requires translate_with_tlb
     assert!(result1.is_ok());
     assert!(result2.is_ok());
+    // Verify correct physical addresses
+    assert_eq!(result1.unwrap(), 0x9000_0000);
+    assert_eq!(result2.unwrap(), 0x9000_1000);
 }
 
 #[test]
@@ -218,14 +219,14 @@ fn test_tlb_flush_all() {
     };
 
     // First access - TLB miss
-    let _ = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().misses, 1);
 
     // Flush all TLB entries
     tlb.flush_all();
 
     // Next access should miss again
-    let _ = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().misses, 2);
 }
 
@@ -259,19 +260,19 @@ fn test_tlb_flush_va() {
     };
 
     // Populate TLB
-    let _ = translator.translate_with_tlb(request1, &mut tlb, &memory);
-    let _ = translator.translate_with_tlb(request2, &mut tlb, &memory);
+    let _ = translator.translate_with_tlb(request1, &mut tlb, &mut memory);
+    let _ = translator.translate_with_tlb(request2, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().misses, 2);
 
     // Flush specific VA (VPN 0)
     tlb.flush_va(0); // VPN = 0
 
     // Access VPN 0 again - should miss
-    let _ = translator.translate_with_tlb(request1, &mut tlb, &memory);
+    let _ = translator.translate_with_tlb(request1, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().misses, 3);
 
     // Access VPN 1 again - should hit
-    let _ = translator.translate_with_tlb(request2, &mut tlb, &memory);
+    let _ = translator.translate_with_tlb(request2, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().hits, 1);
 }
 
@@ -298,14 +299,14 @@ fn test_tlb_flush_asid() {
     };
 
     // First access - TLB miss
-    let _ = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().misses, 1);
 
     // Flush TLB for ASID 1
     tlb.flush_asid(1);
 
     // Next access should miss again
-    let _ = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().misses, 2);
 }
 
@@ -332,14 +333,14 @@ fn test_tlb_flush_asid_va() {
     };
 
     // First access - TLB miss
-    let _ = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().misses, 1);
 
     // Flush TLB for ASID 1, VPN 1
     tlb.flush_asid_va(1, 1);
 
     // Next access should miss again
-    let _ = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().misses, 2);
 }
 
@@ -365,7 +366,7 @@ fn test_translation_permission_violation() {
         mstatus: 0,
     };
 
-    let result = translator.translate_with_tlb(write_request, &mut tlb, &memory);
+    let result = translator.translate_with_tlb(write_request, &mut tlb, &mut memory);
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), MmuError::PageFault(_)));
 }
@@ -392,7 +393,7 @@ fn test_translation_user_access_violation() {
         mstatus: 0,
     };
 
-    let result = translator.translate_with_tlb(user_request, &mut tlb, &memory);
+    let result = translator.translate_with_tlb(user_request, &mut tlb, &mut memory);
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), MmuError::PageFault(_)));
 }
@@ -419,7 +420,7 @@ fn test_translation_user_access_allowed() {
         mstatus: 0,
     };
 
-    let result = translator.translate_with_tlb(user_request, &mut tlb, &memory);
+    let result = translator.translate_with_tlb(user_request, &mut tlb, &mut memory);
     assert!(result.is_ok());
     // PPN 0x90003 -> address 0x9000_3000
     assert_eq!(result.unwrap(), 0x9000_3000);
@@ -429,31 +430,49 @@ fn test_translation_user_access_allowed() {
 fn test_satp_parsing() {
     // Bare mode
     let satp = Satp(0);
-    assert_eq!(satp.mode(), TranslationMode::Bare);
+    assert_eq!(satp.mode(), Some(TranslationMode::Bare));
     assert!(!satp.paging_enabled());
+    assert!(satp.is_valid());
     assert_eq!(satp.asid(), 0);
     assert_eq!(satp.ppn(), 0);
 
     // Sv39 mode
     let satp = Satp((8u64 << 60) | (0x1234 << 44) | 0xABCDEF);
-    assert_eq!(satp.mode(), TranslationMode::Sv39);
+    assert_eq!(satp.mode(), Some(TranslationMode::Sv39));
     assert!(satp.paging_enabled());
+    assert!(satp.is_valid());
     assert_eq!(satp.asid(), 0x1234);
     assert_eq!(satp.ppn(), 0xABCDEF);
     assert_eq!(satp.root_page_table_addr(), 0xABCDEF << 12);
 
     // Sv48 mode
     let satp = Satp(9u64 << 60);
-    assert_eq!(satp.mode(), TranslationMode::Sv48);
+    assert_eq!(satp.mode(), Some(TranslationMode::Sv48));
+
+    // Invalid mode
+    let satp = Satp(15u64 << 60);
+    assert_eq!(satp.mode(), None);
+    assert!(!satp.paging_enabled());
+    assert!(!satp.is_valid());
 }
 
 #[test]
 fn test_translation_mode_from_satp() {
-    assert_eq!(TranslationMode::from_satp(0), TranslationMode::Bare);
-    assert_eq!(TranslationMode::from_satp(8 << 60), TranslationMode::Sv39);
-    assert_eq!(TranslationMode::from_satp(9 << 60), TranslationMode::Sv48);
-    assert_eq!(TranslationMode::from_satp(10 << 60), TranslationMode::Sv57);
-    assert_eq!(TranslationMode::from_satp(15 << 60), TranslationMode::Bare); // Invalid mode
+    assert_eq!(TranslationMode::from_satp(0), Some(TranslationMode::Bare));
+    assert_eq!(
+        TranslationMode::from_satp(8 << 60),
+        Some(TranslationMode::Sv39)
+    );
+    assert_eq!(
+        TranslationMode::from_satp(9 << 60),
+        Some(TranslationMode::Sv48)
+    );
+    assert_eq!(
+        TranslationMode::from_satp(10 << 60),
+        Some(TranslationMode::Sv57)
+    );
+    // Invalid mode returns None
+    assert_eq!(TranslationMode::from_satp(15 << 60), None);
 }
 
 #[test]
@@ -502,7 +521,7 @@ fn test_mmu_flush_tlb_asid_va() {
 #[test]
 fn test_sv48_not_supported() {
     // Memory: base 0x8000_0000, size 0x1001_0000
-    let memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
+    let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
     let config = MmuConfig::default();
     let translator = AddressTranslator::new(config);
     let mut tlb = Tlb::new(64, 4);
@@ -518,7 +537,7 @@ fn test_sv48_not_supported() {
         mstatus: 0,
     };
 
-    let result = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let result = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -529,7 +548,7 @@ fn test_sv48_not_supported() {
 #[test]
 fn test_translation_invalid_virtual_address() {
     // Memory: base 0x8000_0000, size 0x1001_0000
-    let memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
+    let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
     let config = MmuConfig::default();
     let translator = AddressTranslator::new(config);
     let mut tlb = Tlb::new(64, 4);
@@ -546,7 +565,7 @@ fn test_translation_invalid_virtual_address() {
         mstatus: 0,
     };
 
-    let result = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let result = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -602,7 +621,7 @@ fn test_translation_large_address() {
         mstatus: 0,
     };
 
-    let result = translator.translate_with_tlb(request, &mut tlb, &memory);
+    let result = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert!(result.is_ok());
     // PPN 0xA0000 -> address 0xA000_0000
     assert_eq!(result.unwrap(), (0xA0000 << 12) | 0xABC);

@@ -40,11 +40,15 @@ pub struct Tlb {
     ways: usize,
     sets: usize,
     entries: Vec<Option<TlbEntry>>,
-    lru_counters: Vec<u8>,
+    /// LRU counters - use u32 to prevent overflow in high-frequency scenarios
+    lru_counters: Vec<u32>,
     stats: TlbStats,
 }
 
 impl Tlb {
+    /// Maximum LRU counter value before aging
+    const MAX_LRU_COUNTER: u32 = u32::MAX / 2;
+
     pub fn new(size: usize, ways: usize) -> Self {
         let sets = size / ways;
         Self {
@@ -95,7 +99,7 @@ impl Tlb {
     }
 
     fn find_lru_way(&self, set: usize) -> usize {
-        let mut min_counter = u8::MAX;
+        let mut min_counter = u32::MAX;
         let mut min_way = 0;
 
         for way in 0..self.ways {
@@ -112,11 +116,28 @@ impl Tlb {
         min_way
     }
 
+    /// Update LRU counters for a set after an access
+    ///
+    /// Uses aging mechanism to prevent counter overflow:
+    /// - Sets the accessed entry to MAX_LRU_COUNTER
+    /// - Other entries are aged (decremented if > 0)
+    /// - When any counter would exceed MAX_LRU_COUNTER, all counters are halved
     fn update_lru(&mut self, set: usize, used_way: usize) {
+        // Check if we need to age all counters
+        let used_idx = self.entry_index(set, used_way);
+        if self.lru_counters[used_idx] >= Self::MAX_LRU_COUNTER {
+            // Age all counters in this set by halving them
+            for way in 0..self.ways {
+                let idx = self.entry_index(set, way);
+                self.lru_counters[idx] /= 2;
+            }
+        }
+
+        // Update counters
         for way in 0..self.ways {
             let idx = self.entry_index(set, way);
             if way == used_way {
-                self.lru_counters[idx] = 255;
+                self.lru_counters[idx] = Self::MAX_LRU_COUNTER;
             } else if self.lru_counters[idx] > 0 {
                 self.lru_counters[idx] -= 1;
             }

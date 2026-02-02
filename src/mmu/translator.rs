@@ -46,23 +46,25 @@ impl AddressTranslator {
     /// 2. Performs TLB lookup
     /// 3. On TLB miss, walks page table and updates TLB
     /// 4. Checks permissions
+    /// 5. Updates Accessed/Dirty bits in the PTE
     pub fn translate_with_tlb<M: PhysicalMemoryInterface + ?Sized>(
         &self,
         request: TranslationRequest,
         tlb: &mut Tlb,
-        memory: &M,
+        memory: &mut M,
     ) -> Result<u64, MmuError> {
         let satp = Satp(request.satp);
 
         // Check translation mode
         match satp.mode() {
-            TranslationMode::Bare => {
+            Some(TranslationMode::Bare) => {
                 // No translation - return virtual address as physical
                 Ok(request.vaddr)
             }
-            TranslationMode::Sv39 => self.translate_sv39_with_tlb(request, satp, tlb, memory),
-            TranslationMode::Sv48 => Err(MmuError::UnsupportedMode(TranslationMode::Sv48)),
-            _ => Err(MmuError::UnsupportedMode(satp.mode())),
+            Some(TranslationMode::Sv39) => self.translate_sv39_with_tlb(request, satp, tlb, memory),
+            Some(TranslationMode::Sv48) => Err(MmuError::UnsupportedMode(TranslationMode::Sv48)),
+            Some(TranslationMode::Sv57) => Err(MmuError::UnsupportedMode(TranslationMode::Sv57)),
+            None => Err(MmuError::InvalidSatpMode(satp.0)),
         }
     }
 
@@ -72,7 +74,7 @@ impl AddressTranslator {
         request: TranslationRequest,
         satp: Satp,
         tlb: &mut Tlb,
-        memory: &M,
+        memory: &mut M,
     ) -> Result<u64, MmuError> {
         let vaddr = request.vaddr;
         let vpn = vaddr >> 12;
@@ -81,10 +83,12 @@ impl AddressTranslator {
         if let Some(entry) = tlb.lookup(vpn, satp.asid()) {
             // TLB hit - check permissions
             if !self.check_tlb_permissions(&entry, request.access_type, request.privilege) {
-                return Err(MmuError::PageFault(format!(
-                    "Permission denied for access {:?} at 0x{:016x}",
-                    request.access_type, vaddr
-                )));
+                return Err(MmuError::PageFault(
+                    super::PageFaultReason::PermissionDenied {
+                        access_type: request.access_type,
+                        vaddr,
+                    },
+                ));
             }
 
             // Build physical address from TLB entry
@@ -94,11 +98,12 @@ impl AddressTranslator {
 
         // TLB miss - perform page table walk
         let va = VirtualAddress::new(vaddr)?;
-        let walker = PageTableWalker::new(memory, satp.ppn());
+        let mut walker = PageTableWalker::new(memory, satp.ppn());
 
         let is_user = matches!(request.privilege, PrivilegeMode::User);
 
-        match walker.walk_check_permissions(va, request.access_type, is_user) {
+        // Use walk_check_permissions_and_update_ad to update A/D bits
+        match walker.walk_check_permissions_and_update_ad(va, request.access_type, is_user) {
             WalkResult::Success {
                 paddr,
                 pte,
@@ -111,10 +116,12 @@ impl AddressTranslator {
 
                 Ok(paddr)
             }
-            WalkResult::PageFault { level } => Err(MmuError::PageFault(format!(
-                "Page fault at level {} for address 0x{:016x}",
-                level, vaddr
-            ))),
+            WalkResult::PageFault { level } => {
+                Err(MmuError::PageFault(super::PageFaultReason::PageTableWalk {
+                    level,
+                    vaddr,
+                }))
+            }
             WalkResult::AccessFault { level: _ } => Err(MmuError::AccessFault(vaddr)),
         }
     }
@@ -175,15 +182,16 @@ impl AddressTranslator {
 
         // Check translation mode
         match satp.mode() {
-            TranslationMode::Bare => Ok(request.vaddr),
-            TranslationMode::Sv39 => {
+            Some(TranslationMode::Bare) => Ok(request.vaddr),
+            Some(TranslationMode::Sv39) => {
                 // Without memory access, we can only validate the address format
                 let _va = VirtualAddress::new(request.vaddr)?;
                 // Return passthrough - actual translation requires page table walk
                 Ok(request.vaddr)
             }
-            TranslationMode::Sv48 => Err(MmuError::UnsupportedMode(TranslationMode::Sv48)),
-            _ => Err(MmuError::UnsupportedMode(satp.mode())),
+            Some(TranslationMode::Sv48) => Err(MmuError::UnsupportedMode(TranslationMode::Sv48)),
+            Some(TranslationMode::Sv57) => Err(MmuError::UnsupportedMode(TranslationMode::Sv57)),
+            None => Err(MmuError::InvalidSatpMode(satp.0)),
         }
     }
 
@@ -191,30 +199,33 @@ impl AddressTranslator {
     ///
     /// This method performs a full page table walk without TLB caching.
     /// Useful for debug or when TLB is disabled.
+    /// Updates Accessed/Dirty bits in the PTE according to RISC-V spec.
     pub fn translate_sv39_walk<M: PhysicalMemoryInterface + ?Sized>(
         &self,
         vaddr: u64,
         satp: u64,
         access_type: AccessType,
         privilege: PrivilegeMode,
-        memory: &M,
+        memory: &mut M,
     ) -> Result<u64, MmuError> {
         let satp = Satp(satp);
 
-        if satp.mode() != TranslationMode::Sv39 {
-            return Err(MmuError::UnsupportedMode(satp.mode()));
+        if satp.mode() != Some(TranslationMode::Sv39) {
+            return Err(MmuError::UnsupportedMode(TranslationMode::Sv39));
         }
 
         let va = VirtualAddress::new(vaddr)?;
-        let walker = PageTableWalker::new(memory, satp.ppn());
+        let mut walker = PageTableWalker::new(memory, satp.ppn());
         let is_user = matches!(privilege, PrivilegeMode::User);
 
-        match walker.walk_check_permissions(va, access_type, is_user) {
+        match walker.walk_check_permissions_and_update_ad(va, access_type, is_user) {
             WalkResult::Success { paddr, .. } => Ok(paddr),
-            WalkResult::PageFault { level } => Err(MmuError::PageFault(format!(
-                "Page fault at level {} for address 0x{:016x}",
-                level, vaddr
-            ))),
+            WalkResult::PageFault { level } => {
+                Err(MmuError::PageFault(super::PageFaultReason::PageTableWalk {
+                    level,
+                    vaddr,
+                }))
+            }
             WalkResult::AccessFault { .. } => Err(MmuError::AccessFault(vaddr)),
         }
     }
@@ -245,7 +256,7 @@ mod tests {
         let config = MmuConfig::default();
         let translator = AddressTranslator::new(config);
         let mut tlb = Tlb::new(64, 4);
-        let memory = PhysicalMemory::new(0x8000_0000, 0x10000);
+        let mut memory = PhysicalMemory::new(0x8000_0000, 0x10000);
 
         let request = TranslationRequest {
             vaddr: 0x8000_0000,
@@ -255,7 +266,7 @@ mod tests {
             mstatus: 0,
         };
 
-        let result = translator.translate_with_tlb(request, &mut tlb, &memory);
+        let result = translator.translate_with_tlb(request, &mut tlb, &mut memory);
         assert_eq!(result.unwrap(), 0x8000_0000);
     }
 
@@ -325,7 +336,7 @@ mod tests {
             mstatus: 0,
         };
 
-        let result = translator.translate_with_tlb(request, &mut tlb, &memory);
+        let result = translator.translate_with_tlb(request, &mut tlb, &mut memory);
         assert!(result.is_ok(), "Translation failed: {:?}", result.err());
 
         // Expected: (data_ppn << 12) | offset = 0x9000_0000 | 0x0 = 0x9000_0000
@@ -336,7 +347,7 @@ mod tests {
         assert_eq!(tlb.stats().misses, 1);
 
         // Second access should hit TLB
-        let result2 = translator.translate_with_tlb(request, &mut tlb, &memory);
+        let result2 = translator.translate_with_tlb(request, &mut tlb, &mut memory);
         assert_eq!(result2.unwrap(), 0x9000_0000);
         assert_eq!(tlb.stats().hits, 1);
     }
@@ -344,7 +355,7 @@ mod tests {
     #[test]
     fn test_sv39_page_fault() {
         // Create memory large enough for root table
-        let memory = PhysicalMemory::new(0x8000_0000, 0x20000);
+        let mut memory = PhysicalMemory::new(0x8000_0000, 0x20000);
 
         // Create SATP with root PPN pointing to memory with invalid PTE
         // PPN = 0x80000 -> address 0x8000_0000 (all zeros = invalid PTEs)
@@ -363,7 +374,7 @@ mod tests {
             mstatus: 0,
         };
 
-        let result = translator.translate_with_tlb(request, &mut tlb, &memory);
+        let result = translator.translate_with_tlb(request, &mut tlb, &mut memory);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), MmuError::PageFault(_)));
     }
@@ -395,7 +406,7 @@ mod tests {
             mstatus: 0,
         };
 
-        let result = translator.translate_with_tlb(write_request, &mut tlb, &memory);
+        let result = translator.translate_with_tlb(write_request, &mut tlb, &mut memory);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), MmuError::PageFault(_)));
 
@@ -408,7 +419,7 @@ mod tests {
             mstatus: 0,
         };
 
-        let result = translator.translate_with_tlb(read_request, &mut tlb, &memory);
+        let result = translator.translate_with_tlb(read_request, &mut tlb, &mut memory);
         assert!(result.is_ok());
     }
 }

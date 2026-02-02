@@ -272,8 +272,8 @@ impl Sv39 {
 ///
 /// Performs page table walks to translate virtual addresses to physical addresses.
 pub struct PageTableWalker<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> {
-    /// Physical memory interface for reading page tables
-    memory: &'a M,
+    /// Physical memory interface for reading/writing page tables
+    memory: &'a mut M,
     /// Root page table PPN
     root_ppn: u64,
 }
@@ -284,7 +284,7 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
     /// # Arguments
     /// * `memory` - Physical memory interface
     /// * `root_ppn` - Physical Page Number of the root page table
-    pub fn new(memory: &'a M, root_ppn: u64) -> Self {
+    pub fn new(memory: &'a mut M, root_ppn: u64) -> Self {
         Self { memory, root_ppn }
     }
 
@@ -424,6 +424,86 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
                 WalkResult::Success {
                     paddr,
                     pte,
+                    level,
+                    pte_addr,
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Walk the page table, check permissions, and update Accessed/Dirty bits
+    ///
+    /// This method performs the same permission checks as walk_check_permissions,
+    /// but also updates the A/D bits in the PTE according to RISC-V spec:
+    /// - Sets A (Accessed) bit on any access (read/write/execute)
+    /// - Sets D (Dirty) bit on write access
+    ///
+    /// # Arguments
+    /// * `vaddr` - Virtual address to translate
+    /// * `access_type` - Type of access (read/write/execute)
+    /// * `is_user` - Whether this is a user-mode access
+    ///
+    /// # Returns
+    /// WalkResult indicating success or type of fault
+    /// On success, returns the updated PTE
+    pub fn walk_check_permissions_and_update_ad(
+        &mut self,
+        vaddr: VirtualAddress,
+        access_type: super::AccessType,
+        is_user: bool,
+    ) -> WalkResult {
+        match self.walk(vaddr) {
+            WalkResult::Success {
+                paddr,
+                pte,
+                level,
+                pte_addr,
+            } => {
+                let perms = pte.permissions();
+
+                // Check user permission: user mode can only access user pages (U=1)
+                if is_user && !perms.user {
+                    return WalkResult::PageFault { level };
+                }
+
+                // Check access type permission
+                let allowed = match access_type {
+                    super::AccessType::Read => perms.read,
+                    super::AccessType::Write => perms.write,
+                    super::AccessType::InstructionFetch => perms.execute,
+                };
+
+                if !allowed {
+                    return WalkResult::PageFault { level };
+                }
+
+                // Update Accessed/Dirty bits according to RISC-V spec
+                let mut updated_pte = pte;
+                let mut needs_update = false;
+
+                // Set A bit on any access (read/write/execute)
+                if !pte.is_accessed() {
+                    updated_pte.set_accessed();
+                    needs_update = true;
+                }
+
+                // Set D bit on write access
+                if access_type == super::AccessType::Write && !pte.is_dirty() {
+                    updated_pte.set_dirty();
+                    needs_update = true;
+                }
+
+                // Write back updated PTE if needed
+                if needs_update {
+                    if let Err(_e) = self.memory.write_dword(pte_addr, updated_pte.bits()) {
+                        return WalkResult::AccessFault { level };
+                    }
+                }
+
+                WalkResult::Success {
+                    paddr,
+                    pte: updated_pte,
                     level,
                     pte_addr,
                 }
@@ -623,7 +703,7 @@ mod tests {
         mem.write_bytes(0x8000_0000u64, &pte_bytes).unwrap();
 
         // Create walker and test - explicitly cast to trait object
-        let walker = PageTableWalker::new(&mem as &dyn PhysicalMemoryInterface, root_ppn);
+        let walker = PageTableWalker::new(&mut mem as &mut dyn PhysicalMemoryInterface, root_ppn);
 
         // Test VA = 0 (VPN2=0, VPN1=0, VPN0=0, offset=0)
         let va = VirtualAddress::new(0).unwrap();
@@ -649,12 +729,12 @@ mod tests {
     #[test]
     fn test_page_table_walk_invalid_pte() {
         // Create memory large enough for root table at 0x8000_0000
-        let mem = PhysicalMemory::new(0x8000_0000, 0x20000);
+        let mut mem = PhysicalMemory::new(0x8000_0000, 0x20000);
         let root_ppn = 0x80000; // Root at 0x8000_0000
 
         // Don't write any PTE - all entries are invalid (0)
 
-        let walker = PageTableWalker::new(&mem as &dyn PhysicalMemoryInterface, root_ppn);
+        let walker = PageTableWalker::new(&mut mem as &mut dyn PhysicalMemoryInterface, root_ppn);
         let va = VirtualAddress::new(0).unwrap();
 
         match walker.walk(va) {
@@ -689,7 +769,7 @@ mod tests {
         mem.write_dword(level0_ppn << 12, level0_pte.bits())
             .unwrap();
 
-        let walker = PageTableWalker::new(&mem as &dyn PhysicalMemoryInterface, root_ppn);
+        let walker = PageTableWalker::new(&mut mem as &mut dyn PhysicalMemoryInterface, root_ppn);
 
         // Test VA = 0
         let va = VirtualAddress::new(0).unwrap();
@@ -712,7 +792,7 @@ mod tests {
         let pte = PageTableEntry::new_leaf(0x90000, PagePermissions::user_rx(), false);
         mem.write_dword(root_ppn << 12, pte.bits()).unwrap();
 
-        let walker = PageTableWalker::new(&mem as &dyn PhysicalMemoryInterface, root_ppn);
+        let walker = PageTableWalker::new(&mut mem as &mut dyn PhysicalMemoryInterface, root_ppn);
         let va = VirtualAddress::new(0).unwrap();
 
         // User execute should succeed (page is user+execute)
