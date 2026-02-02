@@ -2,7 +2,7 @@
 //!
 //! 实现基于 TCP 的 GDB 远程串行协议服务器，支持多连接和异步处理。
 
-use super::{
+use super::{StopReason,
     BreakpointManager, BreakpointType, DebugError, DebugTarget, GdbPacket, RspProtocol,
     WatchpointManager, WatchpointType,
 };
