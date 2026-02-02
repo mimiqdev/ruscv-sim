@@ -1,0 +1,25 @@
+#!/bin/bash
+# Pre-commit Hook for RISC-V ISS Simulator
+# 快速检查：格式化 + 编译
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+cd "$PROJECT_ROOT"
+
+# 添加 cargo 到 PATH
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# 检查 Rust
+if ! command -v cargo &> /dev/null; then
+    echo "Rust not found. Skip checks."
+    exit 0
+fi
+
+# Step 1: cargo fmt (自动修复)
+echo "Pre-commit: cargo fmt (auto-fixing)..."
+cargo fmt --all
+
+# Step 2: cargo check (快速编译检查)
+echo "Pre-commit: cargo check..."
+cargo check --all-features
+
+echo "Pre-commit checks done."
