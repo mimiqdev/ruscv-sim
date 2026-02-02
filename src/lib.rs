@@ -10,6 +10,7 @@ pub mod decode;
 pub mod dispatch;
 pub mod elf;
 pub mod execute;
+pub mod executor;
 pub mod fpu;
 pub mod isa;
 pub mod memory;
@@ -26,6 +27,9 @@ pub use debug::{
 };
 pub use decode::{DecodeError, DecodedInstruction, InstructionDecoder, InstructionFormat};
 pub use execute::{ExecuteError, Executor};
+pub use executor::{
+    load_and_run, load_and_run_file, ExecutionResult, ExecutorError, RiscVSimulator,
+};
 pub use fpu::{Fcsr, Fpr, FpuRegisterFile};
 pub use memory::{MemoryError, MemoryInterface, SimpleMemory};
 pub use mmu::{
