@@ -20,7 +20,14 @@ fi
 echo "Pre-commit: cargo fmt (auto-fixing)..."
 cargo fmt --all
 
-# Step 2: cargo check (快速编译检查)
+# Step 2: 检查是否有格式改动，自动添加到 staging
+if ! git diff --quiet --exit-code; then
+    echo "Pre-commit: Staging formatting changes..."
+    git add -A
+    echo "Pre-commit: Formatting changes staged."
+fi
+
+# Step 3: cargo check (快速编译检查)
 echo "Pre-commit: cargo check..."
 cargo check --all-features
 
