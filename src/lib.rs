@@ -8,6 +8,7 @@ pub mod csr;
 pub mod debug;
 pub mod decode;
 pub mod dispatch;
+pub mod elf;
 pub mod execute;
 pub mod fpu;
 pub mod isa;
