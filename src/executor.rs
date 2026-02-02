@@ -552,7 +552,7 @@ mod tests {
         assert_eq!(extract_exit_code(val), Some(1));
 
         // Exit code 0 (success)
-        let val = WRITE_MARKER | 0x0;
+        let val = WRITE_MARKER;
         assert_eq!(extract_exit_code(val), Some(0));
 
         // Non-exit value
