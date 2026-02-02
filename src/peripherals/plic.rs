@@ -55,10 +55,12 @@ impl PartialOrd for InterruptRequest {
 
 impl Ord for InterruptRequest {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // 优先级高的更大，相同优先级时ID小的更小（ID大的更优先）
+        // 优先级高的更大，相同优先级时ID小的更大（ID小的更优先）
+        // 根据 RISC-V PLIC 规范：当两个或更多中断源具有相同优先级时，
+        // 中断 ID 较小的中断优先于中断 ID 较大的中断（Smaller ID takes precedence）
         self.priority
             .cmp(&other.priority)
-            .then_with(|| self.id.cmp(&other.id))
+            .then_with(|| other.id.cmp(&self.id)) // 反转ID比较顺序：ID小的优先级更高
     }
 }
 
@@ -665,9 +667,12 @@ mod tests {
         let req2 = InterruptRequest { id: 2, priority: 3 };
         let req3 = InterruptRequest { id: 3, priority: 5 }; // 相同优先级，ID 更大
 
-        // 按优先级降序
-        assert!(req1 > req2); // 5 > 3
-        assert!(req1 < req3); // 相同优先级，ID 1 < 3，所以 req1 < req3
+        // 按优先级降序：优先级数值越大，优先级越高
+        assert!(req1 > req2); // 优先级 5 > 3，所以 req1 > req2
+
+        // 相同优先级时，ID 小的优先级更高（RISC-V PLIC 规范）
+        // ID 1 < ID 3，所以 req1 的优先级高于 req3
+        assert!(req1 > req3); // 相同优先级，ID 1 < 3，所以 req1 > req3
     }
 
     #[test]
