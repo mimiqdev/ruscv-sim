@@ -76,18 +76,25 @@
 
 ### M5: 架构测试集成 [PLANNING]
 **Status:** Planning
-**Goal:** 集成 riscv-arch-test，准备 v1.0 发布
+**Goal:** 建立 riscv-arch-test 执行闭环，准备 v1.0 发布
 
-#### Features
+#### M5.1: ELF 执行闭环（基础执行器）
+- [ ] **ELF Loader**: 加载 arch-test ELF（入口点/段映射）
+- [ ] **运行入口**: reset → run 的最小执行流程
+- [ ] **Signature 导出**: 支持 signature 区域 dump
+- [ ] **退出机制**: tohost/exit 约定，用于自动停止测试
+
+#### M5.2: 测试质量强化（本地回归）
+- [ ] **ELF 集成测试**: 最小裸机程序执行回归
+- [ ] **属性测试 (proptest)**: 关键外设边界自动化探索（已添加 `proptest = "1.0"` 依赖，见 Code Review 建议 #1）
+- [ ] **覆盖率报告**: 集成 `cargo-llvm-cov` 输出覆盖率（见 Code Review 建议 #3）
+
+#### M5.3: RISCOF + arch-test 集成
 - [ ] **RISCOF 框架**: 安装和配置 RISCOF 测试框架
 - [ ] **DUT 配置**: 创建 ruscv-sim 的 YAML 配置文件
 - [ ] **Spike 集成**: 安装 Spike 作为参考模型
 - [ ] **riscv-arch-test 运行**: 执行 RV64IMAFDC 架构测试
 - [ ] **问题修复**: 解决测试失败问题
-
-#### Buffer Zone
-- [ ] [BUFFER] **属性测试 (proptest)**: 对关键外设使用 proptest 进行自动化边界值探索（已添加 `proptest = "1.0"` 依赖，见 Code Review 建议 #1）
-- [ ] [BUFFER] **覆盖率报告工具**: 集成 `cargo-llvm-cov` 生成详细测试覆盖率报告（见 Code Review 建议 #3）
 
 ---
 ### M6: v1.0 发布 [PLANNING]
@@ -126,6 +133,10 @@
 - M5 调整为：架构测试集成阶段
 - 其他目标（性能优化、文档、模糊测试等）移至 Future Goals
 - 添加版本规划表：v0.1.0 → v0.5.0 → v0.9.0-RC1 → v1.0.0
+
+**2026-02-02**: M5 分阶段拆解
+- M5 拆分为 M5.1 ELF 执行闭环、M5.2 测试质量强化、M5.3 RISCOF + arch-test 集成
+- 将 proptest 与覆盖率报告纳入 M5.2 作为本地回归能力建设
 
 **2026-02-02**: Code Review 改进建议评估（M3 完成后）
 评估了三项改进建议，决策如下：
