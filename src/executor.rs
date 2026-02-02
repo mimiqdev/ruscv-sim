@@ -6,7 +6,7 @@
 //! with tohost exit signal support.
 
 use crate::core::{CoreState, RiscvCore};
-use crate::elf::{load_elf_file, ElfError};
+use crate::elf::{load_elf_file, ElfError, SignatureInfo};
 use crate::memory::MemoryInterface;
 use crate::memory::SimpleMemory;
 use std::sync::{Arc, Mutex};
@@ -25,6 +25,10 @@ pub struct ExecutionResult {
     pub timed_out: bool,
     /// Whether an error occurred
     pub error: Option<String>,
+    /// Signature section address (if available)
+    pub signature_addr: Option<u64>,
+    /// Signature data (if available)
+    pub signature_data: Option<Vec<u8>>,
 }
 
 impl Default for ExecutionResult {
@@ -35,6 +39,8 @@ impl Default for ExecutionResult {
             final_pc: 0,
             timed_out: false,
             error: None,
+            signature_addr: None,
+            signature_data: None,
         }
     }
 }
@@ -64,6 +70,45 @@ const DEFAULT_TOHOST: u64 = 0x8000_1000;
 
 /// Write marker to distinguish tohost/fromhost access
 const WRITE_MARKER: u64 = 1 << 63;
+
+/// Dump signature data from memory
+///
+/// Reads signature region from memory and returns as bytes.
+/// Returns None if signature section info is not available.
+pub fn dump_signature(
+    mem: &Arc<Mutex<SimpleMemory>>,
+    sig_info: Option<&crate::elf::SignatureInfo>,
+) -> Result<Option<Vec<u8>>, ExecutorError> {
+    let sig_info = match sig_info {
+        Some(info) => info,
+        None => return Ok(None),
+    };
+
+    let addr = sig_info.vaddr;
+    let size = sig_info.size;
+
+    if size == 0 {
+        return Ok(Some(Vec::new()));
+    }
+
+    let guard = mem.lock().unwrap();
+    let mut data = Vec::with_capacity(size as usize);
+
+    for i in 0..size {
+        match guard.read_byte(addr + i) {
+            Ok(byte) => data.push(byte),
+            Err(e) => {
+                return Err(ExecutorError::ExecutionError(format!(
+                    "Failed to read signature byte at 0x{:016x}: {}",
+                    addr + i,
+                    e
+                )));
+            }
+        }
+    }
+
+    Ok(Some(data))
+}
 
 /// Extract exit code from tohost value
 fn extract_exit_code(tohost_value: u64) -> Option<u32> {
@@ -98,7 +143,7 @@ pub fn load_and_run(
     let max_cycles = max_cycles.unwrap_or(DEFAULT_MAX_CYCLES);
 
     // Step 1: Load ELF file
-    let (entry_point, memory, _signature, elf_tohost) = load_elf_file(elf_data)?;
+    let (entry_point, memory, signature, elf_tohost) = load_elf_file(elf_data)?;
 
     // Use provided tohost address or try to find it in ELF
     let tohost = tohost_addr.or(elf_tohost).unwrap_or(DEFAULT_TOHOST);
@@ -146,21 +191,29 @@ pub fn load_and_run(
                             // Check if this is an exit signal
                             if let Some(code) = extract_exit_code(tohost_value) {
                                 // Valid exit signal received
+                                let sig_data =
+                                    dump_signature(&mem, signature.as_ref()).ok().flatten();
                                 return Ok(ExecutionResult {
                                     exit_code: code,
                                     cycles,
                                     final_pc: core.state().pc,
                                     timed_out: false,
                                     error: None,
+                                    signature_addr: signature.map(|s| s.vaddr),
+                                    signature_data: sig_data,
                                 });
                             } else if is_exit_code(tohost_value) {
                                 // Alternative exit detection
+                                let sig_data =
+                                    dump_signature(&mem, signature.as_ref()).ok().flatten();
                                 return Ok(ExecutionResult {
                                     exit_code: tohost_value as u32,
                                     cycles,
                                     final_pc: core.state().pc,
                                     timed_out: false,
                                     error: None,
+                                    signature_addr: signature.map(|s| s.vaddr),
+                                    signature_data: sig_data,
                                 });
                             }
                         }
@@ -171,6 +224,7 @@ pub fn load_and_run(
                 }
             }
             Err(e) => {
+                let sig_data = dump_signature(&mem, signature.as_ref()).ok().flatten();
                 return Ok(ExecutionResult {
                     exit_code: 1,
                     cycles,
@@ -180,18 +234,23 @@ pub fn load_and_run(
                         "Execution error at PC 0x{:016x}: {}",
                         current_pc, e
                     )),
+                    signature_addr: signature.map(|s| s.vaddr),
+                    signature_data: sig_data,
                 });
             }
         }
     }
 
     // Timeout reached
+    let sig_data = dump_signature(&mem, signature.as_ref()).ok().flatten();
     Ok(ExecutionResult {
         exit_code: 1, // Non-zero indicates abnormal termination
         cycles,
         final_pc: core.state().pc,
         timed_out: true,
         error: Some(format!("Timeout after {} cycles", max_cycles)),
+        signature_addr: signature.map(|s| s.vaddr),
+        signature_data: sig_data,
     })
 }
 
@@ -250,6 +309,8 @@ pub struct RiscVSimulator {
     tohost: u64,
     /// Maximum cycles
     max_cycles: u64,
+    /// Signature section info
+    signature: Option<SignatureInfo>,
 }
 
 impl RiscVSimulator {
@@ -262,12 +323,14 @@ impl RiscVSimulator {
             memory,
             tohost: DEFAULT_TOHOST,
             max_cycles: DEFAULT_MAX_CYCLES,
+            signature: None,
         }
     }
 
     /// Load ELF data into memory
     pub fn load_elf(&mut self, elf_data: &[u8]) -> Result<u64, ExecutorError> {
-        let (entry_point, memory, _sig, tohost) = load_elf_file(elf_data)?;
+        let (entry_point, memory, sig, tohost) = load_elf_file(elf_data)?;
+        self.signature = sig;
 
         // Resize memory if needed
         let required_size = memory.len();
@@ -346,24 +409,34 @@ impl RiscVSimulator {
                     cycles += 1;
                 }
                 Err(e) => {
+                    let sig_data = dump_signature(&self.memory, self.signature.as_ref())
+                        .ok()
+                        .flatten();
                     return Ok(ExecutionResult {
                         exit_code: 1,
                         cycles,
                         final_pc: self.core.state().pc,
                         timed_out: false,
                         error: Some(format!("Execution error: {}", e)),
+                        signature_addr: self.signature.as_ref().map(|s| s.vaddr),
+                        signature_data: sig_data,
                     });
                 }
             }
         }
 
         // Timeout
+        let sig_data = dump_signature(&self.memory, self.signature.as_ref())
+            .ok()
+            .flatten();
         Ok(ExecutionResult {
             exit_code: 1,
             cycles,
             final_pc: self.core.state().pc,
             timed_out: true,
             error: Some(format!("Timeout after {} cycles", max_cycles)),
+            signature_addr: self.signature.as_ref().map(|s| s.vaddr),
+            signature_data: sig_data,
         })
     }
 
@@ -400,12 +473,18 @@ impl RiscVSimulator {
             }
         };
 
+        let sig_data = dump_signature(&self.memory, self.signature.as_ref())
+            .ok()
+            .flatten();
+
         ExecutionResult {
             exit_code,
             cycles,
             final_pc: self.core.state().pc,
             timed_out: false,
             error: None,
+            signature_addr: self.signature.as_ref().map(|s| s.vaddr),
+            signature_data: sig_data,
         }
     }
 
