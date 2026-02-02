@@ -319,12 +319,13 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
                     );
                     val
                 }
-                Err(_e) => {
+                Err(e) => {
                     #[cfg(test)]
                     eprintln!(
                         "AccessFault at level {}: addr={:016x}, error={:?}",
                         level, pte_addr, e
                     );
+                    let _ = e; // Suppress unused warning in non-test builds
                     return WalkResult::AccessFault { level };
                 }
             };
@@ -436,7 +437,7 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
 mod tests {
     use super::*;
     use crate::mmu::physical::{PhysicalMemory, PhysicalMemoryInterface};
-    use crate::mmu::pte::flags;
+    use crate::mmu::pte::PagePermissions;
 
     #[test]
     fn test_virtual_address() {
@@ -575,7 +576,7 @@ mod tests {
     fn test_trait_object_address_passing() {
         use crate::mmu::physical::PhysicalMemoryInterface;
 
-        let mut mem = PhysicalMemory::new(0x8000_0000, 0x10000);
+        let mem = PhysicalMemory::new(0x8000_0000, 0x10000);
 
         // Test address passing through trait object
         let iface: &dyn PhysicalMemoryInterface = &mem;

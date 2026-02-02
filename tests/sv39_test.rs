@@ -8,7 +8,7 @@
 //! - Permission checking
 //! - Accessed/Dirty bits
 
-use ruscv_sim::mmu::physical::{PhysicalMemory, PhysicalMemoryInterface};
+use ruscv_sim::mmu::physical::PhysicalMemory;
 use ruscv_sim::mmu::pte::{flags, PagePermissions, PageTableEntry};
 use ruscv_sim::mmu::sv39::{PageTableWalker, Sv39, VirtualAddress, WalkResult};
 
@@ -55,7 +55,7 @@ fn test_sv39_4kb_page_translation() {
     match walker.walk(va) {
         WalkResult::Success { paddr, level, .. } => {
             assert_eq!(level, 0); // 4KB page at level 0
-            assert_eq!(paddr, (data_ppn << 12) | 0); // offset = 0
+            assert_eq!(paddr, data_ppn << 12); // offset = 0
         }
         other => panic!("Expected Success, got {:?}", other),
     }
@@ -213,13 +213,13 @@ fn test_sv39_walk_all_levels_no_leaf() {
 
     let level1_pte = PageTableEntry::new_pointer(level0_ppn);
     memory
-        .write_dword((level1_ppn << 12), level1_pte.bits())
+        .write_dword(level1_ppn << 12, level1_pte.bits())
         .unwrap();
 
     // Level 0 has a pointer (not a leaf) - this is invalid
     let level0_pte = PageTableEntry::new_pointer(0x1234);
     memory
-        .write_dword((level0_ppn << 12), level0_pte.bits())
+        .write_dword(level0_ppn << 12, level0_pte.bits())
         .unwrap();
 
     let walker = PageTableWalker::new(&memory, root_ppn);

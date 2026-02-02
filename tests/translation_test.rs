@@ -8,10 +8,10 @@
 //! - SATP mode switching
 
 use ruscv_sim::core::PrivilegeMode;
-use ruscv_sim::mmu::physical::{PhysicalMemory, PhysicalMemoryInterface};
+use ruscv_sim::mmu::physical::PhysicalMemory;
 use ruscv_sim::mmu::pte::{PagePermissions, PageTableEntry};
 use ruscv_sim::mmu::translator::{AddressTranslator, TranslationRequest};
-use ruscv_sim::mmu::{AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TlbEntry, TranslationMode};
+use ruscv_sim::mmu::{AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TranslationMode};
 
 /// Setup a simple 3-level page table for testing
 /// Uses root_ppn as the base, with level1 at root_ppn + 1, level0 at root_ppn + 2
@@ -23,19 +23,19 @@ fn setup_page_table(memory: &mut PhysicalMemory, root_ppn: u64) {
     // Level 2 (root) - pointer to level 1 at VPN[2]=0
     let root_pte = PageTableEntry::new_pointer(level1_ppn);
     memory
-        .write_dword((root_ppn << 12), root_pte.bits())
+        .write_dword(root_ppn << 12, root_pte.bits())
         .unwrap();
 
     // Level 1 - pointer to level 0 at VPN[1]=0
     let level1_pte = PageTableEntry::new_pointer(level0_ppn);
     memory
-        .write_dword((level1_ppn << 12), level1_pte.bits())
+        .write_dword(level1_ppn << 12, level1_pte.bits())
         .unwrap();
 
     // Level 0 - multiple entries
     // Entry 0: RWX page at PPN 0x90000 (address 0x9000_0000)
     let pte0 = PageTableEntry::new_leaf(0x90000, PagePermissions::rwx(), false);
-    memory.write_dword((level0_ppn << 12), pte0.bits()).unwrap();
+    memory.write_dword(level0_ppn << 12, pte0.bits()).unwrap();
 
     // Entry 1: RW page at PPN 0x90001 (address 0x9000_1000)
     let pte1 = PageTableEntry::new_leaf(0x90001, PagePermissions::rw(), false);
@@ -69,7 +69,7 @@ fn test_mmu_creation() {
 #[test]
 fn test_bare_mode_translation() {
     // Memory: base 0x8000_0000, size 0x1001_0000 (covers up to 0x9001_0000)
-    let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
+    let memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
     let config = MmuConfig::default();
     let translator = AddressTranslator::new(config);
     let mut tlb = Tlb::new(64, 4);
@@ -167,7 +167,7 @@ fn test_translation_instruction_vs_data() {
     setup_page_table(&mut memory, root_ppn);
 
     let config = MmuConfig::default();
-    let mut mmu = Mmu::new(config);
+    let mmu = Mmu::new(config);
 
     let satp = (8u64 << 60) | root_ppn;
 
@@ -445,7 +445,7 @@ fn test_satp_parsing() {
     assert_eq!(satp.root_page_table_addr(), 0xABCDEF << 12);
 
     // Sv48 mode
-    let satp = Satp((9u64 << 60));
+    let satp = Satp(9u64 << 60);
     assert_eq!(satp.mode(), TranslationMode::Sv48);
 }
 
@@ -504,13 +504,13 @@ fn test_mmu_flush_tlb_asid_va() {
 #[test]
 fn test_sv48_not_supported() {
     // Memory: base 0x8000_0000, size 0x1001_0000
-    let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
+    let memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
     let config = MmuConfig::default();
     let translator = AddressTranslator::new(config);
     let mut tlb = Tlb::new(64, 4);
 
     // Sv48 mode
-    let satp = (9u64 << 60);
+    let satp = 9u64 << 60;
 
     let request = TranslationRequest {
         vaddr: 0x1000,

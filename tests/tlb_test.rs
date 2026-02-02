@@ -8,7 +8,7 @@
 //! - LRU replacement policy
 //! - Statistics tracking
 
-use ruscv_sim::mmu::{Tlb, TlbEntry, TlbStats};
+use ruscv_sim::mmu::{Tlb, TlbEntry};
 
 #[test]
 fn test_tlb_basic_lookup() {
