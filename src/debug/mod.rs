@@ -11,7 +11,7 @@ pub mod watchpoint;
 
 pub use breakpoint::{Breakpoint, BreakpointManager, BreakpointType};
 pub use cli::DebugCli;
-pub use gdb_server::{GdbServer, GdbServerConfig};
+pub use gdb_server::{GdbServer, GdbServerConfig, GdbServerState};
 pub use rsp::{GdbPacket, RspProtocol};
 pub use watchpoint::{Watchpoint, WatchpointManager, WatchpointType};
 

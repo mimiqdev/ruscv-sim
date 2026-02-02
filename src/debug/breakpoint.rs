@@ -343,7 +343,11 @@ impl BreakpointStats {
     pub fn format(&self) -> String {
         format!(
             "Breakpoints: {} software, {}/{} hardware, {} temporary, {} total hits",
-            self.software_count, self.hardware_count, self.hardware_limit, self.temporary_count, self.total_hits
+            self.software_count,
+            self.hardware_count,
+            self.hardware_limit,
+            self.temporary_count,
+            self.total_hits
         )
     }
 }
@@ -492,12 +496,8 @@ mod tests {
         mgr.add_breakpoint(0x1000, BreakpointType::Software, 4)
             .unwrap();
 
-        mgr.set_breakpoint_condition(
-            0x1000,
-            BreakpointType::Software,
-            "x1 == 42".to_string(),
-        )
-        .unwrap();
+        mgr.set_breakpoint_condition(0x1000, BreakpointType::Software, "x1 == 42".to_string())
+            .unwrap();
 
         let bp = mgr
             .get_breakpoint(0x1000, BreakpointType::Software)
@@ -525,8 +525,14 @@ mod tests {
 
     #[test]
     fn test_breakpoint_type_conversion() {
-        assert_eq!(BreakpointType::from_gdb_type(0), Some(BreakpointType::Software));
-        assert_eq!(BreakpointType::from_gdb_type(1), Some(BreakpointType::Hardware));
+        assert_eq!(
+            BreakpointType::from_gdb_type(0),
+            Some(BreakpointType::Software)
+        );
+        assert_eq!(
+            BreakpointType::from_gdb_type(1),
+            Some(BreakpointType::Hardware)
+        );
         assert_eq!(BreakpointType::from_gdb_type(99), None);
 
         assert_eq!(BreakpointType::Software.to_gdb_type(), 0);

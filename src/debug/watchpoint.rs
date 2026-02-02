@@ -177,10 +177,7 @@ impl WatchpointManager {
         }
 
         let wp = Watchpoint::new(address, wp_type, size);
-        self.watchpoints
-            .entry(address)
-            .or_default()
-            .push(wp);
+        self.watchpoints.entry(address).or_default().push(wp);
 
         Ok(())
     }
@@ -227,12 +224,7 @@ impl WatchpointManager {
 
     /// 检查内存访问是否触发观察点
     /// 返回触发观察点的地址列表
-    pub fn check_memory_access(
-        &self,
-        addr: u64,
-        len: u64,
-        access: WatchpointAccess,
-    ) -> Vec<u64> {
+    pub fn check_memory_access(&self, addr: u64, len: u64, access: WatchpointAccess) -> Vec<u64> {
         let mut triggered = Vec::new();
 
         for (wp_addr, wps) in &self.watchpoints {
@@ -248,12 +240,7 @@ impl WatchpointManager {
     }
 
     /// 标记观察点命中并返回命中的观察点地址列表
-    pub fn hit_watchpoints(
-        &mut self,
-        addr: u64,
-        len: u64,
-        access: WatchpointAccess,
-    ) -> Vec<u64> {
+    pub fn hit_watchpoints(&mut self, addr: u64, len: u64, access: WatchpointAccess) -> Vec<u64> {
         let mut hit_addresses = Vec::new();
 
         for (wp_addr, wps) in &mut self.watchpoints {
@@ -353,7 +340,12 @@ impl WatchpointStats {
     pub fn format(&self) -> String {
         format!(
             "Watchpoints: {} read, {} write, {} access ({}/{}), {} total hits",
-            self.read_count, self.write_count, self.access_count, self.total_count, self.limit, self.total_hits
+            self.read_count,
+            self.write_count,
+            self.access_count,
+            self.total_count,
+            self.limit,
+            self.total_hits
         )
     }
 }
@@ -416,7 +408,8 @@ mod tests {
         let mut mgr = WatchpointManager::new();
 
         // 添加观察点
-        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4).unwrap();
+        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4)
+            .unwrap();
         assert!(mgr.has_watchpoint(0x1000));
         assert_eq!(mgr.count(), 1);
 
@@ -436,12 +429,8 @@ mod tests {
     fn test_watchpoint_limit() {
         let mut mgr = WatchpointManager::new().with_limit(2);
 
-        assert!(mgr
-            .add_watchpoint(0x1000, WatchpointType::Write, 4)
-            .is_ok());
-        assert!(mgr
-            .add_watchpoint(0x2000, WatchpointType::Write, 4)
-            .is_ok());
+        assert!(mgr.add_watchpoint(0x1000, WatchpointType::Write, 4).is_ok());
+        assert!(mgr.add_watchpoint(0x2000, WatchpointType::Write, 4).is_ok());
         assert!(mgr
             .add_watchpoint(0x3000, WatchpointType::Write, 4)
             .is_err()); // 超出限制
@@ -450,7 +439,8 @@ mod tests {
     #[test]
     fn test_check_memory_access() {
         let mut mgr = WatchpointManager::new();
-        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4).unwrap();
+        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4)
+            .unwrap();
         mgr.add_watchpoint(0x2000, WatchpointType::Read, 8).unwrap();
 
         // 应该触发写观察点
@@ -473,7 +463,8 @@ mod tests {
     #[test]
     fn test_hit_watchpoints() {
         let mut mgr = WatchpointManager::new();
-        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4).unwrap();
+        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4)
+            .unwrap();
 
         let hit = mgr.hit_watchpoints(0x1000, 4, WatchpointAccess::Write);
         assert_eq!(hit, vec![0x1000]);
@@ -487,7 +478,8 @@ mod tests {
     fn test_multiple_watchpoints_same_address() {
         let mut mgr = WatchpointManager::new();
         mgr.add_watchpoint(0x1000, WatchpointType::Read, 4).unwrap();
-        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4).unwrap();
+        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4)
+            .unwrap();
 
         assert_eq!(mgr.count(), 2);
 
@@ -499,7 +491,8 @@ mod tests {
     #[test]
     fn test_clear_all() {
         let mut mgr = WatchpointManager::new();
-        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4).unwrap();
+        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4)
+            .unwrap();
         mgr.add_watchpoint(0x2000, WatchpointType::Read, 4).unwrap();
 
         mgr.clear_all();
@@ -510,7 +503,8 @@ mod tests {
     #[test]
     fn test_watchpoint_enable_disable() {
         let mut mgr = WatchpointManager::new();
-        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4).unwrap();
+        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4)
+            .unwrap();
 
         // 禁用
         mgr.set_watchpoint_enabled(0x1000, WatchpointType::Write, false)
@@ -528,14 +522,11 @@ mod tests {
     #[test]
     fn test_watchpoint_condition() {
         let mut mgr = WatchpointManager::new();
-        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4).unwrap();
+        mgr.add_watchpoint(0x1000, WatchpointType::Write, 4)
+            .unwrap();
 
-        mgr.set_watchpoint_condition(
-            0x1000,
-            WatchpointType::Write,
-            "x1 == 42".to_string(),
-        )
-        .unwrap();
+        mgr.set_watchpoint_condition(0x1000, WatchpointType::Write, "x1 == 42".to_string())
+            .unwrap();
 
         let wps = mgr.get_watchpoints(0x1000).unwrap();
         assert_eq!(wps[0].condition, Some("x1 == 42".to_string()));
@@ -545,8 +536,10 @@ mod tests {
     fn test_watchpoint_stats() {
         let mut mgr = WatchpointManager::new();
         mgr.add_watchpoint(0x1000, WatchpointType::Read, 4).unwrap();
-        mgr.add_watchpoint(0x2000, WatchpointType::Write, 4).unwrap();
-        mgr.add_watchpoint(0x3000, WatchpointType::Access, 4).unwrap();
+        mgr.add_watchpoint(0x2000, WatchpointType::Write, 4)
+            .unwrap();
+        mgr.add_watchpoint(0x3000, WatchpointType::Access, 4)
+            .unwrap();
 
         mgr.hit_watchpoints(0x1000, 4, WatchpointAccess::Read);
         mgr.hit_watchpoints(0x2000, 4, WatchpointAccess::Write);
@@ -562,8 +555,14 @@ mod tests {
     #[test]
     fn test_watchpoint_type_conversion() {
         assert_eq!(WatchpointType::from_gdb_type(2), Some(WatchpointType::Read));
-        assert_eq!(WatchpointType::from_gdb_type(3), Some(WatchpointType::Write));
-        assert_eq!(WatchpointType::from_gdb_type(4), Some(WatchpointType::Access));
+        assert_eq!(
+            WatchpointType::from_gdb_type(3),
+            Some(WatchpointType::Write)
+        );
+        assert_eq!(
+            WatchpointType::from_gdb_type(4),
+            Some(WatchpointType::Access)
+        );
         assert_eq!(WatchpointType::from_gdb_type(99), None);
 
         assert_eq!(WatchpointType::Read.to_gdb_type(), 2);

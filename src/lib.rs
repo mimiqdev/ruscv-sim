@@ -5,6 +5,7 @@
 pub mod codegen;
 pub mod core;
 pub mod csr;
+pub mod debug;
 pub mod decode;
 pub mod dispatch;
 pub mod execute;
@@ -17,6 +18,11 @@ pub mod tlm;
 
 pub use core::{CoreState, PrivilegeMode, RiscvCore};
 pub use csr::{CsrError, CsrFile};
+pub use debug::{
+    Breakpoint, BreakpointManager, BreakpointType, DebugCli, DebugError, DebugTarget, GdbPacket,
+    GdbServer, GdbServerConfig, GdbServerState, RspProtocol, StopReason, Watchpoint,
+    WatchpointAccess, WatchpointManager, WatchpointType,
+};
 pub use decode::{DecodeError, DecodedInstruction, InstructionDecoder, InstructionFormat};
 pub use execute::{ExecuteError, Executor};
 pub use fpu::{Fcsr, Fpr, FpuRegisterFile};

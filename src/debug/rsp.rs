@@ -4,7 +4,6 @@
 //! 校验和是 packet-data 中所有字节的和的低 8 位
 
 use super::DebugError;
-use std::fmt::Write;
 
 /// GDB 数据包
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,9 +15,7 @@ pub struct GdbPacket {
 impl GdbPacket {
     /// 创建新的数据包
     pub fn new(data: impl Into<String>) -> Self {
-        Self {
-            data: data.into(),
-        }
+        Self { data: data.into() }
     }
 
     /// 从原始数据解析数据包
@@ -270,8 +267,7 @@ impl RspProtocol {
             .parse::<u8>()
             .map_err(|_| DebugError::InvalidPacket("Invalid breakpoint type".into()))?;
 
-        let addr = u64::from_str_radix(parts[1], 16)
-            .map_err(|_| DebugError::InvalidAddress(0))?;
+        let addr = u64::from_str_radix(parts[1], 16).map_err(|_| DebugError::InvalidAddress(0))?;
 
         let kind = parts[2]
             .parse::<u64>()
@@ -297,8 +293,7 @@ impl RspProtocol {
             ));
         }
 
-        let addr = u64::from_str_radix(parts[0], 16)
-            .map_err(|_| DebugError::InvalidAddress(0))?;
+        let addr = u64::from_str_radix(parts[0], 16).map_err(|_| DebugError::InvalidAddress(0))?;
 
         let len = usize::from_str_radix(parts[1], 16)
             .map_err(|_| DebugError::InvalidPacket("Invalid length".into()))?;
@@ -310,9 +305,9 @@ impl RspProtocol {
     /// 格式: Maddr,length:data
     pub fn parse_memory_write(cmd: &str) -> Result<(u64, Vec<u8>), DebugError> {
         // 跳过 'M'
-        let colon_pos = cmd.find(':').ok_or_else(|| {
-            DebugError::InvalidPacket("Memory write command missing ':'".into())
-        })?;
+        let colon_pos = cmd
+            .find(':')
+            .ok_or_else(|| DebugError::InvalidPacket("Memory write command missing ':'".into()))?;
 
         let params = &cmd[1..colon_pos];
         let data_hex = &cmd[colon_pos + 1..];
@@ -324,8 +319,7 @@ impl RspProtocol {
             ));
         }
 
-        let addr = u64::from_str_radix(parts[0], 16)
-            .map_err(|_| DebugError::InvalidAddress(0))?;
+        let addr = u64::from_str_radix(parts[0], 16).map_err(|_| DebugError::InvalidAddress(0))?;
 
         let data = GdbPacket::decode_hex(data_hex)?;
         let expected_len = usize::from_str_radix(parts[1], 16)
@@ -358,8 +352,8 @@ impl RspProtocol {
             DebugError::InvalidPacket("Register write command missing '='".into())
         })?;
 
-        let reg_num = u32::from_str_radix(&cmd[1..eq_pos], 16)
-            .map_err(|_| DebugError::InvalidRegister(0))?;
+        let reg_num =
+            u32::from_str_radix(&cmd[1..eq_pos], 16).map_err(|_| DebugError::InvalidRegister(0))?;
 
         let value = u64::from_str_radix(&cmd[eq_pos + 1..], 16)
             .map_err(|_| DebugError::InvalidPacket("Invalid register value".into()))?;
@@ -378,9 +372,9 @@ impl RspProtocol {
             }
 
             let mut chars = part.chars();
-            let action = chars.next().ok_or_else(|| {
-                DebugError::InvalidPacket("Empty vCont action".into())
-            })?;
+            let action = chars
+                .next()
+                .ok_or_else(|| DebugError::InvalidPacket("Empty vCont action".into()))?;
 
             let thread_id = if chars.next() == Some(':') {
                 let tid: String = chars.collect();
@@ -511,7 +505,10 @@ mod tests {
         // 测试包含特殊字符的数据
         let data = vec![0x24, 0x23, 0x7d, 0x2a]; // $ # } *
         let escaped = GdbPacket::escape_binary(&data);
-        assert_eq!(escaped, vec![0x7d, 0x04, 0x7d, 0x03, 0x7d, 0x5d, 0x7d, 0x0a]);
+        assert_eq!(
+            escaped,
+            vec![0x7d, 0x04, 0x7d, 0x03, 0x7d, 0x5d, 0x7d, 0x0a]
+        );
 
         let unescaped = GdbPacket::unescape_binary(&escaped);
         assert_eq!(unescaped, data);
