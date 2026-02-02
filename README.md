@@ -27,7 +27,8 @@
 | RV64F 浮点单元 | ✅ 完成 | Sprint 6 |
 | 陷阱处理 | ✅ 完成 | Sprint 5 |
 | **MMU/TLB** | ✅ **完成** | **Sprint 10 - Sv39 页表, 4-way LRU TLB** |
-| **测试覆盖** | ✅ **558 tests** | 全部通过 |
+| **TLM2.0 + 外设** | ✅ **完成** | **Sprint 11 - CLINT, PLIC, UART 16550** |
+| **测试覆盖** | ✅ **90+ tests** | Sprint 11 新增，全部通过 |
 
 ## 项目结构
 
@@ -41,7 +42,16 @@ ruscv-sim/
 │   ├── execute/            # 指令执行器
 │   ├── memory/             # 存储器子系统
 │   ├── mmu/                # MMU/TLB/Sv39 页表 (Sprint 10)
-│   ├── tlm/                # TLM2.0 接口抽象
+│   ├── tlm/                # TLM2.0 接口抽象 (Sprint 11)
+│   │   ├── phase.rs        # 传输相位
+│   │   ├── time.rs         # 时间管理
+│   │   ├── payload.rs      # 事务载荷
+│   │   ├── traits.rs       # Initiator/Target 接口
+│   │   └── bus.rs          # 总线实现
+│   ├── peripherals/        # 外设模型 (Sprint 11)
+│   │   ├── clint.rs        # 本地中断控制器
+│   │   ├── plic.rs         # 平台级中断控制器
+│   │   └── uart16550.rs    # UART 串口
 │   ├── fpu/                # 浮点运算单元 (RV64F)
 │   ├── csr/                # CSR 寄存器框架
 │   └── trap/               # 陷阱处理 (集成在 core/)
@@ -150,6 +160,19 @@ GitHub Actions 自动运行：
 - [x] 约 360 个 MMU 测试
 - [x] 558 个测试全部通过
 
+### ✅ Sprint 11: TLM2.0 + 外设
+- [x] TLM2.0 基础类型: TlmPhase, TlmResponseStatus, TlmCommand
+- [x] TLM2.0 时间管理: ScTime (SystemC 风格，皮秒精度)
+- [x] TLM2.0 核心结构: TlmGenericPayload, TlmPayloadBuilder
+- [x] TLM2.0 接口: TlmInitiator, TlmTarget traits
+- [x] TLM2.0 总线: TlmBus, TlmBusBridge, ArbitrationPolicy
+- [x] TLM2.0 内存: TlmSimpleMemory, DmiData 直接内存接口
+- [x] CLINT 外设: mtime/mtimecmp 定时器, MSIP 软件中断
+- [x] PLIC 外设: 1024 中断源, 优先级仲裁, Claim/Complete
+- [x] UART 16550: FIFO, 中断, 波特率, 流控
+- [x] 平台配置: PlatformConfig (HiFive1, QEMU Virt)
+- [x] 90+ 测试 (TLM 30 个 + 外设 20+ 个)
+
 ### ✅ Sprint 6: RV64F 浮点单元
 - [x] FLW, FSW (加载/存储)
 - [x] FADD.S, FSUB.S, FMUL.S, FDIV.S, FSQRT.S
@@ -226,6 +249,36 @@ Sprint 10 实现的内存管理单元：
 - **SATP 模式**: 支持 Bare 和 Sv39 模式
 - **物理内存抽象**: PhysicalMemoryInterface trait
 
+### TLM2.0 事务级建模
+
+Sprint 11 实现的 SystemC TLM2.0 风格接口：
+
+- **传输相位**: BEGIN_REQ, END_REQ, BEGIN_RESP, END_RESP 四阶段协议
+- **时间管理**: ScTime 皮秒精度，支持加减运算
+- **事务载荷**: TlmGenericPayload 支持字节使能、流式传输、DMI
+- **接口定义**: TlmInitiator/Target traits 支持阻塞/非阻塞传输
+- **总线实现**: TlmBus 多设备互联，支持固定优先级/轮询/LRU 仲裁
+- **桥接器**: TlmBusBridge 支持地址转换和延迟调整
+
+### RISC-V 平台外设
+
+Sprint 11 实现的 RISC-V 标准外设：
+
+- **CLINT**: Core Local Interruptor
+  - mtime: 64位全局定时器
+  - mtimecmp: 定时器比较器（每个 Hart）
+  - MSIP: 软件中断挂起（每个 Hart）
+- **PLIC**: Platform-Level Interrupt Controller
+  - 最多 1024 个外部中断源
+  - 7 级可编程优先级
+  - 阈值屏蔽和中断仲裁
+  - 支持 M-mode 和 S-mode
+- **UART 16550**: 标准串口控制器
+  - 16 字节收发 FIFO
+  - 可编程波特率
+  - 中断驱动收发
+  - 流控支持 (RTS/CTS)
+
 ### 原子操作
 
 Sprint 5 实现的 RV64A 原子指令：
@@ -265,4 +318,4 @@ MIT License
 
 ---
 
-最后更新: 2026-02-02 (Sprint 10 完成)
+最后更新: 2026-02-02 (Sprint 11 完成 - TLM2.0 + 外设)

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sprint 11: TLM2.0 + 外设**
+  - TLM2.0 抽象层完整实现
+    - TlmPhase: BEGIN_REQ, END_REQ, BEGIN_RESP, END_RESP 四阶段协议
+    - TlmResponseStatus: 完整的响应状态枚举和错误分类
+    - TlmCommand: Read/Write 命令类型
+    - ScTime: SystemC 风格的时间管理（皮秒精度）
+    - TlmGenericPayload: 通用事务载荷，支持字节使能、流式传输、DMI
+    - TlmPayloadBuilder: Builder 模式构造载荷
+    - TlmInitiator/TlmTarget: 发起者和目标接口 trait
+    - TlmBus: 多设备互联总线，支持固定优先级/轮询/LRU 仲裁
+    - TlmBusBridge: 总线桥接器，支持地址转换
+    - TlmSimpleMemory: 简单内存实现
+    - DmiData: 直接内存接口支持
+  - 外设模型实现
+    - CLINT (Core Local Interruptor): mtime/mtimecmp 定时器，MSIP 软件中断
+    - PLIC (Platform-Level Interrupt Controller): 最多 1024 个中断源，优先级仲裁
+    - UART 16550: 标准串口控制器，支持 FIFO、中断、波特率配置
+  - 平台配置
+    - PlatformConfig: 预定义 SiFive HiFive1 和 QEMU Virt 平台配置
+  - 测试套件
+    - TLM 基础类型测试: 10 个
+    - TLM Payload 测试: 10 个
+    - TLM 总线测试: 10 个
+    - 外设集成测试: 20+ 个
+    - 总计 90+ 个测试
+
 ### Planned
 
 - **Sprint 8.5: 推广 C 指令模块化模式到所有指令集**

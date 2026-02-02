@@ -1,4 +1,6 @@
 //! RISC-V simulator main module
+//!
+//! This crate provides a RISC-V instruction set simulator with SystemC TLM2.0 interface support.
 
 pub mod codegen;
 pub mod core;
@@ -10,6 +12,7 @@ pub mod fpu;
 pub mod isa;
 pub mod memory;
 pub mod mmu;
+pub mod peripherals;
 pub mod tlm;
 
 pub use core::{CoreState, PrivilegeMode, RiscvCore};
@@ -22,4 +25,50 @@ pub use mmu::{
     AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TlbEntry, TlbStats, TranslationMode,
 };
 pub use ruscv_macros::*;
-pub use tlm::{TlmCommand, TlmGenericPayload, TlmInterface, TlmPhase, TlmResponseStatus, TlmTime};
+
+// TLM2.0 导出
+pub use tlm::{
+    // 基础类型
+    TlmCommand, TlmPhase, TlmResponseStatus, TlmTime,
+    // 核心结构
+    TlmGenericPayload, TlmPayloadBuilder, DataExtensionMode,
+    // 时间管理
+    ScTime, ScTimeUnit,
+    // 接口 trait
+    TlmInitiator, TlmTarget, TlmInterface,
+    // 总线和路由
+    TlmBus, TlmBusBridge, BusRoute, ArbitrationPolicy,
+    // 简单内存
+    TlmSimpleMemory,
+    // 地址和 DMI
+    AddressRange, DmiData, DmiAccessRights,
+    // 错误和同步
+    TlmError, TlmSyncEnum,
+};
+
+// 外设导出
+pub use peripherals::{
+    // CLINT
+    Clint, CLINT_SIZE,
+    // PLIC
+    Plic, PLIC_SIZE, MAX_INTERRUPT_SOURCES, MAX_PRIORITY,
+    // UART
+    Uart16550, UART_SIZE, FIFO_DEPTH,
+    // 配置
+    PlatformConfig,
+    // 错误类型
+    PeripheralError,
+};
+
+// 子模块特定导出
+/// CLINT 寄存器偏移
+pub use peripherals::clint::reg_offset as clint_reg;
+/// PLIC 寄存器偏移
+pub use peripherals::plic::reg_offset as plic_reg;
+/// UART 寄存器偏移和位定义
+pub use peripherals::uart16550::{
+    reg_offset as uart_reg,
+    lsr_bits as uart_lsr, ier_bits as uart_ier, 
+    iir_bits as uart_iir, fcr_bits as uart_fcr,
+    lcr_bits as uart_lcr, mcr_bits as uart_mcr,
+};

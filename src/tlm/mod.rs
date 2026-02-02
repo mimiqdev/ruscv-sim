@@ -1,319 +1,341 @@
-//! TLM2.0 interface abstraction
+//! TLM2.0 抽象层模块
 //!
-//! Provide SystemC TLM2.0-style interface abstraction for external component communication
+//! 实现 SystemC TLM2.0 风格的接口抽象，用于 RISC-V 模拟器的外部组件通信。
+//!
+//! # 主要组件
+//!
+//! - [`phase`]: TLM 传输相位定义 (BEGIN_REQ, END_REQ, BEGIN_RESP, END_RESP)
+//! - [`status`]: TLM 响应状态定义 (OK, ERROR, etc.)
+//! - [`command`]: TLM 命令类型定义 (Read, Write)
+//! - [`time`]: SystemC 风格的时间管理 (sc_time)
+//! - [`payload`]: TLM 通用事务载荷结构
+//! - [`traits`]: TLM Initiator/Target 接口 trait
+//! - [`bus`]: TLM 总线实现，支持多设备互联和路由仲裁
+//! - [`error`]: TLM 错误定义
+//!
+//! # 示例
+//!
+//! ```
+//! use ruscv_sim::tlm::{
+//!     TlmBus, TlmSimpleMemory, TlmGenericPayload, TlmCommand,
+//!     ArbitrationPolicy, ScTime, AddressRange, TlmInitiator
+//! };
+//! use std::sync::{Arc, Mutex};
+//!
+//! // 创建总线和内存
+//! let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+//! let memory = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
+//!
+//! // 添加路由
+//! bus.add_route(
+//!     AddressRange::new(0x1000, 0x13FF),
+//!     memory.clone(),
+//!     0,
+//!     "memory"
+//! );
+//!
+//! // 执行读写操作
+//! let mut trans = TlmGenericPayload::with_data(
+//!     TlmCommand::Write,
+//!     0x1000,
+//!     vec![0x01, 0x02, 0x03, 0x04]
+//! );
+//! let mut delay = ScTime::zero();
+//! bus.b_transport(&mut trans, &mut delay).unwrap();
+//! ```
 
-use thiserror::Error;
+// 子模块声明
+mod bus;
+mod command;
+mod error;
+mod payload;
+mod phase;
+mod status;
+mod time;
+mod traits;
 
-/// TLM transaction type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TlmPhase {
-    BeginReq,  // Request begin
-    EndReq,    // Request end
-    BeginResp, // Response begin
-    EndResp,   // Response end
-}
+// 公开导出
+pub use bus::{ArbitrationPolicy, BusRoute, TlmBus, TlmBusBridge, TlmSimpleMemory};
+pub use command::TlmCommand;
+pub use error::{TlmError, TlmSyncEnum};
+pub use payload::{DataExtensionMode, TlmGenericPayload, TlmPayloadBuilder};
+pub use phase::TlmPhase;
+pub use status::{ErrorCategory, TlmResponseStatus};
+pub use time::{ScTime, ScTimeUnit, TlmTime};
+pub use traits::{AddressRange, DmiAccessRights, DmiData, TlmInitiator, TlmInterface, TlmTarget};
 
-/// TLM response status
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TlmResponseStatus {
-    Ok,              // Success
-    AddressError,    // Address error
-    CommandError,    // Command error
-    BurstError,      // Burst error
-    DataError,       // Data error
-    InvalidAddress,  // Invalid address
-    WaitRequest,     // Wait request
-    WaitResponse,    // Wait response
-    ReleaseRequired, // Release required
-}
-
-/// TLM command type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TlmCommand {
-    Read,
-    Write,
-}
-
-/// TLM generic transaction
-#[derive(Debug, Clone)]
-pub struct TlmGenericPayload {
-    /// 命令
-    pub command: TlmCommand,
-    /// 地址
-    pub address: u32,
-    /// 数据指针
-    pub data: Vec<u8>,
-    /// 字节使能
-    pub byte_enable: Option<Vec<u8>>,
-    /// 字节使能长度
-    pub byte_enable_length: usize,
-    /// 数据长度
-    pub data_length: usize,
-    /// 流式传输
-    pub streaming: bool,
-    /// 响应状态
-    pub response_status: TlmResponseStatus,
-}
-
-impl TlmGenericPayload {
-    /// 创建新的事务
-    pub fn new(command: TlmCommand, address: u32, data: Vec<u8>) -> Self {
-        Self {
-            command,
-            address,
-            data: data.clone(),
-            byte_enable: None,
-            byte_enable_length: 0,
-            data_length: data.len(),
-            streaming: false,
-            response_status: TlmResponseStatus::Ok,
-        }
-    }
-
-    /// 设置响应状态
-    pub fn set_response_status(&mut self, status: TlmResponseStatus) {
-        self.response_status = status;
-    }
-}
-
-/// TLM synchronization type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TlmSyncEnum {
-    Accept,  // Accept
-    Wait,    // Wait
-    Release, // Release
-}
-
-/// TLM time point
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TlmTime {
-    /// 模拟时间（皮秒）
-    Ps(u64),
-    /// 模拟时间（纳秒）
-    Ns(u64),
-    /// 模拟时间（微秒）
-    Us(u64),
-    /// 模拟时间（毫秒）
-    Ms(u64),
-    /// 模拟时间（秒）
-    S(u64),
-}
-
-impl TlmTime {
-    /// 转换为皮秒
-    pub fn to_ps(&self) -> u64 {
-        match self {
-            TlmTime::Ps(v) => *v,
-            TlmTime::Ns(v) => *v * 1000,
-            TlmTime::Us(v) => *v * 1_000_000,
-            TlmTime::Ms(v) => *v * 1_000_000_000,
-            TlmTime::S(v) => *v * 1_000_000_000_000,
-        }
-    }
-}
-
-/// TLM error
-#[derive(Error, Debug)]
-pub enum TlmError {
-    #[error("Invalid address: 0x{0:08x}")]
-    InvalidAddress(u32),
-    #[error("Invalid transaction length: {0}")]
-    InvalidLength(usize),
-    #[error("Transaction timeout")]
-    Timeout,
-    #[error("Bus busy")]
-    Busy,
-    #[error("Not implemented")]
-    NotImplemented,
-}
-
-/// TLM 发起者接口 (Initiator)
-/// Used to initiate TLM transactions
-pub trait TlmInitiatorInterface {
-    /// 阻塞传输
-    fn b_transport(
-        &self,
-        trans: &mut TlmGenericPayload,
-        time: &mut TlmTime,
-    ) -> Result<(), TlmError>;
-
-    /// 非阻塞传输（带时间更新）
-    fn nb_transport_fw(
-        &self,
-        trans: &mut TlmGenericPayload,
-        phase: &mut TlmPhase,
-        time: &mut TlmTime,
-    ) -> Result<TlmSyncEnum, TlmError>;
-}
-
-/// TLM 目标接口 (Target)
-/// Used to respond to TLM transactions
-pub trait TlmTargetInterface {
-    /// 阻塞传输回调
-    fn b_transport_cb(
-        &self,
-        trans: &mut TlmGenericPayload,
-        time: &mut TlmTime,
-    ) -> Result<(), TlmError>;
-
-    /// 非阻塞传输回调
-    fn nb_transport_bw(
-        &self,
-        trans: &mut TlmGenericPayload,
-        phase: &mut TlmPhase,
-        time: &mut TlmTime,
-    ) -> Result<TlmSyncEnum, TlmError>;
-}
-
-/// TLM 通用接口 (用于核心与外部交互)
-pub trait TlmInterface: Send + Sync {
-    /// 读操作 (阻塞)
-    fn read(&self, addr: u32, size: usize) -> Result<Vec<u8>, TlmError>;
-    /// 写操作 (阻塞)
-    fn write(&mut self, addr: u32, data: &[u8]) -> Result<(), TlmError>;
-    /// 获取延迟
-    fn get_delay(&self) -> TlmTime;
-    /// 设置延迟
-    fn set_delay(&mut self, delay: TlmTime);
-}
-
-/// TLM 总线 (连接多个TLM组件)
-#[allow(dead_code)]
-pub struct TlmBus {
-    /// 存储器映射
-    memory_map: Vec<Box<dyn TlmInterface + Send + Sync>>,
-    /// 延迟
-    delay: TlmTime,
-}
-
-impl TlmBus {
-    /// Create new TLM bus
-    pub fn new() -> Self {
-        Self {
-            memory_map: Vec::new(),
-            delay: TlmTime::Ns(10), // Default 10ns delay
-        }
-    }
-
-    /// 添加存储器映射区域
-    pub fn add_memory_region(&mut self, region: Box<dyn TlmInterface + Send + Sync>) {
-        self.memory_map.push(region);
-    }
-}
-
-impl Default for TlmBus {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Simple memory TLM wrapper
-pub struct TlmSimpleMemory {
-    /// 基础存储器
-    memory: Vec<u8>,
-    /// 访问延迟
-    delay: TlmTime,
-    /// 基地址
-    base_addr: u32,
-    /// 大小
-    size: usize,
-}
-
-impl TlmSimpleMemory {
-    /// Create new TLM simple memory
-    pub fn new(base_addr: u32, size: usize) -> Self {
-        Self {
-            memory: vec![0; size],
-            delay: TlmTime::Ns(1),
-            base_addr,
-            size,
-        }
-    }
-
-    /// 加载数据
-    pub fn load(&mut self, data: &[u8], offset: u32) {
-        for (i, &byte) in data.iter().enumerate() {
-            let addr = (offset as usize) + i;
-            if addr < self.size {
-                self.memory[addr] = byte;
-            }
-        }
-    }
-}
-
-impl TlmInterface for TlmSimpleMemory {
-    fn read(&self, addr: u32, size: usize) -> Result<Vec<u8>, TlmError> {
-        if addr < self.base_addr || addr as usize + size > self.base_addr as usize + self.size {
-            return Err(TlmError::InvalidAddress(addr));
-        }
-
-        let offset = (addr - self.base_addr) as usize;
-        Ok(self.memory[offset..offset + size].to_vec())
-    }
-
-    fn write(&mut self, addr: u32, data: &[u8]) -> Result<(), TlmError> {
-        if addr < self.base_addr || addr as usize + data.len() > self.base_addr as usize + self.size
-        {
-            return Err(TlmError::InvalidAddress(addr));
-        }
-
-        let offset = (addr - self.base_addr) as usize;
-        self.memory[offset..offset + data.len()].copy_from_slice(data);
-        Ok(())
-    }
-
-    fn get_delay(&self) -> TlmTime {
-        self.delay
-    }
-
-    fn set_delay(&mut self, delay: TlmTime) {
-        self.delay = delay;
-    }
-}
-
-/// Debug TLM interface
-pub struct DebugTlmInterface;
-
-impl TlmInterface for DebugTlmInterface {
-    fn read(&self, _addr: u32, size: usize) -> Result<Vec<u8>, TlmError> {
-        Ok(vec![0xCC; size])
-    }
-
-    fn write(&mut self, _addr: u32, _data: &[u8]) -> Result<(), TlmError> {
-        Ok(())
-    }
-
-    fn get_delay(&self) -> TlmTime {
-        TlmTime::Ns(0)
-    }
-
-    fn set_delay(&mut self, _delay: TlmTime) {}
-}
+// 重新导出以兼容旧代码
+pub use error::TlmSyncEnum as TlmSync;
 
 #[cfg(test)]
-mod tests {
+mod integration_tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
+    /// 测试完整的 TLM 读写流程
     #[test]
-    fn test_tlm_payload() {
-        let payload = TlmGenericPayload::new(TlmCommand::Read, 0x1000, vec![0; 4]);
-        assert_eq!(payload.command, TlmCommand::Read);
-        assert_eq!(payload.address, 0x1000);
-        assert_eq!(payload.data_length, 4);
+    fn test_full_read_write_flow() {
+        // 创建总线和内存
+        let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+        let memory = Arc::new(Mutex::new(TlmSimpleMemory::new(0x8000_0000, 4096)));
+
+        bus.add_route(
+            AddressRange::new(0x8000_0000, 0x8000_0FFF),
+            memory.clone(),
+            0,
+            "main_memory",
+        );
+
+        // 写入数据
+        let write_data = vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
+        let mut write_trans = TlmGenericPayload::with_data(
+            TlmCommand::Write,
+            0x8000_0100,
+            write_data.clone(),
+        );
+        let mut delay = ScTime::zero();
+
+        assert!(bus.b_transport(&mut write_trans, &mut delay).is_ok());
+        assert!(write_trans.is_response_ok());
+
+        // 读取数据
+        let mut read_trans = TlmGenericPayload::new(TlmCommand::Read, 0x8000_0100, 8);
+        delay = ScTime::zero();
+
+        assert!(bus.b_transport(&mut read_trans, &mut delay).is_ok());
+        assert_eq!(read_trans.data(), &write_data[..]);
     }
 
+    /// 测试多设备路由
     #[test]
-    fn test_tlm_simple_memory() {
-        let mut mem = TlmSimpleMemory::new(0x1000, 1024);
-        mem.load(&[0x01, 0x02, 0x03, 0x04], 0);
+    fn test_multi_device_routing() {
+        let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
 
-        let data = mem.read(0x1000, 4).unwrap();
-        assert_eq!(data, vec![0x01, 0x02, 0x03, 0x04]);
+        // 创建两个内存设备
+        let mem1 = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
+        let mem2 = Arc::new(Mutex::new(TlmSimpleMemory::new(0x2000, 1024)));
+
+        bus.add_route(AddressRange::new(0x1000, 0x13FF), mem1.clone(), 0, "mem1");
+        bus.add_route(AddressRange::new(0x2000, 0x23FF), mem2.clone(), 0, "mem2");
+
+        // 写入 mem1
+        let mut trans1 = TlmGenericPayload::with_data(
+            TlmCommand::Write,
+            0x1000,
+            vec![0xAA, 0xBB],
+        );
+        let mut delay = ScTime::zero();
+        bus.b_transport(&mut trans1, &mut delay).unwrap();
+
+        // 写入 mem2
+        let mut trans2 = TlmGenericPayload::with_data(
+            TlmCommand::Write,
+            0x2000,
+            vec![0xCC, 0xDD],
+        );
+        delay = ScTime::zero();
+        bus.b_transport(&mut trans2, &mut delay).unwrap();
+
+        // 验证 mem1
+        let mut read1 = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 2);
+        delay = ScTime::zero();
+        bus.b_transport(&mut read1, &mut delay).unwrap();
+        assert_eq!(read1.data(), &[0xAA, 0xBB]);
+
+        // 验证 mem2
+        let mut read2 = TlmGenericPayload::new(TlmCommand::Read, 0x2000, 2);
+        delay = ScTime::zero();
+        bus.b_transport(&mut read2, &mut delay).unwrap();
+        assert_eq!(read2.data(), &[0xCC, 0xDD]);
     }
 
+    /// 测试地址越界错误
     #[test]
-    fn test_tlm_time() {
-        assert_eq!(TlmTime::Ns(100).to_ps(), 100_000);
-        assert_eq!(TlmTime::Us(1).to_ps(), 1_000_000);
+    fn test_address_out_of_range() {
+        let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+        let memory = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
+
+        bus.add_route(
+            AddressRange::new(0x1000, 0x13FF),
+            memory.clone(),
+            0,
+            "mem",
+        );
+
+        // 访问未映射的地址
+        let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x5000, 4);
+        let mut delay = ScTime::zero();
+
+        assert!(bus.b_transport(&mut trans, &mut delay).is_err());
+    }
+
+    /// 测试时间延迟累积
+    #[test]
+    fn test_delay_accumulation() {
+        let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+        let memory = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
+
+        // 设置总线延迟
+        bus.set_default_delay(ScTime::from_nanoseconds(5));
+
+        bus.add_route(
+            AddressRange::new(0x1000, 0x13FF),
+            memory.clone(),
+            0,
+            "mem",
+        );
+
+        let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
+        let mut delay = ScTime::from_nanoseconds(3); // 初始延迟
+
+        bus.b_transport(&mut trans, &mut delay).unwrap();
+
+        // 验证延迟累积：初始3ns + 总线5ns + 内存1ns = 9ns
+        assert_eq!(delay.to_nanoseconds(), 9);
+    }
+
+    /// 测试 DMI 功能
+    #[test]
+    fn test_dmi_interface() {
+        let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+        let memory = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
+
+        bus.add_route(
+            AddressRange::new(0x1000, 0x13FF),
+            memory.clone(),
+            0,
+            "mem",
+        );
+
+        let trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
+        
+        // 获取 DMI 指针
+        let dmi = bus.get_direct_mem_ptr(&trans);
+        assert!(dmi.is_some());
+
+        let dmi_data = dmi.unwrap();
+        assert!(dmi_data.contains(0x1000));
+        assert!(dmi_data.contains(0x13FF));
+        assert!(!dmi_data.contains(0x1400));
+        assert!(dmi_data.allows_read());
+        assert!(dmi_data.allows_write());
+    }
+
+    /// 测试流式传输
+    #[test]
+    fn test_streaming_width() {
+        let mut payload = TlmGenericPayload::new(TlmCommand::Write, 0x1000, 16);
+        
+        assert!(!payload.is_streaming());
+        
+        payload.set_streaming_width(4);
+        assert!(payload.is_streaming());
+        assert_eq!(payload.streaming_width(), 4);
+    }
+
+    /// 测试字节使能
+    #[test]
+    fn test_byte_enable() {
+        let mut payload = TlmGenericPayload::new(TlmCommand::Write, 0x1000, 4);
+        
+        // 设置字节使能：只使能第0和第2字节
+        let byte_enable = vec![0xFF, 0x00, 0xFF, 0x00];
+        payload.set_byte_enable(Some(byte_enable.clone()));
+        
+        assert_eq!(payload.byte_enable(), Some(&byte_enable[..]));
+        assert_eq!(payload.byte_enable_length(), 4);
+    }
+
+    /// 测试响应状态
+    #[test]
+    fn test_response_status_handling() {
+        let mut payload = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
+        
+        assert!(payload.is_response_ok());
+        assert!(!payload.is_response_error());
+        
+        payload.set_response_status(TlmResponseStatus::AddressError);
+        
+        assert!(!payload.is_response_ok());
+        assert!(payload.is_response_error());
+    }
+
+    /// 测试载荷深拷贝
+    #[test]
+    fn test_payload_deep_copy() {
+        let original = TlmGenericPayload::with_data(
+            TlmCommand::Write,
+            0x1000,
+            vec![0x01, 0x02, 0x03, 0x04],
+        );
+        
+        let copy = original.deep_copy();
+        
+        assert_eq!(original.command(), copy.command());
+        assert_eq!(original.address(), copy.address());
+        assert_eq!(original.data(), copy.data());
+    }
+
+    /// 测试载荷构建器
+    #[test]
+    fn test_payload_builder() {
+        let payload = TlmPayloadBuilder::new()
+            .command(TlmCommand::Write)
+            .address(0x2000)
+            .data(vec![0x11, 0x22, 0x33, 0x44])
+            .dmi_allowed(true)
+            .streaming_width(2)
+            .build();
+        
+        assert_eq!(payload.command(), TlmCommand::Write);
+        assert_eq!(payload.address(), 0x2000);
+        assert_eq!(payload.data(), &[0x11, 0x22, 0x33, 0x44]);
+        assert!(payload.is_dmi_allowed());
+        assert_eq!(payload.streaming_width(), 2);
+    }
+
+    /// 测试仲裁策略切换
+    #[test]
+    fn test_arbitration_policy_switching() {
+        let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+        assert_eq!(bus.arbitration_policy(), ArbitrationPolicy::FixedPriority);
+        
+        bus.set_arbitration_policy(ArbitrationPolicy::RoundRobin);
+        assert_eq!(bus.arbitration_policy(), ArbitrationPolicy::RoundRobin);
+        
+        bus.set_arbitration_policy(ArbitrationPolicy::LRU);
+        assert_eq!(bus.arbitration_policy(), ArbitrationPolicy::LRU);
+    }
+
+    /// 测试 DMI 缓存
+    #[test]
+    fn test_dmi_cache() {
+        let bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+        
+        // 创建 DMI 数据
+        let mut data = vec![0u8; 1024];
+        let dmi = DmiData {
+            dmi_ptr: data.as_mut_ptr(),
+            dmi_size: 1024,
+            access_rights: DmiAccessRights::ReadWrite,
+            read_latency: ScTime::from_nanoseconds(1),
+            write_latency: ScTime::from_nanoseconds(1),
+            start_address: 0x1000,
+            end_address: 0x13FF,
+        };
+        
+        // 注册 DMI
+        bus.register_dmi(0x1000, dmi);
+        
+        // 获取 DMI
+        let retrieved = bus.get_dmi(0x1000);
+        assert!(retrieved.is_some());
+        
+        // 清空缓存
+        bus.invalidate_dmi();
+        
+        // 验证已清空
+        let after_invalidate = bus.get_dmi(0x1000);
+        assert!(after_invalidate.is_none());
     }
 }
