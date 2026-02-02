@@ -59,14 +59,8 @@ pub enum ExecutorError {
 /// Default maximum cycles before timeout
 const DEFAULT_MAX_CYCLES: u64 = 10_000_000;
 
-/// Default memory size for simulator (16MB)
-const DEFAULT_MEM_SIZE: usize = 16 * 1024 * 1024;
-
 /// Default tohost address (commonly used in RISC-V tests)
 const DEFAULT_TOHOST: u64 = 0x8000_1000;
-
-/// Default exit fromhost address
-const DEFAULT_FROMHOST: u64 = 0x8000_1008;
 
 /// Write marker to distinguish tohost/fromhost access
 const WRITE_MARKER: u64 = 1 << 63;
@@ -133,9 +127,6 @@ pub fn load_and_run(
 
     // Step 4: Execution loop
     let mut cycles = 0u64;
-    let mut exit_code: u32 = 0;
-    let mut timed_out = false;
-    let mut error = None;
 
     while cycles < max_cycles {
         // Read current PC for result
@@ -155,9 +146,8 @@ pub fn load_and_run(
                             // Check if this is an exit signal
                             if let Some(code) = extract_exit_code(tohost_value) {
                                 // Valid exit signal received
-                                exit_code = code;
                                 return Ok(ExecutionResult {
-                                    exit_code,
+                                    exit_code: code,
                                     cycles,
                                     final_pc: core.state().pc,
                                     timed_out: false,
@@ -165,9 +155,8 @@ pub fn load_and_run(
                                 });
                             } else if is_exit_code(tohost_value) {
                                 // Alternative exit detection
-                                exit_code = tohost_value as u32;
                                 return Ok(ExecutionResult {
-                                    exit_code,
+                                    exit_code: tohost_value as u32,
                                     cycles,
                                     final_pc: core.state().pc,
                                     timed_out: false,
@@ -182,28 +171,26 @@ pub fn load_and_run(
                 }
             }
             Err(e) => {
-                error = Some(format!(
-                    "Execution error at PC 0x{:016x}: {}",
-                    current_pc, e
-                ));
                 return Ok(ExecutionResult {
                     exit_code: 1,
                     cycles,
                     final_pc: current_pc,
                     timed_out: false,
-                    error,
+                    error: Some(format!(
+                        "Execution error at PC 0x{:016x}: {}",
+                        current_pc, e
+                    )),
                 });
             }
         }
     }
 
     // Timeout reached
-    timed_out = true;
     Ok(ExecutionResult {
         exit_code: 1, // Non-zero indicates abnormal termination
         cycles,
         final_pc: core.state().pc,
-        timed_out,
+        timed_out: true,
         error: Some(format!("Timeout after {} cycles", max_cycles)),
     })
 }
