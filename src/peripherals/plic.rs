@@ -756,4 +756,241 @@ mod tests {
         assert_eq!(ranges[0].start, 0x0C00_0000);
         assert_eq!(ranges[0].end, 0x0C00_0000 + PLIC_SIZE as u64 - 1);
     }
+
+    // ==================== 边界测试 ====================
+
+    #[test]
+    fn test_plic_invalid_hart_id() {
+        let mut plic = Plic::new(0x0C00_0000, 32, 2);
+
+        // 无效的 Hart/上下文 ID 应该返回 0 或不操作
+        assert_eq!(plic.read_enable(100, 0), 0);
+        assert_eq!(plic.read_threshold(100), 0);
+
+        // 写入无效上下文不应该 panic
+        plic.write_enable(100, 0, 0xFF);
+        plic.write_threshold(100, 5);
+
+        // 声明无效上下文应该返回 0
+        assert_eq!(plic.claim_interrupt(100), 0);
+    }
+
+    #[test]
+    fn test_plic_max_interrupt_sources() {
+        // 测试超过最大值的限制
+        let plic = Plic::new(0x0C00_0000, 2048, 2);
+        // 实际应该被限制为 1024
+        assert_eq!(plic.num_sources(), 1024);
+
+        // 测试边界值
+        let mut plic = Plic::new(0x0C00_0000, 1024, 2);
+        assert_eq!(plic.num_sources(), 1024);
+
+        // 中断源 1023 应该有效
+        plic.write_priority(1023, 5);
+        assert_eq!(plic.read_priority(1023), 5);
+
+        // 触发边界中断
+        plic.trigger_interrupt(1023);
+        assert!(plic.is_pending(1023));
+    }
+
+    #[test]
+    fn test_plic_address_out_of_bounds() {
+        let mut plic = Plic::new(0x0C00_0000, 32, 2);
+
+        // 地址刚好超出边界应该失败
+        let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x0C00_0000 + PLIC_SIZE as u64, 4);
+        let mut delay = ScTime::zero();
+        assert!(plic.b_transport(&mut trans, &mut delay).is_err());
+
+        // 地址远远超出边界应该失败
+        let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0xFFFF_0000, 4);
+        delay = ScTime::zero();
+        assert!(plic.b_transport(&mut trans, &mut delay).is_err());
+    }
+
+    #[test]
+    fn test_plic_invalid_irq_id() {
+        let mut plic = Plic::new(0x0C00_0000, 32, 2);
+
+        // 中断源 0 保留（无中断）
+        plic.write_priority(0, 5);
+        assert_eq!(plic.read_priority(0), 0);
+
+        // 触发无效中断 ID 不应该 panic
+        plic.trigger_interrupt(0); // 0 被保留
+        plic.trigger_interrupt(1000); // 超出范围
+        plic.trigger_interrupt(u32::MAX); // 极大值
+
+        // 清除无效中断 ID 不应该 panic
+        plic.clear_pending(0);
+        plic.clear_pending(1000);
+
+        // 读取无效中断 ID 应该返回 0/false
+        assert_eq!(plic.read_priority(1000), 0);
+        assert!(!plic.is_pending(1000));
+    }
+
+    #[test]
+    fn test_plic_priority_boundary() {
+        let mut plic = Plic::new(0x0C00_0000, 32, 2);
+
+        // 设置超过最大值的优先级应该被截断
+        plic.write_priority(1, u32::MAX);
+        assert_eq!(plic.read_priority(1), MAX_PRIORITY);
+
+        // 设置最大有效优先级
+        plic.write_priority(2, MAX_PRIORITY);
+        assert_eq!(plic.read_priority(2), MAX_PRIORITY);
+
+        // 优先级为 0 应该被屏蔽
+        plic.write_priority(3, 0);
+        plic.write_enable(0, 0, 1 << 3);
+        plic.write_threshold(0, 0); // 阈值为 0
+        plic.trigger_interrupt(3);
+        // 优先级等于阈值，应该被屏蔽
+        let claimed = plic.find_highest_priority_interrupt(0);
+        assert_eq!(claimed, 0);
+    }
+
+    #[test]
+    fn test_plic_threshold_boundary() {
+        let mut plic = Plic::new(0x0C00_0000, 32, 2);
+
+        // 设置超过最大值的阈值应该被截断
+        plic.write_threshold(0, u32::MAX);
+        assert_eq!(plic.read_threshold(0), MAX_PRIORITY);
+
+        // 设置最大阈值
+        plic.write_priority(1, MAX_PRIORITY);
+        plic.write_enable(0, 0, 1 << 1);
+        plic.write_threshold(0, MAX_PRIORITY);
+
+        plic.trigger_interrupt(1);
+        // 优先级等于阈值，应该被屏蔽
+        let claimed = plic.find_highest_priority_interrupt(0);
+        assert_eq!(claimed, 0);
+
+        // 降低阈值后应该能声明
+        plic.write_threshold(0, MAX_PRIORITY - 1);
+        let claimed = plic.claim_interrupt(0);
+        assert_eq!(claimed, 1);
+    }
+
+    #[test]
+    fn test_plic_enable_boundary() {
+        let mut plic = Plic::new(0x0C00_0000, 32, 2);
+
+        // 写入超过 32 个 word 的使能寄存器应该被忽略
+        plic.write_enable(0, 100, 0xFFFFFFFF);
+        // 正常读取应该返回 0
+        assert_eq!(plic.read_enable(0, 100), 0);
+
+        // 中断源 0 始终禁用（写操作会被屏蔽）
+        plic.write_enable(0, 0, 0xFFFFFFFF);
+        assert_eq!(plic.read_enable(0, 0), 0xFFFFFFFE); // bit 0 被清零
+
+        // 使能所有位
+        plic.write_enable(0, 0, 0xFFFFFFFE);
+        assert_eq!(plic.read_enable(0, 0), 0xFFFFFFFE);
+    }
+
+    #[test]
+    fn test_plic_complete_invalid_irq() {
+        let mut plic = Plic::new(0x0C00_0000, 32, 2);
+
+        // 完成一个未声明的中断应该被允许（无 panic）
+        plic.complete_interrupt(0, 5);
+
+        // 在无效上下文中完成中断
+        plic.complete_interrupt(100, 5);
+    }
+
+    #[test]
+    fn test_plic_claim_clears_pending() {
+        let mut plic = Plic::new(0x0C00_0000, 32, 2);
+
+        // 配置中断
+        plic.write_priority(5, 3);
+        plic.write_enable(0, 0, 1 << 5);
+        plic.trigger_interrupt(5);
+
+        // 声明前是挂起状态
+        assert!(plic.is_pending(5));
+
+        // 声明中断
+        let claimed = plic.claim_interrupt(0);
+        assert_eq!(claimed, 5);
+
+        // 声明后挂起状态清除
+        assert!(!plic.is_pending(5));
+
+        // 再次声明应该返回 0
+        let claimed = plic.claim_interrupt(0);
+        assert_eq!(claimed, 0);
+    }
+
+    #[test]
+    fn test_plic_invalid_data_length() {
+        let mut plic = Plic::new(0x0C00_0000, 32, 2);
+
+        // PLIC 只支持 4 字节访问，其他长度应该失败
+        let mut trans = TlmGenericPayload::new(
+            TlmCommand::Read,
+            0x0C00_0000 + reg_offset::PRIORITY_BASE + 4,
+            1,
+        );
+        let mut delay = ScTime::zero();
+        assert!(plic.b_transport(&mut trans, &mut delay).is_err());
+
+        // 8 字节长度也应该失败
+        let mut trans = TlmGenericPayload::new(
+            TlmCommand::Read,
+            0x0C00_0000 + reg_offset::PRIORITY_BASE + 4,
+            8,
+        );
+        delay = ScTime::zero();
+        assert!(plic.b_transport(&mut trans, &mut delay).is_err());
+    }
+
+    #[test]
+    fn test_plic_zero_sources_contexts() {
+        // 0 个中断源应该被调整为至少 1 个
+        let plic = Plic::new(0x0C00_0000, 0, 0);
+        assert_eq!(plic.num_sources(), 1); // 最小值为 1
+        assert_eq!(plic.num_contexts(), 1); // 最小值为 1
+    }
+
+    #[test]
+    fn test_plic_context_boundary() {
+        let mut plic = Plic::new(0x0C00_0000, 32, 4);
+
+        // 配置所有上下文
+        for ctx in 0..4 {
+            plic.write_threshold(ctx, ctx as u32); // 不同阈值
+            plic.write_enable(ctx, 0, 1 << 1);
+        }
+
+        // 验证每个上下文配置
+        for ctx in 0..4 {
+            assert_eq!(plic.read_threshold(ctx), ctx as u32);
+            assert_eq!(plic.read_enable(ctx, 0), 1 << 1);
+        }
+
+        // 触发中断
+        plic.write_priority(1, 5);
+        plic.trigger_interrupt(1);
+
+        // 上下文 0 (threshold=0) 应该能声明
+        let claimed = plic.claim_interrupt(0);
+        assert_eq!(claimed, 1);
+
+        // 重新触发
+        plic.trigger_interrupt(1);
+
+        // 上下文 3 (threshold=3) 应该也能声明（优先级 5 > 阈值 3）
+        let claimed = plic.claim_interrupt(3);
+        assert_eq!(claimed, 1);
+    }
 }

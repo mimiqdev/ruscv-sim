@@ -659,4 +659,195 @@ mod tests {
         assert!(range2.overlaps(&range3));
         assert!(!range1.overlaps(&range3));
     }
+
+    // ==================== 边界测试 ====================
+
+    #[test]
+    fn test_tlm_extreme_address() {
+        let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+        let mem = Arc::new(Mutex::new(TlmSimpleMemory::new(
+            0xFFFF_0000_0000_0000,
+            1024,
+        )));
+
+        bus.add_route(
+            AddressRange::new(0xFFFF_0000_0000_0000, 0xFFFF_0000_0000_03FF),
+            mem.clone(),
+            0,
+            "high_memory",
+        );
+
+        // 访问超高地址
+        let mut write_trans = TlmGenericPayload::with_data(
+            TlmCommand::Write,
+            0xFFFF_0000_0000_0000,
+            vec![0xAB, 0xCD],
+        );
+        let mut delay = ScTime::zero();
+
+        assert!(bus.b_transport(&mut write_trans, &mut delay).is_ok());
+
+        // 读取验证
+        let mut read_trans = TlmGenericPayload::new(TlmCommand::Read, 0xFFFF_0000_0000_0000, 2);
+        delay = ScTime::zero();
+
+        assert!(bus.b_transport(&mut read_trans, &mut delay).is_ok());
+        assert_eq!(read_trans.data(), &[0xAB, 0xCD]);
+    }
+
+    #[test]
+    fn test_tlm_large_transfer() {
+        let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+        let mem = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 65536)));
+
+        bus.add_route(
+            AddressRange::new(0x1000, 0x11000 - 1),
+            mem.clone(),
+            0,
+            "large_memory",
+        );
+
+        // 大长度传输
+        let large_data: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
+        let mut write_trans =
+            TlmGenericPayload::with_data(TlmCommand::Write, 0x1000, large_data.clone());
+        let mut delay = ScTime::zero();
+
+        assert!(bus.b_transport(&mut write_trans, &mut delay).is_ok());
+
+        // 读取验证
+        let mut read_trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 1024);
+        delay = ScTime::zero();
+
+        assert!(bus.b_transport(&mut read_trans, &mut delay).is_ok());
+        assert_eq!(read_trans.data(), &large_data[..]);
+    }
+
+    #[test]
+    fn test_tlm_memory_out_of_range() {
+        let mut mem = TlmSimpleMemory::new(0x1000, 1024);
+
+        // 尝试访问超出内存范围的地址
+        let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x1400, 4);
+        let mut delay = ScTime::zero();
+
+        assert!(mem.b_transport(&mut trans, &mut delay).is_err());
+
+        // 尝试写入超出范围
+        let mut trans =
+            TlmGenericPayload::with_data(TlmCommand::Write, 0x1400, vec![0x01, 0x02, 0x03, 0x04]);
+        delay = ScTime::zero();
+
+        assert!(mem.b_transport(&mut trans, &mut delay).is_err());
+    }
+
+    #[test]
+    fn test_tlm_wrap_around_address() {
+        // 测试地址回绕边界情况
+        let range = AddressRange::new(0xFFFFFFFF_FFFF_F000, 0xFFFFFFFFFFFFFFFF);
+
+        assert!(range.contains(0xFFFFFFFF_FFFF_F000));
+        assert!(range.contains(0xFFFFFFFFFFFFFFFF));
+        assert!(!range.contains(0x1000));
+
+        // 验证地址范围计算
+        assert_eq!(range.size(), 0x1000); // 4096 bytes
+    }
+
+    #[test]
+    fn test_tlm_empty_bus_routing() {
+        let bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+
+        // 空总线不应该找到路由
+        assert!(bus.find_route(0x1000).is_none());
+
+        // 尝试传输应该失败
+        let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
+        let mut delay = ScTime::zero();
+
+        assert!(bus.b_transport(&mut trans, &mut delay).is_err());
+    }
+
+    #[test]
+    fn test_tlm_round_robin_boundary() {
+        let mut bus = TlmBus::new(ArbitrationPolicy::RoundRobin);
+
+        // 添加两个重叠的路由
+        let mem1 = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
+        let mem2 = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
+
+        bus.add_route(AddressRange::new(0x1000, 0x13FF), mem1.clone(), 0, "mem1");
+        bus.add_route(AddressRange::new(0x1000, 0x13FF), mem2.clone(), 1, "mem2");
+
+        // 轮询应该正常工作
+        for i in 0..10 {
+            let mut trans = TlmGenericPayload::with_data(TlmCommand::Write, 0x1000, vec![i as u8]);
+            let mut delay = ScTime::zero();
+            assert!(bus.b_transport(&mut trans, &mut delay).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_tlm_memory_zero_size() {
+        // 创建大小为 0 的内存（边界情况）
+        let mem = TlmSimpleMemory::new(0x1000, 0);
+
+        // 应该处理空内存的情况
+        assert_eq!(mem.read_bytes(0, 0).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_tlm_bridge_negative_offset() {
+        let _mem = Arc::new(Mutex::new(TlmSimpleMemory::new(0x2000, 1024)));
+        let bus = Arc::new(Mutex::new(TlmBus::new(ArbitrationPolicy::FixedPriority)));
+
+        // 创建负偏移的桥接器（地址映射：0x2000 -> 0x1000）
+        let bridge = TlmBusBridge::new(bus.clone(), -0x1000i64, ScTime::zero());
+
+        // 地址 0x2000 减去偏移量 0x1000 应该被转换到 0x1000
+        assert_eq!(bridge.translate_address(0x2000), 0x1000);
+    }
+
+    #[test]
+    fn test_tlm_memory_interface() {
+        let mut mem = TlmSimpleMemory::new(0x1000, 1024);
+
+        // 测试 TlmInterface 实现
+        mem.write(0x1000, &[0x01, 0x02, 0x03, 0x04]).unwrap();
+        let data = mem.read(0x1000, 4).unwrap();
+        assert_eq!(data, vec![0x01, 0x02, 0x03, 0x04]);
+
+        // 超出范围的写操作
+        assert!(mem.write(0x2000, &[0x01]).is_err());
+        assert!(mem.read(0x2000, 4).is_err());
+    }
+
+    #[test]
+    fn test_tlm_dmi_operations() {
+        let mem = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 4096)));
+        let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
+
+        bus.add_route(AddressRange::new(0x1000, 0x1FFF), mem.clone(), 0, "memory");
+
+        // 测试 DMI 缓存
+        assert!(bus.get_dmi(0x1000).is_none());
+
+        // 注册 DMI
+        let dmi_data = DmiData {
+            dmi_ptr: std::ptr::null_mut(),
+            dmi_size: 4096,
+            access_rights: DmiAccessRights::ReadWrite,
+            read_latency: ScTime::from_nanoseconds(1),
+            write_latency: ScTime::from_nanoseconds(1),
+            start_address: 0x1000,
+            end_address: 0x1FFF,
+        };
+
+        bus.register_dmi(0x1000, dmi_data.clone());
+        assert!(bus.get_dmi(0x1000).is_some());
+
+        // 使 DMI 缓存失效
+        bus.invalidate_dmi();
+        assert!(bus.get_dmi(0x1000).is_none());
+    }
 }

@@ -882,4 +882,330 @@ mod tests {
 
         assert!((uart.lsr & lsr_bits::OE) != 0);
     }
+
+    // ==================== 边界测试 ====================
+
+    #[test]
+    fn test_uart_fifo_full_boundary() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 使能 FIFO
+        uart.write_reg(reg_offset::IIR_FCR, fcr_bits::FIFO_ENABLE);
+
+        // 填满 FIFO 到边界
+        for i in 0..FIFO_DEPTH {
+            assert_eq!(uart.rx_fifo.len(), i);
+            uart.receive_byte(i as u8);
+            assert!((uart.lsr & lsr_bits::OE) == 0); // 没有溢出
+        }
+
+        assert_eq!(uart.rx_fifo.len(), FIFO_DEPTH);
+
+        // 再接收一个，应该溢出
+        uart.receive_byte(0xFF);
+        assert!((uart.lsr & lsr_bits::OE) != 0);
+        assert!((uart.lsr & lsr_bits::RFE) != 0); // FIFO 错误
+    }
+
+    #[test]
+    fn test_uart_continuous_overflow() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 使能 FIFO
+        uart.write_reg(reg_offset::IIR_FCR, fcr_bits::FIFO_ENABLE);
+
+        // 先填满 FIFO
+        for i in 0..FIFO_DEPTH {
+            uart.receive_byte(i as u8);
+        }
+
+        // 连续溢出
+        for _ in 0..10 {
+            uart.receive_byte(0xFF);
+        }
+
+        // 溢出标志应该保持设置
+        assert!((uart.lsr & lsr_bits::OE) != 0);
+
+        // 读取 LSR 应该清除溢出错误
+        let _ = uart.read_reg(reg_offset::LSR);
+        assert!((uart.lsr & lsr_bits::OE) == 0);
+    }
+
+    #[test]
+    fn test_uart_baud_rate_boundary() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 设置 DLAB
+        uart.write_reg(reg_offset::LCR, lcr_bits::DLAB);
+
+        // 除数 = 1 (最大波特率)
+        uart.write_reg(reg_offset::RBR_THR, 1); // DLL
+        uart.write_reg(reg_offset::IER, 0); // DLM
+        assert_eq!(uart.baud_rate(), 115200); // 1.8432MHz / (1 * 16)
+
+        // 除数 = 0 (应该返回 0)
+        uart.write_reg(reg_offset::RBR_THR, 0);
+        assert_eq!(uart.baud_rate(), 0);
+
+        // 除数 = 65535 (最小波特率)
+        uart.write_reg(reg_offset::RBR_THR, 0xFF); // DLL
+        uart.write_reg(reg_offset::IER, 0xFF); // DLM
+        assert_eq!(uart.baud_rate(), 1_843_200 / (65535 * 16));
+
+        // 除数 = 12 (标准 9600 bps)
+        uart.write_reg(reg_offset::RBR_THR, 12);
+        uart.write_reg(reg_offset::IER, 0);
+        assert_eq!(uart.baud_rate(), 9600);
+    }
+
+    #[test]
+    fn test_uart_rx_trigger_levels() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 测试所有触发级别
+        let levels = [(0, 1), (1, 4), (2, 8), (3, 14)];
+
+        for (fcr_val, expected_trigger) in levels.iter() {
+            uart.write_reg(reg_offset::IIR_FCR, fcr_bits::FIFO_ENABLE | (fcr_val << 6));
+            assert_eq!(uart.rx_trigger, *expected_trigger);
+        }
+    }
+
+    #[test]
+    fn test_uart_tx_fifo_full() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 使能 FIFO
+        uart.write_reg(reg_offset::IIR_FCR, fcr_bits::FIFO_ENABLE);
+
+        // 填满发送 FIFO
+        for i in 0..FIFO_DEPTH {
+            uart.write_reg(reg_offset::RBR_THR, i as u8);
+        }
+
+        assert_eq!(uart.tx_fifo.len(), FIFO_DEPTH);
+
+        // THRE 应该为 0（发送保持寄存器非空）
+        assert!((uart.lsr & lsr_bits::THRE) == 0);
+
+        // 再写入应该被忽略（或覆盖，取决于实现）
+        uart.write_reg(reg_offset::RBR_THR, 0xFF);
+        // 注意：实现可能允许继续写入到缓冲区
+    }
+
+    #[test]
+    fn test_uart_read_empty_fifo() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 读取空的接收 FIFO
+        assert!(uart.rx_fifo.is_empty());
+        let byte = uart.read_reg(reg_offset::RBR_THR);
+        assert_eq!(byte, 0); // 应该返回 0
+
+        // DR 位应该为 0
+        assert!((uart.lsr & lsr_bits::DR) == 0);
+    }
+
+    #[test]
+    fn test_uart_fifo_reset_boundary() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 填充 FIFO
+        for i in 0..FIFO_DEPTH {
+            uart.receive_byte(i as u8);
+            uart.write_reg(reg_offset::RBR_THR, i as u8);
+        }
+
+        assert_eq!(uart.rx_fifo.len(), FIFO_DEPTH);
+        assert_eq!(uart.tx_fifo.len(), FIFO_DEPTH);
+
+        // 只复位接收 FIFO
+        uart.write_reg(
+            reg_offset::IIR_FCR,
+            fcr_bits::FIFO_ENABLE | fcr_bits::RCVR_FIFO_RESET,
+        );
+        assert!(uart.rx_fifo.is_empty());
+        assert_eq!(uart.tx_fifo.len(), FIFO_DEPTH); // 发送 FIFO 不变
+
+        // 重新填充接收 FIFO
+        for i in 0..FIFO_DEPTH {
+            uart.receive_byte(i as u8);
+        }
+
+        // 只复位发送 FIFO
+        uart.write_reg(
+            reg_offset::IIR_FCR,
+            fcr_bits::FIFO_ENABLE | fcr_bits::XMIT_FIFO_RESET,
+        );
+        assert_eq!(uart.rx_fifo.len(), FIFO_DEPTH); // 接收 FIFO 不变
+        assert!(uart.tx_fifo.is_empty());
+    }
+
+    #[test]
+    fn test_uart_invalid_register_offset() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 读取无效寄存器偏移应该返回 0
+        let value = uart.read_reg(100);
+        assert_eq!(value, 0);
+
+        // 写入无效寄存器偏移不应该 panic
+        uart.write_reg(100, 0xFF);
+    }
+
+    #[test]
+    fn test_uart_lsr_error_bits() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 手动设置错误位
+        uart.lsr |= lsr_bits::OE | lsr_bits::PE | lsr_bits::FE | lsr_bits::BI;
+
+        // 读取 LSR 应该清除错误位
+        let _ = uart.read_reg(reg_offset::LSR);
+        assert!((uart.lsr & (lsr_bits::OE | lsr_bits::PE | lsr_bits::FE | lsr_bits::BI)) == 0);
+
+        // TEMT 和 THRE 不应该被清除
+        assert!((uart.lsr & lsr_bits::TEMT) != 0);
+        assert!((uart.lsr & lsr_bits::THRE) != 0);
+    }
+
+    #[test]
+    fn test_uart_msr_read() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // MSR 是只读的
+        let msr = uart.read_reg(reg_offset::MSR);
+        // 简化实现返回 0
+        assert_eq!(msr, 0);
+
+        // 写入 MSR 应该被忽略
+        let original_lsr = uart.lsr;
+        uart.write_reg(reg_offset::MSR, 0xFF);
+        assert_eq!(uart.lsr, original_lsr); // 不受影响
+    }
+
+    #[test]
+    fn test_uart_lsr_write_ignored() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // LSR 是只读的
+        let original_lsr = uart.lsr;
+        uart.write_reg(reg_offset::LSR, 0);
+        assert_eq!(uart.lsr, original_lsr); // 应该保持不变
+    }
+
+    #[test]
+    fn test_uart_dlab_boundary() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // DLAB = 0，访问 RBR/THR 和 IER
+        assert!(!uart.dlab());
+        uart.write_reg(reg_offset::RBR_THR, 0x41);
+        uart.write_reg(reg_offset::IER, ier_bits::ERBFI);
+        assert_eq!(uart.read_reg(reg_offset::IER), ier_bits::ERBFI);
+
+        // 设置 DLAB
+        uart.write_reg(reg_offset::LCR, lcr_bits::DLAB);
+        assert!(uart.dlab());
+
+        // DLAB = 1，访问 DLL 和 DLM
+        uart.write_reg(reg_offset::RBR_THR, 0x0C);
+        uart.write_reg(reg_offset::IER, 0x00);
+        assert_eq!(uart.read_reg(reg_offset::RBR_THR), 0x0C);
+        assert_eq!(uart.read_reg(reg_offset::IER), 0x00);
+
+        // 清除 DLAB
+        uart.write_reg(reg_offset::LCR, 0);
+        assert!(!uart.dlab());
+
+        // 原来的 IER 值被覆盖（因为我们在 DLAB=1 时写了 DLL/DLM）
+        // 但 RBR 应该仍然可以访问
+    }
+
+    #[test]
+    fn test_uart_interrupt_without_out2() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 使能接收中断，但不使能 OUT2
+        uart.write_reg(reg_offset::IER, ier_bits::ERBFI);
+
+        // 接收数据
+        uart.receive_byte(0x41);
+
+        // 不应该有中断（OUT2 未使能）
+        assert!(!uart.interrupt_pending());
+        assert_eq!(uart.interrupt_id() & iir_bits::NO_INT, iir_bits::NO_INT);
+    }
+
+    #[test]
+    fn test_uart_all_interrupt_types() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 使能 OUT2
+        uart.write_reg(reg_offset::MCR, mcr_bits::OUT2);
+
+        // 测试接收数据中断
+        uart.write_reg(reg_offset::IER, ier_bits::ERBFI);
+        uart.receive_byte(0x41);
+        assert!(uart.interrupt_pending());
+        let iir = uart.interrupt_id();
+        assert_eq!(iir & iir_bits::ID_MASK, iir_bits::RECEIVE_DATA);
+
+        // 清空接收 FIFO
+        uart.clear_rx_fifo();
+
+        // 测试发送保持寄存器空中断
+        uart.write_reg(reg_offset::IER, ier_bits::ETBEI);
+        // THRE 默认为 1，应该有中断
+        assert!(uart.interrupt_pending());
+        let iir = uart.interrupt_id();
+        assert_eq!(iir & iir_bits::ID_MASK, iir_bits::TRANSMIT_EMPTY);
+
+        // 测试线路状态中断（溢出错误）
+        uart.write_reg(reg_offset::IER, ier_bits::ELSI);
+        uart.lsr |= lsr_bits::OE;
+        assert!(uart.interrupt_pending());
+        let iir = uart.interrupt_id();
+        assert_eq!(iir & iir_bits::ID_MASK, iir_bits::LINE_STATUS);
+    }
+
+    #[test]
+    fn test_uart_address_out_of_bounds() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 地址刚好超出边界应该失败
+        let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000_0000 + UART_SIZE as u64, 1);
+        let mut delay = ScTime::zero();
+        assert!(uart.b_transport(&mut trans, &mut delay).is_err());
+
+        // 地址远远超出边界应该失败
+        let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0xFFFF_0000, 1);
+        delay = ScTime::zero();
+        assert!(uart.b_transport(&mut trans, &mut delay).is_err());
+    }
+
+    #[test]
+    fn test_uart_character_timeout() {
+        let mut uart = Uart16550::new(0x1000_0000);
+
+        // 配置 FIFO 和接收触发级别为 14
+        uart.write_reg(
+            reg_offset::IIR_FCR,
+            fcr_bits::FIFO_ENABLE | (3 << 6), // trigger level 14
+        );
+
+        // 使能 OUT2 和接收中断
+        uart.write_reg(reg_offset::MCR, mcr_bits::OUT2);
+        uart.write_reg(reg_offset::IER, ier_bits::ERBFI);
+
+        // 接收 14 个字符（触发级别）
+        for i in 0..14 {
+            uart.receive_byte(i as u8);
+        }
+
+        // 应该有字符超时中断或接收数据中断
+        let iir = uart.interrupt_id();
+        assert!((iir & iir_bits::NO_INT) == 0); // 有中断
+    }
 }

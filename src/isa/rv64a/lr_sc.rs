@@ -265,6 +265,11 @@ mod tests {
     use super::*;
     use crate::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
     use crate::memory::SimpleMemory;
+    use std::sync::Mutex;
+
+    // Test serialization lock to prevent concurrent access to GLOBAL_RESERVATION
+    // This is needed because tests share the global reservation state
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn create_lr_instr(rs1: u8, rd: u8, funct5: u8, _aq: u8, rl: u8) -> DecodedInstruction {
         // LR: funct5 = 00010, rs2 = 00000
@@ -319,6 +324,7 @@ mod tests {
 
     #[test]
     fn test_lr_basic() {
+        let _guard = TEST_LOCK.lock().unwrap();
         clear_reservation();
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
@@ -337,6 +343,7 @@ mod tests {
 
     #[test]
     fn test_lr_creates_reservation() {
+        let _guard = TEST_LOCK.lock().unwrap();
         clear_reservation();
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
@@ -364,6 +371,7 @@ mod tests {
 
     #[test]
     fn test_sc_success() {
+        let _guard = TEST_LOCK.lock().unwrap();
         clear_reservation();
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
@@ -388,6 +396,7 @@ mod tests {
 
     #[test]
     fn test_sc_fail_no_reservation() {
+        let _guard = TEST_LOCK.lock().unwrap();
         clear_reservation();
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
@@ -410,6 +419,7 @@ mod tests {
 
     #[test]
     fn test_sc_fail_after_conflict() {
+        let _guard = TEST_LOCK.lock().unwrap();
         clear_reservation();
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
@@ -434,6 +444,7 @@ mod tests {
 
     #[test]
     fn test_lr_sc_atomic_sequence() {
+        let _guard = TEST_LOCK.lock().unwrap();
         clear_reservation();
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
@@ -460,6 +471,7 @@ mod tests {
 
     #[test]
     fn test_sc_clears_reservation() {
+        let _guard = TEST_LOCK.lock().unwrap();
         clear_reservation();
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
@@ -486,6 +498,7 @@ mod tests {
 
     #[test]
     fn test_lr_x0_dest() {
+        let _guard = TEST_LOCK.lock().unwrap();
         clear_reservation();
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
