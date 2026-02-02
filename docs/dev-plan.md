@@ -72,38 +72,54 @@
 
 ---
 
-### M5: 集成测试 [PLANNING]
+### M5: 架构测试集成 [PLANNING]
 **Status:** Planning
-**Goal:** 完整功能测试、回归测试
+**Goal:** 集成 riscv-arch-test，准备 v1.0 发布
 
 #### Features
-- [ ] **RISC-V testsuite**: RV64IMAFDC 全指令集测试
-- [ ] **冒烟测试**: 端到端功能验证
-- [ ] **稳定性测试**: 24小时长时间运行
-- [ ] **覆盖率**: 代码覆盖率 > 80%
+- [ ] **RISCOF 框架**: 安装和配置 RISCOF 测试框架
+- [ ] **DUT 配置**: 创建 ruscv-sim 的 YAML 配置文件
+- [ ] **Spike 集成**: 安装 Spike 作为参考模型
+- [ ] **riscv-arch-test 运行**: 执行 RV64IMAFDC 架构测试
+- [ ] **问题修复**: 解决测试失败问题
 
 #### Buffer Zone
-- [ ] [BUFFER] **属性测试 (proptest)**: 对关键外设使用 proptest 进行自动化边界值探索（已添加 `proptest` 依赖，见 Code Review 建议 #1）
+- [ ] [BUFFER] **属性测试 (proptest)**: 对关键外设使用 proptest 进行自动化边界值探索（已添加 `proptest = "1.0"` 依赖，见 Code Review 建议 #1）
 - [ ] [BUFFER] **覆盖率报告工具**: 集成 `cargo-llvm-cov` 生成详细测试覆盖率报告（见 Code Review 建议 #3）
 
 ---
-
-### M6: 优化和 v1.0 发布 [PLANNING]
+### M6: v1.0 发布 [PLANNING]
 **Status:** Planning
-**Goal:** 性能优化 + v1.0.0 正式发布
+**Goal:** 通过 riscv-arch-test，发布 v1.0.0
 
 #### Features
-- [ ] **性能基准**: 建立 CPI、译码/执行延迟基线
-- [ ] **性能优化**: 根据基准数据进行针对性优化
-- [ ] **文档完善**: 用户指南、API 参考
-- [ ] **v1.0.0 发布**: 正式版本发布
+- [ ] **riscv-arch-test 集成**: 使用 RISCOF 框架验证模拟器正确性
+- [ ] **v1.0.0 发布**: 通过架构测试后正式发布
 
-#### Buffer Zone
-- [ ] [BUFFER] **模糊测试 (fuzzing)**: 长期考虑添加模糊测试框架，生成随机输入序列测试外设边界（见 Code Review 建议 #2，投入产出比待定）
+#### Future Goals (Post v1.0)
+- [ ] [FUTURE] **性能优化**: CPI、译码/执行延迟优化
+- [ ] [FUTURE] **文档完善**: 用户指南、API 参考
+- [ ] [FUTURE] **模糊测试 (fuzzing)**: 外设边界模糊测试框架
+- [ ] [FUTURE] **冒烟测试**: 端到端功能验证
+- [ ] [FUTURE] **稳定性测试**: 长时间运行测试
+- [ ] [FUTURE] **覆盖率报告**: cargo-llvm-cov 集成
+
+#### Version Plan
+| Version | Milestone | Meaning |
+|---------|-----------|---------|
+| v0.1.0 | Current | 基础功能就绪 |
+| v0.5.0 | M4 Complete | 调试支持就绪 |
+| v0.9.0-RC1 | M5 Complete | riscv-arch-test 候选 |
+| **v1.0.0** | **M6 Complete** | **官方架构测试通过** |
 
 ---
-
 ## Change Log
+
+**2026-02-02**: 版本规划调整
+- M6 目标简化为：仅通过 riscv-arch-test 后发布 v1.0.0
+- M5 调整为：架构测试集成阶段
+- 其他目标（性能优化、文档、模糊测试等）移至 Future Goals
+- 添加版本规划表：v0.1.0 → v0.5.0 → v0.9.0-RC1 → v1.0.0
 
 **2026-02-02**: Code Review 改进建议评估（M3 完成后）
 评估了三项改进建议，决策如下：
