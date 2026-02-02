@@ -2,8 +2,9 @@
 //!
 //! 实现基于 TCP 的 GDB 远程串行协议服务器，支持多连接和异步处理。
 
+#[allow(unused_imports)]
 use super::{
-    BreakpointManager, BreakpointType, DebugError, DebugTarget, GdbPacket, RspProtocol, StopReason,
+    BreakpointManager, BreakpointType, DebugError, DebugTarget, GdbPacket, RspProtocol,
     WatchpointManager, WatchpointType,
 };
 use std::io::{Read, Write};
@@ -669,6 +670,7 @@ impl ClientHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::debug::StopReason;
     use crate::WatchpointAccess;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
