@@ -32,8 +32,8 @@ pub mod uart16550;
 
 // 公开导出
 pub use clint::{Clint, CLINT_SIZE};
-pub use plic::{Plic, PLIC_SIZE, MAX_INTERRUPT_SOURCES, MAX_PRIORITY};
-pub use uart16550::{Uart16550, UART_SIZE, FIFO_DEPTH};
+pub use plic::{Plic, MAX_INTERRUPT_SOURCES, MAX_PRIORITY, PLIC_SIZE};
+pub use uart16550::{Uart16550, FIFO_DEPTH, UART_SIZE};
 
 /// 外设错误类型
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +72,7 @@ impl std::fmt::Display for PeripheralError {
 impl std::error::Error for PeripheralError {}
 
 /// 外设 trait
-/// 
+///
 /// 定义外设的通用接口
 pub trait Peripheral: Send {
     /// 获取外设名称
@@ -90,7 +90,7 @@ pub trait Peripheral: Send {
 }
 
 /// 标准 RISC-V 平台外设配置
-/// 
+///
 /// 提供常见 RISC-V 平台的默认外设配置
 #[derive(Debug, Clone)]
 pub struct PlatformConfig {
@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn test_peripheral_integration() {
         let config = PlatformConfig::default_single_hart();
-        
+
         // 创建外设
         let clint = Arc::new(Mutex::new(Clint::new(
             config.clint_base,
@@ -243,17 +243,13 @@ mod tests {
         use crate::peripherals::plic::reg_offset as plic_offset;
 
         let config = PlatformConfig::default_single_hart();
-        
+
         let clint = Arc::new(Mutex::new(Clint::new(
             config.clint_base,
             config.num_harts,
             10_000_000,
         )));
-        let plic = Arc::new(Mutex::new(Plic::new(
-            config.plic_base,
-            32,
-            2,
-        )));
+        let plic = Arc::new(Mutex::new(Plic::new(config.plic_base, 32, 2)));
 
         let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
         bus.add_route(
@@ -318,7 +314,7 @@ mod tests {
     #[test]
     fn test_uart_plic_integration() {
         let config = PlatformConfig::default_single_hart();
-        
+
         let uart = Arc::new(Mutex::new(Uart16550::new(config.uart_base)));
         let plic = Arc::new(Mutex::new(Plic::new(config.plic_base, 32, 2)));
 

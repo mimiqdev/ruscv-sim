@@ -18,7 +18,7 @@ pub enum DataExtensionMode {
 }
 
 /// TLM2.0 通用事务载荷
-/// 
+///
 /// 这是 TLM2.0 标准的核心数据结构，用于在不同组件之间传输事务信息
 #[derive(Debug, Clone)]
 pub struct TlmGenericPayload {
@@ -46,16 +46,16 @@ pub struct TlmGenericPayload {
 
 impl TlmGenericPayload {
     /// 创建新的事务载荷
-    /// 
+    ///
     /// # 参数
     /// - `command`: 命令类型（读/写）
     /// - `address`: 访问地址
     /// - `data_length`: 数据长度（字节）
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::{TlmGenericPayload, TlmCommand};
-    /// 
+    ///
     /// let payload = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
     /// assert_eq!(payload.command(), TlmCommand::Read);
     /// assert_eq!(payload.address(), 0x1000);
@@ -77,7 +77,7 @@ impl TlmGenericPayload {
     }
 
     /// 从现有数据创建事务载荷
-    /// 
+    ///
     /// # 参数
     /// - `command`: 命令类型
     /// - `address`: 访问地址
@@ -124,7 +124,7 @@ impl TlmGenericPayload {
     }
 
     /// 设置数据长度
-    /// 
+    ///
     /// 注意：这会重新分配数据缓冲区
     pub fn set_data_length(&mut self, length: usize) {
         self.data_length = length;
@@ -153,7 +153,7 @@ impl TlmGenericPayload {
     }
 
     /// 设置字节使能
-    /// 
+    ///
     /// 字节使能用于控制哪些字节实际参与传输
     pub fn set_byte_enable(&mut self, byte_enable: Option<Vec<u8>>) {
         self.byte_enable_length = byte_enable.as_ref().map(|v| v.len()).unwrap_or(0);
@@ -176,7 +176,7 @@ impl TlmGenericPayload {
     }
 
     /// 设置流式传输宽度
-    /// 
+    ///
     /// 设置为0表示非流式传输
     pub fn set_streaming_width(&mut self, width: usize) {
         self.streaming_width = width;
@@ -196,7 +196,7 @@ impl TlmGenericPayload {
     pub fn response_status(&self) -> TlmResponseStatus {
         self.response_status
     }
-    
+
     /// 设置响应状态（向后兼容的方法）
     pub fn set_response_status(&mut self, status: TlmResponseStatus) {
         self.response_status = status;
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn test_payload_setters() {
         let mut payload = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
-        
+
         payload.set_command(TlmCommand::Write);
         assert_eq!(payload.command(), TlmCommand::Write);
 
@@ -414,10 +414,10 @@ mod tests {
     #[test]
     fn test_payload_byte_enable() {
         let mut payload = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
-        
+
         let byte_enable = vec![0xFF, 0x00, 0xFF, 0x00];
         payload.set_byte_enable(Some(byte_enable.clone()));
-        
+
         assert_eq!(payload.byte_enable(), Some(&byte_enable[..]));
         assert_eq!(payload.byte_enable_length(), 4);
     }
@@ -425,9 +425,9 @@ mod tests {
     #[test]
     fn test_payload_streaming() {
         let mut payload = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 16);
-        
+
         assert!(!payload.is_streaming());
-        
+
         payload.set_streaming_width(4);
         assert!(payload.is_streaming());
         assert_eq!(payload.streaming_width(), 4);
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn test_payload_response_status() {
         let mut payload = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
-        
+
         assert!(payload.is_response_ok());
         assert!(!payload.is_response_error());
 
@@ -447,15 +447,12 @@ mod tests {
 
     #[test]
     fn test_payload_reset() {
-        let mut payload = TlmGenericPayload::with_data(
-            TlmCommand::Write,
-            0x1000,
-            vec![0x01, 0x02, 0x03, 0x04]
-        );
+        let mut payload =
+            TlmGenericPayload::with_data(TlmCommand::Write, 0x1000, vec![0x01, 0x02, 0x03, 0x04]);
         payload.set_response_status(TlmResponseStatus::Ok);
-        
+
         payload.reset();
-        
+
         assert_eq!(payload.command(), TlmCommand::Read);
         assert_eq!(payload.address(), 0);
         assert!(payload.is_response_ok());
@@ -463,12 +460,9 @@ mod tests {
 
     #[test]
     fn test_payload_deep_copy() {
-        let payload = TlmGenericPayload::with_data(
-            TlmCommand::Write,
-            0x1000,
-            vec![0x01, 0x02, 0x03, 0x04]
-        );
-        
+        let payload =
+            TlmGenericPayload::with_data(TlmCommand::Write, 0x1000, vec![0x01, 0x02, 0x03, 0x04]);
+
         let copy = payload.deep_copy();
         assert_eq!(payload.data(), copy.data());
     }

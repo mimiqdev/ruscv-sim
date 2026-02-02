@@ -25,7 +25,7 @@ pub enum ScTimeUnit {
 
 impl ScTimeUnit {
     /// 转换为皮秒的乘数
-    const fn to_picoseconds(&self) -> u64 {
+    const fn to_picoseconds(self) -> u64 {
         match self {
             ScTimeUnit::Femtosecond => 0, // 小于1ps，舍入为0
             ScTimeUnit::Picosecond => 1,
@@ -68,7 +68,7 @@ impl fmt::Display for ScTimeUnit {
 }
 
 /// SystemC 风格的时间值
-/// 
+///
 /// 内部以皮秒为单位存储，提供高精度时间表示
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScTime {
@@ -78,15 +78,15 @@ pub struct ScTime {
 
 impl ScTime {
     /// 创建新的时间值
-    /// 
+    ///
     /// # 参数
     /// - `value`: 时间数值
     /// - `unit`: 时间单位
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::{ScTime, ScTimeUnit};
-    /// 
+    ///
     /// let t = ScTime::new(100, ScTimeUnit::Nanosecond);
     /// assert_eq!(t.to_picoseconds(), 100_000);
     /// ```
@@ -107,22 +107,30 @@ impl ScTime {
 
     /// 从纳秒创建时间
     pub const fn from_nanoseconds(ns: u64) -> Self {
-        Self { value_ps: ns.saturating_mul(1_000) }
+        Self {
+            value_ps: ns.saturating_mul(1_000),
+        }
     }
 
     /// 从微秒创建时间
     pub const fn from_microseconds(us: u64) -> Self {
-        Self { value_ps: us.saturating_mul(1_000_000) }
+        Self {
+            value_ps: us.saturating_mul(1_000_000),
+        }
     }
 
     /// 从毫秒创建时间
     pub const fn from_milliseconds(ms: u64) -> Self {
-        Self { value_ps: ms.saturating_mul(1_000_000_000) }
+        Self {
+            value_ps: ms.saturating_mul(1_000_000_000),
+        }
     }
 
     /// 从秒创建时间
     pub const fn from_seconds(s: u64) -> Self {
-        Self { value_ps: s.saturating_mul(1_000_000_000_000) }
+        Self {
+            value_ps: s.saturating_mul(1_000_000_000_000),
+        }
     }
 
     /// 转换为皮秒
@@ -185,7 +193,7 @@ impl Default for ScTime {
 
 impl PartialOrd for ScTime {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.value_ps.cmp(&other.value_ps))
+        Some(self.cmp(other))
     }
 }
 

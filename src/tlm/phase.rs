@@ -12,33 +12,33 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TlmPhase {
     /// 请求开始阶段
-    /// 
+    ///
     /// 发起者发送请求到目标，标志着事务处理的开始
     BeginReq,
     /// 请求结束阶段
-    /// 
+    ///
     /// 目标接收请求完成，可以开始处理
     EndReq,
     /// 响应开始阶段
-    /// 
+    ///
     /// 目标开始发送响应数据
     BeginResp,
     /// 响应结束阶段
-    /// 
+    ///
     /// 发起者接收响应完成，事务结束
     EndResp,
 }
 
 impl TlmPhase {
     /// 获取相位的下一个阶段
-    /// 
+    ///
     /// 按照 TLM2.0 协议的标准顺序推进：
     /// BeginReq -> EndReq -> BeginResp -> EndResp
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmPhase;
-    /// 
+    ///
     /// assert_eq!(TlmPhase::BeginReq.next(), Some(TlmPhase::EndReq));
     /// assert_eq!(TlmPhase::EndResp.next(), None);
     /// ```
@@ -52,11 +52,11 @@ impl TlmPhase {
     }
 
     /// 获取相位的前一个阶段
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmPhase;
-    /// 
+    ///
     /// assert_eq!(TlmPhase::EndReq.prev(), Some(TlmPhase::BeginReq));
     /// assert_eq!(TlmPhase::BeginReq.prev(), None);
     /// ```
@@ -70,11 +70,11 @@ impl TlmPhase {
     }
 
     /// 检查是否为请求阶段
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmPhase;
-    /// 
+    ///
     /// assert!(TlmPhase::BeginReq.is_request());
     /// assert!(TlmPhase::EndReq.is_request());
     /// assert!(!TlmPhase::BeginResp.is_request());
@@ -84,11 +84,11 @@ impl TlmPhase {
     }
 
     /// 检查是否为响应阶段
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmPhase;
-    /// 
+    ///
     /// assert!(TlmPhase::BeginResp.is_response());
     /// assert!(TlmPhase::EndResp.is_response());
     /// assert!(!TlmPhase::BeginReq.is_response());
@@ -98,11 +98,11 @@ impl TlmPhase {
     }
 
     /// 检查是否为开始阶段
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmPhase;
-    /// 
+    ///
     /// assert!(TlmPhase::BeginReq.is_begin());
     /// assert!(TlmPhase::BeginResp.is_begin());
     /// assert!(!TlmPhase::EndReq.is_begin());
@@ -112,11 +112,11 @@ impl TlmPhase {
     }
 
     /// 检查是否为结束阶段
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmPhase;
-    /// 
+    ///
     /// assert!(TlmPhase::EndReq.is_end());
     /// assert!(TlmPhase::EndResp.is_end());
     /// assert!(!TlmPhase::BeginReq.is_end());

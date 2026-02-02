@@ -11,7 +11,7 @@ use super::{
 };
 
 /// TLM 总线路由项
-/// 
+///
 /// 将一个地址范围映射到一个目标
 pub struct BusRoute {
     /// 地址范围
@@ -47,7 +47,7 @@ pub enum ArbitrationPolicy {
 }
 
 /// TLM 总线
-/// 
+///
 /// 实现多 initiator 到多 target 的路由和仲裁
 #[derive(Debug)]
 pub struct TlmBus {
@@ -68,11 +68,11 @@ pub struct TlmBus {
 
 impl TlmBus {
     /// 创建新的 TLM 总线
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::{TlmBus, ArbitrationPolicy};
-    /// 
+    ///
     /// let bus = TlmBus::new(ArbitrationPolicy::RoundRobin);
     /// ```
     pub fn new(policy: ArbitrationPolicy) -> Self {
@@ -87,12 +87,20 @@ impl TlmBus {
     }
 
     /// 创建使用默认设置的 TLM 总线
-    pub fn default() -> Self {
+    pub fn default_bus() -> Self {
         Self::new(ArbitrationPolicy::FixedPriority)
     }
+}
 
+impl Default for TlmBus {
+    fn default() -> Self {
+        Self::new(ArbitrationPolicy::FixedPriority)
+    }
+}
+
+impl TlmBus {
     /// 添加路由
-    /// 
+    ///
     /// # 参数
     /// - `range`: 地址范围
     /// - `target`: 目标组件
@@ -134,7 +142,7 @@ impl TlmBus {
                 // 轮询：从当前索引开始查找
                 let index = *self.round_robin_index.read().unwrap();
                 let len = self.routes.len();
-                
+
                 for i in 0..len {
                     let idx = (index + i) % len;
                     if let Some(route) = self.routes.get(idx) {
@@ -197,7 +205,10 @@ impl TlmBus {
 
     /// 注册 DMI
     pub fn register_dmi(&self, start_address: u64, dmi_data: DmiData) {
-        self.dmi_cache.write().unwrap().insert(start_address, dmi_data);
+        self.dmi_cache
+            .write()
+            .unwrap()
+            .insert(start_address, dmi_data);
     }
 }
 
@@ -208,7 +219,7 @@ impl TlmInitiator for TlmBus {
         delay: &mut ScTime,
     ) -> Result<(), TlmError> {
         let address = trans.address();
-        
+
         // 查找路由
         let route = self
             .find_route(address)
@@ -218,7 +229,7 @@ impl TlmInitiator for TlmBus {
         self.update_round_robin();
 
         // 添加总线延迟
-        *delay = *delay + self.default_delay;
+        *delay += self.default_delay;
 
         // 转发到目标
         let mut target = route.target.lock().unwrap();
@@ -232,7 +243,7 @@ impl TlmInitiator for TlmBus {
         delay: &mut ScTime,
     ) -> Result<TlmSyncEnum, TlmError> {
         let address = trans.address();
-        
+
         // 查找路由
         let route = match self.find_route(address) {
             Some(r) => r,
@@ -246,7 +257,7 @@ impl TlmInitiator for TlmBus {
         self.update_round_robin();
 
         // 添加总线延迟
-        *delay = *delay + self.default_delay;
+        *delay += self.default_delay;
 
         // 转发到目标
         let target = route.target.lock().unwrap();
@@ -255,7 +266,7 @@ impl TlmInitiator for TlmBus {
 
     fn get_direct_mem_ptr(&self, trans: &TlmGenericPayload) -> Option<DmiData> {
         let address = trans.address();
-        
+
         // 先检查 DMI 缓存
         if let Some(dmi) = self.get_dmi(address) {
             return Some(dmi);
@@ -269,7 +280,7 @@ impl TlmInitiator for TlmBus {
 }
 
 /// 总线桥接器
-/// 
+///
 /// 用于连接两个总线或实现地址转换
 pub struct TlmBusBridge {
     /// 输出总线
@@ -326,7 +337,7 @@ impl TlmTarget for TlmBusBridge {
         trans.set_address(new_address);
 
         // 延迟调整
-        *delay = *delay + self.delay_adjustment;
+        *delay += self.delay_adjustment;
 
         // 转发到输出总线
         let bus = self.output_bus.lock().unwrap();
@@ -385,7 +396,9 @@ impl TlmSimpleMemory {
     /// 从内存读取数据
     pub fn read_bytes(&self, offset: usize, size: usize) -> Result<Vec<u8>, TlmError> {
         if offset + size > self.size {
-            return Err(TlmError::InvalidAddress((self.base_addr + offset as u64) as u32));
+            return Err(TlmError::InvalidAddress(
+                (self.base_addr + offset as u64) as u32,
+            ));
         }
         Ok(self.memory[offset..offset + size].to_vec())
     }
@@ -393,7 +406,9 @@ impl TlmSimpleMemory {
     /// 写入数据到内存
     pub fn write_bytes(&mut self, offset: usize, data: &[u8]) -> Result<(), TlmError> {
         if offset + data.len() > self.size {
-            return Err(TlmError::InvalidAddress((self.base_addr + offset as u64) as u32));
+            return Err(TlmError::InvalidAddress(
+                (self.base_addr + offset as u64) as u32,
+            ));
         }
         self.memory[offset..offset + data.len()].copy_from_slice(data);
         Ok(())
@@ -422,15 +437,17 @@ impl TlmTarget for TlmSimpleMemory {
         delay: &mut ScTime,
     ) -> Result<(), TlmError> {
         let addr = trans.address();
-        
+
         // 检查地址范围
-        if addr < self.base_addr || addr + trans.data_length() as u64 > self.base_addr + self.size as u64 {
+        if addr < self.base_addr
+            || addr + trans.data_length() as u64 > self.base_addr + self.size as u64
+        {
             trans.set_response_status(TlmResponseStatus::InvalidAddress);
             return Err(TlmError::InvalidAddress(addr as u32));
         }
 
         let offset = (addr - self.base_addr) as usize;
-        
+
         match trans.command() {
             TlmCommand::Read => {
                 for i in 0..trans.data_length() {
@@ -444,7 +461,7 @@ impl TlmTarget for TlmSimpleMemory {
         }
 
         // 添加延迟
-        *delay = *delay + self.delay;
+        *delay += self.delay;
 
         trans.set_response_status(TlmResponseStatus::Ok);
         trans.set_dmi_allowed(self.dmi_enabled);
@@ -484,7 +501,7 @@ impl TlmInterface for TlmSimpleMemory {
         if addr < self.base_addr || addr + size as u64 > self.base_addr + self.size as u64 {
             return Err(TlmError::InvalidAddress(addr as u32));
         }
-        
+
         let offset = (addr - self.base_addr) as usize;
         Ok(self.memory[offset..offset + size].to_vec())
     }
@@ -493,7 +510,7 @@ impl TlmInterface for TlmSimpleMemory {
         if addr < self.base_addr || addr + data.len() as u64 > self.base_addr + self.size as u64 {
             return Err(TlmError::InvalidAddress(addr as u32));
         }
-        
+
         let offset = (addr - self.base_addr) as usize;
         self.memory[offset..offset + data.len()].copy_from_slice(data);
         Ok(())
@@ -524,14 +541,9 @@ mod tests {
     fn test_tlm_bus_add_route() {
         let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
         let mem = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
-        
-        bus.add_route(
-            AddressRange::new(0x1000, 0x13FF),
-            mem.clone(),
-            0,
-            "memory1"
-        );
-        
+
+        bus.add_route(AddressRange::new(0x1000, 0x13FF), mem.clone(), 0, "memory1");
+
         assert_eq!(bus.route_count(), 1);
     }
 
@@ -539,28 +551,20 @@ mod tests {
     fn test_tlm_bus_b_transport() {
         let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
         let mem = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
-        
-        bus.add_route(
-            AddressRange::new(0x1000, 0x13FF),
-            mem.clone(),
-            0,
-            "memory1"
-        );
+
+        bus.add_route(AddressRange::new(0x1000, 0x13FF), mem.clone(), 0, "memory1");
 
         // 先写入数据
-        let mut write_trans = TlmGenericPayload::with_data(
-            TlmCommand::Write,
-            0x1000,
-            vec![0x01, 0x02, 0x03, 0x04],
-        );
+        let mut write_trans =
+            TlmGenericPayload::with_data(TlmCommand::Write, 0x1000, vec![0x01, 0x02, 0x03, 0x04]);
         let mut delay = ScTime::zero();
-        
+
         assert!(bus.b_transport(&mut write_trans, &mut delay).is_ok());
 
         // 再读取验证
         let mut read_trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
         delay = ScTime::zero();
-        
+
         assert!(bus.b_transport(&mut read_trans, &mut delay).is_ok());
         assert_eq!(read_trans.data(), &[0x01, 0x02, 0x03, 0x04]);
     }
@@ -569,35 +573,30 @@ mod tests {
     fn test_tlm_bus_invalid_address() {
         let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
         let mem = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
-        
-        bus.add_route(
-            AddressRange::new(0x1000, 0x13FF),
-            mem.clone(),
-            0,
-            "memory1"
-        );
+
+        bus.add_route(AddressRange::new(0x1000, 0x13FF), mem.clone(), 0, "memory1");
 
         // 访问无效地址
         let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x2000, 4);
         let mut delay = ScTime::zero();
-        
+
         assert!(bus.b_transport(&mut trans, &mut delay).is_err());
     }
 
     #[test]
     fn test_tlm_simple_memory() {
         let mut mem = TlmSimpleMemory::new(0x1000, 1024);
-        
+
         // 测试 load
         mem.load(&[0x01, 0x02, 0x03, 0x04], 0);
-        
+
         // 测试 read_bytes
         let data = mem.read_bytes(0, 4).unwrap();
         assert_eq!(data, vec![0x01, 0x02, 0x03, 0x04]);
-        
+
         // 测试 write_bytes
         mem.write_bytes(4, &[0x05, 0x06, 0x07, 0x08]).unwrap();
-        
+
         // 验证
         let data = mem.read_bytes(4, 4).unwrap();
         assert_eq!(data, vec![0x05, 0x06, 0x07, 0x08]);
@@ -606,21 +605,18 @@ mod tests {
     #[test]
     fn test_tlm_simple_memory_b_transport() {
         let mut mem = TlmSimpleMemory::new(0x1000, 1024);
-        
+
         // 写入数据
-        let mut write_trans = TlmGenericPayload::with_data(
-            TlmCommand::Write,
-            0x1000,
-            vec![0xAA, 0xBB, 0xCC, 0xDD],
-        );
+        let mut write_trans =
+            TlmGenericPayload::with_data(TlmCommand::Write, 0x1000, vec![0xAA, 0xBB, 0xCC, 0xDD]);
         let mut delay = ScTime::zero();
-        
+
         assert!(mem.b_transport(&mut write_trans, &mut delay).is_ok());
-        
+
         // 读取数据
         let mut read_trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
         delay = ScTime::zero();
-        
+
         assert!(mem.b_transport(&mut read_trans, &mut delay).is_ok());
         assert_eq!(read_trans.data(), &[0xAA, 0xBB, 0xCC, 0xDD]);
     }
@@ -628,11 +624,11 @@ mod tests {
     #[test]
     fn test_tlm_simple_memory_out_of_range() {
         let mut mem = TlmSimpleMemory::new(0x1000, 1024);
-        
+
         // 尝试访问超出范围的地址
         let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x2000, 4);
         let mut delay = ScTime::zero();
-        
+
         assert!(mem.b_transport(&mut trans, &mut delay).is_err());
     }
 
@@ -640,20 +636,15 @@ mod tests {
     fn test_bus_remove_route() {
         let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
         let mem = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
-        
-        bus.add_route(
-            AddressRange::new(0x1000, 0x13FF),
-            mem.clone(),
-            0,
-            "memory1"
-        );
-        
+
+        bus.add_route(AddressRange::new(0x1000, 0x13FF), mem.clone(), 0, "memory1");
+
         assert_eq!(bus.route_count(), 1);
-        
+
         // 移除路由
         assert!(bus.remove_route("memory1"));
         assert_eq!(bus.route_count(), 0);
-        
+
         // 尝试移除不存在的路由
         assert!(!bus.remove_route("nonexistent"));
     }
@@ -663,7 +654,7 @@ mod tests {
         let range1 = AddressRange::new(0x1000, 0x1FFF);
         let range2 = AddressRange::new(0x1800, 0x2800);
         let range3 = AddressRange::new(0x2000, 0x3000);
-        
+
         assert!(range1.overlaps(&range2));
         assert!(range2.overlaps(&range3));
         assert!(!range1.overlaps(&range3));

@@ -28,36 +28,56 @@ pub use ruscv_macros::*;
 
 // TLM2.0 导出
 pub use tlm::{
-    // 基础类型
-    TlmCommand, TlmPhase, TlmResponseStatus, TlmTime,
-    // 核心结构
-    TlmGenericPayload, TlmPayloadBuilder, DataExtensionMode,
+    // 地址和 DMI
+    AddressRange,
+    ArbitrationPolicy,
+    BusRoute,
+    DataExtensionMode,
+    DmiAccessRights,
+    DmiData,
     // 时间管理
-    ScTime, ScTimeUnit,
-    // 接口 trait
-    TlmInitiator, TlmTarget, TlmInterface,
+    ScTime,
+    ScTimeUnit,
     // 总线和路由
-    TlmBus, TlmBusBridge, BusRoute, ArbitrationPolicy,
+    TlmBus,
+    TlmBusBridge,
+    // 基础类型
+    TlmCommand,
+    // 错误和同步
+    TlmError,
+    // 核心结构
+    TlmGenericPayload,
+    // 接口 trait
+    TlmInitiator,
+    TlmInterface,
+    TlmPayloadBuilder,
+    TlmPhase,
+    TlmResponseStatus,
     // 简单内存
     TlmSimpleMemory,
-    // 地址和 DMI
-    AddressRange, DmiData, DmiAccessRights,
-    // 错误和同步
-    TlmError, TlmSyncEnum,
+    TlmSyncEnum,
+    TlmTarget,
+    TlmTime,
 };
 
 // 外设导出
 pub use peripherals::{
     // CLINT
-    Clint, CLINT_SIZE,
-    // PLIC
-    Plic, PLIC_SIZE, MAX_INTERRUPT_SOURCES, MAX_PRIORITY,
-    // UART
-    Uart16550, UART_SIZE, FIFO_DEPTH,
-    // 配置
-    PlatformConfig,
+    Clint,
     // 错误类型
     PeripheralError,
+    // 配置
+    PlatformConfig,
+    // PLIC
+    Plic,
+    // UART
+    Uart16550,
+    CLINT_SIZE,
+    FIFO_DEPTH,
+    MAX_INTERRUPT_SOURCES,
+    MAX_PRIORITY,
+    PLIC_SIZE,
+    UART_SIZE,
 };
 
 // 子模块特定导出
@@ -67,8 +87,6 @@ pub use peripherals::clint::reg_offset as clint_reg;
 pub use peripherals::plic::reg_offset as plic_reg;
 /// UART 寄存器偏移和位定义
 pub use peripherals::uart16550::{
-    reg_offset as uart_reg,
-    lsr_bits as uart_lsr, ier_bits as uart_ier, 
-    iir_bits as uart_iir, fcr_bits as uart_fcr,
-    lcr_bits as uart_lcr, mcr_bits as uart_mcr,
+    fcr_bits as uart_fcr, ier_bits as uart_ier, iir_bits as uart_iir, lcr_bits as uart_lcr,
+    lsr_bits as uart_lsr, mcr_bits as uart_mcr, reg_offset as uart_reg,
 };

@@ -3,7 +3,7 @@
 //! 定义 TLM 事务的命令类型（读/写）
 
 /// TLM2.0 命令类型
-/// 
+///
 /// 表示 TLM 事务的操作类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TlmCommand {
@@ -15,11 +15,11 @@ pub enum TlmCommand {
 
 impl TlmCommand {
     /// 检查是否为读操作
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmCommand;
-    /// 
+    ///
     /// assert!(TlmCommand::Read.is_read());
     /// assert!(!TlmCommand::Write.is_read());
     /// ```
@@ -28,11 +28,11 @@ impl TlmCommand {
     }
 
     /// 检查是否为写操作
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmCommand;
-    /// 
+    ///
     /// assert!(TlmCommand::Write.is_write());
     /// assert!(!TlmCommand::Read.is_write());
     /// ```
@@ -41,11 +41,11 @@ impl TlmCommand {
     }
 
     /// 获取相反的操作类型
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmCommand;
-    /// 
+    ///
     /// assert_eq!(TlmCommand::Read.opposite(), TlmCommand::Write);
     /// assert_eq!(TlmCommand::Write.opposite(), TlmCommand::Read);
     /// ```

@@ -88,11 +88,8 @@ mod integration_tests {
 
         // 写入数据
         let write_data = vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
-        let mut write_trans = TlmGenericPayload::with_data(
-            TlmCommand::Write,
-            0x8000_0100,
-            write_data.clone(),
-        );
+        let mut write_trans =
+            TlmGenericPayload::with_data(TlmCommand::Write, 0x8000_0100, write_data.clone());
         let mut delay = ScTime::zero();
 
         assert!(bus.b_transport(&mut write_trans, &mut delay).is_ok());
@@ -119,20 +116,12 @@ mod integration_tests {
         bus.add_route(AddressRange::new(0x2000, 0x23FF), mem2.clone(), 0, "mem2");
 
         // 写入 mem1
-        let mut trans1 = TlmGenericPayload::with_data(
-            TlmCommand::Write,
-            0x1000,
-            vec![0xAA, 0xBB],
-        );
+        let mut trans1 = TlmGenericPayload::with_data(TlmCommand::Write, 0x1000, vec![0xAA, 0xBB]);
         let mut delay = ScTime::zero();
         bus.b_transport(&mut trans1, &mut delay).unwrap();
 
         // 写入 mem2
-        let mut trans2 = TlmGenericPayload::with_data(
-            TlmCommand::Write,
-            0x2000,
-            vec![0xCC, 0xDD],
-        );
+        let mut trans2 = TlmGenericPayload::with_data(TlmCommand::Write, 0x2000, vec![0xCC, 0xDD]);
         delay = ScTime::zero();
         bus.b_transport(&mut trans2, &mut delay).unwrap();
 
@@ -155,12 +144,7 @@ mod integration_tests {
         let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
         let memory = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
 
-        bus.add_route(
-            AddressRange::new(0x1000, 0x13FF),
-            memory.clone(),
-            0,
-            "mem",
-        );
+        bus.add_route(AddressRange::new(0x1000, 0x13FF), memory.clone(), 0, "mem");
 
         // 访问未映射的地址
         let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x5000, 4);
@@ -178,12 +162,7 @@ mod integration_tests {
         // 设置总线延迟
         bus.set_default_delay(ScTime::from_nanoseconds(5));
 
-        bus.add_route(
-            AddressRange::new(0x1000, 0x13FF),
-            memory.clone(),
-            0,
-            "mem",
-        );
+        bus.add_route(AddressRange::new(0x1000, 0x13FF), memory.clone(), 0, "mem");
 
         let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
         let mut delay = ScTime::from_nanoseconds(3); // 初始延迟
@@ -200,15 +179,10 @@ mod integration_tests {
         let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
         let memory = Arc::new(Mutex::new(TlmSimpleMemory::new(0x1000, 1024)));
 
-        bus.add_route(
-            AddressRange::new(0x1000, 0x13FF),
-            memory.clone(),
-            0,
-            "mem",
-        );
+        bus.add_route(AddressRange::new(0x1000, 0x13FF), memory.clone(), 0, "mem");
 
         let trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
-        
+
         // 获取 DMI 指针
         let dmi = bus.get_direct_mem_ptr(&trans);
         assert!(dmi.is_some());
@@ -225,9 +199,9 @@ mod integration_tests {
     #[test]
     fn test_streaming_width() {
         let mut payload = TlmGenericPayload::new(TlmCommand::Write, 0x1000, 16);
-        
+
         assert!(!payload.is_streaming());
-        
+
         payload.set_streaming_width(4);
         assert!(payload.is_streaming());
         assert_eq!(payload.streaming_width(), 4);
@@ -237,11 +211,11 @@ mod integration_tests {
     #[test]
     fn test_byte_enable() {
         let mut payload = TlmGenericPayload::new(TlmCommand::Write, 0x1000, 4);
-        
+
         // 设置字节使能：只使能第0和第2字节
         let byte_enable = vec![0xFF, 0x00, 0xFF, 0x00];
         payload.set_byte_enable(Some(byte_enable.clone()));
-        
+
         assert_eq!(payload.byte_enable(), Some(&byte_enable[..]));
         assert_eq!(payload.byte_enable_length(), 4);
     }
@@ -250,12 +224,12 @@ mod integration_tests {
     #[test]
     fn test_response_status_handling() {
         let mut payload = TlmGenericPayload::new(TlmCommand::Read, 0x1000, 4);
-        
+
         assert!(payload.is_response_ok());
         assert!(!payload.is_response_error());
-        
+
         payload.set_response_status(TlmResponseStatus::AddressError);
-        
+
         assert!(!payload.is_response_ok());
         assert!(payload.is_response_error());
     }
@@ -263,14 +237,11 @@ mod integration_tests {
     /// 测试载荷深拷贝
     #[test]
     fn test_payload_deep_copy() {
-        let original = TlmGenericPayload::with_data(
-            TlmCommand::Write,
-            0x1000,
-            vec![0x01, 0x02, 0x03, 0x04],
-        );
-        
+        let original =
+            TlmGenericPayload::with_data(TlmCommand::Write, 0x1000, vec![0x01, 0x02, 0x03, 0x04]);
+
         let copy = original.deep_copy();
-        
+
         assert_eq!(original.command(), copy.command());
         assert_eq!(original.address(), copy.address());
         assert_eq!(original.data(), copy.data());
@@ -286,7 +257,7 @@ mod integration_tests {
             .dmi_allowed(true)
             .streaming_width(2)
             .build();
-        
+
         assert_eq!(payload.command(), TlmCommand::Write);
         assert_eq!(payload.address(), 0x2000);
         assert_eq!(payload.data(), &[0x11, 0x22, 0x33, 0x44]);
@@ -299,10 +270,10 @@ mod integration_tests {
     fn test_arbitration_policy_switching() {
         let mut bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
         assert_eq!(bus.arbitration_policy(), ArbitrationPolicy::FixedPriority);
-        
+
         bus.set_arbitration_policy(ArbitrationPolicy::RoundRobin);
         assert_eq!(bus.arbitration_policy(), ArbitrationPolicy::RoundRobin);
-        
+
         bus.set_arbitration_policy(ArbitrationPolicy::LRU);
         assert_eq!(bus.arbitration_policy(), ArbitrationPolicy::LRU);
     }
@@ -311,7 +282,7 @@ mod integration_tests {
     #[test]
     fn test_dmi_cache() {
         let bus = TlmBus::new(ArbitrationPolicy::FixedPriority);
-        
+
         // 创建 DMI 数据
         let mut data = vec![0u8; 1024];
         let dmi = DmiData {
@@ -323,17 +294,17 @@ mod integration_tests {
             start_address: 0x1000,
             end_address: 0x13FF,
         };
-        
+
         // 注册 DMI
         bus.register_dmi(0x1000, dmi);
-        
+
         // 获取 DMI
         let retrieved = bus.get_dmi(0x1000);
         assert!(retrieved.is_some());
-        
+
         // 清空缓存
         bus.invalidate_dmi();
-        
+
         // 验证已清空
         let after_invalidate = bus.get_dmi(0x1000);
         assert!(after_invalidate.is_none());

@@ -3,7 +3,7 @@
 //! 定义 TLM 事务的响应状态码，用于表示事务执行结果
 
 /// TLM2.0 响应状态
-/// 
+///
 /// 表示 TLM 事务的执行结果状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TlmResponseStatus {
@@ -35,11 +35,11 @@ pub enum TlmResponseStatus {
 
 impl TlmResponseStatus {
     /// 检查状态是否为成功
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmResponseStatus;
-    /// 
+    ///
     /// assert!(TlmResponseStatus::Ok.is_ok());
     /// assert!(!TlmResponseStatus::AddressError.is_ok());
     /// ```
@@ -48,11 +48,11 @@ impl TlmResponseStatus {
     }
 
     /// 检查状态是否为错误
-    /// 
+    ///
     /// # 示例
     /// ```
     /// use ruscv_sim::tlm::TlmResponseStatus;
-    /// 
+    ///
     /// assert!(TlmResponseStatus::AddressError.is_error());
     /// assert!(!TlmResponseStatus::Ok.is_error());
     /// ```
@@ -61,7 +61,7 @@ impl TlmResponseStatus {
     }
 
     /// 获取状态的错误分类
-    /// 
+    ///
     /// 返回状态属于哪种错误类型：
     /// - Address: 地址相关错误
     /// - Command: 命令相关错误  
@@ -201,7 +201,10 @@ mod tests {
     #[test]
     fn test_status_display() {
         assert_eq!(format!("{}", TlmResponseStatus::Ok), "OK");
-        assert_eq!(format!("{}", TlmResponseStatus::AddressError), "ADDRESS_ERROR");
+        assert_eq!(
+            format!("{}", TlmResponseStatus::AddressError),
+            "ADDRESS_ERROR"
+        );
         assert_eq!(format!("{}", TlmResponseStatus::Timeout), "TIMEOUT");
     }
 

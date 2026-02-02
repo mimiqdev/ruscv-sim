@@ -80,7 +80,7 @@ pub mod iir_bits {
     pub const ID_MASK: u8 = 0x0E;
     /// FIFO 使能位
     pub const FIFO_EN: u8 = 0xC0;
-    
+
     /// 中断类型
     pub const MODEM_STATUS: u8 = 0x00;
     pub const TRANSMIT_EMPTY: u8 = 0x02;
@@ -492,7 +492,7 @@ impl Uart16550 {
             reg_offset::IIR_FCR => {
                 // FCR 是只写的
                 self.fcr = value;
-                
+
                 // 处理 FIFO 复位
                 if value & fcr_bits::RCVR_FIFO_RESET != 0 {
                     self.rx_fifo.clear();
@@ -502,9 +502,10 @@ impl Uart16550 {
                     self.tx_fifo.clear();
                     self.update_lsr();
                 }
-                
+
                 // 接收触发级别
-                let trigger = (value & (fcr_bits::RCVR_TRIGGER_MSB | fcr_bits::RCVR_TRIGGER_LSB)) >> 6;
+                let trigger =
+                    (value & (fcr_bits::RCVR_TRIGGER_MSB | fcr_bits::RCVR_TRIGGER_LSB)) >> 6;
                 self.rx_trigger = match trigger {
                     0 => 1,
                     1 => 4,
@@ -541,7 +542,7 @@ impl TlmTarget for Uart16550 {
         _delay: &mut ScTime,
     ) -> Result<(), TlmError> {
         let addr = trans.address();
-        
+
         // 检查地址范围
         if addr < self.base_addr || addr >= self.base_addr + UART_SIZE as u64 {
             trans.set_response_status(TlmResponseStatus::InvalidAddress);
@@ -557,7 +558,7 @@ impl TlmTarget for Uart16550 {
                 trans.set_response_status(TlmResponseStatus::Ok);
             }
             TlmCommand::Write => {
-                let value = trans.data().get(0).copied().unwrap_or(0);
+                let value = trans.data().first().copied().unwrap_or(0);
                 self.write_reg(offset, value);
                 trans.set_response_status(TlmResponseStatus::Ok);
             }
@@ -588,10 +589,10 @@ mod tests {
     #[test]
     fn test_uart_fifo_enable() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 初始 FIFO 禁用
         assert!(!uart.fifo_enabled());
-        
+
         // 使能 FIFO
         uart.write_reg(reg_offset::IIR_FCR, fcr_bits::FIFO_ENABLE);
         assert!(uart.fifo_enabled());
@@ -600,14 +601,14 @@ mod tests {
     #[test]
     fn test_uart_receive() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 接收数据
         uart.receive_byte(0x41); // 'A'
         uart.receive_byte(0x42); // 'B'
-        
+
         // 检查 FIFO
         assert_eq!(uart.rx_fifo_data(), &[0x41, 0x42]);
-        
+
         // 检查 LSR
         assert!((uart.lsr & lsr_bits::DR) != 0);
     }
@@ -615,15 +616,15 @@ mod tests {
     #[test]
     fn test_uart_read_rbr() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 接收数据
         uart.receive_byte(0x41);
         uart.receive_byte(0x42);
-        
+
         // 读取 RBR
         let byte1 = uart.read_reg(reg_offset::RBR_THR);
         assert_eq!(byte1, 0x41);
-        
+
         let byte2 = uart.read_reg(reg_offset::RBR_THR);
         assert_eq!(byte2, 0x42);
     }
@@ -631,11 +632,11 @@ mod tests {
     #[test]
     fn test_uart_write_thr() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 写入 THR
         uart.write_reg(reg_offset::RBR_THR, 0x41);
         uart.write_reg(reg_offset::RBR_THR, 0x42);
-        
+
         // 检查发送 FIFO
         assert_eq!(uart.tx_fifo_data(), &[0x41, 0x42]);
     }
@@ -643,18 +644,18 @@ mod tests {
     #[test]
     fn test_uart_dlab() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 设置 DLAB
         uart.write_reg(reg_offset::LCR, lcr_bits::DLAB);
         assert!(uart.dlab());
-        
+
         // DLAB=1 时，访问 DLL/DLM
         uart.write_reg(reg_offset::RBR_THR, 0x0C); // DLL
-        uart.write_reg(reg_offset::IER, 0x00);     // DLM
-        
+        uart.write_reg(reg_offset::IER, 0x00); // DLM
+
         assert_eq!(uart.read_reg(reg_offset::RBR_THR), 0x0C);
         assert_eq!(uart.read_reg(reg_offset::IER), 0x00);
-        
+
         // 清除 DLAB
         uart.write_reg(reg_offset::LCR, 0);
         assert!(!uart.dlab());
@@ -663,34 +664,34 @@ mod tests {
     #[test]
     fn test_uart_baud_rate() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 设置 DLAB
         uart.write_reg(reg_offset::LCR, lcr_bits::DLAB);
-        
+
         // 设置除数 = 12 (9600 bps with 1.8432MHz)
         uart.write_reg(reg_offset::RBR_THR, 12); // DLL
-        uart.write_reg(reg_offset::IER, 0);      // DLM
-        
+        uart.write_reg(reg_offset::IER, 0); // DLM
+
         assert_eq!(uart.baud_rate(), 9600);
     }
 
     #[test]
     fn test_uart_interrupt_enable() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 初始无中断使能
         assert!(!uart.interrupt_pending());
-        
+
         // 使能接收中断，但 OUT2 未使能
         uart.write_reg(reg_offset::IER, ier_bits::ERBFI);
         assert!(!uart.interrupt_pending());
-        
+
         // 使能 OUT2
         uart.write_reg(reg_offset::MCR, mcr_bits::OUT2);
-        
+
         // 接收数据
         uart.receive_byte(0x41);
-        
+
         // 现在应该有中断
         assert!(uart.interrupt_pending());
     }
@@ -698,15 +699,15 @@ mod tests {
     #[test]
     fn test_uart_interrupt_id() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 无中断
         assert_eq!(uart.interrupt_id() & iir_bits::NO_INT, iir_bits::NO_INT);
-        
+
         // 配置并触发接收中断
         uart.write_reg(reg_offset::MCR, mcr_bits::OUT2);
         uart.write_reg(reg_offset::IER, ier_bits::ERBFI);
         uart.receive_byte(0x41);
-        
+
         let iir = uart.interrupt_id();
         assert_eq!(iir & iir_bits::NO_INT, 0); // 有中断
         assert_eq!(iir & iir_bits::ID_MASK, iir_bits::RECEIVE_DATA);
@@ -715,25 +716,31 @@ mod tests {
     #[test]
     fn test_uart_fifo_reset() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 填充 FIFO
         uart.receive_byte(0x41);
         uart.receive_byte(0x42);
         uart.write_reg(reg_offset::RBR_THR, 0x43);
-        
+
         // 复位接收 FIFO
-        uart.write_reg(reg_offset::IIR_FCR, fcr_bits::FIFO_ENABLE | fcr_bits::RCVR_FIFO_RESET);
+        uart.write_reg(
+            reg_offset::IIR_FCR,
+            fcr_bits::FIFO_ENABLE | fcr_bits::RCVR_FIFO_RESET,
+        );
         assert!(uart.rx_fifo.is_empty());
-        
+
         // 复位发送 FIFO
-        uart.write_reg(reg_offset::IIR_FCR, fcr_bits::FIFO_ENABLE | fcr_bits::XMIT_FIFO_RESET);
+        uart.write_reg(
+            reg_offset::IIR_FCR,
+            fcr_bits::FIFO_ENABLE | fcr_bits::XMIT_FIFO_RESET,
+        );
         assert!(uart.tx_fifo.is_empty());
     }
 
     #[test]
     fn test_uart_tlm_read_write() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 写入 IER
         let write_data = vec![ier_bits::ERBFI];
         let mut write_trans = TlmGenericPayload::with_data(
@@ -742,13 +749,13 @@ mod tests {
             write_data,
         );
         let mut delay = ScTime::zero();
-        
+
         assert!(uart.b_transport(&mut write_trans, &mut delay).is_ok());
-        
+
         // 读取 IER
         let mut read_trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000_0001, 1);
         delay = ScTime::zero();
-        
+
         assert!(uart.b_transport(&mut read_trans, &mut delay).is_ok());
         assert_eq!(read_trans.data()[0], ier_bits::ERBFI);
     }
@@ -756,14 +763,14 @@ mod tests {
     #[test]
     fn test_uart_tlm_receive() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 接收数据
         uart.receive_byte(0x42);
-        
+
         // 读取 RBR
         let mut read_trans = TlmGenericPayload::new(TlmCommand::Read, 0x1000_0000, 1);
         let mut delay = ScTime::zero();
-        
+
         assert!(uart.b_transport(&mut read_trans, &mut delay).is_ok());
         assert_eq!(read_trans.data()[0], 0x42);
     }
@@ -771,7 +778,7 @@ mod tests {
     #[test]
     fn test_uart_tlm_transmit() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 写入 THR
         let write_data = vec![0x55];
         let mut write_trans = TlmGenericPayload::with_data(
@@ -780,7 +787,7 @@ mod tests {
             write_data,
         );
         let mut delay = ScTime::zero();
-        
+
         assert!(uart.b_transport(&mut write_trans, &mut delay).is_ok());
         assert_eq!(uart.tx_fifo_data(), &[0x55]);
     }
@@ -788,13 +795,13 @@ mod tests {
     #[test]
     fn test_uart_lsr_read_clears_errors() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 模拟错误
         uart.lsr |= lsr_bits::OE | lsr_bits::PE;
-        
+
         // 读取 LSR
         let _ = uart.read_reg(reg_offset::LSR);
-        
+
         // 错误位被清除
         assert!((uart.lsr & (lsr_bits::OE | lsr_bits::PE)) == 0);
     }
@@ -803,7 +810,7 @@ mod tests {
     fn test_uart_address_range() {
         let uart = Uart16550::new(0x1000_0000);
         let ranges = uart.get_address_ranges();
-        
+
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].start, 0x1000_0000);
         assert_eq!(ranges[0].end, 0x1000_0007);
@@ -812,29 +819,29 @@ mod tests {
     #[test]
     fn test_uart_invalid_address() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 访问无效地址
         let mut trans = TlmGenericPayload::new(TlmCommand::Read, 0x2000_0000, 1);
         let mut delay = ScTime::zero();
-        
+
         assert!(uart.b_transport(&mut trans, &mut delay).is_err());
     }
 
     #[test]
     fn test_uart_output_callback() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let received_clone = received.clone();
-        
+
         uart.set_output_callback(move |byte| {
             received_clone.lock().unwrap().push(byte);
         });
-        
+
         // 写入数据
         uart.write_reg(reg_offset::RBR_THR, 0x41);
         uart.write_reg(reg_offset::RBR_THR, 0x42);
-        
+
         // 检查回调接收到的数据
         let data = received.lock().unwrap();
         assert_eq!(&*data, &[0x41, 0x42]);
@@ -843,36 +850,36 @@ mod tests {
     #[test]
     fn test_uart_interrupt_callback() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         let interrupted = std::sync::Arc::new(std::sync::Mutex::new(false));
         let interrupted_clone = interrupted.clone();
-        
+
         uart.set_interrupt_callback(move || {
             *interrupted_clone.lock().unwrap() = true;
         });
-        
+
         // 配置中断
         uart.write_reg(reg_offset::MCR, mcr_bits::OUT2);
         uart.write_reg(reg_offset::IER, ier_bits::ERBFI);
-        
+
         // 接收数据，应该触发中断
         uart.receive_byte(0x41);
-        
+
         assert!(*interrupted.lock().unwrap());
     }
 
     #[test]
     fn test_uart_fifo_overflow() {
         let mut uart = Uart16550::new(0x1000_0000);
-        
+
         // 填满 FIFO
         for i in 0..FIFO_DEPTH {
             uart.receive_byte(i as u8);
         }
-        
+
         // 再接收一个，应该产生溢出错误
         uart.receive_byte(0xFF);
-        
+
         assert!((uart.lsr & lsr_bits::OE) != 0);
     }
 }

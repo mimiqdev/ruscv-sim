@@ -10,54 +10,54 @@ pub enum TlmError {
     /// 无效地址
     #[error("Invalid address: 0x{0:08x}")]
     InvalidAddress(u32),
-    
+
     /// 无效地址（64位）
     #[error("Invalid address: 0x{0:016x}")]
     InvalidAddress64(u64),
-    
+
     /// 无效事务长度
     #[error("Invalid transaction length: {0}")]
     InvalidLength(usize),
-    
+
     /// 事务超时
     #[error("Transaction timeout")]
     Timeout,
-    
+
     /// 总线繁忙
     #[error("Bus busy")]
     Busy,
-    
+
     /// 未实现
     #[error("Not implemented")]
     NotImplemented,
-    
+
     /// 总线错误
     #[error("Bus error: {0}")]
     BusError(String),
-    
+
     /// 访问权限错误
     #[error("Access denied")]
     AccessDenied,
-    
+
     /// 未连接到目标
     #[error("Not connected to target")]
     NotConnected,
-    
+
     /// 协议错误
     #[error("Protocol error: {0}")]
     ProtocolError(String),
-    
+
     /// 仲裁失败
     #[error("Arbitration failed")]
     ArbitrationFailed,
-    
+
     /// 同步错误
     #[error("Synchronization error")]
     SyncError,
 }
 
 /// TLM 同步枚举
-/// 
+///
 /// 表示非阻塞传输的同步状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlmSyncEnum {
@@ -121,7 +121,7 @@ mod tests {
     fn test_tlm_sync_enum() {
         assert!(TlmSyncEnum::Accept.is_accept());
         assert!(!TlmSyncEnum::Accept.is_wait());
-        
+
         assert!(TlmSyncEnum::Wait.is_wait());
         assert!(TlmSyncEnum::Release.is_release());
         assert!(TlmSyncEnum::Update.is_update());

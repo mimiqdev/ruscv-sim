@@ -160,7 +160,7 @@ impl Plic {
             num_sources,
             num_contexts,
             priorities: vec![0; num_sources as usize],
-            pending: vec![0; ((num_sources + 31) / 32) as usize],
+            pending: vec![0; num_sources.div_ceil(32) as usize],
             contexts: vec![PlicContext::new(); num_contexts as usize],
             interrupt_callback: None,
         }
@@ -276,7 +276,7 @@ impl Plic {
     /// 声明中断（读取最高优先级的中断 ID）
     pub fn claim_interrupt(&mut self, context_id: u32) -> u32 {
         let irq_id = self.find_highest_priority_interrupt(context_id);
-        
+
         if irq_id > 0 {
             // 记录已声明的中断
             if let Some(ctx) = self.contexts.get_mut(context_id as usize) {
@@ -285,7 +285,7 @@ impl Plic {
             // 清除挂起位
             self.clear_pending(irq_id);
         }
-        
+
         irq_id
     }
 
@@ -358,34 +358,34 @@ impl Plic {
             let irq_id = (offset / 4) as u32;
             return RegAddr::Priority(irq_id);
         }
-        
+
         // 挂起寄存器 (0x1000 - 0x1FFF)
-        if offset >= reg_offset::PENDING_BASE && offset < reg_offset::ENABLE_BASE {
+        if (reg_offset::PENDING_BASE..reg_offset::ENABLE_BASE).contains(&offset) {
             let word_idx = ((offset - reg_offset::PENDING_BASE) / 4) as usize;
             return RegAddr::Pending(word_idx);
         }
-        
+
         // 使能寄存器 (0x2000 - 0x1FFFF)
-        if offset >= reg_offset::ENABLE_BASE && offset < reg_offset::THRESHOLD_BASE {
+        if (reg_offset::ENABLE_BASE..reg_offset::THRESHOLD_BASE).contains(&offset) {
             let rel_offset = offset - reg_offset::ENABLE_BASE;
             let context_id = (rel_offset / reg_offset::ENABLE_STRIDE) as u32;
             let word_idx = ((rel_offset % reg_offset::ENABLE_STRIDE) / 4) as usize;
             return RegAddr::Enable(context_id, word_idx);
         }
-        
+
         // 上下文空间 (0x200000+)
         if offset >= reg_offset::THRESHOLD_BASE {
             let rel_offset = offset - reg_offset::THRESHOLD_BASE;
             let context_id = (rel_offset / reg_offset::CONTEXT_STRIDE) as u32;
             let ctx_offset = rel_offset % reg_offset::CONTEXT_STRIDE;
-            
+
             if ctx_offset == 0 {
                 return RegAddr::Threshold(context_id);
             } else if ctx_offset == 4 {
                 return RegAddr::ClaimComplete(context_id);
             }
         }
-        
+
         RegAddr::Invalid
     }
 
@@ -457,7 +457,7 @@ impl TlmTarget for Plic {
         _delay: &mut ScTime,
     ) -> Result<(), TlmError> {
         let addr = trans.address();
-        
+
         // 检查地址范围
         if addr < self.base_addr || addr >= self.base_addr + PLIC_SIZE as u64 {
             trans.set_response_status(TlmResponseStatus::InvalidAddress);
@@ -473,12 +473,13 @@ impl TlmTarget for Plic {
                     self.calculate_reg_addr(offset),
                     RegAddr::ClaimComplete(context_id) if context_id < self.num_contexts
                 );
-                
+
                 if is_claim {
                     // 处理 Claim
-                    let context_id = ((offset - reg_offset::THRESHOLD_BASE) / reg_offset::CONTEXT_STRIDE) as u32;
+                    let context_id =
+                        ((offset - reg_offset::THRESHOLD_BASE) / reg_offset::CONTEXT_STRIDE) as u32;
                     let irq_id = self.claim_interrupt(context_id);
-                    
+
                     for i in 0..trans.data_length().min(4) {
                         trans.data_mut()[i] = ((irq_id >> (i * 8)) & 0xFF) as u8;
                     }
@@ -488,7 +489,7 @@ impl TlmTarget for Plic {
                         trans.data_mut()[i] = ((value >> (i * 8)) & 0xFF) as u8;
                     }
                 }
-                
+
                 trans.set_response_status(TlmResponseStatus::Ok);
             }
             TlmCommand::Write => {
@@ -496,7 +497,7 @@ impl TlmTarget for Plic {
                 for i in 0..trans.data_length().min(4) {
                     value |= (trans.data()[i] as u32) << (i * 8);
                 }
-                
+
                 self.write_reg(offset, value)?;
                 trans.set_response_status(TlmResponseStatus::Ok);
             }
@@ -528,18 +529,18 @@ mod tests {
     #[test]
     fn test_plic_priority() {
         let mut plic = Plic::new(0x0C00_0000, 64, 2);
-        
+
         // 默认优先级为 0
         assert_eq!(plic.read_priority(1), 0);
-        
+
         // 设置优先级
         plic.write_priority(1, 5);
         assert_eq!(plic.read_priority(1), 5);
-        
+
         // 优先级被限制在最大值
         plic.write_priority(2, 100);
         assert_eq!(plic.read_priority(2), MAX_PRIORITY);
-        
+
         // 中断源 0 保留
         plic.write_priority(0, 5);
         assert_eq!(plic.read_priority(0), 0);
@@ -548,14 +549,14 @@ mod tests {
     #[test]
     fn test_plic_pending() {
         let mut plic = Plic::new(0x0C00_0000, 32, 2);
-        
+
         // 初始无挂起中断
         assert!(!plic.is_pending(1));
-        
+
         // 触发中断
         plic.trigger_interrupt(1);
         assert!(plic.is_pending(1));
-        
+
         // 清除挂起
         plic.clear_pending(1);
         assert!(!plic.is_pending(1));
@@ -564,14 +565,14 @@ mod tests {
     #[test]
     fn test_plic_enable() {
         let mut plic = Plic::new(0x0C00_0000, 32, 2);
-        
+
         // 初始禁用
         assert_eq!(plic.read_enable(0, 0), 0);
-        
+
         // 使能中断 1
         plic.write_enable(0, 0, 0x2); // bit 1
         assert_eq!(plic.read_enable(0, 0), 0x2);
-        
+
         // 中断源 0 始终禁用
         plic.write_enable(0, 0, 0x1);
         assert_eq!(plic.read_enable(0, 0), 0);
@@ -580,10 +581,10 @@ mod tests {
     #[test]
     fn test_plic_threshold() {
         let mut plic = Plic::new(0x0C00_0000, 32, 2);
-        
+
         // 默认阈值为 0
         assert_eq!(plic.read_threshold(0), 0);
-        
+
         // 设置阈值
         plic.write_threshold(0, 5);
         assert_eq!(plic.read_threshold(0), 5);
@@ -592,21 +593,21 @@ mod tests {
     #[test]
     fn test_plic_claim_complete() {
         let mut plic = Plic::new(0x0C00_0000, 32, 2);
-        
+
         // 设置优先级和使能
         plic.write_priority(5, 3);
         plic.write_enable(0, 0, 1 << 5);
-        
+
         // 触发中断
         plic.trigger_interrupt(5);
-        
+
         // 声明中断
         let claimed = plic.claim_interrupt(0);
         assert_eq!(claimed, 5);
-        
+
         // 声明后挂起位清除
         assert!(!plic.is_pending(5));
-        
+
         // 完成中断
         plic.complete_interrupt(0, 5);
         assert_eq!(plic.get_claimed(0), None);
@@ -615,20 +616,20 @@ mod tests {
     #[test]
     fn test_plic_priority_arbitration() {
         let mut plic = Plic::new(0x0C00_0000, 32, 2);
-        
+
         // 设置不同优先级
         plic.write_priority(1, 1);
         plic.write_priority(2, 3);
         plic.write_priority(3, 2);
-        
+
         // 使能所有中断
         plic.write_enable(0, 0, 0xFF);
-        
+
         // 触发多个中断
         plic.trigger_interrupt(1);
         plic.trigger_interrupt(2);
         plic.trigger_interrupt(3);
-        
+
         // 应该返回最高优先级的中断 (ID=2, priority=3)
         let claimed = plic.claim_interrupt(0);
         assert_eq!(claimed, 2);
@@ -637,21 +638,21 @@ mod tests {
     #[test]
     fn test_plic_threshold_masking() {
         let mut plic = Plic::new(0x0C00_0000, 32, 2);
-        
+
         // 设置中断优先级
         plic.write_priority(1, 3);
         plic.write_enable(0, 0, 1 << 1);
-        
+
         // 设置阈值高于中断优先级
         plic.write_threshold(0, 5);
-        
+
         // 触发中断
         plic.trigger_interrupt(1);
-        
+
         // 由于阈值高于优先级，无法声明中断
         let claimed = plic.find_highest_priority_interrupt(0);
         assert_eq!(claimed, 0);
-        
+
         // 降低阈值
         plic.write_threshold(0, 2);
         let claimed = plic.claim_interrupt(0);
@@ -663,7 +664,7 @@ mod tests {
         let req1 = InterruptRequest { id: 1, priority: 5 };
         let req2 = InterruptRequest { id: 2, priority: 3 };
         let req3 = InterruptRequest { id: 3, priority: 5 }; // 相同优先级，ID 更大
-        
+
         // 按优先级降序
         assert!(req1 > req2); // 5 > 3
         assert!(req1 < req3); // 相同优先级，ID 1 < 3，所以 req1 < req3
@@ -672,7 +673,7 @@ mod tests {
     #[test]
     fn test_plic_tlm_read_write() {
         let mut plic = Plic::new(0x0C00_0000, 32, 2);
-        
+
         // 写入优先级
         let write_data = vec![0x05, 0x00, 0x00, 0x00]; // 优先级 5
         let mut write_trans = TlmGenericPayload::with_data(
@@ -681,16 +682,16 @@ mod tests {
             write_data,
         );
         let mut delay = ScTime::zero();
-        
+
         assert!(plic.b_transport(&mut write_trans, &mut delay).is_ok());
         assert_eq!(plic.read_priority(1), 5);
-        
+
         // 读取优先级
         let mut read_trans = TlmGenericPayload::new(TlmCommand::Read, 0x0C00_0000 + 4, 4);
         delay = ScTime::zero();
-        
+
         assert!(plic.b_transport(&mut read_trans, &mut delay).is_ok());
-        
+
         let value = read_trans.data()[0] as u32;
         assert_eq!(value, 5);
     }
@@ -698,22 +699,22 @@ mod tests {
     #[test]
     fn test_plic_tlm_claim() {
         let mut plic = Plic::new(0x0C00_0000, 32, 2);
-        
+
         // 配置中断
         plic.write_priority(5, 3);
         plic.write_enable(0, 0, 1 << 5);
         plic.trigger_interrupt(5);
-        
+
         // Claim 中断
         let mut claim_trans = TlmGenericPayload::new(
             TlmCommand::Read,
             0x0C00_0000 + reg_offset::THRESHOLD_BASE + 4, // Context 0 Claim
-            4
+            4,
         );
         let mut delay = ScTime::zero();
-        
+
         assert!(plic.b_transport(&mut claim_trans, &mut delay).is_ok());
-        
+
         let irq_id = claim_trans.data()[0] as u32;
         assert_eq!(irq_id, 5);
     }
@@ -721,13 +722,13 @@ mod tests {
     #[test]
     fn test_plic_tlm_complete() {
         let mut plic = Plic::new(0x0C00_0000, 32, 2);
-        
+
         // 模拟已声明的中断
         plic.write_priority(3, 2);
         plic.write_enable(0, 0, 1 << 3);
         plic.trigger_interrupt(3);
         plic.claim_interrupt(0);
-        
+
         // Complete 中断
         let complete_data = vec![0x03, 0x00, 0x00, 0x00]; // 完成中断 3
         let mut complete_trans = TlmGenericPayload::with_data(
@@ -736,7 +737,7 @@ mod tests {
             complete_data,
         );
         let mut delay = ScTime::zero();
-        
+
         assert!(plic.b_transport(&mut complete_trans, &mut delay).is_ok());
         assert_eq!(plic.get_claimed(0), None);
     }
@@ -745,7 +746,7 @@ mod tests {
     fn test_plic_address_range() {
         let plic = Plic::new(0x0C00_0000, 32, 2);
         let ranges = plic.get_address_ranges();
-        
+
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].start, 0x0C00_0000);
         assert_eq!(ranges[0].end, 0x0C00_0000 + PLIC_SIZE as u64 - 1);
