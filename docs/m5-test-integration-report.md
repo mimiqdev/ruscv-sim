@@ -1,17 +1,66 @@
-# M5 测试集成与改进建议报告
+# M5 测试集成与改进建议报告（riscv-arch-test）
+
+> **riscv-arch-test**（可简称 **arch-test**）是 RISC-V 官方架构测试套件，用于验证 ISA 实现正确性。
 
 **日期**: 2026-02-02
+
+## 与 dev-plan.md M5 规划对应关系
+
+| dev-plan.md 章节 | 本报告对应内容 |
+|---|---|
+| M5.1 ELF 执行闭环 | 第 1.3 节「必需输入/输出接口」、第 1.4 节「集成步骤」 |
+| M5.2 测试质量强化 | 第 2 节「目前测试体系的改进空间」 |
+| M5.3 RISCOF + arch-test 集成 | 第 1.1 节「推荐工具链」、第 1.2 节「集成结构建议」 |
 
 ## 1. riscv-arch-test 集成方式建议
 
 ### 1.1 推荐工具链
 
-- **RISCOF**：作为统一的架构测试框架
-- **riscv-arch-test**：官方测试集
-- **Spike**：参考模型
-- **ruscv-sim**：DUT
+| 工具 | 用途 | 安装方式 |
+|------|------|----------|
+| **RISCOF** | 统一的架构测试框架 | `pip3 install riscof` |
+| **riscv-arch-test** | 官方测试集 | RISCOF 自动下载或手动 clone |
+| **Spike** | 参考模型 | `sudo apt install spike` 或源码编译 |
+| **ruscv-sim** | DUT (待测模拟器) | 本仓库 cargo build |
 
-### 1.2 集成结构建议
+### 1.2 Spike 推荐安装方式
+
+#### 方式一：APT 安装（推荐 Ubuntu/Debian）
+```bash
+sudo apt update
+sudo apt install spike
+spike --version
+```
+
+#### 方式二：源码编译（最新版本）
+```bash
+# 安装依赖
+sudo apt install build-essential device-tree-compiler libftdi1-dev libssl-dev
+
+# 编译 riscv-tools（包含 Spike）
+git clone https://github.com/riscv/riscv-tools.git
+cd riscv-tools
+./build.sh
+
+# 或单独编译 Spike
+git clone https://github.com/riscv/riscv-isa-sim.git
+cd riscv-isa-sim
+mkdir build && cd build
+../configure --prefix=$HOME/riscv
+make -j$(nproc)
+make install
+
+# 添加到 PATH
+export PATH=$HOME/riscv/bin:$PATH
+```
+
+#### 验证安装
+```bash
+spike --help
+pk -h  # 测试 proxy kernel
+```
+
+### 1.3 集成结构建议
 
 建议采用「RISCOF 驱动 + 双模型对比」方式：
 
@@ -24,7 +73,7 @@ RISCOF
          └── signature 导出
 ```
 
-### 1.3 必需输入/输出接口
+### 1.4 必需输入/输出接口
 
 **DUT 需提供**：
 
@@ -38,7 +87,7 @@ RISCOF
 - DUT YAML（ISA、XLEN、支持扩展、特权模式）
 - DUT runner 脚本（调用 ruscv-sim 执行 ELF + signature dump）
 
-### 1.4 集成步骤（最小化路径）
+### 1.5 集成步骤（最小化路径）
 
 1. 安装 RISCOF 与 riscv-arch-test
 2. 安装 Spike 作为参考模型
@@ -55,7 +104,7 @@ RISCOF
 
 **改进建议**：
 - 引入 **属性测试**（proptest）对外设边界与 MMU 参数做随机探索
-- 强化 CSR WARL/WIRI 行为测试（覆盖 “非法值写入后回读” 逻辑）
+- 强化 CSR WARL/WIRI 行为测试（覆盖 "非法值写入后回读" 逻辑）
 - 增加指令随机组合/执行序列测试
 
 ### 2.2 集成测试（Integration）
@@ -64,7 +113,7 @@ RISCOF
 
 **改进建议**：
 - 增加 **ELF 加载 + 程序执行** 的集成测试
-- 增加 “最小裸机程序” 级别的回归测试（如 hello world / mret / trap 路径）
+- 增加 "最小裸机程序" 级别的回归测试（如 hello world / mret / trap 路径）
 - 针对 MMU/Sv39 的「系统级」用例（多页表、多特权模式切换）
 
 ### 2.3 系统测试（System / E2E）
@@ -92,4 +141,4 @@ RISCOF
 
 ## 4. 结论
 
-M5 的核心任务不是增加指令数量，而是 **建立 arch-test 的“执行闭环”**。完成 RISCOF 集成与 ELF/Signature 支持后，ruscv-sim 才能正式进入架构测试验证阶段。现有单元测试覆盖充分，但在「执行完整程序」与「系统级验证」层面仍存在明显空白，需要通过 arch-test 和 ELF 集成测试补齐。
+M5 的核心任务不是增加指令数量，而是 **建立 arch-test 的"执行闭环"**。完成 RISCOF 集成与 ELF/Signature 支持后，ruscv-sim 才能正式进入架构测试验证阶段。现有单元测试覆盖充分，但在「执行完整程序」与「系统级验证」层面仍存在明显空白，需要通过 arch-test 和 ELF 集成测试补齐。

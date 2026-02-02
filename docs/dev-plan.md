@@ -1,6 +1,6 @@
 # Project: RISC-V ISS Simulator (ruscv-sim)
 
-**Current Phase:** M3: 边界测试和原子性改进
+**Current Phase:** M5: ELF 执行闭环
 **Last Updated:** 2026-02-02
 
 ---
@@ -74,22 +74,34 @@
 
 ---
 
-### M5: 架构测试集成 [PLANNING]
-**Status:** Planning
-**Goal:** 建立 riscv-arch-test 执行闭环，准备 v1.0 发布
+### M5: ELF 执行闭环 [ACTIVE]
+**Status:** Active
+**Goal:** 建立 ELF 加载与执行能力，支持 arch-test 运行
 
-#### M5.1: ELF 执行闭环（基础执行器）
+#### Features
 - [ ] **ELF Loader**: 加载 arch-test ELF（入口点/段映射）
 - [ ] **运行入口**: reset → run 的最小执行流程
 - [ ] **Signature 导出**: 支持 signature 区域 dump
 - [ ] **退出机制**: tohost/exit 约定，用于自动停止测试
 
-#### M5.2: 测试质量强化（本地回归）
-- [ ] **ELF 集成测试**: 最小裸机程序执行回归
-- [ ] **属性测试 (proptest)**: 关键外设边界自动化探索（已添加 `proptest = "1.0"` 依赖，见 Code Review 建议 #1）
-- [ ] **覆盖率报告**: 集成 `cargo-llvm-cov` 输出覆盖率（见 Code Review 建议 #3）
+---
 
-#### M5.3: RISCOF + arch-test 集成
+### M6: 测试质量强化 [PLANNING]
+**Status:** Planning
+**Goal:** 提升本地回归测试能力
+
+#### Features
+- [ ] **ELF 集成测试**: 最小裸机程序执行回归
+- [ ] **属性测试 (proptest)**: 关键外设边界自动化探索
+- [ ] **覆盖率报告**: 集成 `cargo-llvm-cov` 输出覆盖率
+
+---
+
+### M7: RISCOF + arch-test 集成 [PLANNING]
+**Status:** Planning
+**Goal:** 对接官方架构测试框架
+
+#### Features
 - [ ] **RISCOF 框架**: 安装和配置 RISCOF 测试框架
 - [ ] **DUT 配置**: 创建 ruscv-sim 的 YAML 配置文件
 - [ ] **Spike 集成**: 安装 Spike 作为参考模型
@@ -97,7 +109,8 @@
 - [ ] **问题修复**: 解决测试失败问题
 
 ---
-### M6: v1.0 发布 [PLANNING]
+
+### M8: v1.0 发布 [PLANNING]
 **Status:** Planning
 **Goal:** 通过 riscv-arch-test，发布 v1.0.0
 
@@ -118,11 +131,19 @@
 |---------|-----------|---------|
 | v0.1.0 | Current | 基础功能就绪 |
 | v0.5.0 | M4 Complete | 调试支持就绪 |
-| v0.9.0-RC1 | M5 Complete | riscv-arch-test 候选 |
-| **v1.0.0** | **M6 Complete** | **官方架构测试通过** |
+| v0.9.0-RC1 | M7 Complete | riscv-arch-test 候选 |
+| **v1.0.0** | **M8 Complete** | **官方架构测试通过** |
 
 ---
 ## Change Log
+
+**2026-02-02**: 里程碑重编号
+- M5.1 → M5 (ELF 执行闭环)
+- M5.2 → M6 (测试质量强化)
+- M5.3 → M7 (RISCOF + arch-test 集成)
+- M6 → M8 (v1.0 发布)
+- M5 状态改为 [ACTIVE]
+- M6/M7/M8 状态改为 [PLANNING]
 
 **2026-02-02**: M4 完成 - 调试支持
 - M4 状态从 [PLANNING] 改为 [COMPLETED]
@@ -143,9 +164,9 @@
 
 | 建议 | 内容 | 决策 | 理由 |
 |------|------|------|------|
-| #1 | 属性测试 (proptest) | 采纳 → M5 Buffer | 已添加 `proptest = "1.0"` 依赖，M5 阶段探索性引入关键外设测试 |
-| #2 | 模糊测试 (fuzzing) | 采纳 → M6 Buffer | 长期规划，需评估投入产出比后再决定 |
-| #3 | 测试覆盖报告 (cargo-llvm-cov) | 采纳 → M5 Buffer | 低成本（仅安装工具）高收益（可视化覆盖率），M5 必做 |
+| #1 | 属性测试 (proptest) | 采纳 → M6 Buffer | 已添加 `proptest = "1.0"` 依赖，M6 阶段探索性引入关键外设测试 |
+| #2 | 模糊测试 (fuzzing) | 采纳 → M8 Buffer | 长期规划，需评估投入产出比后再决定 |
+| #3 | 测试覆盖报告 (cargo-llvm-cov) | 采纳 → M6 Buffer | 低成本（仅安装工具）高收益（可视化覆盖率），M6 必做 |
 
 **2026-02-02**: M3 完成 - 边界测试和原子性改进
 - CLINT: `mtime` 改为 `AtomicU64`，添加多线程安全注释和原子操作方法
