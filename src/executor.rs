@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 /// Execution result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ExecutionResult {
     /// Exit code (0 for success, non-zero for failure)
     pub exit_code: u32,
@@ -29,20 +29,6 @@ pub struct ExecutionResult {
     pub signature_addr: Option<u64>,
     /// Signature data (if available)
     pub signature_data: Option<Vec<u8>>,
-}
-
-impl Default for ExecutionResult {
-    fn default() -> Self {
-        Self {
-            exit_code: 0,
-            cycles: 0,
-            final_pc: 0,
-            timed_out: false,
-            error: None,
-            signature_addr: None,
-            signature_data: None,
-        }
-    }
 }
 
 /// Executor errors
@@ -207,7 +193,7 @@ pub fn load_and_run(
                                 let sig_data =
                                     dump_signature(&mem, signature.as_ref()).ok().flatten();
                                 return Ok(ExecutionResult {
-                                    exit_code: tohost_value as u32,
+                                    exit_code: extract_exit_code(tohost_value).unwrap_or_default(),
                                     cycles,
                                     final_pc: core.state().pc,
                                     timed_out: false,
@@ -462,13 +448,7 @@ impl RiscVSimulator {
         let exit_code = {
             let guard = self.memory.lock().unwrap();
             match guard.read_dword(self.tohost) {
-                Ok(value) => {
-                    if let Some(code) = extract_exit_code(value) {
-                        code
-                    } else {
-                        0
-                    }
-                }
+                Ok(value) => extract_exit_code(value).unwrap_or_default(),
                 Err(_) => 0,
             }
         };
@@ -534,13 +514,13 @@ impl RiscVSimulator {
                 let val = guard.read_dword(addr).map_err(|e| {
                     ExecutorError::ExecutionError(format!("Memory read error: {}", e))
                 })?;
-                for i in 0..8 {
-                    data[i] = (val >> (i * 8)) as u8;
+                for (i, byte) in data.iter_mut().enumerate().take(8) {
+                    *byte = (val >> (i * 8)) as u8;
                 }
             }
             _ => {
-                for i in 0..size {
-                    data[i] = guard.read_byte(addr + i as u64).map_err(|e| {
+                for (i, byte) in data.iter_mut().enumerate().take(size) {
+                    *byte = guard.read_byte(addr + i as u64).map_err(|e| {
                         ExecutorError::ExecutionError(format!("Memory read error: {}", e))
                     })?;
                 }

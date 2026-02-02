@@ -265,6 +265,12 @@ pub struct SignatureInfo {
     pub file_offset: u64,
 }
 
+/// Type alias for section header parsing result
+type SectionHeaderResult = Result<Option<(String, u32, u64, u64, u64)>, ElfError>;
+
+/// Type alias for ELF loading result
+type ElfLoadResult = Result<(u64, Vec<u8>, Option<SignatureInfo>, Option<u64>), ElfError>;
+
 impl ElfLoader {
     /// Load ELF file from reader
     pub fn load<R: Read + Seek>(reader: &mut R) -> Result<Self, ElfError> {
@@ -613,7 +619,7 @@ impl ElfLoader {
     }
 
     /// Parse a section header and return (name, type, addr, offset, size)
-    fn parse_section_header(buf: &[u8]) -> Result<Option<(String, u32, u64, u64, u64)>, ElfError> {
+    fn parse_section_header(buf: &[u8]) -> SectionHeaderResult {
         if buf.len() < 64 {
             return Ok(None);
         }
@@ -742,9 +748,7 @@ impl ElfLoader {
 }
 
 /// Load ELF file and return entry point and memory data
-pub fn load_elf_file(
-    data: &[u8],
-) -> Result<(u64, Vec<u8>, Option<SignatureInfo>, Option<u64>), ElfError> {
+pub fn load_elf_file(data: &[u8]) -> ElfLoadResult {
     let mut cursor = std::io::Cursor::new(data);
     let loader = ElfLoader::load(&mut cursor)?;
 
