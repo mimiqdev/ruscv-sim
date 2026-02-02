@@ -968,13 +968,13 @@ mod tests {
 
         // 配置所有上下文
         for ctx in 0..4 {
-            plic.write_threshold(ctx, ctx as u32); // 不同阈值
+            plic.write_threshold(ctx, ctx); // 不同阈值
             plic.write_enable(ctx, 0, 1 << 1);
         }
 
         // 验证每个上下文配置
         for ctx in 0..4 {
-            assert_eq!(plic.read_threshold(ctx), ctx as u32);
+            assert_eq!(plic.read_threshold(ctx), ctx);
             assert_eq!(plic.read_enable(ctx, 0), 1 << 1);
         }
 

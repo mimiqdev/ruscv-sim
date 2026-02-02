@@ -744,9 +744,9 @@ mod tests {
     #[test]
     fn test_tlm_wrap_around_address() {
         // 测试地址回绕边界情况
-        let range = AddressRange::new(0xFFFFFFFF_FFFF_F000, 0xFFFFFFFFFFFFFFFF);
+        let range = AddressRange::new(0xFFFF_FFFF_FFFF_F000, 0xFFFFFFFFFFFFFFFF);
 
-        assert!(range.contains(0xFFFFFFFF_FFFF_F000));
+        assert!(range.contains(0xFFFF_FFFF_FFFF_F000));
         assert!(range.contains(0xFFFFFFFFFFFFFFFF));
         assert!(!range.contains(0x1000));
 
