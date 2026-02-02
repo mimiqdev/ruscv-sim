@@ -26,7 +26,8 @@
 | CSR 框架 | ✅ 完成 | Sprint 4 |
 | RV64F 浮点单元 | ✅ 完成 | Sprint 6 |
 | 陷阱处理 | ✅ 完成 | Sprint 5 |
-| **测试覆盖** | ✅ **~100 tests** | 全部通过 |
+| **MMU/TLB** | ✅ **完成** | **Sprint 10 - Sv39 页表, 4-way LRU TLB** |
+| **测试覆盖** | ✅ **558 tests** | 全部通过 |
 
 ## 项目结构
 
@@ -39,6 +40,7 @@ ruscv-sim/
 │   ├── decode/             # 指令译码器
 │   ├── execute/            # 指令执行器
 │   ├── memory/             # 存储器子系统
+│   ├── mmu/                # MMU/TLB/Sv39 页表 (Sprint 10)
 │   ├── tlm/                # TLM2.0 接口抽象
 │   ├── fpu/                # 浮点运算单元 (RV64F)
 │   ├── csr/                # CSR 寄存器框架
@@ -138,6 +140,16 @@ GitHub Actions 自动运行：
 - [x] 异常分发和精确异常
 - [x] 特权模式基础
 
+### ✅ Sprint 10: 内存子系统 (MMU/TLB)
+- [x] MMU 架构实现 (mod.rs, physical.rs, pte.rs)
+- [x] Sv39 页表遍历 (3级页表，4KB/2MB/1GB 页)
+- [x] TLB 缓存 (64 entries, 4-way 组相联)
+- [x] LRU 替换策略 + 老化算法
+- [x] A/D 位处理 (Accessed/Dirty bit)
+- [x] SATP 模式 (Bare/Sv39)
+- [x] 约 360 个 MMU 测试
+- [x] 558 个测试全部通过
+
 ### ✅ Sprint 6: RV64F 浮点单元
 - [x] FLW, FSW (加载/存储)
 - [x] FADD.S, FSUB.S, FMUL.S, FDIV.S, FSQRT.S
@@ -156,7 +168,7 @@ GitHub Actions 自动运行：
 
 ## 测试覆盖
 
-项目已实现 **200+ 单元测试**，覆盖：
+项目已实现 **558 个测试**，全部通过，覆盖：
 
 - ✅ RV32I 基础指令 (全部 40+ 指令)
 - ✅ CSR 读写和控制
@@ -164,6 +176,11 @@ GitHub Actions 自动运行：
 - ✅ 原子操作 (LR/SC/AMO 系列)
 - ✅ 浮点运算 (RV64F 全部指令)
 - ✅ 陷阱处理和异常
+- ✅ **MMU/TLB/Sv39** (Sprint 10 新增 ~360 测试)
+  - Sv39 页表遍历 (4KB/2MB/1GB 页)
+  - TLB 命中/未命中/刷新
+  - A/D 位处理
+  - LRU 老化算法
 
 ```bash
 # 运行所有测试
@@ -197,6 +214,17 @@ Sprint 5 实现的陷阱处理机制：
 - **PC 保存**: mepc 寄存器保存返回地址
 - **中断支持**: 基础定时器/软件中断框架
 - **特权模式**: Machine 模式支持
+
+### MMU/TLB 内存管理
+
+Sprint 10 实现的内存管理单元：
+
+- **Sv39 页表**: 3级页表遍历，支持 4KB/2MB/1GB 页
+- **TLB 缓存**: 64 entries, 4-way 组相联缓存
+- **LRU 算法**: 带老化的 LRU 替换策略，防止计数器溢出
+- **A/D 位**: Accessed/Dirty bit 自动处理和回写
+- **SATP 模式**: 支持 Bare 和 Sv39 模式
+- **物理内存抽象**: PhysicalMemoryInterface trait
 
 ### 原子操作
 
@@ -237,4 +265,4 @@ MIT License
 
 ---
 
-最后更新: 2025-01-15
+最后更新: 2026-02-02 (Sprint 10 完成)
