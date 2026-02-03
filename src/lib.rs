@@ -18,7 +18,7 @@ pub mod mmu;
 pub mod peripherals;
 pub mod tlm;
 
-pub use core::{CoreState, PrivilegeMode, RiscvCore};
+pub use core::{CoreState, MemoryAdapter, PrivilegeMode, RiscvCore};
 pub use csr::{CsrError, CsrFile};
 pub use debug::{
     Breakpoint, BreakpointManager, BreakpointType, DebugCli, DebugError, DebugTarget, GdbPacket,

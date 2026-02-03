@@ -39,7 +39,8 @@ pub fn exec_c_j(offset: i32, state: &mut CoreState) -> Result<(), ExecuteError> 
 
     // Update PC to jump target
     state.pc = target;
-
+    // Mark that a jump was taken (used by step() to skip pc += 4)
+    state.branch_taken = true;
     Ok(())
 }
 
@@ -82,7 +83,8 @@ pub fn exec_c_jal(offset: i32, state: &mut CoreState) -> Result<(), ExecuteError
 
     // Update PC to jump target
     state.pc = target;
-
+    // Mark that a jump was taken (used by step() to skip pc += 4)
+    state.branch_taken = true;
     Ok(())
 }
 

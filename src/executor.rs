@@ -50,8 +50,8 @@ pub enum ExecutorError {
 /// Default maximum cycles before timeout
 const DEFAULT_MAX_CYCLES: u64 = 10_000_000;
 
-/// Default tohost address (commonly used in RISC-V tests)
-const DEFAULT_TOHOST: u64 = 0x8000_1000;
+/// Default tohost address (using address that matches our test programs)
+const DEFAULT_TOHOST: u64 = 0x8000_1030;
 
 /// Write marker to distinguish tohost/fromhost access
 const WRITE_MARKER: u64 = 1 << 63;
@@ -193,6 +193,8 @@ pub fn load_and_run(
 
     // Step 1: Load ELF file
     let (entry_point, memory, signature, elf_tohost, base_addr) = load_elf_file(elf_data)?;
+    eprintln!("[DEBUG] load_elf_file returned: entry_point=0x{:016x}, base_addr=0x{:016x}, memory.len()={}, elf_tohost={:?}",
+              entry_point, base_addr, memory.len(), elf_tohost);
 
     // Use provided tohost address or try to find it in ELF
     let tohost = tohost_addr.or(elf_tohost).unwrap_or(DEFAULT_TOHOST);
@@ -220,6 +222,13 @@ pub fn load_and_run(
 
     // Step 4: Execution loop
     let mut cycles = 0u64;
+    let mut last_tohost_value: u64 = 0;
+
+    // Convert tohost virtual address to physical address for checking
+    let tohost_pa = tohost.wrapping_sub(base_addr);
+
+    eprintln!("[DEBUG] Starting execution: entry_point=0x{:016x}, base_addr=0x{:016x}, tohost=0x{:016x} (PA=0x{:016x})",
+              entry_point, base_addr, tohost, tohost_pa);
 
     while cycles < max_cycles {
         // Read current PC for result
@@ -230,15 +239,32 @@ pub fn load_and_run(
             Ok(()) => {
                 cycles += 1;
 
+                // Debug output every 1000 cycles
+                if cycles % 1000 == 0 {
+                    if let Ok(mem_guard) = mem.lock() {
+                        if let Ok(tohost_value) = mem_guard.read_dword(tohost_pa) {
+                            let state = core.state();
+                            eprintln!("[DEBUG] Cycle {}: PC=0x{:010x}, ra={}, sp={}, gp={}, tohost=0x{:016x}",
+                                      cycles, current_pc, state.regs[1], state.regs[2], state.regs[3], tohost_value);
+                        }
+                    }
+                }
+
                 // Check for tohost write (exit signal)
-                // We need to check if tohost was written to
                 if let Ok(mem_guard) = mem.lock() {
-                    // Read from tohost address (64-bit read)
-                    match mem_guard.read_dword(tohost) {
+                    match mem_guard.read_dword(tohost_pa) {
                         Ok(tohost_value) => {
-                            // Unified exit signal detection
-                            // Supports both WRITE_MARKER format and direct exit code format
+                            // Track tohost value changes
+                            if tohost_value != last_tohost_value {
+                                eprintln!(
+                                    "[DEBUG] Cycle {}: tohost changed from 0x{:016x} to 0x{:016x}",
+                                    cycles, last_tohost_value, tohost_value
+                                );
+                                last_tohost_value = tohost_value;
+                            }
+
                             if let Some(code) = try_extract_exit_code(tohost_value) {
+                                eprintln!("[DEBUG] Exit signal detected: code={}", code);
                                 let sig_data =
                                     dump_signature(&mem, signature.as_ref()).ok().flatten();
                                 return Ok(ExecutionResult {
@@ -252,8 +278,8 @@ pub fn load_and_run(
                                 });
                             }
                         }
-                        Err(_) => {
-                            // tohost read failed, continue execution
+                        Err(e) => {
+                            eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
                         }
                     }
                 }
@@ -429,11 +455,44 @@ impl RiscVSimulator {
         let max_cycles = max_cycles.unwrap_or(self.max_cycles);
         let mut cycles = 0u64;
 
+        // DEBUG: Track last tohost value to detect changes
+        let mut last_tohost_value: u64 = 0;
+
         while cycles < max_cycles {
-            // Check for tohost write before stepping
-            if self.check_exit()? {
-                return Ok(self.get_result(cycles));
+            // DEBUG: Check tohost every cycle and log changes
+            let guard = self.memory.lock().unwrap();
+            match guard.read_dword(self.tohost) {
+                Ok(tohost_value) => {
+                    if cycles % 1000 == 0 || tohost_value != last_tohost_value {
+                        eprintln!(
+                            "[DEBUG] Cycle {}: PC=0x{:010x}, tohost=0x{:016x} (changed from 0x{:016x})",
+                            cycles,
+                            self.core.state().pc,
+                            tohost_value,
+                            last_tohost_value
+                        );
+                    }
+                    last_tohost_value = tohost_value;
+
+                    // Check for exit signal
+                    if let Some(code) = try_extract_exit_code(tohost_value) {
+                        eprintln!("[DEBUG] Exit signal detected: code={}", code);
+                        drop(guard);
+                        return Ok(self.get_result(cycles));
+                    }
+                }
+                Err(e) => {
+                    if cycles % 1000 == 0 {
+                        eprintln!(
+                            "[DEBUG] Cycle {}: PC=0x{:010x}, tohost read failed: {}",
+                            cycles,
+                            self.core.state().pc,
+                            e
+                        );
+                    }
+                }
             }
+            drop(guard);
 
             match self.step() {
                 Ok(()) => {
@@ -455,6 +514,14 @@ impl RiscVSimulator {
                 }
             }
         }
+
+        // Timeout - final debug output
+        eprintln!(
+            "[DEBUG] Timeout at cycle {}: PC=0x{:010x}, tohost=0x{:016x}",
+            cycles,
+            self.core.state().pc,
+            last_tohost_value
+        );
 
         // Timeout
         let sig_data = dump_signature(&self.memory, self.signature.as_ref())

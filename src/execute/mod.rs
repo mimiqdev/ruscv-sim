@@ -42,7 +42,7 @@ pub use crate::isa::rv64a::{
 // RV64I re-exports (from isa::rv64i)
 pub use crate::isa::rv64i::{
     exec_auipc, exec_branch, exec_jal, exec_jalr, exec_load, exec_lui, exec_op, exec_op_imm,
-    exec_store, exec_system,
+    exec_shift, exec_shift_imm, exec_store, exec_system,
 };
 
 // RV64D re-exports (from isa::rv64d)
@@ -93,8 +93,29 @@ impl Executor {
             Opcode::Store => exec_store(instr, state, mem),
             Opcode::LoadFp => self.execute_fpload(instr, state, mem),
             Opcode::StoreFp => self.execute_fpstore(instr, state, mem),
-            Opcode::OpImm => exec_op_imm(instr, state, mem),
-            Opcode::Op => exec_op(instr, state, mem),
+            Opcode::OpImm => {
+                // Dispatch to shift or ALU based on funct3
+                // SLLI, SRLI, SRAI use funct3 Sll or SrlSra
+                if let Some(funct3) = instr.funct3 {
+                    match funct3 {
+                        Funct3::Sll | Funct3::SrlSra => exec_shift_imm(instr, state, mem),
+                        _ => exec_op_imm(instr, state, mem),
+                    }
+                } else {
+                    Err(ExecuteError::InvalidOperation)
+                }
+            }
+            Opcode::Op => {
+                // Dispatch to shift or ALU based on funct3
+                if let Some(funct3) = instr.funct3 {
+                    match funct3 {
+                        Funct3::Sll | Funct3::SrlSra => exec_shift(instr, state, mem),
+                        _ => exec_op(instr, state, mem),
+                    }
+                } else {
+                    Err(ExecuteError::InvalidOperation)
+                }
+            }
             Opcode::OpFp => self.execute_fpu(instr, state, mem),
             Opcode::System => exec_system(instr, state, mem),
             Opcode::Amo => self.execute_amo(instr, state, mem),

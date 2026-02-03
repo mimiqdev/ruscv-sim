@@ -25,15 +25,24 @@ pub fn exec_jal(
 ) -> Result<(), ExecuteError> {
     if let (Some(rd), Some(imm)) = (instr.rd, instr.imm) {
         let return_addr = state.pc.wrapping_add(4);
-        // Sign-extend the 21-bit immediate to 64 bits
-        let imm_sext = ((imm as i32) << 11 >> 11) as i64 as u64;
-        let target = state.pc.wrapping_add(imm_sext);
+        // J-type immediate is 21 bits (bits 0-20 of encoded instruction)
+        // Stored as: imm[20|10:1|11|19:12] in decoder's imm field
+        // Sign-extend: shift left 11 bits (move bit 20 to bit 31), then arithmetic right shift 11 bits
+        let imm_sext = ((imm as i32) << 11 >> 11) as i64;
+        let target = state.pc.wrapping_add(imm_sext as u64);
 
         if rd != 0 {
             state.regs[rd as usize] = return_addr;
         }
 
+        eprintln!(
+            "[JAL] pc={:#x}, imm={:#x}, imm_sext={:#x}, target={:#x}",
+            state.pc, imm, imm_sext as u64, target
+        );
+
         state.pc = target;
+        // Mark that a jump was taken (used by step() to skip pc += 4)
+        state.branch_taken = true;
         Ok(())
     } else {
         Err(ExecuteError::InvalidOperation)
@@ -67,6 +76,8 @@ pub fn exec_jalr(
         }
 
         state.pc = target;
+        // Mark that a jump was taken (used by step() to skip pc += 4)
+        state.branch_taken = true;
         Ok(())
     } else {
         Err(ExecuteError::InvalidOperation)
