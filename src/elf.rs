@@ -1125,15 +1125,15 @@ mod tests {
         assert_eq!(loaded.base_addr, 0x8000_0000);
 
         // Verify tohost address is correctly parsed from symbol table
-        // Expected: 0x80002000 (from readelf -s output)
+        // Expected: 0x80001000 (from readelf -s output)
         assert!(
             loaded.tohost.is_some(),
             "tohost symbol should be found in the ELF file"
         );
         assert_eq!(
             loaded.tohost.unwrap(),
-            0x8000_2000,
-            "tohost address should be 0x80002000"
+            0x8000_1000,
+            "tohost address should be 0x80001000"
         );
     }
 
@@ -1162,8 +1162,8 @@ mod tests {
         );
         assert_eq!(
             loaded.tohost.unwrap(),
-            0x8000_2000,
-            "tohost address should be 0x80002000 (from .tohost section)"
+            0x8000_1000,
+            "tohost address should be 0x80001000 (from .tohost section)"
         );
     }
 }

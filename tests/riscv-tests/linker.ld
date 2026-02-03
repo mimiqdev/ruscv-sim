@@ -4,6 +4,6 @@ SECTIONS
     .text : { *(.text*) }
     .data : { *(.data*) }
     .rodata : { *(.rodata*) }
-    . = 0x80002000;
+    . = 0x80001000;
     .tohost : { *(.tohost) }
 }
