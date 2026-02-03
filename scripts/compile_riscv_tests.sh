@@ -1,6 +1,6 @@
 #!/bin/bash
 # Compile RISC-V ELF test programs
-# Builds add.elf, fib.elf, hello.elf from assembly source files
+# Auto-discovers and builds all .S files in tests/bare-metal-riscv-test/rv64i/
 
 # Colors for output
 RED='\033[0;31m'
@@ -23,8 +23,8 @@ LD="${RISCV_PREFIX}ld"
 ASFLAGS="-march=rv64ima -mabi=lp64"
 LDSCRIPT="-T${TESTS_DIR}/linker.ld"
 
-# Source files
-SOURCES="rv64i/add.S rv64i/fib.S rv64i/hello.S"
+# Source files - auto-discover all .S files in rv64i directory
+SOURCES=$(find "${TESTS_DIR}/rv64i" -name "*.S" | sed "s|${TESTS_DIR}/||" | sort)
 
 # Function to check if toolchain exists
 check_toolchain() {
