@@ -693,6 +693,18 @@ impl RiscVSimulator {
     }
 
     /// Load ELF data into memory
+    ///
+    /// # Address Handling
+    /// This method loads the ELF program at the addresses specified by the ELF
+    /// headers. The `base_addr` from the ELF is used to correctly place segments
+    /// in memory, but the core is reset with `base_addr` for VA-to-PA translation.
+    ///
+    /// Note: This differs from `load_and_run` which uses SystemBus with
+    /// identity mapping (VA = PA). This method uses SimpleMemory which expects
+    /// the program to be loaded at the correct virtual addresses.
+    ///
+    /// # Returns
+    /// The entry point address from the ELF header
     pub fn load_elf(&mut self, elf_data: &[u8]) -> Result<u64, ExecutorError> {
         let loaded = load_elf_file(elf_data)?;
         let (entry_point, memory, sig, tohost, base_addr) = (
