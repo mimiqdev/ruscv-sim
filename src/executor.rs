@@ -1,4 +1,3 @@
-//!
 //! M5 ELF Executor
 //!
 //! Implements ELF loading and execution for the RISC-V simulator.
@@ -77,17 +76,59 @@ pub fn dump_signature(
         return Ok(Some(Vec::new()));
     }
 
-    let guard = mem.lock().unwrap();
     let mut data = Vec::with_capacity(size as usize);
+    let mut current_addr = addr;
 
-    for i in 0..size {
-        match guard.read_byte(addr + i) {
-            Ok(byte) => data.push(byte),
+    // Read memory in larger chunks to reduce lock overhead
+    while data.len() < size as usize {
+        let guard = mem.lock().unwrap();
+        let bytes_to_read = ((size as usize - data.len()).min(8)).min(8);
+
+        // Try to read 8 bytes at a time if aligned
+        if bytes_to_read == 8 && current_addr % 8 == 0 {
+            match guard.read_dword(current_addr) {
+                Ok(value) => {
+                    // Store bytes in little-endian order
+                    for i in 0..8 {
+                        data.push((value >> (i * 8)) as u8);
+                    }
+                    current_addr += 8;
+                }
+                Err(_) => {
+                    // Fall back to byte-by-byte read
+                    drop(guard);
+                    break;
+                }
+            }
+        } else {
+            // Read byte by byte for remaining bytes
+            match guard.read_byte(current_addr) {
+                Ok(byte) => {
+                    data.push(byte);
+                    current_addr += 1;
+                }
+                Err(e) => {
+                    return Err(ExecutorError::ExecutionError(format!(
+                        "Failed to read signature byte at 0x{:016x}: {}",
+                        current_addr, e
+                    )));
+                }
+            }
+        }
+    }
+
+    // Fall back to byte-by-byte read for remaining bytes
+    while data.len() < size as usize {
+        let guard = mem.lock().unwrap();
+        match guard.read_byte(current_addr) {
+            Ok(byte) => {
+                data.push(byte);
+                current_addr += 1;
+            }
             Err(e) => {
                 return Err(ExecutorError::ExecutionError(format!(
                     "Failed to read signature byte at 0x{:016x}: {}",
-                    addr + i,
-                    e
+                    current_addr, e
                 )));
             }
         }
@@ -279,10 +320,10 @@ pub fn get_core_state(core: &RiscvCore) -> CoreState {
 
 /// Execute multiple steps and check for exit signal
 pub fn run_until_exit(
-    core: &mut RiscVSimulator,
+    simulator: &mut RiscVSimulator,
     max_cycles: u64,
 ) -> Result<ExecutionResult, ExecutorError> {
-    core.run(Some(max_cycles))
+    simulator.run(Some(max_cycles))
 }
 
 /// Simplified RISC-V Simulator wrapper
@@ -485,47 +526,84 @@ impl RiscVSimulator {
 
     /// Read from memory
     pub fn read_mem(&self, addr: u64, size: usize) -> Result<Vec<u8>, ExecutorError> {
-        let guard = self.memory.lock().unwrap();
         let mut data = vec![0u8; size];
-        match size {
-            1 => {
-                let val = guard.read_byte(addr).map_err(|e| {
-                    ExecutorError::ExecutionError(format!("Memory read error: {}", e))
-                })?;
-                data[0] = val;
-            }
-            2 => {
-                let val = guard.read_half(addr).map_err(|e| {
-                    ExecutorError::ExecutionError(format!("Memory read error: {}", e))
-                })?;
-                data[0] = val as u8;
-                data[1] = (val >> 8) as u8;
-            }
-            4 => {
-                let val = guard.read_word(addr).map_err(|e| {
-                    ExecutorError::ExecutionError(format!("Memory read error: {}", e))
-                })?;
-                data[0] = val as u8;
-                data[1] = (val >> 8) as u8;
-                data[2] = (val >> 16) as u8;
-                data[3] = (val >> 24) as u8;
-            }
-            8 => {
-                let val = guard.read_dword(addr).map_err(|e| {
-                    ExecutorError::ExecutionError(format!("Memory read error: {}", e))
-                })?;
-                for (i, byte) in data.iter_mut().enumerate().take(8) {
-                    *byte = (val >> (i * 8)) as u8;
+        let mut current_addr = addr;
+        let mut offset = 0;
+
+        while offset < size {
+            let remaining = size - offset;
+            let guard = self.memory.lock().unwrap();
+
+            // Try to read in larger chunks when possible
+            if remaining >= 8 && current_addr % 8 == 0 {
+                // Read 8 bytes at a time when aligned
+                match guard.read_dword(current_addr) {
+                    Ok(val) => {
+                        for i in 0..8 {
+                            data[offset + i] = (val >> (i * 8)) as u8;
+                        }
+                        drop(guard);
+                        current_addr += 8;
+                        offset += 8;
+                    }
+                    Err(_) => {
+                        // Fall back to word read
+                        if remaining >= 4 && current_addr % 4 == 0 {
+                            drop(guard);
+                            continue;
+                        }
+                        drop(guard);
+                        // Fall through to byte-by-byte read
+                    }
                 }
-            }
-            _ => {
-                for (i, byte) in data.iter_mut().enumerate().take(size) {
-                    *byte = guard.read_byte(addr + i as u64).map_err(|e| {
-                        ExecutorError::ExecutionError(format!("Memory read error: {}", e))
-                    })?;
+            } else if remaining >= 4 && current_addr % 4 == 0 {
+                // Read 4 bytes at a time
+                match guard.read_word(current_addr) {
+                    Ok(val) => {
+                        data[offset] = val as u8;
+                        data[offset + 1] = (val >> 8) as u8;
+                        data[offset + 2] = (val >> 16) as u8;
+                        data[offset + 3] = (val >> 24) as u8;
+                        drop(guard);
+                        current_addr += 4;
+                        offset += 4;
+                    }
+                    Err(_) => {
+                        // Fall through to byte-by-byte read
+                    }
+                }
+            } else if remaining >= 2 && current_addr % 2 == 0 {
+                // Read 2 bytes at a time
+                match guard.read_half(current_addr) {
+                    Ok(val) => {
+                        data[offset] = val as u8;
+                        data[offset + 1] = (val >> 8) as u8;
+                        drop(guard);
+                        current_addr += 2;
+                        offset += 2;
+                    }
+                    Err(_) => {
+                        // Fall through to byte-by-byte read
+                    }
+                }
+            } else {
+                // Read one byte
+                match guard.read_byte(current_addr) {
+                    Ok(byte) => {
+                        data[offset] = byte;
+                        current_addr += 1;
+                        offset += 1;
+                    }
+                    Err(e) => {
+                        return Err(ExecutorError::ExecutionError(format!(
+                            "Memory read error at 0x{:016x}: {}",
+                            current_addr, e
+                        )));
+                    }
                 }
             }
         }
+
         Ok(data)
     }
 
