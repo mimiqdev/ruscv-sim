@@ -10,7 +10,7 @@ use ruscv_sim::MemoryInterface;
 #[test]
 fn test_elf_loading() {
     // Test loading a minimal ELF
-    let result = load_and_run(&[], Some(100), None);
+    let result = load_and_run(&[], Some(100), None, false);
     assert!(result.is_err(), "Empty ELF should fail to load");
 }
 
@@ -25,7 +25,7 @@ fn test_simulator_creation() {
 /// Test load_and_run with no ELF
 #[test]
 fn test_load_and_run_empty() {
-    let result = load_and_run(&[], Some(100), None);
+    let result = load_and_run(&[], Some(100), None, false);
     assert!(result.is_err());
 }
 
@@ -95,7 +95,7 @@ fn test_simulator_state_access() {
 /// Test load_and_run with timeout (no valid ELF)
 #[test]
 fn test_load_and_run_no_elf() {
-    let result = load_and_run(&[0x7f, 0x45, 0x4c, 0x46], Some(100), None);
+    let result = load_and_run(&[0x7f, 0x45, 0x4c, 0x46], Some(100), None, false);
     // Should fail because ELF is incomplete
     assert!(result.is_err());
 }

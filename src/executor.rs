@@ -963,3 +963,87 @@ impl RiscVSimulator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_htif_exit_code_extraction() {
+        // HTIF standard format: exit code 0
+        let val = (HTIF_DEVICE_SYSCALL << HTIF_DEVICE_SHIFT)
+            | (HTIF_CMD_SYSCALL << HTIF_CMD_SHIFT)
+            | 1u64;
+        assert_eq!(try_extract_exit_code(val), Some(0));
+
+        // HTIF standard format: exit code 1
+        let val = (HTIF_DEVICE_SYSCALL << HTIF_DEVICE_SHIFT)
+            | (HTIF_CMD_SYSCALL << HTIF_CMD_SHIFT)
+            | 3u64;
+        assert_eq!(try_extract_exit_code(val), Some(1));
+
+        // Alternative format
+        let val = (1u64 << 63) | 42;
+        assert_eq!(try_extract_exit_code(val), Some(42));
+    }
+
+    #[test]
+    fn test_simulator_creation() {
+        let sim = RiscVSimulator::new(0x10000);
+        assert_eq!(sim.state().pc, 0);
+    }
+
+    #[test]
+    fn test_load_and_run_simple() {
+        // Create a minimal ELF-like program that exits immediately
+        // For now, just verify the function signature works
+        let result = load_and_run(&[], Some(100), None, false);
+        // Should fail due to invalid ELF
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_system_bus_routing() {
+        let ram_size = 0x1000;
+        let ram_base = 0x80000000;
+        let uart_base = 0x10000000;
+
+        let ram = Arc::new(Mutex::new(SimpleMemory::new(ram_size)));
+        let uart = Arc::new(Mutex::new(Uart16550::new(uart_base)));
+
+        let mut bus = SystemBus::new(ram.clone(), uart.clone(), ram_base, ram_size);
+
+        // Test RAM access
+        let ram_addr = ram_base + 0x100;
+        bus.write_word(ram_addr, 0x12345678).unwrap();
+        assert_eq!(bus.read_word(ram_addr).unwrap(), 0x12345678);
+        assert_eq!(ram.lock().unwrap().read_word(0x100).unwrap(), 0x12345678);
+
+        // Test UART access
+        // Uart IER register is at base + 1
+        let uart_addr = uart_base + 1;
+        bus.write_byte(uart_addr, 0x01).unwrap();
+        assert_eq!(bus.read_byte(uart_addr).unwrap(), 0x01);
+        assert_eq!(uart.lock().unwrap().read_reg(1), 0x01);
+
+        // Test unmapped access
+        let unmapped_addr = 0x20000000;
+        assert!(bus.read_word(unmapped_addr).is_err());
+    }
+
+    #[test]
+    fn test_simulator_load_elf_reinit() {
+        let mut sim = RiscVSimulator::new(0x1000);
+        
+        let dummy_elf = vec![0; 100]; // Invalid ELF
+        
+        // First load attempt
+        let _ = sim.load_elf(&dummy_elf);
+        
+        // Second load attempt - this should not panic or deadlock
+        let _ = sim.load_elf(&dummy_elf);
+        
+        // Verify we can still access the simulator
+        assert_eq!(sim.state().pc, 0);
+    }
+}
