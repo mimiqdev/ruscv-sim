@@ -32,9 +32,6 @@ LDSCRIPT="-T${TESTS_DIR}/linker.ld"
 #
 # CSR 指令需要额外的 CSR 支持
 EXCLUDE_SOURCES=(
-    # 需要 OpImm32 (addiw) 的测试
-    "rv64i/lw.S"
-    "rv64i/sw.S"
     # CSR指令（待实现）
     "rv64i/csrrw.S"
     "rv64i/csrrs.S"
