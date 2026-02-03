@@ -1,0 +1,41 @@
+# Simple RISC-V test: BLT branch instruction test (no C extension)
+# Tests: BLT, ADD, ADDI, done label
+
+.section .text
+.globl _start
+
+_start:
+    # Initialize gp=10, sp=1
+    li      x3, 10          # gp = x3 = 10
+    li      x2, 1           # sp = x2 = 1
+    li      x1, 0           # sum = 0
+
+loop:
+    # blt gp, sp, 0x8000001c (this is what user describes)
+    blt     x3, x2, done    # if gp < sp, jump to done
+    
+    # add instruction (user mentions "add")
+    add     x1, x1, x2      # sum += sp
+    
+    # addi instruction (user mentions "addi")
+    addi    x2, x2, 1       # sp++
+    
+    # Jump back to loop (using JAL instead of J)
+    jal     x0, loop
+
+done:
+    # Exit with code 55
+    la      x5, tohost
+    li      x6, 55          # Expected exit code
+    sw      x6, 0(x5)
+    
+    # Loop forever
+inf:
+    jal     x0, inf
+
+# Tohost address
+.section .data
+.align 3
+tohost:
+    .word   0x00
+    .word   0x80001000

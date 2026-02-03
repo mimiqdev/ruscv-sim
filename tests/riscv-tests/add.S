@@ -36,7 +36,7 @@ fail:
 
 pass:
     # Test passed, exit code = 0
-    li      x5, 0
+    mv      x5, x1          # return sum as exit code
 
 write_exit:
     # Use la pseudo-instruction to auto-generate auipc/addi/ld sequence
@@ -53,9 +53,9 @@ write_exit:
 inf:
     j       inf
 
-# Tohost address for simulation
-.section .data
-.space 0x100
-.align 12
+# --- Key change: use .tohost section ---
+# This aligns with linker.ld to automatically place at 0x80001000
+.section .tohost
+.align 3
 tohost:
     .dword  0

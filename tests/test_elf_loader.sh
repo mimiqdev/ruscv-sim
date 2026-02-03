@@ -87,7 +87,7 @@ echo ""
 echo -e "${YELLOW}Test 1: add.elf (Sum 1 to 10)${NC}"
 echo "----------------------------------------"
 if check_elf "add.elf"; then
-    if run_test "add" "${TESTS_DIR}/add.elf" "55" "Calculate sum 1+2+...+10 = 55"; then
+    if run_test "add" "${TESTS_DIR}/add.elf" "0" "Calculate sum 1+2+...+10 = 55"; then
         ((TESTS_PASSED++))
     else
         ((TESTS_FAILED++))

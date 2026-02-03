@@ -115,7 +115,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn read_half(&self, addr: u64) -> Result<u16, MemoryError> {
-        if self.is_ram(addr) {
+        if addr >= self.ram_base && (addr + 2) <= (self.ram_base + self.ram_size as u64) {
             return self.ram.lock().unwrap().read_half(addr - self.ram_base);
         }
         if self.is_uart(addr) {
@@ -191,7 +191,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn write_half(&mut self, addr: u64, value: u16) -> Result<(), MemoryError> {
-        if self.is_ram(addr) {
+        if addr >= self.ram_base && (addr + 2) <= (self.ram_base + self.ram_size as u64) {
             return self
                 .ram
                 .lock()
