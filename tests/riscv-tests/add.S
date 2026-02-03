@@ -25,28 +25,28 @@ loop:
 done:
     # Expected result: x1 = 55 (0x37)
     
-    # 验证计算结果是否正确
+    # Verify calculation result
     li      x7, 55          # x7 = expected value (55)
     beq     x1, x7, pass    # if x1 == 55, test passed
 
 fail:
-    # 测试失败，exit code = 1
+    # Test failed, exit code = 1
     li      x5, 1
     j       write_exit
 
 pass:
-    # 测试通过，exit code = 0
+    # Test passed, exit code = 0
     li      x5, 0
 
 write_exit:
-    # 使用 la 让汇编器自动生成正确的 auipc/addi/ld 序列
+    # Use la pseudo-instruction to auto-generate auipc/addi/ld sequence
     la      x4, tohost
 
     li      x6, 1
     slli    x6, x6, 63      # x6 = WRITE_MARKER (1 << 63)
     or      x5, x5, x6      # x5 = WRITE_MARKER | exit_code
     
-    # 现在 x4 必然是 8 字节对齐的 (因为 .align 3)，不会报错
+    # x4 is guaranteed 8-byte aligned (due to .align 3), no error will occur
     sd      x5, 0(x4)       # Write to tohost
 
     # Loop forever
