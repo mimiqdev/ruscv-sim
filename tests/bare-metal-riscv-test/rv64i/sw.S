@@ -28,7 +28,7 @@ _start:
     sw      x1, 4(x10)          # store to *(x10 + 4)
     lw      x2, 4(x10)          # load back
     li      x7, 0x80000000      # should be same value
-    sext.w  x8, x7              # sign-extend expected
+    addiw   x8, x7, 0           # sign-extend expected
     bne     x2, x8, fail
 
     # === Test 3: Store all 1s (0xFFFFFFFF) ===

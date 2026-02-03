@@ -27,7 +27,7 @@ _start:
     lw      x2, 4(x10)          # x2 = *(x10 + 4)
     li      x7, 0x80000000      # x7 = expected 32-bit value
     # Sign-extend x7 to 64-bit for comparison
-    sext.w  x8, x7              # x8 = sign-extended x7
+    addiw   x8, x7, 0           # x8 = sign-extended x7
     bne     x2, x8, fail        # if x2 != expected, fail
 
     # === Test 3: Load -1 (0xFFFFFFFF) ===
@@ -54,7 +54,7 @@ _start:
     addi    x12, x10, 8         # x12 = test_data + 8
     lw      x6, -4(x12)         # load from (x12 - 4) = test_data + 4
     li      x7, 0x80000000      # should load 0x80000000
-    sext.w  x8, x7              # sign-extend expected value
+    addiw   x8, x7, 0           # sign-extend expected value
     bne     x6, x8, fail
 
     # === Test 7: LW with different base registers ===
