@@ -56,9 +56,6 @@ fn test_simulator_setters() {
 
     sim.set_max_cycles(1000);
     sim.set_tohost(0x9000_0000);
-
-    // Just verify no panic
-    assert!(true);
 }
 
 /// Test memory read/write via simulator
