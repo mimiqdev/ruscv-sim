@@ -11,9 +11,8 @@
 .globl _start
 
 _start:
-    # --- Load UART_BASE into x10 ---
-    # lui places imm[19:0] in bits [31:12], so 0x10000 gives 0x10000000
-    lui     x10, 0x10000        # x10 = 0x10000000 (UART_BASE)
+    # Load UART_BASE (0x10000000) into x10
+    lui     x10, 0x10000
 
     # --- 输出 'H' ---
     call    wait_tx_ready

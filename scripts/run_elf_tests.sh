@@ -46,7 +46,10 @@ check_simulator() {
     if [ -z "${RUSCV_BIN}" ] || [ ! -f "${RUSCV_BIN}" ]; then
         echo -e "${BLUE}Building ruscv-sim...${NC}"
         cd "${PROJECT_DIR}"
-        cargo build --release 2>/dev/null || cargo build
+        if ! cargo build --release; then
+            echo -e "${RED}Error: cargo build --release failed${NC}"
+            return 1
+        fi
         RUSCV_BIN="$(find_ruscv_sim)"
     fi
     
@@ -86,6 +89,45 @@ run_test() {
         return 0
     else
         echo -e "${RED}  [FAIL]${NC} Exit code = ${exit_status} (expected ${expected_exit})"
+        return 1
+    fi
+}
+
+# Function to run hello test with output verification
+run_hello_test() {
+    local name="$1"
+    local elf="$2"
+    local expected_exit="$3"
+    local description="$4"
+    
+    echo -e "${BLUE}Running test: ${name}${NC}"
+    echo "  File: ${elf}"
+    echo "  Expected exit code: ${expected_exit}"
+    echo "  Description: ${description}"
+    echo ""
+    
+    # Run the simulator
+    local output
+    local exit_status=0
+    
+    # Run simulator and capture output
+    output=$("${RUSCV_BIN}" run "${elf}" --max-cycles 100000 2>&1) || exit_status=$?
+    
+    echo "$output"
+    echo ""
+    
+    # Check exit code
+    if [ $exit_status -ne "$expected_exit" ]; then
+        echo -e "${RED}  [FAIL]${NC} Exit code = ${exit_status} (expected ${expected_exit})"
+        return 1
+    fi
+    
+    # Check output contains "Hello!"
+    if echo "$output" | grep -q "Hello!"; then
+        echo -e "${GREEN}  [PASS]${NC} Exit code = ${exit_status}, output contains 'Hello!'"
+        return 0
+    else
+        echo -e "${RED}  [FAIL]${NC} Output does not contain 'Hello!'"
         return 1
     fi
 }
@@ -137,7 +179,7 @@ echo ""
 echo -e "${YELLOW}Test 3: hello.elf (UART Hello World)${NC}"
 echo "--------------------------------------------"
 if check_elf "${TESTS_DIR}/hello.elf"; then
-    if run_test "hello" "${TESTS_DIR}/hello.elf" "0" "Output 'Hello!' via UART"; then
+    if run_hello_test "hello" "${TESTS_DIR}/hello.elf" "0" "Output 'Hello!' via UART"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
     else
         TESTS_FAILED=$((TESTS_FAILED + 1))

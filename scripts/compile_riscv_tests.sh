@@ -63,16 +63,24 @@ compile_test() {
     
     # Assemble
     echo "  AS  ${src} -> ${name}.o"
-    "${AS}" ${ASFLAGS} "${TESTS_DIR}/${src}" -o "${obj}"
+    if ! "${AS}" ${ASFLAGS} "${TESTS_DIR}/${src}" -o "${obj}"; then
+        echo -e "${RED}  [FAIL]${NC} Assembly failed for ${src}"
+        return 1
+    fi
     
     # Link
     echo "  LD  ${name}.o -> ${name}.elf"
-    "${LD}" ${LDSCRIPT} "${obj}" -o "${elf}"
+    if ! "${LD}" ${LDSCRIPT} "${obj}" -o "${elf}"; then
+        echo -e "${RED}  [FAIL]${NC} Link failed for ${src}"
+        rm -f "${obj}"
+        return 1
+    fi
     
     # Clean up object file
     rm -f "${obj}"
     
     echo -e "${GREEN}  [OK]${NC} Created ${name}.elf"
+    return 0
 }
 
 # Main
