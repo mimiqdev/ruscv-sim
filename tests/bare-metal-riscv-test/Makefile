@@ -16,7 +16,7 @@ OUTDIR  = .
 EXT_DIRS = rv64i rv64m rv64a rv64f rv64d rv64c
 
 # Assembly flags
-ASFLAGS = -march=rv64ima -mabi=lp64
+ASFLAGS = -march=rv64ima_zicsr -mabi=lp64
 
 # Linker script for bare metal
 LDSCRIPT = -Tlinker.ld

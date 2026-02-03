@@ -20,7 +20,7 @@ AS="${RISCV_PREFIX}as"
 LD="${RISCV_PREFIX}ld"
 
 # Assembly and linking flags
-ASFLAGS="-march=rv64ima -mabi=lp64"
+ASFLAGS="-march=rv64ima_zicsr -mabi=lp64"
 LDSCRIPT="-T${TESTS_DIR}/linker.ld"
 
 # Exclude list - tests that require OpImm32 instructions (not yet implemented)
