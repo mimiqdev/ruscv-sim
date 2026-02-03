@@ -577,6 +577,13 @@ impl ElfLoader {
             return Ok((None, None));
         }
 
+        // First, read the section header string table (.shstrtab) if available
+        let shstrtab = if header.e_shstrndx != 0 {
+            Self::read_string_table(reader, header, file_size, header.e_shstrndx)?
+        } else {
+            None
+        };
+
         // Read section headers to find .signature and .tohost
         let shentsize = header.e_shentsize as usize;
         for i in 0..header.e_shnum {
@@ -594,12 +601,12 @@ impl ElfLoader {
                 .read_exact(&mut buf)
                 .map_err(|e| ElfError::IoError(e.to_string()))?;
 
-            // Parse section header
+            // Parse section header with string table for name resolution
             if let Some((name, sh_type, sh_addr, sh_offset, sh_size)) =
-                Self::parse_section_header(&buf)?
+                Self::parse_section_header(&buf, shstrtab.as_deref())?
             {
                 // Check for .signature section
-                if name.contains("signature") && sh_type == 1 {
+                if name == ".signature" && sh_type == 1 {
                     // SHT_PROGBITS
                     signature_section = Some(SignatureInfo {
                         vaddr: sh_addr,
@@ -608,7 +615,7 @@ impl ElfLoader {
                     });
                 }
                 // Check for .tohost section
-                if name.contains("tohost") && sh_type == 1 {
+                if name == ".tohost" && sh_type == 1 {
                     // SHT_PROGBITS
                     tohost_addr = Some(sh_addr);
                 }
@@ -618,13 +625,67 @@ impl ElfLoader {
         Ok((signature_section, tohost_addr))
     }
 
+    /// Read section header string table (.shstrtab)
+    fn read_string_table<R: Read + Seek>(
+        reader: &mut R,
+        header: &Elf64Header,
+        file_size: u64,
+        strtab_index: u16,
+    ) -> Result<Option<Vec<u8>>, ElfError> {
+        // First, read the string table section header to get its offset and size
+        let strtab_sh_offset = header.e_shoff + (strtab_index as u64) * (header.e_shentsize as u64);
+        if strtab_sh_offset.saturating_add(header.e_shentsize as u64) > file_size {
+            return Ok(None);
+        }
+
+        reader
+            .seek(SeekFrom::Start(strtab_sh_offset))
+            .map_err(|e| ElfError::IoError(e.to_string()))?;
+
+        let mut sh_buf = vec![0u8; header.e_shentsize as usize];
+        reader
+            .read_exact(&mut sh_buf)
+            .map_err(|e| ElfError::IoError(e.to_string()))?;
+
+        // Parse the section header to get offset and size
+        let strtab_offset = u64::from_le_bytes([
+            sh_buf[24], sh_buf[25], sh_buf[26], sh_buf[27], sh_buf[28], sh_buf[29], sh_buf[30],
+            sh_buf[31],
+        ]);
+        let strtab_size = u64::from_le_bytes([
+            sh_buf[32], sh_buf[33], sh_buf[34], sh_buf[35], sh_buf[36], sh_buf[37], sh_buf[38],
+            sh_buf[39],
+        ]);
+
+        if strtab_offset == 0 || strtab_size == 0 {
+            return Ok(None);
+        }
+
+        if strtab_offset.saturating_add(strtab_size) > file_size {
+            return Ok(None);
+        }
+
+        // Read the string table contents
+        reader
+            .seek(SeekFrom::Start(strtab_offset))
+            .map_err(|e| ElfError::IoError(e.to_string()))?;
+
+        let mut strtab = vec![0u8; strtab_size as usize];
+        reader
+            .read_exact(&mut strtab)
+            .map_err(|e| ElfError::IoError(e.to_string()))?;
+
+        Ok(Some(strtab))
+    }
+
     /// Parse a section header and return (name, type, addr, offset, size)
-    fn parse_section_header(buf: &[u8]) -> SectionHeaderResult {
+    /// If string_table is provided, resolve the section name from it
+    fn parse_section_header(buf: &[u8], string_table: Option<&[u8]>) -> SectionHeaderResult {
         if buf.len() < 64 {
             return Ok(None);
         }
 
-        let sh_name = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        let sh_name_offset = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
         let sh_type = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
         let _sh_flags = u64::from_le_bytes([
             buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
@@ -639,15 +700,35 @@ impl ElfLoader {
             buf[32], buf[33], buf[34], buf[35], buf[36], buf[37], buf[38], buf[39],
         ]);
 
-        // We'll need to read the string table to get section names
-        // For now, return basic info without name resolution
-        Ok(Some((
-            format!("sh_{}", sh_name),
-            sh_type,
-            sh_addr,
-            sh_offset,
-            sh_size,
-        )))
+        // Resolve section name from string table if available
+        let name = if let Some(strtab) = string_table {
+            Self::get_string_from_table(strtab, sh_name_offset)
+                .unwrap_or_else(|| format!("sh_{}", sh_name_offset))
+        } else {
+            format!("sh_{}", sh_name_offset)
+        };
+
+        Ok(Some((name, sh_type, sh_addr, sh_offset, sh_size)))
+    }
+
+    /// Get a null-terminated string from the string table at the given offset
+    fn get_string_from_table(strtab: &[u8], offset: u32) -> Option<String> {
+        let offset = offset as usize;
+        if offset >= strtab.len() {
+            return None;
+        }
+
+        // Find null terminator
+        let end = strtab[offset..]
+            .iter()
+            .position(|&b| b == 0)
+            .map(|pos| offset + pos)
+            .unwrap_or(strtab.len());
+
+        // Convert to String (only valid UTF-8)
+        std::str::from_utf8(&strtab[offset..end])
+            .ok()
+            .map(|s| s.to_string())
     }
 
     /// Get entry point
@@ -693,26 +774,34 @@ impl ElfLoader {
     }
 
     /// Load all segments into memory
-    /// Memory buffer should be allocated starting from min_addr (from memory_footprint)
+    /// Memory buffer should be allocated starting from the base address returned by memory_footprint()
     pub fn load_into_memory<R: Read + Seek>(
         &self,
         reader: &mut R,
         mem: &mut [u8],
     ) -> Result<(), ElfError> {
-        let (min_addr, _) = self.memory_footprint();
+        let (base_addr, _) = self.memory_footprint();
 
         for seg in &self.load_segments {
             // Calculate offset from the start of memory buffer
-            let mem_offset = (seg.p_vaddr - min_addr) as usize;
+            // The segment's vaddr is relative to the base_addr
+            let mem_offset = (seg.p_vaddr - base_addr) as usize;
             let mem_size = seg.p_memsz as usize;
             let file_offset = seg.p_offset as usize;
             let file_size = seg.p_filesz as usize;
 
-            if mem_offset + mem_size > mem.len() {
+            // Validate memory offset and size with proper bounds checking
+            // mem_offset must be within bounds
+            if mem_offset >= mem.len() {
+                return Err(ElfError::SegmentOutOfBounds);
+            }
+            // The segment must fit entirely within the buffer
+            if mem_offset.saturating_add(mem_size) > mem.len() {
                 return Err(ElfError::SegmentOutOfBounds);
             }
 
-            if file_offset + file_size > self.file_size as usize {
+            // Validate file offsets
+            if file_offset.saturating_add(file_size) > self.file_size as usize {
                 return Err(ElfError::SegmentOutOfBounds);
             }
 
@@ -744,13 +833,14 @@ pub fn load_elf_file(data: &[u8]) -> ElfLoadResult {
     let mut cursor = std::io::Cursor::new(data);
     let loader = ElfLoader::load(&mut cursor)?;
 
-    let (min_addr, max_addr) = loader.memory_footprint();
+    let (base_addr, max_addr) = loader.memory_footprint();
 
-    // Allocate memory
-    let mem_size = (max_addr - min_addr).next_power_of_two().max(0x10000);
+    // Allocate memory - ensure it's large enough to hold all segments
+    // Memory buffer starts from address 0, so we need size = max_addr - base_addr
+    let mem_size = (max_addr - base_addr).next_power_of_two().max(0x10000);
     let mut mem = vec![0u8; mem_size as usize];
 
-    // Load segments
+    // Load segments - they will be placed at offset (p_vaddr - base_addr) in the buffer
     loader.load_into_memory(&mut cursor, &mut mem)?;
 
     Ok((
