@@ -517,40 +517,31 @@ pub fn load_and_run(
                             }
 
                             // Check if tohost contains a valid exit signal
-                            // Only values with bit 63 set are considered exit commands
-                            if tohost_value != 0 {
-                                let is_exit_command = (tohost_value >> 63) == 1;
-                                if is_exit_command {
-                                    let exit_code = ((tohost_value << 1) >> 1) as u32; // Remove highest bit
-                                    if verbose {
-                                        eprintln!(
-                                            "[DEBUG] Exit signal detected: code={}",
-                                            exit_code
-                                        );
-                                    }
-                                    // Clear tohost after processing (Spike-compatible behavior)
-                                    drop(mem_guard);
-                                    clear_tohost(&bus_interface, tohost_pa, verbose);
-                                    let sig_data =
-                                        dump_signature(&bus_interface, signature.as_ref())
-                                            .ok()
-                                            .flatten();
-                                    return Ok(ExecutionResult {
-                                        exit_code,
-                                        cycles,
-                                        final_pc: core.state().pc,
-                                        timed_out: false,
-                                        error: None,
-                                        signature_addr: signature.map(|s| s.vaddr),
-                                        signature_data: sig_data,
-                                    });
-                                } else if verbose {
-                                    // Non-zero but without exit command marker - possible memory corruption or other command
-                                    eprintln!(
-                                        "[WARN] tohost has non-command value: {:#x}",
-                                        tohost_value
-                                    );
+                            if let Some(exit_code) = try_extract_exit_code(tohost_value) {
+                                if verbose {
+                                    eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
                                 }
+                                // Clear tohost after processing (Spike-compatible behavior)
+                                drop(mem_guard);
+                                clear_tohost(&bus_interface, tohost_pa, verbose);
+                                let sig_data = dump_signature(&bus_interface, signature.as_ref())
+                                    .ok()
+                                    .flatten();
+                                return Ok(ExecutionResult {
+                                    exit_code,
+                                    cycles,
+                                    final_pc: core.state().pc,
+                                    timed_out: false,
+                                    error: None,
+                                    signature_addr: signature.map(|s| s.vaddr),
+                                    signature_data: sig_data,
+                                });
+                            } else if tohost_value != 0 && verbose {
+                                // Non-zero but without exit command marker - possible memory corruption or other command
+                                eprintln!(
+                                    "[WARN] tohost has non-command value: {:#x}",
+                                    tohost_value
+                                );
                             }
                         }
                         Err(e) => {
@@ -814,23 +805,18 @@ impl RiscVSimulator {
                         last_tohost_value = tohost_value;
                     }
 
-                    // Check for exit signal (tohost != 0 and bit 63 set)
-                    // Only values with bit 63 set are considered exit commands
-                    if tohost_value != 0 {
-                        let is_exit_command = (tohost_value >> 63) == 1;
-                        if is_exit_command {
-                            let exit_code = ((tohost_value << 1) >> 1) as u32; // Remove highest bit
-                            if self.verbose {
-                                eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
-                            }
-                            // Clear tohost after processing (Spike-compatible behavior)
-                            drop(guard);
-                            clear_tohost(&self.memory, self.tohost, self.verbose);
-                            return Ok(self.get_result(cycles));
-                        } else if self.verbose {
-                            // Non-zero but without exit command marker - possible memory corruption or other command
-                            eprintln!("[WARN] tohost has non-command value: {:#x}", tohost_value);
+                    // Check for exit signal using consistent extraction logic
+                    if let Some(exit_code) = try_extract_exit_code(tohost_value) {
+                        if self.verbose {
+                            eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
                         }
+                        // Clear tohost after processing (Spike-compatible behavior)
+                        drop(guard);
+                        clear_tohost(&self.memory, self.tohost, self.verbose);
+                        return Ok(self.get_result(cycles));
+                    } else if tohost_value != 0 && self.verbose {
+                        // Non-zero but without exit command marker - possible memory corruption or other command
+                        eprintln!("[WARN] tohost has non-command value: {:#x}", tohost_value);
                     }
                 }
                 Err(e) => {
