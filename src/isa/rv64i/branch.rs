@@ -63,7 +63,9 @@ pub fn exec_branch(
 
     if take_branch {
         // Sign-extend the branch offset and add to PC
-        // B-type immediate: imm[12|10:5|4:1|11] -> 13 bits, need 20-bit shift for sign extension
+        // B-type immediate: imm[12|10:5|4:1|11] is a 13-bit signed offset (bit 0 is always 0)
+        // Decode ensures imm only contains 13 valid bits (bits 0-12), so we sign-extend from bit 12
+        // Using i32 << 20 >> 20 to sign-extend the 13-bit value to 32 bits
         let imm_sext = ((imm as i32) << 20 >> 20) as i64 as u64;
         eprintln!(
             "[BRANCH-TAKEN] pc={:#x}, imm={:#x}, imm_sext={:#x}, target={:#x}",
