@@ -147,17 +147,14 @@ jobs:
           retention-days: 7
 
   # ==========================================
-  # Job 5: RISC-V ELF Tests (Container Mode)
+  # Job 5: RISC-V ELF Tests
   # ==========================================
-  # 使用预装 RISC-V 工具链的 Docker 镜像，避免每次 CI 下载
-  # 镜像包含: riscv64-unknown-elf-gcc, gdb, binutils 等
+  # 使用 Docker 容器中的 RISC-V 工具链编译 ELF（不在容器中编译 Rust）
   riscv-tests:
     name: RISC-V ELF Tests
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 15
     needs: build
-    # 使用 Docker 容器，预装 RISC-V 工具链
-    container: riscvcolink/riscv-toolchain:latest
 
     steps:
       - name: Checkout repository
@@ -165,15 +162,10 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Install Rust in container
-        run: |
-          # riscv-toolchain 镜像可能没有 Rust，需要安装
-          if ! command -v cargo &> /dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-            . "$HOME/.cargo/env"
-          fi
-          rustc --version
-          cargo --version
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Download binary artifact
         uses: actions/download-artifact@v4
@@ -184,9 +176,11 @@ jobs:
       - name: Make binary executable
         run: chmod +x target/release/ruscv-sim
 
-      - name: Compile RISC-V test programs
+      - name: Compile RISC-V test programs (using Docker)
         run: |
           chmod +x scripts/compile_riscv_tests.sh
+          # 修改脚本使用 docker run 调用容器中的编译器
+          sed -i 's|riscv64-unknown-elf-|docker run --rm -v $PWD:/app riscvcolink/riscv-toolchain:latest riscv64-unknown-elf-|g' scripts/compile_riscv_tests.sh
           ./scripts/compile_riscv_tests.sh
 
       - name: Run RISC-V ELF tests
