@@ -29,6 +29,7 @@
 | **MMU/TLB** | ✅ **完成** | **Sprint 10 - Sv39 页表, 4-way LRU TLB** |
 | **TLM2.0 + 外设** | ✅ **完成** | **Sprint 11 - CLINT, PLIC, UART 16550** |
 | **调试支持 (GDB RSP)** | ✅ **完成** | **M4 - GDB 远程调试 + CLI 调试器** |
+| **ELF 执行闭环** | ✅ **完成** | **M5 - ELF Loader + Executor + Signature + tohost/exit** |
 | **测试覆盖** | ✅ **90+ tests** | Sprint 11 新增，全部通过 |
 
 ## 项目结构
@@ -58,6 +59,9 @@ ruscv-sim/
 │   │   ├── debugger.rs     # CLI 调试界面
 │   │   ├── breakpoint.rs   # 断点管理器
 │   │   └── watchpoint.rs   # 观察点管理器
+│   ├── elf/                # ELF 执行闭环 (M5)
+│   │   ├── elf.rs          # ELF Loader
+│   │   └── executor.rs     # 执行器
 │   ├── fpu/                # 浮点运算单元 (RV64F)
 │   ├── csr/                # CSR 寄存器框架
 │   └── trap/               # 陷阱处理 (集成在 core/)
@@ -364,4 +368,4 @@ MIT License
 
 ---
 
-最后更新: 2026-02-02 (M4 完成 - 调试支持: GDB RSP + CLI 调试器)
+最后更新: 2026-02-03 (M5 完成 - ELF 执行闭环: Loader + Executor + Signature + tohost/exit)

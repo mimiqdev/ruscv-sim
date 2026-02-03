@@ -74,15 +74,15 @@
 
 ---
 
-### M5: ELF 执行闭环 [ACTIVE]
-**Status:** Active
+### M5: ELF 执行闭环 [COMPLETED]
+**Status:** Completed
 **Goal:** 建立 ELF 加载与执行能力，支持 arch-test 运行
 
-#### Features
-- [ ] **ELF Loader**: 加载 arch-test ELF（入口点/段映射）
-- [ ] **运行入口**: reset → run 的最小执行流程
-- [ ] **Signature 导出**: 支持 signature 区域 dump
-- [ ] **退出机制**: tohost/exit 约定，用于自动停止测试
+#### Features (Completed)
+- [x] **ELF Loader**: 加载 arch-test ELF（入口点/段映射）
+- [x] **运行入口**: reset → run 的最小执行流程
+- [x] **Signature 导出**: 支持 signature 区域 dump
+- [x] **退出机制**: tohost/exit 约定，用于自动停止测试
 
 ---
 
@@ -136,6 +136,11 @@
 
 ---
 ## Change Log
+
+**2026-02-03**: M5 完成 - ELF 执行闭环
+- M5 状态从 [ACTIVE] 改为 [COMPLETED]
+- 功能列表: ELF Loader、Executor、Signature 导出、tohost/exit 机制
+- PR #28 已通过 CI，待合并
 
 **2026-02-02**: 里程碑重编号
 - M5.1 → M5 (ELF 执行闭环)
