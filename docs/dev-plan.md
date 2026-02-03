@@ -83,6 +83,10 @@
 - [x] **运行入口**: reset → run 的最小执行流程
 - [x] **Signature 导出**: 支持 signature 区域 dump
 - [x] **退出机制**: tohost/exit 约定，用于自动停止测试
+- [x] **System Bus & Memory Map Fix**:
+  - 实现 SystemBus 路由 (RAM @ 0x80000000, UART @ 0x10000000)
+  - 修复 `riscv-tests` 运行时的无效内存访问问题
+  - 重构 Core 使用 `dyn MemoryInterface` 支持灵活总线
 
 ---
 
@@ -136,6 +140,12 @@
 
 ---
 ## Change Log
+
+**2026-02-03**: M5 Fix - System Bus Implementation
+- 实现 `SystemBus` 以支持 `riscv-tests` 内存映射
+- 修复 `hello.elf` 运行时的无效内存访问 (UART @ 0x10000000)
+- 增加 `verbose` 模式用于调试输出控制
+- 重构 `load_elf_file` 消除 clippy 警告
 
 **2026-02-03**: M5 完成 - ELF 执行闭环
 - M5 状态从 [ACTIVE] 改为 [COMPLETED]
