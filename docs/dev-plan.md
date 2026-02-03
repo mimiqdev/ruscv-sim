@@ -107,7 +107,7 @@
 **参考文档**: [baremetal-test-template.md](../docs/baremetal-test-template.md)
 
 #### Features
-- [x] **目录结构重组**: 
+- [x] **目录结构重组**:
   - `tests/riscv-tests/` → `tests/bare-metal-riscv-test/`
   - 按扩展名分文件夹: `rv64i/`, `rv64m/`, `rv64a/`, `rv64f/`, `rv64d/`, `rv64c/`
 - [ ] **RVI 整数指令**: add, sub, and, or, xor, sll, srl, sra
@@ -119,6 +119,23 @@
 - [ ] **CSR 指令**: csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci
 
 **注意**: 跳过 M 和 A 扩展的复杂原子场景（后续 arch-test 会覆盖）
+
+#### 未实现的指令 (当前状态)
+以下指令需要实现才能支持完整的 baremetal 测试：
+
+| 类别 | 指令 | 编码 | 原因 |
+|------|------|------|------|
+| **OpImm32** | addiw | 0b001_1011 | Decoder 未处理 |
+| **OpImm32** | slliw | 0b001_1011 | Decoder 未处理 |
+| **OpImm32** | srliw | 0b001_1011 | Decoder 未处理 |
+| **OpImm32** | sraiw | 0b001_1011 | Decoder 未处理 |
+| **Op32** | addw | 0b011_1011 | Decoder 未处理 |
+| **Op32** | subw | 0b011_1011 | Decoder 未处理 |
+| **Op32** | sllw | 0b011_1011 | Decoder 未处理 |
+| **Op32** | srlw | 0b011_1011 | Decoder 未处理 |
+| **Op32** | sraw | 0b011_1011 | Decoder 未处理 |
+
+**备注**: `sext.w` 是 `addiw rd, rs1, 0` 的伪指令形式，需要实现 OpImm32 指令集。
 
 ---
 
