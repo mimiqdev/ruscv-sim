@@ -655,11 +655,10 @@ impl ElfLoader {
             }
         }
 
-        // Fallback: if tohost address is 0 or not found, use default 0x80001000
-        // This handles cases where the linker script doesn't properly place .tohost section
-        if tohost_addr == Some(0) || tohost_addr.is_none() {
-            tohost_addr = Some(0x80001000);
-        }
+        // Note: We don't set a default tohost address here.
+        // If the ELF doesn't define .tohost section or tohost symbol,
+        // the caller is responsible for providing a default address.
+        // This allows flexibility for different use cases.
 
         Ok((signature_section, tohost_addr))
     }
