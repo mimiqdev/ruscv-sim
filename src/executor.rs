@@ -379,7 +379,15 @@ pub fn load_and_run(
     let max_cycles = max_cycles.unwrap_or(DEFAULT_MAX_CYCLES);
 
     // Step 1: Load ELF file
-    let (entry_point, memory, signature, elf_tohost, base_addr) = load_elf_file(elf_data)?;
+    let loaded = load_elf_file(elf_data)?;
+    let (entry_point, memory, signature, elf_tohost, base_addr) = (
+        loaded.entry_point,
+        loaded.memory,
+        loaded.signature,
+        loaded.tohost,
+        loaded.base_addr,
+    );
+
     if verbose {
         eprintln!("[DEBUG] load_elf_file returned: entry_point=0x{:016x}, base_addr=0x{:016x}, memory.len()={}, elf_tohost={:?}",
                   entry_point, base_addr, memory.len(), elf_tohost);
@@ -507,7 +515,7 @@ pub fn load_and_run(
                         }
                         Err(e) => {
                             // Only log errors periodically to avoid spam
-                            if verbose && cycles % 1000 == 0 {
+                            if verbose && cycles.is_multiple_of(1000) {
                                 eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
                             }
                         }
@@ -515,7 +523,7 @@ pub fn load_and_run(
                 }
 
                 // Debug output every 1000 cycles
-                if verbose && cycles % 1000 == 0 {
+                if verbose && cycles.is_multiple_of(1000) {
                     let state = core.state();
                     eprintln!("[DEBUG] Cycle {}: PC=0x{:010x}, ra={}, sp={}, gp={}",
                               cycles, current_pc, state.regs[1], state.regs[2], state.regs[3]);
@@ -649,7 +657,14 @@ impl RiscVSimulator {
 
     /// Load ELF data into memory
     pub fn load_elf(&mut self, elf_data: &[u8]) -> Result<u64, ExecutorError> {
-        let (entry_point, memory, sig, tohost, base_addr) = load_elf_file(elf_data)?;
+        let loaded = load_elf_file(elf_data)?;
+        let (entry_point, memory, sig, tohost, base_addr) = (
+            loaded.entry_point,
+            loaded.memory,
+            loaded.signature,
+            loaded.tohost,
+            loaded.base_addr,
+        );
         self.signature = sig;
 
         // NOTE: This implementation is simplified and still uses SimpleMemory internally 
@@ -774,7 +789,7 @@ impl RiscVSimulator {
                 }
                 Err(e) => {
                     // Only log errors periodically to avoid spam
-                    if self.verbose && cycles % 1000 == 0 {
+                    if self.verbose && cycles.is_multiple_of(1000) {
                         eprintln!(
                             "[DEBUG] Cycle {}: PC=0x{:010x}, tohost read failed: {}",
                             cycles,
@@ -812,22 +827,7 @@ impl RiscVSimulator {
         })
     }
 
-    /// Check if exit signal received
-    fn check_exit(&self) -> Result<bool, ExecutorError> {
-        let guard = self.memory.lock().unwrap();
-        match guard.read_dword(self.tohost) {
-            Ok(value) => {
-                if let Some(code) = try_extract_exit_code(value) {
-                    println!("[EXIT] Received exit signal with code: {}", code);
-                    return Ok(true);
-                }
-            }
-            Err(_) => {
-                // Memory read failed, continue
-            }
-        }
-        Ok(false)
-    }
+
 
     /// Get execution result
     fn get_result(&self, cycles: u64) -> ExecutionResult {

@@ -268,8 +268,20 @@ pub struct SignatureInfo {
 /// Type alias for section header parsing result
 type SectionHeaderResult = Result<Option<(String, u32, u64, u64, u64)>, ElfError>;
 
-/// Type alias for ELF loading result
-type ElfLoadResult = Result<(u64, Vec<u8>, Option<SignatureInfo>, Option<u64>, u64), ElfError>;
+/// Loaded ELF file data
+#[derive(Debug)]
+pub struct LoadedElf {
+    /// Entry point address
+    pub entry_point: u64,
+    /// Memory content (relative to base_addr)
+    pub memory: Vec<u8>,
+    /// Signature section info
+    pub signature: Option<SignatureInfo>,
+    /// Tohost address
+    pub tohost: Option<u64>,
+    /// Base address for memory loading
+    pub base_addr: u64,
+}
 
 impl ElfLoader {
     /// Load ELF file from reader
@@ -914,7 +926,7 @@ impl ElfLoader {
 /// Load ELF file and return entry point and memory data
 pub fn load_elf_file(
     data: &[u8],
-) -> Result<(u64, Vec<u8>, Option<SignatureInfo>, Option<u64>, u64), ElfError> {
+) -> Result<LoadedElf, ElfError> {
     let mut cursor = std::io::Cursor::new(data);
     let loader = ElfLoader::load(&mut cursor)?;
 
@@ -928,13 +940,13 @@ pub fn load_elf_file(
     // Load segments - they will be placed at offset (p_vaddr - base_addr) in the buffer
     loader.load_into_memory(&mut cursor, &mut mem)?;
 
-    Ok((
-        loader.entry_point(),
-        mem,
-        loader.signature_section().cloned(),
-        loader.tohost_addr(),
+    Ok(LoadedElf {
+        entry_point: loader.entry_point(),
+        memory: mem,
+        signature: loader.signature_section().cloned(),
+        tohost: loader.tohost_addr(),
         base_addr, // Return base_addr for correct memory loading
-    ))
+    })
 }
 
 /// Convert virtual address to memory offset
@@ -1081,17 +1093,17 @@ mod tests {
     fn test_load_elf_file_function() {
         let elf_data = create_test_elf();
 
-        let (entry, mem, sig, tohost, base_addr) = load_elf_file(&elf_data).unwrap();
+        let loaded = load_elf_file(&elf_data).unwrap();
 
-        assert_eq!(entry, 0x8000_0000);
-        assert_eq!(base_addr, 0x8000_0000); // base_addr should be the minimum vaddr
+        assert_eq!(loaded.entry_point, 0x8000_0000);
+        assert_eq!(loaded.base_addr, 0x8000_0000); // base_addr should be the minimum vaddr
                                             // Memory should be large enough to hold all segments (0x300 bytes range)
-        assert!(mem.len() >= 0x300);
+        assert!(loaded.memory.len() >= 0x300);
         // Verify data was loaded correctly
-        assert_eq!(mem[0], 0x13); // .text at offset 0
-        assert_eq!(mem[0x100], 0x42); // .data at offset 0x100
-        assert!(sig.is_none()); // No signature section in test ELF
-        assert!(tohost.is_none()); // No tohost section in test ELF
+        assert_eq!(loaded.memory[0], 0x13); // .text at offset 0
+        assert_eq!(loaded.memory[0x100], 0x42); // .data at offset 0x100
+        assert!(loaded.signature.is_none()); // No signature section in test ELF
+        assert!(loaded.tohost.is_none()); // No tohost section in test ELF
     }
 
     /// Test tohost symbol parsing from real ELF file
@@ -1109,20 +1121,20 @@ mod tests {
         }
 
         let elf_data = elf_data.unwrap();
-        let (entry, _mem, _sig, tohost, base_addr) = load_elf_file(&elf_data).unwrap();
+        let loaded = load_elf_file(&elf_data).unwrap();
 
         // Verify entry point
-        assert_eq!(entry, 0x8000_0000);
-        assert_eq!(base_addr, 0x8000_0000);
+        assert_eq!(loaded.entry_point, 0x8000_0000);
+        assert_eq!(loaded.base_addr, 0x8000_0000);
 
         // Verify tohost address is correctly parsed from symbol table
         // Expected: 0x80002000 (from readelf -s output)
         assert!(
-            tohost.is_some(),
+            loaded.tohost.is_some(),
             "tohost symbol should be found in the ELF file"
         );
         assert_eq!(
-            tohost.unwrap(),
+            loaded.tohost.unwrap(),
             0x8000_2000,
             "tohost address should be 0x80002000"
         );
@@ -1140,16 +1152,16 @@ mod tests {
         }
 
         let elf_data = elf_data.unwrap();
-        let (entry, _mem, _sig, tohost, base_addr) = load_elf_file(&elf_data).unwrap();
+        let loaded = load_elf_file(&elf_data).unwrap();
 
         // Verify entry point
-        assert_eq!(entry, 0x8000_0000);
-        assert_eq!(base_addr, 0x8000_0000);
+        assert_eq!(loaded.entry_point, 0x8000_0000);
+        assert_eq!(loaded.base_addr, 0x8000_0000);
 
         // Verify tohost address is correctly parsed from .tohost section
-        assert!(tohost.is_some(), "tohost should be found in the ELF file");
+        assert!(loaded.tohost.is_some(), "tohost should be found in the ELF file");
         assert_eq!(
-            tohost.unwrap(),
+            loaded.tohost.unwrap(),
             0x8000_1000,
             "tohost address should be 0x80001000 (from .tohost section)"
         );

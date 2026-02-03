@@ -78,7 +78,7 @@ fn main() {
 }
 
 fn run_elf(
-    elf_path: &PathBuf,
+    elf_path: &std::path::Path,
     max_cycles: Option<u64>,
     tohost: Option<u64>,
     verbose: bool,
