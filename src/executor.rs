@@ -138,6 +138,12 @@ pub fn dump_signature(
 }
 
 /// Extract exit code from tohost value
+///
+/// Supports two exit code formats:
+/// 1. Standard format (WRITE_MARKER | exit_code): Upper bit set, lower 32 bits contain exit code
+/// 2. Direct format: Small positive number (< 0x100, non-zero) representing exit code directly
+///
+/// Returns Some(exit_code) if a valid exit code is detected, None otherwise.
 fn extract_exit_code(tohost_value: u64) -> Option<u32> {
     // Standard tohost format: upper bit indicates write, lower bits contain exit code
     if tohost_value & WRITE_MARKER != 0 {
@@ -147,10 +153,26 @@ fn extract_exit_code(tohost_value: u64) -> Option<u32> {
     }
 }
 
-/// Check if value looks like a valid exit code
-fn is_exit_code(value: u64) -> bool {
-    // Exit codes are typically small positive numbers
-    value < 0x100 && value != 0
+/// Unified exit code extraction from tohost value
+///
+/// This function handles both exit code formats consistently:
+/// - Format 1 (standard): `WRITE_MARKER | exit_code` - upper bit set
+/// - Format 2 (direct): Small exit code value (< 0x100, non-zero)
+///
+/// Returns the exit code if detected, None if not an exit signal.
+fn try_extract_exit_code(tohost_value: u64) -> Option<u32> {
+    // Try standard format first (WRITE_MARKER | exit_code)
+    if let Some(code) = extract_exit_code(tohost_value) {
+        return Some(code);
+    }
+
+    // Fall back to direct format: small positive number is likely an exit code
+    // Exit codes are typically in range 0-255 (0xFF)
+    if tohost_value != 0 && tohost_value < 0x100 {
+        return Some(tohost_value as u32);
+    }
+
+    None
 }
 
 /// Load and execute an ELF file
@@ -215,26 +237,13 @@ pub fn load_and_run(
                     // Read from tohost address (64-bit read)
                     match mem_guard.read_dword(tohost) {
                         Ok(tohost_value) => {
-                            // Check if this is an exit signal
-                            if let Some(code) = extract_exit_code(tohost_value) {
-                                // Valid exit signal received
+                            // Unified exit signal detection
+                            // Supports both WRITE_MARKER format and direct exit code format
+                            if let Some(code) = try_extract_exit_code(tohost_value) {
                                 let sig_data =
                                     dump_signature(&mem, signature.as_ref()).ok().flatten();
                                 return Ok(ExecutionResult {
                                     exit_code: code,
-                                    cycles,
-                                    final_pc: core.state().pc,
-                                    timed_out: false,
-                                    error: None,
-                                    signature_addr: signature.map(|s| s.vaddr),
-                                    signature_data: sig_data,
-                                });
-                            } else if is_exit_code(tohost_value) {
-                                // Alternative exit detection
-                                let sig_data =
-                                    dump_signature(&mem, signature.as_ref()).ok().flatten();
-                                return Ok(ExecutionResult {
-                                    exit_code: extract_exit_code(tohost_value).unwrap_or_default(),
                                     cycles,
                                     final_pc: core.state().pc,
                                     timed_out: false,
@@ -472,7 +481,7 @@ impl RiscVSimulator {
         let guard = self.memory.lock().unwrap();
         match guard.read_dword(self.tohost) {
             Ok(value) => {
-                if let Some(code) = extract_exit_code(value) {
+                if let Some(code) = try_extract_exit_code(value) {
                     println!("[EXIT] Received exit signal with code: {}", code);
                     return Ok(true);
                 }
@@ -489,7 +498,7 @@ impl RiscVSimulator {
         let exit_code = {
             let guard = self.memory.lock().unwrap();
             match guard.read_dword(self.tohost) {
-                Ok(value) => extract_exit_code(value).unwrap_or_default(),
+                Ok(value) => try_extract_exit_code(value).unwrap_or_default(),
                 Err(_) => 0,
             }
         };
@@ -636,6 +645,37 @@ mod tests {
         // Non-exit value
         let val = 0x1234_5678;
         assert_eq!(extract_exit_code(val), None);
+    }
+
+    #[test]
+    fn test_unified_exit_code_extraction() {
+        // Standard format with WRITE_MARKER
+        let val = WRITE_MARKER | 0x5;
+        assert_eq!(try_extract_exit_code(val), Some(5));
+
+        // Standard format with exit code 0
+        let val = WRITE_MARKER;
+        assert_eq!(try_extract_exit_code(val), Some(0));
+
+        // Direct format (small exit code)
+        let val = 0x2;
+        assert_eq!(try_extract_exit_code(val), Some(2));
+
+        // Direct format (exit code 0)
+        let val = 0x0;
+        assert_eq!(try_extract_exit_code(val), None);
+
+        // Non-exit value (too large)
+        let val = 0x1234_5678;
+        assert_eq!(try_extract_exit_code(val), None);
+
+        // Edge case: max direct exit code
+        let val = 0xFF;
+        assert_eq!(try_extract_exit_code(val), Some(0xFF));
+
+        // Just over direct format range
+        let val = 0x100;
+        assert_eq!(try_extract_exit_code(val), None);
     }
 
     #[test]
