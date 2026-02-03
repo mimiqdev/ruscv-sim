@@ -192,7 +192,7 @@ pub fn load_and_run(
     let max_cycles = max_cycles.unwrap_or(DEFAULT_MAX_CYCLES);
 
     // Step 1: Load ELF file
-    let (entry_point, memory, signature, elf_tohost) = load_elf_file(elf_data)?;
+    let (entry_point, memory, signature, elf_tohost, base_addr) = load_elf_file(elf_data)?;
 
     // Use provided tohost address or try to find it in ELF
     let tohost = tohost_addr.or(elf_tohost).unwrap_or(DEFAULT_TOHOST);
@@ -205,12 +205,11 @@ pub fn load_and_run(
 
     let mem = Arc::new(Mutex::new(SimpleMemory::new(mem_size)));
 
-    // Copy loaded ELF data into memory
+    // Copy loaded ELF data into memory at the correct base address
+    // memory[0] corresponds to virtual address base_addr
     {
-        let mut mem_guard = mem.lock().unwrap();
-        for (i, &byte) in memory.iter().enumerate() {
-            mem_guard.write_byte(i as u64, byte).ok();
-        }
+        let mem_guard = mem.lock().unwrap();
+        mem_guard.load_program(&memory, base_addr);
     }
 
     // Step 3: Create and configure core
@@ -365,7 +364,7 @@ impl RiscVSimulator {
 
     /// Load ELF data into memory
     pub fn load_elf(&mut self, elf_data: &[u8]) -> Result<u64, ExecutorError> {
-        let (entry_point, memory, sig, tohost) = load_elf_file(elf_data)?;
+        let (entry_point, memory, sig, tohost, base_addr) = load_elf_file(elf_data)?;
         self.signature = sig;
 
         // Resize memory if needed
@@ -379,19 +378,15 @@ impl RiscVSimulator {
             // Create new larger memory and copy
             let new_mem = Arc::new(Mutex::new(SimpleMemory::new(required_size)));
             {
-                let mut guard = new_mem.lock().unwrap();
-                for (i, &byte) in memory.iter().enumerate() {
-                    guard.write_byte(i as u64, byte).ok();
-                }
+                let guard = new_mem.lock().unwrap();
+                guard.load_program(&memory, base_addr);
             }
             self.memory = new_mem;
             self.core = RiscvCore::new(self.memory.clone(), self.memory.clone());
         } else {
-            // Copy into existing memory
-            let mut guard = self.memory.lock().unwrap();
-            for (i, &byte) in memory.iter().enumerate() {
-                guard.write_byte(i as u64, byte).ok();
-            }
+            // Copy into existing memory at correct base address
+            let guard = self.memory.lock().unwrap();
+            guard.load_program(&memory, base_addr);
         }
 
         // Update tohost address

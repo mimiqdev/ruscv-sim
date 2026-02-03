@@ -269,7 +269,7 @@ pub struct SignatureInfo {
 type SectionHeaderResult = Result<Option<(String, u32, u64, u64, u64)>, ElfError>;
 
 /// Type alias for ELF loading result
-type ElfLoadResult = Result<(u64, Vec<u8>, Option<SignatureInfo>, Option<u64>), ElfError>;
+type ElfLoadResult = Result<(u64, Vec<u8>, Option<SignatureInfo>, Option<u64>, u64), ElfError>;
 
 impl ElfLoader {
     /// Load ELF file from reader
@@ -829,7 +829,9 @@ impl ElfLoader {
 }
 
 /// Load ELF file and return entry point and memory data
-pub fn load_elf_file(data: &[u8]) -> ElfLoadResult {
+pub fn load_elf_file(
+    data: &[u8],
+) -> Result<(u64, Vec<u8>, Option<SignatureInfo>, Option<u64>, u64), ElfError> {
     let mut cursor = std::io::Cursor::new(data);
     let loader = ElfLoader::load(&mut cursor)?;
 
@@ -848,6 +850,7 @@ pub fn load_elf_file(data: &[u8]) -> ElfLoadResult {
         mem,
         loader.signature_section().cloned(),
         loader.tohost_addr(),
+        base_addr, // Return base_addr for correct memory loading
     ))
 }
 
@@ -995,10 +998,11 @@ mod tests {
     fn test_load_elf_file_function() {
         let elf_data = create_test_elf();
 
-        let (entry, mem, sig, tohost) = load_elf_file(&elf_data).unwrap();
+        let (entry, mem, sig, tohost, base_addr) = load_elf_file(&elf_data).unwrap();
 
         assert_eq!(entry, 0x8000_0000);
-        // Memory should be large enough to hold all segments (0x300 bytes range)
+        assert_eq!(base_addr, 0x8000_0000); // base_addr should be the minimum vaddr
+                                            // Memory should be large enough to hold all segments (0x300 bytes range)
         assert!(mem.len() >= 0x300);
         // Verify data was loaded correctly
         assert_eq!(mem[0], 0x13); // .text at offset 0
