@@ -36,7 +36,7 @@ fail:
 
 pass:
     # Test passed, exit code = 0
-    mv      x5, x1          # return sum as exit code
+    li      x5, 0           # return 0 to indicate pass
 
 write_exit:
     # Use la pseudo-instruction to auto-generate auipc/addi/ld sequence
