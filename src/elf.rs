@@ -1162,8 +1162,8 @@ mod tests {
         );
         assert_eq!(
             loaded.tohost.unwrap(),
-            0x8000_1000,
-            "tohost address should be 0x80001000 (from .tohost section)"
+            0x8000_2000,
+            "tohost address should be 0x80002000 (from .tohost section)"
         );
     }
 }
