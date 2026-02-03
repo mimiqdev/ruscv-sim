@@ -35,11 +35,6 @@ pub fn exec_jal(
             state.regs[rd as usize] = return_addr;
         }
 
-        eprintln!(
-            "[JAL] pc={:#x}, imm={:#x}, imm_sext={:#x}, target={:#x}",
-            state.pc, imm, imm_sext as u64, target
-        );
-
         state.pc = target;
         // Mark that a jump was taken (used by step() to skip pc += 4)
         state.branch_taken = true;

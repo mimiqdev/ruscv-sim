@@ -63,7 +63,7 @@ fn main() {
                 eprintln!("Tohost address: 0x{:016x}", tohost.unwrap_or(0));
             }
 
-            match run_elf(&elf, max_cycles, tohost) {
+            match run_elf(&elf, max_cycles, tohost, verbose) {
                 Ok(result) => {
                     print_result(&result);
                     std::process::exit(result.exit_code as i32);
@@ -81,8 +81,9 @@ fn run_elf(
     elf_path: &PathBuf,
     max_cycles: Option<u64>,
     tohost: Option<u64>,
+    verbose: bool,
 ) -> Result<ExecutionResult, String> {
-    load_and_run_file(elf_path.to_str().unwrap(), max_cycles, tohost)
+    load_and_run_file(elf_path.to_str().unwrap(), max_cycles, tohost, verbose)
         .map_err(|e| format!("Execution failed: {}", e))
 }
 

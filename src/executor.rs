@@ -366,6 +366,7 @@ fn clear_tohost(mem: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>, tohost_addr
 /// * `elf_data` - Raw ELF file bytes
 /// * `max_cycles` - Maximum cycles before timeout (default: 10 million)
 /// * `tohost_addr` - Optional tohost address (auto-detected from ELF if not provided)
+/// * `verbose` - Whether to print verbose debug output
 ///
 /// # Returns
 /// ExecutionResult containing exit code, cycle count, and final state
@@ -373,13 +374,16 @@ pub fn load_and_run(
     elf_data: &[u8],
     max_cycles: Option<u64>,
     tohost_addr: Option<u64>,
+    verbose: bool,
 ) -> Result<ExecutionResult, ExecutorError> {
     let max_cycles = max_cycles.unwrap_or(DEFAULT_MAX_CYCLES);
 
     // Step 1: Load ELF file
     let (entry_point, memory, signature, elf_tohost, base_addr) = load_elf_file(elf_data)?;
-    eprintln!("[DEBUG] load_elf_file returned: entry_point=0x{:016x}, base_addr=0x{:016x}, memory.len()={}, elf_tohost={:?}",
-              entry_point, base_addr, memory.len(), elf_tohost);
+    if verbose {
+        eprintln!("[DEBUG] load_elf_file returned: entry_point=0x{:016x}, base_addr=0x{:016x}, memory.len()={}, elf_tohost={:?}",
+                  entry_point, base_addr, memory.len(), elf_tohost);
+    }
 
     // Determine tohost address with priority:
     // 1. Command line provided address (tohost_addr)
@@ -426,6 +430,7 @@ pub fn load_and_run(
 
     // Step 3: Create and configure core
     let mut core = RiscvCore::new(bus_interface.clone(), bus_interface.clone());
+    core.set_verbose(verbose);
 
     // Reset core with entry point and base address 0 for SystemBus mapping
     // SystemBus expects PA = VA (identity mapping) or explicit ranges
@@ -440,8 +445,10 @@ pub fn load_and_run(
     // Since we use SystemBus with base_addr=0 in Core, VA = PA.
     let tohost_pa = tohost;
 
-    eprintln!("[DEBUG] Starting execution: entry_point=0x{:016x}, base_addr=0 (for bus), tohost=0x{:016x}",
-              entry_point, tohost_pa);
+    if verbose {
+        eprintln!("[DEBUG] Starting execution: entry_point=0x{:016x}, base_addr=0 (for bus), tohost=0x{:016x}",
+                  entry_point, tohost_pa);
+    }
 
     while cycles < max_cycles {
         // Read current PC for result
@@ -458,7 +465,7 @@ pub fn load_and_run(
                     match mem_guard.read_dword(tohost_pa) {
                         Ok(tohost_value) => {
                             // Track tohost value changes for debugging
-                            if tohost_value != last_tohost_value {
+                            if verbose && tohost_value != last_tohost_value {
                                 eprintln!(
                                     "[DEBUG] Cycle {}: tohost changed from 0x{:016x} to 0x{:016x}",
                                     cycles, last_tohost_value, tohost_value
@@ -472,7 +479,9 @@ pub fn load_and_run(
                                 let is_exit_command = (tohost_value >> 63) == 1;
                                 if is_exit_command {
                                     let exit_code = ((tohost_value << 1) >> 1) as u32; // Remove highest bit
-                                    eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
+                                    if verbose {
+                                        eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
+                                    }
                                     // Clear tohost after processing (Spike-compatible behavior)
                                     drop(mem_guard);
                                     clear_tohost(&bus_interface, tohost_pa);
@@ -487,7 +496,7 @@ pub fn load_and_run(
                                         signature_addr: signature.map(|s| s.vaddr),
                                         signature_data: sig_data,
                                     });
-                                } else {
+                                } else if verbose {
                                     // Non-zero but without exit command marker - possible memory corruption or other command
                                     eprintln!(
                                         "[WARN] tohost has non-command value: {:#x}",
@@ -498,7 +507,7 @@ pub fn load_and_run(
                         }
                         Err(e) => {
                             // Only log errors periodically to avoid spam
-                            if cycles % 1000 == 0 {
+                            if verbose && cycles % 1000 == 0 {
                                 eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
                             }
                         }
@@ -506,7 +515,7 @@ pub fn load_and_run(
                 }
 
                 // Debug output every 1000 cycles
-                if cycles % 1000 == 0 {
+                if verbose && cycles % 1000 == 0 {
                     let state = core.state();
                     eprintln!("[DEBUG] Cycle {}: PC=0x{:010x}, ra={}, sp={}, gp={}",
                               cycles, current_pc, state.regs[1], state.regs[2], state.regs[3]);
@@ -531,12 +540,14 @@ pub fn load_and_run(
     }
 
     // Timeout reached
-    eprintln!(
-        "[DEBUG] Timeout at cycle {}: PC=0x{:016x}, tohost=0x{:016x}",
-        cycles,
-        core.state().pc,
-        last_tohost_value
-    );
+    if verbose {
+        eprintln!(
+            "[DEBUG] Timeout at cycle {}: PC=0x{:016x}, tohost=0x{:016x}",
+            cycles,
+            core.state().pc,
+            last_tohost_value
+        );
+    }
 
     let sig_data = dump_signature(&bus_interface, signature.as_ref()).ok().flatten();
     Ok(ExecutionResult {
@@ -556,6 +567,7 @@ pub fn load_and_run(
 /// * `elf_path` - Path to ELF file
 /// * `max_cycles` - Maximum cycles before timeout
 /// * `tohost_addr` - Optional tohost address for exit detection
+/// * `verbose` - Whether to print verbose debug output
 ///
 /// # Returns
 /// ExecutionResult
@@ -563,12 +575,13 @@ pub fn load_and_run_file(
     elf_path: &str,
     max_cycles: Option<u64>,
     tohost_addr: Option<u64>,
+    verbose: bool,
 ) -> Result<ExecutionResult, ExecutorError> {
     // Read ELF file
     let elf_data = std::fs::read(elf_path)
         .map_err(|e| ExecutorError::ElfLoadError(ElfError::IoError(e.to_string())))?;
 
-    load_and_run(&elf_data, max_cycles, tohost_addr)
+    load_and_run(&elf_data, max_cycles, tohost_addr, verbose)
 }
 
 /// Reset the simulator state
@@ -609,6 +622,8 @@ pub struct RiscVSimulator {
     max_cycles: u64,
     /// Signature section info
     signature: Option<SignatureInfo>,
+    /// Verbose output flag
+    verbose: bool,
 }
 
 impl RiscVSimulator {
@@ -622,7 +637,14 @@ impl RiscVSimulator {
             tohost: DEFAULT_TOHOST,
             max_cycles: DEFAULT_MAX_CYCLES,
             signature: None,
+            verbose: false,
         }
+    }
+
+    /// Set verbosity
+    pub fn set_verbose(&mut self, verbose: bool) {
+        self.verbose = verbose;
+        self.core.set_verbose(verbose);
     }
 
     /// Load ELF data into memory
@@ -647,6 +669,7 @@ impl RiscVSimulator {
         }
         self.memory = ram;
         self.core = RiscvCore::new(self.memory.clone(), self.memory.clone());
+        self.core.set_verbose(self.verbose);
 
         // Update tohost address
         if let Some(addr) = tohost {
@@ -719,7 +742,7 @@ impl RiscVSimulator {
             match guard.read_dword(self.tohost) {
                 Ok(tohost_value) => {
                     // Track tohost value changes for debugging
-                    if tohost_value != last_tohost_value {
+                    if self.verbose && tohost_value != last_tohost_value {
                         eprintln!(
                             "[DEBUG] Cycle {}: PC=0x{:010x}, tohost changed from 0x{:016x} to 0x{:016x}",
                             cycles,
@@ -736,12 +759,14 @@ impl RiscVSimulator {
                         let is_exit_command = (tohost_value >> 63) == 1;
                         if is_exit_command {
                             let exit_code = ((tohost_value << 1) >> 1) as u32; // Remove highest bit
-                            eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
+                            if self.verbose {
+                                eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
+                            }
                             // Clear tohost after processing (Spike-compatible behavior)
                             drop(guard);
                             clear_tohost(&self.memory, self.tohost);
                             return Ok(self.get_result(cycles));
-                        } else {
+                        } else if self.verbose {
                             // Non-zero but without exit command marker - possible memory corruption or other command
                             eprintln!("[WARN] tohost has non-command value: {:#x}", tohost_value);
                         }
@@ -749,7 +774,7 @@ impl RiscVSimulator {
                 }
                 Err(e) => {
                     // Only log errors periodically to avoid spam
-                    if cycles % 1000 == 0 {
+                    if self.verbose && cycles % 1000 == 0 {
                         eprintln!(
                             "[DEBUG] Cycle {}: PC=0x{:010x}, tohost read failed: {}",
                             cycles,
@@ -763,12 +788,14 @@ impl RiscVSimulator {
         }
 
         // Timeout - final debug output
-        eprintln!(
-            "[DEBUG] Timeout at cycle {}: PC=0x{:010x}, tohost=0x{:016x}",
-            cycles,
-            self.core.state().pc,
-            last_tohost_value
-        );
+        if self.verbose {
+            eprintln!(
+                "[DEBUG] Timeout at cycle {}: PC=0x{:010x}, tohost=0x{:016x}",
+                cycles,
+                self.core.state().pc,
+                last_tohost_value
+            );
+        }
 
         // Timeout
         let sig_data = dump_signature(&self.memory, self.signature.as_ref())

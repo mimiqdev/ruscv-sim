@@ -82,6 +82,8 @@ pub struct RiscvCore {
     tlm_interface: Option<Arc<Mutex<dyn TlmInterface>>>,
     /// Base address for virtual address translation (loaded ELF base address)
     base_addr: u64,
+    /// Verbose output flag
+    verbose: bool,
 }
 
 /// Memory adapter for virtual to physical address translation
@@ -184,6 +186,7 @@ impl RiscvCore {
             executor: Executor::new(),
             tlm_interface: None,
             base_addr: 0,
+            verbose: false,
         }
     }
 
@@ -191,6 +194,11 @@ impl RiscvCore {
     pub fn new_with_memory(mem_size: usize) -> Self {
         let mem = Arc::new(Mutex::new(SimpleMemory::new(mem_size)));
         Self::new(mem.clone(), mem)
+    }
+
+    /// Set verbosity
+    pub fn set_verbose(&mut self, verbose: bool) {
+        self.verbose = verbose;
     }
 
     /// Set TLM interface
@@ -247,16 +255,18 @@ impl RiscvCore {
             self.state.pc += 4;
         }
 
-        eprintln!(
-            "[STEP] PC: {:#010x} -> {:#010x}, branch_taken={}, instr={:#010x}",
-            pc_before, self.state.pc, self.state.branch_taken, instruction
-        );
+        if self.verbose {
+            eprintln!(
+                "[STEP] PC: {:#010x} -> {:#010x}, branch_taken={}, instr={:#010x}",
+                pc_before, self.state.pc, self.state.branch_taken, instruction
+            );
 
-        // Debug: trace gp and sp registers
-        eprintln!(
-            "[REGS] gp(x3)={}, sp(x2)={}",
-            self.state.regs[3], self.state.regs[2]
-        );
+            // Debug: trace gp and sp registers
+            eprintln!(
+                "[REGS] gp(x3)={}, sp(x2)={}",
+                self.state.regs[3], self.state.regs[2]
+            );
+        }
 
         Ok(())
     }
