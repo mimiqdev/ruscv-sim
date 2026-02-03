@@ -48,6 +48,16 @@ pub enum ExecutorError {
 }
 
 /// System Bus connecting CPU, RAM, and Peripherals
+///
+/// # Memory Map
+/// - RAM: Configurable base address and size
+/// - UART: Fixed at 0x10000000, size 0x100
+///
+/// # UART Access Restrictions
+/// The UART 16550 only supports byte-wide (8-bit) register access.
+/// Multi-byte accesses (halfword, word, dword) to UART addresses will fail
+/// with `MemoryError::InvalidAddress`. This is intentional as real UART
+/// hardware typically does not support multi-byte accesses.
 pub struct SystemBus {
     ram: Arc<Mutex<SimpleMemory>>,
     uart: Arc<Mutex<Uart16550>>,
