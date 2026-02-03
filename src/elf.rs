@@ -1108,7 +1108,7 @@ mod tests {
     #[test]
     fn test_tohost_symbol_from_elf() {
         // Read the actual test ELF file
-        let elf_path = "tests/riscv-tests/add.elf";
+        let elf_path = "tests/bare-metal-riscv-test/rv64i/add.elf";
         let elf_data = std::fs::read(elf_path);
 
         // Skip test if ELF file doesn't exist (e.g., not built yet)
@@ -1140,7 +1140,7 @@ mod tests {
     #[test]
     fn test_fib_tohost_address() {
         // Test that fib.elf correctly parses tohost address from .tohost section
-        let elf_path = "tests/riscv-tests/fib.elf";
+        let elf_path = "tests/bare-metal-riscv-test/rv64i/fib.elf";
         let elf_data = std::fs::read(elf_path);
 
         if elf_data.is_err() {

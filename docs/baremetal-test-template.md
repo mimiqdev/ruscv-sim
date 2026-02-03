@@ -182,14 +182,18 @@ branch_taken:
 
 ```
 tests/
-├── riscv-tests/              # ELF 回归测试（汇编源文件）
+├── bare-metal-riscv-test/    # ELF 回归测试（汇编源文件）
 │   ├── linker.ld             # 链接器脚本（内存布局）
 │   ├── Makefile              # 构建脚本
-│   ├── add.S                 # ADD 指令测试
-│   ├── sub.S                 # SUB 指令测试
-│   ├── and.S                 # AND 指令测试
-│   ├── ...
-│   └── *.elf                 # 编译后的可执行文件
+│   ├── rv64i/                # RV64I 基础整数指令测试
+│   │   ├── add.S             # ADD 指令测试
+│   │   ├── fib.S             # 斐波那契测试
+│   │   └── hello.S           # UART 输出测试
+│   ├── rv64m/                # RV64M 整数乘除法测试
+│   ├── rv64a/                # RV64A 原子指令测试
+│   ├── rv64f/                # RV64F 单精度浮点测试
+│   ├── rv64d/                # RV64D 双精度浮点测试
+│   └── rv64c/                # RV64C 压缩指令测试
 │
 ├── test_elf_loader.rs        # ELF 加载器集成测试
 ├── test_add_direct.rs        # 指令直接测试（Rust 单元测试）
@@ -206,7 +210,7 @@ tests/
 ### 4.1 构建测试
 
 ```bash
-cd tests/riscv-tests
+cd tests/bare-metal-riscv-test
 make all          # 编译所有测试
 make disasm       # 反汇编查看
 make clean        # 清理生成文件
@@ -222,7 +226,7 @@ cargo test --test test_elf_loader
 cargo test test_add -- --nocapture
 
 # 运行模拟器（手动）
-cargo run -- run tests/riscv-tests/add.elf --verbose
+cargo run -- run tests/bare-metal-riscv-test/rv64i/add.elf --verbose
 ```
 
 ---

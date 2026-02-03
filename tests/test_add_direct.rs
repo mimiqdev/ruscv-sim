@@ -2,7 +2,7 @@ use ruscv_sim::load_and_run;
 
 #[test]
 fn test_add_program() {
-    let elf_data = std::fs::read("tests/riscv-tests/add.elf").unwrap();
+    let elf_data = std::fs::read("tests/bare-metal-riscv-test/rv64i/add.elf").unwrap();
     println!("Loading ELF: {} bytes", elf_data.len());
 
     // Tohost address is at 0x80002000 (from .tohost section in ELF)

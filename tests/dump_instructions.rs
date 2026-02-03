@@ -2,7 +2,7 @@ use ruscv_sim::InstructionDecoder;
 
 #[test]
 fn dump_add_instructions() {
-    let elf_data = std::fs::read("tests/riscv-tests/add.elf").unwrap();
+    let elf_data = std::fs::read("tests/bare-metal-riscv-test/rv64i/add.elf").unwrap();
     let decoder = InstructionDecoder::new();
 
     println!("ELF size: {} bytes", elf_data.len());

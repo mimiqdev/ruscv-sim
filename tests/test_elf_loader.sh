@@ -12,7 +12,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TESTS_DIR="${SCRIPT_DIR}/riscv-tests"
+TESTS_DIR="${SCRIPT_DIR}/bare-metal-riscv-test"
 RUSCV_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Build the ruscv-sim if needed
@@ -26,7 +26,7 @@ RUSCV_BIN="${RUSCV_DIR}/target/debug/ruscv-sim"
 check_elf() {
     local elf="${TESTS_DIR}/$1"
     if [ ! -f "$elf" ]; then
-        echo -e "${YELLOW}Warning: $elf not found. Run 'make' in tests/riscv-tests/ first.${NC}"
+        echo -e "${YELLOW}Warning: $elf not found. Run 'make' in tests/bare-metal-riscv-test/ first.${NC}"
         return 1
     fi
     return 0
@@ -86,8 +86,8 @@ echo ""
 # Test 1: add.elf (1+2+...+10 = 55)
 echo -e "${YELLOW}Test 1: add.elf (Sum 1 to 10)${NC}"
 echo "----------------------------------------"
-if check_elf "add.elf"; then
-    if run_test "add" "${TESTS_DIR}/add.elf" "0" "Calculate sum 1+2+...+10 = 55"; then
+if check_elf "rv64i/add.elf"; then
+    if run_test "add" "${TESTS_DIR}/rv64i/add.elf" "0" "Calculate sum 1+2+...+10 = 55"; then
         ((TESTS_PASSED++))
     else
         ((TESTS_FAILED++))
@@ -100,8 +100,8 @@ echo ""
 # Test 2: fib.elf (Fibonacci F10 = 55)
 echo -e "${YELLOW}Test 2: fib.elf (Fibonacci Sequence)${NC}"
 echo "----------------------------------------"
-if check_elf "fib.elf"; then
-    if run_test "fib" "${TESTS_DIR}/fib.elf" "0" "Calculate Fibonacci F10 = 55, expect pass (exit 0)"; then
+if check_elf "rv64i/fib.elf"; then
+    if run_test "fib" "${TESTS_DIR}/rv64i/fib.elf" "0" "Calculate Fibonacci F10 = 55, expect pass (exit 0)"; then
         ((TESTS_PASSED++))
     else
         ((TESTS_FAILED++))
@@ -114,8 +114,8 @@ echo ""
 # Test 3: hello.elf (UART output)
 echo -e "${YELLOW}Test 3: hello.elf (UART Hello World)${NC}"
 echo "----------------------------------------"
-if check_elf "hello.elf"; then
-    if run_test "hello" "${TESTS_DIR}/hello.elf" "0" "Output 'Hello!' via UART, exit 0"; then
+if check_elf "rv64i/hello.elf"; then
+    if run_test "hello" "${TESTS_DIR}/rv64i/hello.elf" "0" "Output 'Hello!' via UART, exit 0"; then
         ((TESTS_PASSED++))
     else
         ((TESTS_FAILED++))

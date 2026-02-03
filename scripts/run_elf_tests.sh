@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-TESTS_DIR="${PROJECT_DIR}/tests/riscv-tests"
+TESTS_DIR="${PROJECT_DIR}/tests/bare-metal-riscv-test"
 
 # Find ruscv-sim binary
 find_ruscv_sim() {
@@ -150,8 +150,8 @@ TESTS_FAILED=0
 # Test 1: add.elf (Sum 1 to 10 = 55)
 echo -e "${YELLOW}Test 1: add.elf (Sum 1 to 10)${NC}"
 echo "--------------------------------------------"
-if check_elf "${TESTS_DIR}/add.elf"; then
-    if run_test "add" "${TESTS_DIR}/add.elf" "0" "Calculate sum 1+2+...+10 = 55"; then
+if check_elf "${TESTS_DIR}/rv64i/add.elf"; then
+    if run_test "add" "${TESTS_DIR}/rv64i/add.elf" "0" "Calculate sum 1+2+...+10 = 55"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
     else
         TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -164,8 +164,8 @@ echo ""
 # Test 2: fib.elf (Fibonacci F10 = 55)
 echo -e "${YELLOW}Test 2: fib.elf (Fibonacci Sequence)${NC}"
 echo "--------------------------------------------"
-if check_elf "${TESTS_DIR}/fib.elf"; then
-    if run_test "fib" "${TESTS_DIR}/fib.elf" "0" "Calculate Fibonacci F10 = 55"; then
+if check_elf "${TESTS_DIR}/rv64i/fib.elf"; then
+    if run_test "fib" "${TESTS_DIR}/rv64i/fib.elf" "0" "Calculate Fibonacci F10 = 55"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
     else
         TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -178,8 +178,8 @@ echo ""
 # Test 3: hello.elf (UART output)
 echo -e "${YELLOW}Test 3: hello.elf (UART Hello World)${NC}"
 echo "--------------------------------------------"
-if check_elf "${TESTS_DIR}/hello.elf"; then
-    if run_hello_test "hello" "${TESTS_DIR}/hello.elf" "0" "Output 'Hello!' via UART"; then
+if check_elf "${TESTS_DIR}/rv64i/hello.elf"; then
+    if run_hello_test "hello" "${TESTS_DIR}/rv64i/hello.elf" "0" "Output 'Hello!' via UART"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
     else
         TESTS_FAILED=$((TESTS_FAILED + 1))

@@ -107,7 +107,7 @@
 **参考文档**: [baremetal-test-template.md](../docs/baremetal-test-template.md)
 
 #### Features
-- [ ] **目录结构重组**: 
+- [x] **目录结构重组**: 
   - `tests/riscv-tests/` → `tests/bare-metal-riscv-test/`
   - 按扩展名分文件夹: `rv64i/`, `rv64m/`, `rv64a/`, `rv64f/`, `rv64d/`, `rv64c/`
 - [ ] **RVI 整数指令**: add, sub, and, or, xor, sll, srl, sra

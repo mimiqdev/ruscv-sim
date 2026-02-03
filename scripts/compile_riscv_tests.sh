@@ -11,7 +11,7 @@ NC='\033[0m' # No Color
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TESTS_DIR="${SCRIPT_DIR}/../tests/riscv-tests"
+TESTS_DIR="${SCRIPT_DIR}/../tests/bare-metal-riscv-test"
 OUTDIR="${TESTS_DIR}"
 
 # RISC-V toolchain prefix
@@ -24,7 +24,7 @@ ASFLAGS="-march=rv64ima -mabi=lp64"
 LDSCRIPT="-T${TESTS_DIR}/linker.ld"
 
 # Source files
-SOURCES="add.S fib.S hello.S"
+SOURCES="rv64i/add.S rv64i/fib.S rv64i/hello.S"
 
 # Function to check if toolchain exists
 check_toolchain() {
