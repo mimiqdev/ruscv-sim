@@ -51,10 +51,23 @@ pub enum ExecutorError {
 const DEFAULT_MAX_CYCLES: u64 = 10_000_000;
 
 /// Default tohost address (using address that matches our test programs)
-const DEFAULT_TOHOST: u64 = 0x8000_1030;
+const DEFAULT_TOHOST: u64 = 0x8000_0040;
 
-/// Write marker to distinguish tohost/fromhost access
-const WRITE_MARKER: u64 = 1 << 63;
+// HTIF (Host-Target Interface) constants
+/// HTIF Device ID for syscall
+const HTIF_DEVICE_SYSCALL: u64 = 0;
+/// HTIF Command ID for syscall
+const HTIF_CMD_SYSCALL: u64 = 0;
+/// HTIF device shift
+const HTIF_DEVICE_SHIFT: u64 = 56;
+/// HTIF command shift
+const HTIF_CMD_SHIFT: u64 = 48;
+/// HTIF device mask
+const HTIF_DEVICE_MASK: u64 = 0xFF << HTIF_DEVICE_SHIFT;
+/// HTIF command mask
+const HTIF_CMD_MASK: u64 = 0xFF << HTIF_CMD_SHIFT;
+/// HTIF payload mask (lower 48 bits)
+const HTIF_PAYLOAD_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
 
 /// Dump signature data from memory
 ///
@@ -137,42 +150,61 @@ pub fn dump_signature(
     Ok(Some(data))
 }
 
-/// Extract exit code from tohost value
+/// Extract exit code from tohost value using HTIF format or alternative formats
 ///
-/// Supports two exit code formats:
-/// 1. Standard format (WRITE_MARKER | exit_code): Upper bit set, lower 32 bits contain exit code
-/// 2. Direct format: Small positive number (< 0x100, non-zero) representing exit code directly
+/// Supports two formats:
+/// 1. Standard HTIF format: tohost = (device << 56) | (cmd << 48) | payload
+///    - device: 8 bits (device ID), must be 0 for syscall/exit
+///    - cmd: 8 bits (command ID), must be 0 for exit
+///    - payload: 48 bits, exit signal format: (exit_code << 1) | 1
 ///
-/// Returns Some(exit_code) if a valid exit code is detected, None otherwise.
-fn extract_exit_code(tohost_value: u64) -> Option<u32> {
-    // Standard tohost format: upper bit indicates write, lower bits contain exit code
-    if tohost_value & WRITE_MARKER != 0 {
-        Some((tohost_value & 0xFFFFFFFF) as u32)
-    } else {
-        None
+/// 2. Alternative format (used by some test programs): tohost = (1 << 63) | exit_code
+///    - bit 63: write marker
+///    - bits 0-31: exit code directly
+///
+/// Returns the exit code if a valid exit signal is detected, None otherwise.
+fn try_extract_exit_code(tohost_value: u64) -> Option<u32> {
+    // Skip zero value (no signal)
+    if tohost_value == 0 {
+        return None;
     }
+
+    // Try standard HTIF format first
+    // Extract device (bits 56-63)
+    let device = (tohost_value & HTIF_DEVICE_MASK) >> HTIF_DEVICE_SHIFT;
+    // Extract command (bits 48-55)
+    let cmd = (tohost_value & HTIF_CMD_MASK) >> HTIF_CMD_SHIFT;
+    // Extract payload (bits 0-47)
+    let payload = tohost_value & HTIF_PAYLOAD_MASK;
+
+    // Standard HTIF: device=0, cmd=0, payload lowest bit = 1
+    if device == HTIF_DEVICE_SYSCALL && cmd == HTIF_CMD_SYSCALL && payload & 1 != 0 {
+        return Some((payload >> 1) as u32);
+    }
+
+    // Try alternative format: (1 << 63) | exit_code
+    // This is used by some RISC-V test programs that set bit 63 as a write marker
+    if tohost_value & (1u64 << 63) != 0 {
+        // Extract exit code from lower 32 bits (or 16 bits for small values)
+        let exit_code = (tohost_value & 0xFFFFFFFF) as u32;
+        return Some(exit_code);
+    }
+
+    // No recognized exit signal format
+    None
 }
 
-/// Unified exit code extraction from tohost value
+/// Clear tohost value in memory (Spike-compatible behavior)
 ///
-/// This function handles both exit code formats consistently:
-/// - Format 1 (standard): `WRITE_MARKER | exit_code` - upper bit set
-/// - Format 2 (direct): Small exit code value (< 0x100, non-zero)
-///
-/// Returns the exit code if detected, None if not an exit signal.
-fn try_extract_exit_code(tohost_value: u64) -> Option<u32> {
-    // Try standard format first (WRITE_MARKER | exit_code)
-    if let Some(code) = extract_exit_code(tohost_value) {
-        return Some(code);
+/// After processing a tohost write, the tohost location should be cleared to 0.
+fn clear_tohost(mem: &Arc<Mutex<SimpleMemory>>, tohost_addr: u64) {
+    let tohost_pa = tohost_addr; // Already physical address in callers
+    if let Ok(mut guard) = mem.lock() {
+        // Write 8 bytes of zeros to clear tohost
+        for i in 0..8 {
+            let _ = guard.write_byte(tohost_pa + i, 0);
+        }
     }
-
-    // Fall back to direct format: small positive number is likely an exit code
-    // Exit codes are typically in range 0-255 (0xFF)
-    if tohost_value != 0 && tohost_value < 0x100 {
-        return Some(tohost_value as u32);
-    }
-
-    None
 }
 
 /// Load and execute an ELF file
@@ -196,7 +228,10 @@ pub fn load_and_run(
     eprintln!("[DEBUG] load_elf_file returned: entry_point=0x{:016x}, base_addr=0x{:016x}, memory.len()={}, elf_tohost={:?}",
               entry_point, base_addr, memory.len(), elf_tohost);
 
-    // Use provided tohost address or try to find it in ELF
+    // Determine tohost address with priority:
+    // 1. Command line provided address (tohost_addr)
+    // 2. Address from ELF .tohost section (elf_tohost)
+    // 3. Default address (DEFAULT_TOHOST)
     let tohost = tohost_addr.or(elf_tohost).unwrap_or(DEFAULT_TOHOST);
 
     // Step 2: Allocate and initialize memory
@@ -225,7 +260,12 @@ pub fn load_and_run(
     let mut last_tohost_value: u64 = 0;
 
     // Convert tohost virtual address to physical address for checking
-    let tohost_pa = tohost.wrapping_sub(base_addr);
+    // If tohost is already a physical address (less than base_addr), use it directly
+    let tohost_pa = if tohost >= base_addr {
+        tohost.wrapping_sub(base_addr)
+    } else {
+        tohost
+    };
 
     eprintln!("[DEBUG] Starting execution: entry_point=0x{:016x}, base_addr=0x{:016x}, tohost=0x{:016x} (PA=0x{:016x})",
               entry_point, base_addr, tohost, tohost_pa);
@@ -239,22 +279,12 @@ pub fn load_and_run(
             Ok(()) => {
                 cycles += 1;
 
-                // Debug output every 1000 cycles
-                if cycles % 1000 == 0 {
-                    if let Ok(mem_guard) = mem.lock() {
-                        if let Ok(tohost_value) = mem_guard.read_dword(tohost_pa) {
-                            let state = core.state();
-                            eprintln!("[DEBUG] Cycle {}: PC=0x{:010x}, ra={}, sp={}, gp={}, tohost=0x{:016x}",
-                                      cycles, current_pc, state.regs[1], state.regs[2], state.regs[3], tohost_value);
-                        }
-                    }
-                }
-
-                // Check for tohost write (exit signal)
+                // Check for tohost write (exit signal) after EVERY instruction
+                // This ensures we detect the write immediately
                 if let Ok(mem_guard) = mem.lock() {
                     match mem_guard.read_dword(tohost_pa) {
                         Ok(tohost_value) => {
-                            // Track tohost value changes
+                            // Track tohost value changes for debugging
                             if tohost_value != last_tohost_value {
                                 eprintln!(
                                     "[DEBUG] Cycle {}: tohost changed from 0x{:016x} to 0x{:016x}",
@@ -263,23 +293,52 @@ pub fn load_and_run(
                                 last_tohost_value = tohost_value;
                             }
 
-                            if let Some(code) = try_extract_exit_code(tohost_value) {
-                                eprintln!("[DEBUG] Exit signal detected: code={}", code);
-                                let sig_data =
-                                    dump_signature(&mem, signature.as_ref()).ok().flatten();
-                                return Ok(ExecutionResult {
-                                    exit_code: code,
-                                    cycles,
-                                    final_pc: core.state().pc,
-                                    timed_out: false,
-                                    error: None,
-                                    signature_addr: signature.map(|s| s.vaddr),
-                                    signature_data: sig_data,
-                                });
+                            // Check if tohost contains a valid exit signal
+                            // Only values with bit 63 set are considered exit commands
+                            if tohost_value != 0 {
+                                let is_exit_command = (tohost_value >> 63) == 1;
+                                if is_exit_command {
+                                    let exit_code = ((tohost_value << 1) >> 1) as u32; // Remove highest bit
+                                    eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
+                                    // Clear tohost after processing (Spike-compatible behavior)
+                                    drop(mem_guard);
+                                    clear_tohost(&mem, tohost_pa);
+                                    let sig_data =
+                                        dump_signature(&mem, signature.as_ref()).ok().flatten();
+                                    return Ok(ExecutionResult {
+                                        exit_code,
+                                        cycles,
+                                        final_pc: core.state().pc,
+                                        timed_out: false,
+                                        error: None,
+                                        signature_addr: signature.map(|s| s.vaddr),
+                                        signature_data: sig_data,
+                                    });
+                                } else {
+                                    // Non-zero but without exit command marker - possible memory corruption or other command
+                                    eprintln!(
+                                        "[WARN] tohost has non-command value: {:#x}",
+                                        tohost_value
+                                    );
+                                }
                             }
                         }
                         Err(e) => {
-                            eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
+                            // Only log errors periodically to avoid spam
+                            if cycles % 1000 == 0 {
+                                eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
+                            }
+                        }
+                    }
+                }
+
+                // Debug output every 1000 cycles
+                if cycles % 1000 == 0 {
+                    if let Ok(mem_guard) = mem.lock() {
+                        if let Ok(tohost_value) = mem_guard.read_dword(tohost_pa) {
+                            let state = core.state();
+                            eprintln!("[DEBUG] Cycle {}: PC=0x{:010x}, ra={}, sp={}, gp={}, tohost=0x{:016x}",
+                                      cycles, current_pc, state.regs[1], state.regs[2], state.regs[3], tohost_value);
                         }
                     }
                 }
@@ -303,6 +362,13 @@ pub fn load_and_run(
     }
 
     // Timeout reached
+    eprintln!(
+        "[DEBUG] Timeout at cycle {}: PC=0x{:016x}, tohost=0x{:016x}",
+        cycles,
+        core.state().pc,
+        last_tohost_value
+    );
+
     let sig_data = dump_signature(&mem, signature.as_ref()).ok().flatten();
     Ok(ExecutionResult {
         exit_code: 1, // Non-zero indicates abnormal termination
@@ -320,18 +386,20 @@ pub fn load_and_run(
 /// # Arguments
 /// * `elf_path` - Path to ELF file
 /// * `max_cycles` - Maximum cycles before timeout
+/// * `tohost_addr` - Optional tohost address for exit detection
 ///
 /// # Returns
 /// ExecutionResult
 pub fn load_and_run_file(
     elf_path: &str,
     max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
 ) -> Result<ExecutionResult, ExecutorError> {
     // Read ELF file
     let elf_data = std::fs::read(elf_path)
         .map_err(|e| ExecutorError::ElfLoadError(ElfError::IoError(e.to_string())))?;
 
-    load_and_run(&elf_data, max_cycles, None)
+    load_and_run(&elf_data, max_cycles, tohost_addr)
 }
 
 /// Reset the simulator state
@@ -455,45 +523,11 @@ impl RiscVSimulator {
         let max_cycles = max_cycles.unwrap_or(self.max_cycles);
         let mut cycles = 0u64;
 
-        // DEBUG: Track last tohost value to detect changes
+        // Track last tohost value to detect changes
         let mut last_tohost_value: u64 = 0;
 
         while cycles < max_cycles {
-            // DEBUG: Check tohost every cycle and log changes
-            let guard = self.memory.lock().unwrap();
-            match guard.read_dword(self.tohost) {
-                Ok(tohost_value) => {
-                    if cycles % 1000 == 0 || tohost_value != last_tohost_value {
-                        eprintln!(
-                            "[DEBUG] Cycle {}: PC=0x{:010x}, tohost=0x{:016x} (changed from 0x{:016x})",
-                            cycles,
-                            self.core.state().pc,
-                            tohost_value,
-                            last_tohost_value
-                        );
-                    }
-                    last_tohost_value = tohost_value;
-
-                    // Check for exit signal
-                    if let Some(code) = try_extract_exit_code(tohost_value) {
-                        eprintln!("[DEBUG] Exit signal detected: code={}", code);
-                        drop(guard);
-                        return Ok(self.get_result(cycles));
-                    }
-                }
-                Err(e) => {
-                    if cycles % 1000 == 0 {
-                        eprintln!(
-                            "[DEBUG] Cycle {}: PC=0x{:010x}, tohost read failed: {}",
-                            cycles,
-                            self.core.state().pc,
-                            e
-                        );
-                    }
-                }
-            }
-            drop(guard);
-
+            // Execute one instruction first
             match self.step() {
                 Ok(()) => {
                     cycles += 1;
@@ -513,6 +547,54 @@ impl RiscVSimulator {
                     });
                 }
             }
+
+            // Check for tohost write AFTER executing instruction
+            // This ensures we detect the write immediately
+            let guard = self.memory.lock().unwrap();
+            match guard.read_dword(self.tohost) {
+                Ok(tohost_value) => {
+                    // Track tohost value changes for debugging
+                    if tohost_value != last_tohost_value {
+                        eprintln!(
+                            "[DEBUG] Cycle {}: PC=0x{:010x}, tohost changed from 0x{:016x} to 0x{:016x}",
+                            cycles,
+                            self.core.state().pc,
+                            last_tohost_value,
+                            tohost_value
+                        );
+                        last_tohost_value = tohost_value;
+                    }
+
+                    // Check for exit signal (tohost != 0 and bit 63 set)
+                    // Only values with bit 63 set are considered exit commands
+                    if tohost_value != 0 {
+                        let is_exit_command = (tohost_value >> 63) == 1;
+                        if is_exit_command {
+                            let exit_code = ((tohost_value << 1) >> 1) as u32; // Remove highest bit
+                            eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
+                            // Clear tohost after processing (Spike-compatible behavior)
+                            drop(guard);
+                            clear_tohost(&self.memory, self.tohost);
+                            return Ok(self.get_result(cycles));
+                        } else {
+                            // Non-zero but without exit command marker - possible memory corruption or other command
+                            eprintln!("[WARN] tohost has non-command value: {:#x}", tohost_value);
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Only log errors periodically to avoid spam
+                    if cycles % 1000 == 0 {
+                        eprintln!(
+                            "[DEBUG] Cycle {}: PC=0x{:010x}, tohost read failed: {}",
+                            cycles,
+                            self.core.state().pc,
+                            e
+                        );
+                    }
+                }
+            }
+            drop(guard);
         }
 
         // Timeout - final debug output
@@ -695,49 +777,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_exit_code_extraction() {
-        // Normal exit code (0x1 with write marker)
-        let val = WRITE_MARKER | 0x1;
-        assert_eq!(extract_exit_code(val), Some(1));
-
-        // Exit code 0 (success)
-        let val = WRITE_MARKER;
-        assert_eq!(extract_exit_code(val), Some(0));
-
-        // Non-exit value
-        let val = 0x1234_5678;
-        assert_eq!(extract_exit_code(val), None);
-    }
-
-    #[test]
-    fn test_unified_exit_code_extraction() {
-        // Standard format with WRITE_MARKER
-        let val = WRITE_MARKER | 0x5;
-        assert_eq!(try_extract_exit_code(val), Some(5));
-
-        // Standard format with exit code 0
-        let val = WRITE_MARKER;
+    fn test_htif_exit_code_extraction() {
+        // HTIF standard format: exit code 0
+        // tohost = (device << 56) | (cmd << 48) | payload
+        // payload = (exit_code << 1) | 1 = (0 << 1) | 1 = 1
+        let val = (HTIF_DEVICE_SYSCALL << HTIF_DEVICE_SHIFT)
+            | (HTIF_CMD_SYSCALL << HTIF_CMD_SHIFT)
+            | 1u64;
         assert_eq!(try_extract_exit_code(val), Some(0));
 
-        // Direct format (small exit code)
-        let val = 0x2;
-        assert_eq!(try_extract_exit_code(val), Some(2));
+        // HTIF standard format: exit code 1
+        // payload = (1 << 1) | 1 = 3
+        let val = (HTIF_DEVICE_SYSCALL << HTIF_DEVICE_SHIFT)
+            | (HTIF_CMD_SYSCALL << HTIF_CMD_SHIFT)
+            | 3u64;
+        assert_eq!(try_extract_exit_code(val), Some(1));
 
-        // Direct format (exit code 0)
-        let val = 0x0;
+        // HTIF standard format: exit code 42
+        // payload = (42 << 1) | 1 = 85
+        let val = (HTIF_DEVICE_SYSCALL << HTIF_DEVICE_SHIFT)
+            | (HTIF_CMD_SYSCALL << HTIF_CMD_SHIFT)
+            | 85u64;
+        assert_eq!(try_extract_exit_code(val), Some(42));
+
+        // HTIF format with wrong device (should not match)
+        // device = 1, not 0
+        let val = (1u64 << HTIF_DEVICE_SHIFT) | (HTIF_CMD_SYSCALL << HTIF_CMD_SHIFT) | 1u64;
         assert_eq!(try_extract_exit_code(val), None);
 
-        // Non-exit value (too large)
+        // HTIF format with wrong cmd (should not match)
+        // cmd = 1, not 0
+        let val = (HTIF_DEVICE_SYSCALL << HTIF_DEVICE_SHIFT) | (1u64 << HTIF_CMD_SHIFT) | 1u64;
+        assert_eq!(try_extract_exit_code(val), None);
+
+        // Non-exit payload (lowest bit is 0, not 1)
+        // payload = 84 = (42 << 1), no exit flag
+        let val = (HTIF_DEVICE_SYSCALL << HTIF_DEVICE_SHIFT)
+            | (HTIF_CMD_SYSCALL << HTIF_CMD_SHIFT)
+            | 84u64;
+        assert_eq!(try_extract_exit_code(val), None);
+
+        // Zero tohost value (should not match)
+        let val = 0u64;
+        assert_eq!(try_extract_exit_code(val), None);
+
+        // Random non-HTIF value (should not match)
         let val = 0x1234_5678;
         assert_eq!(try_extract_exit_code(val), None);
 
-        // Edge case: max direct exit code
-        let val = 0xFF;
-        assert_eq!(try_extract_exit_code(val), Some(0xFF));
-
-        // Just over direct format range
-        let val = 0x100;
-        assert_eq!(try_extract_exit_code(val), None);
+        // Large exit code (max 47 bits)
+        let large_exit_code: u64 = 0x7FFF_FFFF_FFFF;
+        let payload = (large_exit_code << 1) | 1;
+        let val = (HTIF_DEVICE_SYSCALL << HTIF_DEVICE_SHIFT)
+            | (HTIF_CMD_SYSCALL << HTIF_CMD_SHIFT)
+            | payload;
+        assert_eq!(try_extract_exit_code(val), Some(large_exit_code as u32));
     }
 
     #[test]

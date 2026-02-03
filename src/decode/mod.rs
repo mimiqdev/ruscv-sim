@@ -197,7 +197,15 @@ impl InstructionDecoder {
                 };
                 decoded.funct3 =
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
-                decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
+                // Load uses I-type immediate format [31:20], Store uses S-type format [31:25|11:7]
+                decoded.imm = if matches!(opcode, Opcode::Load) {
+                    Some(((instruction >> 20) as i32) as u32 & 0xFFF)
+                } else {
+                    // S-type immediate: imm[11:5] | imm[4:0]
+                    let imm11_5 = ((instruction >> 25) & 0x7F) << 5;
+                    let imm4_0 = (instruction >> 7) & 0x1F;
+                    Some(imm11_5 | imm4_0)
+                };
             }
             Opcode::OpImm => {
                 decoded.format = InstructionFormat::IType;
@@ -353,5 +361,39 @@ mod tests {
 
         assert_eq!(decoded.opcode, Opcode::System);
         assert_eq!(decoded.imm, Some(1));
+    }
+
+    #[test]
+    fn test_store_decode() {
+        // SD x6, 5(x5) - S-type instruction
+        // Format: imm[11:5] | rs2 | rs1 | funct3 | imm[4:0] | opcode
+        // imm = 5, rs2 = 6, rs1 = 5, funct3 = 011 (SD), opcode = 0100011
+        let instruction = (0 << 25) | (6 << 20) | (5 << 15) | (3 << 12) | (5 << 7) | 0b010_0011;
+        let decoder = InstructionDecoder::new();
+        let decoded = decoder.decode(instruction).unwrap();
+
+        assert_eq!(decoded.opcode, Opcode::Store);
+        assert_eq!(decoded.rs1, Some(5), "rs1 should be x5");
+        assert_eq!(decoded.rs2, Some(6), "rs2 should be x6");
+        assert_eq!(decoded.imm, Some(5), "immediate should be 5");
+        assert_eq!(decoded.funct3, Some(Funct3::Sltu)); // funct3 = 0b011
+        assert!(decoded.rd.is_none(), "Store should not have rd");
+    }
+
+    #[test]
+    fn test_load_decode() {
+        // LD x3, 8(x4) - I-type instruction
+        // Format: imm[11:0] | rs1 | funct3 | rd | opcode
+        // imm = 8, rs1 = 4, funct3 = 011 (LD), rd = 3, opcode = 0000011
+        let instruction = (8 << 20) | (4 << 15) | (3 << 12) | (3 << 7) | 0b000_0011;
+        let decoder = InstructionDecoder::new();
+        let decoded = decoder.decode(instruction).unwrap();
+
+        assert_eq!(decoded.opcode, Opcode::Load);
+        assert_eq!(decoded.rs1, Some(4), "rs1 should be x4");
+        assert_eq!(decoded.rd, Some(3), "rd should be x3");
+        assert_eq!(decoded.imm, Some(8), "immediate should be 8");
+        assert_eq!(decoded.funct3, Some(Funct3::Sltu)); // funct3 = 0b011
+        assert!(decoded.rs2.is_none(), "Load should not have rs2");
     }
 }

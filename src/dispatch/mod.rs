@@ -41,10 +41,19 @@ impl InstructionKey {
 
     /// Create from raw instruction word
     pub fn from_raw(raw: u32) -> Self {
+        let opcode = (raw & 0x7F) as u8;
+
+        // For U-type instructions (LUI, AUIPC), funct3 and funct7 are part of the immediate,
+        // so they should be set to 0 for dispatch table lookup
+        let (funct3, funct7) = match opcode {
+            0x37 | 0x17 => (0, 0), // LUI (0x37) and AUIPC (0x17) are U-type
+            _ => (((raw >> 12) & 0x7) as u8, ((raw >> 25) & 0x7F) as u8),
+        };
+
         Self {
-            opcode: (raw & 0x7F) as u8,
-            funct3: ((raw >> 12) & 0x7) as u8,
-            funct7: ((raw >> 25) & 0x7F) as u8,
+            opcode,
+            funct3,
+            funct7,
         }
     }
 
@@ -545,6 +554,37 @@ mod tests {
 
         let key = InstructionKey::from_instr(&instr);
         assert_eq!(key.opcode, 0x33);
+    }
+
+    #[test]
+    fn test_instruction_key_from_raw_utype() {
+        // Test LUI (opcode=0x37) - U-type instruction
+        // lui x10, 0x10000 -> instruction = 0x10000537
+        let lui_raw = 0x10000537u32;
+        let lui_key = InstructionKey::from_raw(lui_raw);
+        assert_eq!(lui_key.opcode, 0x37, "LUI opcode should be 0x37");
+        assert_eq!(
+            lui_key.funct3, 0,
+            "LUI funct3 should be 0 (U-type has no funct3)"
+        );
+        assert_eq!(
+            lui_key.funct7, 0,
+            "LUI funct7 should be 0 (U-type has no funct7)"
+        );
+
+        // Test AUIPC (opcode=0x17) - U-type instruction
+        // auipc x10, 0x10000 -> instruction = 0x10000517
+        let auipc_raw = 0x10000517u32;
+        let auipc_key = InstructionKey::from_raw(auipc_raw);
+        assert_eq!(auipc_key.opcode, 0x17, "AUIPC opcode should be 0x17");
+        assert_eq!(
+            auipc_key.funct3, 0,
+            "AUIPC funct3 should be 0 (U-type has no funct3)"
+        );
+        assert_eq!(
+            auipc_key.funct7, 0,
+            "AUIPC funct7 should be 0 (U-type has no funct7)"
+        );
     }
 
     #[test]

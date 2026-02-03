@@ -6,6 +6,16 @@ use clap::{Parser, Subcommand};
 use ruscv_sim::{load_and_run_file, ExecutionResult};
 use std::path::PathBuf;
 
+/// Parse address string that may be in decimal or hexadecimal format
+fn parse_addr(s: &str) -> Result<u64, String> {
+    if s.starts_with("0x") || s.starts_with("0X") {
+        u64::from_str_radix(&s[2..], 16).map_err(|e| format!("Invalid hexadecimal address: {}", e))
+    } else {
+        s.parse::<u64>()
+            .map_err(|e| format!("Invalid decimal address: {}", e))
+    }
+}
+
 /// RISC-V ISS Simulator CLI
 #[derive(Parser, Debug)]
 #[command(name = "ruscv-sim")]
@@ -27,6 +37,10 @@ enum Commands {
         #[arg(short, long, value_name = "CYCLES")]
         max_cycles: Option<u64>,
 
+        /// Tohost address for exit detection (virtual address, e.g., 0x80001000)
+        #[arg(short, long, value_name = "ADDR", value_parser = parse_addr)]
+        tohost: Option<u64>,
+
         /// Show verbose output
         #[arg(short, long)]
         verbose: bool,
@@ -40,14 +54,16 @@ fn main() {
         Commands::Run {
             elf,
             max_cycles,
+            tohost,
             verbose,
         } => {
             if verbose {
                 eprintln!("Loading ELF file: {:?}", elf);
                 eprintln!("Max cycles: {:?}", max_cycles);
+                eprintln!("Tohost address: 0x{:016x}", tohost.unwrap_or(0));
             }
 
-            match run_elf(&elf, max_cycles) {
+            match run_elf(&elf, max_cycles, tohost) {
                 Ok(result) => {
                     print_result(&result);
                     std::process::exit(result.exit_code as i32);
@@ -61,8 +77,12 @@ fn main() {
     }
 }
 
-fn run_elf(elf_path: &PathBuf, max_cycles: Option<u64>) -> Result<ExecutionResult, String> {
-    load_and_run_file(elf_path.to_str().unwrap(), max_cycles)
+fn run_elf(
+    elf_path: &PathBuf,
+    max_cycles: Option<u64>,
+    tohost: Option<u64>,
+) -> Result<ExecutionResult, String> {
+    load_and_run_file(elf_path.to_str().unwrap(), max_cycles, tohost)
         .map_err(|e| format!("Execution failed: {}", e))
 }
 

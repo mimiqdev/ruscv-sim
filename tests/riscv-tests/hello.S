@@ -1,94 +1,77 @@
 # RISC-V test: Hello World via UART
-# Outputs characters to UART base address
-# Tests: LUI, ADDI, SW, SB, loop
+# Tests: LUI, ADDI, LB, SB, ANDI, BEQZ
+# Base Address: 0x10000000
 
-#define UART_BASE     0x10000000
-#define UART_TX       0x00
-#define UART_LSR      0x05
+.equ UART_BASE,      0x10000000
+.equ UART_TX,        0x00
+.equ UART_LSR,       0x05
+.equ UART_LSR_EMPTY, 0x20
 
 .section .text
 .globl _start
 
 _start:
-    # Load UART base address
-    lui     x1, 0x10000      # UART_BASE = 0x10000000
-    
-    # Output 'H'
+    # --- 修复点：使用 x10 而不是 x1 ---
+    # x1 (ra) 是函数调用的返回地址寄存器，不能随便用来存全局变量
+    lui     x10, 0x10000        # x10 = UART_BASE
+
+    # --- 输出 'H' ---
+    call    wait_tx_ready
     li      x2, 'H'
-    sb      x2, UART_TX(x1)
-    
-    # Wait for TX ready (read LSR)
-wait_h:
-    lbu     x3, UART_LSR(x1)
-    andi    x3, x3, 0x20     # Check THR empty bit
-    beqz    x3, wait_h
-    
-    # Output 'e'
+    sb      x2, 0(x10)          # 使用 x10
+
+    # --- 输出 'e' ---
+    call    wait_tx_ready
     li      x2, 'e'
-    sb      x2, UART_TX(x1)
+    sb      x2, 0(x10)
 
-wait_e:
-    lbu     x3, UART_LSR(x1)
-    andi    x3, x3, 0x20
-    beqz    x3, wait_e
-    
-    # Output 'l'
+    # --- 输出 'l' ---
+    call    wait_tx_ready
     li      x2, 'l'
-    sb      x2, UART_TX(x1)
+    sb      x2, 0(x10)
 
-wait_l:
-    lbu     x3, UART_LSR(x1)
-    andi    x3, x3, 0x20
-    beqz    x3, wait_l
-    
-    # Output 'l'
+    # --- 输出 'l' ---
+    call    wait_tx_ready
     li      x2, 'l'
-    sb      x2, UART_TX(x1)
+    sb      x2, 0(x10)
 
-wait_l2:
-    lbu     x3, UART_LSR(x1)
-    andi    x3, x3, 0x20
-    beqz    x3, wait_l2
-    
-    # Output 'o'
+    # --- 输出 'o' ---
+    call    wait_tx_ready
     li      x2, 'o'
-    sb      x2, UART_TX(x1)
+    sb      x2, 0(x10)
 
-wait_o:
-    lbu     x3, UART_LSR(x1)
-    andi    x3, x3, 0x20
-    beqz    x3, wait_o
-    
-    # Output '!'
+    # --- 输出 '!' ---
+    call    wait_tx_ready
     li      x2, '!'
-    sb      x2, UART_TX(x1)
+    sb      x2, 0(x10)
 
-wait_excl:
-    lbu     x3, UART_LSR(x1)
-    andi    x3, x3, 0x20
-    beqz    x3, wait_excl
-    
-    # Output newline
+    # --- 输出 '\n' ---
+    call    wait_tx_ready
     li      x2, '\n'
-    sb      x2, UART_TX(x1)
+    sb      x2, 0(x10)
 
-wait_nl:
-    lbu     x3, UART_LSR(x1)
-    andi    x3, x3, 0x20
-    beqz    x3, wait_nl
-    
-    # Exit with code 0 (success)
+    j       pass
+
+# --- 子程序：等待 UART 发送就绪 ---
+wait_tx_ready:
+    # 使用 x10 作为基址
+    lbu     x3, UART_LSR(x10)
+    andi    x3, x3, UART_LSR_EMPTY
+    beqz    x3, wait_tx_ready
+    ret     # ret 实际上是 jalr x0, 0(x1)，这里用到 x1 是正确的
+
+pass:
     la      x4, tohost
     li      x5, 0
-    sw      x5, 0(x4)
-    
-    # Loop forever
+    li      x6, 1
+    slli    x6, x6, 63
+    or      x5, x5, x6
+    sd      x5, 0(x4)
+
 inf:
     j       inf
 
-# Tohost address
-.section .data
+.section .tohost
 .align 3
 tohost:
-    .word   0x00
-    .word   0x80001000
+    .dword  0

@@ -16,7 +16,7 @@ OUTDIR  = .
 ASFLAGS = -march=rv64ima -mabi=lp64
 
 # Linker script for bare metal
-LDSCRIPT = -Ttext=0x80000000
+LDSCRIPT = -Tlinker.ld
 
 # Source files
 SOURCES = add.S fib.S hello.S
@@ -28,15 +28,15 @@ ELFS    = $(addprefix $(OUTDIR)/, $(SOURCES:.S=.elf))
 
 all: $(ELFS)
 
-# Generic rule for .S to .elf
-%.elf: %.S
+# linker.ld is manually maintained, do not auto-generate
+
+%.elf: %.S linker.ld
 	@echo "  AS      $<"
 	$(AS) $(ASFLAGS) $< -o $(OUTDIR)/$*.o
 	@echo "  LD      $@"
 	$(LD) $(LDSCRIPT) $(OUTDIR)/$*.o -o $@
 	@rm -f $(OUTDIR)/$*.o
 
-# Disassemble ELF files
 disasm: $(ELFS)
 	@for elf in $(ELFS); do \
 		echo "=== $$elf ==="; \
@@ -54,14 +54,3 @@ help:
 	@echo "  disasm  - Disassemble ELF files"
 	@echo "  clean   - Remove generated files"
 	@echo "  help    - Show this help message"
-	@echo ""
-	@echo "Prerequisites:"
-	@echo "  Install RISC-V toolchain:"
-	@echo "    Ubuntu/Debian: apt install gcc-riscv64-unknown-elf"
-	@echo "    macOS: brew install riscv-gnu-toolchain"
-	@echo "    From source: https://github.com/riscv-collab/riscv-gnu-toolchain"
-	@echo ""
-	@echo "Test programs:"
-	@echo "  add.elf   - Sum 1+2+...+10 = 55"
-	@echo "  fib.elf   - Fibonacci (F10 = 34)"
-	@echo "  hello.elf - UART output \"Hello!\""
