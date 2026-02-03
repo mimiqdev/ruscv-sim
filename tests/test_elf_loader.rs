@@ -4,7 +4,6 @@
 //! These tests validate the core ELF loading functionality.
 
 use ruscv_sim::executor::{load_and_run, ExecutionResult, RiscVSimulator};
-use ruscv_sim::MemoryInterface;
 
 /// Test basic ELF loading with empty data
 #[test]

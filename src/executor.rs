@@ -99,7 +99,7 @@ impl MemoryInterface for SystemBus {
             return self.ram.lock().unwrap().read_word(addr - self.ram_base);
         }
         if self.is_uart(addr) {
-             return Err(MemoryError::InvalidAddress(addr));
+            return Err(MemoryError::InvalidAddress(addr));
         }
         Err(MemoryError::InvalidAddress(addr))
     }
@@ -109,7 +109,7 @@ impl MemoryInterface for SystemBus {
             return self.ram.lock().unwrap().read_half(addr - self.ram_base);
         }
         if self.is_uart(addr) {
-             return Err(MemoryError::InvalidAddress(addr));
+            return Err(MemoryError::InvalidAddress(addr));
         }
         Err(MemoryError::InvalidAddress(addr))
     }
@@ -154,37 +154,53 @@ impl MemoryInterface for SystemBus {
 
     fn write_dword(&mut self, addr: u64, value: u64) -> Result<(), MemoryError> {
         if self.is_ram(addr) {
-            return self.ram.lock().unwrap().write_dword(addr - self.ram_base, value);
+            return self
+                .ram
+                .lock()
+                .unwrap()
+                .write_dword(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
-             return Err(MemoryError::InvalidAddress(addr));
+            return Err(MemoryError::InvalidAddress(addr));
         }
         Err(MemoryError::InvalidAddress(addr))
     }
 
     fn write_word(&mut self, addr: u64, value: u32) -> Result<(), MemoryError> {
         if self.is_ram(addr) {
-            return self.ram.lock().unwrap().write_word(addr - self.ram_base, value);
+            return self
+                .ram
+                .lock()
+                .unwrap()
+                .write_word(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
-             return Err(MemoryError::InvalidAddress(addr));
+            return Err(MemoryError::InvalidAddress(addr));
         }
         Err(MemoryError::InvalidAddress(addr))
     }
 
     fn write_half(&mut self, addr: u64, value: u16) -> Result<(), MemoryError> {
         if self.is_ram(addr) {
-            return self.ram.lock().unwrap().write_half(addr - self.ram_base, value);
+            return self
+                .ram
+                .lock()
+                .unwrap()
+                .write_half(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
-             return Err(MemoryError::InvalidAddress(addr));
+            return Err(MemoryError::InvalidAddress(addr));
         }
         Err(MemoryError::InvalidAddress(addr))
     }
 
     fn write_byte(&mut self, addr: u64, value: u8) -> Result<(), MemoryError> {
         if self.is_ram(addr) {
-            return self.ram.lock().unwrap().write_byte(addr - self.ram_base, value);
+            return self
+                .ram
+                .lock()
+                .unwrap()
+                .write_byte(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
             let offset = addr - self.uart_base;
@@ -198,7 +214,6 @@ impl MemoryInterface for SystemBus {
         self.ram_size + self.uart_size // Approximate
     }
 }
-
 
 /// Default maximum cycles before timeout
 const DEFAULT_MAX_CYCLES: u64 = 10_000_000;
@@ -414,7 +429,7 @@ pub fn load_and_run(
 
     // Create UART
     let uart = Arc::new(Mutex::new(Uart16550::new(0x10000000)));
-    
+
     // Set UART output callback to print to stdout
     {
         let mut uart_guard = uart.lock().unwrap();
@@ -430,9 +445,9 @@ pub fn load_and_run(
         ram.clone(),
         uart.clone(),
         base_addr,
-        mem_size
+        mem_size,
     )));
-    
+
     // Cast to MemoryInterface trait object
     let bus_interface: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = bus;
 
@@ -488,13 +503,18 @@ pub fn load_and_run(
                                 if is_exit_command {
                                     let exit_code = ((tohost_value << 1) >> 1) as u32; // Remove highest bit
                                     if verbose {
-                                        eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
+                                        eprintln!(
+                                            "[DEBUG] Exit signal detected: code={}",
+                                            exit_code
+                                        );
                                     }
                                     // Clear tohost after processing (Spike-compatible behavior)
                                     drop(mem_guard);
                                     clear_tohost(&bus_interface, tohost_pa);
                                     let sig_data =
-                                        dump_signature(&bus_interface, signature.as_ref()).ok().flatten();
+                                        dump_signature(&bus_interface, signature.as_ref())
+                                            .ok()
+                                            .flatten();
                                     return Ok(ExecutionResult {
                                         exit_code,
                                         cycles,
@@ -525,12 +545,16 @@ pub fn load_and_run(
                 // Debug output every 1000 cycles
                 if verbose && cycles.is_multiple_of(1000) {
                     let state = core.state();
-                    eprintln!("[DEBUG] Cycle {}: PC=0x{:010x}, ra={}, sp={}, gp={}",
-                              cycles, current_pc, state.regs[1], state.regs[2], state.regs[3]);
+                    eprintln!(
+                        "[DEBUG] Cycle {}: PC=0x{:010x}, ra={}, sp={}, gp={}",
+                        cycles, current_pc, state.regs[1], state.regs[2], state.regs[3]
+                    );
                 }
             }
             Err(e) => {
-                let sig_data = dump_signature(&bus_interface, signature.as_ref()).ok().flatten();
+                let sig_data = dump_signature(&bus_interface, signature.as_ref())
+                    .ok()
+                    .flatten();
                 return Ok(ExecutionResult {
                     exit_code: 1,
                     cycles,
@@ -557,7 +581,9 @@ pub fn load_and_run(
         );
     }
 
-    let sig_data = dump_signature(&bus_interface, signature.as_ref()).ok().flatten();
+    let sig_data = dump_signature(&bus_interface, signature.as_ref())
+        .ok()
+        .flatten();
     Ok(ExecutionResult {
         exit_code: 1, // Non-zero indicates abnormal termination
         cycles,
@@ -667,14 +693,14 @@ impl RiscVSimulator {
         );
         self.signature = sig;
 
-        // NOTE: This implementation is simplified and still uses SimpleMemory internally 
-        // if created via new(). It does not support SystemBus yet. 
+        // NOTE: This implementation is simplified and still uses SimpleMemory internally
+        // if created via new(). It does not support SystemBus yet.
         // For full support, use load_and_run.
-        
-        // This is a partial fix to allow compilation. 
+
+        // This is a partial fix to allow compilation.
         // Ideally RiscVSimulator should be refactored to use SystemBus as well.
         // Create new memory and load program
-        // We create a SimpleMemory here because RiscVSimulator is typically used for 
+        // We create a SimpleMemory here because RiscVSimulator is typically used for
         // unit tests or benchmarks that expect a simple flat memory environment.
         // For full system simulation (UART, etc.), load_and_run should be used.
         let ram = Arc::new(Mutex::new(SimpleMemory::new(memory.len())));
@@ -826,8 +852,6 @@ impl RiscVSimulator {
             signature_data: sig_data,
         })
     }
-
-
 
     /// Get execution result
     fn get_result(&self, cycles: u64) -> ExecutionResult {
@@ -1034,15 +1058,15 @@ mod tests {
     #[test]
     fn test_simulator_load_elf_reinit() {
         let mut sim = RiscVSimulator::new(0x1000);
-        
+
         let dummy_elf = vec![0; 100]; // Invalid ELF
-        
+
         // First load attempt
         let _ = sim.load_elf(&dummy_elf);
-        
+
         // Second load attempt - this should not panic or deadlock
         let _ = sim.load_elf(&dummy_elf);
-        
+
         // Verify we can still access the simulator
         assert_eq!(sim.state().pc, 0);
     }

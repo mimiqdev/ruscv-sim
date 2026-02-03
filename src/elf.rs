@@ -924,9 +924,7 @@ impl ElfLoader {
 }
 
 /// Load ELF file and return entry point and memory data
-pub fn load_elf_file(
-    data: &[u8],
-) -> Result<LoadedElf, ElfError> {
+pub fn load_elf_file(data: &[u8]) -> Result<LoadedElf, ElfError> {
     let mut cursor = std::io::Cursor::new(data);
     let loader = ElfLoader::load(&mut cursor)?;
 
@@ -1097,7 +1095,7 @@ mod tests {
 
         assert_eq!(loaded.entry_point, 0x8000_0000);
         assert_eq!(loaded.base_addr, 0x8000_0000); // base_addr should be the minimum vaddr
-                                            // Memory should be large enough to hold all segments (0x300 bytes range)
+                                                   // Memory should be large enough to hold all segments (0x300 bytes range)
         assert!(loaded.memory.len() >= 0x300);
         // Verify data was loaded correctly
         assert_eq!(loaded.memory[0], 0x13); // .text at offset 0
@@ -1159,7 +1157,10 @@ mod tests {
         assert_eq!(loaded.base_addr, 0x8000_0000);
 
         // Verify tohost address is correctly parsed from .tohost section
-        assert!(loaded.tohost.is_some(), "tohost should be found in the ELF file");
+        assert!(
+            loaded.tohost.is_some(),
+            "tohost should be found in the ELF file"
+        );
         assert_eq!(
             loaded.tohost.unwrap(),
             0x8000_1000,

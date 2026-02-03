@@ -368,7 +368,7 @@ mod tests {
         // SD x6, 5(x5) - S-type instruction
         // Format: imm[11:5] | rs2 | rs1 | funct3 | imm[4:0] | opcode
         // imm = 5, rs2 = 6, rs1 = 5, funct3 = 011 (SD), opcode = 0100011
-        let instruction = (0 << 25) | (6 << 20) | (5 << 15) | (3 << 12) | (5 << 7) | 0b010_0011;
+        let instruction = (6 << 20) | (5 << 15) | (3 << 12) | (5 << 7) | 0b010_0011;
         let decoder = InstructionDecoder::new();
         let decoded = decoder.decode(instruction).unwrap();
 
