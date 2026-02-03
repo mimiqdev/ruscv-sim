@@ -11,10 +11,12 @@
 .globl _start
 
 _start:
-    # --- Fix: use x10 instead of x1 ---
-    # x1 (ra) is the return address register for function calls,
-                                # don't use it for general purpose values
-    lui     x10, 0x10000        # x10 = UART_BASE
+    # --- Load UART_BASE into x10 ---
+    # lui uses 20-bit signed immediate, so we cannot directly use 0x10000
+    # Instead: load 0x1000 then shift left by 4 to get 0x10000, then shift by 12 more (lui behavior)
+    # Actually: lui places imm[19:0] in bits [31:12], so we need lui with 0x1000 then slli by 4
+    lui     x10, 0x1000         # x10 = 0x1000000
+    slli    x10, x10, 4         # x10 = 0x10000000 (UART_BASE)
 
     # --- 输出 'H' ---
     call    wait_tx_ready

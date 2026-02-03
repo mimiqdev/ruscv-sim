@@ -147,13 +147,17 @@ jobs:
           retention-days: 7
 
   # ==========================================
-  # Job 5: RISC-V ELF Tests
+  # Job 5: RISC-V ELF Tests (Container Mode)
   # ==========================================
+  # 使用预装 RISC-V 工具链的 Docker 镜像，避免每次 CI 下载
+  # 镜像包含: riscv64-unknown-elf-gcc, gdb, binutils 等
   riscv-tests:
     name: RISC-V ELF Tests
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 15
     needs: build
+    # 使用 Docker 容器，预装 RISC-V 工具链
+    container: riscvcolink/riscv-toolchain:latest
 
     steps:
       - name: Checkout repository
@@ -161,10 +165,15 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
+      - name: Install Rust in container
+        run: |
+          # riscv-toolchain 镜像可能没有 Rust，需要安装
+          if ! command -v cargo &> /dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+            . "$HOME/.cargo/env"
+          fi
+          rustc --version
+          cargo --version
 
       - name: Download binary artifact
         uses: actions/download-artifact@v4
@@ -174,21 +183,6 @@ jobs:
 
       - name: Make binary executable
         run: chmod +x target/release/ruscv-sim
-
-      - name: Install RISC-V toolchain
-        run: |
-          echo "Installing RISC-V toolchain..."
-          if command -v riscv64-unknown-elf-gcc &> /dev/null; then
-            echo "RISC-V toolchain already installed"
-            riscv64-unknown-elf-gcc --version
-          elif command -v riscv64-linux-gnu-gcc &> /dev/null; then
-            echo "Using riscv64-linux-gnu toolchain"
-            export RISCV_PREFIX=riscv64-linux-gnu-
-          else
-            echo "Installing gcc-riscv64-unknown-elf..."
-            sudo apt-get update
-            sudo apt-get install -y gcc-riscv64-unknown-elf
-          fi
 
       - name: Compile RISC-V test programs
         run: |
