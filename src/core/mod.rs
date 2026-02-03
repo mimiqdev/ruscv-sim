@@ -71,9 +71,9 @@ pub struct RiscvCore {
     /// core state
     state: CoreState,
     /// 指令存储器
-    instruction_mem: Arc<Mutex<SimpleMemory>>,
+    instruction_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
     /// 数据存储器
-    data_mem: Arc<Mutex<SimpleMemory>>,
+    data_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
     /// Instruction decoder
     decoder: InstructionDecoder,
     /// Executor
@@ -173,8 +173,8 @@ impl MemoryInterface for MemoryAdapter<'_> {
 impl RiscvCore {
     /// Create new core instance
     pub fn new(
-        instruction_mem: Arc<Mutex<SimpleMemory>>,
-        data_mem: Arc<Mutex<SimpleMemory>>,
+        instruction_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
+        data_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
     ) -> Self {
         Self {
             state: CoreState::default(),
