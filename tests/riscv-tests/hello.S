@@ -11,14 +11,15 @@
 .globl _start
 
 _start:
-    # --- 修复点：使用 x10 而不是 x1 ---
-    # x1 (ra) 是函数调用的返回地址寄存器，不能随便用来存全局变量
+    # --- Fix: use x10 instead of x1 ---
+    # x1 (ra) is the return address register for function calls,
+                                # don't use it for general purpose values
     lui     x10, 0x10000        # x10 = UART_BASE
 
     # --- 输出 'H' ---
     call    wait_tx_ready
     li      x2, 'H'
-    sb      x2, 0(x10)          # 使用 x10
+    sb      x2, 0(x10)          # use x10
 
     # --- 输出 'e' ---
     call    wait_tx_ready
@@ -52,13 +53,13 @@ _start:
 
     j       pass
 
-# --- 子程序：等待 UART 发送就绪 ---
+# --- Subroutine: wait for UART transmit ready ---
 wait_tx_ready:
-    # 使用 x10 作为基址
+    # use x10 as base address
     lbu     x3, UART_LSR(x10)
     andi    x3, x3, UART_LSR_EMPTY
     beqz    x3, wait_tx_ready
-    ret     # ret 实际上是 jalr x0, 0(x1)，这里用到 x1 是正确的
+    ret     # ret is actually jalr x0, 0(x1), using x1 here is correct
 
 pass:
     la      x4, tohost
