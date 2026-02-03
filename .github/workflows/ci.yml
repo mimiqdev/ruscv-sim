@@ -147,7 +147,61 @@ jobs:
           retention-days: 7
 
   # ==========================================
-  # Job 5: Smoke Test
+  # Job 5: RISC-V ELF Tests
+  # ==========================================
+  riscv-tests:
+    name: RISC-V ELF Tests
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 15
+    needs: build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Download binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ruscv-sim-release
+          path: target/release/
+
+      - name: Make binary executable
+        run: chmod +x target/release/ruscv-sim
+
+      - name: Install RISC-V toolchain
+        run: |
+          echo "Installing RISC-V toolchain..."
+          if command -v riscv64-unknown-elf-gcc &> /dev/null; then
+            echo "RISC-V toolchain already installed"
+            riscv64-unknown-elf-gcc --version
+          elif command -v riscv64-linux-gnu-gcc &> /dev/null; then
+            echo "Using riscv64-linux-gnu toolchain"
+            export RISCV_PREFIX=riscv64-linux-gnu-
+          else
+            echo "Installing gcc-riscv64-unknown-elf..."
+            sudo apt-get update
+            sudo apt-get install -y gcc-riscv64-unknown-elf
+          fi
+
+      - name: Compile RISC-V test programs
+        run: |
+          chmod +x scripts/compile_riscv_tests.sh
+          ./scripts/compile_riscv_tests.sh
+
+      - name: Run RISC-V ELF tests
+        run: |
+          chmod +x scripts/run_elf_tests.sh
+          ./scripts/run_elf_tests.sh
+
+  # ==========================================
+  # Job 6: Smoke Test
   # ==========================================
   smoke-test:
     name: Smoke Test
@@ -182,13 +236,13 @@ jobs:
           echo "✅ Smoke test passed!"
 
   # ==========================================
-  # Job 6: Summary Report
+  # Job 7: Summary Report
   # ==========================================
   summary:
     name: Summary
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
-    needs: [check, test, bench, build, smoke-test]
+    needs: [check, test, bench, build, riscv-tests, smoke-test]
 
     if: always()
     steps:
@@ -225,6 +279,15 @@ jobs:
             echo "✅ Build Passed" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ Build Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "### RISC-V ELF Tests Status" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.riscv-tests.result }}" == "success" ]; then
+            echo "✅ RISC-V ELF Tests Passed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.riscv-tests.result }}" == "skipped" ]; then
+            echo "⏭️  RISC-V ELF Tests Skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ RISC-V ELF Tests Failed" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "### Smoke Test Status" >> $GITHUB_STEP_SUMMARY
