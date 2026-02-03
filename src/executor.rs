@@ -365,13 +365,23 @@ fn try_extract_exit_code(tohost_value: u64) -> Option<u32> {
 /// Clear tohost value in memory (Spike-compatible behavior)
 ///
 /// After processing a tohost write, the tohost location should be cleared to 0.
-fn clear_tohost(mem: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>, tohost_addr: u64) {
+fn clear_tohost(
+    mem: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
+    tohost_addr: u64,
+    verbose: bool,
+) {
     let tohost_pa = tohost_addr; // Already physical address in callers
     if let Ok(mut guard) = mem.lock() {
         // Write 8 bytes of zeros to clear tohost
         for i in 0..8 {
-            let _ = guard.write_byte(tohost_pa + i, 0);
+            if let Err(e) = guard.write_byte(tohost_pa + i, 0) {
+                if verbose {
+                    eprintln!("[WARN] Failed to clear tohost byte {}: {}", i, e);
+                }
+            }
         }
+    } else if verbose {
+        eprintln!("[WARN] Failed to lock memory for clear_tohost");
     }
 }
 
@@ -510,7 +520,7 @@ pub fn load_and_run(
                                     }
                                     // Clear tohost after processing (Spike-compatible behavior)
                                     drop(mem_guard);
-                                    clear_tohost(&bus_interface, tohost_pa);
+                                    clear_tohost(&bus_interface, tohost_pa, verbose);
                                     let sig_data =
                                         dump_signature(&bus_interface, signature.as_ref())
                                             .ok()
@@ -805,7 +815,7 @@ impl RiscVSimulator {
                             }
                             // Clear tohost after processing (Spike-compatible behavior)
                             drop(guard);
-                            clear_tohost(&self.memory, self.tohost);
+                            clear_tohost(&self.memory, self.tohost, self.verbose);
                             return Ok(self.get_result(cycles));
                         } else if self.verbose {
                             // Non-zero but without exit command marker - possible memory corruption or other command
