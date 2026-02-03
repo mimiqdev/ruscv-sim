@@ -535,7 +535,7 @@ impl RiscVSimulator {
             let guard = self.memory.lock().unwrap();
 
             // Try to read in larger chunks when possible
-            if remaining >= 8 && current_addr % 8 == 0 {
+            if remaining >= 8 && current_addr.is_multiple_of(8) {
                 // Read 8 bytes at a time when aligned
                 match guard.read_dword(current_addr) {
                     Ok(val) => {
@@ -548,7 +548,7 @@ impl RiscVSimulator {
                     }
                     Err(_) => {
                         // Fall back to word read
-                        if remaining >= 4 && current_addr % 4 == 0 {
+                        if remaining >= 4 && current_addr.is_multiple_of(4) {
                             drop(guard);
                             continue;
                         }
@@ -556,7 +556,7 @@ impl RiscVSimulator {
                         // Fall through to byte-by-byte read
                     }
                 }
-            } else if remaining >= 4 && current_addr % 4 == 0 {
+            } else if remaining >= 4 && current_addr.is_multiple_of(4) {
                 // Read 4 bytes at a time
                 match guard.read_word(current_addr) {
                     Ok(val) => {
@@ -572,7 +572,7 @@ impl RiscVSimulator {
                         // Fall through to byte-by-byte read
                     }
                 }
-            } else if remaining >= 2 && current_addr % 2 == 0 {
+            } else if remaining >= 2 && current_addr.is_multiple_of(2) {
                 // Read 2 bytes at a time
                 match guard.read_half(current_addr) {
                     Ok(val) => {
