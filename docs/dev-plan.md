@@ -101,6 +101,24 @@
 
 ---
 
+### M6-extra: 指令测试覆盖 [PLANNING]
+**Goal:** 补充关键指令的 ELF 回归测试
+
+**参考文档**: [baremetal-test-template.md](../docs/baremetal-test-template.md)
+
+#### Features
+- [ ] **RVI 整数指令**: add, sub, and, or, xor, sll, srl, sra
+- [ ] **RVI 立即数**: addi, andi, ori, xori, slli, srli, srai
+- [ ] **Load/Store**: lw, sw, lh, sh, lb, sb, lwu
+- [ ] **分支指令**: beq, bne, blt, bge, bltu, bgeu
+- [ ] **跳转指令**: jal, jalr
+- [ ] **乘除指令**: mul, mulh, mulhsu, mulhu, div, divu, rem, remu
+- [ ] **CSR 指令**: csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci
+
+**注意**: 跳过 M 和 A 扩展的复杂原子场景（后续 arch-test 会覆盖）
+
+---
+
 ### M7: RISCOF + arch-test 集成 [PLANNING]
 **Status:** Planning
 **Goal:** 对接官方架构测试框架
