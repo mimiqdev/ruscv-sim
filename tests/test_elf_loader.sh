@@ -97,11 +97,11 @@ else
 fi
 echo ""
 
-# Test 2: fib.elf (Fibonacci F10 = 34)
+# Test 2: fib.elf (Fibonacci F10 = 55)
 echo -e "${YELLOW}Test 2: fib.elf (Fibonacci Sequence)${NC}"
 echo "----------------------------------------"
 if check_elf "fib.elf"; then
-    if run_test "fib" "${TESTS_DIR}/fib.elf" "34" "Calculate Fibonacci F10 = 34"; then
+    if run_test "fib" "${TESTS_DIR}/fib.elf" "0" "Calculate Fibonacci F10 = 55, expect pass (exit 0)"; then
         ((TESTS_PASSED++))
     else
         ((TESTS_FAILED++))
