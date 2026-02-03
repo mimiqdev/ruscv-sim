@@ -179,8 +179,8 @@ jobs:
       - name: Compile RISC-V test programs (using Docker)
         run: |
           chmod +x scripts/compile_riscv_tests.sh
-          # 修改脚本使用 docker run 调用容器中的编译器
-          sed -i 's|riscv64-unknown-elf-|docker run --rm -v $PWD:/app riscvcolink/riscv-toolchain:latest riscv64-unknown-elf-|g' scripts/compile_riscv_tests.sh
+          # 使用官方 RISC-V Docker 镜像中的编译器
+          sed -i 's|riscvcolink/riscv-toolchain|ghcr.io/riscv-collab/riscv-toolchain|g' scripts/compile_riscv_tests.sh
           ./scripts/compile_riscv_tests.sh
 
       - name: Run RISC-V ELF tests
