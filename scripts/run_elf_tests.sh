@@ -148,12 +148,22 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TEST_NUMBER=0
 
-# Find all .elf files in rv64i directory
+# Find all .elf files in rv64i and rv64m directories
 echo -e "${YELLOW}Discovering tests...${NC}"
-ELF_FILES=("${TESTS_DIR}"/rv64i/*.elf)
+RV64I_FILES=("${TESTS_DIR}"/rv64i/*.elf)
+RV64M_FILES=("${TESTS_DIR}"/rv64m/*.elf)
 
-if [ ${#ELF_FILES[@]} -eq 0 ] || [ ! -f "${ELF_FILES[0]}" ]; then
-    echo -e "${RED}Error: No .elf files found in ${TESTS_DIR}/rv64i/${NC}"
+# Combine both arrays
+ELF_FILES=()
+for f in "${RV64I_FILES[@]}"; do
+    [ -f "$f" ] && ELF_FILES+=("$f")
+done
+for f in "${RV64M_FILES[@]}"; do
+    [ -f "$f" ] && ELF_FILES+=("$f")
+done
+
+if [ ${#ELF_FILES[@]} -eq 0 ]; then
+    echo -e "${RED}Error: No .elf files found in ${TESTS_DIR}/rv64i/ or ${TESTS_DIR}/rv64m/${NC}"
     echo "Run compile_riscv_tests.sh first to build the test programs."
     exit 1
 fi

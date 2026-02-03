@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use crate::core::CoreState;
 use crate::decode::DecodedInstruction;
 use crate::execute::{
-    exec_auipc, exec_branch, exec_jal, exec_jalr, exec_load, exec_lui, exec_op, exec_op_imm,
+    exec_auipc, exec_branch, exec_div, exec_divu, exec_jal, exec_jalr, exec_load, exec_lui,
+    exec_mul, exec_mulh, exec_mulhsu, exec_mulhu, exec_op, exec_op_imm, exec_rem, exec_remu,
     exec_store, exec_system,
 };
 use crate::execute::{ExecuteError, ExecutorFn};
@@ -525,6 +526,86 @@ impl Dispatcher {
                 funct7: 0b0010000,
             },
             exec_system,
+        );
+
+        // RV64M: MUL (opcode=0x33, funct3=0b000, funct7=0b0000001)
+        table.insert(
+            InstructionKey {
+                opcode: 0x33,
+                funct3: 0b000,
+                funct7: 0b0000001,
+            },
+            exec_mul,
+        );
+
+        // RV64M: MULH (opcode=0x33, funct3=0b001, funct7=0b0000001)
+        table.insert(
+            InstructionKey {
+                opcode: 0x33,
+                funct3: 0b001,
+                funct7: 0b0000001,
+            },
+            exec_mulh,
+        );
+
+        // RV64M: MULHSU (opcode=0x33, funct3=0b010, funct7=0b0000001)
+        table.insert(
+            InstructionKey {
+                opcode: 0x33,
+                funct3: 0b010,
+                funct7: 0b0000001,
+            },
+            exec_mulhsu,
+        );
+
+        // RV64M: MULHU (opcode=0x33, funct3=0b011, funct7=0b0000001)
+        table.insert(
+            InstructionKey {
+                opcode: 0x33,
+                funct3: 0b011,
+                funct7: 0b0000001,
+            },
+            exec_mulhu,
+        );
+
+        // RV64M: DIV (opcode=0x33, funct3=0b100, funct7=0b0000001)
+        table.insert(
+            InstructionKey {
+                opcode: 0x33,
+                funct3: 0b100,
+                funct7: 0b0000001,
+            },
+            exec_div,
+        );
+
+        // RV64M: DIVU (opcode=0x33, funct3=0b101, funct7=0b0000001)
+        table.insert(
+            InstructionKey {
+                opcode: 0x33,
+                funct3: 0b101,
+                funct7: 0b0000001,
+            },
+            exec_divu,
+        );
+
+        // RV64M: REM (opcode=0x33, funct3=0b110, funct7=0b0000001)
+        table.insert(
+            InstructionKey {
+                opcode: 0x33,
+                funct3: 0b110,
+                funct7: 0b0000001,
+            },
+            exec_rem,
+        );
+
+        // RV64M: REMU (opcode=0x33, funct3=0b111, funct7=0b0000001)
+        table.insert(
+            InstructionKey {
+                opcode: 0x33,
+                funct3: 0b111,
+                funct7: 0b0000001,
+            },
+            exec_remu,
         );
     }
 }

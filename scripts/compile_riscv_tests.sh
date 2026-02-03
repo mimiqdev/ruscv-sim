@@ -23,40 +23,18 @@ LD="${RISCV_PREFIX}ld"
 ASFLAGS="-march=rv64ima_zicsr -mabi=lp64"
 LDSCRIPT="-T${TESTS_DIR}/linker.ld"
 
-# Exclude list - tests that are not yet working
-# 保留能通过的测试: add, addi, sub, beq, bne, blt, bge, bltu, bgeu, blt_*, jal, jalr, fib, hello
+# Exclude list - tests that require unimplemented instructions
+# 
+# 需要 OpImm32 opcode (0011011) 支持的指令:
+#   - addiw, slliw, srliw, sraiw - 32-bit immediate operations
+# 需要 Op32 opcode (0111011) 支持的指令:
+#   - addw, subw, sllw, srlw, sraw - 32-bit register operations
+#
+# CSR 指令需要额外的 CSR 支持
 EXCLUDE_SOURCES=(
-    # 逻辑运算指令（待实现）
-    "rv64i/and.S"
-    "rv64i/andi.S"
-    "rv64i/or.S"
-    "rv64i/ori.S"
-    "rv64i/xor.S"
-    "rv64i/xori.S"
-    # 移位指令（待实现）
-    "rv64i/sll.S"
-    "rv64i/slli.S"
-    "rv64i/srl.S"
-    "rv64i/srli.S"
-    "rv64i/sra.S"
-    "rv64i/srai.S"
-    # Load/Store指令（待实现）
+    # 需要 OpImm32 (addiw) 的测试
     "rv64i/lw.S"
     "rv64i/sw.S"
-    "rv64i/lh.S"
-    "rv64i/sh.S"
-    "rv64i/lb.S"
-    "rv64i/sb.S"
-    "rv64i/lwu.S"
-    # 乘除指令（待调查失败原因）
-    "rv64m/mul.S"
-    "rv64m/mulh.S"
-    "rv64m/mulhsu.S"
-    "rv64m/mulhu.S"
-    "rv64m/div.S"
-    "rv64m/divu.S"
-    "rv64m/rem.S"
-    "rv64m/remu.S"
     # CSR指令（待实现）
     "rv64i/csrrw.S"
     "rv64i/csrrs.S"
@@ -66,8 +44,8 @@ EXCLUDE_SOURCES=(
     "rv64i/csrrci.S"
 )
 
-# Source files - auto-discover all .S files in rv64i directory, then filter out excluded ones
-ALL_SOURCES=$(find "${TESTS_DIR}/rv64i" -name "*.S" | sed "s|${TESTS_DIR}/||" | sort)
+# Source files - auto-discover all .S files in rv64i and rv64m directories
+ALL_SOURCES=$(find "${TESTS_DIR}/rv64i" "${TESTS_DIR}/rv64m" -name "*.S" | sed "s|${TESTS_DIR}/||" | sort)
 SOURCES=""
 for src in ${ALL_SOURCES}; do
     skip=false

@@ -65,6 +65,7 @@ pub mod branch;
 pub mod jump;
 pub mod load;
 pub mod lui_auipc;
+pub mod op32;
 pub mod shift;
 pub mod store;
 pub mod system;
@@ -74,6 +75,9 @@ pub use alu::{exec_op, exec_op_imm};
 
 // Re-export shift functions
 pub use shift::{exec_shift, exec_shift_imm};
+
+// Re-export 32-bit operation functions
+pub use op32::{exec_op_32, exec_op_imm_32};
 
 // Re-export load/store functions
 pub use load::exec_load;
@@ -137,6 +141,32 @@ pub fn execute(
                 match funct3 {
                     Funct3::Sll | Funct3::SrlSra => exec_shift(instr, state, mem),
                     _ => exec_op(instr, state, mem),
+                }
+            } else {
+                Err(crate::execute::ExecuteError::InvalidOperation)
+            }
+        }
+        Opcode::OpImm32 => {
+            // Dispatch to shift (for SLLIW/SRLIW/SRAIW) or ALU (for ADDIW)
+            if let Some(funct3) = instr.funct3 {
+                use crate::decode::Funct3;
+                match funct3 {
+                    Funct3::Sll | Funct3::SrlSra | Funct3::AddSub => {
+                        exec_op_imm_32(instr, state, mem)
+                    }
+                    _ => Err(crate::execute::ExecuteError::InvalidOperation),
+                }
+            } else {
+                Err(crate::execute::ExecuteError::InvalidOperation)
+            }
+        }
+        Opcode::Op32 => {
+            // Dispatch to shift (for SLLW/SRLW/SRAW) or ALU (for ADDW/SUBW)
+            if let Some(funct3) = instr.funct3 {
+                use crate::decode::Funct3;
+                match funct3 {
+                    Funct3::Sll | Funct3::SrlSra | Funct3::AddSub => exec_op_32(instr, state, mem),
+                    _ => Err(crate::execute::ExecuteError::InvalidOperation),
                 }
             } else {
                 Err(crate::execute::ExecuteError::InvalidOperation)

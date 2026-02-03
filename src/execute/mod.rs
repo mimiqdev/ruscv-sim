@@ -41,8 +41,8 @@ pub use crate::isa::rv64a::{
 
 // RV64I re-exports (from isa::rv64i)
 pub use crate::isa::rv64i::{
-    exec_auipc, exec_branch, exec_jal, exec_jalr, exec_load, exec_lui, exec_op, exec_op_imm,
-    exec_shift, exec_shift_imm, exec_store, exec_system,
+    exec_auipc, exec_branch, exec_jal, exec_jalr, exec_load, exec_lui, exec_op, exec_op_32,
+    exec_op_imm, exec_op_imm_32, exec_shift, exec_shift_imm, exec_store, exec_system,
 };
 
 // RV64D re-exports (from isa::rv64d)
@@ -106,11 +106,41 @@ impl Executor {
                 }
             }
             Opcode::Op => {
-                // Dispatch to shift or ALU based on funct3
-                if let Some(funct3) = instr.funct3 {
+                // Check funct7 first to distinguish RV64M (mul/div) from RV64I (ALU)
+                let funct7 = instr.funct7.unwrap_or(0);
+                if funct7 == 0b000_0001 {
+                    // RV64M multiplication and division instructions
+                    self.execute_rv64m(instr, state, mem)
+                } else if let Some(funct3) = instr.funct3 {
+                    // Dispatch to shift or ALU based on funct3
                     match funct3 {
                         Funct3::Sll | Funct3::SrlSra => exec_shift(instr, state, mem),
                         _ => exec_op(instr, state, mem),
+                    }
+                } else {
+                    Err(ExecuteError::InvalidOperation)
+                }
+            }
+            Opcode::OpImm32 => {
+                // Dispatch to shift (for SLLIW/SRLIW/SRAIW) or ALU (for ADDIW)
+                if let Some(funct3) = instr.funct3 {
+                    match funct3 {
+                        Funct3::Sll | Funct3::SrlSra => exec_op_imm_32(instr, state, mem),
+                        Funct3::AddSub => exec_op_imm_32(instr, state, mem),
+                        _ => Err(ExecuteError::InvalidOperation),
+                    }
+                } else {
+                    Err(ExecuteError::InvalidOperation)
+                }
+            }
+            Opcode::Op32 => {
+                // Dispatch to shift (for SLLW/SRLW/SRAW) or ALU (for ADDW/SUBW)
+                if let Some(funct3) = instr.funct3 {
+                    match funct3 {
+                        Funct3::Sll | Funct3::SrlSra | Funct3::AddSub => {
+                            exec_op_32(instr, state, mem)
+                        }
+                        _ => Err(ExecuteError::InvalidOperation),
                     }
                 } else {
                     Err(ExecuteError::InvalidOperation)
@@ -230,6 +260,36 @@ impl Executor {
             0x02 => exec_fsw(instr, state, mem),
             // FSD (Store 64-bit double)
             0x03 => exec_fsd_d(instr, state, mem),
+            _ => Err(ExecuteError::InvalidOperation),
+        }
+    }
+
+    /// Execute RV64M (Multiplication and Division) instructions
+    fn execute_rv64m(
+        &self,
+        instr: &DecodedInstruction,
+        state: &mut CoreState,
+        mem: &mut dyn MemoryInterface,
+    ) -> Result<(), ExecuteError> {
+        let funct3 = instr.funct3.map(|f| f as u8).unwrap_or(0);
+
+        match funct3 {
+            // MUL: Multiply (lower 64 bits)
+            0b000 => exec_mul(instr, state, mem),
+            // MULH: Multiply Signed * Signed (upper 64 bits)
+            0b001 => exec_mulh(instr, state, mem),
+            // MULHSU: Multiply Signed * Unsigned (upper 64 bits)
+            0b010 => exec_mulhsu(instr, state, mem),
+            // MULHU: Multiply Unsigned * Unsigned (upper 64 bits)
+            0b011 => exec_mulhu(instr, state, mem),
+            // DIV: Divide Signed
+            0b100 => exec_div(instr, state, mem),
+            // DIVU: Divide Unsigned
+            0b101 => exec_divu(instr, state, mem),
+            // REM: Remainder Signed
+            0b110 => exec_rem(instr, state, mem),
+            // REMU: Remainder Unsigned
+            0b111 => exec_remu(instr, state, mem),
             _ => Err(ExecuteError::InvalidOperation),
         }
     }

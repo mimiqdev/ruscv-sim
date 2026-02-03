@@ -38,6 +38,7 @@ pub enum Opcode {
     StoreFp = 0b010_0111,
     MiscMem = 0b000_1111,
     OpImm = 0b001_0011,
+    OpImm32 = 0b001_1011,
     Op = 0b011_0011,
     Op32 = 0b011_1011,
     Lui = 0b011_0111,
@@ -216,7 +217,26 @@ impl InstructionDecoder {
                 decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8); // Needed for SLLI/SRLI/SRAI
                 decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
             }
+            Opcode::OpImm32 => {
+                decoded.format = InstructionFormat::IType;
+                decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8); // Needed for SLLIW/SRLIW/SRAIW
+                decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
+            }
             Opcode::Op => {
+                decoded.format = InstructionFormat::RType;
+                decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
+                decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
+                decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
+            }
+            Opcode::Op32 => {
+                // Op32 uses R-type format: ADDW, SUBW, SLLW, SRLW, SRAW
                 decoded.format = InstructionFormat::RType;
                 decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
                 decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
@@ -378,6 +398,92 @@ mod tests {
         assert_eq!(decoded.imm, Some(5), "immediate should be 5");
         assert_eq!(decoded.funct3, Some(Funct3::Sltu)); // funct3 = 0b011
         assert!(decoded.rd.is_none(), "Store should not have rd");
+    }
+
+    #[test]
+    fn test_op_imm_32_decode() {
+        // ADDIW x3, x4, 5 - I-type instruction
+        // Format: imm[11:0] | rs1 | funct3 | rd | opcode
+        // imm = 5, rs1 = 4, funct3 = 000 (ADDIW), rd = 3, opcode = 0011011
+        let instruction = (5 << 20) | (4 << 15) | (0 << 12) | (3 << 7) | 0b001_1011;
+        let decoder = InstructionDecoder::new();
+        let decoded = decoder.decode(instruction).unwrap();
+
+        assert_eq!(decoded.opcode, Opcode::OpImm32);
+        assert_eq!(decoded.rd, Some(3), "rd should be x3");
+        assert_eq!(decoded.rs1, Some(4), "rs1 should be x4");
+        assert_eq!(decoded.imm, Some(5), "immediate should be 5");
+        assert_eq!(decoded.funct3, Some(Funct3::AddSub));
+    }
+
+    #[test]
+    fn test_op_32_decode() {
+        // ADDW x1, x2, x3 - R-type instruction
+        // Format: funct7 | rs2 | rs1 | funct3 | rd | opcode
+        // funct7 = 0, rs2 = 3, rs1 = 2, funct3 = 000 (ADDW), rd = 1, opcode = 0111011
+        let instruction = (0 << 25) | (3 << 20) | (2 << 15) | (0 << 12) | (1 << 7) | 0b011_1011;
+        let decoder = InstructionDecoder::new();
+        let decoded = decoder.decode(instruction).unwrap();
+
+        assert_eq!(decoded.opcode, Opcode::Op32);
+        assert_eq!(decoded.rd, Some(1), "rd should be x1");
+        assert_eq!(decoded.rs1, Some(2), "rs1 should be x2");
+        assert_eq!(decoded.rs2, Some(3), "rs2 should be x3");
+        assert_eq!(decoded.funct3, Some(Funct3::AddSub));
+        assert_eq!(decoded.funct7, Some(0));
+    }
+
+    #[test]
+    fn test_subw_decode() {
+        // SUBW x1, x2, x3 - R-type instruction
+        // Format: funct7 | rs2 | rs1 | funct3 | rd | opcode
+        // funct7 = 0x20, rs2 = 3, rs1 = 2, funct3 = 000 (SUBW), rd = 1, opcode = 0111011
+        let instruction = (0x20 << 25) | (3 << 20) | (2 << 15) | (0 << 12) | (1 << 7) | 0b011_1011;
+        let decoder = InstructionDecoder::new();
+        let decoded = decoder.decode(instruction).unwrap();
+
+        assert_eq!(decoded.opcode, Opcode::Op32);
+        assert_eq!(decoded.rd, Some(1));
+        assert_eq!(decoded.rs1, Some(2));
+        assert_eq!(decoded.rs2, Some(3));
+        assert_eq!(decoded.funct3, Some(Funct3::AddSub));
+        assert_eq!(decoded.funct7, Some(0x20));
+    }
+
+    #[test]
+    fn test_slliw_decode() {
+        // SLLIW x2, x1, 4 - I-type instruction
+        // Format: funct7 | shamt | rs1 | funct3 | rd | opcode
+        // funct7 = 0, shamt = 4, rs1 = 1, funct3 = 001 (SLLIW), rd = 2, opcode = 0011011
+        let instruction = (0 << 25) | (4 << 20) | (1 << 15) | (1 << 12) | (2 << 7) | 0b001_1011;
+        let decoder = InstructionDecoder::new();
+        let decoded = decoder.decode(instruction).unwrap();
+
+        assert_eq!(decoded.opcode, Opcode::OpImm32);
+        assert_eq!(decoded.rd, Some(2));
+        assert_eq!(decoded.rs1, Some(1));
+        assert_eq!(decoded.imm, Some(4));
+        assert_eq!(decoded.funct3, Some(Funct3::Sll));
+        assert_eq!(decoded.funct7, Some(0));
+    }
+
+    #[test]
+    fn test_sraiw_decode() {
+        // SRAIW x2, x1, 4 - I-type instruction
+        // Format: funct7 | shamt | rs1 | funct3 | rd | opcode
+        // funct7 = 0x20, shamt = 4, rs1 = 1, funct3 = 101 (SRAIW), rd = 2, opcode = 0011011
+        let instruction = (0x20 << 25) | (4 << 20) | (1 << 15) | (5 << 12) | (2 << 7) | 0b001_1011;
+        let decoder = InstructionDecoder::new();
+        let decoded = decoder.decode(instruction).unwrap();
+
+        assert_eq!(decoded.opcode, Opcode::OpImm32);
+        assert_eq!(decoded.rd, Some(2));
+        assert_eq!(decoded.rs1, Some(1));
+        // imm field contains full 12-bit immediate: funct7 << 5 | shamt = 0x20 << 5 | 4 = 0x404 = 1028
+        // The actual shamt (4) is extracted by exec_op_imm_32 using imm & 0x1F
+        assert_eq!(decoded.imm, Some(0x404)); // 1028 = 0x20 << 5 | 4
+        assert_eq!(decoded.funct3, Some(Funct3::SrlSra));
+        assert_eq!(decoded.funct7, Some(0x20));
     }
 
     #[test]
