@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run RISC-V ELF tests using ruscv-sim simulator
-# Tests: add.elf, fib.elf, hello.elf
+# Auto-discovers all .elf files in tests/bare-metal-riscv-test/rv64i/
 
 
 
@@ -146,53 +146,59 @@ echo ""
 # Test counter
 TESTS_PASSED=0
 TESTS_FAILED=0
+TEST_NUMBER=0
 
-# Test 1: add.elf (Sum 1 to 10 = 55)
-echo -e "${YELLOW}Test 1: add.elf (Sum 1 to 10)${NC}"
-echo "--------------------------------------------"
-if check_elf "${TESTS_DIR}/rv64i/add.elf"; then
-    if run_test "add" "${TESTS_DIR}/rv64i/add.elf" "0" "Calculate sum 1+2+...+10 = 55"; then
-        TESTS_PASSED=$((TESTS_PASSED + 1))
+# Find all .elf files in rv64i directory
+echo -e "${YELLOW}Discovering tests...${NC}"
+ELF_FILES=("${TESTS_DIR}"/rv64i/*.elf)
+
+if [ ${#ELF_FILES[@]} -eq 0 ] || [ ! -f "${ELF_FILES[0]}" ]; then
+    echo -e "${RED}Error: No .elf files found in ${TESTS_DIR}/rv64i/${NC}"
+    echo "Run compile_riscv_tests.sh first to build the test programs."
+    exit 1
+fi
+
+echo "Found ${#ELF_FILES[@]} test(s)"
+echo ""
+
+# Run each test
+for elf_file in "${ELF_FILES[@]}"; do
+    # Skip if not a file (handles case when glob doesn't match)
+    [ -f "$elf_file" ] || continue
+    
+    # Extract test name from filename
+    test_name=$(basename "$elf_file" .elf)
+    TEST_NUMBER=$((TEST_NUMBER + 1))
+    
+    echo -e "${YELLOW}Test ${TEST_NUMBER}: ${test_name}.elf${NC}"
+    echo "--------------------------------------------"
+    
+    if check_elf "$elf_file"; then
+        # Use special validation for hello test
+        if [ "$test_name" = "hello" ]; then
+            if run_hello_test "$test_name" "$elf_file" "0" "UART output test"; then
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+            else
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+            fi
+        else
+            if run_test "$test_name" "$elf_file" "0" "RV64I instruction test"; then
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+            else
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+            fi
+        fi
     else
         TESTS_FAILED=$((TESTS_FAILED + 1))
     fi
-else
-    ((TESTS_FAILED++))
-fi
-echo ""
-
-# Test 2: fib.elf (Fibonacci F10 = 55)
-echo -e "${YELLOW}Test 2: fib.elf (Fibonacci Sequence)${NC}"
-echo "--------------------------------------------"
-if check_elf "${TESTS_DIR}/rv64i/fib.elf"; then
-    if run_test "fib" "${TESTS_DIR}/rv64i/fib.elf" "0" "Calculate Fibonacci F10 = 55"; then
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-    else
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-    fi
-else
-    ((TESTS_FAILED++))
-fi
-echo ""
-
-# Test 3: hello.elf (UART output)
-echo -e "${YELLOW}Test 3: hello.elf (UART Hello World)${NC}"
-echo "--------------------------------------------"
-if check_elf "${TESTS_DIR}/rv64i/hello.elf"; then
-    if run_hello_test "hello" "${TESTS_DIR}/rv64i/hello.elf" "0" "Output 'Hello!' via UART"; then
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-    else
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-    fi
-else
-    ((TESTS_FAILED++))
-fi
-echo ""
+    echo ""
+done
 
 # Summary
 echo "============================================"
 echo "  Test Summary"
 echo "============================================"
+echo -e "  Total:  ${YELLOW}$((TESTS_PASSED + TESTS_FAILED))${NC}"
 echo -e "  Passed: ${GREEN}${TESTS_PASSED}${NC}"
 echo -e "  Failed: ${RED}${TESTS_FAILED}${NC}"
 echo ""
