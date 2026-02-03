@@ -2,8 +2,6 @@
 # Compile RISC-V ELF test programs
 # Builds add.elf, fib.elf, hello.elf from assembly source files
 
-set -e
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

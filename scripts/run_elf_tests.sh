@@ -2,7 +2,7 @@
 # Run RISC-V ELF tests using ruscv-sim simulator
 # Tests: add.elf, fib.elf, hello.elf
 
-set -e
+
 
 # Colors for output
 RED='\033[0;31m'
@@ -76,35 +76,16 @@ run_test() {
     local exit_status=0
     
     # Run simulator and capture output
-    if output=$("${RUSCV_BIN}" run "${elf}" --max-cycles 100000 2>&1); then
-        : # Success
-    else
-        exit_status=$?
-    fi
+    output=$("${RUSCV_BIN}" run "${elf}" --max-cycles 100000 2>&1) || exit_status=$?
     
     echo "$output"
-    
-    # Parse exit code from output
-    local exit_code
-    exit_code=$(echo "$output" | grep -oP 'Exit Code:\s*\K\d+' | head -1)
-    
-    if [ -z "$exit_code" ]; then
-        # Try alternative format
-        exit_code=$(echo "$output" | grep -oP 'exit_code:\s*\K\d+' | head -1)
-    fi
-    
     echo ""
     
-    if [ -z "$exit_code" ]; then
-        echo -e "${RED}  [FAIL]${NC} Could not parse exit code from output"
-        return 1
-    fi
-    
-    if [ "$exit_code" = "$expected_exit" ]; then
-        echo -e "${GREEN}  [PASS]${NC} Exit code = ${exit_code} (expected ${expected_exit})"
+    if [ $exit_status -eq "$expected_exit" ]; then
+        echo -e "${GREEN}  [PASS]${NC} Exit code = ${exit_status} (expected ${expected_exit})"
         return 0
     else
-        echo -e "${RED}  [FAIL]${NC} Exit code = ${exit_code} (expected ${expected_exit})"
+        echo -e "${RED}  [FAIL]${NC} Exit code = ${exit_status} (expected ${expected_exit})"
         return 1
     fi
 }
