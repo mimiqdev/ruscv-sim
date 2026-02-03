@@ -215,8 +215,8 @@ pub fn load_and_run(
     // Step 3: Create and configure core
     let mut core = RiscvCore::new(mem.clone(), mem.clone());
 
-    // Reset core with entry point
-    core.reset(entry_point);
+    // Reset core with entry point and base address for VA translation
+    core.reset(entry_point, base_addr);
 
     // Step 4: Execution loop
     let mut cycles = 0u64;
@@ -311,8 +311,8 @@ pub fn load_and_run_file(
 /// Reset the simulator state
 ///
 /// Creates a fresh core state ready for execution
-pub fn reset_core(core: &mut RiscvCore, entry_point: u64) {
-    core.reset(entry_point);
+pub fn reset_core(core: &mut RiscvCore, entry_point: u64, base_addr: u64) {
+    core.reset(entry_point, base_addr);
 }
 
 /// Run a single step and return the result
@@ -394,8 +394,8 @@ impl RiscVSimulator {
             self.tohost = addr;
         }
 
-        // Reset core to entry point
-        self.core.reset(entry_point);
+        // Reset core to entry point with base address for VA translation
+        self.core.reset(entry_point, base_addr);
 
         Ok(entry_point)
     }

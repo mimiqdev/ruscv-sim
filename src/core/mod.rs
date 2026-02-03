@@ -77,6 +77,8 @@ pub struct RiscvCore {
     executor: Executor,
     /// TLM interface（可选）
     tlm_interface: Option<Arc<Mutex<dyn TlmInterface>>>,
+    /// Base address for virtual address translation (loaded ELF base address)
+    base_addr: u64,
 }
 
 impl RiscvCore {
@@ -92,6 +94,7 @@ impl RiscvCore {
             decoder: InstructionDecoder::new(),
             executor: Executor::new(),
             tlm_interface: None,
+            base_addr: 0,
         }
     }
 
@@ -118,13 +121,17 @@ impl RiscvCore {
 
     /// Step execute
     pub fn step(&mut self) -> Result<()> {
-        // 1. Fetch (convert 64-bit PC to 32-bit address for memory access)
+        // Convert virtual address to physical offset for instruction fetch
+        // instruction_addr = pc - base_addr
+        let instruction_addr = self.state.pc.wrapping_sub(self.base_addr);
+
+        // 1. Fetch instruction
         let instruction = {
             let mem = self
                 .instruction_mem
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Failed to lock instruction memory"))?;
-            mem.read_word(self.state.pc)?
+            mem.read_word(instruction_addr)?
         };
 
         // 2. Decode
@@ -149,9 +156,12 @@ impl RiscvCore {
     }
 
     /// Reset core
-    pub fn reset(&mut self, entry_point: u64) {
+    /// entry_point: virtual address of entry point
+    /// base_addr: base address of loaded ELF (used for VA -> PA translation)
+    pub fn reset(&mut self, entry_point: u64, base_addr: u64) {
         self.state = CoreState::default();
         self.state.pc = entry_point;
+        self.base_addr = base_addr;
     }
 
     /// 运行直到停止
@@ -187,7 +197,7 @@ mod tests {
         core.state.pc = 0x100;
         core.state.regs[1] = 42;
 
-        core.reset(0x200);
+        core.reset(0x200, 0x80000000);
 
         assert_eq!(core.state.pc, 0x200);
         assert_eq!(core.state.regs[1], 0); // regs cleared after reset

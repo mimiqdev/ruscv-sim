@@ -79,12 +79,12 @@ impl SimpleMemory {
     }
 
     /// 加载程序数据 (小端序)
-    pub fn load_program(&self, data: &[u8], base_addr: u64) {
+    /// 数据加载到相对偏移 0 开始的位置，base_addr 参数保留用于兼容性
+    pub fn load_program(&self, data: &[u8], _base_addr: u64) {
         let mut mem = self.data.write().unwrap();
         for (i, &byte) in data.iter().enumerate() {
-            let addr = (base_addr as usize) + i;
-            if addr < self.size {
-                mem[addr] = byte;
+            if i < self.size {
+                mem[i] = byte;
             }
         }
     }
@@ -290,10 +290,10 @@ mod tests {
         let mem = SimpleMemory::new(0x2000); // 8KB，足以容纳 0x1000 地址
         let program = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 
-        mem.load_program(&program, 0x1000);
+        mem.load_program(&program, 0x1000); // base_addr 参数被忽略，使用相对偏移
 
-        assert_eq!(mem.read_byte(0x1000).unwrap(), 0x01);
-        assert_eq!(mem.read_byte(0x1007).unwrap(), 0x08);
-        assert_eq!(mem.read_word(0x1000).unwrap(), 0x04030201); // 小端: 0x04+0x03*256+0x02*65536+0x01*16777216
+        assert_eq!(mem.read_byte(0).unwrap(), 0x01);
+        assert_eq!(mem.read_byte(7).unwrap(), 0x08);
+        assert_eq!(mem.read_word(0).unwrap(), 0x04030201); // 小端: 0x04+0x03*256+0x02*65536+0x01*16777216
     }
 }
