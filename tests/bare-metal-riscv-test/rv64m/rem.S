@@ -58,14 +58,14 @@ _start:
     li      x1, 0x7FFFFFFFFFFFFFFF  # Max positive
     li      x2, 100
     rem     x3, x1, x2
-    li      x7, 63                  # 0x7FFFFFFFFFFFFFFF % 100 = 63
+    li      x7, 7                   # 0x7FFFFFFFFFFFFFFF % 100 = 7
     bne     x3, x7, fail
 
     # Test 9: Large negative remainder
     li      x1, 0x8000000000000000  # Min negative (-2^63)
     li      x2, 100
     rem     x3, x1, x2
-    li      x7, -36                 # -2^63 % 100 = -36 (truncated)
+    li      x7, -8                  # -2^63 % 100 = -8 (truncated)
     bne     x3, x7, fail
 
     # Test 10: Overflow case: -2^63 % -1 = 0

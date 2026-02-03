@@ -44,7 +44,7 @@ _start:
     li      x1, 0x12345678  # x1 = 0x12345678
     xori    x3, x1, 0x7FF   # x3 = x1 ^ 0x7FF = 0x12345087
     
-    li      x7, 0x12345087  # x7 = expected value (0x12345087)
+    li      x7, 0x12345187  # x7 = expected value (0x12345187)
     bne     x3, x7, fail    # if x3 != 0x12345087, test failed
 
 pass:

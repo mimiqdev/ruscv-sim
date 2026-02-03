@@ -37,7 +37,7 @@ _start:
     li      x1, 0xFFFFFFFFFFFFFFFF
     li      x2, 100
     remu    x3, x1, x2      # x3 = 63
-    li      x7, 63
+    li      x7, 15
     bne     x3, x7, fail
 
     # Test 6: Maximum % (max-1) = 1
