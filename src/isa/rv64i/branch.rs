@@ -53,27 +53,12 @@ pub fn exec_branch(
         _ => false,
     };
 
-    // DEBUG
-    if funct3_val == 0b100 {
-        let imm_sext = ((imm as i32) << 20 >> 20) as i64 as u64;
-        eprintln!("[BRANCH-DETAIL] blt: rs1={} (x{}, gp), rs2={} (x{}, sp), take_branch={}, pc={:#x}, imm={:#x}, imm_sext={:#x}, target={:#x}",
-                  rs1_val, rs1, rs2_val, rs2, take_branch, state.pc, imm, imm_sext,
-                  state.pc.wrapping_add(imm_sext));
-    }
-
     if take_branch {
         // Sign-extend the branch offset and add to PC
         // B-type immediate: imm[12|10:5|4:1|11] is a 13-bit signed offset (bit 0 is always 0)
         // Decode ensures imm only contains 13 valid bits (bits 0-12), so we sign-extend from bit 12
         // Using i32 << 20 >> 20 to sign-extend the 13-bit value to 32 bits
         let imm_sext = ((imm as i32) << 20 >> 20) as i64 as u64;
-        eprintln!(
-            "[BRANCH-TAKEN] pc={:#x}, imm={:#x}, imm_sext={:#x}, target={:#x}",
-            state.pc,
-            imm,
-            imm_sext,
-            state.pc.wrapping_add(imm_sext)
-        );
         state.pc = state.pc.wrapping_add(imm_sext);
         // Mark that a branch was taken (used by step() to skip pc += 4)
         state.branch_taken = true;
