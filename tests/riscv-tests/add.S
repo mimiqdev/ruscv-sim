@@ -28,6 +28,7 @@ done:
     # Use write marker format: (1 << 63) | exit_code
     
     # For simple test, we'll just write exit code 0x37 (55)
+    # Use lower address for simple memory simulation
     la      x4, tohost
     li      x5, 55          # exit code = 55
     sw      x5, 0(x4)
@@ -36,9 +37,8 @@ done:
 inf:
     j       inf
 
-# Tohost address (should match simulator's default)
+# Tohost address (using lower address for simulation)
 .section .data
 .align 3
 tohost:
-    .word   0x00
-    .word   0x80001000      # Default tohost address (little-endian)
+    .dword  0x8000          # Lower tohost address for simulation

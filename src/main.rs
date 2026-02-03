@@ -2,48 +2,96 @@
 //!
 //! For testing and debugging RISC-V simulator
 
-use ruscv_sim::{RiscvCore, SimpleMemory};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use clap::{Parser, Subcommand};
+use ruscv_sim::{load_and_run_file, ExecutionResult};
+use std::path::PathBuf;
+
+/// RISC-V ISS Simulator CLI
+#[derive(Parser, Debug)]
+#[command(name = "ruscv-sim")]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Run a RISC-V ELF program
+    Run {
+        /// Path to the ELF file to execute
+        #[arg(value_name = "ELF_FILE")]
+        elf: PathBuf,
+
+        /// Maximum number of cycles to execute
+        #[arg(short, long, value_name = "CYCLES")]
+        max_cycles: Option<u64>,
+
+        /// Show verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+}
 
 fn main() {
-    println!("RISC-V ISS Simulator v0.1.0");
-    println!("============================");
+    let args = Args::parse();
 
-    // 创建存储器 (64KB)
-    let mem_size = 0x10000;
-    let mem = Arc::new(Mutex::new(SimpleMemory::new(mem_size)));
+    match args.command {
+        Commands::Run {
+            elf,
+            max_cycles,
+            verbose,
+        } => {
+            if verbose {
+                eprintln!("Loading ELF file: {:?}", elf);
+                eprintln!("Max cycles: {:?}", max_cycles);
+            }
 
-    // 创建核心
-    let mut core = RiscvCore::new(mem.clone(), mem);
+            match run_elf(&elf, max_cycles) {
+                Ok(result) => {
+                    print_result(&result);
+                    std::process::exit(result.exit_code as i32);
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+}
 
-    // 加载简单测试程序 (LUI x1, 0x12345)
-    // LUI x1, 0x12345 -> 0x12345000 | (1 << 7) | 0b011_0111
-    let lui_instr: u32 = (0x12345u32 << 12) | (1u32 << 7) | 0b011_0111u32;
-    let lui_instr_le = lui_instr.to_le();
+fn run_elf(elf_path: &PathBuf, max_cycles: Option<u64>) -> Result<ExecutionResult, String> {
+    load_and_run_file(elf_path.to_str().unwrap(), max_cycles)
+        .map_err(|e| format!("Execution failed: {}", e))
+}
 
-    println!("Test instruction: LUI x1, 0x12345");
-    println!("Instruction encoding: 0x{:08x}", lui_instr);
+fn print_result(result: &ExecutionResult) {
+    println!();
+    println!("========== Execution Result ==========");
+    println!("Exit Code:  {}", result.exit_code);
+    println!("Cycles:     {}", result.cycles);
+    println!("Final PC:   0x{:016x}", result.final_pc);
 
-    // 重置核心
-    core.reset(0x0);
+    if result.timed_out {
+        println!("Status:     TIMEOUT");
+    } else if result.exit_code == 0 {
+        println!("Status:     SUCCESS");
+    } else {
+        println!("Status:     FAILED");
+    }
 
-    // 执行几条指令
-    println!("\nExecute test:");
-    let start = Instant::now();
+    if let Some(ref error) = result.error {
+        println!("Error:      {}", error);
+    }
 
-    // 模拟执行
-    println!("PC = 0x{:08x}", core.state().pc);
+    if let Some(addr) = result.signature_addr {
+        println!(
+            "Signature:  0x{:016x} ({} bytes)",
+            addr,
+            result.signature_data.as_ref().map(|d| d.len()).unwrap_or(0)
+        );
+    }
 
-    // 手动测试解码器
-    use ruscv_sim::InstructionDecoder;
-    let decoder = InstructionDecoder::new();
-    let decoded = decoder.decode(lui_instr_le).unwrap();
-    println!("译码结果: {:?}", decoded.opcode);
-    println!("目标寄存器: {:?}", decoded.rd);
-    println!("Immediate: 0x{:08x}", decoded.imm.unwrap());
-
-    let elapsed = start.elapsed();
-    println!("\n执行时间: {:?}", elapsed);
-    println!("\nSimulator initialization complete!");
+    println!("=====================================");
 }
