@@ -85,7 +85,7 @@ impl SystemBus {
 
 impl MemoryInterface for SystemBus {
     fn read_dword(&self, addr: u64) -> Result<u64, MemoryError> {
-        if self.is_ram(addr) {
+        if addr >= self.ram_base && (addr + 8) <= (self.ram_base + self.ram_size as u64) {
             return self.ram.lock().unwrap().read_dword(addr - self.ram_base);
         }
         if self.is_uart(addr) {
@@ -95,7 +95,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn read_word(&self, addr: u64) -> Result<u32, MemoryError> {
-        if self.is_ram(addr) {
+        if addr >= self.ram_base && (addr + 4) <= (self.ram_base + self.ram_size as u64) {
             return self.ram.lock().unwrap().read_word(addr - self.ram_base);
         }
         if self.is_uart(addr) {
@@ -153,7 +153,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn write_dword(&mut self, addr: u64, value: u64) -> Result<(), MemoryError> {
-        if self.is_ram(addr) {
+        if addr >= self.ram_base && (addr + 8) <= (self.ram_base + self.ram_size as u64) {
             return self
                 .ram
                 .lock()
@@ -167,7 +167,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn write_word(&mut self, addr: u64, value: u32) -> Result<(), MemoryError> {
-        if self.is_ram(addr) {
+        if addr >= self.ram_base && (addr + 4) <= (self.ram_base + self.ram_size as u64) {
             return self
                 .ram
                 .lock()
