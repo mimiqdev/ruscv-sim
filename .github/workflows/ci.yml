@@ -216,13 +216,47 @@ jobs:
           echo "✅ Smoke test passed!"
 
   # ==========================================
-  # Job 7: Summary Report
+  # Job 7: Coverage Report
+  # ==========================================
+  coverage:
+    name: Coverage
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    needs: test
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: llvm-cov
+
+      - name: Generate coverage report
+        run: |
+          cargo install cargo-llvm-cov --locked
+          cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./lcov.info
+          fail_ci_if_error: true
+
+  # ==========================================
+  # Job 8: Summary Report
   # ==========================================
   summary:
     name: Summary
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
-    needs: [check, test, bench, build, riscv-tests, smoke-test]
+    needs: [check, test, bench, build, riscv-tests, smoke-test, coverage]
 
     if: always()
     steps:
@@ -276,7 +310,16 @@ jobs:
           else
             echo "❌ Smoke Test Failed" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
+          echo "### Coverage Status" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.coverage.result }}" == "success" ]; then
+            echo "✅ Coverage Report Uploaded" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.coverage.result }}" == "skipped" ]; then
+            echo "⏭️  Coverage Skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️  Coverage Failed (non-blocking)" >> $GITHUB_STEP_SUMMARY
+          fi
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "_Note: Benchmarks are non-blocking and for baseline data collection only_" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,35 @@
+# Codecov Configuration for ruscv-sim
+# =====================================
+
+coverage:
+  # Project-wide coverage settings
+  status:
+    project:
+      default:
+        target: 70%
+        threshold: 5%
+        if_not_found: success
+    patch:
+      default:
+        target: 70%
+        if_not_found: success
+
+  # Ignore certain files/patterns
+  ignore:
+    - "tests/**"
+    - "benches/**"
+    - "examples/**"
+    - "**.md"
+    - "**.txt"
+
+# Comment settings for PRs
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+# GitHub notification settings
+github_checks:
+  annotations: true
