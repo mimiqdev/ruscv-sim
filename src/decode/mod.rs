@@ -250,11 +250,12 @@ impl InstructionDecoder {
             }
             Opcode::System => {
                 decoded.format = InstructionFormat::IType;
+                decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
+                decoded.funct3 =
+                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
                 // ECALL: imm[20:0] = 0, EBREAK: imm[20:0] = 1
-                // Extract imm[20:0] from bits [31:20] (funct12) shifted
-                // ECALL: funct7=0, rs2=0, funct3=0, rd=0 -> imm[20:0] = funct7 << 14 | rs2 << 9 | funct3 << 6 | rd << 1
-                // Actually simpler: the imm[20:0] field is in bits [31:20] (12-bit funct7 in upper, etc)
-                // For SYSTEM: bits [31:20] is the imm field
+                // For SYSTEM: bits [31:20] is the imm field (CSR address or function code)
                 let imm_20_0 = (instruction >> 20) & 0xFFF;
                 decoded.imm = Some(imm_20_0);
             }

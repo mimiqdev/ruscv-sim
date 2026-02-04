@@ -30,15 +30,8 @@ LDSCRIPT="-T${TESTS_DIR}/linker.ld"
 # 需要 Op32 opcode (0111011) 支持的指令:
 #   - addw, subw, sllw, srlw, sraw - 32-bit register operations
 #
-# CSR 指令需要额外的 CSR 支持
+# CSR 指令已实现
 EXCLUDE_SOURCES=(
-    # CSR指令（待实现）
-    "rv64i/csrrw.S"
-    "rv64i/csrrs.S"
-    "rv64i/csrrc.S"
-    "rv64i/csrrwi.S"
-    "rv64i/csrrsi.S"
-    "rv64i/csrrci.S"
 )
 
 # Source files - auto-discover all .S files in rv64i and rv64m directories

@@ -43,6 +43,20 @@ pub fn exec_system(
             match imm {
                 0 => Err(ExecuteError::Ecall),
                 1 => Err(ExecuteError::Ebreak),
+                0x302 => {
+                    // MRET
+                    let target = exec_mret(instr, state, _mem)?;
+                    state.pc = target;
+                    state.branch_taken = true;
+                    Ok(())
+                }
+                0x102 => {
+                    // SRET
+                    let target = exec_sret(instr, state, _mem)?;
+                    state.pc = target;
+                    state.branch_taken = true;
+                    Ok(())
+                }
                 _ => Err(ExecuteError::InvalidOperation),
             }
         }
