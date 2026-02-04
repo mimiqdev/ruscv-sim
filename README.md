@@ -1,5 +1,8 @@
 # RISC-V ISS Simulator (ruscv-sim)
 
+[![CI](https://github.com/mimiqdev/ruscv-sim/actions/workflows/ci.yml/badge.svg)](https://github.com/mimiqdev/ruscv-sim/actions)
+[![Codecov](https://codecov.io/gh/mimiqdev/ruscv-sim/branch/main/graph/badge.svg)](https://codecov.io/gh/mimiqdev/ruscv-sim)
+
 基于 Rust 实现的 RISC-V 指令集模拟器 (ISS)，支持 RV32I/RV64I 指令集，遵循 RVA23 Profile 标准。
 
 ## 项目概述
