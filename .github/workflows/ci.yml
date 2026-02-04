@@ -236,15 +236,8 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Install LLVM
-        run: |
-          # Install LLVM (required for cargo-llvm-cov)
-          which llvm-config || apt-get update && apt-get install -y llvm-dev
-
       - name: Generate coverage report
-        run: |
-          cargo install cargo-llvm-cov --locked
-          cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
