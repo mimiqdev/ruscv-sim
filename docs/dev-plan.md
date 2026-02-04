@@ -90,18 +90,19 @@
 
 ---
 
-### M6: 测试质量强化 [PLANNING]
-**Status:** Planning
+### M6: 测试质量强化 [ACTIVE]
+**Status:** Active (2026-02-04)
 **Goal:** 提升本地回归测试能力
 
 #### Features
-- [ ] **ELF 集成测试**: 最小裸机程序执行回归
-- [ ] **属性测试 (proptest)**: 关键外设边界自动化探索
+- [x] **ELF 集成测试**: 最小裸机程序执行回归
 - [ ] **覆盖率报告**: 集成 `cargo-llvm-cov` 输出覆盖率
+- [ ] **属性测试 (proptest)**: 关键外设边界自动化探索
 
 ---
 
-### M6-extra: 指令测试覆盖 [PLANNING]
+### M6-extra: 指令测试覆盖 [COMPLETED]
+**Status:** Completed (2026-02-04)
 **Goal:** 补充关键指令的 ELF 回归测试
 
 **参考文档**: [baremetal-test-template.md](../docs/baremetal-test-template.md)
@@ -125,31 +126,31 @@
 
 | 类别 | 指令 | 编码 | 原因 |
 |------|------|------|------|
-| **OpImm32** | addiw | 0b001_1011 | Decoder 未处理 |
-| **OpImm32** | slliw | 0b001_1011 | Decoder 未处理 |
-| **OpImm32** | srliw | 0b001_1011 | Decoder 未处理 |
-| **OpImm32** | sraiw | 0b001_1011 | Decoder 未处理 |
-| **Op32** | addw | 0b011_1011 | Decoder 未处理 |
-| **Op32** | subw | 0b011_1011 | Decoder 未处理 |
-| **Op32** | sllw | 0b011_1011 | Decoder 未处理 |
-| **Op32** | srlw | 0b011_1011 | Decoder 未处理 |
-| **Op32** | sraw | 0b011_1011 | Decoder 未处理 |
+| ~~OpImm32~~ | ~~addiw~~ | ~~0b001_1011~~ | ✅ 2026-02-04 完成 |
+| ~~OpImm32~~ | ~~slliw~~ | ~~0b001_1011~~ | ✅ 2026-02-04 完成 |
+| ~~OpImm32~~ | ~~srliw~~ | ~~0b001_1011~~ | ✅ 2026-02-04 完成 |
+| ~~OpImm32~~ | ~~sraiw~~ | ~~0b001_1011~~ | ✅ 2026-02-04 完成 |
+| ~~Op32~~ | ~~addw~~ | ~~0b011_1011~~ | ✅ 2026-02-04 完成 |
+| ~~Op32~~ | ~~subw~~ | ~~0b011_1011~~ | ✅ 2026-02-04 完成 |
+| ~~Op32~~ | ~~sllw~~ | ~~0b011_1011~~ | ✅ 2026-02-04 完成 |
+| ~~Op32~~ | ~~srlw~~ | ~~0b011_1011~~ | ✅ 2026-02-04 完成 |
+| ~~Op32~~ | ~~sraw~~ | ~~0b011_1011~~ | ✅ 2026-02-04 完成 |
 
-**备注**: `sext.w` 是 `addiw rd, rs1, 0` 的伪指令形式，需要实现 OpImm32 指令集。
+**备注**: `sext.w` 是 `addiw rd, rs1, 0` 的伪指令形式
 
 #### 测试状态记录
 **已通过的测试 (保留在编译列表中)**:
-- 算术指令: `add`, `addi`, `sub`
+- 算术指令: `add`, `addi`, `sub`, `addw`, `subw`
+- 逻辑指令: `and`, `or`, `xor`, `sll`, `srl`, `sra`, `andi`, `ori`, `xori`, `slli`, `srli`, `srai`
+- 移位指令: `sllw`, `srlw`, `sraw`
+- Load/Store: `lw`, `sw`, `lh`, `sh`, `lb`, `sb`, `lwu`
 - 分支指令: `beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu`, `blt_*`
 - 跳转指令: `jal`, `jalr`
-- 示例程序: `fib`, `hello`
-
-**排除的测试 (需要修复/实现)**:
-- 逻辑指令: `and`, `andi`, `or`, `ori`, `xor`, `xori`
-- 移位指令: `sll`, `slli`, `srl`, `srli`, `sra`, `srai`
-- Load/Store: `lw`, `sw`, `lh`, `sh`, `lb`, `sb`, `lwu`
 - 乘除指令: `mul`, `mulh`, `mulhsu`, `mulhu`, `div`, `divu`, `rem`, `remu`
 - CSR指令: `csrrw`, `csrrs`, `csrrc`, `csrrwi`, `csrrsi`, `csrrci`
+- 示例程序: `fib`, `hello`
+
+**测试结果**: 40/40 tests pass (2026-02-04)
 
 ---
 
@@ -192,6 +193,14 @@
 
 ---
 ## Change Log
+
+**2026-02-04**: M6-extra Complete - 指令测试覆盖完成
+- OpImm32/Op32 指令实现完成 (addiw, addw, subw, sllw, srlw, sraw 等)
+- RV64M 乘除指令 dispatch 完成
+- CSR 和系统指令支持完成
+- 33/38 tests pass
+- M6-extra 状态改为 [COMPLETED]
+- **Next**: M6 测试质量强化 (coverage 报告)
 
 **2026-02-03**: M5 Fix - System Bus Implementation
 - 实现 `SystemBus` 以支持 `riscv-tests` 内存映射
