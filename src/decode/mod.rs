@@ -163,7 +163,7 @@ impl InstructionDecoder {
                 decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
                 decoded.funct3 =
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
-                decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
+                decoded.imm = Some((instruction >> 20) as i32 as u32);
                 // 符号扩展
             }
             Opcode::Branch => {

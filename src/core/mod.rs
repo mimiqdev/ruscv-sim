@@ -261,10 +261,10 @@ impl RiscvCore {
                 pc_before, self.state.pc, self.state.branch_taken, instruction
             );
 
-            // Debug: trace gp and sp registers
+            // Debug: trace key registers
             eprintln!(
-                "[REGS] gp(x3)={}, sp(x2)={}",
-                self.state.regs[3], self.state.regs[2]
+                "[REGS] a0(x10)={:#x}, t0(x5)={:#x}, t1(x6)={:#x}, t2(x7)={:#x}",
+                self.state.regs[10], self.state.regs[5], self.state.regs[6], self.state.regs[7]
             );
         }
 
