@@ -1,16 +1,78 @@
 use ruscv_sim::load_and_run;
+use std::process::Command;
 
-// Skip this test if the ELF file doesn't exist (e.g., in CI before riscv-tests job)
-#[test]
-fn test_add_program() {
-    let elf_path = "tests/bare-metal-riscv-test/rv64i/add.elf";
-    if !std::path::Path::new(elf_path).exists() {
-        println!("ELF file not found at {}, skipping test", elf_path);
-        return;
+/// Compile the add.S assembly file to ELF if it doesn't exist
+fn compile_add_elf() -> std::io::Result<std::path::PathBuf> {
+    let elf_path = std::path::PathBuf::from("tests/bare-metal-riscv-test/rv64i/add.elf");
+
+    // Return existing ELF if it already exists
+    if elf_path.exists() {
+        return Ok(elf_path);
     }
 
-    let elf_data = std::fs::read(elf_path).unwrap();
-    println!("Loading ELF: {} bytes", elf_data.len());
+    // Compile add.S to ELF
+    let asm_path = elf_path.with_extension("S");
+    let obj_path = elf_path.with_extension("o");
+
+    println!("Compiling {} to ELF...", asm_path.display());
+
+    // Use riscv64-unknown-elf toolchain
+    let riscv_prefix =
+        std::env::var("RISCV_PREFIX").unwrap_or_else(|_| "riscv64-unknown-elf-".to_string());
+
+    // Assemble: as -march=rv64ima_zicsr -mabi=lp64 add.S -o add.o
+    let as_status = Command::new(&format!("{}as", riscv_prefix))
+        .args(&["-march=rv64ima_zicsr", "-mabi=lp64"])
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()?;
+
+    if !as_status.success() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Failed to assemble add.S",
+        ));
+    }
+
+    // Link: ld -Tlinker.ld add.o -o add.elf
+    let ld_status = Command::new(&format!("{}ld", riscv_prefix))
+        .args(&["-Ttests/bare-metal-riscv-test/linker.ld"])
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&elf_path)
+        .status()?;
+
+    // Clean up object file
+    let _ = std::fs::remove_file(&obj_path);
+
+    if !ld_status.success() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Failed to link add.elf",
+        ));
+    }
+
+    println!("Successfully compiled {}", elf_path.display());
+    Ok(elf_path)
+}
+
+#[test]
+fn test_add_program() {
+    // Compile ELF if needed, otherwise use existing one
+    let elf_path = match compile_add_elf() {
+        Ok(path) => path,
+        Err(e) => {
+            panic!("Failed to compile add.elf: {}", e);
+        }
+    };
+
+    let elf_data = std::fs::read(&elf_path).unwrap();
+    println!(
+        "Loading ELF: {} bytes ({}))",
+        elf_data.len(),
+        elf_path.display()
+    );
 
     // Let the simulator auto-detect tohost address from ELF
     // tohost is at 0x80001000 based on linker script
