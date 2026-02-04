@@ -1,7 +1,6 @@
 use ruscv_sim::InstructionDecoder;
 
-#[test]
-fn dump_add_instructions() {
+fn main() {
     let elf_data = std::fs::read("tests/bare-metal-riscv-test/rv64i/add.elf").unwrap();
     let decoder = InstructionDecoder::new();
 
