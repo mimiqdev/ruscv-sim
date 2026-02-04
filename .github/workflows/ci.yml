@@ -235,7 +235,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          components: llvm-cov
+
+      - name: Install LLVM
+        run: |
+          # Install LLVM (required for cargo-llvm-cov)
+          which llvm-config || apt-get update && apt-get install -y llvm-dev
 
       - name: Generate coverage report
         run: |
