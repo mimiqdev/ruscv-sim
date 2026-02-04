@@ -21,23 +21,20 @@ fn compile_add_elf() -> std::io::Result<std::path::PathBuf> {
         std::env::var("RISCV_PREFIX").unwrap_or_else(|_| "riscv64-unknown-elf-".to_string());
 
     // Assemble: as -march=rv64ima_zicsr -mabi=lp64 add.S -o add.o
-    let as_status = Command::new(&format!("{}as", riscv_prefix))
-        .args(&["-march=rv64ima_zicsr", "-mabi=lp64"])
+    let as_status = Command::new(format!("{}as", riscv_prefix))
+        .args(["-march=rv64ima_zicsr", "-mabi=lp64"])
         .arg(&asm_path)
         .arg("-o")
         .arg(&obj_path)
         .status()?;
 
     if !as_status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Failed to assemble add.S",
-        ));
+        return Err(std::io::Error::other("Failed to assemble add.S"));
     }
 
     // Link: ld -Tlinker.ld add.o -o add.elf
-    let ld_status = Command::new(&format!("{}ld", riscv_prefix))
-        .args(&["-Ttests/bare-metal-riscv-test/linker.ld"])
+    let ld_status = Command::new(format!("{}ld", riscv_prefix))
+        .args(["-Ttests/bare-metal-riscv-test/linker.ld"])
         .arg(&obj_path)
         .arg("-o")
         .arg(&elf_path)
@@ -47,10 +44,7 @@ fn compile_add_elf() -> std::io::Result<std::path::PathBuf> {
     let _ = std::fs::remove_file(&obj_path);
 
     if !ld_status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Failed to link add.elf",
-        ));
+        return Err(std::io::Error::other("Failed to link add.elf"));
     }
 
     println!("Successfully compiled {}", elf_path.display());
