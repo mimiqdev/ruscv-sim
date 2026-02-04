@@ -51,6 +51,7 @@ _start:
     sw      x3, 0(x10)          # store only lower 32 bits (0xCAFEBABE)
     lw      x4, 0(x10)          # load back
     li      x7, 0xCAFEBABE      # expect only lower 32 bits
+    addiw   x7, x7, 0           # sign-extend expected value
     bne     x4, x7, fail
 
     # === Test 6: Store with different source registers ===
@@ -58,6 +59,7 @@ _start:
     sw      x20, 0(x10)
     lw      x5, 0(x10)
     li      x7, 0xAABBCCDD
+    addiw   x7, x7, 0           # sign-extend expected value
     bne     x5, x7, fail
 
     li      x21, 0x11223344
@@ -89,6 +91,7 @@ _start:
     sw      x1, -4(x11)         # store to (x11 - 4) = test_data + 4
     lw      x2, 4(x10)          # verify at correct location
     li      x7, 0x99998888
+    addiw   x7, x7, 0           # sign-extend expected value
     bne     x2, x7, fail
 
 pass:

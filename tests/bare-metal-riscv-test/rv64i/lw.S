@@ -48,6 +48,7 @@ _start:
     sw      x5, 0(x11)          # store word
     lw      x6, 0(x11)          # load word back
     li      x7, 0xAABBCCDD      # x7 = expected
+    addiw   x7, x7, 0           # sign-extend expected value
     bne     x6, x7, fail        # verify loaded value
 
     # === Test 6: LW with negative offset ===
@@ -69,6 +70,7 @@ pass:
 
 fail:
     li      x5, 1               # exit_code = 1 (fail)
+    j       write_exit
 
 write_exit:
     la      x4, tohost

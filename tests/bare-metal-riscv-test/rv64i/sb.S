@@ -54,6 +54,7 @@ _start:
     sb      x4, 0(x10)          # store only first byte
     lw      x5, 0(x10)          # load back full word
     li      x7, 0xDEADBEAA      # expect other bytes preserved, first changed
+    addiw   x7, x7, 0           # sign-extend expected value
     bne     x5, x7, fail
 
     # === Test 6: Store with different source registers ===
@@ -109,18 +110,21 @@ _start:
     sb      x2, 1(x10)          # store at byte 1
     lw      x3, 0(x10)
     li      x7, 0xAABBFFDD      # only byte 1 changed
+    addiw   x7, x7, 0           # sign-extend expected value
     bne     x3, x7, fail
 
     li      x2, 0xEE
     sb      x2, 2(x10)          # store at byte 2
     lw      x3, 0(x10)
     li      x7, 0xAAEEFFDD      # bytes 1 and 2 changed
+    addiw   x7, x7, 0           # sign-extend expected value
     bne     x3, x7, fail
 
     li      x2, 0xCC
     sb      x2, 3(x10)          # store at byte 3
     lw      x3, 0(x10)
     li      x7, 0xCCEEFFDD      # bytes 1, 2, 3 changed
+    addiw   x7, x7, 0           # sign-extend expected value
     bne     x3, x7, fail
 
     # === Test 10: Store each byte then verify full word ===

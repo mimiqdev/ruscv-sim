@@ -54,6 +54,7 @@ _start:
     sh      x4, 0(x10)          # store only lower 16 bits
     lw      x5, 0(x10)          # load back full word
     li      x7, 0xDEAD1234      # expect upper 16 bits preserved, lower changed
+    addiw   x7, x7, 0           # sign-extend expected value
     bne     x5, x7, fail
 
     # === Test 6: Store with different source registers ===
@@ -103,6 +104,7 @@ _start:
     sh      x1, 2(x10)          # store at offset 2 (within first word)
     lw      x2, 0(x10)          # load full word
     li      x7, 0xCAFE3333      # expect: 0xCAFE at upper 16 bits, 0x3333 at lower (from prev test)
+    addiw   x7, x7, 0           # sign-extend expected value
     bne     x2, x7, fail
 
 pass:
