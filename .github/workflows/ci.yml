@@ -85,7 +85,6 @@ jobs:
 
       - name: Run integration tests
         run: cargo test --all-features --test '*'
-        continue-on-error: true
 
   # ==========================================
   # Job 3: Performance Benchmarks
