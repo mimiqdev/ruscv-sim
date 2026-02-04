@@ -38,7 +38,7 @@ pub fn exec_op_imm_32(
         Funct3::AddSub => {
             // ADDIW: Add Immediate Word
             // Sign-extend 12-bit immediate to 32 bits, add, then sign-extend to 64 bits
-            let imm_sext_32 = ((imm as i32) << 20 >> 20) as i32;
+            let imm_sext_32 = (imm as i32) << 20 >> 20;
             rs1_i32.wrapping_add(imm_sext_32) as u32
         }
         Funct3::Sll => {
@@ -116,13 +116,13 @@ pub fn exec_op_32(
         Funct3::Sll => {
             // SLLW: Shift Left Logical Word
             // RV64I uses lower 5 bits of rs2 for shift amount
-            let shamt = (rs2_val & 0x1F) as u32;
+            let shamt = rs2_val & 0x1F;
             rs1_val.wrapping_shl(shamt)
         }
         Funct3::SrlSra => {
             // Distinguish SRLW (funct7=0) vs SRAW (funct7=0x20)
             // RV64I uses lower 5 bits of rs2 for shift amount
-            let shamt = (rs2_val & 0x1F) as u32;
+            let shamt = rs2_val & 0x1F;
             if funct7 == 0 {
                 // SRLW: Shift Right Logical Word
                 rs1_val.wrapping_shr(shamt)

@@ -312,9 +312,6 @@ impl InstructionDecoder {
                     decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
                 }
             }
-            _ => {
-                return Err(DecodeError::ReservedInstruction);
-            }
         }
 
         Ok(decoded)
@@ -405,7 +402,7 @@ mod tests {
         // ADDIW x3, x4, 5 - I-type instruction
         // Format: imm[11:0] | rs1 | funct3 | rd | opcode
         // imm = 5, rs1 = 4, funct3 = 000 (ADDIW), rd = 3, opcode = 0011011
-        let instruction = (5 << 20) | (4 << 15) | (0 << 12) | (3 << 7) | 0b001_1011;
+        let instruction = (5 << 20) | (4 << 15) | (3 << 7) | 0b001_1011;
         let decoder = InstructionDecoder::new();
         let decoded = decoder.decode(instruction).unwrap();
 
@@ -421,7 +418,7 @@ mod tests {
         // ADDW x1, x2, x3 - R-type instruction
         // Format: funct7 | rs2 | rs1 | funct3 | rd | opcode
         // funct7 = 0, rs2 = 3, rs1 = 2, funct3 = 000 (ADDW), rd = 1, opcode = 0111011
-        let instruction = (0 << 25) | (3 << 20) | (2 << 15) | (0 << 12) | (1 << 7) | 0b011_1011;
+        let instruction = (3 << 20) | (2 << 15) | (1 << 7) | 0b011_1011;
         let decoder = InstructionDecoder::new();
         let decoded = decoder.decode(instruction).unwrap();
 
@@ -438,7 +435,7 @@ mod tests {
         // SUBW x1, x2, x3 - R-type instruction
         // Format: funct7 | rs2 | rs1 | funct3 | rd | opcode
         // funct7 = 0x20, rs2 = 3, rs1 = 2, funct3 = 000 (SUBW), rd = 1, opcode = 0111011
-        let instruction = (0x20 << 25) | (3 << 20) | (2 << 15) | (0 << 12) | (1 << 7) | 0b011_1011;
+        let instruction = (0x20 << 25) | (3 << 20) | (2 << 15) | (1 << 7) | 0b011_1011;
         let decoder = InstructionDecoder::new();
         let decoded = decoder.decode(instruction).unwrap();
 
@@ -455,7 +452,7 @@ mod tests {
         // SLLIW x2, x1, 4 - I-type instruction
         // Format: funct7 | shamt | rs1 | funct3 | rd | opcode
         // funct7 = 0, shamt = 4, rs1 = 1, funct3 = 001 (SLLIW), rd = 2, opcode = 0011011
-        let instruction = (0 << 25) | (4 << 20) | (1 << 15) | (1 << 12) | (2 << 7) | 0b001_1011;
+        let instruction = (4 << 20) | (1 << 15) | (1 << 12) | (2 << 7) | 0b001_1011;
         let decoder = InstructionDecoder::new();
         let decoded = decoder.decode(instruction).unwrap();
 
