@@ -21,10 +21,10 @@
 **命令**：
 ```bash
 # 使用 Docker 运行 RISCOF
-docker run --rm ghcr.io/riscv-software-src/riscof:latest riscof --version
+docker run --rm ghcr.io/riscv-software-src/riscof/act:latest riscof --version
 
 # 创建别名方便使用（可选）
-alias riscof='docker run --rm -v $(pwd):/workdir -w /workdir ghcr.io/riscv-software-src/riscof:latest'
+alias riscof='docker run --rm -v $(pwd):/workdir -w /workdir ghcr.io/riscv-software-src/riscof/act:latest'
 ```
 
 **验证**：执行返回版本号且无报错
@@ -33,25 +33,48 @@ alias riscof='docker run --rm -v $(pwd):/workdir -w /workdir ghcr.io/riscv-softw
 
 ---
 
-### T.1.2 安装 Spike
+### T.1.2 构建 RISC-V 开发环境镜像
 
-**目标**：通过 Docker 运行 Spike 参考模拟器
+**目标**：构建包含 riscv-gnu-toolchain 和 Spike 的 Docker 镜像
 
 **命令**：
 ```bash
-# 使用 Docker 运行 Spike
-docker run --rm ghcr.io/riscv-software-src/riscv-isa-sim:latest spike --version
+# 创建 Dockerfile
+cat > .github/riscv-dev.Dockerfile << 'EOF'
+FROM ubuntu:22.04
 
-# 创建别名方便使用（可选）
-alias spike='docker run --rm -v $(pwd):/workdir -w /workdir ghcr.io/riscv-software-src/riscv-isa-sim:latest spike'
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential libpixman-1-dev device-tree-compiler \
+    wget tar git
 
-# 对于需要 pk 的场景
-alias spike-pk='docker run --rm -v $(pwd):/workdir -w /workdir ghcr.io/riscv-software-src/riscv-isa-sim:latest spike'
+# Build and install Spike
+RUN git clone --depth 1 https://github.com/riscv-software-src/riscv-isa-sim && \
+    cd riscv-isa-sim && \
+    ./configure --prefix=/opt/riscv && \
+    make -j$(nproc) && \
+    make install
+
+# Add RISCV to PATH
+ENV RISCV=/opt/riscv
+ENV PATH=$RISCV/bin:$PATH
+
+# Pre-built riscv-gnu-toolchain (download if not building)
+RUN wget -q https://static.dev.sifive.com/unleashed/tools/riscv64-unknown-elf-ubuntu-20.04-nightly-2024.08.01.tar.gz && \
+    tar -xzf riscv64-unknown-elf-*.tar.gz -C /opt/riscv && \
+    rm riscv64-unknown-elf-*.tar.gz
+EOF
+
+# 构建镜像
+docker build -f .github/riscv-dev.Dockerfile -t ghcr.io/mimiqdev/riscv-dev:latest .
+
+# 推送到 GitHub Container Registry
+docker push ghcr.io/mimiqdev/riscv-dev:latest
 ```
 
-**验证**：执行返回版本号且无报错
+**验证**：镜像构建成功，可正常运行 `spike --version` 和 `riscv64-unknown-elf-gcc --version`
 
-**产出**：`spike` 命令可通过 Docker 使用
+**产出**：`ghcr.io/mimiqdev/riscv-dev:latest` 镜像
 
 ---
 
@@ -167,7 +190,7 @@ cd riscv-arch-test
 docker run --rm \
     -v $(pwd):/workdir \
     -v $(pwd)/../ruscv-sim:/dut \
-    ghcr.io/riscv-software-src/riscof:latest \
+    ghcr.io/riscv-software-src/riscof/act:latest \
     riscof --suite riscv-tests --workdir ./work \
     --dut-yaml /dut/scripts/riscof/ruscv-sim-dut.yaml \
     --no-ref-model
@@ -195,7 +218,7 @@ cat ./work/logs/*.log
 ./target/release/ruscv-sim --elf test.elf --signature sig.bin
 
 # 使用 Docker 运行 Spike 进行比对
-docker run --rm -v $(pwd):/workdir ghcr.io/riscv-software-src/riscv-isa-sim:latest spike pk test.elf
+docker run --rm -v $(pwd):/workdir ghcr.io/mimiqdev/riscv-dev:latest spike pk test.elf
 
 # 比对结果
 diff sig.bin spike_sig.bin
@@ -216,10 +239,10 @@ diff sig.bin spike_sig.bin
 **命令**：
 ```bash
 # 查看 Spike 帮助
-docker run --rm ghcr.io/riscv-software-src/riscv-isa-sim:latest spike --help
+docker run --rm ghcr.io/mimiqdev/riscv-dev:latest spike --help
 
 # 运行测试并查看内存映射
-docker run --rm -v $(pwd):/workdir ghcr.io/riscv-software-src/riscv-isa-sim:latest spike --debug pk hello 2>&1 | head -100
+docker run --rm -v $(pwd):/workdir ghcr.io/mimiqdev/riscv-dev:latest spike --debug pk hello 2>&1 | head -100
 
 # 文档参考
 cat riscv-isa-sim/docs/spike-dpi.md 2>/dev/null || true
@@ -321,7 +344,7 @@ DOCKER_SPIKE_CMD = [
     "docker", "run", "--rm",
     "-v", f"{os.getcwd()}:/workdir",
     "-w", "/workdir",
-    "ghcr.io/riscv-software-src/riscv-isa-sim:latest",
+    "ghcr.io/mimiqdev/riscv-dev:latest",
     "spike"
 ]
 
@@ -397,7 +420,7 @@ cat /tmp/compare_report.txt
 # 使用 Docker 运行完整测试套件
 docker run --rm \
     -v $(pwd):/workdir \
-    ghcr.io/riscv-software-src/riscof:latest \
+    ghcr.io/riscv-software-src/riscof/act:latest \
     riscof --suite riscv-arch-test \
     --workdir ./work/full \
     --dut-yaml scripts/riscof/ruscv-sim-dut.yaml
@@ -405,7 +428,7 @@ docker run --rm \
 # 生成覆盖率报告
 docker run --rm \
     -v $(pwd):/workdir \
-    ghcr.io/riscv-software-src/riscof:latest \
+    ghcr.io/riscv-software-src/riscof/act:latest \
     riscof report --workdir ./work/full \
     --output ./coverage_report.html
 ```
@@ -463,17 +486,17 @@ cat > docs/m7-riscof-integration.md << 'EOF'
 ### 1. 环境准备
 \`\`\`bash
 # RISCOF（通过 Docker）
-docker run --rm ghcr.io/riscv-software-src/riscof:latest riscof --version
+docker run --rm ghcr.io/riscv-software-src/riscof/act:latest riscof --version
 
 # Spike（通过 Docker）
-docker run --rm ghcr.io/riscv-software-src/riscv-isa-sim:latest spike --version
+docker run --rm ghcr.io/mimiqdev/riscv-dev:latest spike --version
 \`\`\`
 
 ### 2. 运行测试
 \`\`\`bash
 docker run --rm \
     -v $(pwd):/workdir \
-    ghcr.io/riscv-software-src/riscof:latest \
+    ghcr.io/riscv-software-src/riscof/act:latest \
     riscof --suite riscv-tests --workdir ./work \
     --dut-yaml scripts/riscof/ruscv-sim-dut.yaml
 \`\`\`
