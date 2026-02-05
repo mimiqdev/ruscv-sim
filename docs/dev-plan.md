@@ -78,7 +78,7 @@
 - [x] **退出机制**: tohost/exit 约定，用于自动停止测试
 - [x] **System Bus & Memory Map Fix**:
   - 实现 SystemBus 路由 (RAM @ 0x80000000, UART @ 0x10000000)
-  - 修复 `riscv-tests` 运行时的无效内存访问问题
+  - 修复 `riscv-arch-test` 运行时的无效内存访问问题
   - 重构 Core 使用 `dyn MemoryInterface` 支持灵活总线
 
 ---
@@ -135,6 +135,54 @@
 ### M7: RISCOF + arch-test 集成 [PLANNING]
 **Status:** Planning
 **Goal:** 对接官方架构测试框架
+
+#### 测试套件版本
+- **riscv-arch-test**: v2.5.0 (锁定版本以确保测试稳定性)
+- **RISCOF**: 最新稳定版
+- **Spike**: 最新稳定版 (作为参考模型)
+
+#### ruscv-sim 所需接口
+| 参数 | 类型 | 必选 | 说明 |
+|------|------|------|------|
+| `--elf` | string | 是 | 输入的 ELF 文件路径 |
+| `--signature` | string | 是 | Signature 输出文件路径 |
+| `--priv-mode` | string | 是 | 特权模式: `m`, `s`, `u` 或 `ms`, `su` |
+| `--timeout` | int | 否 | 最大执行周期数 (默认: 1000000) |
+| `--verbose` | bool | 否 | 启用详细输出 |
+| `--log` | string | 否 | 日志输出文件路径 |
+
+#### Signature 格式定义
+- **格式**: 纯 Hex 文本，每行一个 64-bit 值 (小端序)
+- **地址范围**: `0x80000000` - `0x8003FFFF` (256KB RAM 区域)
+- **示例**:
+  ```
+  0000000080000000: aabbccdd
+  0000000080000004: 11223344
+  ...
+  ```
+
+#### DutError Enum 定义
+```rust
+enum DutError {
+    SignatureMismatch,      // 签名不匹配
+    Timeout,                // 执行超时
+    InvalidElf,             // ELF 文件解析失败
+    MemoryAccessError,      // 内存访问越界
+    IllegalInstruction,     // 非法指令
+    UnhandledException,     // 未处理异常
+    DeviceNotFound,         // 设备不存在
+    IoError(String),        // I/O 错误
+}
+```
+
+#### Spike 兼容模式的内存映射配置
+| 地址范围 | 大小 | 设备 | Spike 兼容性 |
+|----------|------|------|-------------|
+| 0x00000000 - 0x0FFFFFFF | 256MB | RAM | ✅ |
+| 0x80000000 - 0x8FFFFFFF | 256MB | RAM (主存) | ✅ |
+| 0x10000000 - 0x10000FFF | 4KB | UART 16550 | ✅ |
+| 0x2000000 - 0x2003FFF | 16KB | CLINT | ✅ |
+| 0xC000000 - 0xFFFFFFFF | 1GB | PLIC | ✅ |
 
 #### Features
 - [ ] **RISCOF 框架**: 安装和配置 RISCOF 测试框架
@@ -207,7 +255,7 @@ Goal: 增强MMU仿真和指令集支持
 - **Next**: M6 测试质量强化 (coverage 报告)
 
 **2026-02-03**: M5 Fix - System Bus Implementation
-- 实现 `SystemBus` 以支持 `riscv-tests` 内存映射
+- 实现 `SystemBus` 以支持 `riscv-arch-test` 内存映射
 - 修复 `hello.elf` 运行时的无效内存访问 (UART @ 0x10000000)
 - 增加 `verbose` 模式用于调试输出控制
 - 重构 `load_elf_file` 消除 clippy 警告
