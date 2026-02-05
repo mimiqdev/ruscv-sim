@@ -163,7 +163,7 @@ proptest! {
         let mut plic = Plic::new(0x0C00_0000, num_sources, context_id + 1);
 
         let ctx_id = context_id.min(context_id);
-        let irq_id = interrupt_id.min(num_sources);
+        let irq_id = interrupt_id.min(num_sources - 1);
         let word_idx = (irq_id / 32) as usize;
         let bit_idx = (irq_id % 32) as usize;
 
