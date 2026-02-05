@@ -21,9 +21,6 @@
 - [x] **Sprint 8-9**: RV64C 压缩指令 (71条)
 - [x] **Sprint 8.5**: ISA 模块化重构 (31个文件, ~10000行)
 
-#### Buffer Zone
-- [ ] [BUFFER] 清理 `src/execute/` 旧模块文件 (见 archive/sprint-8.5-completed.md)
-
 ---
 
 ### M2: Sprint 10-11 (内存子系统 + 外设) [COMPLETED]
@@ -34,10 +31,6 @@
 #### Features (Completed)
 - [x] **Sprint 10**: MMU/TLB 内存管理 (Sv39页表, 4-way LRU TLB)
 - [x] **Sprint 11**: TLM2.0 抽象层 + CLINT + PLIC + UART 16550
-
-#### Buffer Zone
-- [ ] [BUFFER] Sv48/Sv57 页表支持 (规划文档: archive/sprint-plan-archived.md 8.4节)
-- [ ] [BUFFER] RV32I 纯32位仿真支持 (规划文档: archive/sprint-plan-archived.md 8.5节)
 
 ---
 
@@ -99,7 +92,7 @@
   - rv64i: 38个测试（算术、逻辑、分支、跳转、Load/Store、CSR）
   - rv64m: 8个测试（乘除法）
 - [x] **覆盖率报告**: CI集成 `cargo-llvm-cov` + Codecov自动上传
-- [ ] **属性测试 (proptest)**: 关键外设边界自动化探索（可选，已添加依赖）
+- [x] **属性测试 (proptest)**: 关键外设边界自动化探索（可选，已添加依赖）
 
 ---
 
@@ -113,32 +106,15 @@
 - [x] **目录结构重组**:
   - `tests/riscv-tests/` → `tests/bare-metal-riscv-test/`
   - 按扩展名分文件夹: `rv64i/`, `rv64m/`, `rv64a/`, `rv64f/`, `rv64d/`, `rv64c/`
-- [x] **RVI 整数指令（部分）**: add, sub ✓ | and, or, xor, sll, srl, sra ✗
-- [x] **RVI 立即数（部分）**: addi ✓ | andi, ori, xori, slli, srli, srai ✗
-- [x] **Load/Store（部分）**: （基础框架就绪）| lw, sw, lh, sh, lb, sb, lwu ✗
-- [x] **分支指令**: beq, bne, blt, bge, bltu, bgeu ✓
-- [x] **跳转指令**: jal, jalr ✓
-- [ ] **乘除指令**: mul, mulh, mulhsu, mulhu, div, divu, rem, remu（待调查失败原因）
-- [ ] **CSR 指令**: csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci
+- [x] **RVI 整数指令（部分）**: add, sub, and, or, xor, sll, srl, sra
+- [x] **RVI 立即数（部分）**: addi, andi, ori, xori, slli, srli, srai
+- [x] **Load/Store（部分）**: lw, sw, lh, sh, lb, sb, lwu
+- [x] **分支指令**: beq, bne, blt, bge, bltu, bgeu
+- [x] **跳转指令**: jal, jalr
+- [x] **乘除指令**: mul, mulh, mulhsu, mulhu, div, divu, rem, remu
+- [x] **CSR 指令**: csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci
 
-**注意**: 跳过 M 和 A 扩展的复杂原子场景（后续 arch-test 会覆盖）
-
-#### 未实现的指令 (当前状态)
-以下指令需要实现才能支持完整的 baremetal 测试：
-
-| 类别 | 指令 | 编码 | 原因 |
-|------|------|------|------|
-| ~~OpImm32~~ | ~~addiw~~ | ~~0b001_1011~~ | ✅ 2026-02-04 完成 |
-| ~~OpImm32~~ | ~~slliw~~ | ~~0b001_1011~~ | ✅ 2026-02-04 完成 |
-| ~~OpImm32~~ | ~~srliw~~ | ~~0b001_1011~~ | ✅ 2026-02-04 完成 |
-| ~~OpImm32~~ | ~~sraiw~~ | ~~0b001_1011~~ | ✅ 2026-02-04 完成 |
-| ~~Op32~~ | ~~addw~~ | ~~0b011_1011~~ | ✅ 2026-02-04 完成 |
-| ~~Op32~~ | ~~subw~~ | ~~0b011_1011~~ | ✅ 2026-02-04 完成 |
-| ~~Op32~~ | ~~sllw~~ | ~~0b011_1011~~ | ✅ 2026-02-04 完成 |
-| ~~Op32~~ | ~~srlw~~ | ~~0b011_1011~~ | ✅ 2026-02-04 完成 |
-| ~~Op32~~ | ~~sraw~~ | ~~0b011_1011~~ | ✅ 2026-02-04 完成 |
-
-**备注**: `sext.w` 是 `addiw rd, rs1, 0` 的伪指令形式
+**注意**: 跳过 M 和 A 扩展的复杂原子场景（后续 riscv-arch-test 会覆盖）
 
 #### 测试状态记录
 **已通过的测试 (保留在编译列表中)**:
@@ -152,7 +128,7 @@
 - CSR指令: `csrrw`, `csrrs`, `csrrc`, `csrrwi`, `csrrsi`, `csrrci`
 - 示例程序: `fib`, `hello`
 
-**测试结果**: 40/40 tests pass (2026-02-04)
+**测试结果**: 46/46 tests pass (2026-02-04)
 
 ---
 
@@ -165,34 +141,44 @@
 - [ ] **DUT 配置**: 创建 ruscv-sim 的 YAML 配置文件
 - [ ] **Spike 集成**: 安装 Spike 作为参考模型
 - [ ] **riscv-arch-test 运行**: 执行 RV64IMAFDC 架构测试
-- [ ] **问题修复**: 解决测试失败问题
 
 ---
 
-### M8: v1.0 发布 [PLANNING]
+### M8: v0.8.0
 **Status:** Planning
 **Goal:** 通过 riscv-arch-test，发布 v1.0.0
 
 #### Features
 - [ ] **riscv-arch-test 集成**: 使用 RISCOF 框架验证模拟器正确性
-- [ ] **v1.0.0 发布**: 通过架构测试后正式发布
+- [ ] **问题修复**: 解决测试失败问题
+- [ ] **v0.8.0 发布**: 通过架构测试后正式发布
 
-#### Future Goals (Post v1.0)
+### M9: v0.9.0
+Status: Planning
+Goal: 增强MMU仿真和指令集支持
+
+#### Features
+- [ ] Sv48/Sv57 页表支持 (规划文档: archive/sprint-plan-archived.md 8.4节)
+- [ ] RV32I 纯32位仿真支持 (规划文档: archive/sprint-plan-archived.md 8.5节)
+- [ ] 清理 `src/execute/` 旧模块文件 (见 archive/sprint-8.5-completed.md)
+
+### Future Goals (Post v1.0)
 - [ ] [FUTURE] **性能优化**: CPI、译码/执行延迟优化
 - [ ] [FUTURE] **文档完善**: 用户指南、API 参考
 - [ ] [FUTURE] **模糊测试 (fuzzing)**: 外设边界模糊测试框架
 - [ ] [FUTURE] **冒烟测试**: 端到端功能验证
 - [ ] [FUTURE] **稳定性测试**: 长时间运行测试
-- [ ] [FUTURE] **覆盖率报告**: cargo-llvm-cov 集成
 
-#### Version Plan
+### Version Plan
 | Version | Milestone | Meaning |
 |---------|-----------|---------|
-| v0.1.0 | Current | 基础功能就绪 |
-| v0.5.0 | M4 Complete | 调试支持就绪 |
-| **v0.6.0** | **M6 Complete** | **测试质量强化完成** |
-| v0.7.0 | M7 Complete | RISCOF + arch-test 集成 |
-| **v0.8.0** | **M8 Complete** | **官方架构测试通过** |
+| v0.1.0 | Sprint 1-11 | 基础功能就绪 |
+| v0.4.0 | M4 | 调试支持就绪 |
+| v0.5.0 | M5 | ELF执行流程 |
+| v0.6.0 | M6 | 测试质量强化完成 |
+| v0.7.0 | M7 | RISCOF + riscv-arch-test 集成 |
+| v0.8.0 | M8 | 官方架构测试通过 |
+| v0.9.0 | M9 | MMU增强，指令集扩展(RV32) |
 | v1.0.0 | Future | 待重新review规划 |
 
 ---
@@ -200,12 +186,15 @@
 
 **2026-02-05**: M6 Complete - 测试质量强化完成 + 版本规划调整
 - M6状态从[ACTIVE]改为[COMPLETED]
+- 添加Milestone M9
+  - 移动之前的BUFFER任务到M9
 - ELF集成测试: 46个裸机程序（rv64i: 38, rv64m: 8）
 - 覆盖率报告: CI已集成cargo-llvm-cov + Codecov
 - 版本规划调整:
   - M6完成 → v0.6.0
   - M7完成 → v0.7.0
   - M8完成 → v0.8.0
+  - M9完成 → v0.9.0
   - v1.0.0标记为"待重新review"
 - **Next**: M7 - RISCOF + arch-test 集成
 
