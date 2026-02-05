@@ -16,50 +16,42 @@
 
 ### T.1.1 安装 RISCOF
 
-**目标**：安装 RISCOF 测试框架
+**目标**：通过 Docker 运行 RISCOF 测试框架
 
 **命令**：
 ```bash
-# 使用 pip 安装
-pip install riscof
+# 使用 Docker 运行 RISCOF
+docker run --rm ghcr.io/riscv-software-src/riscof:latest riscof --version
 
-# 验证安装
-riscof --version
+# 创建别名方便使用（可选）
+alias riscof='docker run --rm -v $(pwd):/workdir -w /workdir ghcr.io/riscv-software-src/riscof:latest'
 ```
 
-**验证**：执行 `riscof --version` 返回版本号且无报错
+**验证**：执行返回版本号且无报错
 
-**产出**：`riscof` 命令可用
+**产出**：`riscof` 命令可通过 Docker 使用
 
 ---
 
 ### T.1.2 安装 Spike
 
-**目标**：安装 Spike 参考模拟器
+**目标**：通过 Docker 运行 Spike 参考模拟器
 
 **命令**：
 ```bash
-# 方式一：APT 安装（Ubuntu/Debian）
-apt install spike
+# 使用 Docker 运行 Spike
+docker run --rm ghcr.io/riscv-software-src/riscv-isa-sim:latest spike --version
 
-# 方式二：源码编译（推荐最新版本）
-git clone https://github.com/riscv-software-src/riscv-isa-sim.git
-cd riscv-isa-sim
-mkdir build && cd build
-../configure --prefix=$HOME/riscv
-make -j$(nproc)
-make install
+# 创建别名方便使用（可选）
+alias spike='docker run --rm -v $(pwd):/workdir -w /workdir ghcr.io/riscv-software-src/riscv-isa-sim:latest spike'
 
-# 添加到 PATH
-export PATH=$HOME/riscv/bin:$PATH
-
-# 验证安装
-spike --version
+# 对于需要 pk 的场景
+alias spike-pk='docker run --rm -v $(pwd):/workdir -w /workdir ghcr.io/riscv-software-src/riscv-isa-sim:latest spike'
 ```
 
-**验证**：执行 `spike --version` 返回版本号且无报错
+**验证**：执行返回版本号且无报错
 
-**产出**：`spike` 命令可用
+**产出**：`spike` 命令可通过 Docker 使用
 
 ---
 
@@ -171,9 +163,13 @@ cat exit_code.txt
 # 进入 riscv-arch-test 目录
 cd riscv-arch-test
 
-# 运行 RV64I 基础测试
-riscof --suite riscv-tests --workdir ./work \
-    --dut-yaml ../ruscv-sim/scripts/riscof/ruscv-sim-dut.yaml \
+# 使用 Docker 运行 RISCOF
+docker run --rm \
+    -v $(pwd):/workdir \
+    -v $(pwd)/../ruscv-sim:/dut \
+    ghcr.io/riscv-software-src/riscof:latest \
+    riscof --suite riscv-tests --workdir ./work \
+    --dut-yaml /dut/scripts/riscof/ruscv-sim-dut.yaml \
     --no-ref-model
 
 # 查看测试报告
@@ -197,7 +193,9 @@ cat ./work/logs/*.log
 
 # 手动执行单个测试
 ./target/release/ruscv-sim --elf test.elf --signature sig.bin
-spike pk test.elf
+
+# 使用 Docker 运行 Spike 进行比对
+docker run --rm -v $(pwd):/workdir ghcr.io/riscv-software-src/riscv-isa-sim:latest spike pk test.elf
 
 # 比对结果
 diff sig.bin spike_sig.bin
@@ -218,10 +216,10 @@ diff sig.bin spike_sig.bin
 **命令**：
 ```bash
 # 查看 Spike 帮助
-spike --help
+docker run --rm ghcr.io/riscv-software-src/riscv-isa-sim:latest spike --help
 
 # 运行测试并查看内存映射
-spike --debug pk hello 2>&1 | head -100
+docker run --rm -v $(pwd):/workdir ghcr.io/riscv-software-src/riscv-isa-sim:latest spike --debug pk hello 2>&1 | head -100
 
 # 文档参考
 cat riscv-isa-sim/docs/spike-dpi.md 2>/dev/null || true
@@ -319,12 +317,19 @@ import json
 import sys
 import os
 
+DOCKER_SPIKE_CMD = [
+    "docker", "run", "--rm",
+    "-v", f"{os.getcwd()}:/workdir",
+    "-w", "/workdir",
+    "ghcr.io/riscv-software-src/riscv-isa-sim:latest",
+    "spike"
+]
+
 def run_spike(elf, output):
     """运行 Spike 并导出状态"""
-    cmd = [
-        "spike",
+    cmd = DOCKER_SPIKE_CMD + [
         "--log", output + "_spike.log",
-        pk, elf
+        "pk", elf
     ]
     subprocess.run(cmd, check=True)
 
@@ -389,13 +394,19 @@ cat /tmp/compare_report.txt
 
 **命令**：
 ```bash
-# 运行完整测试套件
-riscof --suite riscv-arch-test \
+# 使用 Docker 运行完整测试套件
+docker run --rm \
+    -v $(pwd):/workdir \
+    ghcr.io/riscv-software-src/riscof:latest \
+    riscof --suite riscv-arch-test \
     --workdir ./work/full \
     --dut-yaml scripts/riscof/ruscv-sim-dut.yaml
 
 # 生成覆盖率报告
-riscof report --workdir ./work/full \
+docker run --rm \
+    -v $(pwd):/workdir \
+    ghcr.io/riscv-software-src/riscof:latest \
+    riscof report --workdir ./work/full \
     --output ./coverage_report.html
 ```
 
@@ -451,13 +462,20 @@ cat > docs/m7-riscof-integration.md << 'EOF'
 
 ### 1. 环境准备
 \`\`\`bash
-pip install riscof
-apt install spike
+# RISCOF（通过 Docker）
+docker run --rm ghcr.io/riscv-software-src/riscof:latest riscof --version
+
+# Spike（通过 Docker）
+docker run --rm ghcr.io/riscv-software-src/riscv-isa-sim:latest spike --version
 \`\`\`
 
 ### 2. 运行测试
 \`\`\`bash
-riscof --suite riscv-tests --workdir ./work --dut-yaml scripts/riscof/ruscv-sim-dut.yaml
+docker run --rm \
+    -v $(pwd):/workdir \
+    ghcr.io/riscv-software-src/riscof:latest \
+    riscof --suite riscv-tests --workdir ./work \
+    --dut-yaml scripts/riscof/ruscv-sim-dut.yaml
 \`\`\`
 
 ### 3. Spike 比对
@@ -494,10 +512,12 @@ EOF
 
 ### 安装方式：Docker vs 直接安装
 
-**决策：推荐直接安装**
+**决策：使用 Docker**
 
-- 直接安装便于调试和性能测试
-- Docker 可作为 CI/CD 环境的补充方案
+- 避免 host 环境依赖冲突
+- 便于在不同机器上复现一致的环境
+- 简化 CI/CD 集成流程
+- 可选：创建 wrapper 脚本简化日常使用
 
 ---
 
