@@ -87,36 +87,7 @@ jobs:
         run: cargo test --all-features --test '*'
 
   # ==========================================
-  # Job 3: Performance Benchmarks
-  # ==========================================
-  # Only run on push to main/master, not during PRs
-  # Non-blocking baseline data collection
-  bench:
-    name: Bench
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 30
-    needs: test
-    continue-on-error: true
-    # Only run when pushing to main/master, skip for PRs
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Run benchmarks
-        run: cargo bench --all-features
-        continue-on-error: true
-
-  # ==========================================
-  # Job 4: Release Build
+  # Job 3: Release Build
   # ==========================================
   build:
     name: Build
@@ -146,7 +117,7 @@ jobs:
           retention-days: 7
 
   # ==========================================
-  # Job 5: RISC-V ELF Tests
+  # Job 3: RISC-V ELF Tests
   # ==========================================
   riscv-tests:
     name: RISC-V ELF Tests
@@ -180,7 +151,7 @@ jobs:
           ./scripts/run_elf_tests.sh
 
   # ==========================================
-  # Job 6: Smoke Test
+  # Job 4: Smoke Test
   # ==========================================
   smoke-test:
     name: Smoke Test
@@ -215,7 +186,7 @@ jobs:
           echo "✅ Smoke test passed!"
 
   # ==========================================
-  # Job 7: Coverage Report
+  # Job 5: Coverage Report
   # ==========================================
   coverage:
     name: Coverage
@@ -239,20 +210,20 @@ jobs:
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov.info
           fail_ci_if_error: true
 
   # ==========================================
-  # Job 8: Summary Report
+  # Job 6: Summary Report
   # ==========================================
   summary:
     name: Summary
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
-    needs: [check, test, bench, build, riscv-tests, smoke-test, coverage]
+    needs: [check, test, build, riscv-tests, smoke-test, coverage]
 
     if: always()
     steps:
@@ -274,16 +245,7 @@ jobs:
           else
             echo "❌ Tests Failed" >> $GITHUB_STEP_SUMMARY
           fi
-          
-          echo "### Benchmark Status" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ needs.bench.result }}" == "success" ]; then
-            echo "✅ Benchmarks Passed (baseline data)" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ needs.bench.result }}" == "failure" ]; then
-            echo "⚠️  Benchmarks Failed (non-blocking)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⏭️  Benchmarks Skipped" >> $GITHUB_STEP_SUMMARY
-          fi
-          
+
           echo "### Build Status" >> $GITHUB_STEP_SUMMARY
           if [ "${{ needs.build.result }}" == "success" ]; then
             echo "✅ Build Passed" >> $GITHUB_STEP_SUMMARY
@@ -318,8 +280,6 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "_Note: Benchmarks are non-blocking and for baseline data collection only_" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "Workflow completed at: $(date -u)" >> $GITHUB_STEP_SUMMARY
 
 # ==========================================
