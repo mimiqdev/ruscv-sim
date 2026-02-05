@@ -212,7 +212,7 @@ proptest! {
         let mut uart = Uart16550::new(0x1000_0000);
 
         // 设置 DLAB 位（使用 LCR 寄存器偏移 0x03）
-        uart.write_reg(0x03, dlab | 0x03); // 8-bit, no parity, 1 stop bit
+        uart.write_reg(0x03, (dlab << 7) | 0x03); // 8-bit, no parity, 1 stop bit, DLAB in bit 7
 
         // 只有当 DLAB=1 时，offset 0x00 和 0x01 才是 DLL 和 DLM
         // 设置除数
