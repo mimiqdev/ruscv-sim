@@ -1,7 +1,7 @@
 # Project: RISC-V ISS Simulator (ruscv-sim)
 
-**Current Phase:** M5: ELF 执行闭环
-**Last Updated:** 2026-02-02
+**Current Phase:** M7: RISCOF + arch-test 集成 (Planning)
+**Last Updated:** 2026-02-05
 
 ---
 
@@ -90,14 +90,16 @@
 
 ---
 
-### M6: 测试质量强化 [ACTIVE]
-**Status:** Active (2026-02-04)
+### M6: 测试质量强化 [COMPLETED]
+**Status:** Completed (2026-02-05)
 **Goal:** 提升本地回归测试能力
 
-#### Features
-- [x] **ELF 集成测试**: 最小裸机程序执行回归
-- [ ] **覆盖率报告**: 集成 `cargo-llvm-cov` 输出覆盖率
-- [ ] **属性测试 (proptest)**: 关键外设边界自动化探索
+#### Features (Completed)
+- [x] **ELF 集成测试**: 46个裸机ELF程序测试覆盖
+  - rv64i: 38个测试（算术、逻辑、分支、跳转、Load/Store、CSR）
+  - rv64m: 8个测试（乘除法）
+- [x] **覆盖率报告**: CI集成 `cargo-llvm-cov` + Codecov自动上传
+- [ ] **属性测试 (proptest)**: 关键外设边界自动化探索（可选，已添加依赖）
 
 ---
 
@@ -188,11 +190,24 @@
 |---------|-----------|---------|
 | v0.1.0 | Current | 基础功能就绪 |
 | v0.5.0 | M4 Complete | 调试支持就绪 |
-| v0.9.0-RC1 | M7 Complete | riscv-arch-test 候选 |
-| **v1.0.0** | **M8 Complete** | **官方架构测试通过** |
+| **v0.6.0** | **M6 Complete** | **测试质量强化完成** |
+| v0.7.0 | M7 Complete | RISCOF + arch-test 集成 |
+| **v0.8.0** | **M8 Complete** | **官方架构测试通过** |
+| v1.0.0 | Future | 待重新review规划 |
 
 ---
 ## Change Log
+
+**2026-02-05**: M6 Complete - 测试质量强化完成 + 版本规划调整
+- M6状态从[ACTIVE]改为[COMPLETED]
+- ELF集成测试: 46个裸机程序（rv64i: 38, rv64m: 8）
+- 覆盖率报告: CI已集成cargo-llvm-cov + Codecov
+- 版本规划调整:
+  - M6完成 → v0.6.0
+  - M7完成 → v0.7.0
+  - M8完成 → v0.8.0
+  - v1.0.0标记为"待重新review"
+- **Next**: M7 - RISCOF + arch-test 集成
 
 **2026-02-04**: M6-extra Complete - 指令测试覆盖完成
 - OpImm32/Op32 指令实现完成 (addiw, addw, subw, sllw, srlw, sraw 等)
