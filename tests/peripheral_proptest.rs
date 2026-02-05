@@ -329,8 +329,10 @@ proptest! {
         base2 in 0u64..0xFFFF_FFFFu64,
         size2 in 1usize..=0x10000usize
     ) {
-        let end1 = base1 + size1 as u64;
-        let end2 = base2 + size2 as u64;
+        // AddressRange::new(start, end) 使用的是包含性的 [start, end] 范围，
+        // 因此 end = base + size - 1
+        let end1 = base1 + size1 as u64 - 1;
+        let end2 = base2 + size2 as u64 - 1;
         let range1 = AddressRange::new(base1, end1);
         let range2 = AddressRange::new(base2, end2);
 
