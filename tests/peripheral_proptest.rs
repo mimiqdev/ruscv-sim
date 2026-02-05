@@ -313,7 +313,7 @@ proptest! {
         prop_assert!(range.contains(base + valid_offset));
 
         // 排除测试
-        prop_assert!(!range.contains(base + size as u64)); // 地址 end + size 不在范围内
+        prop_assert!(!range.contains(base + size as u64)); // 地址 end + 1 不在范围内
 
         // 测试基地址之前的地址（如果没有溢出）
         if base > 0 {
