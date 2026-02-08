@@ -1,6 +1,6 @@
 # Project: RISC-V ISS Simulator (ruscv-sim)
 
-**Current Phase:** M7: RISCOF + arch-test 集成 (Planning)
+**Current Phase:** M7: Log 输出增强 (Active)
 **Last Updated:** 2026-02-05
 
 ---
@@ -132,9 +132,17 @@
 
 ---
 
-### M7: RISCOF + arch-test 集成 [PLANNING]
-**Status:** Planning
-**Goal:** 对接官方架构测试框架
+### M7: Log 输出增强 [ACTIVE]
+**Status:** Active
+**Goal:** 增强日志输出，支持与 Spike 日志直接对比
+
+#### 核心理念
+**先研究，再实现** - 先深入理解 Spike 日志格式规范，再实现 ruscv-sim 的兼容输出
+
+#### 执行阶段
+1. **研究阶段**: 分析 Spike `--log-commits` 格式，定义目标规范
+2. **实现阶段**: 添加 `--log-commits` 参数，实现兼容日志输出
+3. **验证阶段**: 创建对比工具，运行测试验证
 
 #### 测试套件版本
 - **riscv-arch-test**: v2.5.0 (锁定版本以确保测试稳定性)
@@ -185,21 +193,29 @@ enum DutError {
 | 0xC000000 - 0xFFFFFFFF | 1GB | PLIC | ✅ |
 
 #### Features
-- [ ] **RISCOF 框架**: 安装和配置 RISCOF 测试框架
-- [ ] **DUT 配置**: 创建 ruscv-sim 的 YAML 配置文件
-- [ ] **Spike 集成**: 安装 Spike 作为参考模型
-- [ ] **riscv-arch-test 运行**: 执行 RV64IMAFDC 架构测试
+- [ ] **增强日志输出**: 添加 `--log-commits` 选项，输出与 Spike 兼容格式
+  - 格式: `core 0: 3 <pc> (<instr>) x<reg> <value>`
+  - 每条指令一行，包含全部 32 个寄存器变化
+  - 支持内存访问日志（可选）
+- [ ] **签名导出增强**: 完善 `--signature` 参数，支持更多格式
+- [ ] **对比工具**: 创建 log-diff 脚本，支持 ruscv-sim vs Spike 日志对比
+- [ ] **Spike 兼容模式**: 研究并实现 Spike 内存映射兼容
+
+#### M7 Log 格式规范
+```
+# Spike --log-commits 格式
+core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
+
+# ruscv-sim 目标输出格式
+core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
+```
+
+#### 与 Spike 对比方案
+- **直接对比**: 使用 `diff` 或 `vimdiff` 对比两个模拟器的日志输出
+- **脚本对比**: 使用 Python/Rust 工具解析并比对 PC、寄存器、内存访问
+- **签名对比**: 直接比对最终 signature 区域
 
 ---
-
-### M8: v0.8.0
-**Status:** Planning
-**Goal:** 通过 riscv-arch-test，发布 v1.0.0
-
-#### Features
-- [ ] **riscv-arch-test 集成**: 使用 RISCOF 框架验证模拟器正确性
-- [ ] **问题修复**: 解决测试失败问题
-- [ ] **v0.8.0 发布**: 通过架构测试后正式发布
 
 ### M9: v0.9.0
 Status: Planning
@@ -211,6 +227,10 @@ Goal: 增强MMU仿真和指令集支持
 - [ ] 清理 `src/execute/` 旧模块文件 (见 archive/sprint-8.5-completed.md)
 
 ### Future Goals (Post v1.0)
+- [ ] [FUTURE] **RISCOF 支持**: 对接官方架构测试框架
+  - RISCOF 框架集成
+  - riscv-arch-test 套件支持
+  - DUT YAML 配置
 - [ ] [FUTURE] **性能优化**: CPI、译码/执行延迟优化
 - [ ] [FUTURE] **文档完善**: 用户指南、API 参考
 - [ ] [FUTURE] **模糊测试 (fuzzing)**: 外设边界模糊测试框架
@@ -224,13 +244,26 @@ Goal: 增强MMU仿真和指令集支持
 | v0.4.0 | M4 | 调试支持就绪 |
 | v0.5.0 | M5 | ELF执行流程 |
 | v0.6.0 | M6 | 测试质量强化完成 |
-| v0.7.0 | M7 | RISCOF + riscv-arch-test 集成 |
-| v0.8.0 | M8 | 官方架构测试通过 |
+| v0.7.0 | M7 | Log 输出增强（Spike 兼容格式） |
+| v0.8.0 | Future | RISCOF + riscv-arch-test 集成 |
 | v0.9.0 | M9 | MMU增强，指令集扩展(RV32) |
 | v1.0.0 | Future | 待重新review规划 |
 
 ---
 ## Change Log
+
+**2026-02-08**: M7 重新规划 - Log 输出增强优先
+- M7 目标从 "RISCOF + arch-test 集成" 改为 "Log 输出增强"
+- M7 Features 更新:
+  - 添加 `--log-commits` 选项，输出与 Spike 兼容格式
+  - 完善签名导出
+  - 创建 log-diff 对比工具
+  - Spike 兼容模式研究
+- RISCOF 支持移至 Future Goals
+- M8 里程碑删除（合并到 Future Goals）
+- 版本规划调整:
+  - v0.7.0 → M7 (Log 输出增强)
+  - v0.8.0 → Future (RISCOF + arch-test)
 
 **2026-02-05**: M6 Complete - 测试质量强化完成 + 版本规划调整
 - M6状态从[ACTIVE]改为[COMPLETED]
