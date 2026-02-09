@@ -37,13 +37,17 @@ enum Commands {
         #[arg(short, long, value_name = "CYCLES")]
         max_cycles: Option<u64>,
 
-        /// Tohost address for exit detection (virtual address, e.g., 0x80001000)
+        /// Tohost address for exit detection (virtual address, e.g., 0x40008000)
         #[arg(short, long, value_name = "ADDR", value_parser = parse_addr)]
         tohost: Option<u64>,
 
         /// Show verbose output
         #[arg(short, long)]
         verbose: bool,
+
+        /// Output commit log to file (Spike-compatible format)
+        #[arg(long, value_name = "FILE")]
+        log_commits: Option<PathBuf>,
     },
 }
 
@@ -56,14 +60,18 @@ fn main() {
             max_cycles,
             tohost,
             verbose,
+            log_commits,
         } => {
             if verbose {
                 eprintln!("Loading ELF file: {:?}", elf);
                 eprintln!("Max cycles: {:?}", max_cycles);
                 eprintln!("Tohost address: 0x{:016x}", tohost.unwrap_or(0));
+                if let Some(ref path) = log_commits {
+                    eprintln!("Commit log: {:?}", path);
+                }
             }
 
-            match run_elf(&elf, max_cycles, tohost, verbose) {
+            match run_elf(&elf, max_cycles, tohost, log_commits, verbose) {
                 Ok(result) => {
                     print_result(&result);
                     std::process::exit(result.exit_code as i32);
@@ -81,10 +89,17 @@ fn run_elf(
     elf_path: &std::path::Path,
     max_cycles: Option<u64>,
     tohost: Option<u64>,
+    log_commits: Option<PathBuf>,
     verbose: bool,
 ) -> Result<ExecutionResult, String> {
-    load_and_run_file(elf_path.to_str().unwrap(), max_cycles, tohost, verbose)
-        .map_err(|e| format!("Execution failed: {}", e))
+    load_and_run_file(
+        elf_path.to_str().unwrap(),
+        max_cycles,
+        tohost,
+        log_commits,
+        verbose,
+    )
+    .map_err(|e| format!("Execution failed: {}", e))
 }
 
 fn print_result(result: &ExecutionResult) {

@@ -4,10 +4,11 @@
 //! Provides `load_and_run` function for loading and executing ELF files
 //! with tohost exit signal support.
 
-use crate::core::{CoreState, RiscvCore};
+use crate::core::{commits::CommitLogger, CoreState, RiscvCore};
 use crate::elf::{load_elf_file, ElfError, SignatureInfo};
 use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::Uart16550;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
@@ -52,12 +53,19 @@ pub enum ExecutorError {
 /// # Memory Map
 /// - RAM: Configurable base address and size
 /// - UART: Fixed at 0x10000000, size 0x100
+/// - HTIF: Fixed at 0x40008000, size 8 (tohost register)
 ///
 /// # UART Access Restrictions
 /// The UART 16550 only supports byte-wide (8-bit) register access.
 /// Multi-byte accesses (halfword, word, dword) to UART addresses will fail
 /// with `MemoryError::InvalidAddress`. This is intentional as real UART
 /// hardware typically does not support multi-byte accesses.
+///
+/// # HTIF (Host-Target Interface)
+/// The HTIF device at 0x40008000 provides exit signal support:
+/// - Write to tohost triggers exit check
+/// - Read returns 0 (no signal)
+/// - After processing exit, value is cleared
 pub struct SystemBus {
     ram: Arc<Mutex<SimpleMemory>>,
     uart: Arc<Mutex<Uart16550>>,
@@ -65,6 +73,10 @@ pub struct SystemBus {
     ram_size: usize,
     uart_base: u64,
     uart_size: usize,
+    htif_base: u64,
+    htif_size: usize,
+    /// Callback for HTIF write events (exit signal detection)
+    htif_write_callback: Option<Arc<dyn Fn(u64) + Send + Sync>>,
 }
 
 impl SystemBus {
@@ -81,7 +93,23 @@ impl SystemBus {
             ram_size,
             uart_base: 0x10000000,
             uart_size: 0x100,
+            htif_base: HTIF_BASE,
+            htif_size: HTIF_SIZE,
+            htif_write_callback: None,
         }
+    }
+
+    /// Set callback for HTIF write events
+    pub fn set_htif_write_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(u64) + Send + Sync + 'static,
+    {
+        self.htif_write_callback = Some(Arc::new(callback));
+    }
+
+    /// Check if address is HTIF MMIO
+    fn is_htif(&self, addr: u64) -> bool {
+        addr >= self.htif_base && addr < self.htif_base + self.htif_size as u64
     }
 
     fn is_ram(&self, addr: u64) -> bool {
@@ -100,6 +128,11 @@ impl MemoryInterface for SystemBus {
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
+        }
+        if self.is_htif(addr) {
+            // HTIF tohost register reads return 0 (no signal pending)
+            // This matches Spike behavior
+            return Ok(0);
         }
         Err(MemoryError::InvalidAddress(addr))
     }
@@ -173,6 +206,13 @@ impl MemoryInterface for SystemBus {
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
         }
+        if self.is_htif(addr) {
+            // HTIF tohost write - trigger callback if registered
+            if let Some(ref callback) = self.htif_write_callback {
+                callback(value);
+            }
+            return Ok(());
+        }
         Err(MemoryError::InvalidAddress(addr))
     }
 
@@ -228,8 +268,13 @@ impl MemoryInterface for SystemBus {
 /// Default maximum cycles before timeout
 const DEFAULT_MAX_CYCLES: u64 = 10_000_000;
 
-/// Default tohost address (using address that matches our test programs)
-const DEFAULT_TOHOST: u64 = 0x8000_0040;
+/// Default tohost address (matches Spike's HTIF at 0x40008000)
+const DEFAULT_TOHOST: u64 = 0x4000_8000;
+
+/// HTIF MMIO base address (matches Spike's HTIF device)
+const HTIF_BASE: u64 = 0x4000_8000;
+/// HTIF MMIO size (single 8-byte register for tohost)
+const HTIF_SIZE: usize = 8;
 
 // HTIF (Host-Target Interface) constants
 /// HTIF Device ID for syscall
@@ -395,12 +440,15 @@ fn clear_tohost(
     }
 }
 
+use std::path::Path;
+
 /// Load and execute an ELF file
 ///
 /// # Arguments
 /// * `elf_data` - Raw ELF file bytes
 /// * `max_cycles` - Maximum cycles before timeout (default: 10 million)
 /// * `tohost_addr` - Optional tohost address (auto-detected from ELF if not provided)
+/// * `log_commits` - Optional path to write commit log (Spike-compatible format)
 /// * `verbose` - Whether to print verbose debug output
 ///
 /// # Returns
@@ -409,6 +457,7 @@ pub fn load_and_run(
     elf_data: &[u8],
     max_cycles: Option<u64>,
     tohost_addr: Option<u64>,
+    log_commits: Option<&Path>,
     verbose: bool,
 ) -> Result<ExecutionResult, ExecutorError> {
     let max_cycles = max_cycles.unwrap_or(DEFAULT_MAX_CYCLES);
@@ -468,6 +517,22 @@ pub fn load_and_run(
         mem_size,
     )));
 
+    // Create exit signal tracker for HTIF callback
+    let exit_code = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(u32::MAX)); // u32::MAX = not set
+    let exit_code_clone = exit_code.clone();
+
+    // Register HTIF write callback
+    {
+        let mut bus_guard = bus.lock().unwrap();
+        let exit_code_inner = exit_code_clone.clone();
+        bus_guard.set_htif_write_callback(move |value| {
+            // Check if this is an exit signal
+            if let Some(code) = try_extract_exit_code(value) {
+                exit_code_inner.store(code, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+    }
+
     // Cast to MemoryInterface trait object
     let bus_interface: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = bus;
 
@@ -479,6 +544,18 @@ pub fn load_and_run(
     // SystemBus expects PA = VA (identity mapping) or explicit ranges
     // With base_addr=0 in Core, VA is passed directly to SystemBus.
     core.reset(entry_point, 0);
+
+    // Create commit logger if requested
+    let mut commit_logger: Option<CommitLogger> = log_commits
+        .map(CommitLogger::new_file)
+        .transpose()
+        .map_err(|e| {
+            ExecutorError::ExecutionError(format!("Failed to create commit log: {}", e))
+        })?;
+
+    // Save initial register state for logging
+    let mut regs_before = [0u64; 32];
+    let mut regs_after = [0u64; 32];
 
     // Step 4: Execution loop
     let mut cycles = 0u64;
@@ -496,11 +573,68 @@ pub fn load_and_run(
     while cycles < max_cycles {
         // Read current PC for result
         let current_pc = core.state().pc;
+        let pc_before = current_pc;
+
+        // Get instruction for logging (need to read before step)
+        let instruction = {
+            let mem = bus_interface.lock().unwrap();
+            mem.read_word(pc_before.wrapping_sub(base_addr))
+                .unwrap_or(0)
+        };
+
+        // Capture register state before execution
+        regs_before = core.state().regs;
 
         // Execute one instruction
         match core.step() {
             Ok(()) => {
                 cycles += 1;
+
+                // Capture register state after execution
+                regs_after = core.state().regs;
+
+                // Log commit if logger is active
+                if let Some(ref mut logger) = commit_logger {
+                    // Get privilege mode (3 = machine mode)
+                    let privilege = core.state().privilege as u8;
+
+                    // Try to detect memory access
+                    let mem_access = None; // Simplified: detect in executor if needed
+
+                    // Log the commit
+                    let _ = logger.log_commit(
+                        0, // hartid
+                        privilege,
+                        pc_before,
+                        instruction,
+                        &regs_before,
+                        &regs_after,
+                        mem_access,
+                    );
+                }
+
+                // Check for exit signal from HTIF callback first
+                // This handles writes to HTIF MMIO at 0x40008000
+                let htif_exit = exit_code.load(std::sync::atomic::Ordering::SeqCst);
+                if htif_exit != u32::MAX {
+                    if verbose {
+                        eprintln!("[DEBUG] HTIF exit signal detected: code={}", htif_exit);
+                    }
+                    // Reset for potential re-use
+                    exit_code.store(u32::MAX, std::sync::atomic::Ordering::SeqCst);
+                    let sig_data = dump_signature(&bus_interface, signature.as_ref())
+                        .ok()
+                        .flatten();
+                    return Ok(ExecutionResult {
+                        exit_code: htif_exit,
+                        cycles,
+                        final_pc: core.state().pc,
+                        timed_out: false,
+                        error: None,
+                        signature_addr: signature.map(|s| s.vaddr),
+                        signature_data: sig_data,
+                    });
+                }
 
                 // Check for tohost write (exit signal) after EVERY instruction
                 // This ensures we detect the write immediately
@@ -517,9 +651,12 @@ pub fn load_and_run(
                             }
 
                             // Check if tohost contains a valid exit signal
-                            if let Some(exit_code) = try_extract_exit_code(tohost_value) {
+                            if let Some(exit_code_val) = try_extract_exit_code(tohost_value) {
                                 if verbose {
-                                    eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
+                                    eprintln!(
+                                        "[DEBUG] Exit signal detected: code={}",
+                                        exit_code_val
+                                    );
                                 }
                                 // Clear tohost after processing (Spike-compatible behavior)
                                 drop(mem_guard);
@@ -528,7 +665,7 @@ pub fn load_and_run(
                                     .ok()
                                     .flatten();
                                 return Ok(ExecutionResult {
-                                    exit_code,
+                                    exit_code: exit_code_val,
                                     cycles,
                                     final_pc: core.state().pc,
                                     timed_out: false,
@@ -612,6 +749,7 @@ pub fn load_and_run(
 /// * `elf_path` - Path to ELF file
 /// * `max_cycles` - Maximum cycles before timeout
 /// * `tohost_addr` - Optional tohost address for exit detection
+/// * `log_commits` - Optional path to write commit log (Spike-compatible format)
 /// * `verbose` - Whether to print verbose debug output
 ///
 /// # Returns
@@ -620,13 +758,20 @@ pub fn load_and_run_file(
     elf_path: &str,
     max_cycles: Option<u64>,
     tohost_addr: Option<u64>,
+    log_commits: Option<PathBuf>,
     verbose: bool,
 ) -> Result<ExecutionResult, ExecutorError> {
     // Read ELF file
     let elf_data = std::fs::read(elf_path)
         .map_err(|e| ExecutorError::ElfLoadError(ElfError::IoError(e.to_string())))?;
 
-    load_and_run(&elf_data, max_cycles, tohost_addr, verbose)
+    load_and_run(
+        &elf_data,
+        max_cycles,
+        tohost_addr,
+        log_commits.as_deref(),
+        verbose,
+    )
 }
 
 /// Reset the simulator state

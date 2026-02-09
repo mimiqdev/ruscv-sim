@@ -2,6 +2,7 @@
 //!
 //! Implements RISC-V processor core fetch-decode-execute cycle
 
+pub mod commits;
 pub mod trap;
 use crate::csr::CsrFile;
 use crate::decode::InstructionDecoder;
