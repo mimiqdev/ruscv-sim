@@ -1,5 +1,162 @@
 # M7: Log 输出增强实施计划
 
+**项目:** RISC-V ISS Simulator (ruscv-sim)
+**里程碑:** M7 - Log 输出增强
+**文档版本:** 2.0
+**创建日期:** 2026-02-08
+**更新日期:** 2026-02-08
+**状态:** 实施中
+
+---
+
+## 背景
+
+M7 原计划集成 RISCOF + arch-test，现调整为**先增强日志输出**，实现与 Spike 直接对比。
+
+**核心理念**: 先研究清楚需要什么格式，再实现。
+
+---
+
+## 阶段 1: 研究阶段 ✅ (完成)
+
+### T.1.1 分析 Spike 日志格式 ✅
+
+**产出**: `docs/spike-log-format.md`
+
+**Spike 标准格式：**
+```
+core   <hartid>: <privilege> <pc> (<opcode>) [<changes>]
+```
+
+**关键字段：**
+| 字段 | 格式 | 示例 |
+|------|------|------|
+| PC | `0x` + 16位零填充 | `0x0000000080000000` |
+| 机器码 | `(0x` + 8位十六进制 + `)` | `(0x00000297)` |
+| 寄存器 | `x<num>  <value>`（2空格） | `x5  0x0000000000001000` |
+| 内存 | `mem <addr> [value]` | `mem 0x00000000800000c0 0x12345678` |
+| 特权模式 | 数字 (3=M, 1=S, 0=U) | `3` |
+
+---
+
+### T.1.2 分析 ruscv-sim 当前格式 ✅
+
+**当前问题：**
+1. PC 只显示 10 位十六进制（应 16 位）
+2. 寄存器格式不兼容：`x<num>=<value>` → 应为 `x<num>  <value>`
+3. 缺少内存访问日志
+4. 缺少特权模式标识
+5. 字段宽度不对齐
+
+---
+
+### T.1.3 定义目标格式规范 ✅
+
+**产出**: `docs/ruscv-log-format.md`
+
+**目标格式（与 Spike 兼容）：**
+```
+core   0: 3 0x0000000080000000 (0x00000297) x5  0x0000000000001000
+core   0: 3 0x0000000080000004 (0x00028023) mem 0x00000000800000c0
+```
+
+---
+
+## 阶段 2: 格式修复
+
+### T.2.1 修复 PC 输出宽度
+
+**目标**: PC 显示为 16 位十六进制
+
+**修改位置**: `src/core/` 相关模块
+
+**示例**:
+```rust
+// 当前
+println!("PC: {:#010x}", pc);
+
+// 目标
+println!("{:#018x}", pc);
+```
+
+**验证**: `0x80000000` → `0x0000000080000000`
+
+---
+
+### T.2.2 修复寄存器格式
+
+**目标**: 寄存器格式对齐 Spike
+
+**修改位置**: `src/cli.rs`, `src/core/executor.rs`
+
+**示例**:
+```rust
+// 当前
+println!("a0(x10)={:#x}", reg);
+
+// 目标
+println!("x10  {:#018x}", reg);
+```
+
+---
+
+### T.2.3 添加特权模式标识
+
+**目标**: 输出当前特权级别 (3=M-mode)
+
+**修改位置**: `src/core/mod.rs`
+
+**示例**:
+```rust
+println!("core 0: 3 {:#018x} ({:#010x})", pc, instr);
+```
+
+---
+
+### T.2.4 字段宽度对齐
+
+**目标**: 所有字段宽度一致
+
+**Spike 对齐示例:**
+```
+core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
+core   0: 3 0x0000000080000004 (0x00100113) x2  0x0000000000000001
+```
+
+---
+
+## 阶段 3: 实现 --log-commits
+
+### T.3.1 添加 CLI 参数
+
+**命令**:
+```rust
+// src/cli.rs
+
+.arg(Arg::new("log_commits")
+    .long("log-commits")
+    .value_name("FILE")
+    .help("Output commit log compatible with Spike --log-commits"))
+```
+
+**验证**: `--log-commits <path>` 参数可用
+
+---
+
+### T.3.2 创建日志输出模块
+
+**命令**:
+```rust
+// src/core/commits.rs
+
+/// 输出与 Spike --log-commits 兼容的日志
+pub fn log_commit(pc: u64, instr: u32, priv_mode: u8, regs: &[u64; 32]) {
+    println!("core 0: {} {:#018x} ({:#010x})", priv_mode, pc, instr);
+
+    // 输出变化的寄存器
+    for i in 0..32 {
+        if i == 0 { continue; } // x0 总是 0
+        println!("core 0: {}          x{}  {:#018x}", priv_mode, i, regs[i]);
 **项目:** RISC-V ISS Simulator (ruscv-sim)  
 **里程碑:** M7 - Log 输出增强  
 **文档版本:** 1.2  
@@ -142,11 +299,57 @@ pub fn log_commit(pc: u64, instr: u32, regs_before: &[u64; 32], regs_after: &[u6
 
 ---
 
+### T.3.3 集成到执行流程
 ### T.2.3 集成到执行流程
 
 **命令**:
 ```rust
 // 在执行循环中
+
+for _ in 0..max_cycles {
+    let result = core.step()?;
+
+    if config.log_commits {
+        core::log_commit(
+            core.state.pc,
+            result.instruction,
+            core.state.priv_mode,
+            &core.state.regs
+        );
+    }
+
+    if result.halted {
+        break;
+    }
+}
+```
+
+---
+
+## 阶段 4: 添加内存访问日志
+
+### T.4.1 实现内存访问追踪
+
+**目标**: 支持 `mem <addr> [value]` 日志
+
+**修改位置**: `src/memory/`, `src/core/executor.rs`
+
+**示例**:
+```rust
+if let Some((addr, value, is_store)) = result.memory_access {
+    if is_store {
+        println!("core 0: {} mem {:#x} {:#x}", priv_mode, addr, value);
+    } else {
+        println!("core 0: {} mem {:#x}", priv_mode, addr);
+    }
+}
+```
+
+---
+
+## 阶段 5: 创建对比工具
+
+### T.5.1 Python 对比脚本
 
 let result = core.step()?;
 let regs_before = core.state.regs;
@@ -175,6 +378,60 @@ if config.log_commits {
 ```python
 #!/usr/bin/env python3
 # scripts/log-compare.py
+
+import re
+from typing import Dict
+
+class LogParser:
+    PC_PATTERN = re.compile(r'core\s+\d+:\s+\d+\s+([0-9a-f]+)\s+\(([0-9a-f]+)\)')
+    REG_PATTERN = re.compile(r'x(\d+)\s+([0-9a-f]+)')
+
+    def parse(self, filename: str) -> Dict[int, Dict[str, int]]:
+        """解析日志文件"""
+        pc_to_regs = {}
+        with open(filename) as f:
+            for line in f:
+                pc_match = self.PC_PATTERN.search(line)
+                if pc_match:
+                    pc = int(pc_match.group(1), 16)
+                    pc_to_regs[pc] = {}
+
+                reg_match = self.REG_PATTERN.search(line)
+                if reg_match:
+                    reg = int(reg_match.group(1))
+                    val = int(reg_match.group(2), 16)
+                    if pc in pc_to_regs:
+                        pc_to_regs[pc][f'x{reg}'] = val
+        return pc_to_regs
+
+    def compare(self, spike: Dict, ruscv: Dict):
+        """对比并返回差异"""
+        diffs = []
+        all_pcs = set(spike.keys()) | set(ruscv.keys())
+        for pc in sorted(all_pcs):
+            spike_regs = spike.get(pc, {})
+            ruscv_regs = ruscv.get(pc, {})
+            for reg in set(spike_regs.keys()) | set(ruscv_regs.keys()):
+                s = spike_regs.get(reg)
+                r = ruscv_regs.get(reg)
+                if s != r:
+                    diffs.append((pc, reg, s, r))
+        return diffs
+
+if __name__ == "__main__":
+    import sys
+    parser = LogParser()
+    spike = parser.parse(sys.argv[1])
+    ruscv = parser.parse(sys.argv[2])
+    diffs = parser.compare(spike, ruscv)
+
+    if not diffs:
+        print("✅ No differences found!")
+    else:
+        print("❌ Differences:")
+        for pc, reg, s, r in diffs:
+            print(f"  PC {pc:#x}: {reg} = spike {s:#x}, ruscv {r:#x}")
+```
 
 import sys
 import re
@@ -254,6 +511,58 @@ if __name__ == "__main__":
 
 ---
 
+### T.5.2 Shell 对比脚本
+
+**命令**:
+```bash
+#!/bin/bash
+# scripts/compare.sh
+
+SPIKE_LOG=${1:-spike.log}
+RUSCV_LOG=${2:-ruscv.log}
+ELF=${3:-tests/bare-metal-riscv-test/rv64i/p/fib.elf}
+
+echo "🆚 对比 Spike 和 ruscv-sim..."
+
+# 生成 Spike 日志
+docker run --rm -v $(pwd):/workdir ghcr.io/mimiqdev/riscv-dev:latest \
+  spike --log-commits "$ELF" > "$SPIKE_LOG"
+
+# 生成 ruscv-sim 日志
+./target/release/ruscv-sim --elf "$ELF" --log-commits "$RUSCV_LOG"
+
+# 对比
+python3 scripts/log-compare.py "$SPIKE_LOG" "$RUSCV_LOG"
+```
+
+**产出**: `scripts/compare.sh`
+
+---
+
+## 阶段 6: 测试与验证
+
+### T.6.1 格式验证
+
+**命令**:
+```bash
+# 验证格式对齐
+./target/release/ruscv-sim --elf tests/add.elf --log-commits ruscv.log
+docker run --rm -v $(pwd):/workdir ghcr.io/mimiqdev/riscv-dev:latest \
+  spike --log-commits tests/add.elf > spike.log
+
+# 逐行对比
+diff spike.log ruscv.log || true
+```
+
+---
+
+### T.6.2 功能测试
+
+**测试用例：**
+- `add.elf` - 算术指令
+- `hello.elf` - UART 输出
+- `lw.elf` / `sw.elf` - 加载/存储
+- `fib.elf` - 循环分支
 ### T.3.2 运行对比测试
 
 **命令**:
@@ -309,6 +618,33 @@ EOF
 ## 成功标准
 
 - [x] 研究 Spike 日志格式（阶段 1）
+- [ ] 修复 PC 和寄存器格式（阶段 2）
+- [ ] 实现 `--log-commits` 参数（阶段 3）
+- [ ] 添加内存访问日志（阶段 4）
+- [ ] log-compare.py 脚本可用（阶段 5）
+- [ ] 至少 5 个测试用例对比通过（阶段 6）
+
+---
+
+## 测试程序
+
+已编译可用的 ELF 文件：
+```
+tests/bare-metal-riscv-test/
+├── rv64i/
+│   ├── p/add.elf
+│   ├── p/hello.elf
+│   ├── p/lw.elf
+│   ├── p/sw.elf
+│   └── p/fib.elf
+```
+
+---
+
+## 参考文档
+
+- `docs/spike-log-format.md` - Spike 日志格式分析
+- `docs/ruscv-log-format.md` - ruscv-sim 目标格式
 - [ ] `--log-commits` 参数可用（阶段 2）
 - [ ] 日志格式与 Spike 完全兼容（阶段 2）
 - [ ] log-compare.py 脚本正常工作（阶段 3）

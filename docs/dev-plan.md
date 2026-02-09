@@ -144,45 +144,49 @@
 2. **实现阶段**: 添加 `--log-commits` 参数，实现兼容日志输出
 3. **验证阶段**: 创建对比工具，运行测试验证
 
-#### 测试套件版本
-- **riscv-arch-test**: v2.5.0 (锁定版本以确保测试稳定性)
-- **RISCOF**: 最新稳定版
-- **Spike**: 最新稳定版 (作为参考模型)
+**当前进度**: 阶段 1（研究）已完成
 
-#### ruscv-sim 所需接口
-| 参数 | 类型 | 必选 | 说明 |
-|------|------|------|------|
-| `--elf` | string | 是 | 输入的 ELF 文件路径 |
-| `--signature` | string | 是 | Signature 输出文件路径 |
-| `--priv-mode` | string | 是 | 特权模式: `m`, `s`, `u` 或 `ms`, `su` |
-| `--timeout` | int | 否 | 最大执行周期数 (默认: 1000000) |
-| `--verbose` | bool | 否 | 启用详细输出 |
-| `--log` | string | 否 | 日志输出文件路径 |
+#### 阶段 1: 研究阶段 ✅
+- [x] 分析 Spike `--log-commits` 格式
+- [x] 创建 `docs/spike-log-format.md`
+- [x] 创建 `docs/ruscv-log-format.md`
+- [x] 定义目标格式规范
 
-#### Signature 格式定义
-- **格式**: 纯 Hex 文本，每行一个 64-bit 值 (小端序)
-- **地址范围**: `0x80000000` - `0x8003FFFF` (256KB RAM 区域)
-- **示例**:
-  ```
-  0000000080000000: aabbccdd
-  0000000080000004: 11223344
-  ...
-  ```
+#### 阶段 2: 格式修复 [下一步]
+- [ ] 修复 PC 输出宽度（10位 → 16位）
+- [ ] 修复寄存器格式（`xN=V` → `xN  V`）
+- [ ] 添加特权模式标识（3=M-mode）
+- [ ] 字段宽度对齐
 
-#### DutError Enum 定义
-```rust
-enum DutError {
-    SignatureMismatch,      // 签名不匹配
-    Timeout,                // 执行超时
-    InvalidElf,             // ELF 文件解析失败
-    MemoryAccessError,      // 内存访问越界
-    IllegalInstruction,     // 非法指令
-    UnhandledException,     // 未处理异常
-    DeviceNotFound,         // 设备不存在
-    IoError(String),        // I/O 错误
-}
+#### 阶段 3: 实现 --log-commits
+- [ ] 添加 `--log-commits` CLI 参数
+- [ ] 创建 `src/core/commits.rs` 日志模块
+- [ ] 集成到执行流程
+
+#### 阶段 4: 添加内存访问日志
+- [ ] 实现 `mem <addr> [value]` 日志
+- [ ] 支持加载/存储追踪
+
+#### 阶段 5: 创建对比工具
+- [ ] 创建 `scripts/log-compare.py`
+- [ ] 创建 `scripts/compare.sh`
+
+#### 阶段 6: 测试与验证
+- [ ] 格式验证
+- [ ] 功能测试（add, hello, lw, sw, fib）
+
+#### M7 Log 格式规范
+```
+# Spike 格式
+core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
+
+# ruscv-sim 目标格式（完全兼容）
+core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
 ```
 
+#### 与 Spike 对比方案
+- **直接对比**: `diff spike.log ruscv.log`
+- **脚本对比**: `python3 scripts/log-compare.py spike.log ruscv.log`
 #### Spike 兼容模式的内存映射配置
 | 地址范围 | 大小 | 设备 | Spike 兼容性 |
 |----------|------|------|-------------|
@@ -252,6 +256,16 @@ Goal: 增强MMU仿真和指令集支持
 ---
 ## Change Log
 
+**2026-02-08**: M7 阶段 1 完成，实施计划更新
+- 阶段 1（研究 Spike 日志格式）已完成
+- 创建 docs/spike-log-format.md 和 docs/ruscv-log-format.md
+- 阶段 2-6 实施计划已添加到 m7-execution-plan.md
+- **Next**: M7 阶段 2（格式修复）
+
+**2026-02-08**: PR #45 merged - M7 Log 输出增强规划
+- M7 重新规划完成，PR 已合并到 main 分支
+- dev-plan.md 和 m7-execution-plan.md 更新已生效
+- **Next**: M7 阶段 1（研究 Spike 日志格式）
 **2026-02-08**: M7 重新规划 - Log 输出增强优先
 - M7 目标从 "RISCOF + arch-test 集成" 改为 "Log 输出增强"
 - M7 Features 更新:
