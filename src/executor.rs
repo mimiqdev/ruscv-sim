@@ -553,8 +553,10 @@ pub fn load_and_run(
             ExecutorError::ExecutionError(format!("Failed to create commit log: {}", e))
         })?;
 
+    #[allow(unused_assignments)]
     // Save initial register state for logging
     let mut regs_before = [0u64; 32];
+    #[allow(unused_assignments)]
     let mut regs_after = [0u64; 32];
 
     // Step 4: Execution loop
@@ -1184,7 +1186,7 @@ mod tests {
     fn test_load_and_run_simple() {
         // Create a minimal ELF-like program that exits immediately
         // For now, just verify the function signature works
-        let result = load_and_run(&[], Some(100), None, false);
+        let result = load_and_run(&[], Some(100), None, None, false);
         // Should fail due to invalid ELF
         assert!(result.is_err());
     }

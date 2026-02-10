@@ -70,6 +70,7 @@ impl CommitLogger {
     /// * `opcode` - Instruction opcode (machine code)
     /// * `regs` - Register values [x0..x31]
     /// * `mem_access` - Optional memory access info
+    #[allow(clippy::too_many_arguments)]
     pub fn log_commit(
         &mut self,
         hartid: usize,
