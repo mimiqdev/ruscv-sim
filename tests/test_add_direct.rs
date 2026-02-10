@@ -70,7 +70,7 @@ fn test_add_program() {
 
     // Let the simulator auto-detect tohost address from ELF
     // tohost is at 0x80001000 based on linker script
-    let result = load_and_run(&elf_data, Some(1000), None, false);
+    let result = load_and_run(&elf_data, Some(1000), None, None, false);
 
     match result {
         Ok(r) => {
