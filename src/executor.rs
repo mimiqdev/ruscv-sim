@@ -278,19 +278,19 @@ const HTIF_SIZE: usize = 8;
 
 // HTIF (Host-Target Interface) constants
 /// HTIF Device ID for syscall
-const HTIF_DEVICE_SYSCALL: u64 = 0;
+pub(crate) const HTIF_DEVICE_SYSCALL: u64 = 0;
 /// HTIF Command ID for syscall
-const HTIF_CMD_SYSCALL: u64 = 0;
+pub(crate) const HTIF_CMD_SYSCALL: u64 = 0;
 /// HTIF device shift
-const HTIF_DEVICE_SHIFT: u64 = 56;
+pub(crate) const HTIF_DEVICE_SHIFT: u64 = 56;
 /// HTIF command shift
-const HTIF_CMD_SHIFT: u64 = 48;
+pub(crate) const HTIF_CMD_SHIFT: u64 = 48;
 /// HTIF device mask
-const HTIF_DEVICE_MASK: u64 = 0xFF << HTIF_DEVICE_SHIFT;
+pub(crate) const HTIF_DEVICE_MASK: u64 = 0xFF << HTIF_DEVICE_SHIFT;
 /// HTIF command mask
-const HTIF_CMD_MASK: u64 = 0xFF << HTIF_CMD_SHIFT;
+pub(crate) const HTIF_CMD_MASK: u64 = 0xFF << HTIF_CMD_SHIFT;
 /// HTIF payload mask (lower 48 bits)
-const HTIF_PAYLOAD_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
+pub(crate) const HTIF_PAYLOAD_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
 
 /// Dump signature data from memory
 ///
@@ -385,8 +385,10 @@ pub fn dump_signature(
 ///    - bit 63: write marker
 ///    - bits 0-31: exit code directly
 ///
+/// Extract exit code from tohost value using HTIF format or alternative formats
+///
 /// Returns the exit code if a valid exit signal is detected, None otherwise.
-fn try_extract_exit_code(tohost_value: u64) -> Option<u32> {
+pub(crate) fn try_extract_exit_code(tohost_value: u64) -> Option<u32> {
     // Skip zero value (no signal)
     if tohost_value == 0 {
         return None;
@@ -420,7 +422,7 @@ fn try_extract_exit_code(tohost_value: u64) -> Option<u32> {
 /// Clear tohost value in memory (Spike-compatible behavior)
 ///
 /// After processing a tohost write, the tohost location should be cleared to 0.
-fn clear_tohost(
+pub(crate) fn clear_tohost(
     mem: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
     tohost_addr: u64,
     verbose: bool,
