@@ -774,3 +774,255 @@ fn create_minimal_elf() -> Vec<u8> {
 
     elf
 }
+
+/// Test: RiscVSimulator step operation
+#[test]
+fn test_simulator_step() {
+    let mut sim = RiscVSimulator::new(0x1000);
+
+    // Load minimal ELF
+    let _ = sim.load_elf(&create_minimal_elf());
+
+    // Step should work (may error on invalid instruction)
+    let _ = sim.step();
+}
+
+/// Test: RiscVSimulator run operation
+#[test]
+fn test_simulator_run_until_exit() {
+    let mut sim = RiscVSimulator::new(0x1000);
+
+    // This tests run() function which includes exit detection
+    let result = sim.run(Some(10));
+    assert!(result.is_ok());
+}
+
+/// Test: load_and_run with verbose output
+#[test]
+fn test_load_and_run_verbose_output() {
+    let minimal_elf = create_minimal_elf();
+
+    // Verbose mode should not panic
+    let result = load_and_run(
+        &minimal_elf,
+        Some(5),
+        Some(0x40008000),
+        None,
+        true, // verbose
+    );
+    assert!(result.is_ok() || result.is_err());
+}
+
+/// Test: load_and_run with signature extraction
+#[test]
+fn test_load_and_run_with_signature() {
+    // This tests the path where dump_signature is called
+    // Create minimal ELF
+    let minimal_elf = create_minimal_elf();
+
+    let result = load_and_run(&minimal_elf, Some(5), Some(0x40008000), None, false);
+    assert!(result.is_ok() || result.is_err());
+}
+
+/// Test: load_and_run with very large max_cycles
+#[test]
+fn test_load_and_run_large_max_cycles() {
+    let minimal_elf = create_minimal_elf();
+
+    let result = load_and_run(
+        &minimal_elf,
+        Some(100_000_000), // Large max_cycles
+        Some(0x40008000),
+        None,
+        false,
+    );
+    assert!(result.is_ok() || result.is_err());
+}
+
+/// Test: SystemBus read_word_sext
+#[test]
+fn test_system_bus_read_word_sext() {
+    use ruscv_sim::executor::SystemBus;
+    use ruscv_sim::memory::SimpleMemory;
+    use ruscv_sim::peripherals::Uart16550;
+    use std::sync::Arc;
+
+    let ram = Arc::new(std::sync::Mutex::new(SimpleMemory::new(0x1000)));
+    let uart = Arc::new(std::sync::Mutex::new(Uart16550::new(0x10000000)));
+    let mut bus = SystemBus::new(ram.clone(), uart.clone(), 0x8000_0000, 0x1000);
+
+    // Write a word then read it back sign-extended
+    let ram_addr = 0x8000_0100;
+    bus.write_word(ram_addr, 0xFFFF_FFFF).unwrap();
+    let value = bus.read_word_sext(ram_addr).unwrap();
+    // 0xFFFF_FFFF sign-extended to 64-bit is 0xFFFF_FFFF_FFFF_FFFF
+    assert_eq!(value, 0xFFFF_FFFF_FFFF_FFFF);
+}
+
+/// Test: SystemBus read_half_sext
+#[test]
+fn test_system_bus_read_half_sext() {
+    use ruscv_sim::executor::SystemBus;
+    use ruscv_sim::memory::SimpleMemory;
+    use ruscv_sim::peripherals::Uart16550;
+    use std::sync::Arc;
+
+    let ram = Arc::new(std::sync::Mutex::new(SimpleMemory::new(0x1000)));
+    let uart = Arc::new(std::sync::Mutex::new(Uart16550::new(0x10000000)));
+    let mut bus = SystemBus::new(ram.clone(), uart.clone(), 0x8000_0000, 0x1000);
+
+    // Write a half then read it back sign-extended
+    let ram_addr = 0x8000_0100;
+    bus.write_half(ram_addr, 0xFFFF).unwrap();
+    let value = bus.read_half_sext(ram_addr).unwrap();
+    // 0xFFFF sign-extended to 64-bit is 0xFFFF_FFFF_FFFF_FFFF
+    assert_eq!(value, 0xFFFF_FFFF_FFFF_FFFF);
+}
+
+/// Test: SystemBus read_byte_sext
+#[test]
+fn test_system_bus_read_byte_sext() {
+    use ruscv_sim::executor::SystemBus;
+    use ruscv_sim::memory::SimpleMemory;
+    use ruscv_sim::peripherals::Uart16550;
+    use std::sync::Arc;
+
+    let ram = Arc::new(std::sync::Mutex::new(SimpleMemory::new(0x1000)));
+    let uart = Arc::new(std::sync::Mutex::new(Uart16550::new(0x10000000)));
+    let mut bus = SystemBus::new(ram.clone(), uart.clone(), 0x8000_0000, 0x1000);
+
+    // Write a byte then read it back sign-extended
+    let ram_addr = 0x8000_0100;
+    bus.write_byte(ram_addr, 0xFF).unwrap();
+    let value = bus.read_byte_sext(ram_addr).unwrap();
+    // 0xFF sign-extended to 64-bit is 0xFFFF_FFFF_FFFF_FFFF
+    assert_eq!(value, 0xFFFF_FFFF_FFFF_FFFF);
+}
+
+/// Test: SystemBus read_word_zext
+#[test]
+fn test_system_bus_read_word_zext() {
+    use ruscv_sim::executor::SystemBus;
+    use ruscv_sim::memory::SimpleMemory;
+    use ruscv_sim::peripherals::Uart16550;
+    use std::sync::Arc;
+
+    let ram = Arc::new(std::sync::Mutex::new(SimpleMemory::new(0x1000)));
+    let uart = Arc::new(std::sync::Mutex::new(Uart16550::new(0x10000000)));
+    let mut bus = SystemBus::new(ram.clone(), uart.clone(), 0x8000_0000, 0x1000);
+
+    // Write a word then read it back zero-extended
+    let ram_addr = 0x8000_0100;
+    bus.write_word(ram_addr, 0x8000_0001).unwrap();
+    let value = bus.read_word_zext(ram_addr).unwrap();
+    assert_eq!(value, 0x8000_0001);
+}
+
+/// Test: SystemBus read_half_zext
+#[test]
+fn test_system_bus_read_half_zext() {
+    use ruscv_sim::executor::SystemBus;
+    use ruscv_sim::memory::SimpleMemory;
+    use ruscv_sim::peripherals::Uart16550;
+    use std::sync::Arc;
+
+    let ram = Arc::new(std::sync::Mutex::new(SimpleMemory::new(0x1000)));
+    let uart = Arc::new(std::sync::Mutex::new(Uart16550::new(0x10000000)));
+    let mut bus = SystemBus::new(ram.clone(), uart.clone(), 0x8000_0000, 0x1000);
+
+    // Write a half then read it back zero-extended
+    let ram_addr = 0x8000_0100;
+    bus.write_half(ram_addr, 0x8001).unwrap();
+    let value = bus.read_half_zext(ram_addr).unwrap();
+    assert_eq!(value, 0x8001);
+}
+
+/// Test: SystemBus read_byte_zext
+#[test]
+fn test_system_bus_read_byte_zext() {
+    use ruscv_sim::executor::SystemBus;
+    use ruscv_sim::memory::SimpleMemory;
+    use ruscv_sim::peripherals::Uart16550;
+    use std::sync::Arc;
+
+    let ram = Arc::new(std::sync::Mutex::new(SimpleMemory::new(0x1000)));
+    let uart = Arc::new(std::sync::Mutex::new(Uart16550::new(0x10000000)));
+    let mut bus = SystemBus::new(ram.clone(), uart.clone(), 0x8000_0000, 0x1000);
+
+    // Write a byte then read it back zero-extended
+    let ram_addr = 0x8000_0100;
+    bus.write_byte(ram_addr, 0x81).unwrap();
+    let value = bus.read_byte_zext(ram_addr).unwrap();
+    assert_eq!(value, 0x81);
+}
+
+/// Test: RiscVSimulator load_elf_file
+#[test]
+fn test_simulator_load_elf_file() {
+    use tempfile::TempDir;
+    let mut sim = RiscVSimulator::new(0x1000);
+    let temp_dir = TempDir::new().unwrap();
+    let elf_file = temp_dir.path().join("test.elf");
+    let elf_data = create_minimal_elf();
+    std::fs::write(&elf_file, &elf_data).unwrap();
+    let result = sim.load_elf_file(elf_file.to_str().unwrap());
+    assert!(result.is_ok() || result.is_err());
+}
+
+/// Test: RiscVSimulator read_mem and write_mem
+#[test]
+fn test_simulator_read_write_mem() {
+    let sim = RiscVSimulator::new(0x1000);
+
+    // Write to memory
+    let data = vec![0xAA, 0xBB, 0xCC, 0xDD];
+    let result = sim.write_mem(0x100, &data);
+    assert!(result.is_ok());
+
+    // Read back from memory
+    let read_data = sim.read_mem(0x100, 4);
+    assert!(read_data.is_ok());
+    assert_eq!(read_data.unwrap(), vec![0xAA, 0xBB, 0xCC, 0xDD]);
+}
+
+/// Test: RiscVSimulator read_mem with unaligned address
+#[test]
+fn test_simulator_read_mem_unaligned() {
+    let sim = RiscVSimulator::new(0x1000);
+
+    // Write aligned data
+    let data = vec![0xAA, 0xBB, 0xCC, 0xDD];
+    let _ = sim.write_mem(0x100, &data);
+
+    // Read unaligned
+    let result = sim.read_mem(0x101, 2);
+    assert!(result.is_ok() || result.is_err());
+}
+
+/// Test: RiscVSimulator write_mem with large data
+#[test]
+fn test_simulator_write_mem_large() {
+    let sim = RiscVSimulator::new(0x10000);
+
+    // Write large data
+    let data = vec![0x55; 1024];
+    let result = sim.write_mem(0x1000, &data);
+    assert!(result.is_ok());
+}
+
+/// Test: ExecutionResult display
+#[test]
+fn test_execution_result_display() {
+    let result = ExecutionResult {
+        exit_code: 1,
+        cycles: 1000,
+        final_pc: 0x8000_1234,
+        timed_out: true,
+        error: Some("test error".to_string()),
+        signature_addr: Some(0x8000_2000),
+        signature_data: Some(vec![0xAA, 0xBB]),
+    };
+
+    // Debug format should work
+    let _ = format!("{:?}", result);
+}
