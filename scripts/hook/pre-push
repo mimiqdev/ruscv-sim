@@ -6,6 +6,7 @@ set -e
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_ROOT"
+. "$HOME/.cargo/env"
 
 # 检查 Rust
 if ! command -v cargo &> /dev/null; then
