@@ -502,12 +502,11 @@ pub fn load_and_run(
     let uart = Arc::new(Mutex::new(Uart16550::new(0x10000000)));
 
     // Set UART output callback to print to stdout
+    // Note: No explicit flush here - stdout will be flushed at program exit
     {
         let mut uart_guard = uart.lock().unwrap();
         uart_guard.set_output_callback(|byte| {
             print!("{}", byte as char);
-            use std::io::Write;
-            std::io::stdout().flush().unwrap();
         });
     }
 
@@ -549,17 +548,24 @@ pub fn load_and_run(
 
     // Create commit logger if requested
     let mut commit_logger: Option<CommitLogger> = log_commits
-        .map(CommitLogger::new_file)
-        .transpose()
-        .map_err(|e| {
-            ExecutorError::ExecutionError(format!("Failed to create commit log: {}", e))
-        })?;
-
-    #[allow(unused_assignments)]
-    // Save initial register state for logging
-    let mut regs_before = [0u64; 32];
-    #[allow(unused_assignments)]
-    let mut regs_after = [0u64; 32];
+        .map(|path| {
+            CommitLogger::new_file(path).map_err(|e| {
+                let error_type = match e.kind() {
+                    std::io::ErrorKind::PermissionDenied => "Permission denied",
+                    std::io::ErrorKind::NotFound => "Path not found",
+                    std::io::ErrorKind::AlreadyExists => "File already exists",
+                    std::io::ErrorKind::IsADirectory => "Path is a directory",
+                    _ => "Unknown error",
+                };
+                ExecutorError::ExecutionError(format!(
+                    "Failed to create commit log file '{}': {} ({})",
+                    path.display(),
+                    error_type,
+                    e
+                ))
+            })
+        })
+        .transpose()?;
 
     // Step 4: Execution loop
     let mut cycles = 0u64;
@@ -587,7 +593,7 @@ pub fn load_and_run(
         };
 
         // Capture register state before execution
-        regs_before = core.state().regs;
+        let regs_before = core.state().regs;
 
         // Execute one instruction
         match core.step() {
@@ -595,7 +601,7 @@ pub fn load_and_run(
                 cycles += 1;
 
                 // Capture register state after execution
-                regs_after = core.state().regs;
+                let regs_after = core.state().regs;
 
                 // Log commit if logger is active
                 if let Some(ref mut logger) = commit_logger {

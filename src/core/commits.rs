@@ -61,14 +61,23 @@ impl CommitLogger {
 
     /// Log a commit in Spike-compatible format
     ///
-    /// Format: core   <hartid>: <privilege> <pc> (<opcode>) [x<reg> <value>] [mem <addr> [value]]
+    /// Format: `core   <hartid>: <privilege> <pc> (<opcode>) [x<reg>  <value>]... [mem <addr> [<value>]]`
+    ///
+    /// Where:
+    /// - `<hartid>` is the hart ID (typically 0)
+    /// - `<privilege>` is the privilege mode (0=U, 1=S, 3=M)
+    /// - `<pc>` is the program counter (hex, 18 digits with 0x prefix)
+    /// - `<opcode>` is the instruction opcode (hex, 10 digits with 0x prefix)
+    /// - `[x<reg>  <value>]` is repeated for each register that changed (x1-x31)
+    /// - `[mem <addr>]` for loads, `[mem <addr> <value>]` for stores
     ///
     /// # Arguments
     /// * `hartid` - Hart ID (typically 0)
     /// * `privilege` - Privilege mode (0=U, 1=S, 3=M)
     /// * `pc` - Program counter
     /// * `opcode` - Instruction opcode (machine code)
-    /// * `regs` - Register values [x0..x31]
+    /// * `regs_before` - Register values before execution [x0..x31]
+    /// * `regs_after` - Register values after execution [x0..x31]
     /// * `mem_access` - Optional memory access info
     #[allow(clippy::too_many_arguments)]
     pub fn log_commit(

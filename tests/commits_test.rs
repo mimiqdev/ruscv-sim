@@ -1,8 +1,3 @@
-//! Commit Logger Edge Case Tests
-//!
-//! Tests for edge cases in commit logging functionality.
-//! Specifically tests register change output and memory store with None value.
-
 use ruscv_sim::core::commits::{CommitLogger, MemoryAccess};
 use std::fs::File;
 use std::io::Read;
@@ -342,4 +337,87 @@ fn test_memory_access_helpers() {
     assert_eq!(store.addr, 0x8000_2000);
     assert!(store.is_store);
     assert_eq!(store.value, Some(0xDEAD_BEEF));
+}
+
+/// Test: Log file to directory that is not writable returns error
+#[test]
+fn test_log_file_to_unwritable_directory() {
+    // Create a temporary directory
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a subdirectory that is read-only
+    let readonly_dir = temp_dir.path().join("readonly");
+    std::fs::create_dir(&readonly_dir).unwrap();
+
+    // Make the directory read-only (remove write permission)
+    let mut perms = std::fs::metadata(&readonly_dir).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&readonly_dir, perms).unwrap();
+
+    // Try to create a log file in the read-only directory
+    let test_file = readonly_dir.join("test.log");
+
+    // This should fail with a permission denied error
+    let result = CommitLogger::new_file(&test_file);
+
+    assert!(
+        result.is_err(),
+        "Expected error when creating file in read-only directory"
+    );
+    // On Unix-like systems, this should be a permission denied error
+    #[cfg(unix)]
+    {
+        if let Err(error) = result {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied,
+                "Expected PermissionDenied error, got: {:?}",
+                error.kind()
+            );
+        }
+    }
+}
+
+/// Test: Log file to non-existent directory returns error
+#[test]
+fn test_log_file_to_nonexistent_directory() {
+    let nonexistent_path = PathBuf::from("/nonexistent/path/that/does/not/exist/test.log");
+
+    let result = CommitLogger::new_file(&nonexistent_path);
+
+    assert!(
+        result.is_err(),
+        "Expected error when creating file in non-existent directory"
+    );
+    // This should be a "not found" error
+    #[cfg(unix)]
+    {
+        if let Err(error) = result {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::NotFound,
+                "Expected NotFound error, got: {:?}",
+                error.kind()
+            );
+        }
+    }
+}
+
+/// Test: Log file to a file path that is actually a directory returns error
+#[test]
+fn test_log_file_to_directory_returns_error() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Try to create a log file using a directory path
+    let result = CommitLogger::new_file(temp_dir.path());
+
+    assert!(result.is_err(), "Expected error when path is a directory");
+    if let Err(error) = result {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::IsADirectory,
+            "Expected IsADirectory error, got: {:?}",
+            error.kind()
+        );
+    }
 }
