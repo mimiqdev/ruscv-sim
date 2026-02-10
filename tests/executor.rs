@@ -9,7 +9,6 @@ use ruscv_sim::executor::{
     load_and_run, load_and_run_file, ExecutionResult, ExecutorError, RiscVSimulator, SystemBus,
 };
 use ruscv_sim::MemoryInterface;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 /// Test: log_commit is called during execution with commit logger

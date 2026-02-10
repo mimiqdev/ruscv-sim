@@ -3,7 +3,7 @@
 //! Tests for the complete CLI execution flow.
 //! Tests the main.rs code paths for CLI execution.
 
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs::File;
 use std::io::Write;
 use tempfile::TempDir;
@@ -11,25 +11,30 @@ use tempfile::TempDir;
 /// Test: CLI help command
 #[test]
 fn test_cli_help() {
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    cmd.arg("--help").assert().success();
+    let output = cargo_bin_cmd!("ruscv-sim").arg("--help").output().unwrap();
+    assert!(output.status.success());
 }
 
 /// Test: CLI run command with --help
 #[test]
 fn test_cli_run_help() {
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    cmd.arg("run").arg("--help").assert().success();
+    let output = cargo_bin_cmd!("ruscv-sim")
+        .arg("run")
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
 }
 
 /// Test: CLI run with missing ELF file (should error)
 #[test]
 fn test_cli_run_missing_elf() {
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    cmd.arg("run")
+    let output = cargo_bin_cmd!("ruscv-sim")
+        .arg("run")
         .arg("/nonexistent/path/test.elf")
-        .assert()
-        .failure();
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
 }
 
 /// Test: CLI run with invalid ELF (should error gracefully)
@@ -42,8 +47,12 @@ fn test_cli_run_invalid_elf() {
     let mut file = File::create(&invalid_elf).unwrap();
     file.write_all(b"not an elf file").unwrap();
 
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    cmd.arg("run").arg(&invalid_elf).assert().failure();
+    let output = cargo_bin_cmd!("ruscv-sim")
+        .arg("run")
+        .arg(&invalid_elf)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
 }
 
 /// Test: CLI run with verbose flag (should not panic)
@@ -57,9 +66,12 @@ fn test_cli_run_verbose_flag() {
     let mut file = File::create(&elf_file).unwrap();
     file.write_all(&minimal_elf).unwrap();
 
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
     // Just run with verbose - should not panic even if execution fails
-    let _ = cmd.arg("run").arg(&elf_file).arg("--verbose").output();
+    let _ = cargo_bin_cmd!("ruscv-sim")
+        .arg("run")
+        .arg(&elf_file)
+        .arg("--verbose")
+        .output();
 }
 
 /// Test: CLI run with max_cycles flag
@@ -72,8 +84,7 @@ fn test_cli_run_with_max_cycles() {
     let mut file = File::create(&elf_file).unwrap();
     file.write_all(&minimal_elf).unwrap();
 
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    let _ = cmd
+    let _ = cargo_bin_cmd!("ruscv-sim")
         .arg("run")
         .arg(&elf_file)
         .arg("--max-cycles")
@@ -91,8 +102,7 @@ fn test_cli_run_with_tohost() {
     let mut file = File::create(&elf_file).unwrap();
     file.write_all(&minimal_elf).unwrap();
 
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    let _ = cmd
+    let _ = cargo_bin_cmd!("ruscv-sim")
         .arg("run")
         .arg(&elf_file)
         .arg("--tohost")
@@ -111,8 +121,7 @@ fn test_cli_run_with_log_commits() {
     let mut file = File::create(&elf_file).unwrap();
     file.write_all(&minimal_elf).unwrap();
 
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    let _ = cmd
+    let _ = cargo_bin_cmd!("ruscv-sim")
         .arg("run")
         .arg(&elf_file)
         .arg("--log-commits")
@@ -131,8 +140,7 @@ fn test_cli_run_all_flags() {
     let mut file = File::create(&elf_file).unwrap();
     file.write_all(&minimal_elf).unwrap();
 
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    let _ = cmd
+    let _ = cargo_bin_cmd!("ruscv-sim")
         .arg("run")
         .arg(&elf_file)
         .arg("--max-cycles")
@@ -148,22 +156,28 @@ fn test_cli_run_all_flags() {
 /// Test: CLI with invalid subcommand
 #[test]
 fn test_cli_invalid_subcommand() {
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    cmd.arg("invalid").assert().failure();
+    let output = cargo_bin_cmd!("ruscv-sim").arg("invalid").output().unwrap();
+    assert!(!output.status.success());
 }
 
 /// Test: CLI with unknown flag
 #[test]
 fn test_cli_unknown_flag() {
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    cmd.arg("--unknown-flag").assert().failure();
+    let output = cargo_bin_cmd!("ruscv-sim")
+        .arg("--unknown-flag")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
 }
 
 /// Test: CLI version command
 #[test]
 fn test_cli_version() {
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    cmd.arg("--version").assert().success();
+    let output = cargo_bin_cmd!("ruscv-sim")
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
 }
 
 /// Test: CLI run with hex tohost address
@@ -176,8 +190,7 @@ fn test_cli_run_hex_tohost() {
     let mut file = File::create(&elf_file).unwrap();
     file.write_all(&minimal_elf).unwrap();
 
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    let _ = cmd
+    let _ = cargo_bin_cmd!("ruscv-sim")
         .arg("run")
         .arg(&elf_file)
         .arg("--tohost")
@@ -195,8 +208,7 @@ fn test_cli_run_decimal_tohost() {
     let mut file = File::create(&elf_file).unwrap();
     file.write_all(&minimal_elf).unwrap();
 
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    let _ = cmd
+    let _ = cargo_bin_cmd!("ruscv-sim")
         .arg("run")
         .arg(&elf_file)
         .arg("--tohost")
@@ -214,8 +226,11 @@ fn test_cli_run_processes_command() {
     let mut file = File::create(&elf_file).unwrap();
     file.write_all(&minimal_elf).unwrap();
 
-    let mut cmd = Command::cargo_bin("ruscv-sim").unwrap();
-    let output = cmd.arg("run").arg(&elf_file).output().unwrap();
+    let output = cargo_bin_cmd!("ruscv-sim")
+        .arg("run")
+        .arg(&elf_file)
+        .output()
+        .unwrap();
 
     // Should have output (either success or execution error)
     assert!(!output.stdout.is_empty() || !output.stderr.is_empty());
