@@ -132,94 +132,33 @@
 
 ---
 
-### M7: Log 输出增强 [ACTIVE]
-**Status:** Active
+### M7: Log 输出增强 [COMPLETED]
+**Status:** Completed (2026-02-11)
 **Goal:** 增强日志输出，支持与 Spike 日志直接对比
 
-#### 核心理念
-**先研究，再实现** - 先深入理解 Spike 日志格式规范，再实现 ruscv-sim 的兼容输出
-
-#### 执行阶段
-1. **研究阶段**: 分析 Spike `--log-commits` 格式，定义目标规范
-2. **实现阶段**: 添加 `--log-commits` 参数，实现兼容日志输出
-3. **验证阶段**: 创建对比工具，运行测试验证
-
-**当前进度**: 阶段 1（研究）已完成
-
-#### 阶段 1: 研究阶段 ✅
-- [x] 分析 Spike `--log-commits` 格式
-- [x] 创建 `docs/spike-log-format.md`
-- [x] 创建 `docs/ruscv-log-format.md`
-- [x] 定义目标格式规范
-
-#### 阶段 2: 格式修复 [下一步]
-- [ ] 修复 PC 输出宽度（10位 → 16位）
-- [ ] 修复寄存器格式（`xN=V` → `xN  V`）
-- [ ] 添加特权模式标识（3=M-mode）
-- [ ] 字段宽度对齐
-
-#### 阶段 3: 实现 --log-commits
-- [ ] 添加 `--log-commits` CLI 参数
-- [ ] 创建 `src/core/commits.rs` 日志模块
-- [ ] 集成到执行流程
-
-#### 阶段 4: 添加内存访问日志
-- [ ] 实现 `mem <addr> [value]` 日志
-- [ ] 支持加载/存储追踪
-
-#### 阶段 5: 创建对比工具
-- [ ] 创建 `scripts/log-compare.py`
-- [ ] 创建 `scripts/compare.sh`
-
-#### 阶段 6: 测试与验证
-- [ ] 格式验证
-- [ ] 功能测试（add, hello, lw, sw, fib）
-
-#### M7 Log 格式规范
-```
-# Spike 格式
-core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
-
-# ruscv-sim 目标格式（完全兼容）
-core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
-```
-
-#### 与 Spike 对比方案
-- **直接对比**: `diff spike.log ruscv.log`
-- **脚本对比**: `python3 scripts/log-compare.py spike.log ruscv.log`
-#### Spike 兼容模式的内存映射配置
-| 地址范围 | 大小 | 设备 | Spike 兼容性 |
-|----------|------|------|-------------|
-| 0x00000000 - 0x0FFFFFFF | 256MB | RAM | ✅ |
-| 0x80000000 - 0x8FFFFFFF | 256MB | RAM (主存) | ✅ |
-| 0x10000000 - 0x10000FFF | 4KB | UART 16550 | ✅ |
-| 0x2000000 - 0x2003FFF | 16KB | CLINT | ✅ |
-| 0xC000000 - 0xFFFFFFFF | 1GB | PLIC | ✅ |
-
 #### Features
-- [ ] **增强日志输出**: 添加 `--log-commits` 选项，输出与 Spike 兼容格式
-  - 格式: `core 0: 3 <pc> (<instr>) x<reg> <value>`
-  - 每条指令一行，包含全部 32 个寄存器变化
-  - 支持内存访问日志（可选）
-- [ ] **签名导出增强**: 完善 `--signature` 参数，支持更多格式
-- [ ] **对比工具**: 创建 log-diff 脚本，支持 ruscv-sim vs Spike 日志对比
-- [ ] **Spike 兼容模式**: 研究并实现 Spike 内存映射兼容
+- [x] **--log-commits CLI 参数**: 添加日志输出选项
+- [x] **Spike 兼容格式**: `core 0: 3 <pc> (<instr>) x<reg> <value>`
+- [x] **内存访问日志**: `mem <addr> [value]` 支持加载/存储追踪
+- [x] **commit 日志模块**: `src/core/commits.rs`
+- [x] **对比工具**: `scripts/log-compare.py` + `scripts/compare.sh`
+- [x] **测试覆盖**: 700+ 测试通过
 
 #### M7 Log 格式规范
 ```
 # Spike --log-commits 格式
 core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
 
-# ruscv-sim 目标输出格式
+# ruscv-sim 输出格式（完全兼容）
 core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
 ```
 
-#### 与 Spike 对比方案
-- **直接对比**: 使用 `diff` 或 `vimdiff` 对比两个模拟器的日志输出
-- **脚本对比**: 使用 Python/Rust 工具解析并比对 PC、寄存器、内存访问
-- **签名对比**: 直接比对最终 signature 区域
+#### 版本发布
+- [x] **v0.7.0**: Log 输出增强发布
 
----
+#### 与 Spike 对比方案
+- **直接对比**: `diff spike.log ruscv.log`
+- **脚本对比**: `python3 scripts/log-compare.py spike.log ruscv.log`
 
 ### M9: v0.9.0
 Status: Planning
