@@ -1,14 +1,14 @@
 # RISC-V ISS Simulator - Scheduled Benchmark Workflow
 # ====================================================
-# Runs daily to collect baseline performance data
+# Runs weekly to collect baseline performance data
 # Helps track performance regressions over time
 
 name: Daily Benchmarks
 
 on:
   schedule:
-    # Run daily at 02:00 UTC (10:00 CST)
-    - cron: '0 2 * * *'
+    # Run every Sunday at 02:00 UTC (10:00 China Standard Time)
+    - cron: '0 2 * * 0'
   workflow_dispatch: # Allow manual trigger
 
 env:
@@ -20,7 +20,7 @@ jobs:
   # ==========================================
   benchmark:
     name: Daily Benchmark
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
@@ -36,50 +36,22 @@ jobs:
 
       - name: Run comprehensive benchmarks
         run: |
-          echo "## Benchmark Results - $(date -u)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           cargo bench --all-features -- --verbose
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Daily benchmarks completed" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Benchmark Results - $(date -u)"
+            echo ""
+            echo "✅ Weekly benchmarks completed"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Archive benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results-${{ github.run_number }}
           path: target/criterion/
-          retention-days: 30
-
-  # ==========================================
-  # Summary Report
-  # ==========================================
-  summary:
-    name: Summary
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 5
-    needs: benchmark
-    if: always()
-
-    steps:
-      - name: Benchmark Summary
-        run: |
-          echo "## Daily Benchmark Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ needs.benchmark.result }}" == "success" ]; then
-            echo "✅ Daily benchmarks completed successfully" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Daily benchmarks failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "Next scheduled run: Daily at 02:00 UTC" >> $GITHUB_STEP_SUMMARY
-          echo "Completed at: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          retention-days: 7
 
 # ==========================================
 # Permissions
 # ==========================================
 permissions:
   contents: read
-  actions: read
-  id-token: write

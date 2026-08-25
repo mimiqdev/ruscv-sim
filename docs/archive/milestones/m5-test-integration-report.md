@@ -1,5 +1,7 @@
 # M5 测试集成与改进建议报告（riscv-arch-test）
 
+> Historical document. This RISCOF-era report is archived and has been superseded by the active ACT4 plan.
+
 > **riscv-arch-test**（可简称 **arch-test**）是 RISC-V 官方架构测试套件，用于验证 ISA 实现正确性。
 
 **日期**: 2026-02-02

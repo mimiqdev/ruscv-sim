@@ -1,5 +1,7 @@
 # M7: Log 输出增强实施计划
 
+> Historical document. M7 is complete; this plan is not a source of current work.
+
 **项目:** RISC-V ISS Simulator (ruscv-sim)
 **里程碑:** M7 - Log 输出增强
 **文档版本:** 2.0

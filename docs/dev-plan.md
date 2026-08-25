@@ -1,315 +1,155 @@
-# Project: RISC-V ISS Simulator (ruscv-sim)
+# Active Development Plan
 
-**Current Phase:** M7: Log 输出增强 (Active)
-**Last Updated:** 2026-02-05
+**Project:** RISC-V ISS Simulator (`ruscv-sim`)
 
----
+**Active milestone:** M8 — ACT4 RV64I Baseline
 
-## Milestones
+**Status:** Active — planning and environment bootstrap
 
-### M1: Sprint 1-9 (基础 + 指令集) [COMPLETED]
-**Status:** Completed
-**Goal:** RV64IMAFDC 核心指令集完整实现
-**Sprint Alias:** 1, 2, 3, 4, 5, 6, 7, 8, 8.5, 9
+**Started:** 2026-08-26
 
-#### Features (Completed)
-- [x] **Sprint 1**: 项目骨架、构建系统、基础模块
-- [x] **Sprint 2-3**: RV64I 整数指令 (47条)
-- [x] **Sprint 4**: CSR 框架 (35个寄存器, 6条指令)
-- [x] **Sprint 5**: RV64M/A + 陷阱处理 (乘除 + 原子操作)
-- [x] **Sprint 6-7**: RV64F/D 浮点单元 (单/双精度)
-- [x] **Sprint 8-9**: RV64C 压缩指令 (71条)
-- [x] **Sprint 8.5**: ISA 模块化重构 (31个文件, ~10000行)
+**Planning model:** Rolling milestone
 
----
+This file is the single source of truth for current project work. It contains exactly one active milestone. Completed plans live in [`archive/milestones/`](archive/milestones/); archived checkboxes and old future goals are not active tasks.
 
-### M2: Sprint 10-11 (内存子系统 + 外设) [COMPLETED]
-**Status:** Completed
-**Goal:** Sv39 MMU/TLB + TLM2.0 外设框架
-**Sprint Alias:** 10, 11
+## M8 objective
 
-#### Features (Completed)
-- [x] **Sprint 10**: MMU/TLB 内存管理 (Sv39页表, 4-way LRU TLB)
-- [x] **Sprint 11**: TLM2.0 抽象层 + CLINT + PLIC + UART 16550
+Integrate the latest RISC-V Architectural Certification Test framework (ACT4) and pass the complete non-privileged RV64I suite with self-checking ELF programs.
 
----
+M8 deliberately starts with RV64I only. Existing M/A/F/D/C, CSR, trap, MMU, TLM, and peripheral components must not be advertised to ACT4 until their end-to-end execution paths are separately verified.
 
-### M3: 边界测试和原子性改进 [COMPLETED]
-**Status:** Completed
-**Goal:** 提升外设代码质量和测试覆盖率
+## Upstream baseline
 
-#### Features
-- [x] **CLINT 原子性改进**:
-  - [x] mtime: u64 → AtomicU64
-  - [x] 添加多线程安全注释
-  - [x] 更新读写方法使用 load/store
+ACT4 4.0 replaced the deprecated RISCOF flow. ACT4 uses a UDB description of the DUT, runs the Sail reference model to generate expected results, and compiles those results into self-checking ELF files.
 
-- [x] **边界测试覆盖** (90+ 新测试):
-  - [x] CLINT: 22 个测试（新增 10 个边界测试：无效 Hart ID、地址越界、最大 mtime 值等）
-  - [x] PLIC: 25 个测试（新增 14 个边界测试：无效 hart ID、最大中断源、地址越界等）
-  - [x] UART: 36 个测试（新增 19 个边界测试：FIFO 溢出、波特率边界、连续溢出等）
-  - [x] TLM: 19 个测试（新增 10 个边界测试：超大地址、超大长度传输、无效命令等）
-  
-**完成总结**: 总测试数 704 个全部通过，外设模块测试覆盖率达 95%+
+Before implementation, record reproducible pins for:
 
----
+- [ ] `riscv-arch-test` ACT4 commit
+- [ ] RISC-V Sail version supported by that ACT4 commit
+- [ ] RISC-V compiler and binutils versions
+- [ ] Python, `uv`, Ruby, Bundler, and UDB environment
 
-### M4: 调试支持 [COMPLETED]
-**Status:** Completed
-**Goal:** GDB RSP 调试接口可用
+Official references:
 
-#### Features (Completed)
-- [x] **GDB RSP 服务器实现**: 完整的 Remote Serial Protocol 支持
-- [x] **CLI 调试界面**: 交互式命令行调试工具
-- [x] **断点管理器**: 软件/硬件断点支持
-- [x] **观察点管理器**: 内存访问观察点
-- [x] **版本控制的 git hooks**: 自动格式化、代码检查
+- <https://github.com/riscv/riscv-arch-test/tree/act4>
+- <https://github.com/riscv/sail-riscv>
 
----
+## Scope
 
-### M5: ELF 执行闭环 [COMPLETED]
-**Status:** Completed
-**Goal:** 建立 ELF 加载与执行能力，支持 arch-test 运行
+### 1. Reproducible ACT4 environment
 
-#### Features (Completed)
-- [x] **ELF Loader**: 加载 arch-test ELF（入口点/段映射）
-- [x] **运行入口**: reset → run 的最小执行流程
-- [x] **Signature 导出**: 支持 signature 区域 dump
-- [x] **退出机制**: tohost/exit 约定，用于自动停止测试
-- [x] **System Bus & Memory Map Fix**:
-  - 实现 SystemBus 路由 (RAM @ 0x80000000, UART @ 0x10000000)
-  - 修复 `riscv-arch-test` 运行时的无效内存访问问题
-  - 重构 Core 使用 `dyn MemoryInterface` 支持灵活总线
+- [ ] Choose the supported execution environment for local development and CI
+- [ ] Install or provision ACT4 dependencies
+- [ ] Generate a self-checking RV64I ELF using an upstream reference configuration
+- [ ] Document exact setup and reproduction commands
+- [ ] Keep the upstream test suite outside this repository or pin it explicitly; do not copy generated upstream tests into the source tree
 
----
+### 2. Minimal ruscv-sim DUT configuration
 
-### M6: 测试质量强化 [COMPLETED]
-**Status:** Completed (2026-02-05)
-**Goal:** 提升本地回归测试能力
+Create an ACT4 configuration for the capabilities that are true in the ELF execution path:
 
-#### Features (Completed)
-- [x] **ELF 集成测试**: 46个裸机ELF程序测试覆盖
-  - rv64i: 38个测试（算术、逻辑、分支、跳转、Load/Store、CSR）
-  - rv64m: 8个测试（乘除法）
-- [x] **覆盖率报告**: CI集成 `cargo-llvm-cov` + Codecov自动上传
-- [x] **属性测试 (proptest)**: 关键外设边界自动化探索（可选，已添加依赖）
+- [ ] `test_config.yaml`
+- [ ] Minimal RV64I UDB configuration
+- [ ] `rvmodel_macros.h`
+- [ ] ACT4-compatible linker script
+- [ ] `sail.json`
+- [ ] `rvtest_config.h`
+- [ ] `rvtest_config.svh`
+- [ ] `run_cmd.txt`
 
----
+Initial configuration constraints:
 
-### M6-extra: 指令测试覆盖 [COMPLETED]
-**Status:** Completed (2026-02-04)
-**Goal:** 补充关键指令的 ELF 回归测试
+- XLEN is 64
+- Little-endian
+- One hart
+- RV64I only
+- Privileged tests disabled
+- Compressed instructions disabled
+- Paging and MMU behavior not advertised
+- Interrupts, PMP, Supervisor mode, and optional extensions not advertised
 
-**参考文档**: [baremetal-test-template.md](../docs/baremetal-test-template.md)
+### 3. DUT runtime contract
 
-#### Features
-- [x] **目录结构重组**:
-  - `tests/riscv-tests/` → `tests/bare-metal-riscv-test/`
-  - 按扩展名分文件夹: `rv64i/`, `rv64m/`, `rv64a/`, `rv64f/`, `rv64d/`, `rv64c/`
-- [x] **RVI 整数指令（部分）**: add, sub, and, or, xor, sll, srl, sra
-- [x] **RVI 立即数（部分）**: addi, andi, ori, xori, slli, srli, srai
-- [x] **Load/Store（部分）**: lw, sw, lh, sh, lb, sb, lwu
-- [x] **分支指令**: beq, bne, blt, bge, bltu, bgeu
-- [x] **跳转指令**: jal, jalr
-- [x] **乘除指令**: mul, mulh, mulhsu, mulhu, div, divu, rem, remu
-- [x] **CSR 指令**: csrrw, csrrs, csrrc, csrrwi, csrrsi, csrrci
+- [ ] Place test code and data in RAM beginning at `0x8000_0000`
+- [ ] Place `.tohost` in RAM and keep it eight-byte aligned
+- [ ] Implement ACT4 `RVMODEL_HALT_PASS` using `tohost = 1`
+- [ ] Implement ACT4 `RVMODEL_HALT_FAIL` using `tohost = 3`
+- [ ] Implement ACT4 console macros for the UART 16550 at `0x1000_0000`
+- [ ] Verify UART output contains an intact `RVCP-SUMMARY` line
+- [ ] Distinguish test failure, simulator error, and timeout in process exit behavior and logs
+- [ ] Select and document a safe per-test instruction limit
+- [ ] Support ACT4 `run_cmd.txt` debug placeholders with `--log-commits`
 
-**注意**: 跳过 M 和 A 扩展的复杂原子场景（后续 riscv-arch-test 会覆盖）
+### 4. First self-checking ELF
 
-#### 测试状态记录
-**已通过的测试 (保留在编译列表中)**:
-- 算术指令: `add`, `addi`, `sub`, `addw`, `subw`
-- 逻辑指令: `and`, `or`, `xor`, `sll`, `srl`, `sra`, `andi`, `ori`, `xori`, `slli`, `srli`, `srai`
-- 移位指令: `sllw`, `srlw`, `sraw`
-- Load/Store: `lw`, `sw`, `lh`, `sh`, `lb`, `sb`, `lwu`
-- 分支指令: `beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu`, `blt_*`
-- 跳转指令: `jal`, `jalr`
-- 乘除指令: `mul`, `mulh`, `mulhsu`, `mulhu`, `div`, `divu`, `rem`, `remu`
-- CSR指令: `csrrw`, `csrrs`, `csrrc`, `csrrwi`, `csrrsi`, `csrrci`
-- 示例程序: `fib`, `hello`
+- [ ] Build the simulator in release mode
+- [ ] Generate one simple RV64I ACT4 ELF
+- [ ] Load and execute it through the public CLI
+- [ ] Observe `RVCP-SUMMARY: TEST PASSED`
+- [ ] Return process exit code zero
+- [ ] Confirm `run_tests.py` recognizes the result
+- [ ] Preserve the command and log as a smoke-test fixture or reproducible CI artifact
 
-**测试结果**: 46/46 tests pass (2026-02-04)
+### 5. Complete non-privileged RV64I suite
 
----
+- [ ] Run the complete ACT4 RV64I non-privileged selection
+- [ ] Implement FENCE/FENCE.I in the real decode/execute path where required
+- [ ] Fix instruction decoding and execution failures exposed by ACT4
+- [ ] Fix load/store, alignment, and integer edge cases exposed by ACT4
+- [ ] Add a focused local regression test for every simulator defect found by ACT4
+- [ ] Keep DUT UDB and Sail configuration synchronized with actual behavior
+- [ ] Produce a machine-readable and human-readable test summary
 
-### M7: Log 输出增强 [COMPLETED]
-**Status:** Completed (2026-02-11)
-**Goal:** 增强日志输出，支持与 Spike 日志直接对比
+### 6. CI integration
 
-#### Features
-- [x] **--log-commits CLI 参数**: 添加日志输出选项
-- [x] **Spike 兼容格式**: `core 0: 3 <pc> (<instr>) x<reg> <value>`
-- [x] **内存访问日志**: `mem <addr> [value]` 支持加载/存储追踪
-- [x] **commit 日志模块**: `src/core/commits.rs`
-- [x] **对比工具**: `scripts/log-compare.py` + `scripts/compare.sh`
-- [x] **测试覆盖**: 700+ 测试通过
+- [ ] Add a dedicated ACT4 job without slowing ordinary unit-test iteration unnecessarily
+- [ ] Cache or provision the pinned ACT4 tool environment reproducibly
+- [ ] Upload summary, failing simulator logs, objdump files, and debug traces
+- [ ] Fail CI on ACT failure, simulator error, timeout, or missing summary
+- [ ] Document how to rerun a single failing ELF locally
 
-#### M7 Log 格式规范
-```
-# Spike --log-commits 格式
-core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
+## Known starting gaps
 
-# ruscv-sim 输出格式（完全兼容）
-core   0: 3 0x0000000080000000 (0x00000093) x1  0x0000000000000000
-```
+- `Opcode::MiscMem` currently returns `UnimplementedInstruction`, so FENCE/FENCE.I are not available through the ELF core loop.
+- RV64C components are not integrated into fetch; the core fetches 32-bit words and advances the PC by four bytes.
+- MMU and TLM components are not used by `RiscvCore::step`.
+- Trap components are not yet a unified error-to-architectural-trap path for ELF execution.
+- Commit logging does not yet receive memory-access information from the executor.
+- The current local environment does not have the ACT4 toolchain, Sail, or a RISC-V cross compiler installed.
 
-#### 版本发布
-- [x] **v0.7.0**: Log 输出增强发布
+Only gaps that block the RV64I ACT4 acceptance criteria belong in M8. Other gaps must be evaluated when planning the next milestone.
 
-#### 与 Spike 对比方案
-- **直接对比**: `diff spike.log ruscv.log`
-- **脚本对比**: `python3 scripts/log-compare.py spike.log ruscv.log`
+## Execution order
 
-### M9: v0.9.0
-Status: Planning
-Goal: 增强MMU仿真和指令集支持
+1. Pin and validate the ACT4 build environment.
+2. Add the minimal RV64I DUT configuration.
+3. Run one self-checking ELF manually.
+4. Make the same ELF pass through ACT4 `run_tests.py`.
+5. Run the full RV64I selection and triage failures.
+6. Add regressions and fix simulator behavior.
+7. Add the stable suite to CI.
+8. Verify every acceptance criterion and archive M8.
 
-#### Features
-- [ ] Sv48/Sv57 页表支持 (规划文档: archive/sprint-plan-archived.md 8.4节)
-- [ ] RV32I 纯32位仿真支持 (规划文档: archive/sprint-plan-archived.md 8.5节)
-- [ ] 清理 `src/execute/` 旧模块文件 (见 archive/sprint-8.5-completed.md)
+## Acceptance criteria
 
-### Future Goals (Post v1.0)
-- [ ] [FUTURE] **RISCOF 支持**: 对接官方架构测试框架
-  - RISCOF 框架集成
-  - riscv-arch-test 套件支持
-  - DUT YAML 配置
-- [ ] [FUTURE] **性能优化**: CPI、译码/执行延迟优化
-- [ ] [FUTURE] **文档完善**: 用户指南、API 参考
-- [ ] [FUTURE] **模糊测试 (fuzzing)**: 外设边界模糊测试框架
-- [ ] [FUTURE] **冒烟测试**: 端到端功能验证
-- [ ] [FUTURE] **稳定性测试**: 长时间运行测试
+M8 is complete only when all of the following are true:
 
-### Version Plan
-| Version | Milestone | Meaning |
-|---------|-----------|---------|
-| v0.1.0 | Sprint 1-11 | 基础功能就绪 |
-| v0.4.0 | M4 | 调试支持就绪 |
-| v0.5.0 | M5 | ELF执行流程 |
-| v0.6.0 | M6 | 测试质量强化完成 |
-| v0.7.0 | M7 | Log 输出增强（Spike 兼容格式） |
-| v0.8.0 | Future | RISCOF + riscv-arch-test 集成 |
-| v0.9.0 | M9 | MMU增强，指令集扩展(RV32) |
-| v1.0.0 | Future | 待重新review规划 |
+- [ ] Tool and upstream versions are pinned and reproducible
+- [ ] The ruscv-sim ACT4 configuration validates and generates self-checking ELF files
+- [ ] ACT4 uses a truthful RV64I-only DUT configuration
+- [ ] Every selected non-privileged RV64I ACT4 test passes through `run_tests.py`
+- [ ] No selected test times out or exits because of a simulator-internal error
+- [ ] ACT4 failures discovered during development have focused local regression tests
+- [ ] CI runs the same pinned suite and retains useful failure artifacts
+- [ ] Setup, single-test debugging, and full-suite commands are documented
 
----
-## Change Log
+Passing project-authored bare-metal programs or Rust unit tests does not satisfy these criteria.
 
-**2026-02-08**: M7 阶段 1 完成，实施计划更新
-- 阶段 1（研究 Spike 日志格式）已完成
-- 创建 docs/spike-log-format.md 和 docs/ruscv-log-format.md
-- 阶段 2-6 实施计划已添加到 m7-execution-plan.md
-- **Next**: M7 阶段 2（格式修复）
+## Milestone closeout
 
-**2026-02-08**: PR #45 merged - M7 Log 输出增强规划
-- M7 重新规划完成，PR 已合并到 main 分支
-- dev-plan.md 和 m7-execution-plan.md 更新已生效
-- **Next**: M7 阶段 1（研究 Spike 日志格式）
-**2026-02-08**: M7 重新规划 - Log 输出增强优先
-- M7 目标从 "RISCOF + arch-test 集成" 改为 "Log 输出增强"
-- M7 Features 更新:
-  - 添加 `--log-commits` 选项，输出与 Spike 兼容格式
-  - 完善签名导出
-  - 创建 log-diff 对比工具
-  - Spike 兼容模式研究
-- RISCOF 支持移至 Future Goals
-- M8 里程碑删除（合并到 Future Goals）
-- 版本规划调整:
-  - v0.7.0 → M7 (Log 输出增强)
-  - v0.8.0 → Future (RISCOF + arch-test)
+When every acceptance criterion is verified:
 
-**2026-02-05**: M6 Complete - 测试质量强化完成 + 版本规划调整
-- M6状态从[ACTIVE]改为[COMPLETED]
-- 添加Milestone M9
-  - 移动之前的BUFFER任务到M9
-- ELF集成测试: 46个裸机程序（rv64i: 38, rv64m: 8）
-- 覆盖率报告: CI已集成cargo-llvm-cov + Codecov
-- 版本规划调整:
-  - M6完成 → v0.6.0
-  - M7完成 → v0.7.0
-  - M8完成 → v0.8.0
-  - M9完成 → v0.9.0
-  - v1.0.0标记为"待重新review"
-- **Next**: M7 - RISCOF + arch-test 集成
-
-**2026-02-04**: M6-extra Complete - 指令测试覆盖完成
-- OpImm32/Op32 指令实现完成 (addiw, addw, subw, sllw, srlw, sraw 等)
-- RV64M 乘除指令 dispatch 完成
-- CSR 和系统指令支持完成
-- 33/38 tests pass
-- M6-extra 状态改为 [COMPLETED]
-- **Next**: M6 测试质量强化 (coverage 报告)
-
-**2026-02-03**: M5 Fix - System Bus Implementation
-- 实现 `SystemBus` 以支持 `riscv-arch-test` 内存映射
-- 修复 `hello.elf` 运行时的无效内存访问 (UART @ 0x10000000)
-- 增加 `verbose` 模式用于调试输出控制
-- 重构 `load_elf_file` 消除 clippy 警告
-
-**2026-02-03**: M5 完成 - ELF 执行闭环
-- M5 状态从 [ACTIVE] 改为 [COMPLETED]
-- 功能列表: ELF Loader、Executor、Signature 导出、tohost/exit 机制
-- PR #28 已通过 CI，待合并
-
-**2026-02-02**: 里程碑重编号
-- M5.1 → M5 (ELF 执行闭环)
-- M5.2 → M6 (测试质量强化)
-- M5.3 → M7 (RISCOF + arch-test 集成)
-- M6 → M8 (v1.0 发布)
-- M5 状态改为 [ACTIVE]
-- M6/M7/M8 状态改为 [PLANNING]
-
-**2026-02-02**: M4 完成 - 调试支持
-- M4 状态从 [PLANNING] 改为 [COMPLETED]
-- 添加功能列表: GDB RSP 服务器、CLI 调试界面、断点管理器、观察点管理器、git hooks
-
-**2026-02-02**: 版本规划调整
-- M6 目标简化为：仅通过 riscv-arch-test 后发布 v1.0.0
-- M5 调整为：架构测试集成阶段
-- 其他目标（性能优化、文档、模糊测试等）移至 Future Goals
-- 添加版本规划表：v0.1.0 → v0.5.0 → v0.9.0-RC1 → v1.0.0
-
-**2026-02-02**: Code Review 改进建议评估（M3 完成后）
-评估了三项改进建议，决策如下：
-
-| 建议 | 内容 | 决策 | 理由 |
-|------|------|------|------|
-| #1 | 属性测试 (proptest) | 采纳 → M6 Buffer | 已添加 `proptest = "1.0"` 依赖，M6 阶段探索性引入关键外设测试 |
-| #2 | 模糊测试 (fuzzing) | 采纳 → M8 Buffer | 长期规划，需评估投入产出比后再决定 |
-| #3 | 测试覆盖报告 (cargo-llvm-cov) | 采纳 → M6 Buffer | 低成本（仅安装工具）高收益（可视化覆盖率），M6 必做 |
-
-**2026-02-02**: M3 完成 - 边界测试和原子性改进
-- CLINT: `mtime` 改为 `AtomicU64`，添加多线程安全注释和原子操作方法
-- CLINT 新增边界测试: 无效 Hart ID、地址越界、最大 mtime 值、原子操作等 (22 个测试)
-- PLIC 新增边界测试: 无效 hart ID、最大中断源、地址越界、优先级边界等 (25 个测试)
-- UART 新增边界测试: FIFO 溢出、波特率边界、连续溢出、触发级别等 (36 个测试)
-- TLM 新增边界测试: 超大地址、超大长度传输、无效命令、DMI 操作等 (19 个测试)
-- 总测试数: 704 个全部通过
-
-**2026-02-02**: 创建 dev-plan.md，替换 sprint-plan.md
-- 归档原 sprint-plan.md → archive/sprint-plan-archived.md
-- 保留 Sprint 别名用于历史提交查找
-- 未完成项使用功能描述而非 Sprint 命名
-
----
-
-## Usage Notes
-
-**Status tags:**
-- `[ ]` - Pending/Not started
-- [x] - Completed
-- [ACTIVE] - Currently working on
-- [BLOCKED] - Waiting on dependency
-- [POSTPONED] - Explicitly delayed due to other priorities
-- [BUFFER] - In cleanup/refactor queue
-
-**Hierarchy:**
-- **Milestone** = Major product capability (answers "where am I going?")
-- **Feature** = Independently demonstrable functionality (answers "what am I building?")
-- **Task** = Concrete deliverable in focused session (answers "what am I doing now?")
-- Sub-tasks (implementation details) stay in code comments, not tracked here
-
-**Energy conservation:**
-- Adding a Task → Must postpone or remove another Task
-- Track all scope changes in Change Log
-- Buffer Zone is for discovered improvements, not commitments
+1. Move this complete plan to `docs/archive/milestones/m8-act4-rv64i.md`.
+2. Add completion date, ACT4 commit, tool versions, test counts, CI evidence, known limitations, and relevant commit/tag identifiers.
+3. Re-evaluate—not automatically inherit—the remaining M/A/F/D/C, privileged, MMU, RV32, and Sv48/Sv57 work.
+4. Replace this file with exactly one newly approved active milestone.

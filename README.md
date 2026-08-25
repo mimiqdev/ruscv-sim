@@ -71,13 +71,13 @@ ruscv-sim/
 ├── tests/                  # 集成测试
 ├── docs/                   # 文档
 │   ├── architecture.md     # 架构设计
-│   ├── sprint-plan.md      # 14 Sprint 开发计划
+│   ├── dev-plan.md         # 唯一 active milestone
 │   ├── testing-strategy.md # 测试策略
 │   └── versions.md         # 依赖版本
 ├── scripts/                # 工具脚本
-│   └── hook/               # Git hooks
+├── .githooks/              # 版本控制的 Git hooks
 ├── .github/workflows/      # CI/CD 配置
-├── CLAUDE.md               # Agent 指南
+├── AGENTS.md               # Agent 指南
 └── Cargo.toml
 ```
 
@@ -85,8 +85,9 @@ ruscv-sim/
 
 ### 环境要求
 
-- Rust 1.93+
+- Stable Rust
 - Cargo
+- rustfmt 和 clippy 组件
 
 ### 构建和运行
 
@@ -108,8 +109,8 @@ cargo run -- --help
 项目包含本地 Git hooks 保证代码质量：
 
 ```bash
-# 安装 hooks
-bash scripts/hook/install.sh
+# 启用版本控制的 hooks
+git config core.hooksPath .githooks
 
 # commit 前自动运行: cargo fmt + cargo check
 # push 前自动运行: cargo clippy (严格模式)
@@ -117,12 +118,7 @@ bash scripts/hook/install.sh
 
 ### CI/CD 流程
 
-GitHub Actions 自动运行：
-- **Check**: fmt + clippy + doc
-- **Test**: 单元测试 + 文档测试
-- **Bench**: 性能基准
-- **Build**: Release 构建
-- **Smoke Test**: 二进制验证
+Pull Request 只运行合并后的格式、clippy、测试和文档检查。main push 额外运行 Release 构建、冒烟测试和项目自建裸机 ELF 回归；覆盖率按需手动触发，性能基准每周运行。
 
 ## Sprint 进度
 
@@ -131,7 +127,7 @@ GitHub Actions 自动运行：
 - [x] GitHub Actions CI/CD 配置
 - [x] Pre-commit hooks (fmt + check)
 - [x] Pre-push hooks (clippy)
-- [x] CLAUDE.md 文档
+- [x] AGENTS.md 文档
 - [x] 12 单元测试全部通过
 
 ### ✅ Sprint 2: RV32I 基础指令
@@ -196,15 +192,13 @@ GitHub Actions 自动运行：
 - [x] FEQ.S, FLT.S, FLE.S
 - [x] 浮点比较和符号注入
 
-### 📋 剩余 Sprint (待开发)
-- **Sprint 3**: 未开始
-- **Sprint 7-14**: 完整 RVA23 支持 (压缩指令、向量扩展等)
+### 当前开发计划
 
-详细计划见 [docs/sprint-plan.md](docs/sprint-plan.md)
+当前只维护一个 active milestone。历史里程碑不会自动成为当前任务，详见 [docs/dev-plan.md](docs/dev-plan.md)。
 
 ## 测试覆盖
 
-项目已实现 **558 个测试**，全部通过，覆盖：
+项目包含单元测试、集成测试、属性测试和项目自建裸机 ELF 回归测试，主要覆盖：
 
 - ✅ RV32I 基础指令 (全部 40+ 指令)
 - ✅ CSR 读写和控制
@@ -225,8 +219,8 @@ cargo test --all-features
 # 运行特定测试
 cargo test test_rv64i_add
 
-# 查看测试覆盖
-cargo tarpaulin --out lcov
+# 生成与 CI 一致的覆盖率报告（需要 cargo-llvm-cov）
+cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 ```
 
 ### FPU 浮点单元
@@ -303,9 +297,9 @@ Sprint 5 实现的 RV64A 原子指令：
   - MIN, MAX, MINU, MAXU
 - **释放一致性**: 支持 Acquire/Release 语义
 
-## 调试支持 (M4)
+## 调试支持组件 (M4)
 
-本项目提供完整的调试支持，包括 GDB RSP 服务器和 CLI 调试界面。
+库中包含 GDB RSP、断点、观察点和 CLI 调试组件。
 
 ### GDB RSP 服务器
 
@@ -317,9 +311,9 @@ Sprint 5 实现的 RV64A 原子指令：
 - **内存访问**: 读取/修改任意内存地址
 - **单步执行**: 支持单指令/源码级单步
 
-### CLI 调试器
+### CLI 调试器组件
 
-交互式命令行调试工具 (`cargo run --bin debugger`):
+CLI 调试模块支持以下类型的操作：
 
 - 断点管理: `break`, `delete`, `list`
 - 观察点管理: `watch`, `rwatch`, `awatch`
@@ -327,21 +321,7 @@ Sprint 5 实现的 RV64A 原子指令：
 - 检查命令: `info registers`, `info memory`, `info breakpoints`
 - 源码浏览: `list`, `disassemble`
 
-### 使用示例
-
-```bash
-# 启动 GDB RSP 服务器 (默认端口 3333)
-cargo run --bin gdb-server -- program.elf
-
-# 或使用 CLI 调试器
-cargo run --bin debugger -- program.elf
-
-# 在另一个终端连接 GDB
-riscv64-unknown-elf-gdb program.elf
-(gdb) target remote localhost:3333
-(gdb) break main
-(gdb) continue
-```
+这些组件目前由 library 导出，但仓库没有 `gdb-server` 或 `debugger` 独立 binary；公开 CLI 当前只提供 ELF `run` 子命令。
 
 ## 依赖
 
@@ -349,7 +329,7 @@ riscv64-unknown-elf-gdb program.elf
 
 - `anyhow` - 错误处理
 - `thiserror` - 错误类型定义
-- `tokio` - 异步支持
+- `clap` - CLI 参数解析
 - `serde` - 序列化
 
 ### 开发依赖

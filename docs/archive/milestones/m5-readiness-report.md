@@ -1,5 +1,7 @@
 # M5 里程碑就绪性评估报告（riscv-arch-test）
 
+> Historical document. This pre-ACT4 readiness report is archived and is not an active plan.
+
 > **riscv-arch-test**（可简称 **arch-test**）是 RISC-V 官方架构测试套件，用于验证 ISA 实现正确性。
 
 **日期**: 2026-02-02

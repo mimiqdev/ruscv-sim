@@ -1,7 +1,7 @@
-# RISC-V ISS Simulator CI Workflow
-# ===================================
-# Simplified for single self-hosted runner
-# No caching needed - runner is local
+# RISC-V ISS Simulator CI
+# ========================
+# Pull requests run one consolidated Rust quality job. More expensive release,
+# bare-metal ELF, and coverage work runs only when it provides additional value.
 
 name: CI
 
@@ -13,9 +13,11 @@ on:
       - "**.md"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
 
-# 避免单个 runner 被长时间占用
-# 取消同一 PR/分支的旧运行，让新提交优先
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,19 +26,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ==========================================
-  # Job 1: Code Checks
-  # ==========================================
-  check:
-    name: Check
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 15
+  quality:
+    name: Quality and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -50,161 +47,59 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-features --all-targets -- -D warnings
 
+      - name: Run tests
+        run: cargo test --all-features
+
       - name: Check documentation
         run: cargo doc --all-features --no-deps
 
-  # ==========================================
-  # Job 2: Test Suite
-  # ==========================================
-  test:
-    name: Test
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 30
-    needs: check
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
-
-      - name: Build project
-        run: cargo build --all-features
-
-      - name: Run unit tests
-        run: cargo test --all-features --lib --bins
-
-      - name: Run doc tests
-        run: cargo test --all-features --doc
-
-      - name: Run integration tests
-        run: cargo test --all-features --test '*'
-
-  # ==========================================
-  # Job 3: Release Build
-  # ==========================================
-  build:
-    name: Build
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 30
-    needs: test
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Build release
+      # Pull requests already exercise the debug/test build above. Build and run
+      # the release binary only after code reaches main.
+      - name: Build release binary
+        if: github.event_name == 'push'
         run: cargo build --release --all-features
 
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ruscv-sim-release
-          path: target/release/ruscv-sim
-          retention-days: 7
+      - name: Smoke test release binary
+        if: github.event_name == 'push'
+        run: ./target/release/ruscv-sim --version
 
-  # ==========================================
-  # Job 3: RISC-V ELF Tests
-  # ==========================================
-  riscv-tests:
-    name: RISC-V ELF Tests
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 15
-    needs: build
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Download binary artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ruscv-sim-release
-          path: target/release/
-
-      - name: Make binary executable
-        run: chmod +x target/release/ruscv-sim
+      # The project-authored ELF suite needs a cross assembler and linker. Keep
+      # this on main pushes to avoid paying the setup cost for every PR revision.
+      - name: Install RISC-V GNU toolchain
+        if: github.event_name == 'push'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf
 
       - name: Compile RISC-V test programs
-        run: |
-          chmod +x scripts/compile_riscv_tests.sh
-          ./scripts/compile_riscv_tests.sh
+        if: github.event_name == 'push'
+        run: ./scripts/compile_riscv_tests.sh
 
       - name: Run RISC-V ELF tests
-        run: |
-          chmod +x scripts/run_elf_tests.sh
-          ./scripts/run_elf_tests.sh
+        if: github.event_name == 'push'
+        run: ./scripts/run_elf_tests.sh
 
-  # ==========================================
-  # Job 4: Smoke Test
-  # ==========================================
-  smoke-test:
-    name: Smoke Test
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 10
-    needs: build
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Download binary artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ruscv-sim-release
-          path: target/release/
-
-      - name: Make binary executable
-        run: chmod +x target/release/ruscv-sim
-
-      - name: Run smoke test
-        run: |
-          echo "Running ruscv-sim..."
-          ./target/release/ruscv-sim --version || true
-          echo "✅ Smoke test passed!"
-
-  # ==========================================
-  # Job 5: Coverage Report
-  # ==========================================
+  # Coverage recompiles the workspace with instrumentation and is intentionally
+  # manual. Run this workflow from the Actions UI when a coverage refresh is
+  # useful instead of spending runner minutes on every push.
   coverage:
     name: Coverage
-    runs-on: [self-hosted, linux, x64]
+    if: github.event_name == 'workflow_dispatch'
+    needs: quality
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: test
-    continue-on-error: true
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
 
       - name: Generate coverage report
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
@@ -216,79 +111,5 @@ jobs:
           files: ./lcov.info
           fail_ci_if_error: true
 
-  # ==========================================
-  # Job 6: Summary Report
-  # ==========================================
-  summary:
-    name: Summary
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 5
-    needs: [check, test, build, riscv-tests, smoke-test, coverage]
-
-    if: always()
-    steps:
-      - name: CI Summary
-        run: |
-          echo "## CI/CD Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### Check Status" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ needs.check.result }}" == "success" ]; then
-            echo "✅ Check Passed" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Check Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "### Test Status" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ needs.test.result }}" == "success" ]; then
-            echo "✅ Tests Passed" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Tests Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "### Build Status" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ needs.build.result }}" == "success" ]; then
-            echo "✅ Build Passed" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Build Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "### RISC-V ELF Tests Status" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ needs.riscv-tests.result }}" == "success" ]; then
-            echo "✅ RISC-V ELF Tests Passed" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ needs.riscv-tests.result }}" == "skipped" ]; then
-            echo "⏭️  RISC-V ELF Tests Skipped" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ RISC-V ELF Tests Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "### Smoke Test Status" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ needs.smoke-test.result }}" == "success" ]; then
-            echo "✅ Smoke Test Passed" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Smoke Test Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "### Coverage Status" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ needs.coverage.result }}" == "success" ]; then
-            echo "✅ Coverage Report Uploaded" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ needs.coverage.result }}" == "skipped" ]; then
-            echo "⏭️  Coverage Skipped" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️  Coverage Failed (non-blocking)" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "Workflow completed at: $(date -u)" >> $GITHUB_STEP_SUMMARY
-
-# ==========================================
-# Permissions
-# ==========================================
 permissions:
   contents: read
-  actions: read
-  checks: write
-  id-token: write
-  attestations: write
-  packages: write
