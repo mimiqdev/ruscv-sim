@@ -16,7 +16,7 @@ tests/bare-metal-riscv-test/
 ## 测试程序
 
 | 程序 | 文件 | 功能 | 预期结果 |
-|------|------|------|----------|
+| ------ | ------ | ------ | ---------- |
 | 加法测试 | `rv64i/add.elf` | 计算 1+2+...+10 | 退出码 55 (计算结果) |
 | 斐波那契 | `rv64i/fib.elf` | 计算 F10 | 退出码 0 (pass/fail) |
 | Hello World | `rv64i/hello.elf` | UART 输出 "Hello!" | 退出码 0 |
@@ -29,16 +29,19 @@ tests/bare-metal-riscv-test/
 ### 1. 安装 RISC-V 工具链
 
 **Ubuntu/Debian:**
+
 ```bash
 sudo apt install gcc-riscv64-unknown-elf
 ```
 
 **macOS:**
+
 ```bash
 brew install riscv-gnu-toolchain
 ```
 
 **从源码编译:**
+
 ```bash
 git clone https://github.com/riscv-collab/riscv-gnu-toolchain.git
 cd riscv-gnu-toolchain
@@ -54,6 +57,7 @@ make
 ```
 
 或者手动编译：
+
 ```bash
 cd tests/bare-metal-riscv-test/rv64i
 riscv64-unknown-elf-as -march=rv64ima -mabi=lp64 add.S -o add.o
@@ -63,17 +67,20 @@ riscv64-unknown-elf-ld -T ../linker.ld add.o -o add.elf
 ### 3. 运行测试
 
 **方式 1: 使用测试脚本**
+
 ```bash
 cd tests
 ./test_elf_loader.sh
 ```
 
 **方式 2: 使用 Rust 测试**
+
 ```bash
 cargo test --test test_elf_loader
 ```
 
 **方式 3: 手动运行**
+
 ```bash
 cargo run -- run tests/bare-metal-riscv-test/rv64i/add.elf --max-cycles 100000
 ```
@@ -102,6 +109,7 @@ let tohost_value = (1 << 63) | 55;  // 0x8000000000000037
 ### "RISC-V toolchain not found"
 
 确保工具链已安装并添加到 PATH：
+
 ```bash
 export PATH=$PATH:/opt/riscv/bin
 ```
@@ -109,6 +117,7 @@ export PATH=$PATH:/opt/riscv/bin
 ### "Invalid ELF magic number"
 
 确保生成的是 64 位小端 ELF 文件：
+
 ```bash
 file rv64i/add.elf
 # 应输出: add.elf: ELF 64-bit LSB executable, UCB RISC-V
@@ -117,6 +126,7 @@ file rv64i/add.elf
 ### "Unsupported machine"
 
 确保目标架构是 RISC-V (e_machine = 243)：
+
 ```bash
 riscv64-unknown-elf-readelf -h rv64i/add.elf | grep Machine
 # 应输出: Machine:                           RISC-V
