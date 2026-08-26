@@ -71,7 +71,7 @@ ruscv-sim/
 └── scripts/             # 编译和对比脚本
 ```
 
-更细的模块说明见 [docs/architecture.md](docs/architecture.md)。
+文档入口见 [docs/README.md](docs/README.md)，目标产品架构见 [docs/architecture/README.md](docs/architecture/README.md)。
 
 ## 测试
 

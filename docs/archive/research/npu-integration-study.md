@@ -1,14 +1,16 @@
  > **注意**：本文档中的代码示例仅用于说明设计概念和 API 用途，是伪代码性质的示例，不保证可编译通过。示例代码可能包含语法糖简写、类型占位符等，仅供理解之用。 
-# NPU 架构集成到 ruscv-sim 的技术方案
+# 已归档的 NPU 集成研究方案
+
+> **状态：** 历史研究。接口伪代码、寄存器映射和性能讨论可供未来评估，路线图和项目状态已失效。
 
 > 文档版本: v1.0  
 > 创建日期: 2026-02-05  
 > 项目状态: M7: RISCOF + arch-test 集成阶段
 
 **相关文档：**
-- [架构总结](heterogeneous-architecture-summary.md) - 核心决策概览
-- [SystemBus 扩展计划](systembus-extension-plan.md) - 设备 trait 设计
-- [异构计算研究报告](heterogeneous-computing-research.md) - 深入分析
+- [架构总结](heterogeneous-architecture-summary.md) - 历史决策概览
+- [已归档的 SystemBus 扩展计划](../plans/systembus-heterogeneous-extension.md) - 历史设备 trait 设计
+- [异构计算研究报告](heterogeneous-computing-study.md) - 深入分析
 
 ---
 
@@ -816,9 +818,9 @@ fn test_npu_end_to_end() {
 
 ### 8.1 内部文档
 
-- [dev-plan.md](../docs/dev-plan.md) - ruscv-sim 开发计划
-- [architecture.md](../docs/architecture.md) - 系统架构文档
-- [memory-arch.md](../docs/memory-arch.md) - 内存架构设计
+- [当前开发计划](../../dev-plan.md) - ruscv-sim 开发计划
+- [当前架构入口](../../architecture/README.md) - 系统架构文档
+- [已归档的内存架构](../designs/memory-architecture-legacy.md) - 历史内存设计
 
 ### 8.2 外部资源
 

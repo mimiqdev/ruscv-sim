@@ -1,14 +1,18 @@
  > **注意**：本文档中的代码示例仅用于说明设计概念和 API 用途，是伪代码性质的示例，不保证可编译通过。示例代码可能包含语法糖简写、类型占位符等，仅供理解之用。 
-# SystemBus 异构扩展计划
+# 已作废计划：SystemBus 异构扩展
+
+> **状态：** 2026-08-26 作废并归档。
+>
+> 本文档保留为历史研究资料，不代表当前架构或开发承诺。
 
 > 文档版本: v1.0  
 > 创建日期: 2026-02-05  
 > 目标: 让 ruscv-sim 支持异构计算仿真 (L2 级别)
 
 **相关文档：**
-- [架构总结](heterogeneous-architecture-summary.md) - 核心决策概览
-- [NPU 集成方案](npu-integration.md) - NPU 设备实现
-- [异构计算研究报告](heterogeneous-computing-research.md) - 深入分析
+- [已归档的架构总结](../research/heterogeneous-architecture-summary.md) - 历史决策概览
+- [已归档的 NPU 集成方案](../research/npu-integration-study.md) - 历史设备设计
+- [已归档的异构计算研究报告](../research/heterogeneous-computing-study.md) - 深入分析
 
 ---
 

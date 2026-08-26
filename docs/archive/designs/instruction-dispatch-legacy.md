@@ -1,4 +1,6 @@
-# Instruction Dispatch Architecture Design
+# Archived Instruction Dispatch Design
+
+> **Status:** Superseded proposal tied to an obsolete Sprint. It is not the current dispatch architecture.
 
 **Sprint**: 2.5  
 **Author**: Claude Code (updated per user feedback)  
@@ -552,8 +554,8 @@ cache: LruCache,                                      // Hot path optimization
 ## 10. References
 
 - [RISC-V Specification](https://riscv.org/technical/specifications/)
-- [architecture.md](./architecture.md)
-- [sprint-plan.md](./sprint-plan.md)
+- [当前架构入口](../../architecture/README.md)
+- [已归档的 Sprint 计划](../sprint-plan-archived.md)
 
 ---
 
@@ -563,4 +565,3 @@ cache: LruCache,                                      // Hot path optimization
 |---------|------|--------|---------|
 | v1.0 | 2026-01-31 | Claude Code | Initial design |
 | v2.0 | 2026-01-31 | Claude Code | Simplified per user feedback: removed Layer 1, added LRU cache, complete matching |
-

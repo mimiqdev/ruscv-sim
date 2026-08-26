@@ -97,8 +97,8 @@ src/isa/rv64c/
 ## 相关资源
 
 - [详细规划文档](./sprint-8.5-rv64c-refactor-plan.md)
-- [重构映射表](./rv64c-refactor-mapping.md)
-- [参考实现示例](./rv64c-new-structure-example.md)
+- `rv64c-refactor-mapping.md`（历史附件未保存在仓库中）
+- `rv64c-new-structure-example.md`（历史附件未保存在仓库中）
 
 ## 备注
 

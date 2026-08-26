@@ -1,4 +1,6 @@
-# Code Review Comments
+# Archived Code Review History
+
+> **Status:** Historical review record. Sprint assignments and pending states are not current work.
 
 **Date**: 2026-01-30  
 **Reviewer**: Code Review Session  

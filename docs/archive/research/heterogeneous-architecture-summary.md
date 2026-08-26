@@ -1,14 +1,16 @@
  > **注意**：本文档中的代码示例仅用于说明设计概念和 API 用途，是伪代码性质的示例，不保证可编译通过。示例代码可能包含语法糖简写、类型占位符等，仅供理解之用。 
-# ruscv-sim 异构计算仿真架构总结
+# 已归档的异构计算架构总结
+
+> **状态：** 历史研究总结。旧路线、组件状态和 SystemBus 设计不构成当前架构。
 
 > 文档版本: v1.0  
 > 日期: 2026-02-05  
 > 讨论日期: 2026-02-05
 
 **相关文档：**
-- [详细研究报告](heterogeneous-computing-research.md) - 深入分析 CPU+NPU/GPU 协同仿真
-- [SystemBus 扩展计划](systembus-extension-plan.md) - 核心代码设计
-- [NPU 集成方案](npu-integration.md) - NPU 设备实现
+- [详细研究报告](heterogeneous-computing-study.md) - 深入分析 CPU+NPU/GPU 协同仿真
+- [已归档的 SystemBus 扩展计划](../plans/systembus-heterogeneous-extension.md) - 历史核心代码设计
+- [NPU 集成方案](npu-integration-study.md) - NPU 设备实现
 
 ---
 
@@ -49,7 +51,7 @@
 ## 3. 文档索引
 
 ### 3.1 SystemBus 扩展
-**文件**: [systembus-extension-plan.md](systembus-extension-plan.md)
+**历史文件**: [已归档的 SystemBus 扩展计划](../plans/systembus-heterogeneous-extension.md)
 
 包含：
 - Device trait 设计
@@ -58,7 +60,7 @@
 - 错误类型
 
 ### 3.2 NPU 集成
-**文件**: [npu-integration.md](npu-integration.md)
+**文件**: [npu-integration-study.md](npu-integration-study.md)
 
 包含：
 - NPU 设备实现
@@ -67,7 +69,7 @@
 - 执行流程
 
 ### 3.3 深入研究
-**文件**: [heterogeneous-computing-research.md](heterogeneous-computing-research.md)
+**文件**: [heterogeneous-computing-study.md](heterogeneous-computing-study.md)
 
 包含：
 - CPU + NPU/GPU 协同仿真设计
@@ -152,8 +154,8 @@ trait ExternalDevice: Send + Sync {
 ## 8. 下一步
 
 1. ✅ 阅读架构总结
-2. 📖 阅读 [systembus-extension-plan.md](systembus-extension-plan.md)
-3. 📖 阅读 [npu-integration.md](npu-integration.md)
+2. 📖 参考 [已归档的 SystemBus 扩展计划](../plans/systembus-heterogeneous-extension.md)
+3. 📖 阅读 [npu-integration-study.md](npu-integration-study.md)
 4. 💻 实现 Device trait + SystemBus 扩展
 5. 💻 添加 DMA Controller
 6. 💻 实现 NPU 设备
@@ -162,7 +164,7 @@ trait ExternalDevice: Send + Sync {
 
 ## 9. 参考资料
 
-- [异构计算研究报告](heterogeneous-computing-research.md)
+- [异构计算研究报告](heterogeneous-computing-study.md)
 - RISC-V Privileged Architecture Specification
 - AMBA Protocol Specification (ARM)
 - TLM-2.0 Standard (Accellera)

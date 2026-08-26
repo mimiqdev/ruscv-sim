@@ -1,4 +1,6 @@
-# Code Generation Tools
+# Archived Code Generation Design
+
+> **Status:** Superseded documentation. Preserve implementation ideas, but verify all APIs against `src/codegen/` and `ruscv-macros/`.
 
 This document describes the code generation infrastructure for RISC-V instruction implementations.
 

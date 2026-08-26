@@ -1,4 +1,6 @@
-# ruscv-sim 日志格式规范
+# 已归档的 ruscv-sim 日志格式计划
+
+> **状态：** 历史计划。当前格式以 `src/core/commits.rs`、CLI 行为和验证测试为准。
 
 **项目:** ruscv-sim  
 **文档版本:** 1.0  
@@ -313,5 +315,5 @@ diff spike_add.log ruscv_add.log
 
 ## 参考文档
 
-- [Spike 日志格式](spike-log-format.md)
+- [已归档的 Spike 日志格式分析](../reference/spike-log-format-analysis.md)
 - [Spike 官方文档](https://github.com/riscv-software-src/riscv-isa-sim)

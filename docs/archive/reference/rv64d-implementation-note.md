@@ -1,4 +1,6 @@
-# RV64D Specification Documentation
+# Archived RV64D Implementation Note
+
+> **Status:** Historical component documentation. Sprint benchmarks and coverage targets are not current evidence.
 
 This document describes the RV64D (RISC-V 64-bit Double Precision Floating-Point) extension implementation for the ruscv-sim RISC-V Instruction Set Simulator.
 

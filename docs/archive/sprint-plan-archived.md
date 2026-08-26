@@ -810,8 +810,8 @@ proptest! {
 **状态**: ✅ 完成 (2026-02-02)
 
 **完成时间**: Week 19-20
-**设计文档**: [docs/memory-arch.md](./memory-arch.md)
-**对比分析**: [docs/memory-comparison.md](./memory-comparison.md)
+**设计文档**: [已归档的内存架构](designs/memory-architecture-legacy.md)
+**对比分析**: [已归档的内存对比研究](research/memory-comparison.md)
 
 ### 产出物清单
 
@@ -980,8 +980,8 @@ mod.rs (trait)
 
 ### 参考资源
 
-- 设计文档: [docs/memory-arch.md](./memory-arch.md)
-- 对比分析: [docs/memory-comparison.md](./memory-comparison.md)
+- 设计文档: [已归档的内存架构](designs/memory-architecture-legacy.md)
+- 对比分析: [已归档的内存对比研究](research/memory-comparison.md)
 - 参考实现: Spike (riscv-isa-sim), riscv crate
 - 规范: RISC-V Privileged Spec v1.12
 
@@ -1348,7 +1348,7 @@ mod.rs (trait)
 | **Sprint 3.5** | Section 3.3.5 | 模块化重构 + RV64I 规划 (✅ **DONE**) | 56h | ✅ 完成 |
 | **Sprint 4.5** | Section 3.4.5 | 代码生成工具 + 性能基准 (proc-macro、benchmarks) | 48h | 待开始 |
 
-**参考**: 详细技术评论见 [docs/code-review.md](./code-review.md)
+**参考**: 详细技术评论见 [已归档的 Code Review](reviews/code-review-history.md)
 
 ---
 

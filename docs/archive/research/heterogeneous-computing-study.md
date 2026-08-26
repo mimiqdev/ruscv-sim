@@ -1,14 +1,16 @@
  > **注意**：本文档中的代码示例仅用于说明设计概念和 API 用途，是伪代码性质的示例，不保证可编译通过。示例代码可能包含语法糖简写、类型占位符等，仅供理解之用。 
-# ruscv-sim 异构计算仿真研究报告
+# 已归档的异构计算仿真研究报告
+
+> **状态：** 历史研究。保留 DMA、共享内存、同步和加速器建模分析；推荐路线与工期已失效。
 
 > **文档版本**: v1.0  
 > **创建日期**: 2026-02-05  
 > **作者**: Claude Code (硬件仿真工程师)
 
 **相关文档：**
-- [架构总结](heterogeneous-architecture-summary.md) - 核心决策概览
-- [SystemBus 扩展计划](systembus-extension-plan.md) - 设备 trait 设计
-- [NPU 集成方案](npu-integration.md) - NPU 设备实现
+- [架构总结](heterogeneous-architecture-summary.md) - 历史决策概览
+- [已归档的 SystemBus 扩展计划](../plans/systembus-heterogeneous-extension.md) - 历史设备 trait 设计
+- [NPU 集成方案](npu-integration-study.md) - 历史设备设计
 
 ---
 
@@ -1558,11 +1560,11 @@ static void npu_write(void *opaque, hwaddr offset, uint64_t value,
 
 ### C. 相关文档链接
 
-- [architecture.md](./architecture.md) - 系统架构文档
-- [memory-arch.md](./memory-arch.md) - 内存架构设计
-- [dev-plan.md](./dev-plan.md) - 开发计划
-- [npu-integration.md](./npu-integration.md) - NPU 集成方案
-- [instruction-dispatch-design.md](./instruction-dispatch-design.md) - 指令分发设计
+- [当前架构入口](../../architecture/README.md) - 当前系统架构
+- [已归档的内存架构](../designs/memory-architecture-legacy.md) - 历史内存设计
+- [当前开发计划](../../dev-plan.md) - 当前开发计划
+- [已归档的 NPU 集成方案](npu-integration-study.md) - 历史 NPU 方案
+- [已归档的指令分发设计](../designs/instruction-dispatch-legacy.md) - 历史分发设计
 
 ---
 

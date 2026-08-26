@@ -1,4 +1,6 @@
-# RV64M Specification Documentation
+# Archived RV64M Implementation Note
+
+> **Status:** Historical component documentation. It is not an end-to-end support or compliance claim.
 
 This document describes the RV64M (RISC-V 64-bit Multiply/Divide) extension implementation for the ruscv-sim RISC-V Instruction Set Simulator.
 

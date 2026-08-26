@@ -1,4 +1,6 @@
-# RV64A Specification Documentation
+# Archived RV64A Implementation Note
+
+> **Status:** Historical component documentation. It is not an end-to-end support or compliance claim.
 
 This document describes the RV64A (RISC-V 64-bit Atomic Operations) extension implementation for the ruscv-sim RISC-V Instruction Set Simulator.
 
