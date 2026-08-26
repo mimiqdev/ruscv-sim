@@ -2,3 +2,5 @@
 *.elf
 tests/peripheral_proptest.proptest-regressions
 /.worktrees
+/.claude
+*.o

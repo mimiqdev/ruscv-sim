@@ -19,7 +19,7 @@
 ## 项目状态
 
 | 组件 | 状态 | 说明 |
-|------|------|------|
+| ------ | ------ | ------ |
 | 核心框架 | ✅ 完成 | 项目初始化和基础结构 |
 | CI/CD | ✅ 完成 | GitHub Actions 完整配置 |
 | Pre-commit Hook | ✅ 完成 | fmt + check + clippy |
@@ -123,6 +123,7 @@ Pull Request 只运行合并后的格式、clippy、测试和文档检查。main
 ## Sprint 进度
 
 ### ✅ Sprint 1: 基础架构
+
 - [x] 项目初始化和 Rust 项目结构
 - [x] GitHub Actions CI/CD 配置
 - [x] Pre-commit hooks (fmt + check)
@@ -131,6 +132,7 @@ Pull Request 只运行合并后的格式、clippy、测试和文档检查。main
 - [x] 12 单元测试全部通过
 
 ### ✅ Sprint 2: RV32I 基础指令
+
 - [x] LUI, AUIPC, JAL, JALR
 - [x] B-type: BEQ, BNE, BLT, BGE, BLTU, BGEU
 - [x] I-type: LB, LH, LW, LBU, LHU
@@ -143,6 +145,7 @@ Pull Request 只运行合并后的格式、clippy、测试和文档检查。main
 - [x] 约 40 条基础指令实现
 
 ### ✅ Sprint 4: CSR 框架
+
 - [x] CSR 寄存器映射和访问
 - [x] CSRRW, CSRRS, CSRRC
 - [x] CSRRWI, CSRRSI, CSRRCI
@@ -151,6 +154,7 @@ Pull Request 只运行合并后的格式、clippy、测试和文档检查。main
 - [x] 基础中断处理框架
 
 ### ✅ Sprint 5: RV64M + RV64A + 陷阱处理
+
 - [x] MUL, MULH, MULHSU, MULHU (乘法)
 - [x] DIV, DIVU, REM, REMU (除法)
 - [x] LR.W, SC.W (原子加载/条件存储)
@@ -160,6 +164,7 @@ Pull Request 只运行合并后的格式、clippy、测试和文档检查。main
 - [x] 特权模式基础
 
 ### ✅ Sprint 10: 内存子系统 (MMU/TLB)
+
 - [x] MMU 架构实现 (mod.rs, physical.rs, pte.rs)
 - [x] Sv39 页表遍历 (3级页表，4KB/2MB/1GB 页)
 - [x] TLB 缓存 (64 entries, 4-way 组相联)
@@ -170,6 +175,7 @@ Pull Request 只运行合并后的格式、clippy、测试和文档检查。main
 - [x] 558 个测试全部通过
 
 ### ✅ Sprint 11: TLM2.0 + 外设
+
 - [x] TLM2.0 基础类型: TlmPhase, TlmResponseStatus, TlmCommand
 - [x] TLM2.0 时间管理: ScTime (SystemC 风格，皮秒精度)
 - [x] TLM2.0 核心结构: TlmGenericPayload, TlmPayloadBuilder
@@ -183,6 +189,7 @@ Pull Request 只运行合并后的格式、clippy、测试和文档检查。main
 - [x] 90+ 测试 (TLM 30 个 + 外设 20+ 个)
 
 ### ✅ Sprint 6: RV64F 浮点单元
+
 - [x] FLW, FSW (加载/存储)
 - [x] FADD.S, FSUB.S, FMUL.S, FDIV.S, FSQRT.S
 - [x] FMADD.S, FMSUB.S, FNMSUB.S, FNMADD.S
@@ -347,7 +354,7 @@ CLI 调试模块支持以下类型的操作：
 
 ## 许可证
 
-MIT License
+[MIT License](LICENSE)
 
 ---
 

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "RISC-V ISS with SystemC TLM2.0 interface"
 authors = ["RISC-V Virtual Platform Team"]
+license = "MIT"
 
 [dependencies]
 # 基础依赖
