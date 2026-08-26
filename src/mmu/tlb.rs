@@ -145,12 +145,8 @@ impl Tlb {
     }
 
     pub fn flush_all(&mut self) {
-        for entry in &mut self.entries {
-            *entry = None;
-        }
-        for counter in &mut self.lru_counters {
-            *counter = 0;
-        }
+        self.entries.fill(None);
+        self.lru_counters.fill(0);
         self.stats.flushes += 1;
     }
 

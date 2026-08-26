@@ -70,12 +70,8 @@ pub fn exec_divu(
     let dividend = state.regs[rs1];
     let divisor = state.regs[rs2];
 
-    let result = if divisor == 0 {
-        // Division by zero: all ones
-        u64::MAX
-    } else {
-        dividend / divisor
-    };
+    // Division by zero returns all ones, as required by the RISC-V spec.
+    let result = dividend.checked_div(divisor).unwrap_or(u64::MAX);
 
     if rd != 0 {
         state.regs[rd] = result;
