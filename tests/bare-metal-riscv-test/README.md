@@ -10,18 +10,7 @@ tests/bare-metal-riscv-test/
 ├── linker.ld           # 链接器脚本
 ├── README.md           # 本文件
 ├── rv64i/              # RV64I 基础整数指令测试
-│   ├── add.S           # 加法测试 (1+2+...+10)
-│   ├── blt_issue.S     # BLT 分支测试
-│   ├── blt_issue_noc.S # BLT 分支测试 (无压缩指令)
-│   ├── blt_simple.S    # 简化 BLT 测试
-│   ├── blt_test.S      # BLT 综合测试
-│   ├── fib.S           # 斐波那契测试 (F10)
-│   └── hello.S         # UART 输出测试
-├── rv64m/              # RV64M 整数乘除法测试 (预留)
-├── rv64a/              # RV64A 原子指令测试 (预留)
-├── rv64f/              # RV64F 单精度浮点测试 (预留)
-├── rv64d/              # RV64D 双精度浮点测试 (预留)
-└── rv64c/              # RV64C 压缩指令测试 (预留)
+└── rv64m/              # RV64M 整数乘除法测试
 ```
 
 ## 测试程序
