@@ -24,6 +24,7 @@ Re-establish the product architecture from first principles: build a verifiable 
 - [x] Preserve complete historical sources while extracting still-valid current guidance.
 - [x] Establish [`architecture/README.md`](architecture/README.md) as the target-architecture entry point.
 - [x] Describe the product from product-evolution, system-context, layering, Hart, memory/TLM, runtime, and capability-growth perspectives.
+- [x] Establish and verify a repository-owned development image for Rust, RISC-V guest, and differential-test tooling.
 - [ ] Audit the current source tree against the target boundaries.
 - [ ] Define and approve the stable contracts between Hart, Runner, Machine, Platform, and physical access.
 - [ ] Record architecture decisions whose trade-offs materially constrain later implementation.
@@ -49,6 +50,7 @@ Re-establish the product architecture from first principles: build a verifiable 
 ## Deliverables
 
 - A navigable documentation index.
+- A reproducible repository-owned development and verification image.
 - A reviewed multi-view architecture baseline.
 - An inventory of current-to-target gaps.
 - Approved boundary contracts and architecture decision records.
@@ -57,6 +59,7 @@ Re-establish the product architecture from first principles: build a verifiable 
 ## Acceptance criteria
 
 - [ ] Every active architecture document has an explicit status and ownership boundary.
+- [x] The development image builds successfully and can run the current project quality gate and guest ELF toolchain.
 - [ ] The target dependency direction is unambiguous from frontend to infrastructure.
 - [ ] Hart, Runner, Machine, Platform, memory access, interrupts, time, and observation responsibilities are agreed.
 - [ ] ISS and VP product forms can be explained as configurations around one architectural engine.

@@ -1,0 +1,107 @@
+name: Development container
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/dev-container.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/dev-container.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build, verify, and publish development image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Build image
+        run: >-
+          docker build
+          --label org.opencontainers.image.revision=${{ github.sha }}
+          --tag ruscv-sim-dev:ci
+          .
+
+      - name: Verify project build in image
+        run: >-
+          docker run --rm
+          --volume "${{ github.workspace }}:/workspace"
+          --workdir /workspace
+          --user root
+          ruscv-sim-dev:ci
+          cargo check --all-features
+
+      - name: Log in to GHCR
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        # v4.6.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish image to GHCR
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          IMAGE: ghcr.io/mimiqdev/ruscv-sim-dev
+        run: |
+          docker tag ruscv-sim-dev:ci "$IMAGE:main"
+          docker tag ruscv-sim-dev:ci "$IMAGE:sha-${{ github.sha }}"
+          docker push "$IMAGE:main"
+          docker push "$IMAGE:sha-${{ github.sha }}"
+
+      - name: Retain the two newest commit images
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --paginate \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            "/users/mimiqdev/packages/container/ruscv-sim-dev/versions?per_page=100" \
+            --jq '.[] | select(any(.metadata.container.tags[]?; startswith("sha-"))) | [.created_at, .id] | @tsv' \
+            | sort --reverse \
+            | tail --lines=+3 \
+            | cut --fields=2 \
+            > "$RUNNER_TEMP/old-container-version-ids"
+
+          mapfile -t OLD_VERSION_IDS < "$RUNNER_TEMP/old-container-version-ids"
+          for VERSION_ID in "${OLD_VERSION_IDS[@]}"; do
+            if [[ -n "$VERSION_ID" ]]; then
+              gh api --method DELETE \
+                --header "X-GitHub-Api-Version: 2026-03-10" \
+                "/users/mimiqdev/packages/container/ruscv-sim-dev/versions/$VERSION_ID"
+            fi
+          done
+
+          echo "- Retention: kept the two newest \`sha-*\` versions; removed ${#OLD_VERSION_IDS[@]} older version(s)." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record published image
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          IMAGE: ghcr.io/mimiqdev/ruscv-sim-dev
+        run: |
+          REPO_DIGEST=$(docker image inspect \
+            --format '{{index .RepoDigests 0}}' \
+            "$IMAGE:sha-${{ github.sha }}")
+          echo "### Published development image" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Rolling tag: \`$IMAGE:main\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit tag: \`$IMAGE:sha-${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Digest: \`$REPO_DIGEST\`" >> "$GITHUB_STEP_SUMMARY"

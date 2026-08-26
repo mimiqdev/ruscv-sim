@@ -1,0 +1,11 @@
+.git
+.github
+.worktrees
+target
+coverage
+*.elf
+*.o
+*.log
+lcov.info
+spike_compare.log
+ruscv_compare.log

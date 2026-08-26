@@ -23,6 +23,21 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 
 需要 Stable Rust，以及 `rustfmt` / `clippy`。跑项目自带的裸机 ELF 测试还需要 `riscv64-unknown-elf` 工具链。
 
+推荐使用仓库内的完整开发镜像，它还包含 C/C++ 工具链和 Spike：
+
+```bash
+docker build -t ruscv-sim-dev .
+docker run --rm -it --init -v "$PWD:/workspace" ruscv-sim-dev
+```
+
+也可以直接拉取 `main` 上自动验证并发布的镜像：
+
+```bash
+docker pull ghcr.io/mimiqdev/ruscv-sim-dev:main
+```
+
+镜像内容、版本策略和非默认 UID/GID 用法见 [开发环境说明](docs/development-environment.md)。
+
 ```bash
 cargo build --release
 cargo test --all-features
