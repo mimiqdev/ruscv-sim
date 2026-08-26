@@ -23,7 +23,7 @@ jobs:
   build:
     name: Build, verify, and publish development image
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -32,21 +32,51 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Build image
-        run: >-
-          docker build
-          --label org.opencontainers.image.revision=${{ github.sha }}
-          --tag ruscv-sim-dev:ci
-          .
+      - name: Set up QEMU
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        # v4.2.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8
 
-      - name: Verify project build in image
-        run: >-
-          docker run --rm
-          --volume "${{ github.workspace }}:/workspace"
-          --workdir /workspace
-          --user root
-          ruscv-sim-dev:ci
-          cargo check --all-features
+      - name: Set up Docker Buildx
+        # v4.3.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+
+      - name: Detect runner account IDs
+        id: runner-account
+        run: |
+          echo "uid=$(id -u)" >> "$GITHUB_OUTPUT"
+          echo "gid=$(id -g)" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        # v7.3.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ruscv-sim-dev:ci
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            DEV_UID=${{ steps.runner-account.outputs.uid }}
+            DEV_GID=${{ steps.runner-account.outputs.gid }}
+          cache-from: type=gha,scope=dev-container
+          cache-to: type=gha,mode=max,scope=dev-container
+
+      - name: Verify quality gate and guest ELF execution
+        run: |
+          docker run --rm \
+            --volume "${{ github.workspace }}:/workspace" \
+            --workdir /workspace \
+            ruscv-sim-dev:ci \
+            bash -ceu '
+              cargo fmt --all -- --check
+              cargo check --all-features
+              cargo clippy --all-features --all-targets -- -D warnings
+              cargo test --all-features
+              cargo doc --all-features --no-deps
+              ./scripts/compile_riscv_tests.sh
+              ./scripts/run_elf_tests.sh
+            '
 
       - name: Log in to GHCR
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -59,13 +89,23 @@ jobs:
 
       - name: Publish image to GHCR
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        env:
-          IMAGE: ghcr.io/mimiqdev/ruscv-sim-dev
-        run: |
-          docker tag ruscv-sim-dev:ci "$IMAGE:main"
-          docker tag ruscv-sim-dev:ci "$IMAGE:sha-${{ github.sha }}"
-          docker push "$IMAGE:main"
-          docker push "$IMAGE:sha-${{ github.sha }}"
+        id: publish
+        # v7.3.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/mimiqdev/ruscv-sim-dev:main
+            ghcr.io/mimiqdev/ruscv-sim-dev:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/mimiqdev/ruscv-sim
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=Development and verification environment for ruscv-sim
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha,scope=dev-container
+          cache-to: type=gha,mode=max,scope=dev-container
 
       - name: Retain the two newest commit images
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -75,10 +115,10 @@ jobs:
           gh api --paginate \
             --header "X-GitHub-Api-Version: 2026-03-10" \
             "/users/mimiqdev/packages/container/ruscv-sim-dev/versions?per_page=100" \
-            --jq '.[] | select(any(.metadata.container.tags[]?; startswith("sha-"))) | [.created_at, .id] | @tsv' \
+            --jq '.[] | select(any(.metadata.container.tags[]?; startswith("sha-"))) | [.created_at, .id, ([.metadata.container.tags[]? | select(startswith("sha-") | not)] | length)] | @tsv' \
             | sort --reverse \
             | tail --lines=+3 \
-            | cut --fields=2 \
+            | awk --field-separator='\t' '$3 == 0 { print $2 }' \
             > "$RUNNER_TEMP/old-container-version-ids"
 
           mapfile -t OLD_VERSION_IDS < "$RUNNER_TEMP/old-container-version-ids"
@@ -90,18 +130,14 @@ jobs:
             fi
           done
 
-          echo "- Retention: kept the two newest \`sha-*\` versions; removed ${#OLD_VERSION_IDS[@]} older version(s)." \
+          echo "- Retention: kept the two newest \`sha-*\` versions; removed ${#OLD_VERSION_IDS[@]} older unprotected version(s)." \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record published image
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        env:
-          IMAGE: ghcr.io/mimiqdev/ruscv-sim-dev
         run: |
-          REPO_DIGEST=$(docker image inspect \
-            --format '{{index .RepoDigests 0}}' \
-            "$IMAGE:sha-${{ github.sha }}")
           echo "### Published development image" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Rolling tag: \`$IMAGE:main\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Commit tag: \`$IMAGE:sha-${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Digest: \`$REPO_DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Platforms: \`linux/amd64\`, \`linux/arm64\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Rolling tag: \`ghcr.io/mimiqdev/ruscv-sim-dev:main\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit tag: \`ghcr.io/mimiqdev/ruscv-sim-dev:sha-${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- OCI index digest: \`${{ steps.publish.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"

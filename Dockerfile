@@ -8,13 +8,12 @@ FROM rust:${RUST_VERSION}-${DEBIAN_RELEASE} AS development
 ARG DEBIAN_FRONTEND=noninteractive
 ARG SPIKE_VERSION=v1.1.0
 ARG CARGO_LLVM_COV_VERSION=0.6.16
-ARG DEV_USER=developer
-ARG DEV_UID=1000
-ARG DEV_GID=1000
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Host build tools, guest C/C++/assembly toolchain, and Spike build dependencies.
+# Host build tools, freestanding guest C/C++/assembly toolchain, and Spike build
+# dependencies. Debian's bare-metal cross compiler intentionally does not ship
+# a target libc or libstdc++; guest runtime policy remains project-owned.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         autoconf \
@@ -66,11 +65,15 @@ RUN rustup component add clippy rustfmt llvm-tools-preview \
         --version "${CARGO_LLVM_COV_VERSION}" \
         --locked
 
+ARG DEV_USER=developer
+ARG DEV_UID=1000
+ARG DEV_GID=1000
+
 # Use a non-root account by default so bind-mounted build artifacts remain
-# owned by the host developer on the common UID/GID 1000 setup. Both IDs are
-# configurable at build time for other hosts.
-RUN groupadd --gid "${DEV_GID}" "${DEV_USER}" \
-    && useradd --uid "${DEV_UID}" --gid "${DEV_GID}" \
+# owned by the host developer. --non-unique makes host IDs such as macOS GID 20
+# usable even when Debian already assigns the numeric ID to a system account.
+RUN groupadd --non-unique --gid "${DEV_GID}" "${DEV_USER}" \
+    && useradd --non-unique --uid "${DEV_UID}" --gid "${DEV_USER}" \
         --create-home --shell /bin/bash "${DEV_USER}" \
     && echo "${DEV_USER} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${DEV_USER}" \
     && chmod 0440 "/etc/sudoers.d/${DEV_USER}" \
@@ -87,7 +90,9 @@ ENV RISCV_PREFIX=riscv64-unknown-elf-
 USER ${DEV_USER}
 WORKDIR /workspace
 
-# Fail the image build if one of the baseline tool families is missing.
+# Fail the image build if one of the baseline tool families is missing. Compile
+# real native C++ and freestanding RISC-V C++ programs so a version-printing
+# executable cannot masquerade as a working toolchain.
 RUN rustc --version \
     && cargo --version \
     && cargo clippy --version \
@@ -95,7 +100,22 @@ RUN rustc --version \
     && riscv64-unknown-elf-gcc --version \
     && riscv64-unknown-elf-g++ --version \
     && riscv64-unknown-elf-as --version \
-    && spike --help >/dev/null
+    && spike --help >/dev/null \
+    && printf '#include <vector>\nint main() { std::vector<int> v{42}; return v[0] != 42; }\n' \
+        > /tmp/native-cxx-smoke.cc \
+    && g++ -std=c++17 -Wall -Werror /tmp/native-cxx-smoke.cc \
+        -o /tmp/native-cxx-smoke \
+    && /tmp/native-cxx-smoke \
+    && printf 'extern "C" void _start() { __asm__ volatile ("ebreak"); for (;;) {} }\n' \
+        > /tmp/guest-cxx-smoke.cc \
+    && riscv64-unknown-elf-g++ -march=rv64i -mabi=lp64 -ffreestanding \
+        -fno-exceptions -fno-rtti -nostdlib -nostartfiles \
+        -Wl,-e,_start -Wl,-Ttext=0x80000000 /tmp/guest-cxx-smoke.cc \
+        -o /tmp/guest-cxx-smoke.elf \
+    && riscv64-unknown-elf-readelf -h /tmp/guest-cxx-smoke.elf \
+        | grep --quiet 'Machine:.*RISC-V' \
+    && rm -f /tmp/native-cxx-smoke.cc /tmp/native-cxx-smoke \
+        /tmp/guest-cxx-smoke.cc /tmp/guest-cxx-smoke.elf
 
 LABEL org.opencontainers.image.source="https://github.com/mimiqdev/ruscv-sim"
 LABEL org.opencontainers.image.description="Development and verification environment for ruscv-sim"
