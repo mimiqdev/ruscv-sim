@@ -10,7 +10,9 @@
 
 **Started:** 2026-08-26
 
-**Linear:** [`ruscv-sim` project](https://linear.app/mrtoniliu/project/ruscv-sim-7555af313020) · [MRT-5 milestone issue](https://linear.app/mrtoniliu/issue/MRT-5/a0-iss-virtual-platform-architecture-baseline)
+**Last reviewed:** 2026-09-03
+
+**Linear:** [`ruscv-sim` project](https://linear.app/mrtoniliu/project/ruscv-sim-7555af313020) · [MMQ-5 milestone issue](https://linear.app/mrtoniliu/issue/MMQ-5/a0-iss-virtual-platform-architecture-baseline)
 
 This is the only current milestone contract. Earlier milestone and sprint plans are historical records under [`archive/`](archive/). Active task status, priority, ownership, and dependencies are maintained in Linear rather than duplicated here.
 
@@ -29,17 +31,26 @@ The milestone includes:
 - Recording architecture decisions whose trade-offs materially constrain later implementation.
 - Deriving the first implementation milestone from the approved architecture.
 
+## Recorded baseline evidence
+
+The following A0 scope items were already satisfied before this plan was converted to a contract-only presentation. These citations are a durable evidence register, not a second live task checklist:
+
+- Superseded milestone and architecture/SystemBus plans were archived, the documentation hierarchy was reorganized, and historical source content was preserved in the [architecture reset commit `50d8c739f686b218a7e4fcc99619079d97833705`](https://github.com/mimiqdev/ruscv-sim/commit/50d8c739f686b218a7e4fcc99619079d97833705).
+- The target-architecture entry point and its product-evolution, system-context, layering, Hart, memory/TLM, runtime, and capability-growth views are recorded in [`docs/architecture/README.md`](architecture/README.md) by that same [architecture reset commit](https://github.com/mimiqdev/ruscv-sim/commit/50d8c739f686b218a7e4fcc99619079d97833705).
+- The repository-owned Rust/RISC-V guest/differential-testing development image was established and then hardened in [`f7db92d`](https://github.com/mimiqdev/ruscv-sim/commit/f7db92d59b86b886d30919e25e863be614ffed2b) and [`6fc0976`](https://github.com/mimiqdev/ruscv-sim/commit/6fc097661bada37984376a4ba421d44e2b299ab7), with the quality-gate and guest commands recorded in [`docs/development-environment.md`](development-environment.md) and [`.github/workflows/dev-container.yml`](../.github/workflows/dev-container.yml).
+- The already-satisfied acceptance criterion that the development image builds and runs the current project quality gate and guest ELF toolchain is supported by the image workflow and commands cited above. The remaining scope and acceptance criteria above remain current contract requirements, with live status tracked in Linear.
+
 ## Execution tracking
 
-- [MRT-11](https://linear.app/mrtoniliu/issue/MRT-11/review-current-implementation-architecture-audit) — review the current implementation architecture audit.
-- [MRT-9](https://linear.app/mrtoniliu/issue/MRT-9/adr-hart-execution-outcome-and-observation-records) — define Hart outcomes and observation records.
-- [MRT-7](https://linear.app/mrtoniliu/issue/MRT-7/adr-physicalaccess-transaction-and-fault-contract) — define the physical-access contract.
-- [MRT-6](https://linear.app/mrtoniliu/issue/MRT-6/adr-runner-machine-and-platform-ownership) — define Runner, Machine, and Platform ownership.
-- [MRT-10](https://linear.app/mrtoniliu/issue/MRT-10/adr-interrupt-time-and-stop-event-boundaries) — define interrupt, time, and stop-event boundaries.
-- [MRT-12](https://linear.app/mrtoniliu/issue/MRT-12/run-a0-architecture-acceptance-review) — perform the A0 acceptance review.
-- [MRT-8](https://linear.app/mrtoniliu/issue/MRT-8/approve-successor-implementation-milestone-and-close-a0) — approve the successor milestone and close A0.
+- [MMQ-11](https://linear.app/mrtoniliu/issue/MMQ-11/review-current-implementation-architecture-audit) — review the current implementation architecture audit.
+- [MMQ-9](https://linear.app/mrtoniliu/issue/MMQ-9/adr-hart-execution-outcome-and-observation-records) — define Hart outcomes and observation records.
+- [MMQ-7](https://linear.app/mrtoniliu/issue/MMQ-7/adr-physicalaccess-transaction-and-fault-contract) — define the physical-access contract.
+- [MMQ-6](https://linear.app/mrtoniliu/issue/MMQ-6/adr-runner-machine-and-platform-ownership) — define Runner, Machine, and Platform ownership.
+- [MMQ-10](https://linear.app/mrtoniliu/issue/MMQ-10/adr-interrupt-time-and-stop-event-boundaries) — define interrupt, time, and stop-event boundaries.
+- [MMQ-12](https://linear.app/mrtoniliu/issue/MMQ-12/run-a0-architecture-acceptance-review) — perform the A0 acceptance review.
+- [MMQ-8](https://linear.app/mrtoniliu/issue/MMQ-8/approve-successor-implementation-milestone-and-close-a0) — approve the successor milestone and close A0.
 
-These links provide navigation only; Linear holds their live status and dependency graph.
+These individual issue links provide navigation only; Linear holds their live status and dependency graph, while this contract remains authoritative for scope and acceptance criteria.
 
 ## Non-goals
 

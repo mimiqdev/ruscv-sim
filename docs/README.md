@@ -4,6 +4,8 @@
 
 **Authority:** Normative navigation
 
+**Last reviewed:** 2026-09-03
+
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
 ## Sources of truth
@@ -16,6 +18,8 @@ This index is the entry point for project decisions and technical documentation.
 6. [Development environment](development-environment.md) — normative container toolchain and usage.
 7. [Documentation policy](documentation-policy.md) — status, authority, and archival rules.
 8. Source code and verified tests — authority for what is implemented today.
+
+The authority split is deliberate: Linear owns live execution metadata; the milestone contract owns scope and acceptance criteria; accepted ADRs own cross-cutting architecture decisions; and source code plus verified tests own current behavior and integration evidence. Individual Linear issue links are navigation only and do not override repository contracts, ADRs, or implementation evidence.
 
 Target architecture is not implementation status. Component presence is not end-to-end support.
 
