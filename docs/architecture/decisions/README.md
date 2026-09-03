@@ -24,4 +24,10 @@ Each record must state:
 
 ## Records
 
-No architecture decision records have been accepted yet. The diagrams and principles define the working baseline; A0 will convert unresolved boundaries into explicit records.
+| Record | Decision | Status | Tracking |
+| --- | --- | --- | --- |
+| [0002 — Physical-access transaction and fault contract](0002-physical-access-transaction-and-fault.md) | One transport-neutral physical-access contract, raw bytes, fault taxonomy, and atomic operations | Proposed | [MMQ-7](https://linear.app/mrtoniliu/issue/MMQ-7/adr-physicalaccess-transaction-and-fault-contract) |
+
+No architecture decision records have been accepted yet. Proposed records are working
+contracts until their individual review and acceptance; the diagrams and principles
+remain the working baseline in the meantime.
