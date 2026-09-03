@@ -44,7 +44,7 @@ Every non-archived technical document must state both status and authority. A ta
 
 - Active work is performed on an issue-linked branch or isolated worktree, not directly on `main`.
 - A formal review begins only after the intended change is committed, pushed, and represented by a ready pull request.
-- The review target is the PR head commit together with its CI evidence; local inspection before that point is pre-review only.
+- The review target is the PR head commit together with applicable CI or recorded verification evidence; local inspection before that point is pre-review only.
 - Review findings are fixed on the same issue branch and re-reviewed against the updated PR head.
 - Linear may move to `Done` only after merge and after durable repository evidence exists.
 

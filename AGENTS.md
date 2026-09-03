@@ -15,10 +15,10 @@
 - Keep `main` clean. Perform project work on an issue-linked branch or isolated worktree.
 - Move a Linear issue to `In Progress` when implementation begins. A local inspection or dirty working tree is not formal review.
 - Commit and verify the intended change, then push it and open a pull request. Move the issue to `In Review` only when the PR is ready for review.
-- Formal review targets the committed PR head and its CI evidence. Coding and review should use separate Agents or contexts; the reviewer must not modify the coding worktree.
+- Formal review targets the committed PR head and its applicable CI or recorded verification evidence. Coding and review should use separate Agents or contexts; the reviewer must not modify the coding worktree.
 - Address findings on the same issue branch and repeat review against the new PR head.
 - Mark an issue `Done` only after the PR is merged and the required repository evidence exists.
-- For a solo-maintainer repository, required CI and resolved review findings are sufficient; do not require an impossible self-approval.
+- For a solo-maintainer repository, applicable required checks and resolved review findings are sufficient; do not require an impossible self-approval.
 
 ## Rolling milestone workflow
 
