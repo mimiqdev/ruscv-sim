@@ -6,11 +6,13 @@
 
 **Status:** Active — architecture definition
 
-**Authority:** Normative; the only active milestone
+**Authority:** Normative milestone contract; Linear is authoritative for execution status
 
 **Started:** 2026-08-26
 
-This is the only active milestone. Earlier milestone and sprint plans are historical records under [`archive/`](archive/).
+**Linear:** [`ruscv-sim` project](https://linear.app/mrtoniliu/project/ruscv-sim-7555af313020) · [MRT-5 milestone issue](https://linear.app/mrtoniliu/issue/MRT-5/a0-iss-virtual-platform-architecture-baseline)
+
+This is the only current milestone contract. Earlier milestone and sprint plans are historical records under [`archive/`](archive/). Active task status, priority, ownership, and dependencies are maintained in Linear rather than duplicated here.
 
 ## Objective
 
@@ -18,17 +20,26 @@ Re-establish the product architecture from first principles: build a verifiable 
 
 ## Scope
 
-- [x] Archive the superseded M8 ACT4 plan without claiming completion.
-- [x] Archive obsolete architecture and SystemBus expansion plans.
-- [x] Reorganize documentation by authority and content rather than legacy filename.
-- [x] Preserve complete historical sources while extracting still-valid current guidance.
-- [x] Establish [`architecture/README.md`](architecture/README.md) as the target-architecture entry point.
-- [x] Describe the product from product-evolution, system-context, layering, Hart, memory/TLM, runtime, and capability-growth perspectives.
-- [x] Establish and verify a repository-owned development image for Rust, RISC-V guest, and differential-test tooling.
-- [ ] Audit the current source tree against the target boundaries.
-- [ ] Define and approve the stable contracts between Hart, Runner, Machine, Platform, and physical access.
-- [ ] Record architecture decisions whose trade-offs materially constrain later implementation.
-- [ ] Derive the first implementation milestone from the approved architecture.
+The milestone includes:
+
+- Archiving superseded milestone, architecture, and SystemBus plans without claiming completion.
+- Reorganizing documentation by authority while preserving historical sources.
+- Establishing the target architecture, architecture principles, development image, and current-to-target implementation inventory.
+- Defining and approving stable contracts between Hart, Runner, Machine, Platform, and physical access.
+- Recording architecture decisions whose trade-offs materially constrain later implementation.
+- Deriving the first implementation milestone from the approved architecture.
+
+## Execution tracking
+
+- [MRT-11](https://linear.app/mrtoniliu/issue/MRT-11/review-current-implementation-architecture-audit) — review the current implementation architecture audit.
+- [MRT-9](https://linear.app/mrtoniliu/issue/MRT-9/adr-hart-execution-outcome-and-observation-records) — define Hart outcomes and observation records.
+- [MRT-7](https://linear.app/mrtoniliu/issue/MRT-7/adr-physicalaccess-transaction-and-fault-contract) — define the physical-access contract.
+- [MRT-6](https://linear.app/mrtoniliu/issue/MRT-6/adr-runner-machine-and-platform-ownership) — define Runner, Machine, and Platform ownership.
+- [MRT-10](https://linear.app/mrtoniliu/issue/MRT-10/adr-interrupt-time-and-stop-event-boundaries) — define interrupt, time, and stop-event boundaries.
+- [MRT-12](https://linear.app/mrtoniliu/issue/MRT-12/run-a0-architecture-acceptance-review) — perform the A0 acceptance review.
+- [MRT-8](https://linear.app/mrtoniliu/issue/MRT-8/approve-successor-implementation-milestone-and-close-a0) — approve the successor milestone and close A0.
+
+These links provide navigation only; Linear holds their live status and dependency graph.
 
 ## Non-goals
 
@@ -58,15 +69,17 @@ Re-establish the product architecture from first principles: build a verifiable 
 
 ## Acceptance criteria
 
-- [ ] Every active architecture document has an explicit status and ownership boundary.
-- [x] The development image builds successfully and can run the current project quality gate and guest ELF toolchain.
-- [ ] The target dependency direction is unambiguous from frontend to infrastructure.
-- [ ] Hart, Runner, Machine, Platform, memory access, interrupts, time, and observation responsibilities are agreed.
-- [ ] ISS and VP product forms can be explained as configurations around one architectural engine.
-- [ ] The current code has been mapped to the target architecture without overstating integration.
-- [ ] Open architecture decisions and deferred performance work are explicitly recorded.
-- [ ] The next implementation milestone is approved and replaces A0 as the only active milestone.
+- Every active architecture document has an explicit status and ownership boundary.
+- The development image builds successfully and can run the current project quality gate and guest ELF toolchain.
+- The target dependency direction is unambiguous from frontend to infrastructure.
+- Hart, Runner, Machine, Platform, memory access, interrupts, time, and observation responsibilities are agreed.
+- ISS and VP product forms can be explained as configurations around one architectural engine.
+- The current code has been mapped to the target architecture without overstating integration.
+- Open architecture decisions and deferred performance work are explicitly recorded.
+- The next implementation milestone is approved and replaces A0 as the only current milestone contract.
+
+Acceptance is established by recorded repository evidence and the A0 review; live completion state is tracked in Linear.
 
 ## Closeout
 
-When all acceptance criteria are satisfied, archive this plan with the review date, accepted decisions, known open questions, and relevant commit identifier. Then replace it with exactly one approved implementation milestone.
+When all acceptance criteria are satisfied, archive this plan with the review date, accepted decisions, known open questions, relevant commit identifier, and Linear milestone issue. Then replace it with exactly one approved implementation milestone contract and link the successor Linear tracking issue.
