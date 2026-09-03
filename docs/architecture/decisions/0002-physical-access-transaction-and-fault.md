@@ -5,8 +5,7 @@
 | Status | Proposed |
 | Authority | Draft contract; normative only after acceptance |
 | Date | 2026-09-03 |
-| Tracking | [MMQ-7](https://linear.app/mrtoniliu/issue/MMQ-7/adr-physicalaccess-transaction-and-fault-contract) |
-| Related decisions | [MMQ-9](https://linear.app/mrtoniliu/issue/MMQ-9/adr-hart-execution-outcome-and-observation-records), MMQ-6 (Runner, Machine, and Platform ownership), MMQ-10 (interrupt, time, and stop-event boundaries) |
+| Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0003](0003-runner-machine-and-platform-ownership.md), the interrupt, time, and stop-event decision |
 
 ## Context
 
@@ -95,8 +94,8 @@ target, or an unsupported width is handled as a physical-target result under sec
 | Raw byte transfer and target/device semantics | Platform target | Owns RAM/ROM/MMIO effects and target capability checks. |
 | Indivisible atomic operations and competing-write visibility | Physical-access/Platform domain | Provides the atomic envelope and visibility needed by Hart reservation state; never exposes an AMO or SC as an ordinary read/write pair. |
 | Per-Hart reservation architectural state and SC architectural result | Hart | Records reservation state and produces the architectural SC result from the physical operation response. |
-| Trap entry, retirement, and architectural register/CSR effects | Hart; architectural cause mapping is owned by MMQ-9 | A port call neither takes a trap nor retires an instruction. |
-| Delay metadata consumption and scheduler advancement | Runner/scheduler under MMQ-10 | A delay annotation does not make the Hart sleep or choose a scheduling algorithm. |
+| Trap entry, retirement, and architectural register/CSR effects | Hart; architectural cause mapping is owned by [ADR-0001](0001-hart-execution-outcome-and-observation.md) | A port call neither takes a trap nor retires an instruction. |
+| Delay metadata consumption and scheduler advancement | Runner/scheduler under the interrupt, time, and stop-event decision | A delay annotation does not make the Hart sleep or choose a scheduling algorithm. |
 
 The Hart checks architectural alignment before translation and before issuing a
 physical request when the selected profile requires alignment. If a profile admits a
@@ -138,7 +137,7 @@ The following remain different:
 
 Page-table walks use the same port as all other physical accesses. A failed PTE read
 or A/D write therefore follows the physical-fault-or-simulator-failure distinction
-above; it is not silently treated as an invalid PTE. MMQ-9 owns the already-decided
+above; it is not silently treated as an invalid PTE. [ADR-0001](0001-hart-execution-outcome-and-observation.md) defines the
 architectural cause matrix: using the Hart's access kind and translation-stage context,
 it maps a physical access fault to the corresponding Hart outcome and trap record.
 This ADR supplies the physical classification and does not reopen or duplicate that
@@ -176,7 +175,7 @@ physical context for diagnosis.
 MMU Accessed/Dirty-bit writeback is an **ordinary separate physical transaction** on
 the same port. It is not bundled into the later fetch/load/store transaction and is
 not part of that transaction's rollback unit. Its Hart-level visibility follows the
-selected RISC-V profile and the architectural outcome rules owned by MMQ-9; this ADR
+selected RISC-V profile and the architectural outcome rules owned by [ADR-0001](0001-hart-execution-outcome-and-observation.md); this ADR
 does not invent a second A/D update scheme.
 
 A target that cannot provide a failed-read-without-side-effect contract must model the
@@ -233,7 +232,7 @@ load value, fault classification, cycle count, or permission to mutate Hart stat
 Zero is a valid modeled latency; absence means that the backend has no timing
 annotation. An annotation never turns a fault into a wait or a success into a trap.
 
-MMQ-10 owns units, precision conversion, accumulation, whether a fault consumes modeled
+The interrupt, time, and stop-event decision owns units, precision conversion, accumulation, whether a fault consumes modeled
 time, Hart budgeting, temporal decoupling, and scheduler advancement. This ADR does
 not select a scheduler algorithm or require Hart semantics to depend on a transport
 time type.
@@ -281,10 +280,10 @@ field on a Hart must not become a second path that bypasses `PhysicalAccess`.
 - Raw byte width and order are explicit, while RISC-V load interpretation and
   architectural effects remain in the Hart.
 - Physical access faults, page faults, misalignment, and simulator failures remain
-  distinguishable for MMQ-9 and observers.
+  distinguishable for [ADR-0001](0001-hart-execution-outcome-and-observation.md) and observers.
 - Transaction-level atomicity prevents a backend from silently weakening AMO/LR/SC
   semantics while leaving target-specific mechanisms open.
-- Delay can be carried without prematurely selecting MMQ-10's scheduler or time policy.
+- Delay can be carried without prematurely selecting the interrupt, time, and stop-event decision's scheduler or time policy.
 
 ### Costs and risks
 
@@ -301,8 +300,8 @@ field on a Hart must not become a second path that bypasses `PhysicalAccess`.
 
 ## Non-normative implementation and verification notes
 
-This section records later evidence and migration considerations. It is not an
-acceptance gate for this Proposed documentation ADR.
+This section records later evidence and migration considerations for the Proposed
+contract.
 
 ### Compatibility and migration notes
 
@@ -317,7 +316,7 @@ signature, and cycle-limit behavior until an approved Platform replacement exist
 Existing component tests remain regression evidence for their components, not proof of
 end-to-end `PhysicalAccess` integration.
 
-### Verification when implementing (not ADR acceptance criteria)
+### Verification when implementing
 
 When an implementation is introduced, verification should establish:
 
@@ -353,7 +352,8 @@ Only the following concerns are intentionally bounded outside this ADR:
    reservation-token representation, transport/FFI details, and migration structure.
 
 The selected ISA profile, rather than this ADR, supplies exact architectural behavior
-for profile-defined cases such as a faulting SC. MMQ-6, MMQ-10, and MMQ-12 consume this
-contract for ownership, time/run control, and architecture review; none is a
-precondition for accepting this record, and the cross-check with MMQ-9 is consistency
-of the already-decided cause matrix rather than a circular acceptance dependency.
+for profile-defined cases such as a faulting SC. [ADR-0003](0003-runner-machine-and-platform-ownership.md)
+and the interrupt, time, and stop-event decision consume this contract for their
+respective ownership and timing concerns. The cross-check with [ADR-0001](0001-hart-execution-outcome-and-observation.md)
+keeps the cause matrix consistent; these records do not redefine the physical-access
+contract.
