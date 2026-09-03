@@ -27,5 +27,8 @@ Each record must state:
 | Record | Decision | Status | Tracking |
 | --- | --- | --- | --- |
 | [0001 — Hart execution outcome and observation records](0001-hart-execution-outcome-and-observation.md) | Hart step outcomes, retirement/trap boundaries, and immutable observation ownership | Proposed | [MMQ-9](https://linear.app/mrtoniliu/issue/MMQ-9/adr-hart-execution-outcome-and-observation-records) |
+| [0002 — Physical-access transaction and fault contract](0002-physical-access-transaction-and-fault.md) | One transport-neutral physical-access contract, raw bytes, fault taxonomy, and atomic operations | Proposed | [MMQ-7](https://linear.app/mrtoniliu/issue/MMQ-7/adr-physicalaccess-transaction-and-fault-contract) |
 
-No architecture decision records have been accepted yet. The diagrams and principles define the working baseline; proposed records capture unresolved boundaries for review, and the A0 review evaluates and accepts those records rather than inventing them.
+No architecture decision records have been accepted yet. Proposed records are working
+contracts until their individual review and acceptance; the diagrams and principles
+remain the working baseline in the meantime.
