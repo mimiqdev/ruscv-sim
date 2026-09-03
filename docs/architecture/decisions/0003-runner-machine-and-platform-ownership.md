@@ -26,38 +26,20 @@ composition, and Runner-owned application orchestration. The
 [current implementation inventory](../current-state.md) records that the public
 path does not yet have those boundaries.
 
-Today, the public path in [`src/executor.rs`](../../../src/executor.rs) concentrates
-ELF loading, RAM/UART/HTIF construction, the instruction loop, cycle limits,
-commit-log delivery, signature extraction, tohost polling, and
-`ExecutionResult` construction in `load_and_run`. `SystemBus` is a concrete
-RAM/UART/HTIF switch in that same module. The public CLI in
-[`src/main.rs`](../../../src/main.rs) calls `load_and_run_file` and formats the
-result. The exported `RiscVSimulator` in `executor.rs` has a second, simpler
-flat-memory loop with different address and device behavior. This is useful
-current implementation evidence, but it must not become two architectural
+Today, [`src/executor.rs`](../../../src/executor.rs) concentrates ELF loading,
+RAM/UART/HTIF construction, the instruction loop, limits, observations,
+signature extraction, tohost polling, and `ExecutionResult` construction in
+`load_and_run`; its `SystemBus` is a concrete RAM/UART/HTIF switch. The CLI in
+[`src/main.rs`](../../../src/main.rs) calls `load_and_run_file`, while
+`RiscVSimulator` exposes a second flat-memory loop with different address/device
+behavior. See the [current implementation inventory](../current-state.md) for
+wiring and test status; these are evidence for this decision, not target
 execution engines.
 
-The existing component boundaries are also not yet composition boundaries:
-
-- [`src/core/mod.rs`](../../../src/core/mod.rs) provides `RiscvCore`, but its
-  `step` currently returns a generic result, performs base-address adaptation, and
-  does not integrate the trap handler or interrupt inputs.
-- [`src/elf.rs`](../../../src/elf.rs) validates ELF64/RISC-V input, flattens
-  loadable segments relative to their lowest virtual address, and discovers the
-  entry point, signature section, and tohost section or symbol. It currently
-  returns a memory buffer rather than a transport-neutral image-placement
-  contract.
-- [`src/memory/mod.rs`](../../../src/memory/mod.rs) combines typed storage
-  operations with RISC-V sign/zero-extension helpers. That is current API
-  evidence, not the target physical-access boundary.
-- [`src/peripherals/uart16550.rs`](../../../src/peripherals/uart16550.rs),
-  [`src/peripherals/clint.rs`](../../../src/peripherals/clint.rs), and
-  [`src/peripherals/plic.rs`](../../../src/peripherals/plic.rs) implement device
-  behavior and focused TLM tests, but the public `SystemBus` only wires a limited
-  UART and embedded HTIF; CLINT and PLIC are not on that public path.
-- [`src/debug/mod.rs`](../../../src/debug/mod.rs), `debug/cli.rs`, and
-  `debug/gdb_server.rs` define protocol and mock-target-facing control surfaces,
-  but no production debugger target is connected to the public execution loop.
+`RiscvCore`, `ElfLoader`, memory, peripheral, TLM, and debug modules remain
+component boundaries rather than the target composition. The current loader
+returns a flattened buffer and the public core step a generic result, so this ADR
+defines target contracts without claiming they are separated in code.
 
 ADR-0001 defines the semantic Hart outcomes and observation ownership consumed by
 this record: a completed step yields `InstructionRetired`, `TrapEntered`, or
@@ -76,8 +58,8 @@ module or public API:
 
 - **Hart** is the single architectural engine. It owns architectural state,
   instruction semantics, privilege, traps, address translation, retirement, and
-  per-Hart architectural reservation state as defined by the approved Hart and
-  PhysicalAccess decisions.
+  per-Hart architectural reservation state under the consumed Proposed working
+  contracts ADR-0001 and ADR-0002.
 - **Platform** is the physical world visible to the Hart. It owns physical
   address routing, memory and device targets, host-facing device behavior,
   interrupt sources and wiring endpoints, and platform events. It never owns
@@ -111,17 +93,20 @@ port. Machine connects the two. Platform events flow back through Machine to the
 Runner as semantic observations, never as a direct dependency from a device to a
 CLI or Runner policy.
 
-The composition boundary may connect additional approved ports—such as interrupt
+The composition boundary may connect additional defined ports—such as interrupt
 lines, observation delivery, and time/deadline information—without changing this
 direction. Machine owns the association of any time/scheduling service with the
-Hart and Platform; Runner requests bounded execution and control, while MMQ-10
-defines the service's detailed semantics. A port is a contract, not a commitment
-to a Rust trait, callback, channel, or transport representation.
+Hart and Platform. A scheduler, when present, is Machine-associated and cannot
+bypass the Runner's outer loop or terminal policy; the complete invocation and
+return rule is in §3. MMQ-10 defines only detailed timing, interrupt, and
+stop-arbitration semantics. A port is a contract, not a commitment to a Rust
+trait, callback, channel, or transport representation.
 
 | Concern | Primary owner | Boundary rule |
 | --- | --- | --- |
 | CLI/API/debug protocol and presentation | Frontend | Converts requests/results; does not own machine state or instruction semantics. |
 | Image parsing and load-image description | ELF/image loader, invoked by Runner | Parses and validates the file and describes segments/metadata; does not mutate a Machine or translate a guest virtual address. |
+| Image installation and placement | Machine coordinates; Platform writes | Machine installs the loader's `LoadImage` metadata; Platform performs physical writes, target checks, and routing; Hart is not involved. |
 | Run configuration and outer control | Runner | Chooses the run configuration, limits, observer sinks, and requested control operation; does not inspect concrete devices directly. |
 | Hart + Platform composition | Machine | Creates or obtains the configured parts, connects their ports, and exposes the composed lifecycle. |
 | Architectural execution | Hart | Owns fetch/decode/execute, translation, traps, retirement, and Hart observations. |
@@ -133,7 +118,7 @@ to a Rust trait, callback, channel, or transport representation.
 No layer below the Runner may depend on `src/main.rs`, CLI flags, a concrete
 `ExecutionResult`, or presentation text. No Hart implementation may depend on
 ELF parsing, CLI policy, concrete UART/HTIF types, SystemC/TLM mechanics, or a
-specific Runner. The existing modules are mapped to these roles in §10 without
+specific Runner. Current source and test evidence is pointed to in §10 without
 claiming that the roles have already been separated in code.
 
 ### 2. Machine composition boundary
@@ -149,7 +134,7 @@ At composition time, the Machine is responsible for:
 1. establishing one Hart instance using the selected architectural profile;
 2. establishing one Platform instance and its configured physical targets;
 3. establishing the Hart's `PhysicalAccess` connection to that Platform;
-4. connecting interrupt inputs, observation paths, and any approved time or
+4. connecting interrupt inputs, observation paths, and any defined time or
    deadline ports without making the Hart aware of their concrete producers;
 5. connecting device outputs to Platform event collection and host services; and
 6. making the composed state available through a coherent lifecycle/inspection
@@ -233,26 +218,31 @@ requests a new composition or image installation, reset must:
 
 Reset does not change an address map, perform virtual-to-physical translation,
 reparse an ELF file, or report a run result. Exact Hart reset values and exact
-device reset behavior follow their approved architectural/device contracts; the
+device reset behavior follow the applicable architectural/device contracts; the
 semantic requirement is that no prior run's dynamic state is accidentally used as
 the initial state of the next run.
 
 #### Run, stop, and teardown
 
-The Runner starts and controls a run through the Machine. The Runner may request
-single-step or a bounded run, but the Machine is the only composition boundary
-that drives its Hart against its Platform. The Hart performs the architectural
-step; the Platform services physical transactions and produces platform events;
-the Machine returns the resulting facts to the Runner. A batch or accelerated
-execution strategy must preserve the per-instruction outcome/observation
-semantics of ADR-0001.
+**Execution-loop rule.** The Runner owns the outer execution loop and all
+terminal policy. For each iteration/request, it asks the Machine for one Hart
+step or a budgeted quantum. The Machine alone invokes the Hart, or invokes its
+Machine-associated scheduler to operate the Hart against that Machine's Platform,
+and returns per-step Hart outcomes plus causal Platform events (and any
+budget/time facts). The Machine does not apply Platform-exit, execution-limit,
+debugger-stop, or other Runner terminal policy and does not decide whether
+returned facts end the run. The Runner consumes those facts/events and decides
+continue versus stop, including non-terminal Hart outcomes and result
+aggregation. A quantum may contain multiple steps only when the Machine returns
+each step's facts/events and preserves ADR-0001 observation semantics; it is not
+a Machine-owned stop-policy operation. MMQ-10 defines timing, interrupt
+eligibility/sampling, and simultaneous-stop arbitration only; it does not own
+this loop.
 
-Stop requests are handled at an approved architectural boundary. A Runner stop
-request, debugger request, limit, Platform exit, Hart trap, or simulator failure
-must remain distinguishable in the run-level result. The Runner owns the policy
-of whether a non-terminal Hart outcome (for example, a trap that can be resumed)
-continues the run, while MMQ-10 owns the precise arbitration when multiple stop
-conditions are eligible at the same boundary.
+A Runner stop request, debugger request, limit, Platform exit, Hart trap, or
+simulator failure must remain distinguishable in the run-level result. Stop
+requests are handled at the defined architectural boundary; MMQ-10 arbitrates
+only when multiple conditions are eligible at one boundary.
 
 At teardown the Runner stops accepting control, completes or reports observer
 handling according to its run policy, and releases its run-level sinks. The
@@ -264,7 +254,17 @@ new ownership boundary.
 
 ### 4. ELF parsing, image placement, and address meaning
 
-The ELF/image loader and the Machine/Platform have separate responsibilities:
+The ELF/image loader and the Machine/Platform have separate responsibilities.
+This Proposed ADR explicitly refines the wording in
+[`principles.md`](../principles.md#address-ownership) that `ELF segment placement
+is a loader responsibility`: here that loader responsibility means producing a
+`LoadImage` metadata description containing segments, zero-fill, entry, and
+signature/tohost metadata; Machine coordinates installation; Platform performs
+physical writes and routing. The `Runner` `Image loading` row in the same
+principles document is refined to this metadata/orchestration split. Because
+ADR-0003 remains Proposed, `principles.md` remains the current normative
+authority and is neither marked accepted nor rewritten here; it must be aligned
+when this ADR is accepted.
 
 | Operation | Owner | Semantic result |
 | --- | --- | --- |
@@ -295,7 +295,7 @@ addressing contract; an internal storage offset cannot be mistaken for a
 replacement entry address. Segment permissions and any `p_vaddr`/`p_paddr`
 interpretation are likewise image/platform policy, not a new Hart API decision.
 
-### 5. Hart driving and observation ownership
+### 5. Hart outcomes and observation ownership
 
 The Hart boundary is the one defined by ADR-0001 and is consumed without
 redefinition here:
@@ -307,11 +307,11 @@ redefinition here:
 - `SimulatorFailure` means architectural completion was not possible and no
   fabricated commit or trap is emitted.
 
-The Machine drives the Hart only as part of its composition. The Runner consumes
-these outcomes and must not recreate them by comparing register snapshots,
-re-fetching opcodes, interpreting generic memory errors, or polling a second
-execution loop. In particular, the current `load_and_run` commit logger's
-pre/post register snapshot and opcode re-fetch are compatibility-era behavior,
+Under the §3 execution-loop rule, the Machine invokes the Hart only against its
+composed Platform and returns these outcomes to the Runner. The Runner consumes
+them and must not recreate them by comparing register snapshots, re-fetching
+opcodes, interpreting generic memory errors, or polling a second execution loop;
+current `load_and_run` snapshot/re-fetch logging is compatibility-era behavior,
 not the target observation ownership.
 
 ADR-0002 is consumed at the Machine/Platform connection:
@@ -429,364 +429,171 @@ The standalone ISS and future VP are configurations of the same boundaries:
 | Standalone ISS | ELF-oriented run control, deterministic single-Hart limit, optional commit log/debug inspection, and current host-exit compatibility | One Hart, one minimal native/flat Platform implementing PhysicalAccess, and only the platform services required by the current CLI. |
 | Future VP around one Hart | Same Runner/Machine contracts with richer event/time control and an interchangeable Platform backend | The same one Hart implementation and architectural outcomes connected to a composed Platform containing additional devices, interrupt sources, and/or a native or TLM-adapted physical transport. |
 
-A VP scheduler, virtual-time source, external model, or TLM adapter changes how
-the Runner/Machine drives the Hart and how the Platform implements
-`PhysicalAccess`; it does not create alternate instruction semantics. A future
-multi-Hart Machine is not defined by this ADR, although the one-Hart ownership
-boundary must not prevent a later explicit extension.
+A VP scheduler, virtual-time source, external model, or TLM adapter changes the
+scheduling/budget strategy used by the Machine under §3 and how the Platform
+implements `PhysicalAccess`; it does not create alternate instruction semantics.
+A scheduler is Machine-associated, not a second Hart owner, and cannot bypass
+the Runner's outer loop or Platform-exit, limit, or debugger terminal policy. A
+future multi-Hart Machine is not defined by this ADR, although the one-Hart
+ownership boundary must not prevent a later explicit extension.
 
 `RiscVSimulator` may remain a public convenience/library facade for a flat
-single-Hart configuration. It must not acquire semantics that differ from the
-shared Hart boundary merely because it is a library wrapper. `load_and_run` and
-`RiscVSimulator::run` are current duplicated loops; the target has one Runner
-ownership model, even if compatibility adapters temporarily expose more than one
-entry point. The details of such adapters, deprecation, or replacement are not
-selected here.
+single-Hart configuration, but it must use the same Runner/Machine/Hart semantics
+and must not become an independent execution loop. Compatibility adapters,
+deprecation, or replacement are not selected here.
 
 ### 9. Compatibility constraints for the current product
 
-These constraints preserve observable behavior for later implementation work;
-they do not freeze the target address map, concrete bus, Rust API shape, or
-transport. This ADR itself changes no behavior.
+These are the observable invariants required by MMQ-6 for later implementation;
+they do not freeze target internals, address maps, buses, Rust APIs, or transport.
+This ADR changes no behavior; see the [current implementation inventory](../current-state.md)
+for current wiring and test status.
 
 #### CLI and ELF
 
-The existing `ruscv-sim run` interface remains the compatibility frontend:
+`ruscv-sim run <ELF_FILE>` retains `--max-cycles`, hexadecimal-or-decimal
+`--tohost`, `--verbose`, and optional Spike-compatible `--log-commits`. The
+current loader accepts RV64 ELF64 little-endian input, loads PT_LOAD bytes and
+zero-fill, preserves the entry point, and discovers `.signature` and `.tohost`
+metadata or a `tohost` symbol. Public `load_and_run` keeps tohost precedence as
+CLI override, ELF-discovered address, then fixed `0x4000_8000`; the frontend
+continues to report exit code, completed cycles, final PC, timeout/error status,
+and optional signature data, with input and execution errors distinguishable.
 
-- `run <ELF_FILE>` accepts the current ELF execution flow;
-- `--max-cycles` remains an optional outer bound;
-- `--tohost` remains a hexadecimal-or-decimal address override;
-- `--verbose` remains presentation/debug output; and
-- `--log-commits` remains an optional Spike-compatible commit-log sink.
+#### UART, HTIF/tohost, and exit ordering
 
-The current loader accepts RV64 ELF64 little-endian executable RISC-V input,
-loads PT_LOAD file bytes and zero-fills the memory remainder, preserves the entry
-point, and discovers `.signature` and `.tohost` metadata or a `tohost` symbol.
-Those are current compatibility expectations, not a prohibition on a future
-loader profile.
+The public path retains UART16550-compatible byte MMIO at `0x1000_0000`,
+transmitted-byte callback output, and rejection of multi-byte register accesses.
+The fixed HTIF endpoint at `0x4000_8000` retains dword/callback exit behavior;
+selected ELF/CLI tohost storage is polled after each successful instruction,
+supports standard and supported high-bit encodings, and clears a recognized
+selected-address signal (the fixed callback endpoint has no backing value to
+clear). A successful HTIF/tohost write retires before the outer result reports
+Platform exit, as required by §6.
 
-For public `load_and_run`, tohost selection currently has this precedence:
-command-line override, ELF-discovered address, then the fixed default
-`0x4000_8000`. Later composition must preserve that observable precedence until
-a separately approved product decision changes it. A command-line override is
-configuration/observation policy; it is not an instruction-translation rule.
+#### Signatures, limits, and public surfaces
 
-The CLI continues to format an `ExecutionResult`-equivalent report containing
-exit code, completed cycle count, final PC, timeout status, error text, and
-optional signature information, and continues to use the reported exit code for
-its process status. Invalid ELF/input errors and execution-time result errors
-remain distinguishable at the frontend boundary. Exact concrete result fields,
-error enum variants, and serialization remain outside this ADR.
+A discovered `.signature` region remains a host-side post-run artifact at its
+reported address/metadata: absent is absent output and zero-sized is empty,
+without a guest load or Hart-state change. The default maximum remains
+`10_000_000`; a successful `RiscvCore::step` increments the count, an error does
+not, tohost is checked after success, and zero performs no steps before timeout.
+The library wrapper retains this configured/default limit concept. `load_and_run`,
+`RiscVSimulator`, `SystemBus`, `ExecutionResult`, and existing helper names remain
+available until an accepted replacement contract says otherwise; concrete layouts,
+constructors, and migration remain outside this ADR.
 
-#### UART
+### 10. Current source and test pointer
 
-The current public path provides a UART16550-compatible byte MMIO behavior at
-`0x1000_0000`, sends transmitted bytes through the configured output callback
-(which the CLI currently prints), and rejects multi-byte accesses to UART
-registers. The model's declared `UART_SIZE` is eight bytes while `SystemBus`
-currently routes a 0x100-byte window; this discrepancy is recorded as current
-boundary debt rather than resolved or frozen by this ADR. Later Platform work
-must preserve the current CLI's supported byte-register behavior and output
-observability while an approved device/address-map contract is developed.
-
-UART receive/FIFO and interrupt behavior covered by component tests remains
-component evidence. It is not a claim that UART interrupts are integrated into
-the public Hart path.
-
-#### HTIF/tohost
-
-The public path must continue to recognize the current host-exit conventions:
-
-- the fixed HTIF endpoint at `0x4000_8000` accepts the current dword write/read
-  behavior, including callback-based exit detection;
-- selected ELF/CLI tohost storage is polled after each successfully completed
-  instruction in the current flow;
-- standard HTIF syscall/exit encoding and the supported high-bit alternative
-  encoding continue to produce the same exit code interpretation;
-- a recognized signal in selected ELF/CLI tohost storage is cleared after it is
-  processed, preserving the current Spike-compatible intent; the fixed callback
-  endpoint has no backing value to clear; and
-- a successful writing instruction is observed as retired before the outer
-  result reports Platform exit, as required by §6.
-
-The fixed endpoint, selected ELF address, and their current coexistence are
-compatibility behavior. This ADR does not choose a final HTIF device model or
-address map. Their lower-level implementations must converge on one semantic
-Platform event rather than making the Runner maintain two architectural loops.
-
-#### Signatures and cycle limits
-
-A discovered `.signature` region remains available as post-run bytes at its
-reported address/metadata, with absent metadata represented as absent output and
-a zero-sized region represented as empty output. Extraction remains host-side
-inspection and must not alter Hart state.
-
-The current default maximum is 10,000,000. In the public loop, one successfully
-completed `RiscvCore::step` increments the exposed cycle count; a step that
-returns an error does not, tohost is checked after successful execution, and a
-zero bound performs no steps before producing a timeout result. The library
-wrapper exposes the same configured/default limit concept. These are compatibility
-constraints for current CLI/library behavior. MMQ-10 may later define richer
-instruction-cost and virtual-time semantics, but no implementation under this
-ADR may silently change the existing externally visible bound.
-
-#### Library and bus surfaces
-
-`RiscVSimulator`, `SystemBus`, `MemoryInterface`, `ExecutionResult`, and the
-existing public helper functions remain available compatibility surfaces unless a
-separate accepted decision authorizes a change. Their current differences are
-not target semantics:
-
-- `RiscVSimulator` uses a flat `SimpleMemory` path and does not wire the public
-  UART/SystemBus;
-- `SystemBus` is a concrete public-path RAM/UART/HTIF router in `executor.rs`;
-- `MemoryInterface` exposes typed and sign/zero-extending operations; and
-- commit logging currently derives register differences around `step` and passes
-  no memory access from the active Runner.
-
-Later adapters may place these surfaces over the shared Machine/Runner contracts,
-but this ADR does not prescribe their constructors, trait signatures, lifetimes,
-concrete layouts, or migration sequence. Existing focused tests remain evidence
-to preserve, not proof of end-to-end VP integration.
-
-### 10. Current source and test map
-
-The following map records evidence for the ownership problem and compatibility
-constraints. It does not relabel component tests as integrated behavior.
-
-| Area | Current evidence |
-| --- | --- |
-| CLI and result presentation | [`src/main.rs`](../../../src/main.rs); [`tests/cli_test.rs`](../../../tests/cli_test.rs) covers help, parsing, flags, invalid input, and command processing. |
-| Public Runner/orchestration | `load_and_run`, `load_and_run_file`, `dump_signature`, `clear_tohost`, `try_extract_exit_code`, and `ExecutionResult` in [`src/executor.rs`](../../../src/executor.rs); [`tests/executor.rs`](../../../tests/executor.rs) covers result/defaults, routing, error paths, exit encodings, signature helpers, and limits at the API level. |
-| Current library loop | `RiscVSimulator::new`, `load_elf`, `step`, `run`, `read_mem`, and `write_mem` in [`src/executor.rs`](../../../src/executor.rs); [`tests/test_elf_loader.rs`](../../../tests/test_elf_loader.rs) covers creation, invalid input, setters, memory access, and result shapes. |
-| ELF parse and flattening | [`src/elf.rs`](../../../src/elf.rs), including `ElfLoader`, `memory_footprint`, `load_into_memory`, `load_elf_file`, signature discovery, and tohost section/symbol discovery; ELF unit tests and [`tests/test_elf_loader.rs`](../../../tests/test_elf_loader.rs). |
-| Hart and current address adaptation | [`src/core/mod.rs`](../../../src/core/mod.rs), including `RiscvCore::step`, `reset`, `run`, and `MemoryAdapter`; core unit tests cover reset and base-address adaptation. |
-| Current memory contract | [`src/memory/mod.rs`](../../../src/memory/mod.rs) and its typed, alignment, endian, and sign/zero-extension tests. |
-| Commit observation debt | [`src/core/commits.rs`](../../../src/core/commits.rs); [`tests/commits_test.rs`](../../../tests/commits_test.rs); public `load_and_run` snapshots/re-fetches around `core.step`. |
-| Hart outcomes/traps consumed here | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [`src/core/trap.rs`](../../../src/core/trap.rs), and [`tests/trap_test.rs`](../../../tests/trap_test.rs). |
-| Physical-access contract consumed here | [ADR-0002](0002-physical-access-transaction-and-fault.md), [`src/mmu/physical.rs`](../../../src/mmu/physical.rs), [`src/tlm/traits.rs`](../../../src/tlm/traits.rs), and [`tests/tlm_tests.rs`](../../../tests/tlm_tests.rs). |
-| Public native platform path | `SystemBus` in [`src/executor.rs`](../../../src/executor.rs), including RAM/UART/HTIF routing and fixed endpoint behavior; [`tests/executor.rs`](../../../tests/executor.rs) covers representative routing and access widths. |
-| UART and platform components | [`src/peripherals/uart16550.rs`](../../../src/peripherals/uart16550.rs), [`src/peripherals/clint.rs`](../../../src/peripherals/clint.rs), [`src/peripherals/plic.rs`](../../../src/peripherals/plic.rs), [`src/peripherals/mod.rs`](../../../src/peripherals/mod.rs), [`tests/peripheral_tests.rs`](../../../tests/peripheral_tests.rs), and focused module tests. |
-| TLM routing/time/DMI components | [`src/tlm/bus.rs`](../../../src/tlm/bus.rs), [`src/tlm/payload.rs`](../../../src/tlm/payload.rs), [`src/tlm/time.rs`](../../../src/tlm/time.rs), and [`tests/tlm_tests.rs`](../../../tests/tlm_tests.rs); these are adapters/components, not an integrated Hart path. |
-| Debug inspection/control surfaces | [`src/debug/mod.rs`](../../../src/debug/mod.rs), [`src/debug/cli.rs`](../../../src/debug/cli.rs), [`src/debug/gdb_server.rs`](../../../src/debug/gdb_server.rs), [`src/debug/breakpoint.rs`](../../../src/debug/breakpoint.rs), and [`src/debug/watchpoint.rs`](../../../src/debug/watchpoint.rs); focused tests use mock targets and do not establish public-path integration. |
+For as-is wiring and the full source/test inventory, see the [current
+implementation inventory](../current-state.md). The ownership split is evidenced
+by [`src/executor.rs`](../../../src/executor.rs), [`src/main.rs`](../../../src/main.rs),
+[`src/elf.rs`](../../../src/elf.rs), and [`src/core/mod.rs`](../../../src/core/mod.rs);
+focused tests cited there remain regression evidence, not proof of end-to-end VP
+integration.
 
 ## Relationship to ADR-0001
 
 ADR-0001 remains **Proposed** and is consumed here as the Hart outcome and
-observation contract; this ADR neither accepts it nor reopens its architectural
-retirement/trap decisions. In particular:
-
-- Runner consumes `InstructionRetired`, `TrapEntered`, and `SimulatorFailure`
-  rather than translating `Result<()>` or a generic memory error itself;
-- Machine provides the one Hart/Platform composition in which those outcomes
-  occur; and
-- Platform exit, debugger stop, limits, scheduler/time events, and observer
-  delivery remain outside the Hart outcome and are not converted into Hart
-  traps.
-
-The successful HTIF ordering in §6 is a direct composition consequence of
-ADR-0001's rule that a successful MMIO instruction retires before the Runner
-reports the resulting Platform event.
+observation contract; this ADR neither accepts nor reopens its retirement/trap
+decisions. Runner consumes `InstructionRetired`, `TrapEntered`, and
+`SimulatorFailure`; Machine supplies their one Hart/Platform composition; and
+Platform exit, debugger stop, limits, and scheduler/time events remain outside
+Hart outcomes. The §6 HTIF ordering follows ADR-0001's retire-before-event rule.
 
 ## Relationship to ADR-0002
 
 ADR-0002 remains **Proposed** and is consumed here as the physical transaction
 boundary; this ADR does not replace its raw-byte, fault, atomicity, or delay
-semantics. Machine connects the Hart's single conceptual `PhysicalAccess` port
-to a Platform implementation. The Platform owns target routing and target-local
-faults; Hart owns virtual translation, architectural checks, load interpretation,
-trap mapping, and retirement. Native memory, `SystemBus`, TLM, DMI, and external
-models are possible Platform-side implementations or adapters, not alternate ISA
-engines.
-
-Image installation is host-side composition work and therefore does not use a
-synthetic Hart load or claim a Hart `CommitRecord`. A page-table walk, in contrast,
-is Hart/MMU architectural work and uses the same PhysicalAccess port as every
-other physical transaction, exactly as ADR-0002 requires.
+semantics. Machine connects Hart `PhysicalAccess` to a Platform: Platform owns
+routing/target faults, while Hart owns translation, architectural checks, load
+interpretation, trap mapping, and retirement. Native, `SystemBus`, TLM, DMI, and
+external models are Platform implementations, not alternate ISA engines. Image
+installation is host-side Machine work without a Hart load/commit; page walks use
+the same port.
 
 ## Boundary with MMQ-10
 
-MMQ-10 owns the detailed timing, interrupt, and stop arbitration contract. This
-ADR fixes only the ownership and causal boundaries needed to compose the result:
+MMQ-10 owns detailed timing, interrupt, and stop-arbitration semantics only. This
+ADR fixes ownership and causal boundaries; it does not assign the outer loop or
+terminal policy to MMQ-10:
 
-| Concern deliberately left to MMQ-10 | Boundary fixed by this ADR |
+| Concern left to MMQ-10 | Boundary fixed by this ADR |
 | --- | --- |
-| Interrupt eligibility, masking, priority, and exact Hart sampling point | Platform/Machine provide interrupt sources/lines; Hart consumes them at an approved boundary. |
-| Instruction cost, physical delay units, delay consumption, and virtual-time advancement | Runner applies outer limits; Machine connects time/deadline information without choosing a scheduler. |
-| Scheduler quantum, batching, temporal decoupling, and event-loop algorithm | Runner drives Machine; all strategies preserve precise Hart observations. |
-| Tie-breaking among simultaneous trap, Platform exit, debugger, limit, time, and failure events | Runner aggregates distinct causes; MMQ-10 chooses precise priority/arbitration. |
-| Asynchronous user/debug interruption and safe stop boundary | Debug control reaches Runner/Machine; it is not an architectural trap or device exit. |
-| Whether a trap or device event is resumable in a particular run mode | Hart reports its architectural outcome; Runner applies run policy at the agreed boundary. |
+| Interrupt eligibility, masking, priority, sampling point | Platform/Machine provide lines; Hart samples at the defined boundary. |
+| Cost, delay, time units, advancement, and budget facts | Runner owns limits; the Machine-associated scheduler reports facts; MMQ-10 defines timing. |
+| Quantum, batching, and event-loop strategy | Machine associates/invokes the scheduler under §3; it returns per-step facts/events and cannot bypass Runner terminal policy. |
+| Simultaneous trap/exit/debug/limit/time/failure priority | Runner aggregates causes; MMQ-10 chooses arbitration. |
+| Asynchronous interruption and resumability | Debug control reaches Runner/Machine; it is not a Hart trap or device exit. |
 
-MMQ-10 may refine these details without moving Hart semantics into Runner or
-Platform, and without changing the requirement that a successful tohost-writing
-instruction retires before Platform exit is reported. This is a bounded deferral,
-not an unresolved ownership question.
+MMQ-10 may refine timing, interrupt, and arbitration without moving Hart semantics
+or §3 loop/terminal ownership, and without changing successful tohost retirement
+ordering. This is a bounded deferral, not an unresolved ownership question.
 
 ## Alternatives considered
 
-### A. Keep `load_and_run` as the machine, runner, and platform
-
-This is the current public shape and is credible because it is small and already
-runs ELF programs. It is rejected as the target because one function owns image
-placement, device construction, Hart driving, stop policy, observers, and result
-formatting; `RiscVSimulator` then duplicates related policy. It prevents a clear
-Machine lifecycle, makes Platform events indistinguishable from run policy, and
-encourages a second implementation when a VP is added.
-
-### B. Make the Platform own the Hart and the run loop
-
-A Platform-centric design is credible for system simulators because a scheduler
-and devices often coordinate CPU execution. It is rejected because it couples
-architectural semantics to concrete devices and transport timing, lets the
-Platform perform Hart work, and makes standalone ISS behavior a special case.
-The chosen design lets a Machine connect a Hart to a Platform while the Runner
-controls the outer run; a future scheduler remains an input/strategy rather than a
-second ISA owner.
-
-### C. Maintain separate ISS and VP engines
-
-Two engines could optimize each product form independently and minimize initial
-composition work. It is rejected by the product invariant: traps, retirement,
-MMU behavior, and device-visible memory effects would drift, and every compliance
-or differential result would have to explain which engine produced it. The same
-Hart and Machine boundaries are deliberately shared instead.
-
-### D. Let the ELF loader write directly to a concrete bus
-
-This is credible because the current loader returns a flattened buffer and the
-executor immediately copies it into `SimpleMemory`. It is rejected because it
-couples file parsing to one address map, conflates image/storage offsets with
-virtual translation, and prevents a VP or external Platform from choosing its own
-physical target. The loader describes; Machine installs; Platform routes.
-
-### E. Use one undifferentiated event/status stream for all stops
-
-A single stream could simplify plumbing by treating traps, tohost, breakpoints,
-limits, and host errors as generic stop records. It is rejected because guest
-architecture, platform behavior, debugger control, bounded execution, and
-simulator failure have different ownership and recovery semantics. The Runner
-may aggregate them in one run result, but it must preserve their categories and
-causal facts.
-
-### F. Make observers and debuggers direct peers of the Hart
-
-Direct callbacks from instruction implementations or debugger code are credible
-for small interpreters and can appear to reduce Runner overhead. It is rejected
-because callbacks can observe partial architectural state, re-enter execution,
-bypass Platform routing, and make failed transitions appear committed. ADR-0001's
-completed-outcome boundary and Machine/Runner inspection path provide observation
-without exposing an in-progress transition.
+| Alternative | Decision |
+| --- | --- |
+| Keep `load_and_run` as machine, runner, and platform | Rejected: it fuses placement, device construction, Hart invocation, stop policy, observers, and result formatting, with no clear Machine lifecycle. |
+| Let Platform own Hart and the run loop | Rejected: it couples ISA semantics to devices/timing; Machine composes Hart/Platform while Runner owns the outer run. |
+| Maintain separate ISS and VP engines | Rejected: traps, retirement, MMU, and device effects would drift; one Hart/Machine boundary is required. |
+| Let the loader write directly to a concrete bus | Rejected: it couples parsing to an address map and confuses storage offsets with translation; loader → Machine → Platform is retained. |
+| Use one undifferentiated status stream | Rejected: causes have different ownership/recovery; Runner aggregates while preserving categories and causal facts. |
+| Make observers/debuggers direct Hart peers | Rejected: callbacks risk partial state, re-entry, bypassed routing, and false commits; completed outcomes remain the boundary. |
 
 ## Consequences
 
 ### Benefits
 
-- One Hart implementation can serve a minimal ISS and a richer VP without
-  duplicating architectural semantics.
-- Machine gives construction, reset, placement, inspection, and teardown one
-  explicit composition boundary.
-- Runner can combine Hart facts, Platform events, debugger requests, limits, and
-  later scheduler/time information without making them look like one kind of
-  exception.
-- Platform devices and transport adapters remain replaceable behind the
-  PhysicalAccess contract, while the current native path and future TLM path can
-  share semantics.
-- ELF host concerns remain separate from Hart address translation, and signatures
-  remain non-architectural inspection artifacts.
-- The successful tohost ordering is precise enough for commit logs, differential
-  testing, and VP event delivery without selecting a callback or scheduler API.
+- One Hart serves ISS and VP; Machine owns composition/lifecycle and Runner aggregates distinct facts without conflating terminal causes.
+- Replaceable Platform backends preserve PhysicalAccess while image storage, translation, signatures, and successful tohost retirement remain distinct.
 
 ### Costs and risks
 
-- A composition root and coherent lifecycle boundary are more explicit than the
-  current monolithic executor and require coordination among Hart, Platform,
-  Runner, and Frontend work.
-- Platform implementations must preserve event provenance and distinguish target
-  faults from host/adapter failures; a generic `MemoryError` cannot decide the
-  outer result.
-- Reset requires a meaningful definition of initial image state and dynamic
-  device state. Backends that cannot restore mutable image-owned storage need a
-  separate lifecycle guarantee rather than silently reusing state.
-- Debug inspection and observer delivery need safe boundary/error handling and
-  must not reintroduce snapshot/re-fetch reconstruction.
-- Existing public wrappers and text logs need compatibility adapters while the
-  target semantic boundaries are implemented; this ADR does not prescribe how.
+- The explicit composition root needs coordination beyond the monolithic executor and compatibility adapters for existing wrappers/logs.
+- Platform reset/event implementations must preserve provenance, distinguish target from host failures, and restore initial image/device state rather than stale state.
+- Inspection and observers need safe boundaries and must not reintroduce snapshots or opcode re-fetch.
 
 ## Compatibility and migration impact
 
-This ADR is documentation-only. It changes no simulator behavior, public Rust
-API, CLI output, test expectation, or serialization format. The current source
-and focused tests remain the authority for implemented behavior; this record is a
-Proposed target contract and does not claim that `Machine`, `Platform`, or the
-Runner boundary already exists.
-
-Future implementation work must preserve the compatibility constraints in §9,
-including current CLI ELF operation, tohost precedence and encodings, UART byte
-output, signature artifacts, cycle limits, `ExecutionResult`-equivalent reporting,
-`RiscVSimulator` availability, and the public native bus behavior until an
-accepted replacement contract says otherwise. The exact decomposition of
-`load_and_run`, the relation of a library facade to Runner, concrete adapters,
-public API evolution, and any migration order are intentionally deferred.
+This documentation-only ADR changes no simulator behavior, public API, CLI output,
+tests, or serialization; source/tests remain authoritative and the target Machine,
+Platform, and Runner boundaries are not claimed to be integrated. Later work must
+preserve §9's CLI/ELF, tohost, UART, signature, cycle-limit, result, and named
+surface invariants; decomposition, adapters, API evolution, and migration remain
+implementation work.
 
 ## Later verification when implemented
 
-The following evidence is expected from later implementation work; it is not an
-acceptance gate for this documentation ADR:
+These are implementation evidence, not acceptance gates for this documentation ADR:
 
-- **Ownership and one-engine parity:** prove that standalone ISS and VP
-  configurations execute through one Hart implementation and produce equivalent
-  Hart outcomes/architectural state for the same one-Hart workload.
-- **Composition lifecycle:** verify construction wires one Hart, one Platform,
-  PhysicalAccess, interrupt/event inputs, and observers; reset preserves static
-  configuration/image metadata while clearing/restoring dynamic Hart and device
-  state; teardown prevents late events.
-- **Image placement:** verify ELF parsing/segment zero-fill and metadata are
-  separate from physical placement; test that image-base storage adaptation does
-  not bypass or impersonate Hart virtual translation.
-- **Hart observation:** verify Runner consumes ADR-0001 records without snapshots
-  or opcode re-fetch, with exactly one commit for each retired instruction and no
-  fabricated record for a trap or simulator failure.
-- **Physical-access parity:** verify native and TLM/external Platform adapters
-  preserve ADR-0002 raw-byte, fault, atomicity, and delay semantics.
-- **Platform event ordering:** verify successful HTIF/tohost writes produce a
-  Platform event only after the writing instruction's `InstructionRetired` fact
-  is complete, and failed writes produce no successful exit.
-- **Result and inspection:** verify terminal categories remain distinct, final
-  Machine inspection is coherent, debugger operations route through Machine,
-  and signature extraction is host-side and post-run.
-- **Compatibility regression:** run the focused CLI, ELF, executor, commit,
-  peripheral, TLM, and debug tests plus project-authored ELF programs; record
-  exact commands/revisions for any external compliance or differential suite.
-- **MMQ-10 integration:** separately verify interrupt sampling, timing/delay,
-  scheduler boundaries, and simultaneous-stop arbitration once MMQ-10 defines
-  them; do not infer those results from this ADR.
+- **Engine/lifecycle:** verify one Hart serves ISS/VP and §2–§4 construction, reset,
+  image, observation, and teardown semantics.
+- **Placement/observation:** verify metadata installation through Machine/Platform
+  without translation and ADR-0001 records without snapshots or re-fetch.
+- **Physical/events:** verify ADR-0002 parity and successful tohost exit only after
+  retirement, with failed writes producing no successful exit.
+- **Result/compatibility:** verify distinct terminal categories, coherent inspection,
+  host-side signatures, current CLI behavior, and project ELF tests.
+- **MMQ-10:** separately verify interrupt, timing/delay, and stop arbitration once
+  that ADR defines them; verify the Machine scheduler's §3 boundary independently.
 
 ## Bounded deferrals and open questions
 
-Only the following are intentionally left to later contracts or implementation
-design:
+Only these remain for later contracts or implementation design:
 
-1. Concrete Rust layouts, constructors, traits, generics, callbacks, channels,
-   lifetimes, ownership mechanics, and serialization/wire formats.
-2. The final Platform address map, concrete device models, host-service API, and
-   native/TLM/SystemC transport or FFI API.
-3. MMQ-10's interrupt eligibility/sampling, time units and advancement, delay
-   consumption, scheduler/batching strategy, safe asynchronous stop boundary,
-   and simultaneous-event priority.
-4. The selected ISA profile's exact reset values and any profile-specific device
-   reset details not already owned by an accepted device contract.
-5. The concrete representation of image placement, storage snapshots, and
-   signature inspection, provided they preserve the address/translation boundary
-   in §4.
-6. The implementation relationship, deprecation policy, and migration sequence
-   for `load_and_run`, `RiscVSimulator`, `SystemBus`, `MemoryInterface`, and
-   existing debug/TLM components.
-7. Future multi-Hart ordering, shared-device arbitration, DMA/coherence, and
-   global observation ordering.
+1. Concrete Rust layouts, traits, callbacks, lifetimes, ownership, serialization,
+   and wire formats.
+2. Platform address map, device/host models, and native/TLM/SystemC APIs.
+3. MMQ-10 interrupt sampling, time/delay semantics, safe async stop, and event
+   priority; the Machine scheduler strategy remains bounded by §3.
+4. Profile-specific Hart/device reset values not owned by an accepted contract.
+5. Image-placement storage/snapshot and signature representations, plus migration
+   and deprecation of existing wrappers/components.
+6. Future multi-Hart ordering, shared-device arbitration, DMA/coherence, and global
+   observation ordering.
 
-The ownership decisions, image-base-versus-translation distinction, successful
-HTIF retirement ordering, one-Hart ISS/VP composition, and compatibility
-constraints are decisions in this record rather than open questions. This ADR
-remains **Proposed** pending normal review and acceptance; it has no superseding
-record.
+The ownership, image-base distinction, HTIF retirement ordering, one-Hart
+composition, and compatibility constraints are decisions, not open questions.
+This ADR remains **Proposed** pending normal review and acceptance; it has no
+superseding record.
