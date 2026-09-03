@@ -10,6 +10,8 @@
 
 This document describes the intended product architecture. It does not claim that every depicted component is implemented or integrated. Current capability must be established from the source code and verified tests.
 
+For the corresponding as-is execution path, component wiring, and Current → Target gaps, see [Current Implementation Architecture](current-state.md).
+
 ## 1. Product evolution
 
 ```mermaid
