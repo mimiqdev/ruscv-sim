@@ -10,16 +10,15 @@ This index is the entry point for project decisions and technical documentation.
 
 ## Sources of truth
 
-1. [`ruscv-sim` Linear project](https://linear.app/mrtoniliu/project/ruscv-sim-7555af313020) — active work items, status, priority, ownership, and dependencies.
-2. [Current milestone contract](dev-plan.md) — objective, scope boundaries, non-goals, constraints, deliverables, and acceptance criteria.
-3. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
-4. [Current implementation architecture](architecture/current-state.md) — descriptive source-to-target inventory and gap matrix.
-5. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
-6. [Development environment](development-environment.md) — normative container toolchain and usage.
-7. [Documentation policy](documentation-policy.md) — status, authority, and archival rules.
-8. Source code and verified tests — authority for what is implemented today.
+1. [Current milestone contract](dev-plan.md) — objective, scope boundaries, non-goals, constraints, deliverables, and acceptance criteria.
+2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
+3. [Current implementation architecture](architecture/current-state.md) — descriptive source-to-target inventory and gap matrix.
+4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
+5. [Development environment](development-environment.md) — normative container toolchain and usage.
+6. [Documentation policy](documentation-policy.md) — status, authority, and archival rules.
+7. Source code and verified tests — authority for what is implemented today.
 
-The authority split is deliberate: Linear owns live execution metadata; the milestone contract owns scope and acceptance criteria; accepted ADRs own cross-cutting architecture decisions; and source code plus verified tests own current behavior and integration evidence. Individual Linear issue links are navigation only and do not override repository contracts, ADRs, or implementation evidence.
+The authority split is deliberate: the milestone contract owns scope and acceptance criteria; accepted ADRs own cross-cutting architecture decisions; source code plus verified tests own current behavior and integration evidence; and Git history records change provenance.
 
 Target architecture is not implementation status. Component presence is not end-to-end support.
 

@@ -6,15 +6,13 @@
 
 **Status:** Active — architecture definition
 
-**Authority:** Normative milestone contract; Linear is authoritative for execution status
+**Authority:** Normative milestone contract
 
 **Started:** 2026-08-26
 
 **Last reviewed:** 2026-09-03
 
-**Linear:** [`ruscv-sim` project](https://linear.app/mrtoniliu/project/ruscv-sim-7555af313020) · [MMQ-5 milestone issue](https://linear.app/mrtoniliu/issue/MMQ-5/a0-iss-virtual-platform-architecture-baseline)
-
-This is the only current milestone contract. Earlier milestone and sprint plans are historical records under [`archive/`](archive/). Active task status, priority, ownership, and dependencies are maintained in Linear rather than duplicated here.
+This is the only current milestone contract. Earlier milestone and sprint plans are historical records under [`archive/`](archive/). Historical plans do not direct current work; this document defines the current technical scope and acceptance criteria.
 
 ## Objective
 
@@ -37,20 +35,21 @@ The following A0 scope items were already satisfied before this plan was convert
 
 - Superseded milestone and architecture/SystemBus plans were archived, the documentation hierarchy was reorganized, and historical source content was preserved in the [architecture reset commit `50d8c739f686b218a7e4fcc99619079d97833705`](https://github.com/mimiqdev/ruscv-sim/commit/50d8c739f686b218a7e4fcc99619079d97833705).
 - The target-architecture entry point and its product-evolution, system-context, layering, Hart, memory/TLM, runtime, and capability-growth views are recorded in [`docs/architecture/README.md`](architecture/README.md) by that same [architecture reset commit](https://github.com/mimiqdev/ruscv-sim/commit/50d8c739f686b218a7e4fcc99619079d97833705).
-- The repository-owned Rust/RISC-V guest/differential-testing development image was established and then hardened in [`f7db92d`](https://github.com/mimiqdev/ruscv-sim/commit/f7db92d59b86b886d30919e25e863be614ffed2b) and [`6fc0976`](https://github.com/mimiqdev/ruscv-sim/commit/6fc097661bada37984376a4ba421d44e2b299ab7), with the quality-gate and guest commands recorded in [`docs/development-environment.md`](development-environment.md) and [`.github/workflows/dev-container.yml`](../.github/workflows/dev-container.yml).
-- The already-satisfied acceptance criterion that the development image builds and runs the current project quality gate and guest ELF toolchain is supported by the image workflow and commands cited above. The remaining scope and acceptance criteria above remain current contract requirements, with live status tracked in Linear.
+- The repository-owned Rust/RISC-V guest/differential-testing development image was established and hardened in [`f7db92d`](https://github.com/mimiqdev/ruscv-sim/commit/f7db92d59b86b886d30919e25e863be614ffed2b) and [`6fc0976`](https://github.com/mimiqdev/ruscv-sim/commit/6fc097661bada37984376a4ba421d44e2b299ab7), with the quality-gate and guest commands recorded in [`docs/development-environment.md`](development-environment.md) and [`.github/workflows/dev-container.yml`](../.github/workflows/dev-container.yml).
+- The already-satisfied acceptance criterion that the development image builds and runs the current project quality gate and guest ELF toolchain is supported by the image workflow and commands cited above. The remaining scope and acceptance criteria above remain current contract requirements.
 
-## Execution tracking
+## Architecture sequence
 
-- [MMQ-11](https://linear.app/mrtoniliu/issue/MMQ-11/review-current-implementation-architecture-audit) — review the current implementation architecture audit.
-- [MMQ-9](https://linear.app/mrtoniliu/issue/MMQ-9/adr-hart-execution-outcome-and-observation-records) — define Hart outcomes and observation records.
-- [MMQ-7](https://linear.app/mrtoniliu/issue/MMQ-7/adr-physicalaccess-transaction-and-fault-contract) — define the physical-access contract.
-- [MMQ-6](https://linear.app/mrtoniliu/issue/MMQ-6/adr-runner-machine-and-platform-ownership) — define Runner, Machine, and Platform ownership.
-- [MMQ-10](https://linear.app/mrtoniliu/issue/MMQ-10/adr-interrupt-time-and-stop-event-boundaries) — define interrupt, time, and stop-event boundaries.
-- [MMQ-12](https://linear.app/mrtoniliu/issue/MMQ-12/run-a0-architecture-acceptance-review) — perform the A0 acceptance review.
-- [MMQ-8](https://linear.app/mrtoniliu/issue/MMQ-8/approve-successor-implementation-milestone-and-close-a0) — approve the successor milestone and close A0.
+This sequence records the technical order for completing the baseline; it is not a task-status or dependency register.
 
-These individual issue links provide navigation only; Linear holds their live status and dependency graph, while this contract remains authoritative for scope and acceptance criteria.
+1. Review the current implementation architecture in [`docs/architecture/current-state.md`](architecture/current-state.md).
+2. Define Hart outcomes and observation records in [ADR-0001](architecture/decisions/0001-hart-execution-outcome-and-observation.md).
+3. Define the physical-access contract in [ADR-0002](architecture/decisions/0002-physical-access-transaction-and-fault.md).
+4. Define Runner, Machine, and Platform ownership in [ADR-0003](architecture/decisions/0003-runner-machine-and-platform-ownership.md).
+5. Define the interrupt, time, and stop-event boundaries.
+6. Cross-check the baseline against the acceptance criteria and derive the successor implementation scope.
+
+The architecture records and current implementation inventory are the durable references for this sequence.
 
 ## Non-goals
 
@@ -89,8 +88,8 @@ These individual issue links provide navigation only; Linear holds their live st
 - Open architecture decisions and deferred performance work are explicitly recorded.
 - The next implementation milestone is approved and replaces A0 as the only current milestone contract.
 
-Acceptance is established by recorded repository evidence and the A0 review; live completion state is tracked in Linear.
+Acceptance is established by recorded repository evidence.
 
 ## Closeout
 
-When all acceptance criteria are satisfied, archive this plan with the review date, accepted decisions, known open questions, relevant commit identifier, and Linear milestone issue. Then replace it with exactly one approved implementation milestone contract and link the successor Linear tracking issue.
+When all acceptance criteria are satisfied, archive this plan with the review date, accepted decisions, known open questions, relevant repository evidence, and known limitations. Then replace it with exactly one approved implementation milestone contract.

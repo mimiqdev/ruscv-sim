@@ -6,8 +6,7 @@
 | Authority | Draft contract; normative only after acceptance |
 | Date | 2026-09-03 |
 | Owner | Runtime and composition architecture |
-| Tracking | [MMQ-6](https://linear.app/mrtoniliu/issue/MMQ-6/adr-runner-machine-and-platform-ownership) |
-| Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0002](0002-physical-access-transaction-and-fault.md), MMQ-10 (interrupt, time, and stop-event boundaries) |
+| Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0002](0002-physical-access-transaction-and-fault.md), the interrupt, time, and stop-event decision |
 | Supersedes | None |
 
 > This is a documentation-only decision. It defines semantic ownership and dependency
@@ -46,8 +45,9 @@ this record: a completed step yields `InstructionRetired`, `TrapEntered`, or
 `SimulatorFailure`, with Hart-owned commit/trap facts. ADR-0002 defines the one
 transport-neutral `PhysicalAccess` boundary consumed here: all physical accesses
 use the same raw-byte transaction vocabulary, and physical target faults remain
-distinct from simulator/adapter failures. MMQ-10 will define the detailed
-interrupt, time, and stop-event arbitration that this record deliberately bounds.
+distinct from simulator/adapter failures. The interrupt, time, and stop-event
+decision will define the detailed interrupt, time, and stop-event arbitration that
+this record deliberately bounds.
 
 ## Decision
 
@@ -98,8 +98,9 @@ lines, observation delivery, and time/deadline information—without changing th
 direction. Machine owns the association of any time/scheduling service with the
 Hart and Platform. A scheduler, when present, is Machine-associated and cannot
 bypass the Runner's outer loop or terminal policy; the complete invocation and
-return rule is in §3. MMQ-10 defines only detailed timing, interrupt, and
-stop-arbitration semantics. A port is a contract, not a commitment to a Rust
+return rule is in §3. The interrupt, time, and stop-event decision defines only
+detailed timing, interrupt, and stop-arbitration semantics. A port is a contract,
+not a commitment to a Rust
 trait, callback, channel, or transport representation.
 
 | Concern | Primary owner | Boundary rule |
@@ -235,14 +236,16 @@ returned facts end the run. The Runner consumes those facts/events and decides
 continue versus stop, including non-terminal Hart outcomes and result
 aggregation. A quantum may contain multiple steps only when the Machine returns
 each step's facts/events and preserves ADR-0001 observation semantics; it is not
-a Machine-owned stop-policy operation. MMQ-10 defines timing, interrupt
-eligibility/sampling, and simultaneous-stop arbitration only; it does not own
+a Machine-owned stop-policy operation. The interrupt, time, and stop-event
+decision defines timing, interrupt eligibility/sampling, and simultaneous-stop
+arbitration only; it does not own
 this loop.
 
 A Runner stop request, debugger request, limit, Platform exit, Hart trap, or
 simulator failure must remain distinguishable in the run-level result. Stop
-requests are handled at the defined architectural boundary; MMQ-10 arbitrates
-only when multiple conditions are eligible at one boundary.
+requests are handled at the defined architectural boundary; the interrupt, time,
+and stop-event decision arbitrates only when multiple conditions are eligible at
+one boundary.
 
 At teardown the Runner stops accepting control, completes or reports observer
 handling according to its run policy, and releases its run-level sinks. The
@@ -416,7 +419,8 @@ Limits are Runner-owned outer controls. The Runner may stop after a configured
 number of completed Hart steps, a deadline, or another bound and reports a limit
 rather than a Hart trap. The exact meaning of a cycle versus an instruction,
 physical delay consumption, virtual-time advancement, deadline sampling, and
-whether a limit wins against another event are explicitly deferred to MMQ-10.
+whether a limit wins against another event are explicitly deferred to the
+interrupt, time, and stop-event decision.
 The current CLI instruction-count behavior is nevertheless preserved as a
 compatibility constraint while these decisions are made.
 
@@ -444,8 +448,9 @@ deprecation, or replacement are not selected here.
 
 ### 9. Compatibility constraints for the current product
 
-These are the observable invariants required by MMQ-6 for later implementation;
-they do not freeze target internals, address maps, buses, Rust APIs, or transport.
+These are the observable invariants required by this ADR for later
+implementation; they do not freeze target internals, address maps, buses, Rust
+APIs, or transport.
 This ADR changes no behavior; see the [current implementation inventory](../current-state.md)
 for current wiring and test status.
 
@@ -512,22 +517,23 @@ external models are Platform implementations, not alternate ISA engines. Image
 installation is host-side Machine work without a Hart load/commit; page walks use
 the same port.
 
-## Boundary with MMQ-10
+## Boundary with the interrupt, time, and stop-event decision
 
-MMQ-10 owns detailed timing, interrupt, and stop-arbitration semantics only. This
-ADR fixes ownership and causal boundaries; it does not assign the outer loop or
-terminal policy to MMQ-10:
+The interrupt, time, and stop-event decision owns detailed timing, interrupt, and
+stop-arbitration semantics only. This ADR fixes ownership and causal boundaries;
+it does not assign the outer loop or terminal policy to that decision:
 
-| Concern left to MMQ-10 | Boundary fixed by this ADR |
+| Concern left to the interrupt, time, and stop-event decision | Boundary fixed by this ADR |
 | --- | --- |
 | Interrupt eligibility, masking, priority, sampling point | Platform/Machine provide lines; Hart samples at the defined boundary. |
-| Cost, delay, time units, advancement, and budget facts | Runner owns limits; the Machine-associated scheduler reports facts; MMQ-10 defines timing. |
+| Cost, delay, time units, advancement, and budget facts | Runner owns limits; the Machine-associated scheduler reports facts; the interrupt, time, and stop-event decision defines timing. |
 | Quantum, batching, and event-loop strategy | Machine associates/invokes the scheduler under §3; it returns per-step facts/events and cannot bypass Runner terminal policy. |
-| Simultaneous trap/exit/debug/limit/time/failure priority | Runner aggregates causes; MMQ-10 chooses arbitration. |
+| Simultaneous trap/exit/debug/limit/time/failure priority | Runner aggregates causes; the interrupt, time, and stop-event decision chooses arbitration. |
 | Asynchronous interruption and resumability | Debug control reaches Runner/Machine; it is not a Hart trap or device exit. |
 
-MMQ-10 may refine timing, interrupt, and arbitration without moving Hart semantics
-or §3 loop/terminal ownership, and without changing successful tohost retirement
+The interrupt, time, and stop-event decision may refine timing, interrupt, and
+arbitration without moving Hart semantics or §3 loop/terminal ownership, and
+without changing successful tohost retirement
 ordering. This is a bounded deferral, not an unresolved ownership question.
 
 ## Alternatives considered
@@ -565,7 +571,7 @@ implementation work.
 
 ## Later verification when implemented
 
-These are implementation evidence, not acceptance gates for this documentation ADR:
+These are implementation evidence for a later implementation:
 
 - **Engine/lifecycle:** verify one Hart serves ISS/VP and §2–§4 construction, reset,
   image, observation, and teardown semantics.
@@ -575,8 +581,9 @@ These are implementation evidence, not acceptance gates for this documentation A
   retirement, with failed writes producing no successful exit.
 - **Result/compatibility:** verify distinct terminal categories, coherent inspection,
   host-side signatures, current CLI behavior, and project ELF tests.
-- **MMQ-10:** separately verify interrupt, timing/delay, and stop arbitration once
-  that ADR defines them; verify the Machine scheduler's §3 boundary independently.
+- **Interrupt, time, and stop-event decision:** separately verify interrupt,
+  timing/delay, and stop arbitration once its technical contract is defined;
+  verify the Machine scheduler's §3 boundary independently.
 
 ## Bounded deferrals and open questions
 
@@ -585,8 +592,9 @@ Only these remain for later contracts or implementation design:
 1. Concrete Rust layouts, traits, callbacks, lifetimes, ownership, serialization,
    and wire formats.
 2. Platform address map, device/host models, and native/TLM/SystemC APIs.
-3. MMQ-10 interrupt sampling, time/delay semantics, safe async stop, and event
-   priority; the Machine scheduler strategy remains bounded by §3.
+3. Interrupt sampling, time/delay semantics, safe async stop, and event priority
+   belong to the interrupt, time, and stop-event decision; the Machine scheduler
+   strategy remains bounded by §3.
 4. Profile-specific Hart/device reset values not owned by an accepted contract.
 5. Image-placement storage/snapshot and signature representations, plus migration
    and deprecation of existing wrappers/components.
@@ -595,5 +603,4 @@ Only these remain for later contracts or implementation design:
 
 The ownership, image-base distinction, HTIF retirement ordering, one-Hart
 composition, and compatibility constraints are decisions, not open questions.
-This ADR remains **Proposed** pending normal review and acceptance; it has no
-superseding record.
+This ADR remains **Proposed**; it has no superseding record.

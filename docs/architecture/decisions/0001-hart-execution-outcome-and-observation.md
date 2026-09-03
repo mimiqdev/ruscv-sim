@@ -4,7 +4,6 @@
 **Authority:** Draft contract; normative only after acceptance
 **Date:** 2026-09-03
 **Owner:** Hart/core architecture
-**Issues:** [MMQ-9](https://linear.app/mrtoniliu/issue/MMQ-9/adr-hart-execution-outcome-and-observation-records), [MMQ-7](https://linear.app/mrtoniliu/issue/MMQ-7/adr-physical-access-transaction-and-fault-contract), [MMQ-6](https://linear.app/mrtoniliu/issue/MMQ-6/adr-runner-machine-and-platform-ownership), [MMQ-10](https://linear.app/mrtoniliu/issue/MMQ-10/adr-interrupt-time-and-stop-event-boundaries)
 
 > This record defines the semantic Hart outcome, retirement, trap, and observation-ownership contracts. It is not a trace schema or a Rust implementation plan. The outcome and record names below are illustrative; this ADR does not prescribe enum or struct layouts, field types, serialization, wire formats, or migration mechanics.
 
@@ -34,7 +33,7 @@ One Hart architectural step starts from a coherent architectural state and compl
 | `TrapEntered` | An architectural synchronous exception or an eligible interrupt was accepted and trap entry completed. | One `TrapRecord`, emitted from Hart-owned facts; no instruction retires in this step. |
 | `SimulatorFailure` | The Hart or an adapter could not complete the step as an architectural operation. This is not guest-visible trap entry. | A diagnostic owned by the execution-control layer; no commit or trap record for an incomplete step. |
 
-These conceptual variants are a semantic contract, not a requirement to expose a particular Rust enum. A step with no accepted interrupt attempts one instruction. MMQ-10 owns interrupt eligibility, priority, masking, and timing; this ADR fixes the Hart boundary at which an accepted interrupt enters trap before fetching or executing an instruction.
+These conceptual variants are a semantic contract, not a requirement to expose a particular Rust enum. A step with no accepted interrupt attempts one instruction. The interrupt, time, and stop-event decision owns interrupt eligibility, priority, masking, and timing; this ADR fixes the Hart boundary at which an accepted interrupt enters trap before fetching or executing an instruction.
 
 `TrapEntered` is complete only after the architectural trap-entry state is established: the applicable saved PC, cause, and value and status state have been updated, privilege has changed as required by delegation, and the Hart PC is the selected handler target. If trap entry itself cannot be completed because of an implementation or host failure, the result is `SimulatorFailure`, not a partially recorded trap.
 
@@ -50,7 +49,7 @@ The following rules are normative for the semantic contract:
 | A physical port reports a guest-visible fault, after Hart classification | No | `TrapEntered` | Trap entry for the access-fault cause selected by the matrix below |
 | A Hart invariant, host resource, unsupported legal operation, or physical backend failure prevents architectural completion | No completed instruction | `SimulatorFailure` | No partial Hart architectural state is exposed as a commit or trap |
 
-A faulting instruction and interrupt entry therefore never retire an instruction. In particular, `minstret`-like retirement accounting must not count either the faulting instruction or an interrupt entry as a retired instruction. Other architectural counters follow their ISA-defined semantics and are recorded when they change; scheduler, wall-clock, and virtual-time accounting is outside this ADR and belongs to MMQ-10.
+A faulting instruction and interrupt entry therefore never retire an instruction. In particular, `minstret`-like retirement accounting must not count either the faulting instruction or an interrupt entry as a retired instruction. Other architectural counters follow their ISA-defined semantics and are recorded when they change; scheduler, wall-clock, and virtual-time accounting is outside this ADR and belongs to the interrupt, time, and stop-event decision.
 
 A normal instruction's retirement is the point at which its architectural state transition becomes visible to the Hart's observers. The implementation may stage effects, use a journal, or use another mechanism; this ADR does not choose among those mechanisms. A failed instruction cannot leave partially applied GPR, floating-point register, CSR, privilege, PC, reservation, or other Hart architectural state behind. Any state change that the selected ISA profile explicitly mandates for a faulting attempt is part of the completed architectural outcome rather than a leaked partial effect.
 
@@ -158,8 +157,8 @@ The Hart step outcome is deliberately narrower than a Runner result:
 | Architectural exception or accepted interrupt | `TrapEntered` plus `TrapRecord` | Hart/architecture determines entry; Runner decides whether/how to continue |
 | `tohost`/HTIF or another guest-visible platform exit is written successfully | The writing instruction still returns `InstructionRetired` | Platform reports the event; Runner applies exit policy |
 | Debugger breakpoint, user interruption, or debugger request | No special Hart trap outcome unless the guest executed an architectural breakpoint instruction | Runner/debug controller |
-| Cycle/instruction limit | No special Hart trap outcome | Runner and, for time/scheduling details, MMQ-10 |
-| Device scheduling, delay, or virtual time advancement | Not a Hart step outcome | Platform/Machine/Scheduler under MMQ-10 |
+| Cycle/instruction limit | No special Hart trap outcome | Runner and, for time/scheduling details, the interrupt, time, and stop-event decision |
+| Device scheduling, delay, or virtual time advancement | Not a Hart step outcome | Platform/Machine/Scheduler under the interrupt, time, and stop-event decision |
 | Internal or host failure | `SimulatorFailure` if it prevents Hart completion | Runner reports/stops according to its policy |
 
 This keeps platform exit, debugger stop, execution limits, scheduling, architectural traps, and simulator failures distinguishable as required by the architecture principles.
@@ -200,7 +199,7 @@ A tagged semantic outcome makes retirement, trap entry, and simulator failure mu
 
 - Hart execution must prevent partial architectural state from escaping a failed step; the implementation may need staging, journaling, or an equivalent mechanism.
 - The PhysicalAccess contract must distinguish guest-visible physical faults from host/transport failures and provide the atomic operation guarantees required by Hart semantics.
-- Existing loggers and trap components require adapters or later migration, but this documentation issue does not change them.
+- Existing loggers and trap components require adapters or later migration, but this ADR does not change them.
 - Concrete record representation, sink behavior, multi-Hart ordering, and run-control policy remain implementation or outer-layer concerns.
 
 ## Compatibility and migration impact
@@ -209,7 +208,7 @@ This ADR is documentation-only. It changes no simulator behavior, public Rust AP
 
 When implementation work is authorized, the public ELF behavior and one-Hart execution model should be preserved while observation and fault classification move to the Hart boundary. The concrete migration sequence, Rust types, serialization, sink adapters, and compatibility details are deferred to implementation design and the later verification described below.
 
-## Relationship to PhysicalAccess (MMQ-7)
+## Relationship to [ADR-0002](0002-physical-access-transaction-and-fault.md)
 
 The companion PhysicalAccess contract and this Hart contract have distinct responsibilities:
 
@@ -219,15 +218,15 @@ The companion PhysicalAccess contract and this Hart contract have distinct respo
 | Data and operations | Transfer raw little-endian bytes and carry enough operation information for indivisible AMO/LR/SC envelopes. | Interpret load/store/atomic semantics, apply register results, and decide retirement. |
 | Translation-stage access | Serve PTE reads and A/D writes as physical operations with the same fault taxonomy. | Know that a failed PTE operation belongs to the original fetch/load/store-AMO access and apply §2; preserve a successful A/D write as a separate effect. |
 | Atomicity and reservation | Prevent partial failed physical transactions and expose competing-access visibility through the port. | Own architectural reservation state and SC result; apply the selected ISA profile's reservation effects. |
-| Timing | Report optional physical delay metadata without defining Hart outcomes. | Leave consumption and scheduling to the outer layers under MMQ-10. |
+| Timing | Report optional physical delay metadata without defining Hart outcomes. | Leave consumption and scheduling to the outer layers under the interrupt, time, and stop-event decision. |
 
 A valid routed device error is therefore not an unresolved integration question: it is a guest-visible physical access fault. An adapter failure or unknown completion is a `SimulatorFailure`, never an invented trap. A generic `MemoryError` conversion in the current implementation is not this contract.
 
-This is a consistency boundary, not a circular acceptance dependency. MMQ-7 records the companion port contract; MMQ-6 and MMQ-10 consume the Hart boundary for outer ownership; and MMQ-12 performs the later A0 review. None of those sibling or downstream records is a prerequisite for accepting this documentation ADR once its own decisions are reviewed.
+This is a consistency boundary. [ADR-0002](0002-physical-access-transaction-and-fault.md) records the companion port contract; [ADR-0003](0003-runner-machine-and-platform-ownership.md) and the interrupt, time, and stop-event decision consume the Hart boundary for outer ownership. The records retain their distinct scopes and do not duplicate one another.
 
 ## Later verification when implemented
 
-The following are implementation evidence to obtain later; they are not acceptance gates for this documentation ADR:
+The following are implementation evidence to obtain later:
 
 - **Outcome and retirement:** verify one commit for each successful instruction, no commit for a faulting instruction or accepted interrupt, precise saved/next PC, privilege transitions, and retirement-counter behavior.
 - **Fault matrix:** exercise post-translation and page-table-walk physical faults for fetch/load/store-AMO, invalid or non-canonical translation conditions, permission failures, and architectural misalignment. Verify access-fault versus page-fault causes and original-VA trap values, with physical/PTE context remaining diagnostic.
@@ -239,13 +238,13 @@ The following are implementation evidence to obtain later; they are not acceptan
 
 ## Open questions and explicit deferrals
 
-1. MMQ-10 owns interrupt eligibility, priority/masking, architectural counter timing, delay consumption, and scheduler boundaries outside a Hart step.
-2. MMQ-6 owns how the Runner represents a completed Hart outcome together with platform exit, debugger stop, execution limit, observer failure, and simulator failure.
+1. The interrupt, time, and stop-event decision owns interrupt eligibility, priority/masking, architectural counter timing, delay consumption, and scheduler boundaries outside a Hart step.
+2. [ADR-0003](0003-runner-machine-and-platform-ownership.md) owns how the Runner represents a completed Hart outcome together with platform exit, debugger stop, execution limit, observer failure, and simulator failure.
 3. The selected ISA profile determines the A/D update scheme and LR/SC reservation effects, including profile-defined faulting-SC behavior; this ADR does not select a new scheme or semantic.
 4. Concrete Rust outcome/record layouts, field types, ownership/lifetime mechanics, serialization, text-log compatibility, and detailed sink or trace formats are deferred to implementation design.
 5. Reservation granule, multi-Hart ordering, DMA coherence, global observation ordering, and trace back-pressure are deferred to the relevant outer-layer contracts; they must not weaken precise per-Hart retirement.
 
-The physical-fault cause matrix, architectural trap value, A/D-write visibility, and device-fault versus simulator-failure distinction are decisions above, not open questions. There is no superseding record. This ADR remains **Proposed** pending normal review of this record; sibling and downstream ADRs and the A0 review consume this contract rather than unlocking it.
+The physical-fault cause matrix, architectural trap value, A/D-write visibility, and device-fault versus simulator-failure distinction are decisions above, not open questions. There is no superseding record. This ADR remains **Proposed**.
 
 ## Source and test map
 
