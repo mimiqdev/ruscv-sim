@@ -36,10 +36,10 @@ interrupt, a device must not silently advance a Hart-owned counter, an annotated
 physical delay must not become an accidental sleep or instruction count, and a
 Runner must not lose the fact that a limit, trap, exit, debugger request, and
 backend failure happened at one boundary. WFI makes the distinction observable:
-a waiting Hart must not spin through instructions, while a timer must be able to
-wake it without inventing a retirement. Multiple Harts also need a stable result
-when their events share a timestamp, without this ADR prescribing one scheduler
-implementation.
+a waiting Hart must not spin through instructions, while a timer/input event must
+be admitted without inventing a retirement. Multiple Harts also need a stable
+result when their events share a timestamp, without this ADR prescribing one
+scheduler implementation.
 
 This ADR therefore defines:
 
@@ -48,10 +48,12 @@ This ADR therefore defines:
    control requests, and observation demand;
 3. the minimal functional-ISS time policy and the rules for consuming physical
    delay;
-4. interrupt assertion, pending state, eligibility, sampling, acceptance, and
-   block-execution precision;
-5. WFI, runnable/waiting/no-progress state, lifecycle drain, timer wakeup,
-   and legal idle jumps;
+4. Platform interrupt-input admission, the Hart/profile sampling slot and
+   acceptance outcome, and block-execution precision (without defining Hart
+   eligibility, masking, delegation, or architectural priority);
+5. scheduler handling of Hart/profile-reported WFI/runnable/waiting state,
+   lifecycle drain, timer/input admission, and legal idle jumps (without
+   defining WFI legality or transitions);
 6. non-lossy control facts, deterministic same-time ordering, and primary-reason
    classification; and
 7. synchronization, quiesce/drain, multi-Hart ordering, and conditional replay
@@ -65,8 +67,9 @@ and may be represented by different types or transports later.
 - **Must** and **shall** state an invariant of the target contract.
 - **May** describes an allowed implementation choice that cannot change the
   observable contract.
-- **Minimal ISS policy** is the deterministic functional policy selected here for
-  the baseline. It is not a claim about hardware cycle accuracy.
+- **Minimal ISS policy** is the deterministic framework accounting policy selected
+  here for baseline `iss_tick`/virtual-time behavior. It is not an ISA timing
+  profile or a claim about hardware cycle accuracy.
 - **Precise mode** means that no architectural interrupt, stop request, or
   required time boundary is observed later than the next permitted Hart boundary.
 - **Reduced-accuracy mode** is allowed only when it declares a finite interrupt
@@ -76,9 +79,10 @@ and may be represented by different types or transports later.
   an instruction attempt that retires or enters an architectural trap, or an
   accepted interrupt entry whose trap entry completes. A started turn that ends
   in `SimulatorFailure` is attempted and consumes its turn budget slot, but is
-  not a completed Hart turn and receives no completed-turn counter or `iss_tick`
-  charge; for an instruction turn, its `InstructionAttempted` progress is still
-  reported. WFI idle time and Platform-only time advancement are not Hart turns.
+  not a completed Hart turn and receives no completed-turn framework `iss_tick`
+  charge; no ISA counter delta is implied by that accounting. For an instruction
+  turn, its `InstructionAttempted` progress is still reported. WFI idle time and
+  Platform-only time advancement are not Hart turns.
 - **QuiesceRequested** is the lifecycle state in which an effective quiesce/drain
   request prevents new turns while already-started work is drained.
 - **DrainComplete** is the lifecycle acknowledgment that no Hart transition,
@@ -96,13 +100,15 @@ and may be represented by different types or transports later.
 
 The contract adopts these rules:
 
-1. The Hart owns instruction attempts, retirement, `mcycle`, `minstret`, trap
-   entry, and profile-defined architectural pending/privilege state. The Platform
-   owns `mtime`, `mtimecmp`, interrupt sources, level/edge controller state,
-   physical routing, and device events. The Machine owns the native virtual-time
-   cursor, grants, event arbitration, and the distinct quiesce/drain lifecycle;
-   an external kernel remains the time authority for its grants. The Runner owns
-   run policy and final presentation. Host wall time is observation/control input
+1. The Hart/profile owns instruction attempts, retirement, `mcycle`, `minstret`,
+   interrupt eligibility, masking, delegation, architectural priority, trap/debug/
+   WFI transitions, and other architectural state. The Platform owns `mtime`,
+   `mtimecmp`, interrupt sources, level/edge controller state, physical routing,
+   and device events. The Machine owns Platform-input admission, grants at a
+   Hart/profile-provided architectural boundary, native virtual-time cursor,
+   framework event/fact ordering, and the distinct quiesce/drain lifecycle; an
+   external kernel remains the time authority for its grants. The Runner owns run
+   policy and final presentation. Host wall time is observation/control input
    only.
 2. A Machine exchange uses an explicit finite, zero, or unbounded **Hart-turn
    budget**, an absolute virtual-time deadline, a control request, and an
@@ -113,23 +119,26 @@ The contract adopts these rules:
    cross it.
 3. In the minimal ISS, each completed Hart turn advances virtual time by one
    configured `iss_tick`; each physical response delay is added once, separately;
-   WFI idle jumps advance only virtual/Platform time. Minimal `mcycle` advances
-   once per completed Hart turn and `minstret` advances only for retired
-   instructions. These equalities are a functional policy, not an assertion that
-   an instruction is one hardware cycle or that virtual time is host time.
+   and WFI idle jumps advance only virtual/Platform time. The Hart/timing profile
+   returns ISA-visible `mcycle` and `minstret` deltas for each transition; the
+   Machine neither computes nor writes those counters. A separately named
+   optional functional Hart timing profile may relate a counter delta to a
+   completed transition, but that profile is not a Machine identity and does not
+   change this ownership boundary.
 4. A physical success and a guest-visible physical fault consume all known
    transaction delay. A simulator/adapter failure consumes any delay known to
    have elapsed, never retries or rolls back an unknown completion, and makes the
    run non-resumable until the adapter resolves or resets the state.
-5. Interrupts are sampled at the pre-fetch boundary after all Platform events due
-   at the current virtual time have been admitted. An accepted interrupt enters
-   trap before fetch, consumes one Hart turn, and does not retire an instruction.
-   An in-flight instruction is never asynchronously preempted.
-6. WFI retires once when executed and then puts the Hart into `Waiting` if no
-   wake condition is present at the post-retirement boundary. A `continue`/`run`
+5. The Machine admits Platform inputs due at the current virtual time, then grants
+   a selected Hart at the Hart/profile-provided architectural sampling boundary.
+   The Hart/profile samples and decides eligibility there: an accepted interrupt
+   enters trap before fetch, consumes one framework Hart turn, and does not retire
+   an instruction. An in-flight instruction is never asynchronously preempted.
+6. The Hart/profile applies WFI legality and post-retirement wake behavior,
+   returning its resulting `Runnable` or `Waiting` state. A `continue`/`run`
    scheduler may jump a wholly idle Machine only to the next known event or grant
    deadline; a single-step request never uses that idle jump. The Machine must
-   never simulate idle by retiring instructions.
+   never simulate idle by retiring instructions or mutate a Hart's run state.
 7. Machine returns every applicable fact in canonical order, including run-level
    `NoProgress` and any `DrainComplete` lifecycle acknowledgment. It does not
    collapse coincident facts into one reason or turn lifecycle readiness into a
@@ -147,11 +156,11 @@ exchange response for reporting, but copying does not transfer ownership.
 
 | Quantity | Owner | Meaning and update rule | Explicitly not |
 | --- | --- | --- | --- |
-| Instruction attempt | Hart, reported by Machine | A fetch/decode/execute attempt begins after the pre-fetch interrupt sample says no interrupt was accepted. It counts whether the instruction retires, enters a guest-visible synchronous trap, or fails; a failed attempt is reported as attempted but has no fabricated architectural outcome. | Retirement, a WFI idle jump, or an accepted interrupt entry |
+| Instruction attempt | Hart, reported by Machine | A fetch/decode/execute attempt begins after the Hart/profile boundary decision returns no accepted interrupt. It counts whether the instruction retires, enters a guest-visible synchronous trap, or fails; a failed attempt is reported as attempted but has no fabricated architectural outcome. | Retirement, a WFI idle jump, or an accepted interrupt entry |
 | Retired instruction progress | Hart, reported by Machine/Runner | Increments exactly once for `InstructionRetired`, including a retired WFI. It does not increment for a faulting instruction, interrupt entry, idle time, Platform advancement, or a simulator failure. | Number of turns or host instructions executed by a block engine |
-| Hart turn/step | Machine grant accounting | One accepted-interrupt transition or one started instruction attempt is one budget slot. Only a completed transition is a completed Hart turn for `mcycle`/`iss_tick` accounting; a started failed attempt is reported separately and is not charged as completed. | A hardware cycle, a retired instruction, or a unit of modeled time |
-| `minstret` | Hart architectural state | The selected ISA profile's retired-instruction counter. The baseline relation is one increment per retired instruction and none for interrupt entry or faulting instruction. | A Runner limit or a Platform clock |
-| `mcycle` | Hart architectural state | The selected ISA profile's cycle counter. Minimal ISS policy increments it by one counter unit per completed Hart turn, including an accepted interrupt entry and WFI retirement, but not idle jumps or Platform-only advancement. A richer timing profile may replace this charge explicitly. | `minstret`, `mtime`, transaction delay, or host elapsed time |
+| Hart turn/step | Machine grant accounting | One accepted-interrupt transition or one started instruction attempt is one budget slot. Only a completed transition is a completed Hart turn for framework `iss_tick` accounting; a started failed attempt is reported separately and is not charged as completed. ISA-visible counter deltas are returned by the Hart/profile and are not implied by this slot. | A hardware cycle, a retired instruction, an ISA counter delta, or a unit of modeled time |
+| `minstret` | Hart architectural state; delta returned by the Hart/timing profile | The selected ISA/profile's retired-instruction counter. The profile defines when it changes (the standard profile counts retired instructions and not interrupt entry or a faulting instruction); the Machine reports the returned delta without deriving or writing it. | A Runner limit, a framework budget slot, or a Platform clock |
+| `mcycle` | Hart architectural state; delta returned by the Hart/timing profile | The selected ISA profile's cycle counter. The Hart/timing profile determines its rate, inhibit behavior, and delta for each architectural transition. An explicitly selected functional Hart timing profile may return one counter unit for each completed transition, including an accepted interrupt entry and WFI retirement, but the Machine does not compute or write that value. | `minstret`, `mtime`, transaction delay, a budget slot, or host elapsed time |
 | `mtime` | Platform | Platform clock value derived from Machine virtual-time advancement using the configured Platform clock mapping. It is shared Platform state, not a per-Hart progress counter. Normal advancement is monotonic. | A Hart counter or host wall clock |
 | `mtimecmp` | Platform, normally per Hart/source | Timer compare state. It may be changed by an architectural MMIO operation according to the selected Platform contract; timer assertion is level-based on the resulting `mtime >= mtimecmp` condition. | An interrupt acceptance count or a scheduler deadline |
 | Scheduler/kernel virtual time | Machine in native hosting; outer kernel is the time authority in external hosting | Monotonic modeled time used to order Platform events and grants. A native Machine advances its cursor. An external kernel grants a bounded interval and commits the returned consumed time. | `mcycle`, wall time, or an implicit instruction count |
@@ -161,27 +170,43 @@ exchange response for reporting, but copying does not transfer ownership.
 ### 3.1 Progress vocabulary and counter independence
 
 A normal retired instruction produces one instruction attempt, one completed Hart
-turn, one retirement-progress increment, one `minstret` increment, and—under the
-minimal policy—one `mcycle` increment. A synchronous faulting instruction
-produces one instruction attempt and one completed Hart turn, enters a trap,
-produces no retirement or `minstret` increment, and receives the minimal `mcycle`
-charge because the Hart turn completed as an architectural trap. An accepted
-interrupt produces one completed Hart turn and one trap entry, but zero
-instruction attempts, zero retirement progress, and zero `minstret` increment. A
-started simulator-failed turn consumes one finite budget slot, but is not a
-completed Hart turn and receives no `mcycle` or `iss_tick` charge. For an
-instruction attempt it produces `InstructionAttempted` progress; for a failed
-accepted-interrupt entry it produces no completed `TrapEntered` fact. Any known
-consumed physical delay is still accounted for. It leaves the deterministic run
-non-resumable until the adapter resolves the failure or the Machine is reset. A
-WFI instruction is a normal retired instruction; the subsequent wait is not a
-turn.
+turn, and one retirement-progress increment. The Hart/timing profile returns the
+`minstret` and `mcycle` deltas required by the selected ISA/profile; the Machine
+reports those returned deltas but does not derive or write them. A synchronous
+faulting instruction produces one instruction attempt and one completed Hart
+turn, enters a trap, and produces no retirement progress; its counter deltas are
+returned by the Hart/profile. An accepted interrupt produces one completed
+framework Hart turn and one trap entry, but zero instruction attempts and zero
+retirement progress; its ISA-visible counter deltas likewise come only from the
+Hart/profile. A started simulator-failed turn consumes one finite budget slot,
+but is not a completed Hart turn and receives no completed-turn `iss_tick`
+charge; the Hart/profile supplies whatever counter facts are valid for the
+failure according to its own contract. For an instruction attempt it produces
+`InstructionAttempted` progress; for a failed accepted-interrupt entry it
+produces no completed `TrapEntered` fact. Any known consumed physical delay is
+still accounted for. It leaves the deterministic run non-resumable until the
+adapter resolves the failure or the Machine is reset. A WFI instruction is a
+normal retired instruction under the selected Hart/profile; the subsequent wait
+is not a turn.
 
-These relations are deliberately stated separately. A future cycle model may
-charge different `mcycle` costs, and a scheduler may advance virtual time by
-transaction delay or an idle jump without changing either Hart counter. A Runner
-that wants an instruction-only compatibility limit must express that as a
-separate run policy or adapter; it must not relabel `mcycle` or virtual time.
+The framework relation is intentionally limited to scheduler quantities:
+
+```text
+virtual_time_delta = completed_turns * iss_tick
+                    + converted_transaction_delay
+                    + Platform_idle_advance
+mtime               = Platform_clock_map(virtual_time)
+```
+
+The Hart/timing profile independently returns `mcycle_delta` and
+`minstret_delta`; ADR-0004 does not identify either with turns, `iss_tick`, or
+virtual time. A separately named optional **unit-transition functional Hart
+timing profile** may return one `mcycle` unit for each completed architectural
+transition and one `minstret` unit for each retired instruction, subject to the
+selected profile's counter rules. This optional profile is selected by Hart/profile
+configuration and is not a Machine identity. A Runner that wants an
+instruction-only compatibility limit must express that as a separate run policy
+or adapter; it must not relabel `mcycle` or virtual time.
 
 ## 4. Machine exchange
 
@@ -206,7 +231,8 @@ ordinary native grant:
   is always Hart turns as defined in §1.1. An accepted interrupt or a started
   instruction attempt consumes one turn budget slot, so a pending-interrupt storm
   or a failed attempt cannot bypass a zero or finite limit. A failed attempt does
-  not receive completed-turn `mcycle` or `iss_tick` accounting.
+  not receive completed-turn `iss_tick` accounting; any ISA-visible counter deltas
+  are supplied by the Hart/profile according to its own failure contract.
 - **Absolute virtual-time deadline:** optional. It is an inclusive completion
   bound. A grant without one is not allowed to cross another caller-imposed
   bound; an unbounded grant still stops at mandatory semantic boundaries.
@@ -233,11 +259,12 @@ request.
 The Machine returns, at a coherent boundary:
 
 - per-Hart instruction attempts, retired instructions, accepted interrupt entries,
-  trap entries, and wait/runnable state transitions, including a started attempt
-  that failed before architectural completion;
+  trap entries, Hart/profile-returned ISA counter deltas, and Hart/profile-reported
+  wait/runnable state transitions, including a started attempt that failed before
+  architectural completion;
 - start and end virtual time, total converted transaction delay, and any
   Platform-only idle advance, kept distinguishable from Hart progress;
-- the next known Platform event, timer wakeup, or grant deadline, if any;
+- the next known Platform event/input, timer crossing, or grant deadline, if any;
 - the current per-Hart state (`Runnable`, `Waiting`, or a terminal/stopped state),
   the run-level progress state (including `NoProgress` when applicable), and the
   lifecycle state (`QuiesceRequested` or `DrainComplete` when applicable);
@@ -283,10 +310,12 @@ For each exchange, the Machine must provide the equivalent of these phases:
 6. **Honor a reached deadline.** If the cursor equals the inclusive deadline,
    admit due events and perform no Hart turn. Return `DeadlineReached` together
    with every other applicable fact.
-7. **Handle an idle Machine.** If no Hart is Runnable, apply the WFI/idle rules
-   in §8. A legal idle advance may proceed only to the earliest permitted event
-   or deadline; if no admissible future work exists, expose `NoProgress` as a
-   run-level fact without inferring lifecycle `DrainComplete` from it.
+7. **Handle an idle Machine.** If no Hart is reported `Runnable` by its
+   Hart/profile, apply the scheduler idle rules in §8. A legal idle advance may
+   proceed only to the earliest permitted event or deadline; if no admissible
+   future work exists, expose `NoProgress` as a run-level fact without inferring
+   lifecycle `DrainComplete` from it. The Machine does not evaluate Hart
+   eligibility or change a Hart's run state while handling idle.
 8. **Check completion safety before a turn.** If a Hart is Runnable and a
    deadline is present, establish conservative completion bounds for enough
    candidate turns to determine whether one can fit, including each candidate's
@@ -298,15 +327,23 @@ For each exchange, the Machine must provide the equivalent of these phases:
    still do. If a required precise completion bound cannot be established, return
    a simulator/adapter failure before speculative work unless reduced accuracy was
    explicitly requested with finite bounds.
-9. **Sample and execute one turn.** At the selected Hart's pre-fetch boundary,
-   sample normalized interrupt inputs and architectural eligibility. Accept an
-   eligible interrupt before fetch, or begin one instruction attempt and complete
-   its architectural transition. A transition may retire, enter a synchronous
-   trap, or fail according to ADR-0001; a started failure consumes its budget
-   slot but is not a completed Hart turn.
+9. **Grant and receive one boundary result.** At the selected Hart/profile-
+   provided architectural boundary, the Machine grants one turn when the
+   Hart/profile has reported `Runnable`, with the admitted normalized inputs. If
+   it is `Waiting`, the Machine grants no instruction turn and receives a
+   still-waiting result. Otherwise the Hart/profile samples its inputs and
+   applies its own eligibility, masking, delegation, priority, and
+   trap/debug/WFI rules, then returns exactly one architectural transition:
+   accepted interrupt/trap entry, an instruction attempt yielding retirement or
+   synchronous trap, Debug Mode/trigger entry when implemented, still-waiting,
+   or failure. A started failure consumes its framework budget slot but is not a
+   completed Hart turn; the Machine does not fetch, accept, trap, execute WFI,
+   or change Hart state on the Hart's behalf.
 10. **Account and admit causal effects.** Consume each returned physical delay
-    exactly once, charge only completed-turn `iss_tick`/counter progress, update
-    Platform time, and append causal Platform facts after the parent transition.
+    exactly once, charge framework `iss_tick` only for completed turns when that
+    accounting is selected, record the Hart/profile-returned ISA counter deltas
+    without deriving or writing them, update Platform time, and append causal
+    Platform facts after the parent transition.
 11. **Expose the completed boundary.** Deliver requested observations, record any
     delivery or simulator failure, update the grant accounting, and re-evaluate
     all facts made applicable by the transition. Return at a required boundary
@@ -345,21 +382,27 @@ or any other external kernel API.
 
 A Machine must not advance the external kernel's global time behind its back. A
 native scheduler must not invent a second Hart execution engine or treat a grant
-as ownership of the Machine cursor. Both modes use the same interrupt sample
-point, delay rules, WFI rules, deadline checks, and fact ordering.
+as ownership of the Machine cursor. Both modes use the same input-admission and
+grant boundary, delay rules, Hart/profile WFI outcomes, deadline checks, and fact
+ordering. Hart/profile eligibility, masking, delegation, architectural priority,
+trap/debug transitions, and ISA-visible counter behavior remain outside the
+Machine exchange.
 
 ## 5. Modeled time and physical delay
 
-### 5.1 Minimal ISS time policy
+### 5.1 Framework `iss_tick` policy and optional Hart timing profile
 
-The baseline functional ISS uses a configured abstract duration called one
-`iss_tick`:
+The baseline framework uses a configured abstract duration called one `iss_tick`.
+This is scheduler accounting, not an ISA-visible counter rule:
 
 - The virtual-time cursor advances by one `iss_tick` for each completed Hart turn:
   an instruction retirement, a synchronous architectural trap entry, or an
-  accepted interrupt trap entry.
-- A WFI retirement receives the normal one-`iss_tick` charge. The following
-  `Waiting` interval receives no per-step charge.
+  accepted interrupt trap entry. A failed turn is not a completed turn and gets
+  no completed-turn `iss_tick` charge.
+- A completed WFI transition receives the normal one-`iss_tick` charge when this
+  framework policy is selected. The subsequent `Waiting` interval receives no
+  per-step grant or `iss_tick` charge because the Machine does not invoke the
+  Hart while it is waiting.
 - Every physical transaction contributes its converted nonnegative delay once,
   after that transaction completes. Delays from multiple accesses in one Hart
   turn are accumulated in their semantic completion order. A Platform event whose
@@ -367,40 +410,40 @@ The baseline functional ISS uses a configured abstract duration called one
   admitted at turn completion, with its due time retained separately from its
   effective boundary time.
 - A Platform-only idle jump advances virtual time directly to the next permitted
-  event or grant deadline. It does not increment `minstret`, instruction
-  attempts, or Hart turns, and it does not receive an artificial `mcycle`
-  instruction charge.
+  event or grant deadline. It does not increment instruction attempts or Hart
+  turns, does not invoke the Hart, and does not infer or fabricate any ISA
+  counter delta.
 - The default functional mapping is one virtual-time tick to one Platform
   `mtime` tick. This is a reproducible logical-clock choice, not a hardware
   frequency claim. A configured clock ratio may replace it.
-- Minimal `mcycle` increments by one counter unit for each completed Hart turn;
-  minimal `minstret` increments only for retired instructions as specified in
-  §3.1. Physical delay and idle advance do not silently increment either counter.
 - A simulator failure does not create a completed Hart turn or a fabricated
-  retirement/counter update. A started failed turn consumes one finite
-  turn-budget slot, but it does not add `BudgetExhausted` as the return story
-  merely because that slot was the last one. It reports an
-  `InstructionAttempted` fact when the failed turn began as an instruction
-  attempt, together with any known attempted work and consumed delay, then
-  stops the deterministic run in a non-resumable state until the adapter
-  resolves the failure or the Machine is reset.
+  retirement. A started failed turn consumes one finite turn-budget slot, but it
+  does not add `BudgetExhausted` as the return story merely because that slot was
+  the last one. It reports an `InstructionAttempted` fact when the failed turn
+  began as an instruction attempt, together with any known attempted work and
+  consumed delay, then stops the deterministic run in a non-resumable state until
+  the adapter resolves the failure or the Machine is reset.
 
-The policy intentionally relates the quantities without identifying them:
+The framework policy intentionally relates only scheduler quantities:
 
 ```text
 virtual_time_delta = completed_turns * iss_tick
                     + converted_transaction_delay
                     + Platform_idle_advance
-mcycle_delta        = completed_turns                 (minimal policy)
-minstret_delta      = retired_instructions
 mtime               = Platform_clock_map(virtual_time)
 ```
 
-The equation is a semantic accounting rule for the baseline, not a microarchitectural
-model. A richer timing profile may assign instruction, trap, bus, arbitration,
-cache, or idle costs and a different `mcycle` charge. It must name those mappings,
-keep ownership and monotonicity intact, and return enough accounting to distinguish
-them. It may not make host elapsed time the implicit guest clock.
+The Hart/timing profile independently returns `mcycle_delta` and `minstret_delta`
+for each architectural transition. ADR-0004 reports those deltas but neither
+computes nor writes them. A configuration may explicitly select the separately
+named **unit-transition functional Hart timing profile**: that Hart/profile may
+return one `mcycle` unit for each completed architectural transition (including an
+accepted interrupt entry and retired WFI) and one `minstret` unit for each retired
+instruction, subject to its ISA/profile counter rules. This optional Hart profile
+is not the Machine's identity, and another profile may return different deltas;
+physical delay and idle advance never silently become ISA counter updates. A
+Runner that wants an instruction-only compatibility limit must express that as a
+separate run policy or adapter; it must not relabel `mcycle` or virtual time.
 
 ### 5.2 Units, precision, and conversion
 
@@ -448,7 +491,8 @@ bound by reporting an unanticipated delay, the completed facts remain ordered an
 the response includes the overshoot plus `SimulatorFailure`; rollback is not a
 baseline requirement. A started turn that fails is not converted into a completed
 Hart turn: its known consumed delay still advances modeled time exactly once, but
-it contributes no `iss_tick` or `mcycle` charge and leaves the run non-resumable
+it contributes no completed-turn `iss_tick` charge and does not imply any ISA
+counter delta; it leaves the run non-resumable
 until adapter resolution or reset.
 
 A missing delay annotation means zero delay under the minimal ISS policy. A richer
@@ -482,48 +526,60 @@ Interrupt handling has three distinguishable stages:
    Platform/controller priority or perform controller claim/complete; those
    operations remain in the Platform/controller domain.
 
-Pending is not acceptance. A masked or lower-priority source remains observable as
-pending and is not reported as an accepted interrupt. A level source that remains
-asserted may become pending again after an acceptance. Platform/controller edge
-queues are never collapsed into one Boolean fact, even if Hart architectural
-pending state is Boolean. A source may be reported as asserted even when it is not
-yet eligible, and accepting a Hart interrupt does not by itself claim or discard a
-Platform token unless the Platform/controller contract explicitly defines that
-operation.
+Pending is not acceptance. A source that the Hart/profile reports as masked or
+lower priority remains observable as pending and is not reported as an accepted
+interrupt. A level source that remains asserted may become pending again after an
+acceptance. Platform/controller edge queues are never collapsed into one Boolean
+fact, even if Hart architectural pending state is Boolean. A source may be
+reported as asserted even when it is not yet eligible, and accepting a Hart
+interrupt does not by itself claim or discard a Platform token unless the
+Platform/controller contract explicitly defines that operation.
 
-The Platform/controller resolves controller-specific source priority before it
-presents normalized inputs; the Hart applies the selected architectural/profile
-priority among the presented causes. If that architectural table leaves a tie,
-the lower architectural cause number wins, followed by the earlier admitted source
-sequence. These rules are semantic; they do not prescribe a PLIC register layout
-or a container iteration order.
+The Platform/controller resolves controller-specific source priority and claim
+before it presents normalized inputs; the Hart/profile applies the selected
+architectural priority among the presented causes. ADR-0004 supplies no numeric,
+admission-sequence, or other fallback tie-break for architectural causes. If a
+selected profile permits an otherwise unspecified tie, that profile must define
+how it is resolved; the Machine only preserves the resulting Hart decision and
+keeps source identity/sequence for Platform fact ordering and diagnosis. These
+rules do not prescribe a PLIC register layout or a container iteration order.
 
 ### 6.2 Sampling and acceptance boundary
 
-At every precise pre-fetch boundary the Machine first applies all Platform events
-whose modeled timestamp is at or before the current cursor. The Hart then samples
-its interrupt inputs and eligibility before fetching the next instruction.
+At every precise grant boundary the Machine first admits all Platform events whose
+modeled timestamp is at or before the current cursor. When a Hart/profile reports
+`Runnable`, the Machine offers one turn at the architectural boundary supplied by
+that Hart/profile; when it reports `Waiting`, no instruction turn is offered. The
+Hart/profile samples normalized inputs and applies the selected ISA and debug
+rules; the Machine does not sample eligibility, choose an architectural cause,
+or perform a trap/debug/WFI transition.
 
-- If an interrupt is eligible, the Hart accepts the highest-priority cause and
-  enters trap before fetch. No instruction attempt starts, the current PC is not
-  replaced by a fetched instruction, and `minstret` does not increment. The
-  accepted interrupt is one Hart turn and one `TrapEntered` control fact.
-- If no interrupt is eligible, the Hart begins exactly one instruction attempt.
-  A synchronous exception raised by that instruction is ordered after its access
-  effects and enters trap without retirement. An interrupt asserted while that
-  instruction is in flight is not an asynchronous preemption; it is pending for
-  the next boundary.
-- If an interrupt and an instruction breakpoint/exception could both be observed
-  at the same pre-fetch boundary, the accepted interrupt wins because the
-  breakpoint instruction was not fetched. The breakpoint or other source remains
-  represented by its pending/control fact as applicable.
-- If a synchronous exception and a newly asserted interrupt become known while
-  the instruction is executing, the synchronous exception completes first. The
-  interrupt remains pending and is considered at the next pre-fetch boundary.
+- If the Hart/profile returns an accepted interrupt, that transition enters trap
+  before instruction fetch. No instruction attempt starts, and the Machine does
+  not begin a fetch after the accepted-interrupt result. The transition consumes
+  one framework Hart-turn budget slot and is returned with its Hart-owned trap and
+  counter facts; no `minstret` delta is inferred by the Machine.
+- If the Hart/profile returns an instruction attempt, the attempt may retire,
+  enter a synchronous trap, enter Debug Mode/trigger halt when implemented, or
+  fail according to ADR-0001 and the selected profile. An interrupt that becomes
+  asserted while the attempt is in flight is not an asynchronous Machine
+  preemption; its handling at a later Hart boundary follows the profile.
+- If an interrupt, synchronous breakpoint/exception, trigger, or other
+  architectural/debug condition could compete at one boundary, the selected
+  Hart/profile decides which single architectural transition occurs. The Machine
+  grants the boundary and returns that result; it has no interrupt-over-breakpoint
+  or other framework winner rule. Unselected Platform inputs and control facts
+  remain non-lossy where applicable.
+- If a synchronous exception and a newly admitted interrupt are both relevant to
+  an in-flight instruction, the Hart/profile applies the selected ISA ordering
+  and returns one transition; the Machine does not arbitrate between them or
+  fabricate a second transition.
 
-Trap-entry effects, saved PC/cause, and privilege transitions remain Hart-owned
-under ADR-0001. This ADR fixes only when the interrupt can enter that path and how
-its time/progress facts are accounted.
+Trap-entry effects, saved PC/cause, privilege transitions, debug state, WFI state,
+and ISA-visible counter deltas remain Hart/profile-owned
+under ADR-0001 and the selected profile. ADR-0004 fixes only input admission,
+the grant/sampling slot, framework budget/`iss_tick` accounting, and the return
+of the Hart result.
 
 ### 6.3 Precise versus reduced-accuracy execution
 
@@ -533,9 +589,10 @@ following is the required observable ordering, not an identical control-flow
 algorithm:
 
 ```text
-admit due Platform inputs and sample interrupt eligibility
-  -> accept interrupt OR execute one instruction attempt
-  -> commit/retire or enter synchronous trap
+admit due Platform inputs
+  -> grant Hart at its profile-provided architectural boundary
+  -> Hart/profile returns exactly one transition
+     (accepted interrupt, instruction attempt/trap, Debug Mode, still-waiting, or failure)
   -> consume delay and admit causal events
   -> expose the next boundary and all applicable facts
 ```
@@ -556,14 +613,14 @@ unbounded hidden block is not a conforming implementation.
 
 ### 7.1 Budget semantics
 
-The Hart-turn budget is a budget of started turn slots, while counter and
+The Hart-turn budget is a budget of started turn slots, while framework
 `iss_tick` accounting uses only completed Hart turns:
 
-- **Zero:** admit already-arrived events at the current boundary if needed for
-  reporting, but perform no Hart turn, instruction fetch, interrupt acceptance,
-  WFI transition, idle clock advance, or Platform event-time jump. Return a
-  `BudgetExhausted` fact. A pending eligible interrupt is reported as pending,
-  not accepted.
+- **Zero:** admit already-arrived inputs/events at the current boundary if needed
+  for reporting, but perform no Hart turn, instruction fetch, interrupt
+  acceptance, WFI transition, idle clock advance, or Platform event-time jump.
+  Return a `BudgetExhausted` fact. The admitted input remains represented for the
+  Hart/profile; the Machine does not evaluate its eligibility or accept it.
 - **Finite N:** start at most N turn slots. If a turn retires an instruction,
   enters a trap, or accepts an interrupt, finish all causal delay and
   Platform-event accounting for that completed turn, append the resulting facts,
@@ -593,7 +650,7 @@ not host wall time. The bound is inclusive for completion:
   `<= deadline`;
 - a turn that completes exactly at the deadline is valid, and the Machine admits
   all Platform events due at that timestamp before returning `DeadlineReached`;
-- if the next known idle wakeup/event is after the deadline, an idle Machine may
+- if the next known idle event/input is after the deadline, an idle Machine may
   advance to the deadline and return `DeadlineReached`, without retiring a fake
   instruction; and
 - if precise deadline safety cannot be established because a required cost/delay
@@ -635,47 +692,54 @@ automatic terminal return reason. All applicable facts are returned together.
 
 ## 8. WFI, waiting, runnable, no-progress, and lifecycle drain state
 
-### 8.1 WFI retirement
+### 8.1 WFI and profile-owned waiting transition
 
-For the baseline profile, WFI is an ordinary Hart instruction with a special
-post-retirement state transition:
+WFI legality and behavior belong to the selected Hart/profile, not to the
+Machine. At a granted architectural boundary, the Hart/profile samples its
+admitted inputs and applies the selected ISA and debug rules:
 
-1. If an eligible interrupt is present at the pre-fetch boundary, it is accepted
-   before WFI fetch; WFI does not retire.
-2. Otherwise WFI executes and retires once. It produces one instruction attempt,
-   one retirement-progress increment, one `minstret` increment, and the minimal
-   `mcycle`/`iss_tick` charge.
-3. At the post-retirement boundary, if a WFI wake condition is already present,
-   the Hart remains `Runnable` so the next turn can accept the interrupt or
-   execute according to eligibility. It is never both waiting and executing.
-4. If no wake condition is present, the Hart enters `Waiting`. Waiting is a Hart
-   state, not an instruction outcome and not a stop reason.
+1. If the profile accepts an interrupt before WFI fetch, it returns that accepted
+   interrupt/trap transition; WFI does not retire.
+2. Otherwise the profile determines whether WFI is illegal (including any `TW`
+   rule), a legal no-op, a stall/wait operation, or another profile-defined
+   transition. When the profile implements waiting semantics, a WFI attempt
+   retires once and the Hart/profile returns the instruction progress and
+   ISA-visible counter deltas for that transition.
+3. After a waiting WFI transition, the Hart/profile evaluates its own
+   locally-enabled wake predicate and returns `Runnable` when it may receive a
+   turn, or `Waiting` when it remains stalled. The Hart/profile also owns the
+   associated architectural state transition and counter deltas. It is never both
+   waiting and executing.
 
-The selected ISA profile may define WFI as a legal no-op or give it additional
-privilege behavior; those architectural details remain Hart-owned. The boundary
-above applies whenever the profile implements WFI waiting semantics. A profile
-that treats WFI as a no-op must say so in its Hart policy rather than silently
-spinning in the scheduler.
+The selected profile may allow WFI to resume for any reason or implement it as a
+NOP, and may impose privilege behavior. A profile that treats WFI as a NOP must
+say so in Hart policy rather than silently spinning in the scheduler. A profile
+that implements waiting semantics must consume the applicable RISC-V WFI/TW and
+local-enable rules; ADR-0004 neither repeats an ISA priority table nor chooses
+between them.
 
-The minimal ISS wake policy is conservative: an interrupt pending for the Hart,
-even if currently masked and therefore not acceptable as a trap, wakes a waiting
-Hart; acceptance still requires the normal eligibility checks. A Platform may
-also mark a source as an explicit WFI wake source. An unrelated Platform event
-does not wake a Hart unless its Platform contract says it is such a source.
+There is no framework masked-pending WFI wake policy. The Machine admits
+normalized Platform inputs and may account for Platform time, but it does not
+mark a source as a wake source, evaluate whether an interrupt is masked or
+locally enabled, or change a Hart's wait state. Platform/controller sources may
+provide inputs (including any profile-defined wake-capable event); the
+Hart/profile alone decides WFI legality, NOP/stall behavior, local wake, state
+transition, and counter deltas, then returns `Runnable` or `Waiting`.
 
 ### 8.2 Runnable, no-progress, and lifecycle drain states
 
-- **Runnable:** the Hart can receive a turn. It may have no eligible interrupt,
-  in which case it can attempt an instruction, or it may have an eligible
-  interrupt, in which case the next turn accepts it before fetch.
-- **Waiting:** the Hart has retired WFI and cannot receive ordinary instruction
-  turns until a permitted wake source is admitted. Waiting does not consume
-  budget, increment `mcycle`, or advance time by itself; it is neither
-  `NoProgress` nor `DrainComplete` by itself.
+- **Runnable:** the Hart/profile reports that the Hart can receive a turn. The
+  Machine may grant a turn, and the Hart/profile then decides whether to accept
+  an interrupt or attempt an instruction.
+- **Waiting:** the Hart/profile reports that the Hart has entered or remains in a
+  waiting state. Waiting cannot receive an ordinary instruction turn until the
+  profile returns `Runnable`; the Machine does not infer that transition.
+  Waiting does not consume a framework turn budget slot or advance time by
+  itself; it is neither `NoProgress` nor `DrainComplete` by itself.
 - **Stopped/terminal:** the Hart or run has been halted by a terminal architectural
   or control fact. Its state is reported; it is not selected by a normal grant.
-- **NoProgress:** at a coherent run boundary no Hart is Runnable and no
-  admissible future Platform work exists. Waiting Harts may remain in the
+- **NoProgress:** at a coherent run boundary no Hart is reported `Runnable` and
+  no admissible future Platform work exists. Waiting Harts may remain in the
   Machine. `NoProgress` is a run-level fact (idle with no future work), not a
   lifecycle state and not permission to mutate the Machine.
 - **QuiesceRequested:** an effective explicit quiesce/drain request has stopped
@@ -686,19 +750,21 @@ does not wake a Hart unless its Platform contract says it is such a source.
   legal in this state, even if a Hart would otherwise be Runnable; the state does
   not mean that the run has made no progress or that it must terminate.
 
-If one Hart is Runnable, the Machine must not idle-jump merely because another Hart
-is Waiting. If all Harts are Waiting and a known timer/input/platform event exists,
-`continue`/`run` may advance to the earliest such event, wake the affected Harts,
-and return to the normal pre-fetch interrupt rule. If no event exists and no
+If one Hart is reported `Runnable`, the Machine must not idle-jump merely because
+another Hart is reported `Waiting`. If all Harts are reported `Waiting` and a
+known timer/input/Platform event exists, `continue`/`run` may advance to the
+earliest such event and admit its inputs. A later grant lets each affected
+Hart/profile re-evaluate those inputs and return `Runnable` or `Waiting`; the
+Machine does not wake or mutate the Hart directly. If no event exists and no
 finite deadline supplies a destination, it returns `NoProgress` rather than
 polling WFI. An explicit quiesce/drain request returns its `DrainComplete`
 acknowledgment only after the lifecycle drain, independently of `NoProgress`.
 
 ### 8.3 Legal idle jumps
 
-An idle jump is legal only when no Hart is Runnable and no in-flight operation
-exists, and only for `continue`/`run` rather than a single-step request. The
-destination is the minimum of:
+An idle jump is legal only when no Hart is reported `Runnable` and no in-flight
+operation exists, and only for `continue`/`run` rather than a single-step
+request. The destination is the minimum of:
 
 - the earliest known timer compare crossing or other Platform event;
 - the earliest admitted external/replay input timestamp;
@@ -707,12 +773,13 @@ destination is the minimum of:
 
 A single-step request for a Waiting Hart returns `Waiting` plus
 `SingleStepBoundary` without this jump or any modeled-time advance. The Machine
-must not jump over an earlier event, and it must not invent an instruction,
-retirement, `mcycle` charge, or interrupt acceptance during the jump. At the
-destination it advances `mtime`, asserts due level sources, enqueues due edge
-sources, records all Platform facts, and makes waiting Harts Runnable when their
-wake policy is satisfied. An already-due event has destination `now` and requires
-no positive jump.
+must not jump over an earlier event or invent an instruction, retirement, Hart
+turn, or ISA counter delta during the jump. At the destination it advances
+`mtime`, asserts due level sources, enqueues due edge sources, and records all
+Platform input/event facts. It does not mark wake sources or change any Hart run
+state; the affected Hart/profile re-evaluates admitted inputs at its next grant
+and returns `Runnable` or `Waiting`. An already-due event has destination `now`
+and requires no positive jump.
 
 ## 9. Platform events, exit, and causal commit order
 
@@ -739,8 +806,9 @@ emits `SimulatorFailure` and never fabricates either result.
 
 Causal Platform events are admitted after their parent transition at the same
 effective boundary time. Independent events that were already due are admitted
-before the next Hart pre-fetch sample. This rule makes the interrupt visible to the
-next boundary without allowing it to preempt the operation that caused it.
+before the next Hart/profile architectural sample. This rule makes the interrupt
+input visible to the next boundary without allowing it to preempt the operation
+that caused it.
 
 ## 10. Non-lossy facts, deterministic ordering, and primary reason
 
@@ -752,7 +820,8 @@ semantics are the same. Facts include, as applicable:
 
 - `InstructionRetired` and `InstructionAttempted` progress;
 - `TrapEntered`, with synchronous versus interrupt cause and Hart provenance;
-- interrupt source assertion, pending, deassertion, wakeup, and acceptance;
+- interrupt source assertion, pending, deassertion, Hart/profile-reported wake
+  state, and acceptance;
 - timer/Platform events and `PlatformExit`;
 - `BudgetExhausted`, `DeadlineReached`, `DeadlineBlocked`,
   `SingleStepBoundary`, and `ExternalStop`;
@@ -764,8 +833,8 @@ semantics are the same. Facts include, as applicable:
 - run-level `NoProgress` (idle with no admissible future work).
 
 An interrupt accepted as a normal architectural transition is a fact but is not a
-terminal stop in the minimal Runner policy. A pending-but-masked interrupt is not
-renamed as an acceptance. `DrainComplete` confirms lifecycle mutation readiness
+terminal stop in the minimal Runner policy. An input that the Hart/profile reports
+as pending but not accepted is not renamed as an acceptance. `DrainComplete` confirms lifecycle mutation readiness
 only; it is not an automatic run termination or a substitute for `NoProgress`.
 A fact is never removed because another fact is selected as primary.
 
@@ -779,9 +848,10 @@ before the parent transition. The canonical order is:
 
 1. increasing effective boundary timestamp;
 2. for one timestamp, causal predecessors before their descendants;
-3. at a boundary, Platform/input admission before the Hart pre-fetch sample;
-4. a Hart transition (interrupt acceptance or instruction outcome) before its
-   causal Platform event;
+3. at a boundary, Platform/input admission before the Hart/profile's
+   architectural sampling at its granted boundary;
+4. the single Hart/profile transition (interrupt acceptance or instruction
+   outcome) before its causal Platform event;
 5. completed transition/event facts before the boundary facts that caused the
    exchange to return (`SingleStepBoundary`, budget, deadline including
    `DeadlineBlocked`, effective stop, `NoProgress`, or the
@@ -853,7 +923,7 @@ retired instruction.
 Every Hart has a stable semantic Hart ID. For N Harts sharing a Platform:
 
 - Platform clock advancement and due-source updates happen once for the shared
-  timestamp before Hart acceptance sampling.
+  timestamp before Hart/profile architectural sampling.
 - Independent Hart transitions at the same timestamp are canonically ordered by
   Hart ID and each Hart's local transition sequence, after already-admitted
   Platform facts.
@@ -931,7 +1001,7 @@ Only after that acknowledgment may lifecycle operations such as reset, image
 installation, Platform composition changes, debugger memory/register mutation, or
 teardown change architectural or Platform state. A future checkpoint/restore
 operation must use the same drain boundary and must invalidate any cached
-translation, compiled block, DMI, or derived interrupt eligibility that its
+translation, compiled block, DMI, or Hart/profile-derived interrupt state that its
 implementation uses. The checkpoint representation itself is deferred.
 
 Quiesce is not an implicit reset, and a waiting Hart is not an in-flight Hart.
@@ -954,7 +1024,8 @@ uses an explicit abstract tick policy instead.
 
 Rejected. Polling only at Runner loop boundaries or block exits can lose precise
 interrupt entry and makes latency depend on the chosen execution strategy. The
-pre-fetch sample is fixed; reduced accuracy must declare a finite bound.
+Machine therefore grants at the Hart/profile-provided architectural boundary;
+the profile owns the sample and reduced accuracy must declare a finite bound.
 
 ### C. Return only one stop reason
 
@@ -979,8 +1050,8 @@ available.
 ### F. Spin WFI one instruction at a time
 
 Rejected. It consumes budgets and host work while no architectural progress is
-possible, and it can prevent timer-driven wakeup when time is only advanced by
-execution. Waiting plus legal idle jumps is the contract.
+possible, and it can prevent timer/input admission when time is only advanced
+by execution. Waiting plus legal idle jumps is the contract.
 
 ### G. Fix a scheduler algorithm or quantum in the ADR
 
@@ -992,14 +1063,16 @@ replaceable implementation choices.
 
 ### Positive
 
-- Interrupt visibility and trap entry have one precise location independent of
-  interpreter, block, native, or external-kernel hosting.
-- `mcycle`, `minstret`, `mtime`, virtual time, physical delay, and host elapsed time
-  cannot be accidentally substituted for one another.
+- Interrupt input admission and the Hart/profile-provided trap boundary are
+  stable across interpreter, block, native, or external-kernel hosting without
+  moving architectural decisions into the framework.
+- Hart/profile-returned `mcycle`/`minstret`, Platform `mtime`, Machine virtual
+  time, physical delay, and host elapsed time cannot be accidentally substituted
+  for one another.
 - Exact zero/finite limits and absolute deadlines can be implemented without
   retroactive unretirement or rollback.
-- WFI can make a Machine genuinely idle and let a timer wake it with no fake
-  instruction progress.
+- WFI can let a Hart/profile report genuine waiting while the Machine idles and
+  advances Platform time to a timer/input event with no fake instruction progress.
 - Exit, trap, debug, budget, deadline, observer, and simulator facts remain
   available for diagnosis and deterministic Runner classification.
 - Stable same-time ordering gives N-Hart and replay-capable implementations a
@@ -1026,17 +1099,22 @@ The implementation and later ADRs must preserve these invariants:
 1. Virtual time and normal Platform clock advancement are monotonic within a run.
 2. A consumed delay is counted once and never erased by a later fault, stop, or
    classification decision.
-3. `minstret` counts only retired instructions; interrupt entry and faulting
-   instructions never increment it.
-4. No instruction is fetched after an accepted pre-fetch interrupt, and no
-   interrupt preempts an in-flight instruction.
+3. The Hart/profile supplies ISA-visible `minstret`/`mcycle` deltas according to
+   the selected profile; the Machine does not derive or write them. In the
+   standard profile, `minstret` counts only retired instructions, while interrupt
+   entry and faulting instructions do not retire.
+4. No instruction is fetched after the Hart/profile reports an accepted
+   pre-fetch interrupt, and no interrupt preempts an in-flight instruction.
 5. A retired instruction cannot be unretired because it caused exit or because an
    observer failed.
 6. Zero budget and an reached deadline perform no subsequent Hart turn.
-7. A waiting Hart does not consume instruction budget or `mcycle` while idle.
+7. A waiting Hart receives no instruction-turn grant while idle; the Machine
+   does not infer an ISA counter delta or consume a Hart-turn budget slot for the
+   wait.
 8. A started simulator-failed attempt consumes its finite budget slot but is not a
-   completed Hart turn: it adds no `mcycle` or `iss_tick` charge, and it does not
-   add `BudgetExhausted` merely because that slot was last.
+   completed Hart turn: it adds no completed-turn `iss_tick` charge, and it does
+   not add `BudgetExhausted` merely because that slot was last. Any ISA counter
+   delta is supplied by the Hart/profile.
 9. Every applicable fact is returned, including facts that are not primary.
 10. Same-time independent facts and shared effects do not depend on host thread,
     map, queue, or callback iteration order.
@@ -1049,22 +1127,22 @@ The following cases make the required ordering concrete:
 
 | Situation at one exchange boundary | Required semantic order | Facts/primary under minimal policy |
 | --- | --- | --- |
-| Zero budget with an eligible pending interrupt | Admit current-time inputs; do not accept or fetch; return | Pending interrupt + `BudgetExhausted`; primary budget |
-| One remaining turn and the interrupt is eligible | Accept interrupt as the final turn; complete trap accounting; stop | `TrapEntered`, then `BudgetExhausted`; primary budget unless a higher fact exists |
+| Zero budget with an admitted input that could be accepted by the Hart/profile | Admit current-time inputs; do not grant a Hart turn, accept, or fetch; return | Input/pending facts as reported or retained by Platform/Hart + `BudgetExhausted`; primary budget |
+| One remaining turn and the Hart/profile reports an accepted interrupt | Grant the final turn; complete returned trap and framework accounting; stop | `TrapEntered`, then `BudgetExhausted`; primary budget unless a higher fact exists |
 | One remaining turn and the instruction retires then writes exit | Complete write; retire/counters; emit exit; return | Retirement, `PlatformExit`, `BudgetExhausted`; primary Platform exit |
 | Deadline equals the end of the final instruction | Complete instruction and delay; admit due events; return | Retirement/events, then `DeadlineReached`; primary deadline unless exit/failure |
 | Runnable Harts cannot fit before a future deadline | Do not start a turn or idle-jump; return at the current cursor | `DeadlineBlocked` with residual slack and candidate bound; primary deadline unless a higher fact exists |
 | Timer crosses during a non-WFI instruction | Finish instruction; advance/admit timer; sample at next boundary | Retirement, timer assertion/pending; no mid-instruction trap |
-| Eligible interrupt and breakpoint at pre-fetch | Accept interrupt before fetch | Interrupt `TrapEntered`; breakpoint remains unexecuted/pending |
+| Interrupt, breakpoint, or Debug/trigger condition could compete at one boundary | Grant the boundary; let the Hart/profile select and return exactly one architectural transition | The returned Hart transition and all applicable unselected input/control facts; no framework winner rule |
 | Synchronous exception and interrupt asserted during that instruction | Finish synchronous exception; leave interrupt pending | Synchronous `TrapEntered`, pending interrupt; primary synchronous trap if terminal |
-| WFI with no wake source | Retire WFI; enter `Waiting`; `continue`/`run` may idle-jump, while no future work returns `NoProgress` | Retirement, waiting transition, then timer/wakeup or `NoProgress` |
+| WFI with no profile-defined wake condition | Hart/profile applies WFI and returns retirement plus `Waiting`; `continue`/`run` may idle-jump, while no future work returns `NoProgress` | Retirement, Hart/profile-reported waiting, then admitted input/state result or `NoProgress` |
 | Single-step of a Waiting Hart | Return without an idle jump or time advance | `Waiting` + `SingleStepBoundary`; primary single-step |
-| Timer/input exactly at deadline while all Harts wait | Advance/admit event at deadline; do not start a Hart turn | Event, wake/pending facts, `DeadlineReached`; primary deadline |
+| Timer/input exactly at deadline while all Harts report `Waiting` | Advance/admit event at deadline; do not start a Hart turn | Event and Hart/profile-reported state/pending facts when later granted, plus `DeadlineReached`; primary deadline |
 | Guest exit and external stop admitted at the same boundary | Preserve commit and both facts | `ExternalStop` primary, `PlatformExit` retained |
 | Observer fails after a committed instruction | Keep commit/progress; stop delivery and return | Retirement, observer failure; primary observer failure |
 | Started instruction attempt fails | Preserve attempted progress and known delay; do not charge a completed turn or fabricate a trap/commit | `InstructionAttempted` + `SimulatorFailure`; consume the budget slot without adding `BudgetExhausted`; primary simulator failure |
 | Adapter reports unknown write completion | Do not claim commit, exit, or guest trap; preserve known prefix | `SimulatorFailure` with uncertainty; primary simulator failure |
-| Two Harts have due timers at the same timestamp | Update shared clock/lines; accept in stable Hart-ID order | Both interrupt facts; no Hart's acceptance hides the other's pending state |
+| Two Harts have due timers at the same timestamp | Update shared clock/inputs once; grant Harts in stable canonical order and let each profile decide | Both Hart/profile transition facts and all Platform inputs; no Hart's result hides the other's pending state |
 
 ## 16. Verification scenarios
 
@@ -1073,14 +1151,14 @@ not claims about the current public ELF path.
 
 | Scenario | Required evidence |
 | --- | --- |
-| Counter separation | A normal instruction, faulting instruction, accepted interrupt, WFI, idle jump, and started failed attempt show distinct attempts, completed turns, `mcycle`, `minstret`, and virtual-time deltas; failure has no completed-turn charge. |
+| Counter separation | A normal instruction, faulting instruction, accepted interrupt, WFI, idle jump, and started failed attempt show distinct attempts, completed turns, framework `iss_tick`, and Hart/profile-returned `mcycle`/`minstret` deltas; failure has no completed-turn `iss_tick` charge. |
 | Zero/exact/exhausted budget | Zero performs no Hart turn; N permits exactly N started turn slots including interrupt entries and failed attempts; a normal Nth outcome and all causal facts precede `BudgetExhausted`, while a failed Nth attempt reports `SimulatorFailure` without that fact. |
 | Deadline safety | A turn ending before, exactly at, and beyond a deadline is tested; exact completion is allowed, crossing is rejected or reported with the declared reduced-accuracy/adapter-failure fact, a Runnable-but-unfitting turn returns `DeadlineBlocked` with residual slack, and no rollback occurs. |
 | Delay matrix | Success, guest-visible target fault, known adapter failure, and unknown completion verify the table in §5.3, including page-table/A-D delay, failed-attempt accounting, and no retry. |
-| Interrupt lifecycle | Platform-owned level assertion while masked, deassertion before acceptance, queued edge tokens, multiple pending causes, controller priority/claim/complete, Hart profile pending/enable/delegation, priority ties, and pre-fetch acceptance are tested. |
-| Interrupt versus instruction | An interrupt asserted during fetch/load/store is accepted only at the next boundary; a synchronous exception from that instruction remains first. |
+| Interrupt lifecycle | Platform-owned level assertion/deassertion, queued edge tokens, multiple pending causes, controller priority/claim/complete, Hart/profile pending/enable/delegation/masking and architectural priority, and Hart/profile pre-fetch acceptance are tested without a framework fallback tie-break. |
+| Interrupt versus instruction | An interrupt admitted during fetch/load/store is not a Machine preemption; the Hart/profile returns the selected architectural result at its next boundary and preserves any remaining inputs/facts. |
 | Block equivalence | Precise block execution matches single-step observable effects, outcomes, time accounting, and facts without requiring identical control flow; reduced accuracy reports a finite measured/configured latency bound. |
-| WFI/timer | WFI retires once, consumes no idle turns, `continue`/`run` idle-jumps to `mtimecmp`, wakes, and accepts the timer interrupt before the next instruction. No-event WFI returns `NoProgress`; single-step of Waiting returns `Waiting` + `SingleStepBoundary` without a jump. |
+| WFI/timer | Hart/profile WFI legality, NOP/stall/TW behavior, local-enable wake predicate, retirement, counter deltas, and `Runnable`/`Waiting` result are exercised; `continue`/`run` may idle-jump to `mtimecmp`, while the Machine only admits inputs. No-event WFI returns `NoProgress`; single-step of Waiting returns `Waiting` + `SingleStepBoundary` without a jump. |
 | Exit ordering | A successful exit-causing MMIO write is visible as a retired instruction before `PlatformExit`; a faulting or unknown write is not reported as a successful exit. |
 | Co-incident facts | Exit, trap, budget, deadline, external stop, observer failure, and simulator failure combinations retain every fact and apply the rank in §10.3. |
 | N-Hart same-time order | Repeated runs under different host thread/container iteration orders produce the same canonical facts and shared-state effects, or reject unsupported conflict configurations. |
@@ -1115,10 +1193,23 @@ The following are explicit deferrals, not unresolved semantic choices:
   Hart outcomes; and
 - SystemC/TLM/HDL FFI, callback, delta-cycle, and external-kernel APIs.
 
-The selected ISA profile still owns exact trap causes, delegation, interrupt enable
-bits, WFI legality, and architectural counter access. This ADR does not invent a
-new ISA profile or device map; it fixes the boundary at which those profile rules
-interact with scheduling and Platform time.
+The selected ISA/profile still owns exact trap causes, interrupt pending and
+eligibility predicates, masking/enables, delegation, architectural priority,
+trap/debug/WFI legality and transitions, and ISA-visible `mcycle`/`minstret`
+behavior. Its timing profile returns the counter deltas for each transition. The
+framework consumes the applicable [RISC-V Privileged Architecture
+Specification, 2024-04-11](https://github.com/riscv/riscv-isa-manual/tree/v20240411-DRAFT)
+§3.1.9 interrupt rules, §3.1.10 counter rules, §3.2.1 timer rules, §3.3.1
+synchronous environment-break rules, §3.3.3 WFI/TW rules, and the selected
+profile's synchronous-exception priority table. It also consumes the selected
+debug profile, including [RISC-V External Debug Support
+0.13.2](https://github.com/riscv/riscv-debug-spec/tree/0.13-test-release) §4
+when Debug Mode is implemented. The [RISC-V Unprivileged ISA,
+2024-04-11](https://github.com/riscv/riscv-isa-manual/tree/v20240411-DRAFT)
+Zicntr rules supply the applicable `cycle`/`instret` semantics. These references
+are Hart/profile inputs, not additional framework rules: ADR-0004 does not copy a
+priority table or choose WFI/debug behavior. It fixes the boundary at which
+profile results interact with scheduler accounting and Platform time.
 
 ADR-0001 remains the source of truth for Hart transition effects and optional
 observations. ADR-0002 remains the source of truth for raw physical transactions,

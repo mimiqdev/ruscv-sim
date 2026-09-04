@@ -146,10 +146,10 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    ENTRY["step / run"] --> SAMPLE["Sample InterruptLines"]
-    SAMPLE --> PENDING{"Eligible interrupt?"}
-    PENDING -- Yes --> INTR["Build interrupt trap"]
-    INTR --> TRAP["Trap entry<br/>CSR / Privilege / Target PC"]
+    ENTRY["Machine grant at Hart boundary"] --> SAMPLE["Hart/profile samples InterruptLines"]
+    SAMPLE --> PENDING{"Hart/profile: eligible interrupt?"}
+    PENDING -- Yes --> INTR["Hart builds interrupt trap"]
+    INTR --> TRAP["Hart trap entry<br/>CSR / Privilege / Target PC"]
 
     PENDING -- No --> FETCHVA["Instruction virtual address<br/>PC"]
     FETCHVA --> IMMU["Instruction translation<br/>MMU / TLB / PMP"]
@@ -173,7 +173,7 @@ flowchart TB
     TRAP --> CTRL
     RETIRE -. optional observation .-> COMMIT["CommitRecord"]
     TRAP -. optional observation .-> TRAPREC["TrapRecord"]
-    CTRL --> OUT["Step / quantum control result"]
+    CTRL --> OUT["One Hart transition + control facts"]
     COMMIT --> OUT
     TRAPREC --> OUT
 ```
@@ -257,7 +257,7 @@ flowchart TB
     end
 
     subgraph Integration["System integration"]
-        SYSTEMC["SystemC"]
+        SYSC["SystemC"]
         RTL["RTL Emulator"]
         EXT["External IP Models"]
     end
@@ -274,9 +274,9 @@ flowchart TB
     CONTRACT --> VPBUS
     VPSCHED --> VPTIME
     VPBUS --> PERIPH
-    VPBUS --> SYSTEMC
-    SYSTEMC --> RTL
-    SYSTEMC --> EXT
+    VPBUS --> SYSC
+    SYSC --> RTL
+    SYSC --> EXT
 ```
 
 A Machine is one Platform plus one or more Harts; N=1 is the ISS baseline. Native VP scheduling is Machine-associated. SystemC, HDL, or other co-simulation may own the outer execution thread while the same Hart/Platform semantics and ruscv-sim result taxonomy remain in force.
@@ -299,12 +299,13 @@ sequenceDiagram
     loop Until a stop condition
         M->>M: admit due Platform/input events at cursor
         M->>M: check conservative turn bound against deadline slack
-        M->>H: pre-fetch boundary + normalized interrupt inputs
+        M->>H: Hart-provided architectural boundary + admitted inputs
+        H->>H: profile decides eligibility and one architectural transition
         H->>B: fetch / load / store
         B->>D: MMIO transaction
         D-->>B: data / fault / delay / event
         B-->>H: AccessResponse
-        H-->>M: transition facts + optional Commit / Trap records
+        H-->>M: exactly one transition + state/counter facts + optional records
         M->>M: consume delay once; advance cursor; admit causal events
         M-->>O: deliver requested observations
     end
@@ -315,12 +316,16 @@ sequenceDiagram
 
 This diagram shows the required observable phases for the Runner-driven ISS/native
 path; it is not a scheduler control-flow prescription. [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md)
-defines the exchange, pre-fetch interrupt sample, conservative deadline bound,
-modeled-time and delay accounting, WFI/idle boundary, and fact ordering shown
-here. In external-kernel hosting the kernel grants the authoritative time horizon
-into the Machine; the Runner still classifies non-lossy facts and does not have to
-own that outer thread. Observation records are subscriber-gated; control facts are
-always returned.
+defines input admission, the Machine grant at a Hart/profile-provided
+architectural boundary, conservative deadline bounds, modeled-time and delay
+accounting, WFI/idle scheduling, and fact ordering shown here. The selected
+Hart/profile decides interrupt eligibility, masking/delegation, architectural
+priority, trap/debug/WFI transitions, and ISA-visible counter deltas; the Machine
+never evaluates those predicates or changes Hart run state directly. In
+external-kernel hosting the kernel grants the authoritative time horizon into the
+Machine; the Runner still classifies non-lossy facts and does not have to own that
+outer thread. Observation records are subscriber-gated; control facts are always
+returned.
 
 ## 8. Capability accumulation and architecture gates
 

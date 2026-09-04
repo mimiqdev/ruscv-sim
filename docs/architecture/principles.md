@@ -14,10 +14,10 @@ The standalone ISS and the Virtual Platform use one RISC-V Hart implementation. 
 
 | Area | Owns | Must not own |
 | --- | --- | --- |
-| Hart | Architectural state, fetch/decode/execute, privilege, traps, address translation, retirement | ELF loading, concrete devices, CLI, SystemC |
+| Hart | Architectural state, fetch/decode/execute, privilege, interrupt eligibility/masking/delegation/architectural priority, traps/debug/WFI transitions, address translation, retirement, ISA-visible counters | ELF loading, concrete devices, CLI, SystemC |
 | Physical access port | Physical transactions and access faults | RISC-V load sign extension, virtual translation, platform policy |
-| Platform | Physical address map, RAM/ROM/MMIO, devices, interrupt wiring, platform events | ISA semantics |
-| Machine | One Platform plus one or more Harts, composition, and lifecycle | User-interface policy and terminal-result classification |
+| Platform | Physical address map, RAM/ROM/MMIO, devices, interrupt sources/controller priority and claim/complete, interrupt wiring, platform events | ISA semantics, Hart eligibility/masking/delegation, architectural priority, trap/debug/WFI transitions |
+| Machine | One Platform plus one or more Harts, composition/lifecycle, Platform-input admission, Hart-boundary grants, and framework time/budget/fact accounting | Hart eligibility/masking/delegation/architectural priority, trap/debug/WFI transitions, ISA-visible counter deltas, user-interface policy, and terminal-result classification |
 | Runner | Image loading, limits, ruscv-sim stop taxonomy, result production, observers | Instruction semantics; need not own every outer execution thread |
 | Frontend | CLI/API/debug protocol and presentation | Machine-internal behavior |
 

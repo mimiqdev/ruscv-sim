@@ -48,9 +48,10 @@ transport-neutral Hart-initiator `PhysicalAccess` boundary consumed here: all Ha
 physical accesses use the same raw-byte transaction vocabulary, and physical target
 faults remain distinct from simulator/adapter failures. A future inbound
 Platform-master/DMA port is an explicit ADR-0002 deferral, not a second Hart path.
-[ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines the
-detailed interrupt, time, and stop-event arbitration that this record deliberately
-bounds.
+[ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines
+Platform-input admission, Machine grants at Hart/profile-provided boundaries,
+scheduler accounting, and non-lossy fact ordering that this record deliberately
+bounds; Hart/profile architectural decisions remain with the Hart.
 
 ## Decision
 
@@ -115,8 +116,9 @@ Harts and Platform. A scheduler, when present, is Machine-associated for native
 hosting and cannot bypass ruscv-sim terminal taxonomy; in external-kernel hosting
 it does not own the outer kernel thread. The complete invocation and return rule
 is in §3. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines
-only detailed timing, interrupt, and stop-arbitration semantics. A port is a contract, not a
-commitment to a Rust trait, callback, channel, or transport representation.
+only Platform-input admission, Machine grants, scheduler accounting, and
+non-lossy fact ordering. A port is a contract, not a commitment to a Rust trait,
+callback, channel, or transport representation.
 
 | Concern | Primary owner | Boundary rule |
 | --- | --- | --- |
@@ -303,17 +305,21 @@ per-instruction `CommitRecord` or `TrapRecord` and without a per-instruction
 Runner callback. When observation is enabled, interpreted and block execution
 must still make available precise, ordered, non-speculative, non-reentrant Hart
 records as required by ADR-0001. A quantum is not a Machine-owned stop-policy
-operation. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines timing,
-interrupt eligibility/sampling, quantum size, and simultaneous-stop arbitration
-only; it does not own ruscv-sim terminal taxonomy.
+operation. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines
+Platform-input admission, the Machine grant at a Hart/profile-provided
+architectural boundary, virtual-time/budget accounting, quantum size, and
+non-lossy fact ordering only; it does not own Hart interrupt eligibility,
+masking/delegation, architectural priority, trap/debug/WFI transitions, ISA
+counter deltas, or ruscv-sim terminal taxonomy.
 
 A Runner stop request, external debugger/protocol halt, guest architectural
 breakpoint trap, future RISC-V Debug Mode halt, limit, Platform exit, Hart trap,
 or simulator failure must remain distinguishable. Stop requests are handled at a
 coherent architectural boundary; an asynchronous request may shorten the next
-quantum but must not unretire a completed instruction. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) arbitrates only
-when multiple conditions are eligible at one boundary, after all co-incident facts
-have been preserved.
+quantum but must not unretire a completed instruction. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) admits inputs and
+coordinates the grant/accounting boundary only. The Hart/profile decides which
+architectural transition occurs at that boundary; the Machine returns all
+co-incident facts for Runner presentation.
 
 At teardown the Runner stops accepting ruscv-sim control, completes or reports
 observer handling according to its run policy, and releases its run-level sinks.
@@ -599,23 +605,27 @@ the same port.
 ## Boundary with [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md)
 
 [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) owns detailed
-timing, interrupt, and stop-arbitration semantics only. This ADR fixes ownership and causal boundaries;
-it does not assign ruscv-sim terminal taxonomy to that decision, freeze a
-scheduler algorithm, or require the Runner to own every outer execution thread:
+Platform-input admission, Machine grants, scheduler accounting, and fact-order
+semantics only. This ADR fixes ownership and causal boundaries; it does not
+assign Hart architectural predicates or transitions to that decision, assign
+ruscv-sim terminal taxonomy to it, freeze a scheduler algorithm, or require the
+Runner to own every outer execution thread:
 
 | Concern left to [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) | Boundary fixed by this ADR |
 | --- | --- |
-| Interrupt eligibility, masking, priority, sampling point | Platform/Machine provide lines; Hart samples at the defined boundary. |
-| Cost, delay, time units, advancement, and budget facts | Runner owns ruscv-sim limits; Machine/scheduler or the external kernel reports facts; [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines timing. |
+| Platform-input admission and the Machine grant at a Hart/profile-provided architectural boundary | Hart/profile owns interrupt eligibility, masking, delegation, architectural priority, and the resulting trap/debug/WFI transition; Machine only admits inputs and grants the boundary. |
+| Cost, delay, time units, advancement, and budget facts | Runner owns ruscv-sim limits; Machine/scheduler or the external kernel reports facts; [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines scheduler accounting without writing ISA counters. |
 | Quantum, batching, hosting exchange, and event-loop strategy | Native scheduling is Machine-associated under §3; external kernels may own the outer thread; both return unclassified facts and cannot bypass ruscv-sim terminal taxonomy. |
-| Simultaneous trap/exit/debug/limit/time/failure priority | Machine returns non-lossy co-incident facts; Runner selects presentation later; [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) chooses arbitration. |
+| Simultaneous trap/exit/debug/limit/time/failure facts and presentation | Machine returns non-lossy co-incident facts; Runner selects presentation later; no framework layer supplies Hart architectural priority. |
 | Asynchronous interruption and resumability | External protocol halt reaches Runner/Machine; it is not a Hart trap, Debug Mode entry, or device exit. |
 
-[ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) may refine timing,
-interrupt, hosting exchange, and arbitration without moving Hart semantics,
-Platform physical ownership, or ruscv-sim terminal taxonomy, and without changing
-successful tohost retirement ordering. This is a bounded deferral, not an
-unresolved ownership question.
+[ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) may refine
+input admission, grants, scheduler accounting, hosting exchange, and fact order
+without moving Hart semantics, Platform physical ownership, or ruscv-sim terminal
+taxonomy, and without changing successful tohost retirement ordering. The
+selected Hart/profile remains the source of architectural eligibility, masking,
+delegation, priority, trap/debug/WFI transitions, and ISA-visible counter deltas.
+This is a bounded deferral, not an unresolved ownership question.
 
 ## Alternatives considered
 
@@ -679,10 +689,13 @@ Only these remain for later contracts or implementation design:
 1. Concrete Rust layouts, traits, callbacks, lifetimes, ownership, serialization,
    and wire formats.
 2. Platform address map, device/host models, and native/TLM/SystemC APIs.
-3. Interrupt sampling, time/delay semantics, safe async stop, event priority,
-   quantum size, and hosting-exchange details belong to the interrupt, time, and
-   stop-event decision; they remain bounded by §3 and must not freeze scheduler
-   algorithms.
+3. Platform-input admission, Machine grant/sampling-slot mechanics,
+   `iss_tick`/virtual-time/delay/budget/idle accounting, safe async stop,
+   event/fact order, quantum size, and hosting-exchange details belong to the
+   interrupt, time, and stop-event decision. Hart/profile eligibility,
+   masking/delegation, architectural priority, trap/debug/WFI transitions, and
+   ISA-visible counter deltas remain outside that framework decision; all details
+   remain bounded by §3 and must not freeze scheduler algorithms.
 4. Profile-specific Hart/device reset values not owned by an accepted contract.
 5. Image-placement storage/snapshot and signature representations, plus migration
    and deprecation of existing wrappers/components.
