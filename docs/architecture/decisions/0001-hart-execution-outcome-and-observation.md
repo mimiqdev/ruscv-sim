@@ -27,13 +27,15 @@ The result is that a Runner or observer can mistake a failed instruction for a r
 
 One Hart architectural step starts from a coherent architectural state and completes with exactly one semantic outcome. The conceptual outcome set is:
 
-| Conceptual outcome | Meaning | Required observation |
-| --- | --- | --- |
-| `InstructionRetired` | Exactly one guest instruction completed all of its architectural checks and effects and crossed the retirement boundary. | One `CommitRecord`, emitted from Hart-owned facts. |
-| `TrapEntered` | An architectural synchronous exception or an eligible interrupt was accepted and trap entry completed. | One `TrapRecord`, emitted from Hart-owned facts; no instruction retires in this step. |
-| `SimulatorFailure` | The Hart or an adapter could not complete the step as an architectural operation. This is not guest-visible trap entry. | A diagnostic owned by the execution-control layer; no commit or trap record for an incomplete step. |
+| Conceptual outcome | Meaning | Control fact | Materialized observation |
+| --- | --- | --- | --- |
+| `InstructionRetired` | Exactly one guest instruction completed all of its architectural checks and effects and crossed the retirement boundary. | Always: retirement occurred for this Hart, with the progress and PC context needed by outer control. | Optional: one `CommitRecord` from Hart-owned facts when observation is enabled. |
+| `TrapEntered` | An architectural synchronous exception or an eligible interrupt was accepted and trap entry completed. | Always: trap entry completed; no instruction retires in this step. | Optional: one `TrapRecord` from Hart-owned facts when observation is enabled. |
+| `SimulatorFailure` | The Hart or an adapter could not complete the step as an architectural operation. This is not guest-visible trap entry. | Always: a diagnostic owned by the execution-control layer. | None: no commit or trap record for an incomplete step. |
 
-These conceptual variants are a semantic contract, not a requirement to expose a particular Rust enum. A step with no accepted interrupt attempts one instruction. The interrupt, time, and stop-event decision owns interrupt eligibility, priority, masking, and timing; this ADR fixes the Hart boundary at which an accepted interrupt enters trap before fetching or executing an instruction.
+These conceptual variants are a semantic contract, not a requirement to expose a particular Rust enum. They describe the capability of the Hart's semantic engine, not the shape or volume of materialized observations crossing the Machine boundary. For every attempted instruction or accepted interrupt, the Hart establishes the control-boundary facts needed to drive execution—whether architectural progress occurred, the relevant Hart and boundary-PC context, progress accounting, and any completed trap or failure context. A block or other execution strategy may aggregate non-terminal progress while preserving those control facts at its return boundary.
+
+A step with no accepted interrupt attempts one instruction. The interrupt, time, and stop-event decision owns interrupt eligibility, priority, masking, and timing; this ADR fixes the Hart boundary at which an accepted interrupt enters trap before fetching or executing an instruction. A `CommitRecord` or `TrapRecord` is an optional materialized observation of that semantic transition. When no observation subscriber is active, the Hart and its execution strategy must not allocate, serialize, retain, or deliver one such record per instruction merely to preserve this capability; in particular, no per-instruction Runner callback is required. The same architectural transition, control facts, and final state must result whether observation is disabled or enabled.
 
 `TrapEntered` is complete only after the architectural trap-entry state is established: the applicable saved PC, cause, and value and status state have been updated, privilege has changed as required by delegation, and the Hart PC is the selected handler target. If trap entry itself cannot be completed because of an implementation or host failure, the result is `SimulatorFailure`, not a partially recorded trap.
 
@@ -69,7 +71,7 @@ A target-reported bus or device error for a valid routed physical request is a g
 
 A successful translation-stage A/D-bit write is a separate physical effect. If the selected ISA profile uses hardware A/D updates and translation successfully performs that write, a later fetch/load/store/AMO physical access fault does not roll it back. The write is not a retired effect of a faulting instruction and is not included as such in its `CommitRecord`, but its successful memory effect remains visible. If the selected profile instead faults when an A/D update is required, that profile-defined behavior applies; this ADR chooses observability of a successful write, not an A/D update scheme.
 
-An architectural `EBREAK` or other guest-generated breakpoint exception is a synchronous exception and therefore produces `TrapEntered`. A debugger breakpoint, user interruption, execution limit, scheduler stop, and platform exit are not Hart traps and do not change these rules. For example, an instruction that successfully writes a `tohost` or other platform-exit register first retires and produces its commit; the Platform/Runner may then observe the resulting platform event and stop the run.
+An architectural `EBREAK` or other guest-generated breakpoint exception is a synchronous exception and therefore produces `TrapEntered`. An external debugger or protocol halt request, user interruption, execution limit, scheduler stop, and platform exit are not Hart traps and do not change these rules. A future RISC-V Debug Mode or trigger-module action that enters Debug Mode is a separate Hart-owned architectural control boundary; its detailed state and outcome contract are deferred and must not be classified as an external protocol halt or as a guest breakpoint exception. A trigger configured to raise a guest breakpoint exception follows the `TrapEntered` path, while a trigger configured to enter Debug Mode follows that future Hart-owned path. For example, an instruction that successfully writes a `tohost` or other platform-exit register first retires and produces its commit when observation is enabled; the Platform/Runner may then observe the resulting platform event and stop the run.
 
 ### 3. CommitRecord semantic requirements
 
@@ -115,21 +117,23 @@ A simulator failure:
 
 A decoder's internal "not implemented" error is not automatically an illegal-instruction trap: an encoding that is architecturally legal but unsupported by the implementation is a simulator failure until the implementation supports it. Conversely, an encoding that the configured ISA profile defines as illegal is an architectural illegal-instruction trap. This classification belongs at the Hart boundary rather than in a generic Runner error conversion.
 
-Observer delivery is downstream of the Hart outcome. If a sink fails after a completed `InstructionRetired` or `TrapEntered` outcome, the architectural transition and its record remain valid; the Runner may stop with a separate reporting/simulator failure according to its policy. An observer failure must never roll back a committed instruction or turn a completed trap into a different Hart outcome.
+Observer delivery is downstream of the Hart outcome. If a sink fails after a completed `InstructionRetired` or `TrapEntered` outcome, the architectural transition and, when observation was enabled, its materialized record remain valid; the Runner may stop with a separate reporting/simulator failure according to its policy. An observer failure must never roll back a committed instruction or turn a completed trap into a different Hart outcome.
 
 ### 6. Visibility, atomicity, and observation ownership
 
-The Hart owns the facts and the retirement boundary:
+The Hart owns the semantic capability, control facts, and retirement boundary:
 
 - It determines whether an instruction retired, a trap was entered, or the step failed.
-- It constructs the semantic commit or trap facts from the same architectural transition that it applies.
-- It emits each completed instruction or trap exactly once, after the corresponding state transition is complete.
-- It exposes immutable observation facts to consumers; observers cannot mutate Hart state or execute a callback in the middle of an architectural transition.
+- It constructs the semantic commit or trap facts from the same architectural transition that it applies; this capability remains present even when no observation is materialized.
+- It always supplies the control-boundary facts needed by the Machine to continue, stop, account for progress, and preserve causal context, without requiring a per-instruction record stream.
+- When observation is enabled, it materializes one immutable commit or trap fact for each completed instruction or trap, after the corresponding state transition is complete. In interpreted and block execution, those facts are ordered by architectural transition and contain no speculative or prefetched work.
+- It never invokes an external observer in the middle of an architectural transition. Materialized facts may be buffered for delivery at a completed boundary, but observer delivery must not be re-entrant into Hart execution.
 - It owns architectural reservation state and the architectural LR/SC result, subject to the selected ISA profile.
 
-The Runner owns observation delivery and run-level policy:
+The Runner owns observation demand, delivery, and run-level policy:
 
-- It subscribes to Hart outcomes and fans the same facts out to commit loggers, traces, profilers, or other sinks.
+- It enables or disables the optional observation plane and, when enabled, fans the same immutable Hart facts out to commit loggers, traces, profilers, or other sinks.
+- With observation disabled, it consumes always-present control facts and does not receive a callback for each retired instruction merely to maintain observability.
 - It decides how to handle a sink error and how to combine Hart outcomes with platform exit, debugger stop, limit, and scheduling events.
 - It must not reconstruct a commit by comparing pre/post register snapshots, re-fetching an opcode, or guessing a memory access.
 
@@ -143,7 +147,7 @@ This ADR deliberately fixes only the ownership boundary:
 - PhysicalAccess owns the indivisible conditional-operation envelope and physical visibility of competing accesses, and reports the information needed for the Hart to apply reservation rules; and
 - reservation granule, multi-Hart ordering, DMA coherence, and all reservation consumption or invalidation cases—including a faulting SC—follow the selected ISA profile. This ADR does not invent a new faulting-SC semantic from the current implementation.
 
-For future block execution, a block may return an aggregate control result, but it must preserve one precise observation per retired instruction in architectural order. If a block encounters a trap, all earlier instructions in the block retain their individual commits, the faulting instruction has no commit, and the trap entry has one trap record. Speculative or prefetched work must not be exposed as an architectural record.
+For future block execution, a block may return an aggregate control result without materializing per-instruction records when observation is disabled. When observation is enabled, both interpreted and block execution must make available one precise immutable observation per retired instruction or completed trap in architectural order. If a block encounters a trap, all earlier instructions in the block retain their individual commits, the faulting instruction has no commit, and the trap entry has one trap record. Speculative or prefetched work must never be exposed as an architectural record, and delivery must not permit a callback to re-enter an in-flight transition.
 
 The Frontend owns presentation and serialization choices. No layer outside the Hart may create a second set of ISA semantics.
 
@@ -153,10 +157,12 @@ The Hart step outcome is deliberately narrower than a Runner result:
 
 | Event or condition | Hart step outcome | Owner of the outer run decision |
 | --- | --- | --- |
-| Guest instruction retires | `InstructionRetired` plus `CommitRecord` | Runner may continue or inspect resulting platform events |
-| Architectural exception or accepted interrupt | `TrapEntered` plus `TrapRecord` | Hart/architecture determines entry; Runner decides whether/how to continue |
+| Guest instruction retires | `InstructionRetired`; optional `CommitRecord` when observation is enabled | Runner may continue or inspect resulting platform events |
+| Architectural exception or accepted interrupt | `TrapEntered`; optional `TrapRecord` when observation is enabled | Hart/architecture determines entry; Runner decides whether/how to continue |
 | `tohost`/HTIF or another guest-visible platform exit is written successfully | The writing instruction still returns `InstructionRetired` | Platform reports the event; Runner applies exit policy |
-| Debugger breakpoint, user interruption, or debugger request | No special Hart trap outcome unless the guest executed an architectural breakpoint instruction | Runner/debug controller |
+| External debugger/protocol halt, user interruption, or debugger request | No special Hart trap outcome; it is an outer control fact | Runner/debug controller |
+| Guest architectural breakpoint exception (`EBREAK` or equivalent) | `TrapEntered`; it follows synchronous architectural exception rules | Hart enters the guest trap; Runner decides whether/how to continue |
+| Future RISC-V Debug Mode or trigger-module halt | Separate Hart-owned architectural control boundary when implemented; not a protocol halt or guest trap | Hart/debug architecture supplies the state; Runner presents the control fact |
 | Cycle/instruction limit | No special Hart trap outcome | Runner and, for time/scheduling details, the interrupt, time, and stop-event decision |
 | Device scheduling, delay, or virtual time advancement | Not a Hart step outcome | Platform/Machine/Scheduler under the interrupt, time, and stop-event decision |
 | Internal or host failure | `SimulatorFailure` if it prevents Hart completion | Runner reports/stops according to its policy |
@@ -183,7 +189,11 @@ This would make the current API easy to wrap, but a poisoned lock, unsupported l
 
 ### E. Use a structured Hart outcome carrying completed semantic facts (chosen)
 
-A tagged semantic outcome makes retirement, trap entry, and simulator failure mutually distinguishable, lets the Hart produce records from authoritative effects, and preserves precise boundaries for block execution and Virtual Platform adapters. It requires an atomic/staged transition strategy and a richer observer contract, which are deliberate costs accepted by this ADR; their concrete designs remain implementation work.
+A tagged semantic outcome makes retirement, trap entry, and simulator failure mutually distinguishable, lets the Hart produce records from authoritative effects, and preserves precise boundaries for block execution and Virtual Platform adapters. Materialized records are optional and subscriber-gated; control-boundary facts remain always present. It requires an atomic/staged transition strategy and a richer observer contract, which are deliberate costs accepted by this ADR; their concrete designs remain implementation work.
+
+### F. Require one materialized record or Runner callback per retired instruction
+
+This would keep observation simple for the interpreter ISS, but it would freeze every quantum as a high-bandwidth observation channel and contradict later block execution, translation, and DMI. It is rejected. Semantic capability remains mandatory; allocation and delivery occur only when observation is enabled.
 
 ## Consequences
 
@@ -228,21 +238,22 @@ This is a consistency boundary. [ADR-0002](0002-physical-access-transaction-and-
 
 The following are implementation evidence to obtain later:
 
-- **Outcome and retirement:** verify one commit for each successful instruction, no commit for a faulting instruction or accepted interrupt, precise saved/next PC, privilege transitions, and retirement-counter behavior.
+- **Outcome and retirement:** verify that a successful instruction retires once, a faulting instruction or accepted interrupt does not, saved/next PC and privilege transitions are precise, and retirement-counter behavior is independent of whether observation records are materialized.
 - **Fault matrix:** exercise post-translation and page-table-walk physical faults for fetch/load/store-AMO, invalid or non-canonical translation conditions, permission failures, and architectural misalignment. Verify access-fault versus page-fault causes and original-VA trap values, with physical/PTE context remaining diagnostic.
 - **A/D visibility:** verify that a successful translation-stage A/D write remains visible when a later physical access faults, without assuming a particular A/D update scheme.
 - **Failure classification:** inject internal, unsupported-legal-operation, transport, device, and unknown-completion failures. Verify that guest-visible device faults become access-fault traps while host/unknown failures remain simulator failures, with no fabricated record.
-- **Observer ownership:** verify that records originate at the Hart transition, are delivered once as immutable facts, and do not require register snapshots or opcode re-fetch.
+- **Observer ownership:** verify that enabled interpreted and block execution produce the same precise ordered records without snapshots or opcode re-fetch, that speculative work is never recorded, that delivery is non-re-entrant, and that disabled observation produces identical Hart outcomes/final state without per-instruction record allocation or Runner callbacks.
 - **LR/SC profile behavior:** verify the selected ISA profile's reservation and conditional-access effects through a Hart-owned reservation state and a PhysicalAccess atomic envelope; do not use current implementation behavior as the specification.
 - **Block equivalence:** when block execution exists, compare its per-instruction outcomes and final architectural state with single-step execution, including a block that traps part-way through.
 
 ## Open questions and explicit deferrals
 
 1. The interrupt, time, and stop-event decision owns interrupt eligibility, priority/masking, architectural counter timing, delay consumption, and scheduler boundaries outside a Hart step.
-2. [ADR-0003](0003-runner-machine-and-platform-ownership.md) owns how the Runner represents a completed Hart outcome together with platform exit, debugger stop, execution limit, observer failure, and simulator failure.
+2. [ADR-0003](0003-runner-machine-and-platform-ownership.md) owns how the Runner represents completed Hart control facts together with platform exit, debugger/protocol halt, execution limit, observer failure, and simulator failure.
 3. The selected ISA profile determines the A/D update scheme and LR/SC reservation effects, including profile-defined faulting-SC behavior; this ADR does not select a new scheme or semantic.
 4. Concrete Rust outcome/record layouts, field types, ownership/lifetime mechanics, serialization, text-log compatibility, and detailed sink or trace formats are deferred to implementation design.
 5. Reservation granule, multi-Hart ordering, DMA coherence, global observation ordering, and trace back-pressure are deferred to the relevant outer-layer contracts; they must not weaken precise per-Hart retirement.
+6. RISC-V Debug Mode, trigger-module halt, and `dcsr`/`dret` state are Hart-owned when implemented; their detailed outcome contract is deferred and must not be classified as an external protocol halt or as a guest breakpoint exception.
 
 The physical-fault cause matrix, architectural trap value, A/D-write visibility, and device-fault versus simulator-failure distinction are decisions above, not open questions. There is no superseding record. This ADR remains **Proposed**.
 
