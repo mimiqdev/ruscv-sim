@@ -4,6 +4,7 @@
 **Authority:** Draft contract; normative only after acceptance
 **Date:** 2026-09-03
 **Owner:** Hart/core architecture
+**Related decisions:** [ADR-0002](0002-physical-access-transaction-and-fault.md), [ADR-0003](0003-runner-machine-and-platform-ownership.md), [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md)
 
 > This record defines the semantic Hart outcome, retirement, trap, and observation-ownership contracts. It is not a trace schema or a Rust implementation plan. The outcome and record names below are illustrative; this ADR does not prescribe enum or struct layouts, field types, serialization, wire formats, or migration mechanics.
 
@@ -35,7 +36,7 @@ One Hart architectural step starts from a coherent architectural state and compl
 
 These conceptual variants are a semantic contract, not a requirement to expose a particular Rust enum. They describe the capability of the Hart's semantic engine, not the shape or volume of materialized observations crossing the Machine boundary. For every attempted instruction or accepted interrupt, the Hart establishes the control-boundary facts needed to drive execution—whether architectural progress occurred, the relevant Hart and boundary-PC context, progress accounting, and any completed trap or failure context. A block or other execution strategy may aggregate non-terminal progress while preserving those control facts at its return boundary.
 
-A step with no accepted interrupt attempts one instruction. The interrupt, time, and stop-event decision owns interrupt eligibility, priority, masking, and timing; this ADR fixes the Hart boundary at which an accepted interrupt enters trap before fetching or executing an instruction. A `CommitRecord` or `TrapRecord` is an optional materialized observation of that semantic transition. When no observation subscriber is active, the Hart and its execution strategy must not allocate, serialize, retain, or deliver one such record per instruction merely to preserve this capability; in particular, no per-instruction Runner callback is required. The same architectural transition, control facts, and final state must result whether observation is disabled or enabled.
+A step with no accepted interrupt attempts one instruction. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) owns interrupt eligibility, priority, masking, and timing; this ADR fixes the Hart boundary at which an accepted interrupt enters trap before fetching or executing an instruction. A `CommitRecord` or `TrapRecord` is an optional materialized observation of that semantic transition. When no observation subscriber is active, the Hart and its execution strategy must not allocate, serialize, retain, or deliver one such record per instruction merely to preserve this capability; in particular, no per-instruction Runner callback is required. The same architectural transition, control facts, and final state must result whether observation is disabled or enabled.
 
 `TrapEntered` is complete only after the architectural trap-entry state is established: the applicable saved PC, cause, and value and status state have been updated, privilege has changed as required by delegation, and the Hart PC is the selected handler target. If trap entry itself cannot be completed because of an implementation or host failure, the result is `SimulatorFailure`, not a partially recorded trap.
 
@@ -51,7 +52,7 @@ The following rules are normative for the semantic contract:
 | A physical port reports a guest-visible fault, after Hart classification | No | `TrapEntered` | Trap entry for the access-fault cause selected by the matrix below |
 | A Hart invariant, host resource, unsupported legal operation, or physical backend failure prevents architectural completion | No completed instruction | `SimulatorFailure` | No partial Hart architectural state is exposed as a commit or trap |
 
-A faulting instruction and interrupt entry therefore never retire an instruction. In particular, `minstret`-like retirement accounting must not count either the faulting instruction or an interrupt entry as a retired instruction. Other architectural counters follow their ISA-defined semantics and are recorded when they change; scheduler, wall-clock, and virtual-time accounting is outside this ADR and belongs to the interrupt, time, and stop-event decision.
+A faulting instruction and interrupt entry therefore never retire an instruction. In particular, `minstret`-like retirement accounting must not count either the faulting instruction or an interrupt entry as a retired instruction. Other architectural counters follow their ISA-defined semantics and are recorded when they change; scheduler, wall-clock, and virtual-time accounting is outside this ADR and belongs to [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md).
 
 A normal instruction's retirement is the point at which its architectural state transition becomes visible to the Hart's observers. The implementation may stage effects, use a journal, or use another mechanism; this ADR does not choose among those mechanisms. A failed instruction cannot leave partially applied GPR, floating-point register, CSR, privilege, PC, reservation, or other Hart architectural state behind. Any state change that the selected ISA profile explicitly mandates for a faulting attempt is part of the completed architectural outcome rather than a leaked partial effect.
 
@@ -163,8 +164,8 @@ The Hart step outcome is deliberately narrower than a Runner result:
 | External debugger/protocol halt, user interruption, or debugger request | No special Hart trap outcome; it is an outer control fact | Runner/debug controller |
 | Guest architectural breakpoint exception (`EBREAK` or equivalent) | `TrapEntered`; it follows synchronous architectural exception rules | Hart enters the guest trap; Runner decides whether/how to continue |
 | Future RISC-V Debug Mode or trigger-module halt | Separate Hart-owned architectural control boundary when implemented; not a protocol halt or guest trap | Hart/debug architecture supplies the state; Runner presents the control fact |
-| Cycle/instruction limit | No special Hart trap outcome | Runner and, for time/scheduling details, the interrupt, time, and stop-event decision |
-| Device scheduling, delay, or virtual time advancement | Not a Hart step outcome | Platform/Machine/Scheduler under the interrupt, time, and stop-event decision |
+| Cycle/instruction limit | No special Hart trap outcome | Runner and [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) for time/scheduling details |
+| Device scheduling, delay, or virtual time advancement | Not a Hart step outcome | Platform/Machine/Scheduler under [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) |
 | Internal or host failure | `SimulatorFailure` if it prevents Hart completion | Runner reports/stops according to its policy |
 
 This keeps platform exit, debugger stop, execution limits, scheduling, architectural traps, and simulator failures distinguishable as required by the architecture principles.
@@ -228,11 +229,11 @@ The companion PhysicalAccess contract and this Hart contract have distinct respo
 | Data and operations | Transfer raw little-endian bytes and carry enough operation information for indivisible AMO/LR/SC envelopes. | Interpret load/store/atomic semantics, apply register results, and decide retirement. |
 | Translation-stage access | Serve PTE reads and A/D writes as physical operations with the same fault taxonomy. | Know that a failed PTE operation belongs to the original fetch/load/store-AMO access and apply §2; preserve a successful A/D write as a separate effect. |
 | Atomicity and reservation | Prevent partial failed physical transactions and expose competing-access visibility through the port. | Own architectural reservation state and SC result; apply the selected ISA profile's reservation effects. |
-| Timing | Report optional physical delay metadata without defining Hart outcomes. | Leave consumption and scheduling to the outer layers under the interrupt, time, and stop-event decision. |
+| Timing | Report optional physical delay metadata without defining Hart outcomes. | Leave consumption and scheduling to the outer layers under [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md). |
 
 A valid routed device error is therefore not an unresolved integration question: it is a guest-visible physical access fault. An adapter failure or unknown completion is a `SimulatorFailure`, never an invented trap. A generic `MemoryError` conversion in the current implementation is not this contract.
 
-This is a consistency boundary. [ADR-0002](0002-physical-access-transaction-and-fault.md) records the companion port contract; [ADR-0003](0003-runner-machine-and-platform-ownership.md) and the interrupt, time, and stop-event decision consume the Hart boundary for outer ownership. The records retain their distinct scopes and do not duplicate one another.
+This is a consistency boundary. [ADR-0002](0002-physical-access-transaction-and-fault.md) records the companion port contract; [ADR-0003](0003-runner-machine-and-platform-ownership.md) and [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) consume the Hart boundary for outer ownership. The records retain their distinct scopes and do not duplicate one another.
 
 ## Later verification when implemented
 
@@ -248,7 +249,7 @@ The following are implementation evidence to obtain later:
 
 ## Open questions and explicit deferrals
 
-1. The interrupt, time, and stop-event decision owns interrupt eligibility, priority/masking, architectural counter timing, delay consumption, and scheduler boundaries outside a Hart step.
+1. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) owns interrupt eligibility, priority/masking, architectural counter timing, delay consumption, and scheduler boundaries outside a Hart step.
 2. [ADR-0003](0003-runner-machine-and-platform-ownership.md) owns how the Runner represents completed Hart control facts together with platform exit, debugger/protocol halt, execution limit, observer failure, and simulator failure.
 3. The selected ISA profile determines the A/D update scheme and LR/SC reservation effects, including profile-defined faulting-SC behavior; this ADR does not select a new scheme or semantic.
 4. Concrete Rust outcome/record layouts, field types, ownership/lifetime mechanics, serialization, text-log compatibility, and detailed sink or trace formats are deferred to implementation design.

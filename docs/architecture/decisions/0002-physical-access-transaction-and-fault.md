@@ -5,7 +5,7 @@
 | Status | Proposed |
 | Authority | Draft contract; normative only after acceptance |
 | Date | 2026-09-03 |
-| Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0003](0003-runner-machine-and-platform-ownership.md), the interrupt, time, and stop-event decision |
+| Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0003](0003-runner-machine-and-platform-ownership.md), [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) |
 
 ## Context
 
@@ -95,7 +95,7 @@ target, or an unsupported width is handled as a physical-target result under sec
 | Indivisible atomic operations and competing-write visibility | Physical-access/Platform domain | Provides the atomic envelope and visibility needed by Hart reservation state; never exposes an AMO or SC as an ordinary read/write pair. |
 | Per-Hart reservation architectural state and SC architectural result | Hart | Records reservation state and produces the architectural SC result from the physical operation response. |
 | Trap entry, retirement, and architectural register/CSR effects | Hart; architectural cause mapping is owned by [ADR-0001](0001-hart-execution-outcome-and-observation.md) | A port call neither takes a trap nor retires an instruction. |
-| Delay metadata consumption and scheduler advancement | Runner/scheduler under the interrupt, time, and stop-event decision | A delay annotation does not make the Hart sleep or choose a scheduling algorithm. |
+| Delay metadata consumption and scheduler advancement | Runner/scheduler under [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) | A delay annotation does not make the Hart sleep or choose a scheduling algorithm. |
 
 The Hart checks architectural alignment before translation and before issuing a
 physical request when the selected profile requires alignment. If a profile admits a
@@ -233,7 +233,7 @@ load value, fault classification, cycle count, or permission to mutate Hart stat
 Zero is a valid modeled latency; absence means that the backend has no timing
 annotation. An annotation never turns a fault into a wait or a success into a trap.
 
-The interrupt, time, and stop-event decision owns units, precision conversion, accumulation, whether a fault consumes modeled
+[ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) owns units, precision conversion, accumulation, whether a fault consumes modeled
 time, Hart budgeting, temporal decoupling, and scheduler advancement. This ADR does
 not select a scheduler algorithm or require Hart semantics to depend on a transport
 time type.
@@ -314,7 +314,7 @@ algorithm, DMI API, or SystemC interface.
   distinguishable for [ADR-0001](0001-hart-execution-outcome-and-observation.md) and observers.
 - Transaction-level atomicity prevents a backend from silently weakening AMO/LR/SC
   semantics while leaving target-specific mechanisms open.
-- Delay can be carried without prematurely selecting the interrupt, time, and stop-event decision's scheduler or time policy.
+- Delay can be carried without prematurely selecting [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md)'s scheduler or time policy.
 
 ### Costs and risks
 
@@ -390,7 +390,7 @@ Only the following concerns are intentionally bounded outside this ADR:
 
 The selected ISA profile, rather than this ADR, supplies exact architectural behavior
 for profile-defined cases such as a faulting SC. [ADR-0003](0003-runner-machine-and-platform-ownership.md)
-and the interrupt, time, and stop-event decision consume this contract for their
+and [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) consume this contract for their
 respective ownership and timing concerns. The cross-check with [ADR-0001](0001-hart-execution-outcome-and-observation.md)
 keeps the cause matrix consistent; these records do not redefine the physical-access
 contract.

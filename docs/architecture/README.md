@@ -294,25 +294,25 @@ sequenceDiagram
     participant O as Observer
 
     F->>R: run(image, limits, options)
-    R->>S: start(machine)
+    R->>S: grant(machine, budget, deadline, control)
 
     loop Until a stop condition
-        S->>H: run(budget, deadline, interrupt_lines)
+        S->>H: exchange(grant: budget, deadline, control, observations)
         H->>B: fetch / load / store
         B->>D: MMIO transaction
         D-->>B: data / fault / delay / event
         B-->>H: AccessResponse
         H-->>O: optional Commit / Trap records
-        H-->>S: control facts + consumed time
-        S->>D: advance_to(next deadline)
-        D-->>S: interrupt / DMA / platform event
+        H-->>S: ordered facts + progress + consumed time
+        S->>D: advance_to(next boundary)
+        D-->>S: interrupt / timer / platform event
     end
 
     S-->>R: unclassified co-incident facts
     R-->>F: classified ExecutionResult
 ```
 
-This sequence is the Runner-driven ISS/native path. In external-kernel hosting the kernel grants time into the Machine; the Runner still classifies non-lossy facts and does not have to own that outer thread. Observation records are subscriber-gated; control facts are always returned.
+This sequence is the Runner-driven ISS/native path. [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md) defines the exchange, pre-fetch interrupt sample, modeled-time and delay accounting, WFI/idle boundary, and fact ordering shown here. In external-kernel hosting the kernel grants time into the Machine; the Runner still classifies non-lossy facts and does not have to own that outer thread. Observation records are subscriber-gated; control facts are always returned.
 
 ## 8. Capability accumulation and architecture gates
 
