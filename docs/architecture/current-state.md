@@ -141,9 +141,9 @@ This is not yet the target `Frontend → Runner → Machine → Hart/Platform �
 | Physical access | `MemoryInterface` combines typed storage operations with RISC-V sign/zero-extension helpers | Define a physical transaction/fault contract; keep ISA load interpretation, alignment, translation, and privilege checks in Hart semantics. |
 | Platform/address map | `SystemBus` is a fixed RAM/UART/HTIF switch inside `executor.rs`; `TlmBus` is separate | Choose one platform address-space abstraction with native and future TLM backends, without routing ISA semantics through two buses. |
 | MMU | Standalone `mmu` subsystem is not called by the core | Decide how Hart-owned instruction/data translation uses the same physical-access port as normal accesses and page-table walks. |
-| Traps and interrupts | Trap and interrupt components exist, but `step` neither samples lines nor performs the integrated trap path | Define interrupt inputs, sampling points, priority, trap records, and architectural exception propagation. |
+| Traps and interrupts | Trap and interrupt components exist, but `step` neither samples lines nor performs the integrated trap path | Define Platform source/input admission and Machine grants at Hart/profile-provided architectural boundaries; keep eligibility, masking, delegation, architectural priority, trap/debug/WFI transitions, and ISA-visible counter deltas in the Hart/profile. |
 | Devices | UART is minimally wired; CLINT/PLIC are TLM-side components; HTIF is embedded in the executor bus | Define device lifecycle, reset, MMIO routing, interrupt output, host service, and platform-exit contracts. |
-| Time/scheduling | Public execution counts completed instructions; side components have independent time concepts | Define the minimal ISS time/budget contract that can later be driven by a VP scheduler without changing Hart semantics. |
+| Time/scheduling | Public execution counts completed instructions; side components have independent time concepts | Define the minimal ISS time/budget contract in [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md) so it can later be driven by a VP scheduler without changing Hart semantics. |
 | Debug/run control | GDB and managers exist only against mock `DebugTarget` implementations | Bind debug operations to Machine/Runner state and distinguish debugger stops from traps, exits, limits, and faults. |
 | TLM/SystemC | Rust TLM-style components and an unused optional core field exist | Make TLM a `PhysicalAccess` adapter. Define a narrow C/C++ boundary later; do not add a TLM-specific Hart execution path. |
 | Faster execution | Only single-instruction interpretation is active | Preserve precise retirement and event contracts so block execution, translation, DMI, and temporal decoupling can be added as strategies later. |
@@ -155,7 +155,7 @@ The next architecture work should resolve these items in order; this is a depend
 1. Define the Hart step/run outcome and observation records.
 2. Define physical access and fault semantics, including which layer owns alignment and sign extension.
 3. Define Machine, Platform, and Runner ownership so `load_and_run` can be decomposed without changing behavior.
-4. Define interrupt, platform-exit, debug-stop, simulator-fault, and execution-limit boundaries.
+4. Define interrupt, platform-exit, debug-stop, simulator-fault, and execution-limit boundaries in [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md).
 5. Decide how existing MMU, TLM, peripherals, and debug components adapt to those contracts.
 
 ## 7. Behavior that refactoring must preserve

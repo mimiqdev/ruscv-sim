@@ -146,10 +146,16 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    ENTRY["step / run"] --> SAMPLE["Sample InterruptLines"]
-    SAMPLE --> PENDING{"Eligible interrupt?"}
-    PENDING -- Yes --> INTR["Build interrupt trap"]
-    INTR --> TRAP["Trap entry<br/>CSR / Privilege / Target PC"]
+    WAITINPUT["Machine admits newly normalized inputs<br/>for a previously Waiting Hart"] --> REEVAL["Control-only wait-state re-evaluation<br/>(no turn/time/counter accounting)"]
+    REEVAL --> WAITRESULT{"Hart/profile alone returns<br/>Runnable or Waiting"}
+    WAITRESULT -- Runnable --> ENTRY["Machine normal grant at Hart boundary"]
+    WAITRESULT -- Waiting --> STILLWAIT["Waiting remains reported<br/>(no normal turn)"]
+    RUNNABLE["Hart/profile reports Runnable"] --> ENTRY
+
+    ENTRY --> SAMPLE["Hart/profile samples InterruptLines"]
+    SAMPLE --> PENDING{"Hart/profile: eligible interrupt?"}
+    PENDING -- Yes --> INTR["Hart builds interrupt trap"]
+    INTR --> TRAP["Hart trap entry<br/>CSR / Privilege / Target PC"]
 
     PENDING -- No --> FETCHVA["Instruction virtual address<br/>PC"]
     FETCHVA --> IMMU["Instruction translation<br/>MMU / TLB / PMP"]
@@ -173,7 +179,7 @@ flowchart TB
     TRAP --> CTRL
     RETIRE -. optional observation .-> COMMIT["CommitRecord"]
     TRAP -. optional observation .-> TRAPREC["TrapRecord"]
-    CTRL --> OUT["Step / quantum control result"]
+    CTRL --> OUT["One Hart transition + control facts"]
     COMMIT --> OUT
     TRAPREC --> OUT
 ```
@@ -257,7 +263,7 @@ flowchart TB
     end
 
     subgraph Integration["System integration"]
-        SYSTEMC["SystemC"]
+        SYSC["SystemC"]
         RTL["RTL Emulator"]
         EXT["External IP Models"]
     end
@@ -274,9 +280,9 @@ flowchart TB
     CONTRACT --> VPBUS
     VPSCHED --> VPTIME
     VPBUS --> PERIPH
-    VPBUS --> SYSTEMC
-    SYSTEMC --> RTL
-    SYSTEMC --> EXT
+    VPBUS --> SYSC
+    SYSC --> RTL
+    SYSC --> EXT
 ```
 
 A Machine is one Platform plus one or more Harts; N=1 is the ISS baseline. Native VP scheduling is Machine-associated. SystemC, HDL, or other co-simulation may own the outer execution thread while the same Hart/Platform semantics and ruscv-sim result taxonomy remain in force.
@@ -287,32 +293,61 @@ A Machine is one Platform plus one or more Harts; N=1 is the ISS baseline. Nativ
 sequenceDiagram
     participant F as Frontend
     participant R as Runner
-    participant S as Scheduler
+    participant M as Machine
     participant H as Hart
     participant B as PhysicalAccess
     participant D as Device
     participant O as Observer
 
     F->>R: run(image, limits, options)
-    R->>S: start(machine)
+    R->>M: grant(budget, deadline, control, observations)
 
     loop Until a stop condition
-        S->>H: run(budget, deadline, interrupt_lines)
-        H->>B: fetch / load / store
-        B->>D: MMIO transaction
-        D-->>B: data / fault / delay / event
-        B-->>H: AccessResponse
-        H-->>O: optional Commit / Trap records
-        H-->>S: control facts + consumed time
-        S->>D: advance_to(next deadline)
-        D-->>S: interrupt / DMA / platform event
+        M->>M: admit due Platform/input events at cursor
+        alt Newly admitted input for a previously Waiting Hart
+            M->>H: control-only wait-state re-evaluation (no turn/accounting)
+            H-->>M: Runnable or Waiting (Hart/profile-owned result)
+        end
+        alt Runnable and budget/deadline/control conditions permit
+            M->>M: check conservative turn bound against deadline slack
+            M->>H: Hart-provided architectural boundary + admitted inputs
+            H->>H: profile decides eligibility and one architectural transition
+            H->>B: fetch / load / store
+            B->>D: MMIO transaction
+            D-->>B: data / fault / delay / event
+            B-->>H: AccessResponse
+            H-->>M: exactly one transition + state/counter facts + optional records
+            M->>M: consume delay once; advance cursor; admit causal events
+        else All Harts remain Waiting
+            M->>M: continue/run idle jump to next event or deadline
+        end
+        M-->>O: deliver requested observations
     end
 
-    S-->>R: unclassified co-incident facts
+    M-->>R: unclassified co-incident facts + accounting
     R-->>F: classified ExecutionResult
 ```
 
-This sequence is the Runner-driven ISS/native path. In external-kernel hosting the kernel grants time into the Machine; the Runner still classifies non-lossy facts and does not have to own that outer thread. Observation records are subscriber-gated; control facts are always returned.
+This diagram shows the required observable phases for the Runner-driven ISS/native
+path; it is not a scheduler control-flow prescription. [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md)
+defines input admission, the Machine's normal architectural grant and
+control-only wait-state re-evaluation grant at a Hart/profile-provided boundary,
+conservative deadline bounds, modeled-time and delay accounting, WFI/idle
+scheduling, and fact ordering shown here. After a legal `continue`/`run` idle
+jump, input admission and the required wait-state re-evaluation may occur in the
+same exchange; the Hart/profile alone returns `Runnable` or `Waiting`, and only a
+`Runnable` result plus permitted budget/deadline/control conditions can lead to a
+normal turn. The re-evaluation consumes no turn, instruction attempt, retirement,
+`iss_tick`, virtual-time advance, physical delay, or ISA counter delta. At a
+reached deadline it may report state but no normal turn begins, while a Waiting
+single-step retains its no-idle-jump `Waiting` + `SingleStepBoundary` behavior.
+The selected Hart/profile decides interrupt eligibility, masking/delegation,
+architectural priority, trap/debug/WFI transitions, and ISA-visible counter
+deltas; the Machine never evaluates those predicates or changes Hart run state
+directly. In external-kernel hosting the kernel grants the authoritative time
+horizon into the Machine; the Runner still classifies non-lossy facts and does not
+have to own that outer thread. Observation records are subscriber-gated; control
+facts are always returned.
 
 ## 8. Capability accumulation and architecture gates
 

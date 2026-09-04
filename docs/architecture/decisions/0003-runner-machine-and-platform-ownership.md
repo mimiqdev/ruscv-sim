@@ -6,7 +6,7 @@
 | Authority | Draft contract; normative only after acceptance |
 | Date | 2026-09-03 |
 | Owner | Runtime and composition architecture |
-| Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0002](0002-physical-access-transaction-and-fault.md), the interrupt, time, and stop-event decision |
+| Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0002](0002-physical-access-transaction-and-fault.md), [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) |
 | Supersedes | None |
 
 > This is a documentation-only decision. It defines semantic ownership and dependency
@@ -48,8 +48,11 @@ transport-neutral Hart-initiator `PhysicalAccess` boundary consumed here: all Ha
 physical accesses use the same raw-byte transaction vocabulary, and physical target
 faults remain distinct from simulator/adapter failures. A future inbound
 Platform-master/DMA port is an explicit ADR-0002 deferral, not a second Hart path.
-The interrupt, time, and stop-event decision will define the detailed interrupt,
-time, and stop-event arbitration that this record deliberately bounds.
+[ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines
+Platform-input admission, the Machine's normal architectural grants and its
+control-only wait-state re-evaluation grants at Hart/profile-provided boundaries,
+scheduler accounting, and non-lossy fact ordering that this record deliberately
+bounds; Hart/profile architectural decisions remain with the Hart.
 
 ## Decision
 
@@ -113,9 +116,12 @@ direction. Machine owns the association of any time/scheduling service with the
 Harts and Platform. A scheduler, when present, is Machine-associated for native
 hosting and cannot bypass ruscv-sim terminal taxonomy; in external-kernel hosting
 it does not own the outer kernel thread. The complete invocation and return rule
-is in §3. The interrupt, time, and stop-event decision defines only detailed
-timing, interrupt, and stop-arbitration semantics. A port is a contract, not a
-commitment to a Rust trait, callback, channel, or transport representation.
+is in §3. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines
+only Platform-input admission, Machine grants, scheduler accounting, and
+non-lossy fact ordering, including the control-only wait-state re-evaluation
+exchange that does not itself constitute a Hart turn. A port is a contract, not a
+commitment to a Rust trait,
+callback, channel, or transport representation.
 
 | Concern | Primary owner | Boundary rule |
 | --- | --- | --- |
@@ -212,8 +218,10 @@ An installed image establishes the entry metadata and the initial contents again
 which a fresh run is defined. Replacing an image or changing composition is a
 separate lifecycle operation, not an implicit side effect of a Hart step. The
 concrete operation used to replace it—reconfigure, rebuild, or another mechanism—
-is intentionally not selected here. Image installation requires a quiescent Machine
-as defined below; it is illegal while a step or quantum is in flight.
+is intentionally not selected here. Image installation requires lifecycle
+quiescence (`DrainComplete`) as defined by [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md),
+not merely the run-level `NoProgress` fact; it is illegal while a step or quantum
+is in flight.
 
 #### Reset
 
@@ -246,8 +254,12 @@ the initial state of the next run.
 
 #### Quiesce
 
-Mutating control operations require a coherent quiescent Machine. While a Hart
-step or budgeted quantum is in flight, the following are illegal:
+Mutating control operations require a coherent lifecycle-quiescent Machine
+(`DrainComplete` under [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md)).
+This lifecycle acknowledgment is distinct from the run-level `NoProgress` fact:
+a Machine may have no future work without granting mutation, and a completed
+quiesce/drain may leave Harts conceptually Runnable while new turns are held.
+While a Hart step or budgeted quantum is in flight, the following are illegal:
 
 - image installation or replacement;
 - reset;
@@ -259,9 +271,13 @@ step or budgeted quantum is in flight, the following are illegal:
 
 Quiesce means that no architectural transition is in progress, already completed
 outcomes remain valid, and no new Platform run events are emitted for the
-in-flight quantum. Future checkpoint/restore additionally requires drain and
-invalidation of stale DMI or translated state; those mechanisms are not specified
-here. This ADR does not prescribe APIs, drain algorithms, or checkpoint formats.
+in-flight quantum. The Machine enters `QuiesceRequested` when an effective request
+stops new work, and reports `DrainComplete` only after all started work and
+observation delivery have drained; an unknown completion is reported as a failure
+instead and does not grant lifecycle mutation.
+Future checkpoint/restore additionally requires drain and invalidation of stale
+DMI or translated state; those mechanisms are not specified here. This ADR does
+not prescribe APIs, drain algorithms, or checkpoint formats.
 
 #### Run, stop, and teardown
 
@@ -292,23 +308,28 @@ per-instruction `CommitRecord` or `TrapRecord` and without a per-instruction
 Runner callback. When observation is enabled, interpreted and block execution
 must still make available precise, ordered, non-speculative, non-reentrant Hart
 records as required by ADR-0001. A quantum is not a Machine-owned stop-policy
-operation. The interrupt, time, and stop-event decision defines timing, interrupt
-eligibility/sampling, quantum size, and simultaneous-stop arbitration only; it
-does not own ruscv-sim terminal taxonomy.
+operation. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines
+Platform-input admission, normal Machine grants and control-only wait-state
+re-evaluation grants at Hart/profile-provided architectural boundaries,
+virtual-time/budget accounting, quantum size, and non-lossy fact ordering only; it
+does not own Hart interrupt eligibility,
+masking/delegation, architectural priority, trap/debug/WFI transitions, ISA
+counter deltas, or ruscv-sim terminal taxonomy.
 
 A Runner stop request, external debugger/protocol halt, guest architectural
 breakpoint trap, future RISC-V Debug Mode halt, limit, Platform exit, Hart trap,
 or simulator failure must remain distinguishable. Stop requests are handled at a
 coherent architectural boundary; an asynchronous request may shorten the next
-quantum but must not unretire a completed instruction. The interrupt, time, and
-stop-event decision arbitrates only when multiple conditions are eligible at one
-boundary, after all co-incident facts have been preserved.
+quantum but must not unretire a completed instruction. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) admits inputs and
+coordinates the grant/accounting boundary only. The Hart/profile decides which
+architectural transition occurs at that boundary; the Machine returns all
+co-incident facts for Runner presentation.
 
 At teardown the Runner stops accepting ruscv-sim control, completes or reports
 observer handling according to its run policy, and releases its run-level sinks.
-The Machine first reaches a quiescent state, then disconnects or releases the
-Harts, Platform, device, host-service, and event resources it owns. The Platform
-must not emit new run events after the Machine has completed teardown. Whether a
+The Machine first reaches lifecycle `DrainComplete`, then disconnects or
+releases the Harts, Platform, device, host-service, and event resources it owns.
+The Platform must not emit new run events after the Machine has completed teardown. Whether a
 host transport needs an adapter-specific shutdown sequence is an implementation
 detail, not a new ownership boundary.
 
@@ -485,8 +506,8 @@ Limits are Runner-owned outer controls. The Runner may stop after a configured
 number of completed Hart steps, a deadline, or another bound and reports a limit
 rather than a Hart trap. The exact meaning of a cycle versus an instruction,
 physical delay consumption, virtual-time advancement, deadline sampling, and
-whether a limit wins against another event are explicitly deferred to the
-interrupt, time, and stop-event decision.
+whether a limit wins against another event are defined by
+[ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md).
 The current CLI instruction-count behavior is nevertheless preserved as a
 compatibility constraint while these decisions are made.
 
@@ -585,26 +606,30 @@ external models are Platform implementations, not alternate ISA engines. Image
 installation is host-side Machine work without a Hart load/commit; page walks use
 the same port.
 
-## Boundary with the interrupt, time, and stop-event decision
+## Boundary with [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md)
 
-The interrupt, time, and stop-event decision owns detailed timing, interrupt, and
-stop-arbitration semantics only. This ADR fixes ownership and causal boundaries;
-it does not assign ruscv-sim terminal taxonomy to that decision, freeze a
-scheduler algorithm, or require the Runner to own every outer execution thread:
+[ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) owns detailed
+Platform-input admission, Machine grants, scheduler accounting, and fact-order
+semantics only. This ADR fixes ownership and causal boundaries; it does not
+assign Hart architectural predicates or transitions to that decision, assign
+ruscv-sim terminal taxonomy to it, freeze a scheduler algorithm, or require the
+Runner to own every outer execution thread:
 
-| Concern left to the interrupt, time, and stop-event decision | Boundary fixed by this ADR |
+| Concern left to [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) | Boundary fixed by this ADR |
 | --- | --- |
-| Interrupt eligibility, masking, priority, sampling point | Platform/Machine provide lines; Hart samples at the defined boundary. |
-| Cost, delay, time units, advancement, and budget facts | Runner owns ruscv-sim limits; Machine/scheduler or the external kernel reports facts; the later decision defines timing. |
+| Platform-input admission, the normal Machine grant, and the control-only wait-state re-evaluation grant at a Hart/profile-provided architectural boundary | Hart/profile owns interrupt eligibility, masking, delegation, architectural priority, and the resulting trap/debug/WFI transition; Machine only admits inputs and offers the boundary exchange, without deciding wake/state or architectural behavior. |
+| Cost, delay, time units, advancement, and budget facts | Runner owns ruscv-sim limits; Machine/scheduler or the external kernel reports facts; [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines scheduler accounting without writing ISA counters. |
 | Quantum, batching, hosting exchange, and event-loop strategy | Native scheduling is Machine-associated under §3; external kernels may own the outer thread; both return unclassified facts and cannot bypass ruscv-sim terminal taxonomy. |
-| Simultaneous trap/exit/debug/limit/time/failure priority | Machine returns non-lossy co-incident facts; Runner selects presentation later; the interrupt, time, and stop-event decision chooses arbitration. |
+| Simultaneous trap/exit/debug/limit/time/failure facts and presentation | Machine returns non-lossy co-incident facts; Runner selects presentation later; no framework layer supplies Hart architectural priority. |
 | Asynchronous interruption and resumability | External protocol halt reaches Runner/Machine; it is not a Hart trap, Debug Mode entry, or device exit. |
 
-The interrupt, time, and stop-event decision may refine timing, interrupt,
-hosting exchange, and arbitration without moving Hart semantics, Platform
-physical ownership, or ruscv-sim terminal taxonomy, and without changing
-successful tohost retirement ordering. This is a bounded deferral, not an
-unresolved ownership question.
+[ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) may refine
+input admission, grants, scheduler accounting, hosting exchange, and fact order
+without moving Hart semantics, Platform physical ownership, or ruscv-sim terminal
+taxonomy, and without changing successful tohost retirement ordering. The
+selected Hart/profile remains the source of architectural eligibility, masking,
+delegation, priority, trap/debug/WFI transitions, and ISA-visible counter deltas.
+This is a bounded deferral, not an unresolved ownership question.
 
 ## Alternatives considered
 
@@ -668,10 +693,14 @@ Only these remain for later contracts or implementation design:
 1. Concrete Rust layouts, traits, callbacks, lifetimes, ownership, serialization,
    and wire formats.
 2. Platform address map, device/host models, and native/TLM/SystemC APIs.
-3. Interrupt sampling, time/delay semantics, safe async stop, event priority,
-   quantum size, and hosting-exchange details belong to the interrupt, time, and
-   stop-event decision; they remain bounded by §3 and must not freeze scheduler
-   algorithms.
+3. Platform-input admission, Machine normal-grant and control-only wait-state
+   re-evaluation mechanics, `iss_tick`/virtual-time/delay/budget/idle accounting,
+   safe async stop, event/fact order, quantum size, and hosting-exchange details
+   belong to the
+   interrupt, time, and stop-event decision. Hart/profile eligibility,
+   masking/delegation, architectural priority, trap/debug/WFI transitions, and
+   ISA-visible counter deltas remain outside that framework decision; all details
+   remain bounded by §3 and must not freeze scheduler algorithms.
 4. Profile-specific Hart/device reset values not owned by an accepted contract.
 5. Image-placement storage/snapshot and signature representations, plus migration
    and deprecation of existing wrappers/components.
