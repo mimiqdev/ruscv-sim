@@ -6,7 +6,7 @@
 
 Research documents retain useful options and constraints without placing them on the active roadmap.
 
-- [ISS and Virtual Platform architectural prior art](iss-vp-prior-art.md)
+- [ISS and Virtual Platform architectural prior art](iss-vp-prior-art.md) — comparative evidence, Proposed ADR implications, and bounds for the future interrupt/time/stop-event decision
 - [Execution performance directions](performance.md)
 - [Heterogeneous platform directions](heterogeneous-platforms.md)
 - [Linux boot requirements](linux-boot-requirements.md)

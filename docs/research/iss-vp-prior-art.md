@@ -57,7 +57,7 @@ These categories expose boundaries that projects name differently. A close vocab
 2. **Run control is broader than a Hart/CPU result.** Mature systems represent debugger stops, limits, guest shutdown, event-loop exits, and internal failure outside the instruction semantics even when their concrete APIs do not expose one clean taxonomy.
 3. **Transactions and architectural faults are related but not identical.** QEMU has explicit transaction result categories and target-specific CPU fault mapping; gem5 separates packets from ISA `Fault` objects; TLM has transport response statuses but no ISA mapping. This supports a normalized physical result below a Hart-owned cause mapping.
 4. **Time is not safely modeled as “one instruction equals one cycle.”** Spike and the Sail harness use deliberately coarse instruction-linked time; gem5, Renode, SystemC/TLM, QEMU, and Fast Models expose event time, budgets, or quanta. Fast Models explicitly documents the accuracy/performance cost of temporal decoupling.
-5. **Precise observation must coexist with a bypassable fast path.** Spike, QEMU TCG, Renode, Sail, and Fast Models all pay additional costs or introduce synchronization when fine-grained debugging/tracing is enabled. Observation semantics should be stable, but inactive sinks must not force per-instruction allocation or MMIO interception.
+5. **Semantic observability must be separated from materialized observation.** Spike, QEMU TCG, Renode, Sail, and Fast Models all pay additional costs or introduce synchronization when fine-grained debugging/tracing is enabled. The Hart must retain the capability to produce precise completed facts, but an unsubscribed fast path must not allocate or return one record per instruction or intercept every MMIO access.
 6. **Acceleration is an execution strategy, not an ownership rewrite.** Translation blocks, direct memory interfaces, alternate CPU models, KVM, and temporal decoupling preserve a surrounding machine/platform boundary and require explicit exits, invalidation, or synchronization.
 7. **No reviewed design can be copied wholesale.** Spike is intentionally compact; gem5 optimizes for detailed event simulation; QEMU and Renode have much wider product surfaces; Sail prioritizes executable specification; Fast Models and Simics expose proprietary products; SystemC/TLM is an integration standard rather than an ISA/platform implementation.
 
@@ -166,7 +166,7 @@ Implementation evidence is from the Accellera reference implementation at tag [`
 - **Time — SO:** transport calls carry annotated `sc_time`; [`tlm_quantumkeeper`](https://github.com/accellera-official/systemc/blob/3.0.2/src/tlm_utils/tlm_quantumkeeper.h#L31-L162) tracks initiator-local time and synchronizes when the global quantum is reached. This permits an initiator to run ahead while bounding divergence.
 - **Observability — SO:** TLM debug transport requires non-intrusive access with no side effects, waits, or event notifications; SystemC tracing/reporting observe kernel/model state. TLM itself does not define architectural commit or trap records.
 - **Acceleration — SO:** [`tlm_dmi`](https://github.com/accellera-official/systemc/blob/3.0.2/src/tlm_core/tlm_2/tlm_2_interfaces/tlm_dmi.h#L27-L109) grants a host pointer over an address range with read/write permission and latency; the backward interface invalidates ranges. Quantum keeping provides temporal decoupling. Neither mechanism is an alternate ISA implementation.
-- **PI:** SystemC/TLM is a suitable integration-side vocabulary, not the Hart's canonical semantic API. A future adapter must normalize status, preserve raw bytes and atomic semantics, invalidate DMI, and return delay facts to the Machine-associated scheduler. `sc_stop` cannot replace a structured Runner stop result.
+- **PI:** SystemC/TLM is a suitable integration-side vocabulary, not the Hart's canonical semantic API. A future adapter must normalize status, preserve raw bytes and atomic semantics, invalidate DMI, and return delay facts to the active Runner-driven scheduler or external simulation kernel. `sc_stop` cannot replace a structured ruscv-sim stop-fact set and terminal result.
 
 ## Comparative synthesis
 
@@ -213,126 +213,126 @@ Implementation evidence is from the Accellera reference implementation at tag [`
 | Intel Simics | Multithreaded scheduler; details NE | Debug, inspect, trace, checkpoint | Fast functional simulation; mechanism NE |
 | SystemC/TLM | Global event time + annotated delays + local quantum | Kernel/model trace and debug transport; no ISA records | DMI with invalidation; temporal decoupling |
 
-**PI:** The recurring high-performance shape is “execute to a budget or mandatory boundary, then return precise facts.” Direct RAM and translated blocks require invalidation; time decoupling requires a deadline/quantum; debugging and detailed trace require earlier exits. These are reasons to stabilize Hart outcomes and Machine scheduling ports before optimizing them.
+**PI:** The recurring high-performance shape is “execute to a budget or mandatory boundary, then return control facts and any requested observations.” Direct RAM and translated blocks require invalidation; time decoupling requires a deadline/quantum; debugging and detailed trace require earlier exits. These are reasons to stabilize Hart semantics and Machine scheduling ports without making per-instruction record materialization mandatory.
 
-## Cross-check of the proposed ADRs
+## Architecture synthesis for the Proposed ADRs
 
-Research cannot accept a Proposed ADR. The verdicts below mean “consistent with the reviewed prior art and suitable to retain for architecture review,” not “implemented” or “normative.”
+Research cannot accept an ADR. The conclusions below identify supported invariants, wording changes needed before the existing Proposed ADRs can be accepted, requirements for the future interrupt/time/stop-event decision, and later implementation concerns.
 
-### ADR-0001 — Hart execution outcome and observation records
+### ADR-0001 — semantic core stands; observation and debug need refinement
 
-**Verdict: retain unchanged; supported by the reviewed evidence.**
+The evidence supports Hart ownership of retirement, trap entry, architectural fault mapping, and authoritative effects. It also supports keeping simulator failures outside guest trap state and forbidding Runner-side opcode re-fetch or snapshot comparison as the source of architectural truth. The Proposed ADR needs these refinements:
 
-- Spike, QEMU RISC-V/Arm, gem5, and Sail all keep architectural trap/exception handling with the CPU/ISA model rather than with a generic physical bus.
-- QEMU and gem5 demonstrate why transport failure and architectural fault are separate stages. Sail's internal-error union demonstrates why unsupported/internal model failure must not be fabricated as a guest trap.
-- Spike and Sail expose architectural effects close to execution; neither justifies Runner-side opcode re-fetch or post-hoc register comparison as the authoritative record.
-- Translation-block systems preserve earlier completed work and exit at precise boundaries for traps, debug, invalidation, or budget exhaustion. This is compatible with ADR-0001's one-record-per-retired-instruction rule for future blocks.
-- Fast Models' documented performance penalty for complete interception reinforces, rather than weakens, ADR-0001's separation between semantic facts and optional sink/presentation cost.
+- Distinguish **semantic capability** from **materialized observation**. Each completed Hart transition must have precise commit or trap facts available when observation is enabled, but an unsubscribed path need not allocate, serialize, or return one record per instruction across the Machine boundary.
+- A block may return an aggregate control result plus an optional, subscriber-gated ordered observation stream. When records are requested, earlier retired instructions remain individually observable, a faulting instruction has no commit, and speculative work is never exposed.
+- Keep three debug cases distinct: an external debugger/protocol halt request is outer control, a guest breakpoint exception such as `EBREAK` is `TrapEntered`, and future RISC-V Debug Mode or trigger-module entry is Hart architectural state whose detailed contract remains deferred. “Debugger breakpoint” is not a sound umbrella classification.
 
-**Implementation caution, not an ADR change:** inactive observers need a zero- or low-allocation fast path, while enabled observers receive the same completed Hart facts. Internal effect collection may be optimized, but an observer must not become a re-entrant instruction callback.
+These are changes to the Proposed ADR boundary, not permission for observers to become re-entrant callbacks or to reconstruct architectural effects after the fact.
 
-### ADR-0002 — Physical-access transaction and fault contract
+### ADR-0002 — core contract stands; add a future inbound-master port deferral
 
-**Verdict: retain unchanged; supported, with its stronger guarantees treated as capabilities to verify rather than assumptions about backends.**
+The one Hart-initiator `PhysicalAccess` port, raw-byte transfers, target-fault versus simulator-failure distinction, all-or-nothing operations, atomic envelope, delay metadata, and TLM/DMI adapter rules are supported. The Proposed ADR should keep that core and add one bounded deferral:
 
-- QEMU's address-space routing and `MemTxResult`, gem5's packet/error protocols, Renode's typed bus errors, PVBus abort/ignore ranges, and TLM response statuses all support an explicit physical result below ISA mapping.
-- QEMU's target-specific transaction-failure callbacks support retaining original access kind in the Hart when selecting an architectural exception.
-- TLM generic payload does not by itself guarantee RISC-V AMO/LR/SC semantics, all-or-nothing device effects, or a guest-versus-host failure classification. ADR-0002 is correct to require an adapter and explicit atomic capability instead of naming TLM as the Hart API.
-- Renode width translation and policy-controlled unmapped reads are useful compatibility features, but they confirm that silent splitting/defaulting is policy that must not leak through a strict semantic port.
-- SystemC DMI and Fast Models direct-memory optimizations confirm that DMI must remain behind routing, side-effect, atomicity, and invalidation rules.
+- A future **inbound-master/DMA Platform port** must admit writes and transactions from co-simulation masters, DMA engines, or other modeled initiators without passing through Hart translation.
+- That port is not a second Hart execution path. It must share the Platform's routing, width, side-effect, fault, atomicity, reservation-invalidation visibility, and DMI-invalidation rules.
+- Multi-Hart/DMA ordering and coherence remain future contracts; naming the port now avoids an ad hoc path that bypasses the physical world defined by ADR-0002.
 
-**Verification consequence:** each backend must prove or reject its advertised atomicity, failed-operation side-effect, and DMI invalidation guarantees. The contract must not infer those guarantees from the presence of a transport API.
+Backend proof of advertised atomicity, failure side effects, and DMI invalidation remains later implementation and verification work rather than evidence supplied by the presence of TLM.
 
-### ADR-0003 — Runner, Machine, and Platform ownership
+### ADR-0003 — retain role separation; refine hosting, cardinality, and exchange
 
-**Verdict: retain the ownership direction unchanged; supported by all applicable systems.**
+The evidence supports one architectural Hart implementation, Platform-owned physical behavior, Machine-owned composition/lifecycle, and Runner-owned terminal taxonomy and presentation policy. The Proposed ADR needs these refinements:
 
-- QEMU, gem5, Renode, Fast Models/FVP, and Simics expose a composition/configuration layer around CPUs and devices. Sail and Spike show the same distinction in smaller harnesses.
-- QEMU run state, gem5 exit events, Renode control states, and FVP limits all show that terminal policy is wider than a CPU trap or bus callback.
-- Renode's paused ELF loading and Sail's harness loader support keeping host-side image placement out of guest instruction execution. FVP's separate `--application`, `--data`, and `--start` controls reinforce the distinction between bytes, placement, and architectural entry state.
-- No evidence supports moving RISC-V translation, trap selection, or retirement into the Platform, or allowing a device to construct the final frontend result.
-- gem5 drain/checkpoint and Renode pause/reset show that coherent lifecycle/inspection boundaries matter once asynchronous devices and external controls exist.
+- Define a Machine as **one Platform plus one or more Harts**. One Hart is the standalone ISS baseline cardinality, not a permanent structural boundary; shared RAM, interrupt controllers, and `mtime` remain Platform state.
+- Permit two hosting modes with the same Hart/Platform contracts: **Runner-driven** execution for the standalone ISS/native VP, and **external-kernel-driven** execution for SystemC, HDL, or another co-simulation host. In the latter mode, the Runner is an adapter that preserves ruscv-sim control, observation, and terminal-result semantics; it need not be the thread that owns the external kernel loop.
+- Split the Machine exchange into an always-present **control plane** and a subscriber-gated **observation plane**. Control reports progress, time, causal Platform events, deadlines, and boundary facts; observation carries ordered Hart records only when requested.
+- Machine or scheduler returns an **unclassified set of co-incident facts**. Runner policy—or the Runner adapter in an externally hosted configuration—selects a primary presented reason without discarding the remaining facts.
 
-**Implementation caution, not an ADR change:** ADR-0003's “fresh reset restores installed image-owned mutable storage” is stronger than a bare peripheral reset in several reviewed systems. A backend must implement snapshot/reinstall semantics or explicitly decline a fresh-rerun guarantee; ordinary component reset must not be mislabeled as image restoration.
+This does not move ISA semantics out of the Hart, physical routing out of the Platform, composition out of the Machine, or final product policy into a device or simulation kernel.
 
-### Overall consistency verdict
+### Decision classification
 
-The three Proposed ADRs are mutually consistent with the public evidence. No concrete contradiction was found. The research supports these non-negotiable joins:
+**Changes needed to the existing Proposed ADRs:** semantic capability versus record materialization and the three-way debug distinction in ADR-0001; the future inbound-master/DMA Platform-port deferral in ADR-0002; and control/observation planes, two hosting modes, one-or-more-Hart Machine cardinality, and fact-versus-policy separation in ADR-0003.
 
-1. physical transport reports facts; Hart classifies architectural meaning;
-2. Hart completes retirement or trap entry before immutable observation crosses the boundary;
-3. Machine composes and provides a coherent lifecycle; Runner owns outer policy; and
-4. acceleration and SystemC/TLM remain replaceable strategies/adapters around the same Hart semantics.
+**Requirements for the future interrupt/time/stop-event ADR:** define the Machine-level exchange for both hosting modes; `mcycle`/`minstret` versus Platform-owned `mtime`/`mtimecmp`; deterministic multi-Hart and same-timestamp ordering; quiesce/drain boundaries; interrupt latency under blocks/quanta; WFI and idle advancement; and non-lossy simultaneous stop facts with a separate primary-reason policy.
 
-The later interrupt/time/stop decision should refine scheduling and arbitration only. It should not reopen those ownership decisions.
+**Later implementation concerns:** zero- or low-allocation inactive observers; backend capability proof; DMI and translated-code invalidation; snapshot/reinstall support for a fresh-run promise; concrete quantum size, time representation, and host-stop latency; and adapter-specific shutdown, rollback, or retry mechanisms.
 
 ## Bounds for the interrupt, time, and stop-event decision
 
-### Fixed by existing architecture
+### Supported invariants to preserve
 
-The later decision must preserve these already-proposed boundaries:
+The later decision and any revisions to the Proposed ADRs should preserve these boundaries:
 
-- An accepted interrupt enters the Hart before fetch at the defined step boundary and produces `TrapEntered`, not a retired instruction.
-- A synchronous guest exception, platform event, debugger stop, execution limit, observer failure, and simulator failure remain distinguishable.
-- A successful `tohost`/platform-exit write completes and retires before its causal platform-exit event becomes terminal at the Runner.
-- Physical delay is metadata until a Machine-associated scheduler consumes it; a device or Hart does not advance global time unilaterally.
-- Runner owns the outer loop and terminal policy. Machine or its associated scheduler may execute a budgeted quantum but must return precise per-step architectural facts and causal platform events.
-- Future block execution cannot hide commits before a trap/stop or turn prefetched/speculative work into observation.
+- One Hart implementation owns instruction semantics, translation, retirement, architectural traps, and per-Hart architectural state in both ISS and VP configurations.
+- Physical transport results, Hart architectural faults, Platform events, observer failures, and simulator failures remain distinct.
+- An accepted interrupt enters the Hart before fetch at the defined semantic boundary and produces `TrapEntered`, not a retired instruction.
+- A successful `tohost`/platform-exit write completes and retires before its causal Platform event can become terminal policy.
+- Physical delay is metadata until the active Runner-driven scheduler or external kernel consumes it; neither a device nor a Hart advances committed global time unilaterally.
+- A block cannot hide requested observations for commits completed before a trap/stop or expose prefetched/speculative work as architectural observation.
+- TLM, DMI, translation, and temporal decoupling remain adapters or execution strategies around the same Hart and Platform semantics.
+- Co-incident stop facts remain non-lossy; a lower-level scheduler or device does not collapse them into final product policy.
 
 ### Minimum semantic contract to decide
 
-The later ADR should define a Machine execution exchange equivalent in meaning to:
+The later ADR should define a Machine-level execution exchange for both Runner-driven requests and external-kernel grants/callbacks, equivalent in meaning to:
 
 ```text
-request:
-  instruction/step budget
+request or grant:
+  Machine-level instruction/step budget
   virtual-time deadline or no deadline
   control state (continue, single-step, stop requested)
+  observation demand (none or subscribed records)
 
-response:
-  ordered Hart outcomes and architectural observations
+control response (always present):
+  per-Hart and aggregate instructions/steps consumed
   ordered causal Platform events
-  instructions/steps consumed
   modeled-time/delay consumed
   next pending event/deadline information
-  control-boundary reason(s)
+  unclassified control-boundary fact set
+
+observation response (only when subscribed):
+  ordered Hart commit/trap records
 ```
 
-This is semantic pseudocode, not a Rust layout. It keeps instruction progress, time progress, and stop provenance independent.
+This is semantic pseudocode, not a Rust layout. It keeps instruction progress, time progress, stop provenance, and record materialization independent. The Machine or scheduler reports facts; terminal policy selects a primary reason later without dropping co-incident facts.
 
-### Required time properties
+### Required time, hosting, and lifecycle properties
 
-1. **Declared quantities:** keep at least retired instructions, Hart attempts/steps, architectural counter deltas, virtual-time delta, and host elapsed time conceptually distinct. A configuration may relate them, but must name the relation.
-2. **Monotonic virtual time:** use a declared resolution and conversion rule; no component may report time from the future as already globally committed or move committed time backward.
-3. **Deadline-aware budgeting:** a scheduler must not grant a block/quantum beyond the next mandatory platform event, timer deadline, debugger precision point, or Runner bound unless it has a defined rollback mechanism. The baseline should avoid requiring rollback.
-4. **Delay ownership:** accumulate optional physical delays separately from load data and fault status. The time decision must say whether successful accesses, guest-visible physical faults, and simulator failures consume modeled time.
-5. **Idle behavior:** WFI itself follows ISA retirement semantics; subsequent waiting is a Hart/run state, not a stream of fake retired instructions. The scheduler may jump virtual time to the next eligible event only under a defined idle rule.
-6. **Deterministic ordering:** events at the same virtual timestamp need a stable ordering key, such as `(timestamp, class priority, insertion sequence)`. Exact classes are deferred, but nondeterministic container iteration is not an acceptable policy.
-7. **Host input:** asynchronous host/device input must be timestamped or otherwise ordered at a synchronization boundary if deterministic replay is promised.
+1. **Declared quantities and owners:** keep retired instructions, Hart attempts/steps, Hart-owned architectural counters (`mcycle` and `minstret`), Platform-owned `mtime`/`mtimecmp`, scheduler/kernel virtual time, physical delay, and Runner-observed host elapsed time conceptually distinct. A configuration may relate them, but must name the relation.
+2. **Timer ownership:** `mtime` is shared Platform device state, not a Hart retirement counter. Virtual-time advance, or a named minimal-ISS tick policy, drives it; `mtime >= mtimecmp` asserts a Platform interrupt input, while Hart interrupt acceptance remains a separate outcome.
+3. **Monotonic virtual time:** use a declared resolution and conversion rule; no component may report time from the future as already globally committed or move committed time backward.
+4. **Hosting modes:** Runner-driven and external-kernel-driven execution must obey the same semantic boundaries. The external mode must define local versus global time, synchronization and early-return points, and how kernel exit/pause becomes a ruscv-sim fact rather than an unclassified process stop.
+5. **Deadline-aware budgeting:** a scheduler must not grant a block/quantum beyond the next mandatory Platform event, timer deadline, debugger precision point, or Runner bound unless it has a defined rollback mechanism. The baseline should avoid requiring rollback.
+6. **Delay ownership:** accumulate optional physical delays separately from load data and fault status. The time decision must say whether successful accesses, guest-visible physical faults, and simulator failures consume modeled time.
+7. **Idle behavior:** WFI itself follows ISA retirement semantics; subsequent waiting is a Hart/run state, not a stream of fake retired instructions. The scheduler may jump virtual time, and therefore Platform `mtime` when so configured, to the next eligible event only under a defined idle rule.
+8. **Deterministic multi-Hart ordering:** Machine events at the same virtual timestamp need a stable total-order key such as `(timestamp, class priority, hart-id, insertion sequence)`, with a documented representation for events not owned by one Hart. Exact classes are deferred, but Hart/container iteration order is not policy.
+9. **Host input:** asynchronous host/device input must be timestamped or otherwise ordered at a synchronization boundary if deterministic replay is promised.
+10. **Quiesce and drain:** image installation, reset, debug mutation, composition change, and teardown are illegal while a quantum is in flight. Future checkpoint/restore requires an explicit drain/quiesce boundary and invalidation of stale DMI or translated state.
 
 ### Required interrupt properties
 
 1. Platform/device models own line assertion and deassertion; Machine wiring presents normalized inputs to the Hart.
 2. Hart owns eligibility, masking, delegation, architectural priority, trap entry, and trap observation.
-3. The sampling boundary is before instruction fetch for a single step. A block strategy must expose an equivalent precise exit before executing an instruction that should instead be preempted.
+3. The semantic sampling boundary is before instruction fetch. A block strategy must either exit before executing an instruction that should be preempted, or declare a bounded interrupt latency in instructions/time as a reduced-accuracy mode; block-start or quantum-start polling is not silently “equivalent” to precise pre-fetch sampling.
 4. Interrupt assertion is a Platform fact; interrupt acceptance is a Hart outcome. They may occur at different scheduler boundaries and must not share one Boolean state transition.
 5. Pending line state, queued edge events, and claimed/in-service controller state require explicit reset and inspection semantics.
 
 ### Required stop properties
 
-The result must preserve, at minimum, these source categories even if the Runner also selects one primary reason for presentation:
+The Machine/scheduler fact set must preserve, at minimum, these source categories before a Runner or Runner adapter selects one primary reason for presentation:
 
-- architectural trap encountered under a Runner policy that stops on traps;
+- architectural trap encountered under a policy that stops on traps, including a guest breakpoint exception;
+- Hart architectural Debug Mode or trigger halt, if that deferred capability is implemented;
+- external debugger/protocol halt, user stop request, or debugger single-step control boundary;
 - successful Platform exit;
-- debugger breakpoint/watchpoint/single-step completion;
-- external/user stop request;
 - instruction/step budget exhausted;
 - virtual-time deadline reached;
 - observer/reporting failure after a completed outcome;
 - simulator/internal/adapter failure; and
 - normal quiescence/no runnable work, if the selected product supports it.
 
-A stop is sampled only at a coherent architectural boundary. Already completed outcomes remain valid. An asynchronous stop request may shorten the next quantum, but it may not retroactively unretire an instruction.
+A stop is sampled only at a coherent architectural boundary. Already completed outcomes remain valid. An asynchronous stop request may shorten the next quantum, but it may not retroactively unretire an instruction. Simultaneous facts survive primary-reason selection and remain available for inspection and replay diagnostics.
 
 ### Simultaneous-condition constraints
 
@@ -353,28 +353,32 @@ A single lossy `Stopped(bool)` or “first callback wins” mechanism cannot sat
 
 The public evidence narrows but does not answer these project choices:
 
-1. the relation between instruction progress, architectural `mcycle`/`minstret`, and virtual time in the minimal ISS configuration;
+1. the relation between instruction progress, architectural `mcycle`/`minstret`, virtual time, and the configured policy that advances Platform `mtime`;
 2. whether a guest trap is normally continued or surfaced as a Runner terminal reason for each product mode;
-3. the exact same-timestamp priority among Platform exit, debugger request, limit, timer event, and external stop after preserving all facts;
-4. maximum host-stop latency and therefore the largest interruptible block/quantum;
+3. the exact same-timestamp priority among per-Hart outcomes, Platform exit, debugger request, limit, timer event, and external stop after preserving all facts;
+4. maximum interrupt and host-stop latency and therefore the largest block/quantum for each accuracy mode;
 5. whether and how an idle Hart advances directly to the next event;
-6. time units, precision, overflow behavior, and rounding of adapter delays; and
-7. replay requirements for asynchronous host input.
+6. time units, precision, overflow behavior, and rounding of adapter delays;
+7. synchronization, local-time, and early-return mechanics for each external-kernel adapter; and
+8. replay requirements for asynchronous host input.
 
-These are bounded scheduling/arbitration questions. They do not include ownership of ISA semantics, physical routing, image loading, or final result policy.
+These are bounded scheduling/arbitration choices. They do not move ISA semantics, physical routing, image loading, or terminal-policy ownership into the scheduler or external kernel.
 
 ### Verification scenarios for the later contract
 
 A future decision should be testable with at least:
 
-- interrupt asserted before a step, during a multi-instruction budget, and at the same timestamp as a timer deadline;
+- interrupt asserted before a step, during a multi-instruction block/quantum, and at the same timestamp as a timer deadline, checking either precise pre-fetch exit or the declared reduced-accuracy latency bound;
+- shared Platform `mtime` crossing different Harts' `mtimecmp` values without changing `mcycle`/`minstret` ownership;
+- two Harts producing same-timestamp outcomes in different host/container orders but receiving the declared deterministic order;
 - zero instruction budget, exact last-instruction budget, and budget plus causal `tohost` exit;
 - WFI with no pending event, WFI with a future timer, and WFI awakened by an external interrupt;
 - a successful access with zero, absent, and nonzero delay; a physical fault with delay; and an adapter failure with unknown completion;
-- breakpoint/watchpoint and user stop during interpreted and block execution;
-- enabled/disabled observation producing identical Hart outcomes and final architectural state;
-- same-timestamp events inserted in different host orders producing the declared deterministic result; and
-- native and TLM-adapted Platform runs producing equivalent raw transaction, fault, event, and time facts within the chosen abstraction.
+- guest breakpoint exception, external debugger halt, and implemented Debug Mode/trigger halt remaining distinct during interpreted and block execution;
+- enabled/disabled observation producing identical Hart outcomes and final architectural state, with no mandatory per-instruction record stream when disabled;
+- image/debug/reset mutation rejected during an in-flight quantum and admitted only after quiesce, plus drain/invalidation before checkpoint restore when supported;
+- simultaneous stop facts surviving different insertion orders while primary presentation follows the declared policy; and
+- Runner-driven native and external-kernel/TLM-adapted runs producing equivalent raw transaction, fault, control, event, and time facts within the chosen abstraction.
 
 ## Patterns to adopt and traps to avoid
 
@@ -382,9 +386,10 @@ A future decision should be testable with at least:
 
 - One architectural engine with platform-specific composition around it.
 - A normalized physical result with explicit target fault versus simulator failure.
-- Budgeted execution that returns at mandatory interrupt/event/debug/invalidation boundaries.
-- A coherent pause/reset/inspect boundary before image or debugger mutation.
-- Event provenance and possibly multiple co-incident stop facts in the Runner result.
+- Budgeted execution that returns control facts at mandatory interrupt/event/debug/invalidation boundaries and materializes ordered Hart records only for subscribed observation.
+- Runner-driven and external-kernel-driven hosting around the same Machine/Hart/Platform semantics.
+- A coherent quiesce boundary before image, reset, debugger, or composition mutation, with drain before future checkpoint/restore.
+- Event provenance and all co-incident stop facts preserved independently of the primary presented reason.
 - Optional observation sinks fed by semantic facts from completed Hart transitions.
 - Explicit DMI range, permissions, latency, and invalidation beneath the same physical contract.
 
@@ -425,4 +430,4 @@ A future decision should be testable with at least:
 
 The reviewed systems converge on a durable principle: processor semantics, physical platform behavior, composition/lifecycle, and outer run policy are different concerns even when a compact implementation stores several of them in one object. Rich systems add explicit event time, lifecycle quiescence, transport status, and observation surfaces; fast systems add blocks, direct memory, and quanta, but then require precise exits and invalidation.
 
-For `ruscv-sim`, that evidence supports the direction already proposed in ADR-0001/0002/0003. The next architecture decision should define a deterministic, deadline-aware Machine scheduling exchange and a non-lossy stop arbitration model. It should not move architectural semantics out of the Hart, make TLM canonical, or create a second ISS path for the VP.
+For `ruscv-sim`, the evidence supports ADR-0002's core physical contract, with an explicit future inbound-master/DMA Platform-port deferral. ADR-0001 needs semantic-capability versus materialized-observation separation and the three-way debug distinction; ADR-0003 needs two hosting modes, one-or-more-Hart Machine cardinality, control/observation planes, and unclassified fact sets below terminal policy. The future interrupt/time/stop-event ADR should define the resulting deadline-aware exchange, Platform-owned `mtime`/`mtimecmp`, deterministic multi-Hart ordering, quiesce/drain, honest block/quantum interrupt latency, and non-lossy simultaneous stops without moving ISA semantics out of the Hart or making TLM canonical. This research note accepts none of the Proposed ADRs.
