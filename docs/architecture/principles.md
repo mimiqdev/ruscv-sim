@@ -4,7 +4,7 @@
 
 **Authority:** Normative
 
-**Last reviewed:** 2026-08-26
+**Last reviewed:** 2026-09-04
 
 ## Product invariant
 
@@ -17,8 +17,8 @@ The standalone ISS and the Virtual Platform use one RISC-V Hart implementation. 
 | Hart | Architectural state, fetch/decode/execute, privilege, traps, address translation, retirement | ELF loading, concrete devices, CLI, SystemC |
 | Physical access port | Physical transactions and access faults | RISC-V load sign extension, virtual translation, platform policy |
 | Platform | Physical address map, RAM/ROM/MMIO, devices, interrupt wiring, platform events | ISA semantics |
-| Machine | Hart and platform composition | User-interface policy |
-| Runner | Image loading, limits, stop handling, result production, observers | Instruction semantics |
+| Machine | One Platform plus one or more Harts, composition, and lifecycle | User-interface policy and terminal-result classification |
+| Runner | Image loading, limits, ruscv-sim stop taxonomy, result production, observers | Instruction semantics; need not own every outer execution thread |
 | Frontend | CLI/API/debug protocol and presentation | Machine-internal behavior |
 
 ## Error and event boundaries
@@ -28,7 +28,7 @@ The following are distinct and must remain distinguishable:
 - Architectural exceptions and interrupts taken by the guest.
 - Guest-visible platform events such as MMIO completion or interrupt assertion.
 - Platform stop events such as `tohost` termination.
-- Debugger stops such as breakpoints and user interruption.
+- External debugger or protocol halt and user interruption, distinct from a guest architectural breakpoint trap and from future RISC-V Debug Mode halt.
 - Simulator faults caused by invalid internal state or host failures.
 - Execution limits used to bound a run.
 

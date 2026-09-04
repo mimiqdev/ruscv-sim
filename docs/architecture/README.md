@@ -42,7 +42,7 @@ flowchart TB
     subgraph Product["ruscv-sim product"]
         FRONT["Frontend Layer<br/>CLI / API / GDB / Python"]
         RUNNER["Simulation Runner<br/>Load / Control / Stop reasons"]
-        MACHINE["Machine / Platform<br/>Hart + Address space + Devices + Time"]
+        MACHINE["Machine / Platform<br/>one or more Harts + Address space + Devices + Time"]
         OBS["Observability<br/>Commit / Trace / Profile / Events"]
     end
 
@@ -169,9 +169,12 @@ flowchart TB
     EXCEPTION -- Yes --> TRAP
     EXCEPTION -- No --> RETIRE["Retire<br/>x0 / Next PC / Counters"]
     REG --> RETIRE
-    RETIRE --> COMMIT["CommitRecord"]
-    TRAP --> TRAPREC["TrapRecord"]
-    COMMIT --> OUT["StepOutcome"]
+    RETIRE --> CTRL["Control facts"]
+    TRAP --> CTRL
+    RETIRE -. optional observation .-> COMMIT["CommitRecord"]
+    TRAP -. optional observation .-> TRAPREC["TrapRecord"]
+    CTRL --> OUT["Step / quantum control result"]
+    COMMIT --> OUT
     TRAPREC --> OUT
 ```
 
@@ -276,6 +279,8 @@ flowchart TB
     SYSTEMC --> EXT
 ```
 
+A Machine is one Platform plus one or more Harts; N=1 is the ISS baseline. Native VP scheduling is Machine-associated. SystemC, HDL, or other co-simulation may own the outer execution thread while the same Hart/Platform semantics and ruscv-sim result taxonomy remain in force.
+
 ## 7. Runtime control, time, and events
 
 ```mermaid
@@ -297,15 +302,17 @@ sequenceDiagram
         B->>D: MMIO transaction
         D-->>B: data / fault / delay / event
         B-->>H: AccessResponse
-        H-->>O: Commit / Trap / Debug event
-        H-->>S: RunOutcome + consumed time
+        H-->>O: optional Commit / Trap records
+        H-->>S: control facts + consumed time
         S->>D: advance_to(next deadline)
         D-->>S: interrupt / DMA / platform event
     end
 
-    S-->>R: PlatformExit / Limit / Breakpoint / Fault
-    R-->>F: ExecutionResult
+    S-->>R: unclassified co-incident facts
+    R-->>F: classified ExecutionResult
 ```
+
+This sequence is the Runner-driven ISS/native path. In external-kernel hosting the kernel grants time into the Machine; the Runner still classifies non-lossy facts and does not have to own that outer thread. Observation records are subscriber-gated; control facts are always returned.
 
 ## 8. Capability accumulation and architecture gates
 

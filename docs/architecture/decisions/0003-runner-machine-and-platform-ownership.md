@@ -42,12 +42,14 @@ defines target contracts without claiming they are separated in code.
 
 ADR-0001 defines the semantic Hart outcomes and observation ownership consumed by
 this record: a completed step yields `InstructionRetired`, `TrapEntered`, or
-`SimulatorFailure`, with Hart-owned commit/trap facts. ADR-0002 defines the one
-transport-neutral `PhysicalAccess` boundary consumed here: all physical accesses
-use the same raw-byte transaction vocabulary, and physical target faults remain
-distinct from simulator/adapter failures. The interrupt, time, and stop-event
-decision will define the detailed interrupt, time, and stop-event arbitration that
-this record deliberately bounds.
+`SimulatorFailure`. Control-boundary facts are always available; materialized
+commit/trap records are optional and subscriber-gated. ADR-0002 defines the one
+transport-neutral Hart-initiator `PhysicalAccess` boundary consumed here: all Hart
+physical accesses use the same raw-byte transaction vocabulary, and physical target
+faults remain distinct from simulator/adapter failures. A future inbound
+Platform-master/DMA port is an explicit ADR-0002 deferral, not a second Hart path.
+The interrupt, time, and stop-event decision will define the detailed interrupt,
+time, and stop-event arbitration that this record deliberately bounds.
 
 ## Decision
 
@@ -64,14 +66,16 @@ module or public API:
   address routing, memory and device targets, host-facing device behavior,
   interrupt sources and wiring endpoints, and platform events. It never owns
   RISC-V instruction semantics or virtual-address translation.
-- **Machine** is the composition and lifecycle boundary for one Hart and one
-  Platform. It owns their association, port connections, coherent access to the
-  composed state, and lifecycle transitions. It is not a user-interface or
+- **Machine** is the composition and lifecycle boundary for one Platform and one
+  or more Harts. It owns their association, port connections, coherent access to
+  the composed state, and lifecycle transitions. Cardinality N=1 is the current
+  ISS baseline, not a permanent structural limit. It is not a user-interface or
   run-policy object.
 - **Runner** is the application run-control boundary. It owns image-loading
-  orchestration, run options, outer limits, observer delivery, stop handling,
-  aggregation of Hart outcomes and Platform events, inspection/report assembly,
-  and the decision to return a run result. It never implements an instruction.
+  orchestration, run options, outer limits, observer demand and delivery, stop
+  handling, classification and presentation of Machine-returned facts, inspection/
+  report assembly, and the ruscv-sim terminal-result taxonomy. It never implements
+  an instruction and need not own the outer execution thread in every hosting mode.
 - **Frontend** is the CLI, library-facing application layer, debugger protocol,
   or other presentation/control entry point. It translates user or automation
   requests and presents results; it does not reach through the Runner to mutate
@@ -89,19 +93,29 @@ Frontend  ->  Runner  ->  Machine  ->  { Hart, Platform }
 The arrow from Hart to `PhysicalAccess` means that Hart semantics issue physical
 transactions through the contract; it does not mean that Hart depends on a
 concrete bus or device. The Platform supplies the implementation behind that
-port. Machine connects the two. Platform events flow back through Machine to the
-Runner as semantic observations, never as a direct dependency from a device to a
+port. Machine connects each Hart to that Platform. Platform events flow back
+through Machine as semantic facts, never as a direct dependency from a device to a
 CLI or Runner policy.
+
+Two hosting modes use the same Hart/Platform semantics:
+
+- **Runner-driven** ISS and native VP execution: the Runner owns the ruscv-sim
+  request loop and asks the Machine for a step or budgeted quantum.
+- **External-kernel-driven** SystemC, HDL, or other co-simulation hosting: an
+  external kernel owns the outer execution thread and grants or callbacks into the
+  Machine. The Runner remains the ruscv-sim adapter for control, observation, and
+  terminal taxonomy; it need not be the thread that calls `sc_start` or an HDL
+  simulator loop.
 
 The composition boundary may connect additional defined ports—such as interrupt
 lines, observation delivery, and time/deadline information—without changing this
 direction. Machine owns the association of any time/scheduling service with the
-Hart and Platform. A scheduler, when present, is Machine-associated and cannot
-bypass the Runner's outer loop or terminal policy; the complete invocation and
-return rule is in §3. The interrupt, time, and stop-event decision defines only
-detailed timing, interrupt, and stop-arbitration semantics. A port is a contract,
-not a commitment to a Rust
-trait, callback, channel, or transport representation.
+Harts and Platform. A scheduler, when present, is Machine-associated for native
+hosting and cannot bypass ruscv-sim terminal taxonomy; in external-kernel hosting
+it does not own the outer kernel thread. The complete invocation and return rule
+is in §3. The interrupt, time, and stop-event decision defines only detailed
+timing, interrupt, and stop-arbitration semantics. A port is a contract, not a
+commitment to a Rust trait, callback, channel, or transport representation.
 
 | Concern | Primary owner | Boundary rule |
 | --- | --- | --- |
@@ -113,8 +127,9 @@ trait, callback, channel, or transport representation.
 | Architectural execution | Hart | Owns fetch/decode/execute, translation, traps, retirement, and Hart observations. |
 | Physical map and targets | Platform | Routes physical requests to RAM/ROM/MMIO or an external target and reports platform events. |
 | Device behavior and host interaction | Platform and its devices | Implements UART, HTIF/tohost, interrupt sources, and other target-local behavior; does not decide the application run result. |
-| Observer facts | Hart for architectural facts; Platform for platform facts | Hart emits ADR-0001 records; Platform emits platform events. Runner delivers/aggregates them. |
-| Run-level result | Runner | Combines distinct terminal/non-terminal facts and captures the requested inspection; Frontend formats it. |
+| Control-boundary facts | Machine returns them; Hart and Platform produce them | Always present: progress, time/budget consumption, causal Platform events, and unclassified co-incident control facts. |
+| Observer facts | Hart for architectural records; Platform for platform facts | Optional and subscriber-gated. Hart materializes ADR-0001 records only when observation is enabled; Platform emits platform events. Runner delivers/classifies them. |
+| Run-level result | Runner | Selects presentation from non-lossy Machine facts and captures the requested inspection; Frontend formats it. |
 
 No layer below the Runner may depend on `src/main.rs`, CLI flags, a concrete
 `ExecutionResult`, or presentation text. No Hart implementation may depend on
@@ -124,19 +139,22 @@ claiming that the roles have already been separated in code.
 
 ### 2. Machine composition boundary
 
-A Machine represents one composed execution context. For the baseline in this
-ADR it contains one shared Hart and one Platform; it is not a second Hart or a
-second instruction dispatcher. A future VP may use the same boundary with a
-richer Platform and scheduler, but multi-Hart product behavior is outside this
-record's scope.
+A Machine represents one composed execution context: one Platform plus one or
+more Harts that share that Platform. It is not a second architectural engine or a
+second instruction dispatcher. Cardinality N=1 is the current ISS baseline. A
+future VP may attach additional Harts to the same Platform; shared RAM, interrupt
+controllers, and `mtime` remain Platform state. Multi-Hart scheduling, same-
+timestamp ordering, and coherence are outside this record and must not be frozen
+here.
 
 At composition time, the Machine is responsible for:
 
-1. establishing one Hart instance using the selected architectural profile;
+1. establishing one or more Hart instances using the selected architectural
+   profile, with N=1 as the baseline;
 2. establishing one Platform instance and its configured physical targets;
-3. establishing the Hart's `PhysicalAccess` connection to that Platform;
-4. connecting interrupt inputs, observation paths, and any defined time or
-   deadline ports without making the Hart aware of their concrete producers;
+3. establishing each Hart's `PhysicalAccess` connection to that Platform;
+4. connecting interrupt inputs, optional observation paths, and any defined time
+   or deadline ports without making a Hart aware of their concrete producers;
 5. connecting device outputs to Platform event collection and host services; and
 6. making the composed state available through a coherent lifecycle/inspection
    boundary.
@@ -144,15 +162,17 @@ At composition time, the Machine is responsible for:
 The Machine may be created or selected by a Runner configuration, but the Runner
 does not construct a second core, reach into a device, or attach a special
 memory path for one product form. The Machine owns composition wiring; the Runner
-supplies external observer sinks and run policy at that boundary. Hart observers
-receive the immutable `CommitRecord` and `TrapRecord` facts defined by ADR-0001;
-Platform observers receive normalized platform events. Neither observer type may
-execute a callback in the middle of an architectural transition.
+supplies observation demand, external observer sinks, and run policy at that
+boundary. When observation is enabled, Hart observers receive the immutable
+`CommitRecord` and `TrapRecord` facts defined by ADR-0001; Platform observers
+receive normalized platform events. Neither observer type may execute a callback
+in the middle of an architectural transition. Disabled observation requires no
+per-instruction record allocation or Runner callback.
 
-The Machine is therefore the only owner of the association between this Hart and
-this Platform. A library convenience wrapper, debugger target, native bus, or
-future TLM adapter may be an adapter around the Machine, but it must not create an
-independent architectural loop.
+The Machine is therefore the only owner of the association between these Harts
+and this Platform. A library convenience wrapper, debugger target, native bus,
+external-kernel adapter, or future TLM adapter may wrap the Machine, but it must
+not create an independent architectural loop.
 
 ### 3. Lifecycle and ownership
 
@@ -192,7 +212,8 @@ An installed image establishes the entry metadata and the initial contents again
 which a fresh run is defined. Replacing an image or changing composition is a
 separate lifecycle operation, not an implicit side effect of a Hart step. The
 concrete operation used to replace it—reconfigure, rebuild, or another mechanism—
-is intentionally not selected here.
+is intentionally not selected here. Image installation requires a quiescent Machine
+as defined below; it is illegal while a step or quantum is in flight.
 
 #### Reset
 
@@ -223,37 +244,73 @@ device reset behavior follow the applicable architectural/device contracts; the
 semantic requirement is that no prior run's dynamic state is accidentally used as
 the initial state of the next run.
 
+#### Quiesce
+
+Mutating control operations require a coherent quiescent Machine. While a Hart
+step or budgeted quantum is in flight, the following are illegal:
+
+- image installation or replacement;
+- reset;
+- debugger mutation of architectural or Platform state, including register or
+  memory writes and instruction-patching breakpoint insertion;
+- composition mutation (adding, removing, or rewiring Harts, devices, or ports);
+- teardown; and
+- future drain/checkpoint/restore when those capabilities exist.
+
+Quiesce means that no architectural transition is in progress, already completed
+outcomes remain valid, and no new Platform run events are emitted for the
+in-flight quantum. Future checkpoint/restore additionally requires drain and
+invalidation of stale DMI or translated state; those mechanisms are not specified
+here. This ADR does not prescribe APIs, drain algorithms, or checkpoint formats.
+
 #### Run, stop, and teardown
 
-**Execution-loop rule.** The Runner owns the outer execution loop and all
-terminal policy. For each iteration/request, it asks the Machine for one Hart
-step or a budgeted quantum. The Machine alone invokes the Hart, or invokes its
-Machine-associated scheduler to operate the Hart against that Machine's Platform,
-and returns per-step Hart outcomes plus causal Platform events (and any
-budget/time facts). The Machine does not apply Platform-exit, execution-limit,
-debugger-stop, or other Runner terminal policy and does not decide whether
-returned facts end the run. The Runner consumes those facts/events and decides
-continue versus stop, including non-terminal Hart outcomes and result
-aggregation. A quantum may contain multiple steps only when the Machine returns
-each step's facts/events and preserves ADR-0001 observation semantics; it is not
-a Machine-owned stop-policy operation. The interrupt, time, and stop-event
-decision defines timing, interrupt eligibility/sampling, and simultaneous-stop
-arbitration only; it does not own
-this loop.
+**Control-boundary rule.** The Runner owns the ruscv-sim terminal taxonomy and
+presentation policy. It need not own the outer execution thread.
 
-A Runner stop request, debugger request, limit, Platform exit, Hart trap, or
-simulator failure must remain distinguishable in the run-level result. Stop
-requests are handled at the defined architectural boundary; the interrupt, time,
-and stop-event decision arbitrates only when multiple conditions are eligible at
-one boundary.
+In Runner-driven hosting, the Runner asks the Machine for one Hart step or a
+budgeted quantum. The Machine alone invokes the Harts, or invokes its
+Machine-associated scheduler to operate those Harts against that Machine's
+Platform. In external-kernel-driven hosting, the external kernel grants time or
+invokes the Machine; the Runner still classifies returned facts into ruscv-sim
+results and must not let kernel `sc_stop`, HDL finish, or an unclassified process
+abort replace that taxonomy.
 
-At teardown the Runner stops accepting control, completes or reports observer
-handling according to its run policy, and releases its run-level sinks. The
-Machine quiesces the composition and disconnects or releases the Hart, Platform,
-device, host-service, and event resources it owns. The Platform must not emit new
-run events after the Machine has completed teardown. Whether a host transport
-needs an adapter-specific shutdown sequence is an implementation detail, not a
-new ownership boundary.
+The Machine/scheduler always returns a non-lossy, unclassified set of
+co-incident control-boundary facts. That control plane includes, as applicable:
+progress accounting, consumed modeled time or delay, causal Platform events, next
+deadline or pending-event information, and every control-boundary fact that became
+visible at the return (for example completed trap entry, successful Platform exit,
+external debugger/protocol halt request, execution-limit exhaustion, observer
+failure after a completed outcome, or simulator failure). The Machine does not
+apply Platform-exit, execution-limit, debugger-stop, or other Runner terminal
+policy and does not collapse those facts into a single presented reason.
+
+Observation is a separate, subscriber-gated plane. When observation is disabled,
+a quantum may complete without allocating, serializing, or delivering a
+per-instruction `CommitRecord` or `TrapRecord` and without a per-instruction
+Runner callback. When observation is enabled, interpreted and block execution
+must still make available precise, ordered, non-speculative, non-reentrant Hart
+records as required by ADR-0001. A quantum is not a Machine-owned stop-policy
+operation. The interrupt, time, and stop-event decision defines timing, interrupt
+eligibility/sampling, quantum size, and simultaneous-stop arbitration only; it
+does not own ruscv-sim terminal taxonomy.
+
+A Runner stop request, external debugger/protocol halt, guest architectural
+breakpoint trap, future RISC-V Debug Mode halt, limit, Platform exit, Hart trap,
+or simulator failure must remain distinguishable. Stop requests are handled at a
+coherent architectural boundary; an asynchronous request may shorten the next
+quantum but must not unretire a completed instruction. The interrupt, time, and
+stop-event decision arbitrates only when multiple conditions are eligible at one
+boundary, after all co-incident facts have been preserved.
+
+At teardown the Runner stops accepting ruscv-sim control, completes or reports
+observer handling according to its run policy, and releases its run-level sinks.
+The Machine first reaches a quiescent state, then disconnects or releases the
+Harts, Platform, device, host-service, and event resources it owns. The Platform
+must not emit new run events after the Machine has completed teardown. Whether a
+host transport needs an adapter-specific shutdown sequence is an implementation
+detail, not a new ownership boundary.
 
 ### 4. ELF parsing, image placement, and address meaning
 
@@ -303,19 +360,21 @@ interpretation are likewise image/platform policy, not a new Hart API decision.
 The Hart boundary is the one defined by ADR-0001 and is consumed without
 redefinition here:
 
-- `InstructionRetired` means one instruction completed and produced one
-  Hart-owned commit observation;
+- `InstructionRetired` means one instruction completed its architectural effects;
+  a Hart-owned `CommitRecord` is materialized only when observation is enabled;
 - `TrapEntered` means architectural trap entry completed and no instruction
-  retired in that step; and
+  retired in that step; a `TrapRecord` is materialized only when observation is
+  enabled; and
 - `SimulatorFailure` means architectural completion was not possible and no
   fabricated commit or trap is emitted.
 
-Under the §3 execution-loop rule, the Machine invokes the Hart only against its
-composed Platform and returns these outcomes to the Runner. The Runner consumes
-them and must not recreate them by comparing register snapshots, re-fetching
-opcodes, interpreting generic memory errors, or polling a second execution loop;
-current `load_and_run` snapshot/re-fetch logging is compatibility-era behavior,
-not the target observation ownership.
+Under the §3 control-boundary rule, the Machine invokes Harts only against its
+composed Platform and always returns control-boundary facts. Optional observation
+records, when subscribed, originate from those same Hart transitions. The Runner
+consumes the facts and must not recreate them by comparing register snapshots,
+re-fetching opcodes, interpreting generic memory errors, or polling a second
+execution loop; current `load_and_run` snapshot/re-fetch logging is
+compatibility-era behavior, not the target observation ownership.
 
 ADR-0002 is consumed at the Machine/Platform connection:
 
@@ -359,12 +418,13 @@ A successful guest write to HTIF/`tohost` has an explicit ordering guarantee:
 2. The Platform may create a host-exit event as a consequence of that successful
    write, but the event is held as a run observation until the current Hart step
    reaches its boundary.
-3. The Hart completes the instruction and emits `InstructionRetired` with its
-   commit facts, as required by ADR-0001. A successful platform write does not
-   turn the writing instruction into a trap or an unretired instruction.
-4. The Machine forwards the completed Hart outcome and the causal Platform event
-   to the Runner. Only then may the Runner report Platform exit as the outer
-   terminal result.
+3. The Hart completes the instruction as `InstructionRetired`. Observation, when
+   enabled, materializes the corresponding commit facts as required by ADR-0001.
+   A successful platform write does not turn the writing instruction into a trap
+   or an unretired instruction.
+4. The Machine forwards the completed control-boundary facts and the causal
+   Platform event without classifying them. Only then may the Runner report
+   Platform exit as the outer terminal result.
 
 If the physical write fails, no successful-exit event is reported. The Hart
 receives the ADR-0002 result and produces the corresponding architectural trap
@@ -381,12 +441,18 @@ is Platform, and the semantic owner of terminating the run is Runner.
 ### 7. Runner result, limits, and inspection
 
 The Runner owns a run-level result assembled from facts supplied by the Machine.
-The result is conceptually a record with distinct dimensions, not a requirement
-to expose a particular enum or struct:
+The Machine/scheduler returns unclassified co-incident facts; later policy in the
+Runner, or the Runner adapter in external-kernel hosting, selects a primary
+presented reason without discarding the remaining facts. Names such as
+"execution limit" in the result are Runner classifications of reported facts
+(for example steps consumed reaching a bound), not Machine policy. The result is
+conceptually a record with distinct dimensions, not a requirement to expose a
+particular enum or struct:
 
 - terminal reason category, preserving architectural trap, Platform exit,
-  debugger stop, execution limit, scheduler/time stop, observer/reporting
-  failure, and simulator failure as distinguishable causes;
+  external debugger/protocol halt, guest breakpoint trap, future Debug Mode halt,
+  execution limit, scheduler/time stop, observer/reporting failure, and simulator
+  failure as distinguishable causes;
 - guest/platform exit code where one exists;
 - completed-step/instruction-cycle accounting and, when enabled by later
   contracts, consumed virtual time or deadline information;
@@ -428,18 +494,18 @@ compatibility constraint while these decisions are made.
 
 The standalone ISS and future VP are configurations of the same boundaries:
 
-| Product form | Runner configuration | Machine/Hart/Platform composition |
+| Product form | Hosting and Runner role | Machine/Hart/Platform composition |
 | --- | --- | --- |
-| Standalone ISS | ELF-oriented run control, deterministic single-Hart limit, optional commit log/debug inspection, and current host-exit compatibility | One Hart, one minimal native/flat Platform implementing PhysicalAccess, and only the platform services required by the current CLI. |
-| Future VP around one Hart | Same Runner/Machine contracts with richer event/time control and an interchangeable Platform backend | The same one Hart implementation and architectural outcomes connected to a composed Platform containing additional devices, interrupt sources, and/or a native or TLM-adapted physical transport. |
+| Standalone ISS | Runner-driven ELF-oriented run control, N=1 limit, optional commit log/debug inspection, and current host-exit compatibility | One Hart, one minimal native/flat Platform implementing PhysicalAccess, and only the platform services required by the current CLI. |
+| Native VP | Same ruscv-sim Runner taxonomy with richer event/time control | The same Hart implementation, cardinality one or more, connected to a composed Platform containing additional devices, interrupt sources, and/or a native physical transport. |
+| Externally hosted VP / co-simulation | External kernel owns the outer thread; Runner is the ruscv-sim adapter for control, observation, and terminal results | The same Hart/Platform semantics behind a SystemC, HDL, or other co-simulation host. TLM/DMI remain adapters, not a second ISA engine. |
 
 A VP scheduler, virtual-time source, external model, or TLM adapter changes the
-scheduling/budget strategy used by the Machine under §3 and how the Platform
-implements `PhysicalAccess`; it does not create alternate instruction semantics.
-A scheduler is Machine-associated, not a second Hart owner, and cannot bypass
-the Runner's outer loop or Platform-exit, limit, or debugger terminal policy. A
-future multi-Hart Machine is not defined by this ADR, although the one-Hart
-ownership boundary must not prevent a later explicit extension.
+scheduling/budget strategy used under §3 and how the Platform implements
+`PhysicalAccess`; it does not create alternate instruction semantics. Native
+scheduling is Machine-associated and cannot bypass ruscv-sim terminal taxonomy.
+External-kernel hosting does not move ISA semantics, physical routing, or result
+taxonomy into the kernel. Multi-Hart ordering and coherence remain deferred.
 
 `RiscVSimulator` may remain a public convenience/library facade for a flat
 single-Hart configuration, but it must use the same Runner/Machine/Hart semantics
@@ -501,10 +567,12 @@ integration.
 
 ADR-0001 remains **Proposed** and is consumed here as the Hart outcome and
 observation contract; this ADR neither accepts nor reopens its retirement/trap
-decisions. Runner consumes `InstructionRetired`, `TrapEntered`, and
-`SimulatorFailure`; Machine supplies their one Hart/Platform composition; and
-Platform exit, debugger stop, limits, and scheduler/time events remain outside
-Hart outcomes. The §6 HTIF ordering follows ADR-0001's retire-before-event rule.
+decisions. Runner consumes always-present control facts and, when subscribed,
+optional `CommitRecord`/`TrapRecord` materialization of `InstructionRetired`,
+`TrapEntered`, and `SimulatorFailure`. Machine supplies the one-or-more-Hart
+composition around one Platform. Platform exit, external debugger/protocol halt,
+guest breakpoint traps, future Debug Mode, limits, and scheduler/time events
+remain distinct. The §6 HTIF ordering follows ADR-0001's retire-before-event rule.
 
 ## Relationship to ADR-0002
 
@@ -521,28 +589,33 @@ the same port.
 
 The interrupt, time, and stop-event decision owns detailed timing, interrupt, and
 stop-arbitration semantics only. This ADR fixes ownership and causal boundaries;
-it does not assign the outer loop or terminal policy to that decision:
+it does not assign ruscv-sim terminal taxonomy to that decision, freeze a
+scheduler algorithm, or require the Runner to own every outer execution thread:
 
 | Concern left to the interrupt, time, and stop-event decision | Boundary fixed by this ADR |
 | --- | --- |
 | Interrupt eligibility, masking, priority, sampling point | Platform/Machine provide lines; Hart samples at the defined boundary. |
-| Cost, delay, time units, advancement, and budget facts | Runner owns limits; the Machine-associated scheduler reports facts; the interrupt, time, and stop-event decision defines timing. |
-| Quantum, batching, and event-loop strategy | Machine associates/invokes the scheduler under §3; it returns per-step facts/events and cannot bypass Runner terminal policy. |
-| Simultaneous trap/exit/debug/limit/time/failure priority | Runner aggregates causes; the interrupt, time, and stop-event decision chooses arbitration. |
-| Asynchronous interruption and resumability | Debug control reaches Runner/Machine; it is not a Hart trap or device exit. |
+| Cost, delay, time units, advancement, and budget facts | Runner owns ruscv-sim limits; Machine/scheduler or the external kernel reports facts; the later decision defines timing. |
+| Quantum, batching, hosting exchange, and event-loop strategy | Native scheduling is Machine-associated under §3; external kernels may own the outer thread; both return unclassified facts and cannot bypass ruscv-sim terminal taxonomy. |
+| Simultaneous trap/exit/debug/limit/time/failure priority | Machine returns non-lossy co-incident facts; Runner selects presentation later; the interrupt, time, and stop-event decision chooses arbitration. |
+| Asynchronous interruption and resumability | External protocol halt reaches Runner/Machine; it is not a Hart trap, Debug Mode entry, or device exit. |
 
-The interrupt, time, and stop-event decision may refine timing, interrupt, and
-arbitration without moving Hart semantics or §3 loop/terminal ownership, and
-without changing successful tohost retirement
-ordering. This is a bounded deferral, not an unresolved ownership question.
+The interrupt, time, and stop-event decision may refine timing, interrupt,
+hosting exchange, and arbitration without moving Hart semantics, Platform
+physical ownership, or ruscv-sim terminal taxonomy, and without changing
+successful tohost retirement ordering. This is a bounded deferral, not an
+unresolved ownership question.
 
 ## Alternatives considered
 
 | Alternative | Decision |
 | --- | --- |
 | Keep `load_and_run` as machine, runner, and platform | Rejected: it fuses placement, device construction, Hart invocation, stop policy, observers, and result formatting, with no clear Machine lifecycle. |
-| Let Platform own Hart and the run loop | Rejected: it couples ISA semantics to devices/timing; Machine composes Hart/Platform while Runner owns the outer run. |
-| Maintain separate ISS and VP engines | Rejected: traps, retirement, MMU, and device effects would drift; one Hart/Machine boundary is required. |
+| Let Platform own Hart and the run loop | Rejected: it couples ISA semantics to devices/timing; Machine composes Harts/Platform while Runner owns ruscv-sim terminal taxonomy. |
+| Require the Runner to own every outer execution thread | Rejected: SystemC/HDL co-simulation hosts the outer kernel; the Runner remains the ruscv-sim adapter rather than the unique thread owner. |
+| Freeze Machine cardinality at one Hart | Rejected: N=1 is the ISS baseline; shared Platform state requires one Platform plus one or more Harts. |
+| Return only a classified stop reason from the scheduler | Rejected: co-incident facts would be lost; Machine returns unclassified facts and policy selects presentation later. |
+| Maintain separate ISS and VP engines | Rejected: traps, retirement, MMU, and device effects would drift; one Hart implementation is required. |
 | Let the loader write directly to a concrete bus | Rejected: it couples parsing to an address map and confuses storage offsets with translation; loader → Machine → Platform is retained. |
 | Use one undifferentiated status stream | Rejected: causes have different ownership/recovery; Runner aggregates while preserving categories and causal facts. |
 | Make observers/debuggers direct Hart peers | Rejected: callbacks risk partial state, re-entry, bypassed routing, and false commits; completed outcomes remain the boundary. |
@@ -551,7 +624,8 @@ ordering. This is a bounded deferral, not an unresolved ownership question.
 
 ### Benefits
 
-- One Hart serves ISS and VP; Machine owns composition/lifecycle and Runner aggregates distinct facts without conflating terminal causes.
+- One Hart implementation serves ISS and VP; Machine owns one-Platform plus N-Hart composition/lifecycle; Runner classifies non-lossy facts without conflating terminal causes.
+- Runner-driven and external-kernel-driven hosting preserve the same Hart/Platform semantics.
 - Replaceable Platform backends preserve PhysicalAccess while image storage, translation, signatures, and successful tohost retirement remain distinct.
 
 ### Costs and risks
@@ -573,10 +647,12 @@ implementation work.
 
 These are implementation evidence for a later implementation:
 
-- **Engine/lifecycle:** verify one Hart serves ISS/VP and §2–§4 construction, reset,
-  image, observation, and teardown semantics.
+- **Engine/lifecycle:** verify one Hart implementation serves ISS/VP, N=1 remains
+  the baseline, construction/reset/image/teardown require quiesce, and both hosting
+  modes preserve Hart/Platform semantics.
 - **Placement/observation:** verify metadata installation through Machine/Platform
-  without translation and ADR-0001 records without snapshots or re-fetch.
+  without translation; disabled observation allocates no per-instruction records;
+  enabled observation remains precise, ordered, and non-reentrant.
 - **Physical/events:** verify ADR-0002 parity and successful tohost exit only after
   retirement, with failed writes producing no successful exit.
 - **Result/compatibility:** verify distinct terminal categories, coherent inspection,
@@ -592,15 +668,17 @@ Only these remain for later contracts or implementation design:
 1. Concrete Rust layouts, traits, callbacks, lifetimes, ownership, serialization,
    and wire formats.
 2. Platform address map, device/host models, and native/TLM/SystemC APIs.
-3. Interrupt sampling, time/delay semantics, safe async stop, and event priority
-   belong to the interrupt, time, and stop-event decision; the Machine scheduler
-   strategy remains bounded by §3.
+3. Interrupt sampling, time/delay semantics, safe async stop, event priority,
+   quantum size, and hosting-exchange details belong to the interrupt, time, and
+   stop-event decision; they remain bounded by §3 and must not freeze scheduler
+   algorithms.
 4. Profile-specific Hart/device reset values not owned by an accepted contract.
 5. Image-placement storage/snapshot and signature representations, plus migration
    and deprecation of existing wrappers/components.
-6. Future multi-Hart ordering, shared-device arbitration, DMA/coherence, and global
-   observation ordering.
+6. Multi-Hart ordering, shared-device arbitration, DMA/coherence, inbound Platform
+   masters, checkpoint formats, and global observation ordering.
 
-The ownership, image-base distinction, HTIF retirement ordering, one-Hart
-composition, and compatibility constraints are decisions, not open questions.
-This ADR remains **Proposed**; it has no superseding record.
+The ownership split, two hosting modes, Machine cardinality, control/observation
+split, unclassified facts, quiesce requirement, image-base distinction, HTIF
+retirement ordering, and compatibility constraints are decisions, not open
+questions. This ADR remains **Proposed**; it has no superseding record.

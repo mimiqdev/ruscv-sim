@@ -216,8 +216,9 @@ capability.
 A committed conflicting write or AMO through the same physical-access domain must be
 visible to the Hart so that an affected reservation can be invalidated. This includes
 a same-Hart conflicting store and, when such agents exist, writes from other Harts or
-modeled masters. Hart semantics apply the architectural invalidation; the mechanism
-by which the domain reports the competing write is an implementation mechanism.
+modeled masters entering through the future Platform boundary described in §9. Hart
+semantics apply the architectural invalidation; the mechanism by which the domain
+reports the competing write is an implementation mechanism.
 
 The initial contract is usable for a single Hart and targets that provide the atomic
 envelope. It makes no claim of multi-Hart or DMA ordering/coherence support. A
@@ -259,6 +260,36 @@ transport, and C++/FFI details are implementation mechanisms, not this contract.
 They are described only as a **non-normative pointer** in
 [`docs/integration/systemc-tlm.md`](../../integration/systemc-tlm.md). The optional TLM
 field on a Hart must not become a second path that bypasses `PhysicalAccess`.
+
+### 9. Future inbound Platform-master boundary (bounded deferral)
+
+`PhysicalAccess` remains strictly the Hart-initiator port defined above. A future DMA
+engine, co-simulation master, device-originated request, or additional modeled
+initiator may need to enter the same physical world without being a Hart instruction.
+This ADR therefore names, but does not define, a separate Platform-owned inbound
+master/target-facing port. That port is not a second Hart execution path and is not a
+bidirectional extension of `PhysicalAccess`.
+
+When that future boundary is defined, inbound transactions must share the Platform's
+physical semantics with Hart-issued transactions, including:
+
+- physical routing, raw-byte and width rules, target side effects, and target-fault
+  reporting;
+- the same all-or-nothing transaction rules and atomic operation envelope wherever
+  an operation claims atomicity;
+- visibility of committed writes to Hart reservation invalidation and future
+  watchpoint observation; and
+- invalidation of any DMI-visible range when an inbound transaction changes the
+  bytes or permissions covered by that range.
+
+An inbound master must not pass through Hart virtual translation, perform Hart
+architectural checks, enter a guest trap, or implement another ISA execution loop.
+Its target result and any Platform event remain below the Hart/Runner policy boundary;
+Hart reservation and architectural fault ownership are unchanged. Multi-Hart/DMA
+ordering, arbitration, coherence, and the complete reservation/watchpoint protocol
+remain future contracts. This bounded deferral deliberately specifies no inbound
+protocol, coherence model, arbitration algorithm, DMA descriptor format, watchpoint
+algorithm, DMI API, or SystemC interface.
 
 ## Alternatives considered
 
@@ -310,6 +341,9 @@ physical-memory model, and existing TLM components behind `PhysicalAccess`. The 
 Rust trait signatures, request/response representation, adapter layering, backend
 atomic primitive, reservation token, TLM transport, FFI boundary, and migration
 sequence are implementation mechanisms and are intentionally not selected here.
+`PhysicalAccess` remains Hart-initiator only; a future inbound Platform-master port
+must be added as a separate Platform boundary while sharing the physical semantics
+listed in §9.
 
 Migration must preserve the current public ELF flow and its verified RAM/UART/HTIF,
 signature, and cycle-limit behavior until an approved Platform replacement exists.
@@ -348,7 +382,10 @@ Only the following concerns are intentionally bounded outside this ADR:
 1. **Reservation granule:** the granule and any profile/target-specific granule rules.
 2. **Multi-Hart and DMA ordering/coherence:** the complete ordering, invalidation, and
    coherence model once additional agents exist.
-3. **Implementation mechanisms:** concrete Rust types, backend atomic primitives,
+3. **Inbound Platform masters:** the separate DMA/co-simulation/other-master port and
+   its protocol, arbitration, ordering, coherence, watchpoint, and DMI mechanisms;
+   its shared physical semantics are bounded by §9 but not defined here.
+4. **Implementation mechanisms:** concrete Rust types, backend atomic primitives,
    reservation-token representation, transport/FFI details, and migration structure.
 
 The selected ISA profile, rather than this ADR, supplies exact architectural behavior
