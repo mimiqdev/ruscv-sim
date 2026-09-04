@@ -146,7 +146,13 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    ENTRY["Machine grant at Hart boundary"] --> SAMPLE["Hart/profile samples InterruptLines"]
+    WAITINPUT["Machine admits newly normalized inputs<br/>for a previously Waiting Hart"] --> REEVAL["Control-only wait-state re-evaluation<br/>(no turn/time/counter accounting)"]
+    REEVAL --> WAITRESULT{"Hart/profile alone returns<br/>Runnable or Waiting"}
+    WAITRESULT -- Runnable --> ENTRY["Machine normal grant at Hart boundary"]
+    WAITRESULT -- Waiting --> STILLWAIT["Waiting remains reported<br/>(no normal turn)"]
+    RUNNABLE["Hart/profile reports Runnable"] --> ENTRY
+
+    ENTRY --> SAMPLE["Hart/profile samples InterruptLines"]
     SAMPLE --> PENDING{"Hart/profile: eligible interrupt?"}
     PENDING -- Yes --> INTR["Hart builds interrupt trap"]
     INTR --> TRAP["Hart trap entry<br/>CSR / Privilege / Target PC"]
@@ -298,15 +304,23 @@ sequenceDiagram
 
     loop Until a stop condition
         M->>M: admit due Platform/input events at cursor
-        M->>M: check conservative turn bound against deadline slack
-        M->>H: Hart-provided architectural boundary + admitted inputs
-        H->>H: profile decides eligibility and one architectural transition
-        H->>B: fetch / load / store
-        B->>D: MMIO transaction
-        D-->>B: data / fault / delay / event
-        B-->>H: AccessResponse
-        H-->>M: exactly one transition + state/counter facts + optional records
-        M->>M: consume delay once; advance cursor; admit causal events
+        alt Newly admitted input for a previously Waiting Hart
+            M->>H: control-only wait-state re-evaluation (no turn/accounting)
+            H-->>M: Runnable or Waiting (Hart/profile-owned result)
+        end
+        alt Runnable and budget/deadline/control conditions permit
+            M->>M: check conservative turn bound against deadline slack
+            M->>H: Hart-provided architectural boundary + admitted inputs
+            H->>H: profile decides eligibility and one architectural transition
+            H->>B: fetch / load / store
+            B->>D: MMIO transaction
+            D-->>B: data / fault / delay / event
+            B-->>H: AccessResponse
+            H-->>M: exactly one transition + state/counter facts + optional records
+            M->>M: consume delay once; advance cursor; admit causal events
+        else All Harts remain Waiting
+            M->>M: continue/run idle jump to next event or deadline
+        end
         M-->>O: deliver requested observations
     end
 
@@ -316,16 +330,24 @@ sequenceDiagram
 
 This diagram shows the required observable phases for the Runner-driven ISS/native
 path; it is not a scheduler control-flow prescription. [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md)
-defines input admission, the Machine grant at a Hart/profile-provided
-architectural boundary, conservative deadline bounds, modeled-time and delay
-accounting, WFI/idle scheduling, and fact ordering shown here. The selected
-Hart/profile decides interrupt eligibility, masking/delegation, architectural
-priority, trap/debug/WFI transitions, and ISA-visible counter deltas; the Machine
-never evaluates those predicates or changes Hart run state directly. In
-external-kernel hosting the kernel grants the authoritative time horizon into the
-Machine; the Runner still classifies non-lossy facts and does not have to own that
-outer thread. Observation records are subscriber-gated; control facts are always
-returned.
+defines input admission, the Machine's normal architectural grant and
+control-only wait-state re-evaluation grant at a Hart/profile-provided boundary,
+conservative deadline bounds, modeled-time and delay accounting, WFI/idle
+scheduling, and fact ordering shown here. After a legal `continue`/`run` idle
+jump, input admission and the required wait-state re-evaluation may occur in the
+same exchange; the Hart/profile alone returns `Runnable` or `Waiting`, and only a
+`Runnable` result plus permitted budget/deadline/control conditions can lead to a
+normal turn. The re-evaluation consumes no turn, instruction attempt, retirement,
+`iss_tick`, virtual-time advance, physical delay, or ISA counter delta. At a
+reached deadline it may report state but no normal turn begins, while a Waiting
+single-step retains its no-idle-jump `Waiting` + `SingleStepBoundary` behavior.
+The selected Hart/profile decides interrupt eligibility, masking/delegation,
+architectural priority, trap/debug/WFI transitions, and ISA-visible counter
+deltas; the Machine never evaluates those predicates or changes Hart run state
+directly. In external-kernel hosting the kernel grants the authoritative time
+horizon into the Machine; the Runner still classifies non-lossy facts and does not
+have to own that outer thread. Observation records are subscriber-gated; control
+facts are always returned.
 
 ## 8. Capability accumulation and architecture gates
 

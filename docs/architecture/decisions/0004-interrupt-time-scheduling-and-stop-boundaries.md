@@ -52,8 +52,9 @@ This ADR therefore defines:
    acceptance outcome, and block-execution precision (without defining Hart
    eligibility, masking, delegation, or architectural priority);
 5. scheduler handling of Hart/profile-reported WFI/runnable/waiting state,
-   lifecycle drain, timer/input admission, and legal idle jumps (without
-   defining WFI legality or transitions);
+   the control-only wait-state re-evaluation exchange, lifecycle drain,
+   timer/input admission, and legal idle jumps (without defining WFI legality or
+   transitions);
 6. non-lossy control facts, deterministic same-time ordering, and primary-reason
    classification; and
 7. synchronization, quiesce/drain, multi-Hart ordering, and conditional replay
@@ -83,14 +84,23 @@ and may be represented by different types or transports later.
   charge; no ISA counter delta is implied by that accounting. For an instruction
   turn, its `InstructionAttempted` progress is still reported. WFI idle time and
   Platform-only time advancement are not Hart turns.
+- **Wait-state re-evaluation grant** is a control-only Machine-to-Hart/profile
+  exchange offered after newly admitted normalized inputs are presented to a Hart
+  that previously reported `Waiting`. The Hart/profile alone returns its current
+  `Runnable` or still `Waiting` state. It is not a Hart turn or architectural
+  transition: it consumes no finite turn-budget slot, instruction attempt,
+  retirement, framework `iss_tick`, virtual-time increment, physical delay, or
+  ISA-visible counter delta, and it does not prescribe WFI behavior or a wake
+  predicate.
 - **QuiesceRequested** is the lifecycle state in which an effective quiesce/drain
   request prevents new turns while already-started work is drained.
 - **DrainComplete** is the lifecycle acknowledgment that no Hart transition,
   physical transaction, or observation delivery remains in flight, so lifecycle
   mutation is legal. It is not a run-level stop reason.
-- **NoProgress** is a run-level fact meaning that no Hart is Runnable and no
-  admissible future Platform work exists. It is distinct from `DrainComplete`;
-  it does not by itself make lifecycle mutation legal.
+- **NoProgress** is a run-level fact concluded only after applicable current-time
+  inputs and required wait-state re-evaluation have left no Hart `Runnable` and
+  no admissible future Platform work exists. It is distinct from
+  `DrainComplete`; it does not by itself make lifecycle mutation legal.
 - **Boundary** is a point at which the current Hart transition and all of its
   physical effects have completed, modeled delay has been accounted for, causal
   Platform events have been admitted, and no transaction or observation delivery
@@ -129,16 +139,24 @@ The contract adopts these rules:
    transaction delay. A simulator/adapter failure consumes any delay known to
    have elapsed, never retries or rolls back an unknown completion, and makes the
    run non-resumable until the adapter resolves or resets the state.
-5. The Machine admits Platform inputs due at the current virtual time, then grants
-   a selected Hart at the Hart/profile-provided architectural sampling boundary.
-   The Hart/profile samples and decides eligibility there: an accepted interrupt
-   enters trap before fetch, consumes one framework Hart turn, and does not retire
-   an instruction. An in-flight instruction is never asynchronously preempted.
+5. The Machine admits Platform inputs due at the current virtual time. In a
+   `continue`/`run` exchange, for a previously `Waiting` Hart that receives
+   newly admitted normalized inputs, it must first offer the control-only
+   wait-state re-evaluation grant; the Hart/profile alone returns `Runnable` or
+   `Waiting`. Only after `Runnable` is
+   returned and ordinary budget, deadline, and control conditions permit does the
+   Machine grant a normal architectural turn at the Hart/profile-provided
+   sampling boundary. The Hart/profile samples and decides eligibility there: an
+   accepted interrupt enters trap before fetch, consumes one framework Hart turn,
+   and does not retire an instruction. An in-flight instruction is never
+   asynchronously preempted.
 6. The Hart/profile applies WFI legality and post-retirement wake behavior,
-   returning its resulting `Runnable` or `Waiting` state. A `continue`/`run`
-   scheduler may jump a wholly idle Machine only to the next known event or grant
-   deadline; a single-step request never uses that idle jump. The Machine must
-   never simulate idle by retiring instructions or mutate a Hart's run state.
+   returning its resulting `Runnable` or `Waiting` state. The control-only
+   wait-state re-evaluation after newly admitted inputs is not a turn and does not
+   change Hart state on the Machine's behalf. A `continue`/`run` scheduler may
+   jump a wholly idle Machine only to the next known event or grant deadline; a
+   single-step request never uses that idle jump. The Machine must never simulate
+   idle by retiring instructions or mutate a Hart's run state.
 7. Machine returns every applicable fact in canonical order, including run-level
    `NoProgress` and any `DrainComplete` lifecycle acknowledgment. It does not
    collapse coincident facts into one reason or turn lifecycle readiness into a
@@ -232,7 +250,16 @@ ordinary native grant:
   instruction attempt consumes one turn budget slot, so a pending-interrupt storm
   or a failed attempt cannot bypass a zero or finite limit. A failed attempt does
   not receive completed-turn `iss_tick` accounting; any ISA-visible counter deltas
-  are supplied by the Hart/profile according to its own failure contract.
+  are supplied by the Hart/profile according to its own failure contract. A
+  control-only wait-state re-evaluation is not a Hart turn and never consumes
+  this budget.
+- **Wait-state re-evaluation:** in a `continue`/`run` exchange, after newly
+  admitted inputs are presented to a previously `Waiting` Hart, the Machine must
+  issue the control-only grant defined in §1.1. The Hart/profile returns only
+  `Runnable` or `Waiting`; this exchange does not fetch, execute, retire, accept
+  an interrupt, advance virtual time, consume physical delay, or produce an ISA
+  counter delta. It may occur in the same exchange as the input admission,
+  including after an idle jump.
 - **Absolute virtual-time deadline:** optional. It is an inclusive completion
   bound. A grant without one is not allowed to cross another caller-imposed
   bound; an unbounded grant still stops at mandatory semantic boundaries.
@@ -259,9 +286,10 @@ request.
 The Machine returns, at a coherent boundary:
 
 - per-Hart instruction attempts, retired instructions, accepted interrupt entries,
-  trap entries, Hart/profile-returned ISA counter deltas, and Hart/profile-reported
-  wait/runnable state transitions, including a started attempt that failed before
-  architectural completion;
+  trap entries, Hart/profile-returned ISA counter deltas, Hart/profile-reported
+  wait/runnable state, and the outcomes of any control-only wait-state
+  re-evaluation, including a started attempt that failed before architectural
+  completion;
 - start and end virtual time, total converted transaction delay, and any
   Platform-only idle advance, kept distinguishable from Hart progress;
 - the next known Platform event/input, timer crossing, or grant deadline, if any;
@@ -292,30 +320,52 @@ For each exchange, the Machine must provide the equivalent of these phases:
    an external exchange validates the kernel-provided start and horizon without
    permitting a backward start outside reset.
 2. **Admit current-time inputs.** Admit all Platform and externally admitted input
-   events whose timestamp is at or before the cursor. No direct host/device
-   callback may mutate Hart state between synchronization boundaries.
+   events whose timestamp is at or before the cursor. In a `continue`/`run`
+   exchange, for each previously `Waiting` Hart to which a newly admitted
+   normalized input is presented, the Machine must offer one control-only
+   wait-state re-evaluation grant. The Hart/profile alone returns `Runnable` or
+   `Waiting`; this is not an architectural transition or Hart turn and consumes
+   no turn-budget slot,
+   instruction attempt, retirement, framework `iss_tick`, virtual-time advance,
+   physical delay, or ISA-visible counter delta. The result is available to the
+   later phases in this same exchange, including after a legal idle jump. No
+   direct host/device callback may mutate Hart state between synchronization
+   boundaries.
 3. **Evaluate the boundary facts together.** Evaluate every fact applicable at
    this boundary, including effective external stop, `QuiesceRequested`, zero
-   budget, `DeadlineReached`, and `NoProgress` when its predicate holds. The
-   completion-bound check may additionally make `DeadlineBlocked` applicable.
-   A control condition found early must not suppress another coincident fact.
+   budget, `DeadlineReached`, and `NoProgress` only after current-time input
+   admission and any required wait-state re-evaluation have completed. At an idle
+   destination, phase 7 repeats that admission and re-evaluation before making
+   the same `NoProgress` determination; a pre-re-evaluation `Waiting` report
+   alone cannot establish it. The completion-bound check may additionally make
+   `DeadlineBlocked` applicable. A control condition found early must not suppress
+   another coincident fact.
 4. **Honor effective control without starting new work.** An effective external
    stop prevents a new turn. An effective quiesce request stops new turns and
    drains already-started work until it can return `DrainComplete`; that
    lifecycle acknowledgment is not a run-level terminal reason.
 5. **Honor a zero budget.** With zero budget, perform no Hart turn, instruction
    fetch, interrupt acceptance, WFI transition, idle clock advance, or
-   Platform-event time jump. Return the applicable facts, including
+   Platform-event time jump. A required control-only wait-state re-evaluation
+   after current-time input admission may still report `Runnable` or `Waiting`,
+   because it is none of those actions; it must not perform architectural work
+   or any framework/ISA accounting. Return the applicable facts, including
    `BudgetExhausted`, without allowing it to hide same-boundary facts.
 6. **Honor a reached deadline.** If the cursor equals the inclusive deadline,
-   admit due events and perform no Hart turn. Return `DeadlineReached` together
-   with every other applicable fact.
-7. **Handle an idle Machine.** If no Hart is reported `Runnable` by its
-   Hart/profile, apply the scheduler idle rules in §8. A legal idle advance may
-   proceed only to the earliest permitted event or deadline; if no admissible
-   future work exists, expose `NoProgress` as a run-level fact without inferring
-   lifecycle `DrainComplete` from it. The Machine does not evaluate Hart
-   eligibility or change a Hart's run state while handling idle.
+   admit due events and complete any required control-only wait-state
+   re-evaluation, then perform no normal Hart turn. Re-evaluation may report
+   `Runnable` or `Waiting`, but no normal turn begins at the reached deadline.
+   Return `DeadlineReached` together with every other applicable fact.
+7. **Handle an idle Machine.** If no Hart is reported `Runnable` after the
+   required wait-state re-evaluation, apply the scheduler idle rules in §8. A
+   legal idle advance may proceed only to the earliest permitted event or
+   deadline. At an idle destination, repeat current-time input admission and
+   wait-state re-evaluation in this same `continue`/`run` exchange before
+   deciding whether a normal turn can start. If no Hart is Runnable after that
+   re-evaluation and no admissible future work exists, expose `NoProgress` as a
+   run-level fact without inferring lifecycle `DrainComplete` from it. The
+   Machine does not evaluate Hart eligibility or change a Hart's run state while
+   handling idle.
 8. **Check completion safety before a turn.** If a Hart is Runnable and a
    deadline is present, establish conservative completion bounds for enough
    candidate turns to determine whether one can fit, including each candidate's
@@ -327,23 +377,28 @@ For each exchange, the Machine must provide the equivalent of these phases:
    still do. If a required precise completion bound cannot be established, return
    a simulator/adapter failure before speculative work unless reduced accuracy was
    explicitly requested with finite bounds.
-9. **Grant and receive one boundary result.** At the selected Hart/profile-
-   provided architectural boundary, the Machine grants one turn when the
-   Hart/profile has reported `Runnable`, with the admitted normalized inputs. If
-   it is `Waiting`, the Machine grants no instruction turn and receives a
-   still-waiting result. Otherwise the Hart/profile samples its inputs and
-   applies its own eligibility, masking, delegation, priority, and
-   trap/debug/WFI rules, then returns exactly one architectural transition:
-   accepted interrupt/trap entry, an instruction attempt yielding retirement or
-   synchronous trap, Debug Mode/trigger entry when implemented, still-waiting,
-   or failure. A started failure consumes its framework budget slot but is not a
-   completed Hart turn; the Machine does not fetch, accept, trap, execute WFI,
-   or change Hart state on the Hart's behalf.
-10. **Account and admit causal effects.** Consume each returned physical delay
-    exactly once, charge framework `iss_tick` only for completed turns when that
-    accounting is selected, record the Hart/profile-returned ISA counter deltas
-    without deriving or writing them, update Platform time, and append causal
-    Platform facts after the parent transition.
+9. **Grant and receive one boundary result.** After any required wait-state
+   re-evaluation, at the selected Hart/profile-provided architectural boundary,
+   the Machine grants one normal Hart turn only when the Hart/profile has
+   reported `Runnable`, with the admitted normalized inputs. A Hart reported as
+   `Waiting` receives no normal turn; its state is the result of the control-only
+   re-evaluation (or the previously reported state when no new input requires
+   one). The Hart/profile samples its inputs and applies its own eligibility,
+   masking, delegation, priority, and trap/debug/WFI rules, then returns exactly
+   one architectural transition: accepted interrupt/trap entry, an instruction
+   attempt yielding retirement or synchronous trap, Debug Mode/trigger entry
+   when implemented, or failure. A control-only wait-state re-evaluation is not
+   an architectural transition returned here. A started failure consumes its
+   framework budget slot but is not a completed Hart turn; the Machine does not
+   fetch, accept, trap, execute WFI, or change Hart state on the Hart's behalf.
+10. **Account and admit causal effects.** A control-only wait-state re-evaluation
+    has no architectural or framework accounting. For a normal Hart turn,
+    consume each returned physical delay exactly once, charge framework `iss_tick`
+    only for completed turns when that accounting is selected, record the
+    Hart/profile-returned ISA counter deltas without deriving or writing them,
+    update Platform time, and append causal Platform facts after the parent
+    transition.
+
 11. **Expose the completed boundary.** Deliver requested observations, record any
     delivery or simulator failure, update the grant accounting, and re-evaluate
     all facts made applicable by the transition. Return at a required boundary
@@ -382,11 +437,11 @@ or any other external kernel API.
 
 A Machine must not advance the external kernel's global time behind its back. A
 native scheduler must not invent a second Hart execution engine or treat a grant
-as ownership of the Machine cursor. Both modes use the same input-admission and
-grant boundary, delay rules, Hart/profile WFI outcomes, deadline checks, and fact
-ordering. Hart/profile eligibility, masking, delegation, architectural priority,
-trap/debug transitions, and ISA-visible counter behavior remain outside the
-Machine exchange.
+as ownership of the Machine cursor. Both modes use the same input-admission,
+control-only wait-state re-evaluation, normal-grant boundary, delay rules,
+Hart/profile WFI outcomes, deadline checks, and fact ordering. Hart/profile
+eligibility, masking, delegation, architectural priority, trap/debug transitions,
+and ISA-visible counter behavior remain outside the Machine exchange.
 
 ## 5. Modeled time and physical delay
 
@@ -401,8 +456,12 @@ This is scheduler accounting, not an ISA-visible counter rule:
   no completed-turn `iss_tick` charge.
 - A completed WFI transition receives the normal one-`iss_tick` charge when this
   framework policy is selected. The subsequent `Waiting` interval receives no
-  per-step grant or `iss_tick` charge because the Machine does not invoke the
-  Hart while it is waiting.
+  normal per-step Hart turn or `iss_tick` charge. After newly admitted inputs,
+  a required control-only wait-state re-evaluation may invoke the Hart/profile
+  solely to return `Runnable` or `Waiting`; it consumes no turn-budget slot,
+  instruction attempt, retirement, `iss_tick`, virtual-time advance, physical
+  delay, or ISA-visible counter delta. The Machine does not invoke the Hart for
+  an architectural turn while it reports `Waiting`.
 - Every physical transaction contributes its converted nonnegative delay once,
   after that transaction completes. Delays from multiple accesses in one Hart
   turn are accumulated in their semantic completion order. A Platform event whose
@@ -547,12 +606,16 @@ rules do not prescribe a PLIC register layout or a container iteration order.
 ### 6.2 Sampling and acceptance boundary
 
 At every precise grant boundary the Machine first admits all Platform events whose
-modeled timestamp is at or before the current cursor. When a Hart/profile reports
-`Runnable`, the Machine offers one turn at the architectural boundary supplied by
-that Hart/profile; when it reports `Waiting`, no instruction turn is offered. The
-Hart/profile samples normalized inputs and applies the selected ISA and debug
-rules; the Machine does not sample eligibility, choose an architectural cause,
-or perform a trap/debug/WFI transition.
+modeled timestamp is at or before the current cursor. If that admission presents
+new normalized inputs to a previously `Waiting` Hart in a `continue`/`run`
+exchange, the Machine first offers the control-only wait-state re-evaluation
+specified in §8.2. The Hart/profile alone returns `Runnable` or `Waiting`; this
+exchange is not an instruction turn. Only a `Runnable` result, after ordinary
+budget, deadline, and control checks, permits the Machine to offer one normal turn
+at the architectural boundary supplied by that Hart/profile. A `Waiting` result
+receives no normal turn. The Hart/profile samples normalized inputs and applies the
+selected ISA and debug rules; the Machine does not sample eligibility, choose an
+architectural cause, or perform a trap/debug/WFI transition.
 
 - If the Hart/profile returns an accepted interrupt, that transition enters trap
   before instruction fetch. No instruction attempt starts, and the Machine does
@@ -590,9 +653,13 @@ algorithm:
 
 ```text
 admit due Platform inputs
-  -> grant Hart at its profile-provided architectural boundary
-  -> Hart/profile returns exactly one transition
-     (accepted interrupt, instruction attempt/trap, Debug Mode, still-waiting, or failure)
+  -> for a previously Waiting Hart with newly presented inputs:
+     control-only wait-state re-evaluation
+     -> Hart/profile returns Runnable or Waiting
+  -> if Runnable and budget/deadline/control permit:
+     grant Hart at its profile-provided architectural boundary
+     -> Hart/profile returns exactly one transition
+        (accepted interrupt, instruction attempt/trap, Debug Mode, or failure)
   -> consume delay and admit causal events
   -> expose the next boundary and all applicable facts
 ```
@@ -636,16 +703,17 @@ The Hart-turn budget is a budget of started turn slots, while framework
 A single-step control request is a one-turn budget with a `SingleStepBoundary`
 fact, including when that one turn is an accepted interrupt entry. It is not
 necessarily one retired instruction. If the selected Hart is `Waiting`,
-single-step returns `Waiting` plus `SingleStepBoundary` without an idle jump or
-modeled-time advance; `continue`/`run` may idle-jump a wholly waiting Machine
-under §8.
+single-step returns `Waiting` plus `SingleStepBoundary` without an idle jump,
+normal turn, wait-state re-evaluation, or modeled-time advance; `continue`/`run`
+may idle-jump a wholly waiting Machine under §8.
 
 ### 7.2 Deadline semantics
 
 A deadline is an absolute virtual-time value, not a number of instructions and
 not host wall time. The bound is inclusive for completion:
 
-- if `now == deadline`, no Hart turn begins;
+- if `now == deadline`, any required control-only wait-state re-evaluation may
+  report `Runnable` or `Waiting`, but no normal Hart turn begins;
 - a known-cost turn may begin only when its conservative completion bound is
   `<= deadline`;
 - a turn that completes exactly at the deadline is valid, and the Machine admits
@@ -668,8 +736,9 @@ speculative work as described above, unless reduced accuracy was explicitly
 selected.
 
 A timer or input event at the same timestamp as the deadline is not lost. It is
-admitted and included in the response before `DeadlineReached`; no Hart turn is
-started after the deadline in that exchange.
+admitted and included in the response before `DeadlineReached`; a required
+control-only wait-state re-evaluation may report `Runnable` or `Waiting`, but no
+normal Hart turn is started after the deadline in that exchange.
 
 ### 7.3 Mandatory early returns
 
@@ -683,7 +752,8 @@ Regardless of budget, a Machine must return at the next coherent boundary for:
 - a materialized-observation demand that requires the response now;
 - Platform exit, a terminal guest trap under the active trap policy, Hart Debug
   Mode, observer failure, or simulator/adapter failure; and
-- `NoProgress` when there is no Runnable Hart and no admissible future event to
+- `NoProgress` after current-time input admission and any required wait-state
+  re-evaluation leave no Hart `Runnable` and no admissible future event to
   advance to.
 
 The list describes return conditions, not a one-value result enum. `DrainComplete`
@@ -728,20 +798,33 @@ transition, and counter deltas, then returns `Runnable` or `Waiting`.
 
 ### 8.2 Runnable, no-progress, and lifecycle drain states
 
+**Control-only wait-state re-evaluation.** After a `continue`/`run` exchange
+admits new normalized inputs for a Hart that previously reported `Waiting`, the
+Machine must offer the wait-state re-evaluation grant from §1.1 before deciding
+whether the run is idle or can start a normal turn. The input connection selects
+which Harts receive the offer; the Machine neither evaluates wake eligibility nor
+changes Hart state. The Hart/profile alone returns `Runnable` or `Waiting`. This
+grant may occur in the same exchange as admission, including
+after an idle jump, and has none of the turn, architectural, framework-time, or
+ISA-counter effects listed in §1.1. A `Runnable` result does not itself start
+work: phases 8 and 9 still apply budget, deadline, and control checks.
+
 - **Runnable:** the Hart/profile reports that the Hart can receive a turn. The
   Machine may grant a turn, and the Hart/profile then decides whether to accept
   an interrupt or attempt an instruction.
 - **Waiting:** the Hart/profile reports that the Hart has entered or remains in a
   waiting state. Waiting cannot receive an ordinary instruction turn until the
-  profile returns `Runnable`; the Machine does not infer that transition.
-  Waiting does not consume a framework turn budget slot or advance time by
-  itself; it is neither `NoProgress` nor `DrainComplete` by itself.
+  profile returns `Runnable`; a newly admitted input causes the control-only
+  re-evaluation above, not a Machine-inferred state transition. Waiting does not
+  consume a framework turn budget slot or advance time by itself; it is neither
+  `NoProgress` nor `DrainComplete` by itself.
 - **Stopped/terminal:** the Hart or run has been halted by a terminal architectural
   or control fact. Its state is reported; it is not selected by a normal grant.
-- **NoProgress:** at a coherent run boundary no Hart is reported `Runnable` and
-  no admissible future Platform work exists. Waiting Harts may remain in the
-  Machine. `NoProgress` is a run-level fact (idle with no future work), not a
-  lifecycle state and not permission to mutate the Machine.
+- **NoProgress:** only after current-time input admission and any required
+  wait-state re-evaluation, no Hart is reported `Runnable` and no admissible
+  future Platform work exists. Waiting Harts may remain in the Machine.
+  `NoProgress` is a run-level fact (idle with no future work), not a lifecycle
+  state and not permission to mutate the Machine.
 - **QuiesceRequested:** an effective explicit quiesce/drain request has stopped
   new turns while already-started work is being drained. It is a lifecycle state,
   not a run-level stop reason.
@@ -753,12 +836,17 @@ transition, and counter deltas, then returns `Runnable` or `Waiting`.
 If one Hart is reported `Runnable`, the Machine must not idle-jump merely because
 another Hart is reported `Waiting`. If all Harts are reported `Waiting` and a
 known timer/input/Platform event exists, `continue`/`run` may advance to the
-earliest such event and admit its inputs. A later grant lets each affected
-Hart/profile re-evaluate those inputs and return `Runnable` or `Waiting`; the
-Machine does not wake or mutate the Hart directly. If no event exists and no
-finite deadline supplies a destination, it returns `NoProgress` rather than
-polling WFI. An explicit quiesce/drain request returns its `DrainComplete`
-acknowledgment only after the lifecycle drain, independently of `NoProgress`.
+earliest such event and admit its inputs. In that same exchange, each previously
+`Waiting` Hart to which the admitted input is presented receives the control-only
+wait-state re-evaluation above and the Hart/profile returns `Runnable` or
+`Waiting`; the Machine does not wake or mutate the Hart directly. If a Hart
+returns `Runnable`, a normal turn may follow in that exchange only after the
+ordinary budget, deadline, and control checks. If all Harts remain `Waiting` and
+no admissible future work exists, it returns `NoProgress` rather than polling
+WFI. Thus `NoProgress` can be concluded only after applicable current-time input
+admission and required wait-state re-evaluation have left all Harts `Waiting`.
+An explicit quiesce/drain request returns its `DrainComplete` acknowledgment only
+after the lifecycle drain, independently of `NoProgress`.
 
 ### 8.3 Legal idle jumps
 
@@ -772,14 +860,17 @@ request. The destination is the minimum of:
 - the caller's virtual-time deadline.
 
 A single-step request for a Waiting Hart returns `Waiting` plus
-`SingleStepBoundary` without this jump or any modeled-time advance. The Machine
-must not jump over an earlier event or invent an instruction, retirement, Hart
-turn, or ISA counter delta during the jump. At the destination it advances
-`mtime`, asserts due level sources, enqueues due edge sources, and records all
-Platform input/event facts. It does not mark wake sources or change any Hart run
-state; the affected Hart/profile re-evaluates admitted inputs at its next grant
-and returns `Runnable` or `Waiting`. An already-due event has destination `now`
-and requires no positive jump.
+`SingleStepBoundary` without this jump, a normal turn, or any modeled-time
+advance. The Machine must not jump over an earlier event or invent an
+instruction, retirement, Hart turn, or ISA counter delta during the jump. At the
+destination it advances `mtime`, asserts due level sources, enqueues due edge
+sources, and records all Platform input/event facts. It does not mark wake
+sources or change any Hart run state. In the same `continue`/`run` exchange,
+each previously `Waiting` Hart to which a newly admitted input is
+presented receives the control-only wait-state re-evaluation; the Hart/profile
+alone returns `Runnable` or `Waiting`, with no turn or accounting. If it returns
+`Runnable`, the normal grant remains subject to the checks in phases 8 and 9.
+An already-due event has destination `now` and requires no positive jump.
 
 ## 9. Platform events, exit, and causal commit order
 
@@ -806,9 +897,10 @@ emits `SimulatorFailure` and never fabricates either result.
 
 Causal Platform events are admitted after their parent transition at the same
 effective boundary time. Independent events that were already due are admitted
-before the next Hart/profile architectural sample. This rule makes the interrupt
-input visible to the next boundary without allowing it to preempt the operation
-that caused it.
+before any required control-only wait-state re-evaluation and before the next
+Hart/profile architectural sample. A re-evaluation result precedes any normal
+transition it permits. This rule makes the interrupt input visible to the next
+boundary without allowing it to preempt the operation that caused it.
 
 ## 10. Non-lossy facts, deterministic ordering, and primary reason
 
@@ -821,7 +913,7 @@ semantics are the same. Facts include, as applicable:
 - `InstructionRetired` and `InstructionAttempted` progress;
 - `TrapEntered`, with synchronous versus interrupt cause and Hart provenance;
 - interrupt source assertion, pending, deassertion, Hart/profile-reported wake
-  state, and acceptance;
+  state, wait-state re-evaluation result, and acceptance;
 - timer/Platform events and `PlatformExit`;
 - `BudgetExhausted`, `DeadlineReached`, `DeadlineBlocked`,
   `SingleStepBoundary`, and `ExternalStop`;
@@ -848,7 +940,8 @@ before the parent transition. The canonical order is:
 
 1. increasing effective boundary timestamp;
 2. for one timestamp, causal predecessors before their descendants;
-3. at a boundary, Platform/input admission before the Hart/profile's
+3. at a boundary, Platform/input admission before any required control-only
+   wait-state re-evaluation, and re-evaluation before the Hart/profile's normal
    architectural sampling at its granted boundary;
 4. the single Hart/profile transition (interrupt acceptance or instruction
    outcome) before its causal Platform event;
@@ -923,7 +1016,12 @@ retired instruction.
 Every Hart has a stable semantic Hart ID. For N Harts sharing a Platform:
 
 - Platform clock advancement and due-source updates happen once for the shared
-  timestamp before Hart/profile architectural sampling.
+  timestamp before any wait-state re-evaluation or normal Hart/profile
+  architectural sampling.
+- Independent Hart wait-state re-evaluations and normal transitions at the same
+  timestamp are canonically ordered by Hart ID and each Hart's local transition
+  sequence, after already-admitted Platform facts; a re-evaluation result is
+  available before that Hart's normal transition is considered.
 - Independent Hart transitions at the same timestamp are canonically ordered by
   Hart ID and each Hart's local transition sequence, after already-admitted
   Platform facts.
@@ -1051,7 +1149,8 @@ available.
 
 Rejected. It consumes budgets and host work while no architectural progress is
 possible, and it can prevent timer/input admission when time is only advanced
-by execution. Waiting plus legal idle jumps is the contract.
+by execution. Waiting plus legal idle jumps and a control-only Hart/profile
+re-evaluation after input admission are the contract.
 
 ### G. Fix a scheduler algorithm or quantum in the ADR
 
@@ -1072,7 +1171,9 @@ replaceable implementation choices.
 - Exact zero/finite limits and absolute deadlines can be implemented without
   retroactive unretirement or rollback.
 - WFI can let a Hart/profile report genuine waiting while the Machine idles and
-  advances Platform time to a timer/input event with no fake instruction progress.
+  advances Platform time to a timer/input event with no fake instruction progress;
+  the required control-only re-evaluation then closes the loop without a Machine
+  wake predicate.
 - Exit, trap, debug, budget, deadline, observer, and simulator facts remain
   available for diagnosis and deterministic Runner classification.
 - Stable same-time ordering gives N-Hart and replay-capable implementations a
@@ -1107,10 +1208,15 @@ The implementation and later ADRs must preserve these invariants:
    pre-fetch interrupt, and no interrupt preempts an in-flight instruction.
 5. A retired instruction cannot be unretired because it caused exit or because an
    observer failed.
-6. Zero budget and an reached deadline perform no subsequent Hart turn.
-7. A waiting Hart receives no instruction-turn grant while idle; the Machine
-   does not infer an ISA counter delta or consume a Hart-turn budget slot for the
-   wait.
+6. Zero budget and an reached deadline perform no subsequent normal Hart turn;
+   a required control-only wait-state re-evaluation may still report state
+   without architectural, framework-time, budget, or ISA-counter accounting.
+7. A waiting Hart receives no normal instruction-turn grant while idle. After
+   newly admitted inputs in a `continue`/`run` exchange, the control-only
+   wait-state re-evaluation may return `Runnable` or `Waiting`, but the Machine
+   does not infer that result, and the re-evaluation consumes no turn-budget
+   slot, instruction attempt, retirement, `iss_tick`, virtual-time advance,
+   physical delay, or ISA counter delta.
 8. A started simulator-failed attempt consumes its finite budget slot but is not a
    completed Hart turn: it adds no completed-turn `iss_tick` charge, and it does
    not add `BudgetExhausted` merely because that slot was last. Any ISA counter
@@ -1122,12 +1228,17 @@ The implementation and later ADRs must preserve these invariants:
     work after an effective quiesce/drain request; it is not `NoProgress`.
 12. Unknown completion is never retried as if it were a clean failure and never
     converted into a guest-visible trap without evidence.
+13. `NoProgress` is concluded only after applicable current-time input admission
+    and every required wait-state re-evaluation leave all Harts `Waiting` with no
+    admissible future work. A re-evaluation may occur in the same `continue`/`run`
+    exchange after an idle jump; a `Runnable` result still requires the normal
+    budget, deadline, and control checks before a Hart turn.
 
 The following cases make the required ordering concrete:
 
 | Situation at one exchange boundary | Required semantic order | Facts/primary under minimal policy |
 | --- | --- | --- |
-| Zero budget with an admitted input that could be accepted by the Hart/profile | Admit current-time inputs; do not grant a Hart turn, accept, or fetch; return | Input/pending facts as reported or retained by Platform/Hart + `BudgetExhausted`; primary budget |
+| Zero budget with an admitted input that could be accepted by the Hart/profile | Admit current-time inputs; perform only any required control-only wait-state re-evaluation; do not grant a Hart turn, accept, or fetch; return | Input/pending facts, Hart/profile `Runnable`/`Waiting` state, and `BudgetExhausted`; primary budget |
 | One remaining turn and the Hart/profile reports an accepted interrupt | Grant the final turn; complete returned trap and framework accounting; stop | `TrapEntered`, then `BudgetExhausted`; primary budget unless a higher fact exists |
 | One remaining turn and the instruction retires then writes exit | Complete write; retire/counters; emit exit; return | Retirement, `PlatformExit`, `BudgetExhausted`; primary Platform exit |
 | Deadline equals the end of the final instruction | Complete instruction and delay; admit due events; return | Retirement/events, then `DeadlineReached`; primary deadline unless exit/failure |
@@ -1135,9 +1246,9 @@ The following cases make the required ordering concrete:
 | Timer crosses during a non-WFI instruction | Finish instruction; advance/admit timer; sample at next boundary | Retirement, timer assertion/pending; no mid-instruction trap |
 | Interrupt, breakpoint, or Debug/trigger condition could compete at one boundary | Grant the boundary; let the Hart/profile select and return exactly one architectural transition | The returned Hart transition and all applicable unselected input/control facts; no framework winner rule |
 | Synchronous exception and interrupt asserted during that instruction | Finish synchronous exception; leave interrupt pending | Synchronous `TrapEntered`, pending interrupt; primary synchronous trap if terminal |
-| WFI with no profile-defined wake condition | Hart/profile applies WFI and returns retirement plus `Waiting`; `continue`/`run` may idle-jump, while no future work returns `NoProgress` | Retirement, Hart/profile-reported waiting, then admitted input/state result or `NoProgress` |
-| Single-step of a Waiting Hart | Return without an idle jump or time advance | `Waiting` + `SingleStepBoundary`; primary single-step |
-| Timer/input exactly at deadline while all Harts report `Waiting` | Advance/admit event at deadline; do not start a Hart turn | Event and Hart/profile-reported state/pending facts when later granted, plus `DeadlineReached`; primary deadline |
+| WFI followed by a future timer/input | Hart/profile applies WFI and returns retirement plus `Waiting`; `continue`/`run` may idle-jump, admit the event, and offer control-only wait-state re-evaluation; only a resulting `Runnable` plus permitted controls can lead to a later normal turn, while all-`Waiting` no-future-work returns `NoProgress` | Retirement, waiting state, idle/input facts, re-evaluation result, and later Hart/profile transition or `NoProgress` |
+| Single-step of a Waiting Hart | Return without an idle jump, normal turn, wait-state re-evaluation, or time advance | `Waiting` + `SingleStepBoundary`; primary single-step |
+| Timer/input exactly at deadline while all Harts report `Waiting` | Advance/admit event at deadline; offer any required control-only wait-state re-evaluation; do not start a normal Hart turn | Event and Hart/profile `Runnable`/`Waiting` state, plus `DeadlineReached`; primary deadline |
 | Guest exit and external stop admitted at the same boundary | Preserve commit and both facts | `ExternalStop` primary, `PlatformExit` retained |
 | Observer fails after a committed instruction | Keep commit/progress; stop delivery and return | Retirement, observer failure; primary observer failure |
 | Started instruction attempt fails | Preserve attempted progress and known delay; do not charge a completed turn or fabricate a trap/commit | `InstructionAttempted` + `SimulatorFailure`; consume the budget slot without adding `BudgetExhausted`; primary simulator failure |
@@ -1158,7 +1269,7 @@ not claims about the current public ELF path.
 | Interrupt lifecycle | Platform-owned level assertion/deassertion, queued edge tokens, multiple pending causes, controller priority/claim/complete, Hart/profile pending/enable/delegation/masking and architectural priority, and Hart/profile pre-fetch acceptance are tested without a framework fallback tie-break. |
 | Interrupt versus instruction | An interrupt admitted during fetch/load/store is not a Machine preemption; the Hart/profile returns the selected architectural result at its next boundary and preserves any remaining inputs/facts. |
 | Block equivalence | Precise block execution matches single-step observable effects, outcomes, time accounting, and facts without requiring identical control flow; reduced accuracy reports a finite measured/configured latency bound. |
-| WFI/timer | Hart/profile WFI legality, NOP/stall/TW behavior, local-enable wake predicate, retirement, counter deltas, and `Runnable`/`Waiting` result are exercised; `continue`/`run` may idle-jump to `mtimecmp`, while the Machine only admits inputs. No-event WFI returns `NoProgress`; single-step of Waiting returns `Waiting` + `SingleStepBoundary` without a jump. |
+| WFI/timer | Hart/profile WFI legality, NOP/stall/TW behavior, local-enable wake predicate, retirement, counter deltas, and `Runnable`/`Waiting` result are exercised; for WFI plus a future timer, `continue`/`run` idle-jumps to `mtimecmp`, admits normalized inputs, performs the control-only wait-state re-evaluation, and then permits a later normal turn and interrupt acceptance only if the Hart/profile returns `Runnable` and budget/deadline/control conditions allow it. No-event WFI returns `NoProgress` only after the required admission/re-evaluation check; deadline-at-now may report re-evaluation state but starts no normal turn; single-step of Waiting returns `Waiting` + `SingleStepBoundary` without a jump. |
 | Exit ordering | A successful exit-causing MMIO write is visible as a retired instruction before `PlatformExit`; a faulting or unknown write is not reported as a successful exit. |
 | Co-incident facts | Exit, trap, budget, deadline, external stop, observer failure, and simulator failure combinations retain every fact and apply the rank in §10.3. |
 | N-Hart same-time order | Repeated runs under different host thread/container iteration orders produce the same canonical facts and shared-state effects, or reject unsupported conflict configurations. |

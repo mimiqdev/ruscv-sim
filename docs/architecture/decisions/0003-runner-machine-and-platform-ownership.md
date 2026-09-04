@@ -49,7 +49,8 @@ physical accesses use the same raw-byte transaction vocabulary, and physical tar
 faults remain distinct from simulator/adapter failures. A future inbound
 Platform-master/DMA port is an explicit ADR-0002 deferral, not a second Hart path.
 [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines
-Platform-input admission, Machine grants at Hart/profile-provided boundaries,
+Platform-input admission, the Machine's normal architectural grants and its
+control-only wait-state re-evaluation grants at Hart/profile-provided boundaries,
 scheduler accounting, and non-lossy fact ordering that this record deliberately
 bounds; Hart/profile architectural decisions remain with the Hart.
 
@@ -117,7 +118,9 @@ hosting and cannot bypass ruscv-sim terminal taxonomy; in external-kernel hostin
 it does not own the outer kernel thread. The complete invocation and return rule
 is in §3. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines
 only Platform-input admission, Machine grants, scheduler accounting, and
-non-lossy fact ordering. A port is a contract, not a commitment to a Rust trait,
+non-lossy fact ordering, including the control-only wait-state re-evaluation
+exchange that does not itself constitute a Hart turn. A port is a contract, not a
+commitment to a Rust trait,
 callback, channel, or transport representation.
 
 | Concern | Primary owner | Boundary rule |
@@ -306,9 +309,10 @@ Runner callback. When observation is enabled, interpreted and block execution
 must still make available precise, ordered, non-speculative, non-reentrant Hart
 records as required by ADR-0001. A quantum is not a Machine-owned stop-policy
 operation. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines
-Platform-input admission, the Machine grant at a Hart/profile-provided
-architectural boundary, virtual-time/budget accounting, quantum size, and
-non-lossy fact ordering only; it does not own Hart interrupt eligibility,
+Platform-input admission, normal Machine grants and control-only wait-state
+re-evaluation grants at Hart/profile-provided architectural boundaries,
+virtual-time/budget accounting, quantum size, and non-lossy fact ordering only; it
+does not own Hart interrupt eligibility,
 masking/delegation, architectural priority, trap/debug/WFI transitions, ISA
 counter deltas, or ruscv-sim terminal taxonomy.
 
@@ -613,7 +617,7 @@ Runner to own every outer execution thread:
 
 | Concern left to [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) | Boundary fixed by this ADR |
 | --- | --- |
-| Platform-input admission and the Machine grant at a Hart/profile-provided architectural boundary | Hart/profile owns interrupt eligibility, masking, delegation, architectural priority, and the resulting trap/debug/WFI transition; Machine only admits inputs and grants the boundary. |
+| Platform-input admission, the normal Machine grant, and the control-only wait-state re-evaluation grant at a Hart/profile-provided architectural boundary | Hart/profile owns interrupt eligibility, masking, delegation, architectural priority, and the resulting trap/debug/WFI transition; Machine only admits inputs and offers the boundary exchange, without deciding wake/state or architectural behavior. |
 | Cost, delay, time units, advancement, and budget facts | Runner owns ruscv-sim limits; Machine/scheduler or the external kernel reports facts; [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) defines scheduler accounting without writing ISA counters. |
 | Quantum, batching, hosting exchange, and event-loop strategy | Native scheduling is Machine-associated under §3; external kernels may own the outer thread; both return unclassified facts and cannot bypass ruscv-sim terminal taxonomy. |
 | Simultaneous trap/exit/debug/limit/time/failure facts and presentation | Machine returns non-lossy co-incident facts; Runner selects presentation later; no framework layer supplies Hart architectural priority. |
@@ -689,9 +693,10 @@ Only these remain for later contracts or implementation design:
 1. Concrete Rust layouts, traits, callbacks, lifetimes, ownership, serialization,
    and wire formats.
 2. Platform address map, device/host models, and native/TLM/SystemC APIs.
-3. Platform-input admission, Machine grant/sampling-slot mechanics,
-   `iss_tick`/virtual-time/delay/budget/idle accounting, safe async stop,
-   event/fact order, quantum size, and hosting-exchange details belong to the
+3. Platform-input admission, Machine normal-grant and control-only wait-state
+   re-evaluation mechanics, `iss_tick`/virtual-time/delay/budget/idle accounting,
+   safe async stop, event/fact order, quantum size, and hosting-exchange details
+   belong to the
    interrupt, time, and stop-event decision. Hart/profile eligibility,
    masking/delegation, architectural priority, trap/debug/WFI transitions, and
    ISA-visible counter deltas remain outside that framework decision; all details
