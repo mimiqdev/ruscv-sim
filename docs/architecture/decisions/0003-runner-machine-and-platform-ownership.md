@@ -213,8 +213,10 @@ An installed image establishes the entry metadata and the initial contents again
 which a fresh run is defined. Replacing an image or changing composition is a
 separate lifecycle operation, not an implicit side effect of a Hart step. The
 concrete operation used to replace it—reconfigure, rebuild, or another mechanism—
-is intentionally not selected here. Image installation requires a quiescent Machine
-as defined below; it is illegal while a step or quantum is in flight.
+is intentionally not selected here. Image installation requires lifecycle
+quiescence (`DrainComplete`) as defined by [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md),
+not merely the run-level `NoProgress` fact; it is illegal while a step or quantum
+is in flight.
 
 #### Reset
 
@@ -247,8 +249,12 @@ the initial state of the next run.
 
 #### Quiesce
 
-Mutating control operations require a coherent quiescent Machine. While a Hart
-step or budgeted quantum is in flight, the following are illegal:
+Mutating control operations require a coherent lifecycle-quiescent Machine
+(`DrainComplete` under [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md)).
+This lifecycle acknowledgment is distinct from the run-level `NoProgress` fact:
+a Machine may have no future work without granting mutation, and a completed
+quiesce/drain may leave Harts conceptually Runnable while new turns are held.
+While a Hart step or budgeted quantum is in flight, the following are illegal:
 
 - image installation or replacement;
 - reset;
@@ -260,9 +266,13 @@ step or budgeted quantum is in flight, the following are illegal:
 
 Quiesce means that no architectural transition is in progress, already completed
 outcomes remain valid, and no new Platform run events are emitted for the
-in-flight quantum. Future checkpoint/restore additionally requires drain and
-invalidation of stale DMI or translated state; those mechanisms are not specified
-here. This ADR does not prescribe APIs, drain algorithms, or checkpoint formats.
+in-flight quantum. The Machine enters `QuiesceRequested` when an effective request
+stops new work, and reports `DrainComplete` only after all started work and
+observation delivery have drained; an unknown completion is reported as a failure
+instead and does not grant lifecycle mutation.
+Future checkpoint/restore additionally requires drain and invalidation of stale
+DMI or translated state; those mechanisms are not specified here. This ADR does
+not prescribe APIs, drain algorithms, or checkpoint formats.
 
 #### Run, stop, and teardown
 
@@ -307,9 +317,9 @@ have been preserved.
 
 At teardown the Runner stops accepting ruscv-sim control, completes or reports
 observer handling according to its run policy, and releases its run-level sinks.
-The Machine first reaches a quiescent state, then disconnects or releases the
-Harts, Platform, device, host-service, and event resources it owns. The Platform
-must not emit new run events after the Machine has completed teardown. Whether a
+The Machine first reaches lifecycle `DrainComplete`, then disconnects or
+releases the Harts, Platform, device, host-service, and event resources it owns.
+The Platform must not emit new run events after the Machine has completed teardown. Whether a
 host transport needs an adapter-specific shutdown sequence is an implementation
 detail, not a new ownership boundary.
 

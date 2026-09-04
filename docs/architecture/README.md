@@ -287,32 +287,40 @@ A Machine is one Platform plus one or more Harts; N=1 is the ISS baseline. Nativ
 sequenceDiagram
     participant F as Frontend
     participant R as Runner
-    participant S as Scheduler
+    participant M as Machine
     participant H as Hart
     participant B as PhysicalAccess
     participant D as Device
     participant O as Observer
 
     F->>R: run(image, limits, options)
-    R->>S: grant(machine, budget, deadline, control)
+    R->>M: grant(budget, deadline, control, observations)
 
     loop Until a stop condition
-        S->>H: exchange(grant: budget, deadline, control, observations)
+        M->>M: admit due Platform/input events at cursor
+        M->>M: check conservative turn bound against deadline slack
+        M->>H: pre-fetch boundary + normalized interrupt inputs
         H->>B: fetch / load / store
         B->>D: MMIO transaction
         D-->>B: data / fault / delay / event
         B-->>H: AccessResponse
-        H-->>O: optional Commit / Trap records
-        H-->>S: ordered facts + progress + consumed time
-        S->>D: advance_to(next boundary)
-        D-->>S: interrupt / timer / platform event
+        H-->>M: transition facts + optional Commit / Trap records
+        M->>M: consume delay once; advance cursor; admit causal events
+        M-->>O: deliver requested observations
     end
 
-    S-->>R: unclassified co-incident facts
+    M-->>R: unclassified co-incident facts + accounting
     R-->>F: classified ExecutionResult
 ```
 
-This sequence is the Runner-driven ISS/native path. [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md) defines the exchange, pre-fetch interrupt sample, modeled-time and delay accounting, WFI/idle boundary, and fact ordering shown here. In external-kernel hosting the kernel grants time into the Machine; the Runner still classifies non-lossy facts and does not have to own that outer thread. Observation records are subscriber-gated; control facts are always returned.
+This diagram shows the required observable phases for the Runner-driven ISS/native
+path; it is not a scheduler control-flow prescription. [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md)
+defines the exchange, pre-fetch interrupt sample, conservative deadline bound,
+modeled-time and delay accounting, WFI/idle boundary, and fact ordering shown
+here. In external-kernel hosting the kernel grants the authoritative time horizon
+into the Machine; the Runner still classifies non-lossy facts and does not have to
+own that outer thread. Observation records are subscriber-gated; control facts are
+always returned.
 
 ## 8. Capability accumulation and architecture gates
 
