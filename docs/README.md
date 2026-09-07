@@ -4,7 +4,7 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-09-03
+**Last reviewed:** 2026-09-07
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
@@ -28,8 +28,8 @@ Target architecture is not implementation status. Component presence is not end-
 - [Current implementation and gap matrix](architecture/current-state.md)
 - [Architecture principles](architecture/principles.md)
 - [Architecture decision records](architecture/decisions/README.md) — ADR-0001 through ADR-0004 accepted on 2026-09-07
-- [A0 closeout assessment](architecture/a0-closeout-assessment.md) — draft milestone assessment reflecting accepted ADRs; A0 is not closed
-- [First implementation scope candidate](architecture/first-implementation-scope.md) — unapproved successor proposal; A0 remains the only current milestone
+- [A0 closeout record](archive/milestones/a0-closeout-record.md) — accepted architecture, completion evidence and limitations
+- [Implementation scope navigation](architecture/first-implementation-scope.md) — A1 public behavior baseline is approved; the broader migration candidate remains unapproved
 
 ## Verification
 

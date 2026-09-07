@@ -35,5 +35,7 @@ ADR-0001 through ADR-0004 were accepted by the maintainer on 2026-09-07,
 including ADR-0003's loader-metadata / Machine-installation / Platform-write
 split. The [principles](../principles.md) and [target views](../README.md) reflect
 these normative semantic contracts. Acceptance does not claim implementation
-completeness, select concrete Rust APIs, approve the successor implementation
-scope, or close [A0](../../dev-plan.md).
+completeness or select concrete Rust APIs. ADR acceptance alone does not approve
+implementation scope or close a milestone. The separately approved A0-to-A1
+handoff is recorded in the [A0 closeout record](../../archive/milestones/a0-closeout-record.md);
+[A1](../../dev-plan.md) is the only active milestone contract.
