@@ -82,7 +82,7 @@ pub enum CsrPermission {
 }
 
 impl CsrPermission {
-    /// Determine permission from CSR address (bits [11:10])
+    /// Determine permission from CSR address (bits \[11:10\])
     pub fn from_address(addr: u16) -> Self {
         if (addr >> 10) & 0b11 == 0b11 {
             Self::ReadOnly

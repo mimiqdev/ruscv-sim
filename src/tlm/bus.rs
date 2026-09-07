@@ -16,7 +16,7 @@ use super::{
 pub struct BusRoute {
     /// 地址范围
     pub range: AddressRange,
-    /// 目标（使用 Arc<Mutex> 支持多线程）
+    /// Target (`Arc<Mutex>` for multi-threaded access)
     pub target: Arc<Mutex<dyn TlmTarget>>,
     /// 优先级（数值越小优先级越高）
     pub priority: u32,

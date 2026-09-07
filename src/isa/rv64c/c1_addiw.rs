@@ -22,7 +22,7 @@ use crate::execute::ExecuteError;
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.ADDIW x5, 1  (x5[31:0] = x5[31:0] + 1, sign-extended)
 /// // Expands to: addiw x5, x5, 1
 /// ```
@@ -60,7 +60,7 @@ pub fn exec_c_addiw(rd: u8, imm: u32, state: &mut CoreState) -> Result<(), Execu
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.SUBW x8, x9  (x8[31:0] = x8[31:0] - x9[31:0], sign-extended)
 /// // Expands to: subw x8, x8, x9
 /// ```
@@ -92,7 +92,7 @@ pub fn exec_c_subw(rd: u8, rs2: u8, state: &mut CoreState) -> Result<(), Execute
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.ADDW x8, x9  (x8[31:0] = x8[31:0] + x9[31:0], sign-extended)
 /// // Expands to: addw x8, x8, x9
 /// ```

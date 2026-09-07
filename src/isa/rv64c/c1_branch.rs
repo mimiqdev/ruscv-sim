@@ -23,7 +23,7 @@ use crate::execute::ExecuteError;
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.BEQZ x8, 100  (if x8 == 0, PC = PC + 100)
 /// // Expands to: beq x8, x0, 100
 /// ```
@@ -64,7 +64,7 @@ pub fn exec_c_beqz(rs1: u8, offset: i32, state: &mut CoreState) -> Result<(), Ex
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.BNEZ x8, 100  (if x8 != 0, PC = PC + 100)
 /// // Expands to: bne x8, x0, 100
 /// ```

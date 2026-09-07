@@ -22,7 +22,7 @@ use crate::execute::ExecuteError;
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.SRLI x8, 4  (x8 = x8 >> 4, logical)
 /// // Expands to: srli x8, x8, 4
 /// ```
@@ -55,7 +55,7 @@ pub fn exec_c_srli(rd: u8, shamt: u32, state: &mut CoreState) -> Result<(), Exec
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.SRAI x8, 4  (x8 = x8 >> 4, arithmetic)
 /// // Expands to: srai x8, x8, 4
 /// ```
@@ -88,7 +88,7 @@ pub fn exec_c_srai(rd: u8, shamt: u32, state: &mut CoreState) -> Result<(), Exec
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.SLLI x5, 4  (x5 = x5 << 4)
 /// // Expands to: slli x5, x5, 4
 /// ```

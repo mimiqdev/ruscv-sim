@@ -24,7 +24,7 @@ use crate::execute::ExecuteError;
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.J 200  (PC = PC + 200)
 /// // Expands to: jal x0, 200
 /// ```
@@ -63,7 +63,7 @@ pub fn exec_c_j(offset: i32, state: &mut CoreState) -> Result<(), ExecuteError> 
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.JAL 200  (ra = PC + 2, PC = PC + 200)
 /// // Expands to: jal x1, 200
 /// ```

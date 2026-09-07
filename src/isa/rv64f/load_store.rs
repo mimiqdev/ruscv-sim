@@ -12,7 +12,7 @@ use crate::memory::MemoryInterface;
 
 /// Execute FLW (Load 32-bit Float from Memory)
 /// Format: I-type (Load)
-/// Encoding: | imm[11:0] | rs1 | funct3=010 | rd | opcode=LoadFp(0000111) |
+/// Encoding: `| imm[11:0] | rs1 | funct3=010 | rd | opcode=LoadFp(0000111) |`
 pub fn exec_flw(
     instr: &DecodedInstruction,
     state: &mut CoreState,
@@ -38,7 +38,7 @@ pub fn exec_flw(
 
 /// Execute FSW (Store 32-bit Float to Memory)
 /// Format: S-type (Store)
-/// Encoding: | imm[11:5] | rs2 | rs1 | funct3=010 | imm[4:0] | opcode=StoreFp(0100111) |
+/// Encoding: `| imm[11:5] | rs2 | rs1 | funct3=010 | imm[4:0] | opcode=StoreFp(0100111) |`
 pub fn exec_fsw(
     instr: &DecodedInstruction,
     state: &mut CoreState,

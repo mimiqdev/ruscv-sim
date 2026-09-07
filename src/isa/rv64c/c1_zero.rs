@@ -23,7 +23,7 @@ use crate::execute::ExecuteError;
 /// Always returns Ok(())
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.NOP (no operation)
 /// // Expands to: addi x0, x0, 0
 /// ```

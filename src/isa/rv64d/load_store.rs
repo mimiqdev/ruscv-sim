@@ -10,7 +10,7 @@ use crate::memory::MemoryInterface;
 
 /// Execute FLD (Load 64-bit Double from Memory)
 /// Format: I-type (Load)
-/// Encoding: | imm[11:0] | rs1 | funct3=011 | rd | opcode=LoadFp(0000111) |
+/// Encoding: `| imm[11:0] | rs1 | funct3=011 | rd | opcode=LoadFp(0000111) |`
 pub fn exec_fld(
     instr: &DecodedInstruction,
     state: &mut CoreState,
@@ -37,7 +37,7 @@ pub fn exec_fld(
 
 /// Execute FSD (Store 64-bit Double to Memory)
 /// Format: S-type (Store)
-/// Encoding: | imm[11:5] | rs2 | rs1 | funct3=011 | imm[4:0] | opcode=StoreFp(0100111) |
+/// Encoding: `| imm[11:5] | rs2 | rs1 | funct3=011 | imm[4:0] | opcode=StoreFp(0100111) |`
 pub fn exec_fsd(
     instr: &DecodedInstruction,
     state: &mut CoreState,

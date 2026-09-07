@@ -44,8 +44,15 @@ Test language follows the layer rather than the simulator implementation languag
 
 ## Verification documents
 
+- [A1 public behavior compatibility matrix](public-behavior-matrix.md) — first-batch CLI/ELF and flat-library evidence
+- [A1 public behavior defect and gap register](public-behavior-gaps.md) — bounded reproductions and unverified limits
 - [Project-authored bare-metal tests](bare-metal-tests.md)
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)
+
+The A1 matrix and gap register are current as-of evidence records, not an A1
+closeout and not a claim that component tests or old CI/reference logs prove
+public-path support. The matrix records the exact revision, the initial host
+limitation, and the successful Docker-based guest evidence for its batch.
 
 Historical test proposals are retained under [`../archive/designs/`](../archive/designs/).

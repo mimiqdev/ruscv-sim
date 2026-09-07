@@ -24,7 +24,7 @@ use crate::memory::MemoryInterface;
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.ADDI4SPN x8, 64  (Add 64 to SP, store in x8)
 /// // Expands to: addi x8, x2, 64
 /// ```

@@ -16,7 +16,7 @@
 //!
 //! # Page Table Entry Format
 //!
-//! See [`PageTableEntry`](super::pte::PageTableEntry) for details.
+//! See [`PageTableEntry`] for details.
 //!
 //! # Page Sizes
 //!
@@ -47,7 +47,7 @@ impl VirtualAddress {
 
     /// Create a new virtual address
     ///
-    /// Validates that bits [63:39] are all 0 or all 1 (sign extension).
+    /// Validates that bits \[63:39\] are all 0 or all 1 (sign extension).
     ///
     /// # Arguments
     /// * `addr` - Raw 64-bit address
@@ -95,7 +95,7 @@ impl VirtualAddress {
         self.0
     }
 
-    /// Get the page offset (bits [11:0])
+    /// Get the page offset (bits \[11:0\])
     pub fn page_offset(&self) -> u64 {
         self.0 & ((1 << Self::PAGE_OFFSET_WIDTH) - 1)
     }
@@ -116,9 +116,9 @@ impl VirtualAddress {
     /// Get all VPNs as [VPN0, VPN1, VPN2]
     ///
     /// Note: This ordering matches the level index used in page table walks
-    /// - vpns[0] = VPN0 (level 0)
-    /// - vpns[1] = VPN1 (level 1)  
-    /// - vpns[2] = VPN2 (level 2)
+    /// - vpns\[0\] = VPN0 (level 0)
+    /// - vpns\[1\] = VPN1 (level 1)
+    /// - vpns\[2\] = VPN2 (level 2)
     pub fn vpns(&self) -> [u64; 3] {
         [self.vpn(0), self.vpn(1), self.vpn(2)]
     }
