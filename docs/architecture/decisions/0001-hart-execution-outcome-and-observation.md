@@ -1,8 +1,9 @@
 # ADR-0001: Hart Execution Outcome and Observation Records
 
-**Status:** Proposed
-**Authority:** Draft contract; normative only after acceptance
+**Status:** Accepted
+**Authority:** Normative semantic contract; not an implementation-status claim
 **Date:** 2026-09-03
+**Accepted:** 2026-09-07
 **Owner:** Hart/core architecture
 **Related decisions:** [ADR-0002](0002-physical-access-transaction-and-fault.md), [ADR-0003](0003-runner-machine-and-platform-ownership.md), [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md)
 
@@ -22,7 +23,7 @@ The current execution path cannot provide that contract:
 
 The result is that a Runner or observer can mistake a failed instruction for a retired instruction, reconstruct incomplete effects from snapshots, or conflate a guest trap with a host failure. That is unsuitable for differential testing, precise observation, Virtual Platform composition, or future block execution.
 
-## Proposed decision
+## Decision
 
 ### 1. Hart step boundary and conceptual outcomes
 
@@ -256,7 +257,7 @@ The following are implementation evidence to obtain later:
 5. Canonical multi-Hart fact/shared-effect ordering and the semantic order preserved by observations follow [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) §§10–11. Reservation granule, DMA coherence, scheduling mechanisms, observation transport/buffering, and trace back-pressure remain deferred to the relevant contracts or implementation design; they must preserve that order and precise per-Hart retirement.
 6. RISC-V Debug Mode, trigger-module halt, and `dcsr`/`dret` state are Hart-owned when implemented; their detailed outcome contract is deferred and must not be classified as an external protocol halt or as a guest breakpoint exception.
 
-The physical-fault cause matrix, architectural trap value, A/D-write visibility, and device-fault versus simulator-failure distinction are decisions above, not open questions. There is no superseding record. This ADR remains **Proposed**.
+The physical-fault cause matrix, architectural trap value, A/D-write visibility, and device-fault versus simulator-failure distinction are decisions above, not open questions. There is no superseding record. This ADR is **Accepted**; implementation verification remains separate.
 
 ## Source and test map
 

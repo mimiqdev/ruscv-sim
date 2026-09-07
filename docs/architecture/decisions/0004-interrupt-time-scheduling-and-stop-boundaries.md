@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
-| Authority | Draft contract; normative only after acceptance |
+| Status | Accepted |
+| Authority | Normative semantic contract; not an implementation-status claim |
 | Date | 2026-09-04 |
+| Accepted | 2026-09-07 |
 | Owner | Runtime, time, and event architecture |
 | Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0002](0002-physical-access-transaction-and-fault.md), [ADR-0003](0003-runner-machine-and-platform-ownership.md) |
 | Supersedes | None |
@@ -17,7 +18,7 @@
 
 ## 1. Context and scope
 
-The first three proposed decisions establish the boundaries needed to evolve a
+The first three accepted decisions establish the boundaries needed to evolve a
 single-instruction ISS into a composed Virtual Platform (VP):
 
 - [ADR-0001](0001-hart-execution-outcome-and-observation.md) makes the Hart
@@ -1403,5 +1404,5 @@ The current repository evidence that motivates this contract includes:
 These sources and tests show the current component vocabulary and gaps; they are
 not evidence that interrupt/time/stop integration already exists. Future
 implementation work must add focused tests for the verification scenarios above
-and then update the current-state evidence with actual results. This proposed ADR
+and then update the current-state evidence with actual results. This accepted ADR
 has no superseding record.

@@ -1,27 +1,29 @@
 # A0 Closeout Assessment
 
-**Status:** Draft — pre-review assessment, not milestone acceptance
+**Status:** Draft — milestone assessment, not A0 closeout
 
 **Authority:** Informational; does not change the active milestone or accept an ADR
 
 **Assessment date:** 2026-09-07
 
-**Scope:** A0 acceptance evidence, consistency of the four proposed boundary contracts, and prerequisites for selecting the first implementation milestone
+**Scope:** A0 acceptance evidence, consistency of the four accepted boundary contracts, and prerequisites for selecting the first implementation milestone
 
 ## Conclusion and authority
 
-A0 is **not ready to close**. The four proposed ADRs provide a substantial working
-baseline, with diagram, recovery and ordering clarifications prepared for review.
-Formal review, explicit acceptance (including placement alignment), and an
-approved successor remain outstanding. This assessment is not an independent formal review or a
-claim that the target architecture is implemented.
+A0 is **not ready to close**. The maintainer accepted ADR-0001 through ADR-0004
+on 2026-09-07, including ADR-0003's placement split. The principles and target
+views reflect that decision. The successor scope/profile/compatibility choices
+remain unapproved, and this assessment neither replaces the active plan nor
+claims that the target architecture is implemented. The acceptance-document
+change requires exact-head consistency review; this assessment is not that
+independent review.
 
 [The active plan](../dev-plan.md) remains the only current milestone contract.
-[The ADR index](decisions/README.md) records all four decisions as Proposed and
-none as Accepted. Existing normative principles and product boundaries remain in
-force; this assessment does not silently resolve their differences from proposed
-contracts. The [successor scope candidate](first-implementation-scope.md) is a
-proposal for approval, not a second active plan.
+[The ADR index](decisions/README.md) records all four decisions as Accepted with
+an acceptance date of 2026-09-07. The ADRs own normative cross-cutting contracts;
+this assessment records their acceptance without creating new architecture.
+The [successor scope candidate](first-implementation-scope.md) is a proposal for
+approval, not a second active plan.
 
 The assessment covers all eight Markdown documents under `docs/architecture/`
 that existed before this assessment: the target views, principles, current-state
@@ -38,23 +40,23 @@ implemented. This matrix assesses evidence; it is not a separate live task regis
 
 | A0 acceptance criterion | Repository evidence | Assessment and remaining evidence |
 | --- | --- | --- |
-| Every active architecture document has an explicit status and ownership boundary. | [Target views](README.md), [principles](principles.md), [inventory](current-state.md), and [ADR index](decisions/README.md) with its four records state status/authority and describe their relevant scope or ownership. | Document-level evidence exists. The target diagrams now distinguish dependencies, Machine invocation and no-fetch interrupt entry. Placement wording still requires the explicit acceptance-time alignment below. An index has navigation scope, not runtime ownership. |
+| Every active architecture document has an explicit status and ownership boundary. | [Target views](README.md), [principles](principles.md), [inventory](current-state.md), and [ADR index](decisions/README.md) with its four records state status/authority and describe their relevant scope or ownership. | Document-level evidence exists. The target diagrams now distinguish dependencies, Machine invocation and no-fetch interrupt entry. Placement wording is aligned with accepted ADR-0003 as described below. An index has navigation scope, not runtime ownership. |
 | The development image builds successfully and can run the current project quality gate and guest ELF toolchain. | The active plan's recorded baseline evidence cites `f7db92d` and `6fc0976`; [development commands](../development-environment.md) and the [image workflow](../../.github/workflows/dev-container.yml) retain the build/quality/guest gate. | Already satisfied in the active plan's evidence register; this assessment does not reopen that acceptance. No fresh container result or image digest was obtained here. Workflow source defines a gate but is not itself a new successful run. |
 | The target dependency direction is unambiguous from frontend to infrastructure. | [ADR-0003 §1](decisions/0003-runner-machine-and-platform-ownership.md#1-vocabulary-and-dependency-direction) gives `Frontend → Runner → Machine → {Hart, Platform}` and Hart-to-port dependencies. | Text and revised diagrams express the same dependency direction, subject to review. Result production is a Runner dependency; backend implementation arrows point to the port. No return-data arrow authorizes an upward code dependency. |
-| Hart, Runner, Machine, Platform, memory access, interrupts, time, and observation responsibilities are agreed. | [ADR-0001](decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](decisions/0003-runner-machine-and-platform-ownership.md), [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md). | Defined as working contracts, not yet agreed through acceptance. The recovery precondition is now explicit in Proposed ADR-0004 §12.2; it and the other refinements still require review and acceptance. |
+| Hart, Runner, Machine, Platform, memory access, interrupts, time, and observation responsibilities are agreed. | [ADR-0001](decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](decisions/0003-runner-machine-and-platform-ownership.md), [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md). | Accepted by the maintainer on 2026-09-07, including the recovery precondition in ADR-0004 §12.2. This establishes agreement on semantic ownership, not implementation completeness or A0 closeout. |
 | ISS and VP product forms can be explained as configurations around one architectural engine. | [Target §6](README.md#6-one-execution-engine-multiple-product-forms) and [ADR-0003 §8](decisions/0003-runner-machine-and-platform-ownership.md#8-standalone-iss-and-future-vp-configurations). | Explanation exists for native and externally hosted forms, with N=1 as the initial configuration. This is an architectural explanation, not VP integration evidence. |
 | The current code has been mapped to the target architecture without overstating integration. | [Current-state inventory](current-state.md); focused source checks and test results below. | Inventory exists and the sampled core/executor boundaries agree with it. Focused tests do not establish full ISA, interrupt, MMU, debug, TLM, or ACT4 integration. Weak public-path assertions must not be cited as behavioral proof. |
-| Open architecture decisions and deferred performance work are explicitly recorded. | Deferrals in all four ADRs and [principles: future performance work](principles.md#future-performance-work). | Deferrals now distinguish ADR-0004's canonical ordering from deferred scheduling/coherence/transport mechanisms. Concrete Rust representations and acceleration remain outside A0; reconciliation still requires review. |
+| Open architecture decisions and deferred performance work are explicitly recorded. | Deferrals in all four ADRs and [principles: future performance work](principles.md#future-performance-work). | Deferrals now distinguish ADR-0004's canonical ordering from deferred scheduling/coherence/transport mechanisms. Concrete Rust representations and acceleration remain outside A0. Acceptance does not turn deferred capabilities into implementation scope. |
 | The next implementation milestone is approved and replaces A0 as the only current milestone contract. | [Successor scope candidate](first-implementation-scope.md); [active plan closeout](../dev-plan.md#closeout). | Not satisfied. Scope/profile/compatibility choices must be approved before archiving A0 and installing exactly one successor contract. |
 
 The plan also records the documentation reset and target-view baseline at
 `50d8c739f686b218a7e4fcc99619079d97833705`. Those recorded deliverables are not
-reclassified as unfinished merely because acceptance of later boundary decisions
-is pending.
+reclassified as unfinished because later implementation or successor approval
+remains pending.
 
 ## Cross-contract consistency
 
-These are pre-review observations of the proposed texts, not formal approval.
+This table summarizes the accepted contracts, not implementation verification.
 Section references identify the semantic owner; the other records consume it.
 
 | Boundary | Cross-check | Assessment |
@@ -62,23 +64,19 @@ Section references identify the semantic owner; the other records consume it.
 | Retirement, traps, and observation | ADR-0001 §§1–6; ADR-0003 §5; ADR-0004 §§3–4 | Consistent distinction between retirement, completed trap entry, and simulator failure. Always-present control facts do not require optional per-instruction records or Runner callbacks. |
 | Physical fault and transaction atomicity | ADR-0001 §2; ADR-0002 §§4–6; ADR-0004 §5.3 | Target/device faults remain architectural access-fault inputs; host failures and unknown completion remain simulator failures. Successful A/D writes are separate physical effects, not rollback of the later instruction access. |
 | Atomic semantics and reservations | ADR-0001 §6; ADR-0002 §6 | Hart owns arithmetic, architectural reservation state and SC result; the physical domain supplies indivisibility and competing-write visibility. Mechanism selection must not turn this into ordinary visible read/write emulation. |
-| Composition, placement, and inspection | ADR-0003 §§1–4 and §7; ADR-0002 §1 | Hart-initiated execution access differs from host-side image installation and inspection. The proposed placement refinement requires normative-document alignment below. |
+| Composition, placement, and inspection | ADR-0003 §§1–4 and §7; ADR-0002 §1 | Hart-initiated execution access differs from host-side image installation and inspection. The accepted placement split is reflected in the principles and target views. |
 | Interrupts, WFI, and counters | ADR-0001 §§1–2; ADR-0003 §3; ADR-0004 §§3, 6, 8 | Hart/profile owns eligibility, wake decisions and ISA counter deltas. Machine admits inputs and grants turns; waiting re-evaluation is control-only, not a retired instruction or budget slot. |
 | Exit and coincident stops | ADR-0001 §7; ADR-0003 §§6–7; ADR-0004 §§9–10 | Successful exit-causing instruction retires first. Machine retains all facts; Runner selects the primary reason. A completed exit on the final budget slot is not a timeout-only result. |
 | Budgets and CLI compatibility | ADR-0003 §9; ADR-0004 §§3.1, 5.1, 7.1 | Different quantities are intentional: legacy successful-step count is not started-turn budget, ISA cycles, or virtual time. A compatibility adapter is explicitly allowed; its concrete mapping remains an implementation-scope decision. |
-| Lifecycle and uncertain completion | ADR-0003 §3; ADR-0004 §§5.3 and 12.2 | ADR-0004 §12.2 now requires proof of completed/terminated work before drain, and distinguishes lifecycle safety from prior-state trust. ADR-0003 consumes this clarification; acceptance remains pending. |
+| Lifecycle and uncertain completion | ADR-0003 §3; ADR-0004 §§5.3 and 12.2 | ADR-0004 §12.2 now requires proof of completed/terminated work before drain, and distinguishes lifecycle safety from prior-state trust. ADR-0003 consumes this accepted clarification; implementation evidence remains future work. |
 
-## Alignment and acceptance questions
+## Accepted alignment and retained boundaries
 
-### Placement wording: an explicit acceptance-time refinement
+### Placement wording: accepted ownership split
 
-[Principles: address ownership](principles.md#address-ownership) says that ELF
-segment placement is a loader responsibility. [ADR-0003 §4](decisions/0003-runner-machine-and-platform-ownership.md#4-elf-parsing-image-placement-and-address-meaning)
-explicitly refines this into loader-produced metadata, Machine-coordinated
-installation, and Platform physical writes, and explicitly requires alignment
-when accepted.
-
-**Acceptance-time wording proposed for the principles:**
+[Principles: address ownership](principles.md#address-ownership) and
+[ADR-0003 §4](decisions/0003-runner-machine-and-platform-ownership.md#4-elf-parsing-image-placement-and-address-meaning)
+now state the same accepted ownership:
 
 - Runner owns image-loading orchestration, limits, ruscv-sim stop taxonomy,
   result production and observer demand/delivery.
@@ -87,17 +85,15 @@ when accepted.
   physical placement and routing. Hart owns execution-time translation; an ELF
   base offset is not architectural translation.
 
-Apply that wording only together with explicit acceptance of ADR-0003. Until
-then, the principles remain unchanged and normative; the proposed split is not
-silently adopted by this assessment. This is a known refinement, not an
-implementation defect.
+This alignment records the maintainer's explicit acceptance; it does not change
+the current loader or runtime implementation.
 
 ### Target diagrams: distinguish dependencies, data flow, and omitted layers
 
 [Target §3](README.md#3-logical-layers-and-dependency-direction) places report
 production under Runner and marks concrete backends as implementations of the
-physical port, not dependencies of that port. Its placement edge explicitly
-retains the current principles pending ADR-0003 acceptance.
+physical port, not dependencies of that port. Runner depends on the loader for
+metadata and Machine for installation; the loader does not depend on Machine.
 [Target §6](README.md#6-one-execution-engine-multiple-product-forms) explicitly
 shows the single-Hart Machine between ISS Runner and shared Hart semantics.
 
@@ -108,7 +104,7 @@ reached deadline and Waiting single-step do not cause idle advancement. These
 clarifications express existing boundary rules; they do not claim implementation
 changes or formal review approval.
 
-### Unknown completion: proposed recovery precondition
+### Unknown completion: accepted recovery precondition
 
 [ADR-0004 §12.2](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md#122-quiesce-and-drain)
 now makes the conservative interpretation explicit: ordinary reset always
@@ -123,9 +119,9 @@ reset that restores the promised initial state. No uncertain transaction is
 retried and no commit/exit is invented retrospectively. ADR-0003 §3 references
 this rule; ADR-0004 §16 includes future late-write/cancellation/reset verification.
 
-This is a proposed semantic clarification for acceptance, not an implemented
-recovery API. Force-reset/reconstruction exceptions remain outside the contract;
-no new transport or FFI mechanism is selected.
+This is an accepted semantic contract, not an implemented recovery API.
+Force-reset/reconstruction exceptions remain outside the contract; no new
+transport or FFI mechanism is selected.
 
 ### Earlier ordering deferrals: narrow the wording after ADR-0004
 
@@ -133,7 +129,7 @@ ADR-0001's deferral list and ADR-0003 §§2, 8 and its final deferral list now p
 to ADR-0004 §§10–11 for canonical same-time fact/shared-effect order and the
 semantic order preserved by observations. Scheduling/fairness, coherence,
 observation transport/buffering and other implementation mechanisms remain
-deferred. This reconciles the Proposed records without approving or implementing
+deferred. The accepted records do not approve implementation scope or implement
 multiple Harts, replay, or a scheduler in A0.
 
 ## Implementation evidence and its limits
@@ -198,26 +194,30 @@ must not assume that it automatically produces a fresh verified container image.
 
 ### Documentation validation
 
-The seven changed/new documentation files passed `git diff --check`, local
+At the pre-acceptance revision `833979581cad8bdf4e9080b6917940d24633579d`,
+the seven changed/new documentation files passed `git diff --check`, local
 Markdown target/anchor checks (172 links), and primary language-server diagnostics
 with no findings. Code fences and sequence-diagram control blocks were checked
-for balance. All four ADRs remain Proposed; the active plan and principles are
-unchanged. Mermaid graphical rendering was not run because no local renderer was
-found; structural checks are not visual validation. No Rust tests were rerun for
+for balance. At that revision all four ADRs were Proposed and the active plan
+and principles were unchanged. Those historical checks do not verify the later
+acceptance-document change. Mermaid graphical rendering was not run because no
+local renderer was found; structural checks are not visual validation. No Rust tests were rerun for
 the subsequent documentation-only clarifications; the focused results above
 remain evidence for the unchanged source, not for runtime implementation of the
 new contracts.
 
 ## Acceptance handoff
 
-The bounded next decision is whether to adopt the proposed resolutions above and
-the successor scope candidate. No source repair, ISA extension, ACT4 integration,
-or runtime implementation is authorized by this assessment.
+ADR acceptance is recorded; the bounded next milestone decision is approval of
+the successor scope, profile and compatibility choices. No source repair, ISA
+extension, ACT4 integration, or runtime implementation is authorized by this
+assessment.
 
 Formal independent review must follow the repository's
 [review policy](../documentation-policy.md#change-and-review-provenance): review
 the committed, pushed, ready PR head and its applicable verification evidence in
-a separate context. This draft is only pre-review material. ADR acceptance,
-A0 archival with limitations/evidence, and replacement by one approved successor
-remain explicit decisions; none is implied by this document or by passing the
-focused tests.
+a separate context. The acceptance change needs a focused consistency review
+against its new PR head; prior-head reviews are not evidence for the new diff.
+A0 archival with limitations/evidence and replacement by one approved successor
+remain separate explicit decisions. A0 remains active; accepting the ADRs does
+not close it or authorize merging a PR.

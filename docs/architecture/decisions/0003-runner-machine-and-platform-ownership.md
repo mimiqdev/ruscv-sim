@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
-| Authority | Draft contract; normative only after acceptance |
+| Status | Accepted |
+| Authority | Normative semantic contract; not an implementation-status claim |
 | Date | 2026-09-03 |
+| Accepted | 2026-09-07 |
 | Owner | Runtime and composition architecture |
 | Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0002](0002-physical-access-transaction-and-fault.md), [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) |
 | Supersedes | None |
@@ -63,7 +64,7 @@ module or public API:
 
 - **Hart** is the single architectural engine. It owns architectural state,
   instruction semantics, privilege, traps, address translation, retirement, and
-  per-Hart architectural reservation state under the consumed Proposed working
+  per-Hart architectural reservation state under the accepted
   contracts ADR-0001 and ADR-0002.
 - **Platform** is the physical world visible to the Hart. It owns physical
   address routing, memory and device targets, host-facing device behavior,
@@ -342,16 +343,12 @@ detail, not a new ownership boundary.
 ### 4. ELF parsing, image placement, and address meaning
 
 The ELF/image loader and the Machine/Platform have separate responsibilities.
-This Proposed ADR explicitly refines the wording in
-[`principles.md`](../principles.md#address-ownership) that `ELF segment placement
-is a loader responsibility`: here that loader responsibility means producing a
-`LoadImage` metadata description containing segments, zero-fill, entry, and
-signature/tohost metadata; Machine coordinates installation; Platform performs
-physical writes and routing. The `Runner` `Image loading` row in the same
-principles document is refined to this metadata/orchestration split. Because
-ADR-0003 remains Proposed, `principles.md` remains the current normative
-authority and is neither marked accepted nor rewritten here; it must be aligned
-when this ADR is accepted.
+The loader produces a `LoadImage` metadata description containing segments,
+zero-fill, entry, and signature/tohost metadata. Runner orchestrates image
+loading; Machine coordinates installation; Platform performs physical writes and
+routing. [Architecture principles](../principles.md#address-ownership) state the
+same accepted metadata/installation split. Host-side placement is not a Hart
+instruction or execution-time virtual-to-physical translation.
 
 | Operation | Owner | Semantic result |
 | --- | --- | --- |
@@ -594,9 +591,9 @@ integration.
 
 ## Relationship to ADR-0001
 
-ADR-0001 remains **Proposed** and is consumed here as the Hart outcome and
-observation contract; this ADR neither accepts nor reopens its retirement/trap
-decisions. Runner consumes always-present control facts and, when subscribed,
+ADR-0001 is **Accepted** and is consumed here as the Hart outcome and
+observation contract; this ADR does not redefine its retirement/trap decisions.
+Runner consumes always-present control facts and, when subscribed,
 optional `CommitRecord`/`TrapRecord` materialization of `InstructionRetired`,
 `TrapEntered`, and `SimulatorFailure`. Machine supplies the one-or-more-Hart
 composition around one Platform. Platform exit, external debugger/protocol halt,
@@ -605,7 +602,7 @@ remain distinct. The §6 HTIF ordering follows ADR-0001's retire-before-event ru
 
 ## Relationship to ADR-0002
 
-ADR-0002 remains **Proposed** and is consumed here as the physical transaction
+ADR-0002 is **Accepted** and is consumed here as the physical transaction
 boundary; this ADR does not replace its raw-byte, fault, atomicity, or delay
 semantics. Machine connects Hart `PhysicalAccess` to a Platform: Platform owns
 routing/target faults, while Hart owns translation, architectural checks, load
@@ -721,4 +718,5 @@ Only these remain for later contracts or implementation design:
 The ownership split, two hosting modes, Machine cardinality, control/observation
 split, unclassified facts, quiesce requirement, image-base distinction, HTIF
 retirement ordering, and compatibility constraints are decisions, not open
-questions. This ADR remains **Proposed**; it has no superseding record.
+questions. This ADR is **Accepted**; it has no superseding record. Implementation
+verification remains separate.

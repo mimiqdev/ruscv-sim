@@ -117,7 +117,7 @@ flowchart TB
     API --> RUN
     GDB --> CONTROL
     AUTO --> RUN
-    LOAD --> MACHINE
+    RUN --> LOAD
     RUN --> MACHINE
     CONTROL --> MACHINE
     RUN --> REPORT
@@ -144,9 +144,11 @@ flowchart TB
 
 Solid arrows in this view denote dependencies; dotted `implements` arrows point
 from concrete backends to their semantic port. Machine returns control facts to
-Runner, but does not depend on Runner's report/result types. The loader placement
-edge retains the current principles' wording; ADR-0003 §4 proposes its explicit
-metadata/installation split, to be aligned when that record is accepted.
+Runner, but does not depend on Runner's report/result types. Runner invokes the
+loader for image metadata and asks Machine to install it; Platform performs the
+physical writes. The loader has no Machine dependency. This follows the accepted
+[ADR-0003 §4](decisions/0003-runner-machine-and-platform-ownership.md#4-elf-parsing-image-placement-and-address-meaning)
+and the principles' metadata/installation split.
 
 ## 4. Hart internal architecture
 

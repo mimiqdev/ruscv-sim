@@ -4,13 +4,14 @@
 
 **Authority:** Informational; not an active milestone contract
 
-**Scope:** A bounded single-Hart native execution migration derived from the A0 working contracts
+**Scope:** A bounded single-Hart native execution migration derived from the accepted A0 boundary contracts
 
 This candidate supports the [A0 closeout assessment](a0-closeout-assessment.md).
 It is not a delivery commitment, a selected ISA/compliance profile, or a claim
 that the target boundaries are implemented. [A0](../dev-plan.md) remains the only
-current milestone. The proposed ADRs must be reconciled and accepted, and the
-choices below resolved, before this candidate can become a successor contract.
+current milestone. ADR-0001 through ADR-0004 were accepted on 2026-09-07;
+that acceptance does not approve this candidate. The choices below still require
+explicit resolution and approval before this can become a successor contract.
 
 ## Proposed objective
 
