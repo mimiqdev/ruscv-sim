@@ -28,6 +28,8 @@ Target architecture is not implementation status. Component presence is not end-
 - [Current implementation and gap matrix](architecture/current-state.md)
 - [Architecture principles](architecture/principles.md)
 - [Architecture decision records](architecture/decisions/README.md)
+- [A0 closeout assessment](architecture/a0-closeout-assessment.md) — draft evidence and acceptance questions, not milestone acceptance
+- [First implementation scope candidate](architecture/first-implementation-scope.md) — unapproved successor proposal; A0 remains the only current milestone
 
 ## Verification
 

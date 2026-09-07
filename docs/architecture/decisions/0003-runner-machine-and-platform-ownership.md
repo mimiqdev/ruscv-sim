@@ -149,9 +149,10 @@ A Machine represents one composed execution context: one Platform plus one or
 more Harts that share that Platform. It is not a second architectural engine or a
 second instruction dispatcher. Cardinality N=1 is the current ISS baseline. A
 future VP may attach additional Harts to the same Platform; shared RAM, interrupt
-controllers, and `mtime` remain Platform state. Multi-Hart scheduling, same-
-timestamp ordering, and coherence are outside this record and must not be frozen
-here.
+controllers, and `mtime` remain Platform state. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md)
+§§10–11 define canonical same-time fact and shared-effect ordering. Scheduling
+algorithms, fairness and coherence mechanisms remain outside this record; the
+ordering requirement must not be mistaken for a prescribed scheduler.
 
 At composition time, the Machine is responsible for:
 
@@ -250,7 +251,12 @@ Reset does not change an address map, perform virtual-to-physical translation,
 reparse an ELF file, or report a run result. Exact Hart reset values and exact
 device reset behavior follow the applicable architectural/device contracts; the
 semantic requirement is that no prior run's dynamic state is accidentally used as
-the initial state of the next run.
+the initial state of the next run. Reset after simulator failure still requires
+`DrainComplete`; it cannot clear an unresolved transaction or authorize late
+writes into a fresh image. [ADR-0004 §12.2](0004-interrupt-time-scheduling-and-stop-boundaries.md#122-quiesce-and-drain)
+defines the adapter evidence required before drain can complete after unknown
+completion, and distinguishes safe lifecycle mutation from a trustworthy prior
+run state. No force-reset bypass is implied here.
 
 #### Quiesce
 
@@ -526,7 +532,9 @@ scheduling/budget strategy used under §3 and how the Platform implements
 `PhysicalAccess`; it does not create alternate instruction semantics. Native
 scheduling is Machine-associated and cannot bypass ruscv-sim terminal taxonomy.
 External-kernel hosting does not move ISA semantics, physical routing, or result
-taxonomy into the kernel. Multi-Hart ordering and coherence remain deferred.
+taxonomy into the kernel. Canonical multi-Hart fact/shared-effect ordering follows
+ADR-0004 §§10–11; concrete scheduling, shared-memory coherence and transport
+mechanisms remain deferred.
 
 `RiscVSimulator` may remain a public convenience/library facade for a flat
 single-Hart configuration, but it must use the same Runner/Machine/Hart semantics
@@ -704,8 +712,11 @@ Only these remain for later contracts or implementation design:
 4. Profile-specific Hart/device reset values not owned by an accepted contract.
 5. Image-placement storage/snapshot and signature representations, plus migration
    and deprecation of existing wrappers/components.
-6. Multi-Hart ordering, shared-device arbitration, DMA/coherence, inbound Platform
-   masters, checkpoint formats, and global observation ordering.
+6. Multi-Hart scheduling/fairness, shared-device arbitration mechanisms,
+   DMA/coherence, inbound Platform masters, checkpoint formats, and observation
+   transport/buffering. Canonical fact and shared-effect ordering, including the
+   semantic order preserved by observations, follows ADR-0004 §§10–11 and is not
+   deferred; these mechanisms must preserve it.
 
 The ownership split, two hosting modes, Machine cardinality, control/observation
 split, unclassified facts, quiesce requirement, image-base distinction, HTIF
