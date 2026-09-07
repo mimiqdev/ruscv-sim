@@ -14,6 +14,11 @@ Archived files are not active plans. They may describe component-level completio
 
 ## Records
 
+- [A0: ISS → VP architecture baseline — completion record](a0-closeout-record.md)
+  - [Original milestone contract](a0-architecture-baseline.md)
+  - [Pre-closeout assessment](a0-pre-closeout-assessment.md)
+  - [Unapproved full-migration candidate](a0-full-migration-candidate.md)
+
 - [M1: ISA foundation](m1-isa-foundation.md)
 - [M2: Memory and peripherals](m2-memory-peripherals.md)
 - [M3: Peripheral quality](m3-peripheral-quality.md)
