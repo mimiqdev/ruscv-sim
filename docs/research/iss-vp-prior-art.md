@@ -6,6 +6,14 @@
 
 **Evidence reviewed:** 2026-09-04
 
+**Decision context:** The synthesis below preserves the pre-acceptance research
+questions and recommendations from that evidence review. Its references to
+Proposed ADRs and a future interrupt/time/stop decision describe that research
+context, not current decision status. ADR-0001 through ADR-0004 were accepted on
+2026-09-07; consult the [ADR index](../architecture/decisions/README.md) for the
+normative contracts. These earlier recommendations are not pending requirements
+or additions to the active milestone.
+
 ## Purpose
 
 This note compares public architectural evidence from instruction set simulators (ISSs), full-system emulators, virtual platforms (VPs), reference ISA models, and a simulation integration standard. It asks how mature systems divide:

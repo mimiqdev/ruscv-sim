@@ -4,7 +4,7 @@
 
 **Authority:** Normative
 
-**Last reviewed:** 2026-09-04
+**Last reviewed:** 2026-09-07
 
 ## Product invariant
 
@@ -18,7 +18,7 @@ The standalone ISS and the Virtual Platform use one RISC-V Hart implementation. 
 | Physical access port | Physical transactions and access faults | RISC-V load sign extension, virtual translation, platform policy |
 | Platform | Physical address map, RAM/ROM/MMIO, devices, interrupt sources/controller priority and claim/complete, interrupt wiring, platform events | ISA semantics, Hart eligibility/masking/delegation, architectural priority, trap/debug/WFI transitions |
 | Machine | One Platform plus one or more Harts, composition/lifecycle, Platform-input admission, normal Hart-boundary grants, control-only wait-state re-evaluation grants, and framework time/budget/fact accounting | Hart eligibility/masking/delegation/architectural priority, trap/debug/WFI transitions, ISA-visible counter deltas, user-interface policy, and terminal-result classification |
-| Runner | Image loading, limits, ruscv-sim stop taxonomy, result production, observers | Instruction semantics; need not own every outer execution thread |
+| Runner | Image-loading orchestration, limits, ruscv-sim stop taxonomy, result production, observer demand/delivery | Instruction semantics; need not own every outer execution thread |
 | Frontend | CLI/API/debug protocol and presentation | Machine-internal behavior |
 
 ## Error and event boundaries
@@ -34,7 +34,14 @@ The following are distinct and must remain distinguishable:
 
 ## Address ownership
 
-Virtual-to-physical translation is part of Hart behavior. Physical address routing is part of the Platform. ELF segment placement is a loader responsibility. An ELF base-address offset is not an architectural translation mechanism.
+Virtual-to-physical translation during execution is part of Hart behavior.
+Physical address routing is part of the Platform. Under
+[ADR-0003 §4](decisions/0003-runner-machine-and-platform-ownership.md#4-elf-parsing-image-placement-and-address-meaning),
+the loader validates the image and describes segments, zero-fill, entry, and
+signature/tohost metadata. Runner orchestrates image loading; Machine coordinates
+installation; Platform performs physical placement and routing. Host-side
+installation does not execute Hart instructions. An ELF base-address offset is
+not an architectural translation mechanism.
 
 ## Language boundaries
 

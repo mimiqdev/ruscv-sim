@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
-| Authority | Draft contract; normative only after acceptance |
+| Status | Accepted |
+| Authority | Normative semantic contract; not an implementation-status claim |
 | Date | 2026-09-03 |
+| Accepted | 2026-09-07 |
 | Owner | Runtime and composition architecture |
 | Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0002](0002-physical-access-transaction-and-fault.md), [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) |
 | Supersedes | None |
@@ -63,7 +64,7 @@ module or public API:
 
 - **Hart** is the single architectural engine. It owns architectural state,
   instruction semantics, privilege, traps, address translation, retirement, and
-  per-Hart architectural reservation state under the consumed Proposed working
+  per-Hart architectural reservation state under the accepted
   contracts ADR-0001 and ADR-0002.
 - **Platform** is the physical world visible to the Hart. It owns physical
   address routing, memory and device targets, host-facing device behavior,
@@ -149,9 +150,10 @@ A Machine represents one composed execution context: one Platform plus one or
 more Harts that share that Platform. It is not a second architectural engine or a
 second instruction dispatcher. Cardinality N=1 is the current ISS baseline. A
 future VP may attach additional Harts to the same Platform; shared RAM, interrupt
-controllers, and `mtime` remain Platform state. Multi-Hart scheduling, same-
-timestamp ordering, and coherence are outside this record and must not be frozen
-here.
+controllers, and `mtime` remain Platform state. [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md)
+§§10–11 define canonical same-time fact and shared-effect ordering. Scheduling
+algorithms, fairness and coherence mechanisms remain outside this record; the
+ordering requirement must not be mistaken for a prescribed scheduler.
 
 At composition time, the Machine is responsible for:
 
@@ -250,7 +252,12 @@ Reset does not change an address map, perform virtual-to-physical translation,
 reparse an ELF file, or report a run result. Exact Hart reset values and exact
 device reset behavior follow the applicable architectural/device contracts; the
 semantic requirement is that no prior run's dynamic state is accidentally used as
-the initial state of the next run.
+the initial state of the next run. Reset after simulator failure still requires
+`DrainComplete`; it cannot clear an unresolved transaction or authorize late
+writes into a fresh image. [ADR-0004 §12.2](0004-interrupt-time-scheduling-and-stop-boundaries.md#122-quiesce-and-drain)
+defines the adapter evidence required before drain can complete after unknown
+completion, and distinguishes safe lifecycle mutation from a trustworthy prior
+run state. No force-reset bypass is implied here.
 
 #### Quiesce
 
@@ -336,16 +343,12 @@ detail, not a new ownership boundary.
 ### 4. ELF parsing, image placement, and address meaning
 
 The ELF/image loader and the Machine/Platform have separate responsibilities.
-This Proposed ADR explicitly refines the wording in
-[`principles.md`](../principles.md#address-ownership) that `ELF segment placement
-is a loader responsibility`: here that loader responsibility means producing a
-`LoadImage` metadata description containing segments, zero-fill, entry, and
-signature/tohost metadata; Machine coordinates installation; Platform performs
-physical writes and routing. The `Runner` `Image loading` row in the same
-principles document is refined to this metadata/orchestration split. Because
-ADR-0003 remains Proposed, `principles.md` remains the current normative
-authority and is neither marked accepted nor rewritten here; it must be aligned
-when this ADR is accepted.
+The loader produces a `LoadImage` metadata description containing segments,
+zero-fill, entry, and signature/tohost metadata. Runner orchestrates image
+loading; Machine coordinates installation; Platform performs physical writes and
+routing. [Architecture principles](../principles.md#address-ownership) state the
+same accepted metadata/installation split. Host-side placement is not a Hart
+instruction or execution-time virtual-to-physical translation.
 
 | Operation | Owner | Semantic result |
 | --- | --- | --- |
@@ -526,7 +529,9 @@ scheduling/budget strategy used under §3 and how the Platform implements
 `PhysicalAccess`; it does not create alternate instruction semantics. Native
 scheduling is Machine-associated and cannot bypass ruscv-sim terminal taxonomy.
 External-kernel hosting does not move ISA semantics, physical routing, or result
-taxonomy into the kernel. Multi-Hart ordering and coherence remain deferred.
+taxonomy into the kernel. Canonical multi-Hart fact/shared-effect ordering follows
+ADR-0004 §§10–11; concrete scheduling, shared-memory coherence and transport
+mechanisms remain deferred.
 
 `RiscVSimulator` may remain a public convenience/library facade for a flat
 single-Hart configuration, but it must use the same Runner/Machine/Hart semantics
@@ -586,9 +591,9 @@ integration.
 
 ## Relationship to ADR-0001
 
-ADR-0001 remains **Proposed** and is consumed here as the Hart outcome and
-observation contract; this ADR neither accepts nor reopens its retirement/trap
-decisions. Runner consumes always-present control facts and, when subscribed,
+ADR-0001 is **Accepted** and is consumed here as the Hart outcome and
+observation contract; this ADR does not redefine its retirement/trap decisions.
+Runner consumes always-present control facts and, when subscribed,
 optional `CommitRecord`/`TrapRecord` materialization of `InstructionRetired`,
 `TrapEntered`, and `SimulatorFailure`. Machine supplies the one-or-more-Hart
 composition around one Platform. Platform exit, external debugger/protocol halt,
@@ -597,7 +602,7 @@ remain distinct. The §6 HTIF ordering follows ADR-0001's retire-before-event ru
 
 ## Relationship to ADR-0002
 
-ADR-0002 remains **Proposed** and is consumed here as the physical transaction
+ADR-0002 is **Accepted** and is consumed here as the physical transaction
 boundary; this ADR does not replace its raw-byte, fault, atomicity, or delay
 semantics. Machine connects Hart `PhysicalAccess` to a Platform: Platform owns
 routing/target faults, while Hart owns translation, architectural checks, load
@@ -641,7 +646,7 @@ This is a bounded deferral, not an unresolved ownership question.
 | Freeze Machine cardinality at one Hart | Rejected: N=1 is the ISS baseline; shared Platform state requires one Platform plus one or more Harts. |
 | Return only a classified stop reason from the scheduler | Rejected: co-incident facts would be lost; Machine returns unclassified facts and policy selects presentation later. |
 | Maintain separate ISS and VP engines | Rejected: traps, retirement, MMU, and device effects would drift; one Hart implementation is required. |
-| Let the loader write directly to a concrete bus | Rejected: it couples parsing to an address map and confuses storage offsets with translation; loader → Machine → Platform is retained. |
+| Let the loader write directly to a concrete bus | Rejected: it couples parsing to an address map and confuses storage offsets with translation; Runner obtains loader metadata and requests Machine installation, while Platform performs physical writes and routing. |
 | Use one undifferentiated status stream | Rejected: causes have different ownership/recovery; Runner aggregates while preserving categories and causal facts. |
 | Make observers/debuggers direct Hart peers | Rejected: callbacks risk partial state, re-entry, bypassed routing, and false commits; completed outcomes remain the boundary. |
 
@@ -704,10 +709,14 @@ Only these remain for later contracts or implementation design:
 4. Profile-specific Hart/device reset values not owned by an accepted contract.
 5. Image-placement storage/snapshot and signature representations, plus migration
    and deprecation of existing wrappers/components.
-6. Multi-Hart ordering, shared-device arbitration, DMA/coherence, inbound Platform
-   masters, checkpoint formats, and global observation ordering.
+6. Multi-Hart scheduling/fairness, shared-device arbitration mechanisms,
+   DMA/coherence, inbound Platform masters, checkpoint formats, and observation
+   transport/buffering. Canonical fact and shared-effect ordering, including the
+   semantic order preserved by observations, follows ADR-0004 §§10–11 and is not
+   deferred; these mechanisms must preserve it.
 
 The ownership split, two hosting modes, Machine cardinality, control/observation
 split, unclassified facts, quiesce requirement, image-base distinction, HTIF
 retirement ordering, and compatibility constraints are decisions, not open
-questions. This ADR remains **Proposed**; it has no superseding record.
+questions. This ADR is **Accepted**; it has no superseding record. Implementation
+verification remains separate.

@@ -117,10 +117,10 @@ flowchart TB
     API --> RUN
     GDB --> CONTROL
     AUTO --> RUN
-    LOAD --> MACHINE
+    RUN --> LOAD
     RUN --> MACHINE
     CONTROL --> MACHINE
-    MACHINE --> REPORT
+    RUN --> REPORT
     MACHINE --> HART
     MACHINE --> MAP
     MACHINE --> DEVICES
@@ -136,11 +136,19 @@ flowchart TB
     TIME --> CLOCK
     RETIRE --> EVENTS
     DEVICES --> EVENTS
-    PA --> RAM
-    PA --> MMIO
-    PA --> TLM
+    RAM -. implements .-> PA
+    MMIO -. implements .-> PA
+    TLM -. implements .-> PA
     DEVICES --> HOST
 ```
+
+Solid arrows in this view denote dependencies; dotted `implements` arrows point
+from concrete backends to their semantic port. Machine returns control facts to
+Runner, but does not depend on Runner's report/result types. Runner invokes the
+loader for image metadata and asks Machine to install it; Platform performs the
+physical writes. The loader has no Machine dependency. This follows the accepted
+[ADR-0003 §4](decisions/0003-runner-machine-and-platform-ownership.md#4-elf-parsing-image-placement-and-address-meaning)
+and the principles' metadata/installation split.
 
 ## 4. Hart internal architecture
 
@@ -249,6 +257,7 @@ flowchart TB
 
     subgraph ISS["Standalone ISS"]
         ISSRUN["Single-Hart Runner"]
+        ISSMACHINE["Single-Hart Machine"]
         FLATBUS["Flat / Native Bus"]
         ELF["ELF + Compliance"]
         DEBUG["Commit Trace / GDB"]
@@ -270,7 +279,9 @@ flowchart TB
 
     ELF --> ISSRUN
     DEBUG --> ISSRUN
-    ISSRUN --> SEM
+    ISSRUN --> ISSMACHINE
+    ISSMACHINE --> SEM
+    ISSMACHINE --> FLATBUS
     SEM --> STATE
     SEM --> TRAP
     SEM --> CONTRACT
@@ -300,31 +311,51 @@ sequenceDiagram
     participant O as Observer
 
     F->>R: run(image, limits, options)
-    R->>M: grant(budget, deadline, control, observations)
-
-    loop Until a stop condition
-        M->>M: admit due Platform/input events at cursor
-        alt Newly admitted input for a previously Waiting Hart
-            M->>H: control-only wait-state re-evaluation (no turn/accounting)
-            H-->>M: Runnable or Waiting (Hart/profile-owned result)
+    loop Until Runner classifies a terminal result
+        R->>M: grant(budget, deadline, control, observations)
+        loop Until a required Machine return boundary
+            M->>M: admit due Platform/input events at cursor
+            opt Continue/run with newly admitted input for a previously Waiting Hart
+                M->>H: control-only wait-state re-evaluation (no turn/accounting)
+                H-->>M: Runnable or Waiting (Hart/profile-owned result)
+            end
+            M->>M: evaluate all boundary facts and completion safety
+            alt Runnable and budget/deadline/control conditions permit
+                M->>H: Hart-provided architectural boundary + admitted inputs
+                H->>H: profile decides eligibility
+                alt Hart/profile accepts interrupt before fetch
+                    H->>H: enter trap; no instruction fetch or retirement
+                else No interrupt accepted; attempt instruction
+                    H->>B: instruction fetch
+                    B-->>H: raw bytes / fault / failure / delay
+                    opt Fetch and checks permit an instruction data access
+                        H->>B: load / store / atomic
+                        opt Physical target is MMIO
+                            B->>D: transaction
+                            D-->>B: target result; retain causal Platform event
+                        end
+                        B-->>H: AccessResponse
+                    end
+                    H->>H: complete retirement, synchronous trap, or failure
+                end
+                H-->>M: outcome + state/counter facts + optional records
+                M->>M: consume known delay once; account completed turns; admit causal events
+            else Legal continue/run idle advance with budget and time remaining
+                M->>M: jump to next event or deadline; repeat admission/re-evaluation
+            else Stop, limit, waiting single-step, or no admissible progress
+                M->>M: retain all applicable facts; start no work or idle jump
+            end
+            opt Subscribed observations ready at a completed boundary
+                M-->>R: immutable observations for delivery
+                R->>O: deliver requested observations
+                O-->>R: delivery status
+                R-->>M: delivery acknowledgment or observer-failure fact
+            end
+            M->>M: collect coincident facts; honor required return boundary
         end
-        alt Runnable and budget/deadline/control conditions permit
-            M->>M: check conservative turn bound against deadline slack
-            M->>H: Hart-provided architectural boundary + admitted inputs
-            H->>H: profile decides eligibility and one architectural transition
-            H->>B: fetch / load / store
-            B->>D: MMIO transaction
-            D-->>B: data / fault / delay / event
-            B-->>H: AccessResponse
-            H-->>M: exactly one transition + state/counter facts + optional records
-            M->>M: consume delay once; advance cursor; admit causal events
-        else All Harts remain Waiting
-            M->>M: continue/run idle jump to next event or deadline
-        end
-        M-->>O: deliver requested observations
+        M-->>R: unclassified co-incident facts + accounting
+        R->>R: select primary reason without discarding facts
     end
-
-    M-->>R: unclassified co-incident facts + accounting
     R-->>F: classified ExecutionResult
 ```
 
@@ -347,7 +378,13 @@ deltas; the Machine never evaluates those predicates or changes Hart run state
 directly. In external-kernel hosting the kernel grants the authoritative time
 horizon into the Machine; the Runner still classifies non-lossy facts and does not
 have to own that outer thread. Observation records are subscriber-gated; control
-facts are always returned.
+facts are always returned. The observation exchange represents Runner-owned
+sink delivery at a completed boundary, not permission to re-enter Hart execution;
+with observation disabled it is absent. Accepted interrupts take the no-fetch
+branch. The instruction branch abbreviates translation, architectural checks and
+fault handling, not an obligation to issue a data request after a failed fetch.
+Idle advances require the ADR-0004 §8.3 preconditions; zero budget, an effective
+stop, a reached deadline, and Waiting single-step do not advance time.
 
 ## 8. Capability accumulation and architecture gates
 

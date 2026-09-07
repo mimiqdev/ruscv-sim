@@ -24,12 +24,16 @@ Each record must state:
 
 ## Records
 
-| Record | Decision | Status |
-| --- | --- | --- |
-| [0001 — Hart execution outcome and observation records](0001-hart-execution-outcome-and-observation.md) | Hart step outcomes, always-present control facts, and optional subscriber-gated observation | Proposed |
-| [0002 — Physical-access transaction and fault contract](0002-physical-access-transaction-and-fault.md) | Hart-initiator physical-access contract, raw bytes, fault taxonomy, atomics, and deferred inbound masters | Proposed |
-| [0003 — Runner, Machine, and Platform ownership](0003-runner-machine-and-platform-ownership.md) | Runner taxonomy, one-or-more-Hart Machine composition, dual hosting, and unclassified control facts | Proposed |
-| [0004 — Interrupt, time, scheduling, and stop-event boundaries](0004-interrupt-time-scheduling-and-stop-boundaries.md) | Platform-input admission, Hart/profile-provided sampling slots, modeled time, Machine exchanges, WFI/idle scheduling, deterministic event order, and non-lossy stop facts | Proposed |
+| Record | Decision | Status | Accepted |
+| --- | --- | --- | --- |
+| [0001 — Hart execution outcome and observation records](0001-hart-execution-outcome-and-observation.md) | Hart step outcomes, always-present control facts, and optional subscriber-gated observation | Accepted | 2026-09-07 |
+| [0002 — Physical-access transaction and fault contract](0002-physical-access-transaction-and-fault.md) | Hart-initiator physical-access contract, raw bytes, fault taxonomy, atomics, and deferred inbound masters | Accepted | 2026-09-07 |
+| [0003 — Runner, Machine, and Platform ownership](0003-runner-machine-and-platform-ownership.md) | Runner taxonomy, one-or-more-Hart Machine composition, dual hosting, and unclassified control facts | Accepted | 2026-09-07 |
+| [0004 — Interrupt, time, scheduling, and stop-event boundaries](0004-interrupt-time-scheduling-and-stop-boundaries.md) | Platform-input admission, Hart/profile-provided sampling slots, modeled time, Machine exchanges, WFI/idle scheduling, deterministic event order, and non-lossy stop facts | Accepted | 2026-09-07 |
 
-No architecture decision records have been accepted yet. Proposed records are working
-contracts; the diagrams and principles remain the working baseline in the meantime.
+ADR-0001 through ADR-0004 were accepted by the maintainer on 2026-09-07,
+including ADR-0003's loader-metadata / Machine-installation / Platform-write
+split. The [principles](../principles.md) and [target views](../README.md) reflect
+these normative semantic contracts. Acceptance does not claim implementation
+completeness, select concrete Rust APIs, approve the successor implementation
+scope, or close [A0](../../dev-plan.md).

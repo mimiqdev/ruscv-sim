@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
-| Authority | Draft contract; normative only after acceptance |
+| Status | Accepted |
+| Authority | Normative semantic contract; not an implementation-status claim |
 | Date | 2026-09-03 |
+| Accepted | 2026-09-07 |
 | Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0003](0003-runner-machine-and-platform-ownership.md), [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) |
 
 ## Context
@@ -336,8 +337,8 @@ algorithm, DMI API, or SystemC interface.
 
 ## Non-normative implementation and verification notes
 
-This section records later evidence and migration considerations for the Proposed
-contract.
+This section records future implementation evidence and migration considerations
+for the accepted contract; these notes do not claim implementation completeness.
 
 ### Compatibility and migration notes
 
@@ -376,9 +377,9 @@ When an implementation is introduced, verification should establish:
 
 The existing MMU, A/D, AMO/LR/SC, native-bus, and TLM tests cited by
 [`current-state.md`](../current-state.md) are component-level evidence to preserve
-when implementation begins. They are not prerequisites for accepting this ADR, and no
-implementation, public API, or simulator behavior is part of this documentation
-change.
+when implementation begins. Acceptance of this semantic contract does not certify
+those components' integration; no implementation, public API, or simulator
+behavior is part of this documentation change.
 
 ## Bounded deferrals
 

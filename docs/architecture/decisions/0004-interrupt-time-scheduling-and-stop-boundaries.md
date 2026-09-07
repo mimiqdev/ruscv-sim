@@ -2,9 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
-| Authority | Draft contract; normative only after acceptance |
+| Status | Accepted |
+| Authority | Normative semantic contract; not an implementation-status claim |
 | Date | 2026-09-04 |
+| Accepted | 2026-09-07 |
 | Owner | Runtime, time, and event architecture |
 | Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0002](0002-physical-access-transaction-and-fault.md), [ADR-0003](0003-runner-machine-and-platform-ownership.md) |
 | Supersedes | None |
@@ -17,7 +18,7 @@
 
 ## 1. Context and scope
 
-The first three proposed decisions establish the boundaries needed to evolve a
+The first three accepted decisions establish the boundaries needed to evolve a
 single-instruction ISS into a composed Virtual Platform (VP):
 
 - [ADR-0001](0001-hart-execution-outcome-and-observation.md) makes the Hart
@@ -552,7 +553,9 @@ baseline requirement. A started turn that fails is not converted into a complete
 Hart turn: its known consumed delay still advances modeled time exactly once, but
 it contributes no completed-turn `iss_tick` charge and does not imply any ISA
 counter delta; it leaves the run non-resumable
-until adapter resolution or reset.
+until adapter resolution or reset. In this record, every reference to reset as
+failure recovery is subject to §12.2: reset is not a way to bypass unresolved
+in-flight work or permit a late completion to mutate a fresh run.
 
 A missing delay annotation means zero delay under the minimal ISS policy. A richer
 profile must explicitly select a missing-delay policy; the Hart must not guess one.
@@ -1102,6 +1105,26 @@ operation must use the same drain boundary and must invalidate any cached
 translation, compiled block, DMI, or Hart/profile-derived interrupt state that its
 implementation uses. The checkpoint representation itself is deferred.
 
+**Recovery after unknown completion.** A failed drain does not grant
+`DrainComplete`. Before retrying drain, the adapter must establish that every
+started operation has either finished or been conclusively terminated, with no
+remaining transaction, callback, or late effect able to reach the composed state.
+Merely timing out, requesting cancellation, disconnecting a callback, or clearing
+an error flag is not that evidence. If the adapter cannot establish this
+condition, the Machine remains failed: ordinary reset, mutation, teardown and
+further deterministic grants remain unavailable. This contract provides no
+force-reset exception or force-reconstruction API.
+
+Once the adapter establishes that condition, Machine may complete drain without
+reissuing the uncertain transaction. `DrainComplete` then certifies absence of
+in-flight work, not correctness of the prior run's uncertain state. Resuming that
+run additionally requires adapter resolution of its state/time uncertainty;
+otherwise a coordinated fresh reset must restore the promised initial state
+before any new deterministic grant. A backend unable to restore that state must
+reject fresh reset. The failed outcome and known prefix remain failure evidence;
+recovery must not retrospectively fabricate retirement, trap entry, or successful
+Platform exit for the uncertain operation.
+
 Quiesce is not an implicit reset, and a waiting Hart is not an in-flight Hart.
 `DrainComplete` is independent of run-level `NoProgress`: a drained Machine may
 still contain Runnable Harts whose next turn is merely forbidden until a new
@@ -1275,7 +1298,8 @@ not claims about the current public ELF path.
 | N-Hart same-time order | Repeated runs under different host thread/container iteration orders produce the same canonical facts and shared-state effects, or reject unsupported conflict configurations. |
 | Hosting parity | Runner-driven and external-kernel-driven grants produce the same Hart/Platform transitions, delay accounting, interrupt boundaries, and fact order; native grants cannot set or rewind the Machine cursor, and backward external starts fail outside reset. |
 | Replay admission | A replay-capable adapter reproduces same-timestamp inputs by source identity and admission sequence rather than host arrival order. |
-| Quiesce/drain | A stop during an active transaction drains or reports unknown completion, leaves no work in flight, returns `DrainComplete` only for the lifecycle acknowledgment, and permits reset/mutation only after that acknowledgment; `NoProgress` remains separate. |
+| Quiesce/drain | A successful drain proves no work remains in flight and returns `DrainComplete` only as a lifecycle acknowledgment; an unknown completion returns failure without that acknowledgment or mutation permission. `NoProgress` remains separate. |
+| Unknown-completion recovery | A delayed write/callback after a failed drain cannot reach reset state: reset and deterministic grants are rejected while completion remains unresolved. Proven completion/termination permits a new drain without retrying the transaction; uncertain state still requires restoration by fresh reset unless the adapter resolves it. Failed cancellation and a backend unable to restore initial state remain failures, with no fabricated commit or exit. |
 
 ## 17. Compatibility, explicit deferrals, and relationship to earlier ADRs
 
@@ -1380,5 +1404,5 @@ The current repository evidence that motivates this contract includes:
 These sources and tests show the current component vocabulary and gaps; they are
 not evidence that interrupt/time/stop integration already exists. Future
 implementation work must add focused tests for the verification scenarios above
-and then update the current-state evidence with actual results. This proposed ADR
+and then update the current-state evidence with actual results. This accepted ADR
 has no superseding record.
