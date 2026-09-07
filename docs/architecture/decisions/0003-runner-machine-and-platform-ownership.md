@@ -646,7 +646,7 @@ This is a bounded deferral, not an unresolved ownership question.
 | Freeze Machine cardinality at one Hart | Rejected: N=1 is the ISS baseline; shared Platform state requires one Platform plus one or more Harts. |
 | Return only a classified stop reason from the scheduler | Rejected: co-incident facts would be lost; Machine returns unclassified facts and policy selects presentation later. |
 | Maintain separate ISS and VP engines | Rejected: traps, retirement, MMU, and device effects would drift; one Hart implementation is required. |
-| Let the loader write directly to a concrete bus | Rejected: it couples parsing to an address map and confuses storage offsets with translation; loader → Machine → Platform is retained. |
+| Let the loader write directly to a concrete bus | Rejected: it couples parsing to an address map and confuses storage offsets with translation; Runner obtains loader metadata and requests Machine installation, while Platform performs physical writes and routing. |
 | Use one undifferentiated status stream | Rejected: causes have different ownership/recovery; Runner aggregates while preserving categories and causal facts. |
 | Make observers/debuggers direct Hart peers | Rejected: callbacks risk partial state, re-entry, bypassed routing, and false commits; completed outcomes remain the boundary. |
 
