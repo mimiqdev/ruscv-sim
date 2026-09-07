@@ -46,7 +46,7 @@ This sequence records the technical order for completing the baseline; it is not
 2. Define Hart outcomes and observation records in [ADR-0001](architecture/decisions/0001-hart-execution-outcome-and-observation.md).
 3. Define the physical-access contract in [ADR-0002](architecture/decisions/0002-physical-access-transaction-and-fault.md).
 4. Define Runner, Machine, and Platform ownership in [ADR-0003](architecture/decisions/0003-runner-machine-and-platform-ownership.md).
-5. Define the interrupt, time, and stop-event boundaries.
+5. Define the interrupt, time, and stop-event boundaries in [ADR-0004](architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md).
 6. Cross-check the baseline against the acceptance criteria and derive the successor implementation scope.
 
 The architecture records and current implementation inventory are the durable references for this sequence.
