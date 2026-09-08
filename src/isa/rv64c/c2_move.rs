@@ -21,7 +21,7 @@ use crate::execute::ExecuteError;
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.JR x5  (Jump to address in x5)
 /// // Expands to: jalr x0, 0(x5)
 /// ```
@@ -57,7 +57,7 @@ pub fn exec_c_jr(rs1: u8, state: &mut CoreState) -> Result<(), ExecuteError> {
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.JALR x5  (Jump to address in x5, save return address in ra)
 /// // Expands to: jalr x1, 0(x5)
 /// ```
@@ -96,7 +96,7 @@ pub fn exec_c_jalr(rs1: u8, state: &mut CoreState) -> Result<(), ExecuteError> {
 /// Always returns ExecuteError::Ebreak
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.EBREAK
 /// // Expands to: ebreak
 /// ```

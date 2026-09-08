@@ -4,14 +4,14 @@
 //!
 //! # 主要组件
 //!
-//! - [`phase`]: TLM 传输相位定义 (BEGIN_REQ, END_REQ, BEGIN_RESP, END_RESP)
-//! - [`status`]: TLM 响应状态定义 (OK, ERROR, etc.)
-//! - [`command`]: TLM 命令类型定义 (Read, Write)
-//! - [`time`]: SystemC 风格的时间管理 (sc_time)
-//! - [`payload`]: TLM 通用事务载荷结构
-//! - [`traits`]: TLM Initiator/Target 接口 trait
-//! - [`bus`]: TLM 总线实现，支持多设备互联和路由仲裁
-//! - [`error`]: TLM 错误定义
+//! - `phase`: TLM transaction phase definitions (BEGIN_REQ, END_REQ, BEGIN_RESP, END_RESP)
+//! - `status`: TLM response status definitions (OK, ERROR, etc.)
+//! - `command`: TLM command types (Read, Write)
+//! - `time`: SystemC-style time management (`sc_time`)
+//! - `payload`: Generic TLM transaction payload
+//! - `traits`: TLM initiator/target traits
+//! - `bus`: TLM bus implementation with multi-device routing and arbitration
+//! - `error`: TLM error definitions
 //!
 //! # 示例
 //!

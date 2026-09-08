@@ -23,7 +23,7 @@ use crate::memory::MemoryInterface;
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.SLLI x5, 4  (x5 = x5 << 4)
 /// // Expands to: slli x5, x5, 4
 /// ```
@@ -61,7 +61,7 @@ pub fn exec_c_slli(rd: u8, shamt: u32, state: &mut CoreState) -> Result<(), Exec
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.LWSP x5, 16  (x5 = sign_extend(mem[SP + 16]))
 /// // Expands to: lw x5, 16(x2)
 /// ```
@@ -107,7 +107,7 @@ pub fn exec_c_lwsp(
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.LDSP x5, 16  (x5 = mem[SP + 16])
 /// // Expands to: ld x5, 16(x2)
 /// ```
@@ -152,7 +152,7 @@ pub fn exec_c_ldsp(
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.SWSP x5, 16  (mem[SP + 16] = x5[31:0])
 /// // Expands to: sw x5, 16(x2)
 /// ```
@@ -193,7 +193,7 @@ pub fn exec_c_swsp(
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.SDSP x5, 16  (mem[SP + 16] = x5)
 /// // Expands to: sd x5, 16(x2)
 /// ```

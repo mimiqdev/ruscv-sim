@@ -34,6 +34,8 @@ Target architecture is not implementation status. Component presence is not end-
 ## Verification
 
 - [Verification architecture](verification/README.md)
+- [A1 public behavior compatibility matrix](verification/public-behavior-matrix.md)
+- [A1 public behavior defect and gap register](verification/public-behavior-gaps.md)
 - [Project-authored bare-metal tests](verification/bare-metal-tests.md)
 - [External RISC-V test integration contract](verification/external-riscv-tests.md)
 - [Commit tracing and differential testing](verification/commit-tracing.md)

@@ -22,7 +22,7 @@ use crate::execute::ExecuteError;
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.ADDI x5, 4  (x5 = x5 + 4)
 /// // Expands to: addi x5, x5, 4
 /// ```
@@ -56,7 +56,7 @@ pub fn exec_c_addi(rd: u8, imm: u32, state: &mut CoreState) -> Result<(), Execut
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.LI x5, -1  (x5 = -1)
 /// // Expands to: addi x5, x0, -1
 /// ```
@@ -89,7 +89,7 @@ pub fn exec_c_li(rd: u8, imm: u32, state: &mut CoreState) -> Result<(), ExecuteE
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.LUI x5, 0x12345  (x5 = 0x12345000)
 /// // Expands to: lui x5, 0x12345
 /// ```
@@ -120,7 +120,7 @@ pub fn exec_c_lui(rd: u8, imm: u32, state: &mut CoreState) -> Result<(), Execute
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.ADDI16SP -32  (SP = SP - 32)
 /// // Expands to: addi x2, x2, -32
 /// ```
@@ -154,7 +154,7 @@ pub fn exec_c_addi16sp(imm: u32, state: &mut CoreState) -> Result<(), ExecuteErr
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.ANDI x8, 0xF  (x8 = x8 & 0xF)
 /// // Expands to: andi x8, x8, 0xF
 /// ```
@@ -182,7 +182,7 @@ pub fn exec_c_andi(rd: u8, imm: u32, state: &mut CoreState) -> Result<(), Execut
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.MV x5, x6  (x5 = x6)
 /// // Expands to: add x5, x0, x6
 /// ```
@@ -213,7 +213,7 @@ pub fn exec_c_mv(rd: u8, rs2: u8, state: &mut CoreState) -> Result<(), ExecuteEr
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.ADD x5, x6  (x5 = x5 + x6)
 /// // Expands to: add x5, x5, x6
 /// ```
@@ -246,7 +246,7 @@ pub fn exec_c_add(rd: u8, rs2: u8, state: &mut CoreState) -> Result<(), ExecuteE
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.SUB x8, x9  (x8 = x8 - x9)
 /// // Expands to: sub x8, x8, x9
 /// ```
@@ -275,7 +275,7 @@ pub fn exec_c_sub(rd: u8, rs2: u8, state: &mut CoreState) -> Result<(), ExecuteE
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.XOR x8, x9  (x8 = x8 ^ x9)
 /// // Expands to: xor x8, x8, x9
 /// ```
@@ -304,7 +304,7 @@ pub fn exec_c_xor(rd: u8, rs2: u8, state: &mut CoreState) -> Result<(), ExecuteE
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.OR x8, x9  (x8 = x8 | x9)
 /// // Expands to: or x8, x8, x9
 /// ```
@@ -333,7 +333,7 @@ pub fn exec_c_or(rd: u8, rs2: u8, state: &mut CoreState) -> Result<(), ExecuteEr
 /// Result indicating success or execution error
 ///
 /// # Example
-/// ```
+/// ```text
 /// // C.AND x8, x9  (x8 = x8 & x9)
 /// // Expands to: and x8, x8, x9
 /// ```

@@ -102,7 +102,7 @@ static GLOBAL_RESERVATION: Lazy<Mutex<ReservationSet>> =
 /// - rs2 = 00000 (no second source register)
 ///
 /// # Operation
-/// rd = MEM[rs1]
+/// rd = MEM\[rs1\]
 /// Create reservation on rs1
 #[inline]
 pub fn exec_lr(
@@ -136,7 +136,7 @@ pub fn exec_lr(
 /// Creates a reservation on the address.
 ///
 /// # Operation
-/// rd = sext(MEM[rs1][31:0])
+/// rd = sext(MEM\[rs1\]\[31:0\])
 /// Create reservation on rs1
 #[inline]
 pub fn exec_lr_w(
@@ -178,7 +178,7 @@ pub fn exec_lr_w(
 ///
 /// # Operation
 /// if reservation valid:
-///   MEM[rs1] = rs2
+///   MEM\[rs1\] = rs2
 ///   rd = 0
 /// else:
 ///   rd = non-zero

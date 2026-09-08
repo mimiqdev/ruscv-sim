@@ -59,8 +59,8 @@ const AMO_FUNCT5_AMOMAXU: u8 = 0b01011;
 /// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
-/// temp = MEM[rs1]
-/// MEM[rs1] = temp + rs2
+/// temp = MEM\[rs1\]
+/// MEM\[rs1\] = temp + rs2
 /// rd = sext(temp)
 #[inline]
 pub fn exec_amoadd(
@@ -99,8 +99,8 @@ pub fn exec_amoadd(
 /// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
-/// temp = MEM[rs1]
-/// MEM[rs1] = temp & rs2
+/// temp = MEM\[rs1\]
+/// MEM\[rs1\] = temp & rs2
 /// rd = sext(temp)
 #[inline]
 pub fn exec_amoand(
@@ -134,8 +134,8 @@ pub fn exec_amoand(
 /// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
-/// temp = MEM[rs1]
-/// MEM[rs1] = temp | rs2
+/// temp = MEM\[rs1\]
+/// MEM\[rs1\] = temp | rs2
 /// rd = sext(temp)
 #[inline]
 pub fn exec_amoor(
@@ -169,8 +169,8 @@ pub fn exec_amoor(
 /// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
-/// temp = MEM[rs1]
-/// MEM[rs1] = temp ^ rs2
+/// temp = MEM\[rs1\]
+/// MEM\[rs1\] = temp ^ rs2
 /// rd = sext(temp)
 #[inline]
 pub fn exec_amoxor(
@@ -204,8 +204,8 @@ pub fn exec_amoxor(
 /// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
-/// temp = MEM[rs1]
-/// MEM[rs1] = max(temp, rs2) [signed]
+/// temp = MEM\[rs1\]
+/// MEM\[rs1\] = max(temp, rs2) \[signed\]
 /// rd = sext(temp)
 #[inline]
 pub fn exec_amomax(
@@ -243,8 +243,8 @@ pub fn exec_amomax(
 /// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
-/// temp = MEM[rs1]
-/// MEM[rs1] = min(temp, rs2) [signed]
+/// temp = MEM\[rs1\]
+/// MEM\[rs1\] = min(temp, rs2) \[signed\]
 /// rd = sext(temp)
 #[inline]
 pub fn exec_amomin(
@@ -282,8 +282,8 @@ pub fn exec_amomin(
 /// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
-/// temp = MEM[rs1]
-/// MEM[rs1] = max(temp, rs2) [unsigned]
+/// temp = MEM\[rs1\]
+/// MEM\[rs1\] = max(temp, rs2) \[unsigned\]
 /// rd = sext(temp)
 #[inline]
 pub fn exec_amomaxu(
@@ -317,8 +317,8 @@ pub fn exec_amomaxu(
 /// Returns the original value in memory (sign-extended to 64-bit).
 ///
 /// # Operation
-/// temp = MEM[rs1]
-/// MEM[rs1] = min(temp, rs2) [unsigned]
+/// temp = MEM\[rs1\]
+/// MEM\[rs1\] = min(temp, rs2) \[unsigned\]
 /// rd = sext(temp)
 #[inline]
 pub fn exec_amominu(

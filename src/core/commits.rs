@@ -131,7 +131,7 @@ impl CommitLogger {
 
     /// Log a comment/tag line (Spike-compatible)
     ///
-    /// Format: >>>>>  <text>
+    /// Format: >>>>>  &lt;text&gt;
     pub fn log_comment(&mut self, text: &str) -> io::Result<()> {
         writeln!(self.output, ">>>>  {}", text)
     }
