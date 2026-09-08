@@ -14,6 +14,10 @@ Archived files are not active plans. They may describe component-level completio
 
 ## Records
 
+- [A1: Public behavior baseline — completion record](a1-closeout-record.md)
+  - [Original milestone contract](a1-public-behavior-baseline.md)
+  - [Pre-closeout acceptance assessment](a1-acceptance-assessment.md)
+
 - [A0: ISS → VP architecture baseline — completion record](a0-closeout-record.md)
   - [Original milestone contract](a0-architecture-baseline.md)
   - [Pre-closeout assessment](a0-pre-closeout-assessment.md)

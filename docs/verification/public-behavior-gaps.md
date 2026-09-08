@@ -4,17 +4,19 @@
 
 **Authority:** Informational; this register supports the [A1 public behavior matrix](public-behavior-matrix.md) and does not authorize production repair
 
-**Last verified:** 2026-09-07
+**Last reviewed:** 2026-09-08; individual verification runs retain their recorded scope
 
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)
 
-**Follow-up evidence:** the current uncommitted working tree is based on that
-snapshot and records the zero-fill and G-02 harness corrections described below.
-No future commit hash is implied. This is a finite register for the first A1
-inventory plus the second A1 tests/reproductions batch. The original persistent
-tests are committed in the snapshot; only the follow-up corrections are currently
-uncommitted. “Reproduced defect” is used only where a bounded run observed the
+**Merged evidence:** the zero-fill and G-02 harness corrections were verified
+on a working tree based on that snapshot, then committed as
+`54bfdbf11491caf7e78565ddf62cc1e7e13c4e67` and merged in
+`fae4759e09c6750e4105c8be7c287e841dabf0dc`. This is a finite register for the
+first A1 inventory and second tests/reproductions batch, not uncommitted work.
+The [A1 acceptance assessment](a1-acceptance-assessment.md) records fresh
+2026-09-08 post-merge checks and links to accepted dispositions; historical observations
+below retain their original verification scope. “Reproduced defect” is used only where a bounded run observed the
 behavior. A source observation, contract comparison, or hypothesis is labelled
 separately. No entry is a compatibility promise, a production-fix commitment, or
 a second active plan.
@@ -56,7 +58,7 @@ a second active plan.
 - **Reproduction:** A bounded temporary program called `RiscVSimulator::new(0x1000).read_mem(0x2000, 4)`. Running the built harness as `timeout 2s stdbuf -o0 ...` printed `before` and returned status `124`; it did not print a result. The follow-up `public_behavior` harness now launches the exact read in a recursively isolated `--exact` child, requires a ready marker after simulator construction and before the read, waits two seconds only after that marker, then kills it and calls `wait()` to reap it. Child stdout/stderr are retained for diagnostics, and `KillOnDrop` covers panic/error paths. Companion tests exercise missing-ready and early-exit paths; the parent passes the reproduction only when the child remained alive through the post-ready hang window.
 - **Existing tests:** `test_simulator_read_write_mem` and `test_simulator_write_mem_large` are **strong** only for in-range accesses. The persistent reproduction plus its handshake-failure and early-exit cleanup tests are **strong** for the bounded harness behavior. `test_simulator_read_mem_unaligned` remains **weak** because it accepts either `Ok` or `Err`.
 - **Impact:** A public memory inspection helper can hang instead of returning `ExecutorError`.
-- **Next decision:** Retain the bounded child-process reproduction and obtain authorization for any production correction. This batch does not change the loop.
+- **Selected successor scope:** [A2](../dev-plan.md) authorizes the bounded progress/error repair. This A1 evidence record does not claim the repair is implemented; retain the reproduction until the implementation is verified.
 
 ### G-03 — Public commit log loses opcodes for nonzero ELF bases
 
@@ -112,10 +114,11 @@ a second active plan.
 
 ### G-07 — Host-only guest ELF commands require the project toolchain/container
 
-- **Disposition:** **Host-environment limitation; resolved in the project Docker image**, not a simulator defect.
+- **Disposition:** **Host-environment limitation; guest verification supplied by Docker and post-merge main CI**, not a simulator defect.
 - **Surface:** Project-authored bare-metal ELF suite and the real cross-assembled `test_add_program` path.
 - **Evidence:** On the host, `riscv64-unknown-elf-as` and `riscv64-unknown-elf-ld` were absent; `cargo test --all-features --test test_add_direct -- --nocapture` skipped the test; `./scripts/compile_riscv_tests.sh` exited 1; and `./scripts/run_elf_tests.sh` exited 1 because no ELFs existed. The repository Docker image then compiled 46 ELFs, ran `test_add_program` successfully with exit code 0/cycles 53, and passed the ELF runner 46/46. This Docker run predates the final executor-test strengthening and was not rerun by the PR14 independent reviewer or by the follow-up correction run.
-- **Impact:** Host-only execution remains unavailable without the toolchain, but the project-authored guest suite now has bounded Docker evidence. This does not certify ISA-wide compliance. Checked-in CI definitions and old reference logs are not a substitute.
+- **Post-merge evidence:** [Main CI run 34184525187](https://github.com/mimiqdev/ruscv-sim/actions/runs/34184525187) at `fae4759e09c6750e4105c8be7c287e841dabf0dc` compiled the guest programs and passed 46/46 on 2026-09-08. This is exact-merge evidence beyond the historical Docker run, not proof of host toolchain installation.
+- **Impact:** Host-only assembly still requires a suitable toolchain; guest verification no longer blocks A1 acceptance because exact-main CI supplied it. Neither Docker nor CI establishes ISA-wide compliance. Workflow definitions and old reference logs alone are not successful-run evidence.
 - **Next decision:** Use the Docker image or install a compatible host toolchain when repeating guest verification; preserve the actual command output.
 
 ### G-08 — Bare-metal README exit-code text conflicts with executable source

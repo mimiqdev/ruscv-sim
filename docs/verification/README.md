@@ -4,7 +4,7 @@
 
 **Authority:** Normative for test-layer ownership; individual tool integrations require their own verified setup
 
-**Last reviewed:** 2026-08-26
+**Last reviewed:** 2026-09-08
 
 ## Test layers
 
@@ -44,7 +44,8 @@ Test language follows the layer rather than the simulator implementation languag
 
 ## Verification documents
 
-- [A1 public behavior compatibility matrix](public-behavior-matrix.md) — first-batch CLI/ELF and flat-library evidence
+- [A1 acceptance and closeout](a1-acceptance-assessment.md) — completed baseline, explicit limitations and the bounded A2 handoff
+- [A1 public behavior compatibility matrix](public-behavior-matrix.md) — CLI/ELF and flat-library inventory plus persistent second-batch tests
 - [A1 public behavior defect and gap register](public-behavior-gaps.md) — bounded reproductions and unverified limits
 - [Project-authored bare-metal tests](bare-metal-tests.md)
 - [External RISC-V test integration contract](external-riscv-tests.md)
@@ -54,5 +55,8 @@ The A1 matrix and gap register are current as-of evidence records, not an A1
 closeout and not a claim that component tests or old CI/reference logs prove
 public-path support. The matrix records the exact revision, the initial host
 limitation, and the successful Docker-based guest evidence for its batch.
+The [A1 closeout](../archive/milestones/a1-closeout-record.md) additionally records
+exact-merge main CI with guest compilation and 46/46 execution; historical
+batch observations are not rewritten as new runs.
 
 Historical test proposals are retained under [`../archive/designs/`](../archive/designs/).

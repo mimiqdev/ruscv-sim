@@ -38,4 +38,6 @@ these normative semantic contracts. Acceptance does not claim implementation
 completeness or select concrete Rust APIs. ADR acceptance alone does not approve
 implementation scope or close a milestone. The separately approved A0-to-A1
 handoff is recorded in the [A0 closeout record](../../archive/milestones/a0-closeout-record.md);
-[A1](../../dev-plan.md) is the only active milestone contract.
+[A1's subsequent closeout](../../archive/milestones/a1-closeout-record.md) records
+its limitations and successor decision. [A2](../../dev-plan.md) is the only
+active milestone contract.
