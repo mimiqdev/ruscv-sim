@@ -48,7 +48,7 @@ a second active plan.
   The persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` test repeats the contrast at base `0x80000000`: the CLI exits at cycle 4, while `RiscVSimulator::load_elf` followed by `run(Some(20))` returns `exit_code=1`, `cycles=20`, `timed_out=true`, and `Timeout after 20 cycles`. The manually configured flat-offset case from the first batch succeeded only after setting `tohost=0x100` and placing the program/exit value at that offset.
 - **Existing tests:** The persistent test is **strong** for the configuration contrast. The targeted `load_and_run` tests in `tests/executor.rs` now use valid fixtures and assert their results; `test_simulator_creation`, `test_simulator_setters`, `test_simulator_run_with_max_cycles`, and `test_simulator_run_default_cycles` remain **weak** for this flat-library ELF behavior because they do not assert an ELF tohost exit.
 - **Impact:** The wrapper's public ELF success/exit behavior is not equivalent to the CLI. Do not claim flat-library ELF/tohost compatibility from the CLI runs.
-- **Next decision:** A later scope must decide whether to add an adapter/fix or retain this documented limitation. The persistent reproduction is retained; no repair is made here.
+- **Selected successor scope:** [A2](../dev-plan.md) includes this repair as part of the flat-library load/run/result/inspection capability, not as an independent milestone. The persistent reproduction remains current evidence until a verified implementation replaces it with a correct-exit regression.
 
 ### G-02 — Flat-library `read_mem` can loop indefinitely on an out-of-range aligned read
 
@@ -58,7 +58,7 @@ a second active plan.
 - **Reproduction:** A bounded temporary program called `RiscVSimulator::new(0x1000).read_mem(0x2000, 4)`. Running the built harness as `timeout 2s stdbuf -o0 ...` printed `before` and returned status `124`; it did not print a result. The follow-up `public_behavior` harness now launches the exact read in a recursively isolated `--exact` child, requires a ready marker after simulator construction and before the read, waits two seconds only after that marker, then kills it and calls `wait()` to reap it. Child stdout/stderr are retained for diagnostics, and `KillOnDrop` covers panic/error paths. Companion tests exercise missing-ready and early-exit paths; the parent passes the reproduction only when the child remained alive through the post-ready hang window.
 - **Existing tests:** `test_simulator_read_write_mem` and `test_simulator_write_mem_large` are **strong** only for in-range accesses. The persistent reproduction plus its handshake-failure and early-exit cleanup tests are **strong** for the bounded harness behavior. `test_simulator_read_mem_unaligned` remains **weak** because it accepts either `Ok` or `Err`.
 - **Impact:** A public memory inspection helper can hang instead of returning `ExecutorError`.
-- **Selected successor scope:** [A2](../dev-plan.md) authorizes the bounded progress/error repair. This A1 evidence record does not claim the repair is implemented; retain the reproduction until the implementation is verified.
+- **Selected successor scope:** [A2](../dev-plan.md) includes bounded progress/error repair as task T1 within its end-to-end library capability. This A1 evidence record does not claim the repair is implemented; retain the reproduction until the implementation is verified.
 
 ### G-03 — Public commit log loses opcodes for nonzero ELF bases
 

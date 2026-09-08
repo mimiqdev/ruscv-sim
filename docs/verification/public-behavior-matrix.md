@@ -407,12 +407,15 @@ not exact-follow-up-head evidence.
 
 ## Bounded follow-up proposal (not a new active plan)
 
-A1 is complete with documented limits. [A2](../dev-plan.md) selects only G-02;
-these remaining options are not additional active work:
+A1 is complete with documented limits. [A2](../dev-plan.md) now defines the
+flat-library load/run/result/inspection capability, including G-01 and G-02,
+flat signature handling and image replacement checks. The contract, not this
+as-of evidence record, defines its acceptance. These remaining options do not
+add work beyond that contract:
 
-1. Decide separately whether G-01, G-03, G-04, G-05, G-06, and G-09 are
-   production-repair scope or documented compatibility limitations. The new tests
-   intentionally do not make that decision.
+1. Decide separately whether G-03, G-04, G-05, the CLI portion of G-06, and G-09
+   are production-repair scope or documented compatibility limitations. The A1
+   tests intentionally do not make that decision.
 2. If a repair is approved, retain the persistent tests as regressions and add
    only the minimum implementation change needed for the selected gap; do not
    silently alter address maps, limit semantics, APIs, or logging contracts.

@@ -2,134 +2,197 @@
 
 **Project:** `ruscv-sim`
 
-**Active milestone:** A2 — Bounded Flat-Memory Inspection
+**Active milestone:** A2 — Reliable Flat-Library ELF Execution and Inspection
 
-**Status:** Active — focused G-02 repair and verification
+**Status:** Active — capability contract; implementation not yet verified
 
 **Authority:** Normative milestone contract
 
-**Approved / started:** 2026-09-08
-
-This is the only current milestone contract. [A1 is completed](archive/milestones/a1-closeout-record.md)
-with documented limitations. Its [acceptance assessment](archive/milestones/a1-acceptance-assessment.md)
-selected one bounded successor: eliminate the reproduced non-progress behavior in
-`RiscVSimulator::read_mem`. Milestone identifiers are not releases.
-
 ## Objective
 
-For bounded byte-range inspection requests against the existing flat-memory
-configuration, `read_mem` must complete with the requested bytes or an explicit
-error rather than looping indefinitely on a failed wider read.
+A library caller can load a supported RAM-only ELF, run it under a finite budget,
+receive the actual guest exit or a distinguishable timeout/execution error, and
+inspect the resulting registers, RAM and declared signature without hanging or
+confusing ELF addresses with flat storage offsets. Loading a subsequent image
+must not reuse the previous image's exit or signature metadata.
 
-[G-02](verification/public-behavior-gaps.md#g-02--flat-library-read_mem-can-loop-indefinitely-on-an-out-of-range-aligned-read)
-and the persistent child-process reproduction are the starting evidence. This
-milestone does not consolidate run loops or implement Machine/Platform boundaries.
+This is one end-to-end capability, not a quota of repaired defects. A successful
+`read_mem` repair alone does not complete A2. A1 established the baseline; A2
+makes this explicitly bounded library workflow dependable before larger runtime
+migration. [A1's closeout](archive/milestones/a1-closeout-record.md) and its
+G-02-only successor recommendation remain historical records. This contract
+replaces that task-sized scope without reopening A1 or claiming A2 is implemented.
+Milestone identifiers are not release numbers.
 
-## Scope
+## Starting evidence and capability boundary
 
-- Read the existing helper, memory interface and regression harness; reproduce
-  the aligned out-of-range read failure before changing production behavior.
-- Make each iteration of flat-memory inspection advance toward completion or
-  return an error. Preserve the existing public signature, byte ordering and
-  flat address meaning. Do not fabricate bytes or return a partial vector as
-  successful completion of a longer request.
-- Verify valid aligned/unaligned reads, byte/half/word/dword-sized and mixed
-  lengths, memory-end/boundary-crossing reads, zero length and address overflow.
-- Replace the known-hang expectation with a bounded error-return regression;
-  retain safe child startup/timeout/cleanup checks so a regression cannot leave
-  the test harness hanging or leaking a busy child.
-- Update G-02 and the relevant matrix rows using actual tests and gate evidence,
-  retaining historical reproduction provenance and unrelated gap dispositions.
+The [A1 matrix](verification/public-behavior-matrix.md),
+[gap register](verification/public-behavior-gaps.md),
+[`RiscVSimulator`](../src/executor.rs) and
+[`tests/public_behavior.rs`](../tests/public_behavior.rs) provide the baseline:
 
-## Error and compatibility boundaries
+- G-01 reproduces a library ELF run missing an exit visible on the public ELF path.
+- G-02 reproduces an inspection request that never returns.
+- Source inspection shows `run` clears an exit signal before `get_result` reads
+  it again, risking loss of a nonzero code. This is source-observed, not yet a
+  verified reproduction; reproduce it as part of the result task.
+- The flat wrapper passes ELF signature metadata directly to memory inspection
+  and suppresses read errors. Address correspondence and error reporting require
+  focused verification, not an inference from successful CLI signature tests.
 
-- Empty requests return an empty vector without a memory read. Requests within
-  the supported flat range return exactly the requested bytes in ascending
-  address order.
-- Invalid or overflowing nonempty ranges must fail through the existing
-  `ExecutorError` surface; they must not wrap into a different valid address.
-  Keep the error diagnostic informative without freezing incidental wording as
-  a new public string contract.
-- Preserve successful in-range behavior and the ability to read unaligned bytes.
-  A failed wider access must not retry forever. Concrete safe fallback versus
-  byte-wise implementation is an implementation choice, subject to regression
-  evidence and existing interface constraints.
-- The guarantee is for bounded requests on the synchronous existing flat-memory
-  backend. This milestone does not guarantee allocation success for arbitrary
-  enormous `size` values, introduce arbitrary request-size limits, or promise
-  termination of user-supplied blocking devices/backends or poisoned host locks.
-- Host inspection must not change Hart registers, PC, guest memory, run budgets
-  or retirement. No guest instruction execution or platform mapping change is
-  introduced by the repair.
+The supported acceptance configuration is one existing Hart, synchronous flat
+RAM, little-endian ELF64/RV64I fixtures using already exercised instructions,
+RAM-backed tohost and bounded allocations/requests. CLI device behavior is a
+regression constraint, not a promise that the flat wrapper acquires UART/HTIF
+MMIO or every CLI capability. Neither fixture success nor component tests prove
+ISA-wide or ACT4 compliance.
 
-## Non-goals
+## Required observable behavior
 
-- Repairing G-01 or logging, UART, signature and verbose diagnostic gaps;
-  rewriting `write_mem` or the memory subsystem; changing public APIs.
-- Runner/Machine/Platform migration, precise Hart outcomes/observations, new ISA
-  or devices, MMU/PMP, multi-Hart, SystemC/TLM, acceleration or ACT4 integration.
-- A broad performance project, unbounded allocation hardening or a new device
-  inspection protocol. The old migration candidate remains unapproved reference.
-- Automatically carrying forward the remaining A1 limitations as tasks.
+### Load and address correspondence
+
+- Preserve ELF entry and reported metadata as image/guest addresses. Keep public
+  flat `read_mem`, `write_mem` and manual `set_tohost` addresses as storage offsets.
+  Convert image-derived tohost/signature locations at the backend boundary using
+  checked range arithmetic; do not change guest PC or call this MMU translation.
+- Test base zero and nonzero base, a nonzero entry offset, file bytes and BSS.
+  Reuse the existing loader contract; do not introduce an ELF parser redesign.
+- ELF tohost metadata selects the image's RAM-backed signal. An explicit
+  `set_tohost` after loading still overrides it in flat offsets. With no metadata,
+  preserve the documented manual/default configuration without accidentally
+  retaining a previous image-derived selection. Define and test the before-load
+  setter precedence in the API documentation, preserving existing successful
+  uses rather than silently reinterpreting addresses.
+- A second successful image load replaces image-owned state and metadata. This
+  is verification of the existing load operation, not a new reset/checkpoint API
+  or an all-or-nothing guarantee for every malformed ELF load.
+
+### Run and result
+
+- Decode and retain the actual supported zero/nonzero exit value before clearing
+  its RAM signal. Report exit only after the writing instruction succeeds; final
+  PC and successful-step count must describe that boundary.
+- Preserve supported exit encodings and existing public signatures. Zero budget
+  executes no instructions; explicit/configured limits bound non-exiting guests;
+  an exit in the final permitted slot is not a timeout.
+- Distinguish guest failure exit, timeout and execution error through existing
+  result/error surfaces. Do not convert failed instructions into successful
+  cycles or fabricate a successful guest exit after a memory read failure.
+
+### Post-run inspection
+
+- Bounded flat reads return exactly the requested bytes in ascending address
+  order or an explicit `ExecutorError`; never wrap addresses, retry without
+  progress, fabricate bytes or return a partial vector as complete success.
+- Empty reads return an empty vector without reading memory. Cover aligned and
+  unaligned accesses, mixed widths/lengths, the final valid byte, range crossing,
+  out-of-range starts and address overflow. Keep the original G-02 subprocess
+  test bounded with readiness, timeout, kill/reap and failure-path checks.
+- Signature results preserve the guest metadata address while reading the
+  corresponding flat bytes. Absent metadata yields no artifact; a zero-length
+  region yields an empty artifact. An unreadable declared region must produce
+  an explicit diagnostic through existing error surfaces, not silent absence.
+  Preserve the completed run's exit/count/PC and any primary execution failure
+  when reporting an artifact failure; no new public field is required.
+- Inspection must not execute guest instructions or alter PC, registers, RAM or
+  execution accounting. Verify against the state left by actual guest execution,
+  not only an isolated helper round-trip.
+
+## Task decomposition and PR cadence
+
+These are delivery tasks under one milestone, not additional milestones. They
+may be split or combined into reviewable PRs without changing the acceptance goal.
+
+| Task | Contribution to the capability | Dependency / evidence |
+| --- | --- | --- |
+| T1 — Bounded RAM inspection | Repair G-02 and establish exact bytes/error behavior and safe hang-regression harness. | Reproduce before repair; valid/boundary/overflow and state-preservation tests. |
+| T2 — ELF placement metadata and guest completion | Adapt image-derived RAM tohost, retain decoded exit before clearing, and verify limit/error boundaries. | G-01 fixture plus zero/nonzero exit, manual configuration and final-slot tests. |
+| T3 — Post-run artifacts and image replacement | Read flat signatures correctly, expose artifact failures and prevent old metadata leaking into a subsequent image. | Uses checked correspondence from T2 and safe inspection from T1 where applicable. |
+| T4 — Integrated acceptance and documentation | Prove load → run → result → inspect as one workflow and record retained differences from CLI. | Depends on T1–T3; exact-head review, full gate and guest-suite evidence. |
+
+Reproduce source-observed failures before repairing them. Keep new discoveries
+within this workflow explicit; unrelated findings go to the gap register, not
+silently into implementation. Repairing two named gaps is necessary but not
+sufficient: the integrated acceptance scenarios decide completion.
 
 ## Architectural constraints
 
-The [accepted ADRs](architecture/decisions/README.md) and
-[principles](architecture/principles.md) remain authoritative. Keep one Hart
-engine, flat-library versus CLI configurations distinct, and host inspection
-separate from Hart-initiated physical transactions. Preserve
-[ADR-0003 §9 compatibility](architecture/decisions/0003-runner-machine-and-platform-ownership.md#9-compatibility-constraints-for-the-current-product).
-A helper repair does not establish target inspection/lifecycle integration.
+The [accepted ADRs](architecture/decisions/README.md), particularly
+[ADR-0003](architecture/decisions/0003-runner-machine-and-platform-ownership.md),
+and [principles](architecture/principles.md) remain authoritative:
 
-## Deliverables
+- Reuse the existing Hart; no second ISA engine or new execution loop.
+- Storage adaptation is not guest virtual-to-physical translation. Host image
+  installation and inspection do not synthesize Hart instructions.
+- This is a compatibility repair of the existing facade, not approval to retain
+  independent loops as the target architecture. Runner/Machine/Platform ownership
+  remains the target; this milestone does not claim those boundaries integrated.
+- Preserve CLI options, public API signatures, successful CLI ELF/device behavior,
+  and existing flat helper address semantics. Correct misleading address comments
+  and document observable repairs alongside the relevant implementation PRs.
 
-- Minimal production repair of `RiscVSimulator::read_mem` progress/error handling.
-- Focused value/error/boundary tests plus a bounded regression and cleanup-path
-  evidence for the previously hanging request.
-- Updated G-02/matrix evidence, exact verification commands and limitations.
-- An acceptance summary and one evidence-based successor recommendation, not a
-  second active plan.
+## Non-goals and retained gaps
 
-## Delivery cadence
+- Runner/Machine/Platform migration, new physical-access ports, precise Hart
+  observations, multi-Hart, MMU/PMP integration, SystemC/TLM or new ISA support.
+- Public commit-log fixes G-03/G-09, UART aperture G-04, verbose CLI diagnostic
+  G-05, and unrelated guest README discrepancy G-08.
+- Redesigning CLI signature-failure policy (G-06): A2 addresses the flat-library
+  artifact path only. Keep the CLI limitation explicit even if shared helpers
+  receive compatible internal improvements.
+- Device-backed flat execution, arbitrary huge allocation hardening, termination
+  guarantees for blocking custom backends/poisoned locks, general `write_mem`
+  transactional semantics, exhaustive malformed ELF/permission/overlap handling,
+  or a new reset/quiesce/checkpoint protocol.
 
-Use reviewable batches: focused repair and regressions; then acceptance evidence
-and successor recommendation. Small PRs are delivery units, not extra milestones.
-Escalate any necessary scope change instead of mixing unrelated fixes into A2.
+These exclusions bound the capability; they are not extra future milestones or
+a blanket waiver of defects within the required workflow.
 
-## Acceptance criteria
+## Deliverables and acceptance criteria
 
-1. The original `new(0x1000).read_mem(0x2000, 4)` failure is reproduced before
-   repair and thereafter returns an error under a bounded test, without leaving
-   child processes. Handshake/early-exit/timeout cleanup remains verified.
-2. In-range reads return exact bytes for aligned/unaligned and mixed-size cases;
-   zero-size reads, end-of-memory, crossing and overflow cases have explicit
-   success/error expectations and passing assertions.
-3. The helper has no non-progress retry path for the supported flat backend;
-   failure does not masquerade as a complete successful byte vector. Tests
-   verify inspection leaves guest memory, PC and registers unchanged.
-4. Public signatures and unrelated runtime behavior remain unchanged. The
-   compatibility matrix records the narrow repair rather than declaring other
-   gaps fixed or the target architecture integrated.
-5. Full repository quality gate, strict rustdoc and project-authored guest-suite
-   results are recorded for the reviewed implementation or its verified merge.
-   Missing tools, skipped checks and failures are never recorded as passes;
-   unresolved verification gaps require explicit acceptance disposition.
-6. Completion evidence and remaining limitations are summarized; the successor
-   recommendation is derived from evidence and separately approved before the
-   next handoff.
+Deliver repaired library behavior, focused regressions, an integrated acceptance
+suite, public API usage/address documentation and updated evidence records.
+Completion requires all of the following:
+
+1. **Load/run/result/inspect works together.** RAM-only fixtures at zero and
+   nonzero bases execute from their declared entries, modify RAM/registers,
+   terminate through image-derived tohost, and expose exact exit code, count,
+   PC and post-run bytes. Include both zero and nonzero guest exit codes.
+2. **Control is bounded and truthful.** Zero budget, configured/default selection,
+   explicit exhaustion, final-slot exit and instruction-error cases assert
+   distinct outcomes and correct successful-step accounting. The original G-01
+   contrast becomes a correct library-exit regression, not a deleted test.
+3. **Inspection is safe.** The original G-02 request returns an error under the
+   bounded child harness; alignment/size/boundary/overflow/empty cases have exact
+   assertions. Successful and failing inspection leave guest state unchanged.
+4. **Artifacts and subsequent loads are coherent.** Guest-written signatures at
+   nonzero bases return correct bytes and original metadata addresses. Absent,
+   empty and unreadable regions are distinguishable. Load another image on the
+   same wrapper and verify that RAM/image metadata and exits do not leak from the
+   prior image; manual flat tohost configuration remains tested and documented.
+5. **Compatibility and evidence are current.** Full quality gate, strict rustdoc,
+   public ELF/CLI regressions and actual project-authored guest compilation/runs
+   are recorded for the reviewed implementation or verified merge. Matrix/gap
+   updates identify precisely what was repaired and what remains unverified;
+   old logs, skipped checks and component-only passes are not integration proof.
+6. **Capability acceptance, not task counting.** A final assessment maps these
+   scenarios to committed tests, records limitations and independent review,
+   and proposes a successor from remaining architectural needs. T1 completion
+   alone, or merely closing G-01/G-02, cannot close A2.
 
 The quality gate is `cargo fmt --all -- --check`, `cargo check --all-features`,
 `cargo clippy --all-features --all-targets -- -D warnings`,
 `cargo test --all-features`, `cargo doc --all-features --no-deps`, plus
 `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`.
 Use the [development environment](development-environment.md) and
-[guest commands](verification/bare-metal-tests.md); an old reference log or
-workflow definition alone is not a successful run.
+[guest commands](verification/bare-metal-tests.md). Record unavailable tools and
+verification gaps explicitly; unmet capability criteria cannot be silently
+reclassified as optional tasks.
 
 ## Closeout
 
-Assess every criterion against committed code/tests and recorded verification.
-Record completion, limitations and revision identifiers, re-evaluate unfinished
-work, then archive A2 and replace this file only with one approved successor.
-Approval of this contract is not blanket authorization to commit, push, open PRs,
-merge, tag or release future implementation changes.
+Keep this as the only active contract. After capability acceptance and required
+review/merge evidence, archive completion, limitations and revision identifiers;
+re-evaluate unfinished work and select one separately approved successor.
+Task/PR granularity does not determine milestone granularity. No A2 production
+implementation or completion is claimed by this planning correction.
