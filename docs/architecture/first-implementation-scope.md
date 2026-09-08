@@ -4,16 +4,16 @@
 
 **Authority:** Informational; not a second milestone contract
 
-The maintainer approved [A1: Public Behavior Baseline for Architecture Migration](../dev-plan.md)
-on 2026-09-07. A1 establishes compatibility evidence before changing the runtime;
-its scope, exclusions, deliverables and acceptance criteria live only in the
-active plan.
+[A1: Public Behavior Baseline](../archive/milestones/a1-closeout-record.md)
+completed on 2026-09-08 with its documented limitations. The sole
+[active A2 contract](../dev-plan.md) selects bounded flat-memory inspection
+(G-02), not the larger runtime migration.
 
 The [original full-migration candidate](../archive/milestones/a0-full-migration-candidate.md)
 is preserved as historical input. It was not approved: physical/composition
 migration, precise Hart outcomes and observation, and Runner consolidation are
-not A1 commitments. Those choices must be re-evaluated using A1 evidence before
-any later milestone is approved.
+not commitments of A2. Those choices require separate re-evaluation and
+approval; the remaining A1 gaps are not automatically scheduled.
 
 See the [A0 closeout record](../archive/milestones/a0-closeout-record.md) for the
 architecture acceptance evidence and limitations. Accepted ADRs constrain later

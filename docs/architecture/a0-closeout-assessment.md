@@ -11,7 +11,8 @@ A1 public behavior baseline on 2026-09-07. The milestone handoff is recorded in:
 - [Original A0 milestone contract](../archive/milestones/a0-architecture-baseline.md).
 - [Full pre-closeout assessment](../archive/milestones/a0-pre-closeout-assessment.md),
   preserved with its historical evidence and pending-decision context.
-- [A1 — the only active milestone contract](../dev-plan.md).
+- [A1 completion and A2 handoff](../archive/milestones/a1-closeout-record.md).
+- [The only active milestone contract](../dev-plan.md).
 
 The archived assessment's pending-approval statements are historical. Neither A0
 completion nor A1 approval claims that the accepted target architecture is

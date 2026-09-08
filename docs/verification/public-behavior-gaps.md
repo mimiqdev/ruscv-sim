@@ -9,12 +9,14 @@
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)
 
-**Follow-up evidence:** the current uncommitted working tree is based on that
-snapshot and records the zero-fill and G-02 harness corrections described below.
-No future commit hash is implied. This is a finite register for the first A1
-inventory plus the second A1 tests/reproductions batch. The original persistent
-tests are committed in the snapshot; only the follow-up corrections are currently
-uncommitted. “Reproduced defect” is used only where a bounded run observed the
+**Merged evidence:** the zero-fill and G-02 harness corrections were verified
+on a working tree based on that snapshot, then committed as
+`54bfdbf11491caf7e78565ddf62cc1e7e13c4e67` and merged in
+`fae4759e09c6750e4105c8be7c287e841dabf0dc`. This is a finite register for the
+first A1 inventory and second tests/reproductions batch, not uncommitted work.
+The [A1 acceptance assessment](a1-acceptance-assessment.md) records fresh
+2026-09-08 post-merge checks and links to accepted dispositions; historical observations
+below retain their original verification scope. “Reproduced defect” is used only where a bounded run observed the
 behavior. A source observation, contract comparison, or hypothesis is labelled
 separately. No entry is a compatibility promise, a production-fix commitment, or
 a second active plan.
@@ -56,7 +58,7 @@ a second active plan.
 - **Reproduction:** A bounded temporary program called `RiscVSimulator::new(0x1000).read_mem(0x2000, 4)`. Running the built harness as `timeout 2s stdbuf -o0 ...` printed `before` and returned status `124`; it did not print a result. The follow-up `public_behavior` harness now launches the exact read in a recursively isolated `--exact` child, requires a ready marker after simulator construction and before the read, waits two seconds only after that marker, then kills it and calls `wait()` to reap it. Child stdout/stderr are retained for diagnostics, and `KillOnDrop` covers panic/error paths. Companion tests exercise missing-ready and early-exit paths; the parent passes the reproduction only when the child remained alive through the post-ready hang window.
 - **Existing tests:** `test_simulator_read_write_mem` and `test_simulator_write_mem_large` are **strong** only for in-range accesses. The persistent reproduction plus its handshake-failure and early-exit cleanup tests are **strong** for the bounded harness behavior. `test_simulator_read_mem_unaligned` remains **weak** because it accepts either `Ok` or `Err`.
 - **Impact:** A public memory inspection helper can hang instead of returning `ExecutorError`.
-- **Next decision:** Retain the bounded child-process reproduction and obtain authorization for any production correction. This batch does not change the loop.
+- **Selected successor scope:** [A2](../dev-plan.md) authorizes the bounded progress/error repair. This A1 evidence record does not claim the repair is implemented; retain the reproduction until the implementation is verified.
 
 ### G-03 — Public commit log loses opcodes for nonzero ELF bases
 

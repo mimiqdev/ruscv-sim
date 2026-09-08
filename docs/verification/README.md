@@ -44,7 +44,8 @@ Test language follows the layer rather than the simulator implementation languag
 
 ## Verification documents
 
-- [A1 public behavior compatibility matrix](public-behavior-matrix.md) — first-batch CLI/ELF and flat-library evidence
+- [A1 acceptance and closeout](a1-acceptance-assessment.md) — completed baseline, explicit limitations and the bounded A2 handoff
+- [A1 public behavior compatibility matrix](public-behavior-matrix.md) — CLI/ELF and flat-library inventory plus persistent second-batch tests
 - [A1 public behavior defect and gap register](public-behavior-gaps.md) — bounded reproductions and unverified limits
 - [Project-authored bare-metal tests](bare-metal-tests.md)
 - [External RISC-V test integration contract](external-riscv-tests.md)

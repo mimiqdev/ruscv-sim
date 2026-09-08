@@ -2,19 +2,21 @@
 
 **Status:** Current evidence record
 
-**Authority:** Informational; scope is defined by the [active A1 contract](../dev-plan.md), while compatibility requirements are stated in [ADR-0003 §9](../architecture/decisions/0003-runner-machine-and-platform-ownership.md#9-compatibility-constraints-for-the-current-product)
+**Authority:** Informational as-of A1 evidence; original scope is preserved in the [archived A1 contract](../archive/milestones/a1-public-behavior-baseline.md), while compatibility requirements are stated in [ADR-0003 §9](../architecture/decisions/0003-runner-machine-and-platform-ownership.md#9-compatibility-constraints-for-the-current-product)
 
 **Last verified:** 2026-09-07
 
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)
 
-**Follow-up evidence:** the current uncommitted working tree is based on that
-snapshot and contains the bounded evidence corrections described in E7. No
-future commit hash is implied by this record. E1-E5 retain historical evidence
+**Merged evidence:** E7's corrections were committed at
+`54bfdbf11491caf7e78565ddf62cc1e7e13c4e67` and merged in
+`fae4759e09c6750e4105c8be7c287e841dabf0dc`. E1–E5 retain historical evidence
 from the `b20e531` source baseline and the documentation-only warning repair at
-`64c6f976`; E6 records the committed PR14 snapshot; E7 records the follow-up
-working-tree evidence. This is not an A1 closeout, a target-architecture
+`64c6f976`; E6 records the initial PR14 snapshot; E7 records checks collected on
+the follow-up working tree before its commit. The
+[A1 acceptance assessment](a1-acceptance-assessment.md) records the 2026-09-08
+post-merge verification and links to the final accepted residual-gap dispositions. This is not an A1 closeout, a target-architecture
 implementation claim, or an approval to repair production behavior. Source code
 and executed tests are the authority for current behavior; accepted ADR text is
 the contract against which a mismatch is recorded. An observed error is never a
@@ -87,10 +89,11 @@ the prior Docker row remain recorded separately. The E7 follow-up quality gate
 is recorded below. The repository's old CI definitions and checked-in reference
 logs are not substituted for an A1 run.
 
-PR14 is based on `a1-public-behavior-inventory`, not `main`. Because the workflow
-filters `pull_request.branches: [main]`, `gh pr checks 14` reported no checks and
-no check-run rollup. This is an inapplicable workflow result, not a pending or
-passing CI result.
+During the stacked PR14 reviews, its base was `a1-public-behavior-inventory`,
+not `main`. The workflow's `pull_request.branches: [main]` filter meant no checks,
+not pending/passing CI. PR14 subsequently merged into `main`; the acceptance
+assessment records the successful exact-merge push CI, including guest tests.
+That later result does not rewrite these historical review-stage observations.
 
 #### Rustdoc warning repair scope
 
@@ -276,11 +279,12 @@ smoke tests remain outside this targeted strengthening.
 
 ### E7 — Follow-up evidence corrections based on `b16a787`
 
-The current uncommitted working tree is based on the committed PR14 snapshot
-`b16a7872cf62e51dc204d9ea122b6c5223c15f96`. It changes only test fixtures,
-test harness code, and evidence wording; no production code, public API,
-dependency, CI, or address/limit behavior changed. These corrections are not
-assigned a future commit hash.
+These checks were collected before committing the follow-up working tree based
+on `b16a7872cf62e51dc204d9ea122b6c5223c15f96`; the corrections were subsequently
+committed as `54bfdbf11491caf7e78565ddf62cc1e7e13c4e67`. They changed only test
+fixtures, test harness code and evidence wording; no production code, public API,
+dependency, CI or address/limit behavior changed. The results below describe that
+run, not a fresh verification of every later documentation edit.
 
 #### Zero-fill evidence
 
@@ -403,10 +407,10 @@ not exact-follow-up-head evidence.
 
 ## Bounded follow-up proposal (not a new active plan)
 
-The second batch has made the scoped transient evidence persistent. A subsequent
-bounded decision or repair scope should:
+A1 is complete with documented limits. [A2](../dev-plan.md) selects only G-02;
+these remaining options are not additional active work:
 
-1. Decide separately whether G-01, G-02, G-03, G-04, G-05, G-06, and G-09 are
+1. Decide separately whether G-01, G-03, G-04, G-05, G-06, and G-09 are
    production-repair scope or documented compatibility limitations. The new tests
    intentionally do not make that decision.
 2. If a repair is approved, retain the persistent tests as regressions and add
@@ -419,5 +423,5 @@ bounded decision or repair scope should:
    toolchain, and record actual ELF outputs rather than relying on CI definitions
    or old logs.
 
-This proposal does not start a second milestone and does not claim that A1 is
-complete.
+These options do not expand A2. A1's completion and limitations are recorded in
+its [closeout record](../archive/milestones/a1-closeout-record.md).
