@@ -4,7 +4,7 @@
 
 **Authority:** Informational as-of A1 evidence; original scope is preserved in the [archived A1 contract](../archive/milestones/a1-public-behavior-baseline.md), while compatibility requirements are stated in [ADR-0003 §9](../architecture/decisions/0003-runner-machine-and-platform-ownership.md#9-compatibility-constraints-for-the-current-product)
 
-**Last verified:** 2026-09-07
+**Last reviewed:** 2026-09-08; individual verification runs retain their recorded scope
 
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)

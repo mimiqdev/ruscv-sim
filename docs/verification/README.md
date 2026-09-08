@@ -4,7 +4,7 @@
 
 **Authority:** Normative for test-layer ownership; individual tool integrations require their own verified setup
 
-**Last reviewed:** 2026-08-26
+**Last reviewed:** 2026-09-08
 
 ## Test layers
 
@@ -55,5 +55,8 @@ The A1 matrix and gap register are current as-of evidence records, not an A1
 closeout and not a claim that component tests or old CI/reference logs prove
 public-path support. The matrix records the exact revision, the initial host
 limitation, and the successful Docker-based guest evidence for its batch.
+The [A1 closeout](../archive/milestones/a1-closeout-record.md) additionally records
+exact-merge main CI with guest compilation and 46/46 execution; historical
+batch observations are not rewritten as new runs.
 
 Historical test proposals are retained under [`../archive/designs/`](../archive/designs/).

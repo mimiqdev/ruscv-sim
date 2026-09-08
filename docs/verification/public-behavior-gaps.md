@@ -4,7 +4,7 @@
 
 **Authority:** Informational; this register supports the [A1 public behavior matrix](public-behavior-matrix.md) and does not authorize production repair
 
-**Last verified:** 2026-09-07
+**Last reviewed:** 2026-09-08; individual verification runs retain their recorded scope
 
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)
@@ -114,10 +114,11 @@ a second active plan.
 
 ### G-07 — Host-only guest ELF commands require the project toolchain/container
 
-- **Disposition:** **Host-environment limitation; resolved in the project Docker image**, not a simulator defect.
+- **Disposition:** **Host-environment limitation; guest verification supplied by Docker and post-merge main CI**, not a simulator defect.
 - **Surface:** Project-authored bare-metal ELF suite and the real cross-assembled `test_add_program` path.
 - **Evidence:** On the host, `riscv64-unknown-elf-as` and `riscv64-unknown-elf-ld` were absent; `cargo test --all-features --test test_add_direct -- --nocapture` skipped the test; `./scripts/compile_riscv_tests.sh` exited 1; and `./scripts/run_elf_tests.sh` exited 1 because no ELFs existed. The repository Docker image then compiled 46 ELFs, ran `test_add_program` successfully with exit code 0/cycles 53, and passed the ELF runner 46/46. This Docker run predates the final executor-test strengthening and was not rerun by the PR14 independent reviewer or by the follow-up correction run.
-- **Impact:** Host-only execution remains unavailable without the toolchain, but the project-authored guest suite now has bounded Docker evidence. This does not certify ISA-wide compliance. Checked-in CI definitions and old reference logs are not a substitute.
+- **Post-merge evidence:** [Main CI run 34184525187](https://github.com/mimiqdev/ruscv-sim/actions/runs/34184525187) at `fae4759e09c6750e4105c8be7c287e841dabf0dc` compiled the guest programs and passed 46/46 on 2026-09-08. This is exact-merge evidence beyond the historical Docker run, not proof of host toolchain installation.
+- **Impact:** Host-only assembly still requires a suitable toolchain; guest verification no longer blocks A1 acceptance because exact-main CI supplied it. Neither Docker nor CI establishes ISA-wide compliance. Workflow definitions and old reference logs alone are not successful-run evidence.
 - **Next decision:** Use the Docker image or install a compatible host toolchain when repeating guest verification; preserve the actual command output.
 
 ### G-08 — Bare-metal README exit-code text conflicts with executable source
