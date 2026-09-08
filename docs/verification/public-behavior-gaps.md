@@ -6,12 +6,14 @@
 
 **Last verified:** 2026-09-07
 
-**Revision examined:** `b20e531af7abd5fa89d1b11d224b100709a95869`
+**Revision examined:** `64c6f976e27ca24167f32f70c99d2469c7928933` (branch HEAD)
 
-This is a finite register for the first A1 delivery batch. “Reproduced defect” is
-used only where a bounded run observed the behavior. A source observation,
-contract comparison, or hypothesis is labelled separately. No entry is a
-compatibility promise, a production-fix commitment, or a second active plan.
+This is a finite register for the first A1 inventory plus the second A1
+tests/reproductions batch. The persistent second-batch tests are currently
+uncommitted working-tree files. “Reproduced defect” is used only where a bounded
+run observed the behavior. A source observation, contract comparison, or
+hypothesis is labelled separately. No entry is a compatibility promise, a
+production-fix commitment, or a second active plan.
 
 ## Disposition vocabulary
 
@@ -37,20 +39,20 @@ compatibility promise, a production-fix commitment, or a second active plan.
   flat_offset_exit={exit=0, cycles=3, timeout=false, error=None}
   ```
 
-  The manually configured flat-offset case succeeded only after setting `tohost=0x100` and placing the program/exit value at that offset.
-- **Existing tests:** `test_simulator_creation`, `test_simulator_setters`, `test_simulator_run_with_max_cycles`, and `test_simulator_run_default_cycles` are **weak** for this behavior; they do not assert an ELF tohost exit.
+  The persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` test repeats the contrast at base `0x80000000`: the CLI exits at cycle 4, while `RiscVSimulator::load_elf` followed by `run(Some(20))` returns `exit_code=1`, `cycles=20`, `timed_out=true`, and `Timeout after 20 cycles`. The manually configured flat-offset case from the first batch succeeded only after setting `tohost=0x100` and placing the program/exit value at that offset.
+- **Existing tests:** The persistent test is **strong** for the configuration contrast. The targeted `load_and_run` tests in `tests/executor.rs` now use valid fixtures and assert their results; `test_simulator_creation`, `test_simulator_setters`, `test_simulator_run_with_max_cycles`, and `test_simulator_run_default_cycles` remain **weak** for this flat-library ELF behavior because they do not assert an ELF tohost exit.
 - **Impact:** The wrapper's public ELF success/exit behavior is not equivalent to the CLI. Do not claim flat-library ELF/tohost compatibility from the CLI runs.
-- **Next decision:** A later scope must decide whether to add an adapter/fix, a documented limitation, or a focused regression expectation. No repair is made here.
+- **Next decision:** A later scope must decide whether to add an adapter/fix or retain this documented limitation. The persistent reproduction is retained; no repair is made here.
 
 ### G-02 — Flat-library `read_mem` can loop indefinitely on an out-of-range aligned read
 
 - **Disposition:** **Reproduced defect**.
 - **Surface:** `RiscVSimulator::read_mem`.
 - **Implementation evidence:** In `src/executor.rs::RiscVSimulator::read_mem`, an aligned dword/word/half read error can reach the next loop iteration without advancing `current_addr` or `offset`. For an address outside `SimpleMemory`, the loop has no progress condition.
-- **Reproduction:** A bounded temporary program called `RiscVSimulator::new(0x1000).read_mem(0x2000, 4)`. Running the built harness as `timeout 2s stdbuf -o0 ...` printed `before` and returned status `124`; it did not print a result.
-- **Existing tests:** `test_simulator_read_write_mem` and `test_simulator_write_mem_large` are **strong** only for in-range accesses. `test_simulator_read_mem_unaligned` is **weak** because it accepts either `Ok` or `Err`; no out-of-range assertion exists.
+- **Reproduction:** A bounded temporary program called `RiscVSimulator::new(0x1000).read_mem(0x2000, 4)`. Running the built harness as `timeout 2s stdbuf -o0 ...` printed `before` and returned status `124`; it did not print a result. The persistent `public_behavior::out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped` test now launches the exact read in a child test process, waits two seconds, kills it, and calls `wait()` to reap it; the parent passes only when the child has not returned.
+- **Existing tests:** `test_simulator_read_write_mem` and `test_simulator_write_mem_large` are **strong** only for in-range accesses. The persistent child-process test is **strong** for a bounded reproduction. `test_simulator_read_mem_unaligned` remains **weak** because it accepts either `Ok` or `Err`.
 - **Impact:** A public memory inspection helper can hang instead of returning `ExecutorError`.
-- **Next decision:** Add a focused regression and obtain authorization for any production correction. This batch does not change the loop.
+- **Next decision:** Retain the bounded child-process reproduction and obtain authorization for any production correction. This batch does not change the loop.
 
 ### G-03 — Public commit log loses opcodes for nonzero ELF bases
 
@@ -65,7 +67,7 @@ compatibility promise, a production-fix commitment, or a second active plan.
   core   0: 3 0x0000000080000008 (0x00000000)
   ```
 
-- **Existing tests:** `test_log_commit_path_with_logger` is **weak** because it does not inspect the file. Formatter tests such as `test_log_commit_format` are **strong** for supplied arguments but do not exercise the public re-fetch.
+- **Existing tests:** Persistent `public_behavior::public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` is **strong**: it reads all four actual public lines and asserts the zero-opcode observation. The current `test_log_commit_path_with_logger` is **strong** for successful execution, line count, and PC/privilege shape, but deliberately avoids asserting the known-bad opcode; it therefore does not weaken or replace this reproduction. Formatter tests such as `test_log_commit_format` are **strong** for supplied arguments but do not exercise the public re-fetch.
 - **Impact:** Nonzero-base commit logs are not reliable instruction evidence. The zero opcode output must not be treated as a compatibility format.
 - **Next decision:** A later observation/logging scope must choose a fix or an explicit limitation. No source change is made here.
 
@@ -91,7 +93,7 @@ compatibility promise, a production-fix commitment, or a second active plan.
   [DEBUG] Starting execution: ... tohost=0x0000000030001000
   ```
 
-- **Existing tests:** `test_cli_run_verbose_flag` and `test_load_and_run_verbose_output` are **weak** no-panic checks.
+- **Existing tests:** `test_cli_run_verbose_flag` remains a **weak** no-panic check. The current `test_load_and_run_verbose_output` is **strong** for the bounded successful result, but it does not assert the diagnostic text and therefore does not remove this gap.
 - **Impact:** The diagnostic can mislead users about the actual input/configuration; it does not change the observed run result.
 - **Next decision:** Correct the diagnostic or document its meaning in a separately authorized change. No repair is made here.
 
@@ -100,7 +102,7 @@ compatibility promise, a production-fix commitment, or a second active plan.
 - **Disposition:** **Source-observed gap; error path unverified**.
 - **Surface:** `ExecutionResult.signature_data` after a signature read failure.
 - **Implementation evidence:** All `load_and_run` result paths call `dump_signature(...).ok().flatten()`, so a read error becomes `None` while `signature_addr` may remain `Some`.
-- **Existing tests:** `test_dump_signature_none` and `test_dump_signature_zero_size` are **strong** for successful helper cases; no public test injects a signature-region read failure.
+- **Existing tests:** `test_dump_signature_none`, `test_dump_signature_zero_size`, and the current `test_load_and_run_with_signature` are **strong** for successful helper/public artifact cases; no public test injects a signature-region read failure.
 - **Impact:** The result cannot distinguish “no data,” “empty signature,” and “signature read failed” through `signature_data` alone. The current behavior must not be advertised as successful signature capture on an unreadable range.
 - **Next decision:** Decide the result/error contract and add a focused reproduction/regression if a repair is authorized.
 
@@ -124,10 +126,26 @@ compatibility promise, a production-fix commitment, or a second active plan.
 - **Disposition:** **Reproduced defect**.
 - **Surface:** `--log-commits` memory-access annotations on the CLI/public ELF path.
 - **Implementation evidence:** `CommitLogger::log_commit` supports optional `MemoryAccess` formatting, but `load_and_run` unconditionally sets `let mem_access = None` before logging each committed instruction.
-- **Reproduction:** The transient store/exit ELF produced a log line ending after its register changes, with no `mem 0x...` suffix, even though the formatter tests can emit store/load suffixes when supplied with a `MemoryAccess`.
-- **Existing tests:** `test_log_commit_with_memory_load`, `test_log_commit_with_memory_store`, and `test_memory_access_helpers` are **strong** for formatter/helper inputs; `test_log_commit_path_with_logger` is **weak** because it does not inspect the public log contents.
+- **Reproduction:** The transient store/exit ELF produced a log line ending after its register changes, with no `mem 0x...` suffix, even though the formatter tests can emit store/load suffixes when supplied with a `MemoryAccess`. Persistent `public_behavior::public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` repeats this against the public path and asserts that no line contains ` mem `.
+- **Existing tests:** `test_log_commit_with_memory_load`, `test_log_commit_with_memory_store`, and `test_memory_access_helpers` are **strong** for formatter/helper inputs; the persistent public-path test is **strong** for the current omission; `test_log_commit_path_with_logger` remains **weak** because it does not inspect the public log contents.
 - **Impact:** Current public commit logs cannot be used as complete memory-side-effect traces. The formatter's capability is not current public-path behavior.
 - **Next decision:** Decide whether public memory annotation is required and how it should be captured; no repair is made here.
+
+## Persistent second-batch evidence
+
+The current working tree's persistent command is:
+
+```text
+cargo test --all-features --test public_behavior -- --nocapture
+```
+
+It passed **14 tests**. The fixture-backed tests assert segment bytes and zero
+fill, nonzero entry/base execution, RAM effects, exit encodings and process
+statuses, exact limits, tohost precedence, UART bytes, signature bytes, the
+CLI/flat-library distinction, and actual public commit-log contents. The G-02
+case is isolated in a child test process with a two-second deadline; the parent
+kills and waits for the child before asserting the reproduction. No test changes
+the runtime loop or treats a known-defect observation as supported behavior.
 
 ## Out of scope for this register
 
