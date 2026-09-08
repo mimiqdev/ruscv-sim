@@ -6,14 +6,18 @@
 
 **Last verified:** 2026-09-07
 
-**Revision examined:** `64c6f976e27ca24167f32f70c99d2469c7928933` (branch HEAD)
+**Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
+(first submitted PR14 test snapshot)
 
-This is a finite register for the first A1 inventory plus the second A1
-tests/reproductions batch. The persistent second-batch tests are currently
-uncommitted working-tree files. “Reproduced defect” is used only where a bounded
-run observed the behavior. A source observation, contract comparison, or
-hypothesis is labelled separately. No entry is a compatibility promise, a
-production-fix commitment, or a second active plan.
+**Follow-up evidence:** the current uncommitted working tree is based on that
+snapshot and records the zero-fill and G-02 harness corrections described below.
+No future commit hash is implied. This is a finite register for the first A1
+inventory plus the second A1 tests/reproductions batch. The original persistent
+tests are committed in the snapshot; only the follow-up corrections are currently
+uncommitted. “Reproduced defect” is used only where a bounded run observed the
+behavior. A source observation, contract comparison, or hypothesis is labelled
+separately. No entry is a compatibility promise, a production-fix commitment, or
+a second active plan.
 
 ## Disposition vocabulary
 
@@ -49,8 +53,8 @@ production-fix commitment, or a second active plan.
 - **Disposition:** **Reproduced defect**.
 - **Surface:** `RiscVSimulator::read_mem`.
 - **Implementation evidence:** In `src/executor.rs::RiscVSimulator::read_mem`, an aligned dword/word/half read error can reach the next loop iteration without advancing `current_addr` or `offset`. For an address outside `SimpleMemory`, the loop has no progress condition.
-- **Reproduction:** A bounded temporary program called `RiscVSimulator::new(0x1000).read_mem(0x2000, 4)`. Running the built harness as `timeout 2s stdbuf -o0 ...` printed `before` and returned status `124`; it did not print a result. The persistent `public_behavior::out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped` test now launches the exact read in a child test process, waits two seconds, kills it, and calls `wait()` to reap it; the parent passes only when the child has not returned.
-- **Existing tests:** `test_simulator_read_write_mem` and `test_simulator_write_mem_large` are **strong** only for in-range accesses. The persistent child-process test is **strong** for a bounded reproduction. `test_simulator_read_mem_unaligned` remains **weak** because it accepts either `Ok` or `Err`.
+- **Reproduction:** A bounded temporary program called `RiscVSimulator::new(0x1000).read_mem(0x2000, 4)`. Running the built harness as `timeout 2s stdbuf -o0 ...` printed `before` and returned status `124`; it did not print a result. The follow-up `public_behavior` harness now launches the exact read in a recursively isolated `--exact` child, requires a ready marker after simulator construction and before the read, waits two seconds only after that marker, then kills it and calls `wait()` to reap it. Child stdout/stderr are retained for diagnostics, and `KillOnDrop` covers panic/error paths. Companion tests exercise missing-ready and early-exit paths; the parent passes the reproduction only when the child remained alive through the post-ready hang window.
+- **Existing tests:** `test_simulator_read_write_mem` and `test_simulator_write_mem_large` are **strong** only for in-range accesses. The persistent reproduction plus its handshake-failure and early-exit cleanup tests are **strong** for the bounded harness behavior. `test_simulator_read_mem_unaligned` remains **weak** because it accepts either `Ok` or `Err`.
 - **Impact:** A public memory inspection helper can hang instead of returning `ExecutorError`.
 - **Next decision:** Retain the bounded child-process reproduction and obtain authorization for any production correction. This batch does not change the loop.
 
@@ -110,7 +114,7 @@ production-fix commitment, or a second active plan.
 
 - **Disposition:** **Host-environment limitation; resolved in the project Docker image**, not a simulator defect.
 - **Surface:** Project-authored bare-metal ELF suite and the real cross-assembled `test_add_program` path.
-- **Evidence:** On the host, `riscv64-unknown-elf-as` and `riscv64-unknown-elf-ld` were absent; `cargo test --all-features --test test_add_direct -- --nocapture` skipped the test; `./scripts/compile_riscv_tests.sh` exited 1; and `./scripts/run_elf_tests.sh` exited 1 because no ELFs existed. The repository Docker image then compiled 46 ELFs, ran `test_add_program` successfully with exit code 0/cycles 53, and passed the ELF runner 46/46.
+- **Evidence:** On the host, `riscv64-unknown-elf-as` and `riscv64-unknown-elf-ld` were absent; `cargo test --all-features --test test_add_direct -- --nocapture` skipped the test; `./scripts/compile_riscv_tests.sh` exited 1; and `./scripts/run_elf_tests.sh` exited 1 because no ELFs existed. The repository Docker image then compiled 46 ELFs, ran `test_add_program` successfully with exit code 0/cycles 53, and passed the ELF runner 46/46. This Docker run predates the final executor-test strengthening and was not rerun by the PR14 independent reviewer or by the follow-up correction run.
 - **Impact:** Host-only execution remains unavailable without the toolchain, but the project-authored guest suite now has bounded Docker evidence. This does not certify ISA-wide compliance. Checked-in CI definitions and old reference logs are not a substitute.
 - **Next decision:** Use the Docker image or install a compatible host toolchain when repeating guest verification; preserve the actual command output.
 
@@ -127,25 +131,30 @@ production-fix commitment, or a second active plan.
 - **Surface:** `--log-commits` memory-access annotations on the CLI/public ELF path.
 - **Implementation evidence:** `CommitLogger::log_commit` supports optional `MemoryAccess` formatting, but `load_and_run` unconditionally sets `let mem_access = None` before logging each committed instruction.
 - **Reproduction:** The transient store/exit ELF produced a log line ending after its register changes, with no `mem 0x...` suffix, even though the formatter tests can emit store/load suffixes when supplied with a `MemoryAccess`. Persistent `public_behavior::public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` repeats this against the public path and asserts that no line contains ` mem `.
-- **Existing tests:** `test_log_commit_with_memory_load`, `test_log_commit_with_memory_store`, and `test_memory_access_helpers` are **strong** for formatter/helper inputs; the persistent public-path test is **strong** for the current omission; `test_log_commit_path_with_logger` remains **weak** because it does not inspect the public log contents.
+- **Existing tests:** `test_log_commit_with_memory_load`, `test_log_commit_with_memory_store`, and `test_memory_access_helpers` are **strong** for formatter/helper inputs; the persistent public-path test is **strong** for the current omission; the current `test_log_commit_path_with_logger` is **strong** for result, line count, and PC/privilege shape, but deliberately does not inspect the known-bad opcode or missing suffix.
 - **Impact:** Current public commit logs cannot be used as complete memory-side-effect traces. The formatter's capability is not current public-path behavior.
 - **Next decision:** Decide whether public memory annotation is required and how it should be captured; no repair is made here.
 
 ## Persistent second-batch evidence
 
-The current working tree's persistent command is:
+The committed PR14 snapshot's persistent command passed **14 tests**. The
+follow-up working tree's command is:
 
 ```text
 cargo test --all-features --test public_behavior -- --nocapture
 ```
 
-It passed **14 tests**. The fixture-backed tests assert segment bytes and zero
-fill, nonzero entry/base execution, RAM effects, exit encodings and process
-statuses, exact limits, tohost precedence, UART bytes, signature bytes, the
-CLI/flat-library distinction, and actual public commit-log contents. The G-02
-case is isolated in a child test process with a two-second deadline; the parent
-kills and waits for the child before asserting the reproduction. No test changes
+It passed **17 tests**: the original 14, the prefilled-buffer BSS test, and two
+G-02 harness cleanup-path tests. The fixture-backed tests assert segment bytes
+and zero fill, nonzero entry/base execution, RAM effects, exit encodings and
+process statuses, exact limits, tohost precedence, UART bytes, signature bytes,
+the CLI/flat-library distinction, and actual public commit-log contents. The
+G-02 child requires a ready marker before its two-second hang window; the parent
+kills and waits for every spawned child, including failure paths. No test changes
 the runtime loop or treats a known-defect observation as supported behavior.
+The Docker 46/46 result remains prior evidence from before final executor-test
+strengthening, not a follow-up rerun. The detailed zero-fill mutation outcomes
+and the public/component evidence split are recorded in matrix E7.
 
 ## Out of scope for this register
 

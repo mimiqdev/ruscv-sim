@@ -10,9 +10,10 @@ mod common;
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use common::public_elf as fixture;
-use ruscv_sim::elf::load_elf_file;
+use ruscv_sim::elf::{load_elf_file, ElfLoader};
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
-use std::process::{Command, Stdio};
+use std::io::{Cursor, Read};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -34,7 +35,7 @@ fn run_fixture(
 #[test]
 fn elf_segments_preserve_file_bytes_and_zero_fill() {
     let code = [fixture::nop()];
-    let elf = fixture::elf_with_code(&code, 0, true, true, 0x3000);
+    let elf = fixture::elf_with_code(&code, 0, true, true, fixture::BSS_MEMORY_SIZE);
     let loaded = load_elf_file(&elf).unwrap();
 
     assert_eq!(loaded.entry_point, fixture::BASE);
@@ -42,8 +43,8 @@ fn elf_segments_preserve_file_bytes_and_zero_fill() {
     assert_eq!(&loaded.memory[0..4], &code[0].to_le_bytes());
     assert_eq!(loaded.memory[fixture::FILE_BYTE_OFFSET], fixture::FILE_BYTE);
     assert_eq!(loaded.memory[0x2000..0x2008], fixture::SIGNATURE_BYTES);
-    assert_eq!(loaded.memory[0x2fff], 0);
-    assert_eq!(loaded.memory.len(), 0x10000);
+    assert_eq!(loaded.memory[fixture::BSS_PROBE_OFFSET], 0);
+    assert_eq!(loaded.memory.len(), fixture::EXPECTED_BSS_MEMORY_LEN);
     assert_eq!(loaded.tohost, Some(fixture::TOHOST));
     assert_eq!(
         loaded.signature.as_ref().map(|signature| signature.vaddr),
@@ -52,16 +53,32 @@ fn elf_segments_preserve_file_bytes_and_zero_fill() {
 }
 
 #[test]
+fn elf_loader_clears_bss_in_prefilled_memory() {
+    let code = [fixture::nop()];
+    let elf = fixture::elf_with_code(&code, 0, true, false, fixture::BSS_MEMORY_SIZE);
+    let mut cursor = Cursor::new(&elf);
+    let loader = ElfLoader::load(&mut cursor).unwrap();
+    let mut memory = vec![0x5a; fixture::EXPECTED_BSS_MEMORY_LEN];
+
+    assert_eq!(memory[fixture::BSS_PROBE_OFFSET], 0x5a);
+    loader.load_into_memory(&mut cursor, &mut memory).unwrap();
+
+    assert_eq!(&memory[0..4], &code[0].to_le_bytes());
+    assert_eq!(memory[fixture::FILE_BYTE_OFFSET], fixture::FILE_BYTE);
+    assert_eq!(memory[fixture::BSS_PROBE_OFFSET], 0);
+}
+
+#[test]
 fn public_zero_fill_is_observed_by_guest_execution() {
     let code = [
-        fixture::auipc(4, 3),
+        fixture::auipc(4, 0x18),
         fixture::addi(4, 4, -1),
         fixture::lbu(5, 4, 0),
         fixture::ori(5, 5, 1),
         fixture::lui(4, 0x40008),
         fixture::sd(5, 4, 0),
     ];
-    let elf = fixture::elf_with_code(&code, 0, true, false, 0x3000);
+    let elf = fixture::elf_with_code(&code, 0, true, false, fixture::BSS_MEMORY_SIZE);
 
     let result = run_fixture(&elf, Some(20), Some(0x4000_8000));
 
@@ -396,41 +413,301 @@ fn public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps() {
     assert!(lines[3].contains("0x000000008000000c"));
 }
 
-#[test]
-fn out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped() {
-    const CHILD_ENV: &str = "RUSCV_SIM_READ_MEM_CHILD";
-    if std::env::var_os(CHILD_ENV).is_some() {
-        let simulator = RiscVSimulator::new(0x1000);
-        let _ = simulator.read_mem(0x2000, 4);
-        panic!("out-of-range read_mem unexpectedly returned");
+const READ_MEM_CHILD_ENV: &str = "RUSCV_SIM_READ_MEM_CHILD";
+const READ_MEM_READY_ENV: &str = "RUSCV_SIM_READ_MEM_READY";
+const READ_MEM_CHILD_MODE_ENV: &str = "RUSCV_SIM_READ_MEM_CHILD_MODE";
+const READ_MEM_TEST_NAME: &str = "out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped";
+
+#[derive(Debug)]
+struct ChildRun {
+    ready: bool,
+    survived_hang_window: bool,
+    status: Option<ExitStatus>,
+    cleanup_error: Option<String>,
+    diagnostics: String,
+}
+
+struct KillOnDrop {
+    child: Child,
+    reaped: bool,
+}
+
+impl KillOnDrop {
+    fn new(child: Child) -> Self {
+        Self {
+            child,
+            reaped: false,
+        }
     }
 
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        let status = self.child.try_wait()?;
+        if status.is_some() {
+            self.reaped = true;
+        }
+        Ok(status)
+    }
+
+    fn kill_and_wait(&mut self) -> std::io::Result<ExitStatus> {
+        if self.reaped {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "child was already reaped",
+            ));
+        }
+
+        match self.child.kill() {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::InvalidInput | std::io::ErrorKind::NotFound
+                ) => {}
+            Err(error) => return Err(error),
+        }
+        let status = self.child.wait()?;
+        self.reaped = true;
+        Ok(status)
+    }
+
+    fn diagnostics(&mut self) -> String {
+        fn read_pipe<T: Read>(pipe: &mut Option<T>) -> String {
+            let mut bytes = Vec::new();
+            if let Some(pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+
+        let stdout = read_pipe(&mut self.child.stdout);
+        let stderr = read_pipe(&mut self.child.stderr);
+        format!("stdout:\n{stdout}\nstderr:\n{stderr}")
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if !self.reaped {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            self.reaped = true;
+        }
+    }
+}
+
+fn finish_child(
+    child: &mut KillOnDrop,
+    ready: bool,
+    survived_hang_window: bool,
+    reason: impl Into<String>,
+    status: Option<ExitStatus>,
+) -> ChildRun {
+    let (status, cleanup_error) = match status {
+        Some(status) => (Some(status), None),
+        None => match child.kill_and_wait() {
+            Ok(status) => (Some(status), None),
+            Err(error) => (None, Some(error.to_string())),
+        },
+    };
+    let reason = reason.into();
+    let child_output = if cleanup_error.is_none() {
+        child.diagnostics()
+    } else {
+        "child output unavailable before cleanup completed".to_string()
+    };
+    let diagnostics = format!("reason: {reason}\n{child_output}");
+
+    ChildRun {
+        ready,
+        survived_hang_window,
+        status,
+        cleanup_error,
+        diagnostics,
+    }
+}
+
+fn run_read_mem_child(
+    skip_ready: bool,
+    exit_before_ready: bool,
+    ready_timeout: Duration,
+    hang_timeout: Duration,
+) -> ChildRun {
+    let temp_dir = TempDir::new().unwrap();
+    let ready_path = temp_dir.path().join("read-mem-ready");
     let executable = std::env::current_exe().unwrap();
-    let mut child = Command::new(executable)
+    let mode = if exit_before_ready {
+        "exit-before-ready"
+    } else if skip_ready {
+        "skip-ready"
+    } else {
+        "normal"
+    };
+    let spawned = Command::new(executable)
         .arg("--exact")
-        .arg("out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped")
+        .arg(READ_MEM_TEST_NAME)
         .arg("--nocapture")
-        .env(CHILD_ENV, "1")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .env(READ_MEM_CHILD_ENV, "1")
+        .env(READ_MEM_READY_ENV, &ready_path)
+        .env(READ_MEM_CHILD_MODE_ENV, mode)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let mut child = KillOnDrop::new(spawned);
 
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let ready_deadline = Instant::now() + ready_timeout;
     loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            panic!("read_mem child exited before the bound: {status}");
+        match std::fs::read(&ready_path) {
+            Ok(bytes) if bytes == b"ready" => break,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return finish_child(
+                    &mut child,
+                    false,
+                    false,
+                    format!("ready handshake read failed: {error}"),
+                    None,
+                );
+            }
         }
-        if Instant::now() >= deadline {
+
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return finish_child(
+                    &mut child,
+                    false,
+                    false,
+                    format!("read_mem child exited before ready: {status}"),
+                    Some(status),
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return finish_child(
+                    &mut child,
+                    false,
+                    false,
+                    format!("checking read_mem child before ready failed: {error}"),
+                    None,
+                );
+            }
+        }
+
+        if Instant::now() >= ready_deadline {
+            return finish_child(
+                &mut child,
+                false,
+                false,
+                format!("ready handshake timed out after {ready_timeout:?}"),
+                None,
+            );
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    let hang_deadline = Instant::now() + hang_timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return finish_child(
+                    &mut child,
+                    true,
+                    false,
+                    format!("read_mem child exited during hang window: {status}"),
+                    Some(status),
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return finish_child(
+                    &mut child,
+                    true,
+                    false,
+                    format!("checking read_mem child during hang window failed: {error}"),
+                    None,
+                );
+            }
+        }
+
+        if Instant::now() >= hang_deadline {
             break;
         }
         thread::sleep(Duration::from_millis(10));
     }
 
-    if let Some(status) = child.try_wait().unwrap() {
-        panic!("read_mem child returned at the deadline: {status}");
+    finish_child(
+        &mut child,
+        true,
+        true,
+        format!("read_mem child survived {hang_timeout:?} hang window"),
+        None,
+    )
+}
+
+#[test]
+fn out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped() {
+    if std::env::var_os(READ_MEM_CHILD_ENV).is_some() {
+        let simulator = RiscVSimulator::new(0x1000);
+        let mode = std::env::var(READ_MEM_CHILD_MODE_ENV).unwrap();
+        if mode == "exit-before-ready" {
+            eprintln!("read_mem child exiting before ready handshake");
+            return;
+        }
+        if mode != "skip-ready" {
+            let ready_path = std::path::PathBuf::from(
+                std::env::var_os(READ_MEM_READY_ENV).expect("ready path missing"),
+            );
+            std::fs::write(&ready_path, b"ready")
+                .unwrap_or_else(|error| panic!("failed to signal ready handshake: {error}"));
+        }
+        let _ = simulator.read_mem(0x2000, 4);
+        panic!("out-of-range read_mem unexpectedly returned");
     }
-    child.kill().unwrap();
-    let status = child.wait().unwrap();
-    assert!(!status.success());
+
+    let outcome = run_read_mem_child(false, false, Duration::from_secs(2), Duration::from_secs(2));
+    assert!(outcome.ready, "{outcome:?}");
+    assert!(outcome.survived_hang_window, "{outcome:?}");
+    assert!(
+        matches!(outcome.status.as_ref(), Some(status) if !status.success()),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn out_of_range_flat_read_mem_handshake_failure_is_reaped() {
+    let outcome = run_read_mem_child(
+        true,
+        false,
+        Duration::from_millis(250),
+        Duration::from_millis(250),
+    );
+    assert!(!outcome.ready, "{outcome:?}");
+    assert!(!outcome.survived_hang_window, "{outcome:?}");
+    assert!(outcome.status.is_some(), "{outcome:?}");
+    assert!(outcome.cleanup_error.is_none(), "{outcome:?}");
+}
+
+#[test]
+fn out_of_range_flat_read_mem_early_exit_is_reaped() {
+    let outcome = run_read_mem_child(
+        false,
+        true,
+        Duration::from_secs(1),
+        Duration::from_millis(250),
+    );
+    assert!(!outcome.ready, "{outcome:?}");
+    assert!(!outcome.survived_hang_window, "{outcome:?}");
+    assert_eq!(
+        outcome.status.as_ref().and_then(|status| status.code()),
+        Some(0),
+        "{outcome:?}"
+    );
+    assert!(
+        outcome
+            .diagnostics
+            .contains("exiting before ready handshake"),
+        "{outcome:?}"
+    );
+    assert!(outcome.cleanup_error.is_none(), "{outcome:?}");
 }

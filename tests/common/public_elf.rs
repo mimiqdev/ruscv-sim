@@ -9,6 +9,9 @@ pub const SIGNATURE: u64 = BASE + 0x2000;
 pub const SIGNATURE_BYTES: [u8; 8] = [0, 17, 34, 51, 68, 85, 102, 119];
 pub const LOAD_OFFSET: usize = 0x1000;
 pub const FILE_DATA_SIZE: usize = 0x2008;
+pub const BSS_MEMORY_SIZE: usize = 0x18000;
+pub const EXPECTED_BSS_MEMORY_LEN: usize = 0x20000;
+pub const BSS_PROBE_OFFSET: usize = 0x17fff;
 pub const FILE_BYTE_OFFSET: usize = 0x1800;
 pub const FILE_BYTE: u8 = 0xa5;
 
