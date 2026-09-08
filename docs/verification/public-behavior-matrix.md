@@ -6,14 +6,19 @@
 
 **Last verified:** 2026-09-07
 
-**Revision examined:** `b20e531af7abd5fa89d1b11d224b100709a95869`
+**Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
+(first submitted PR14 test snapshot)
 
-This is the first A1 delivery batch: an as-is public behavior inventory and
- evidence record. It is not an A1 closeout, a target-architecture implementation
-claim, or an approval to repair production behavior. Source code and executed
- tests are the authority for current behavior; accepted ADR text is the contract
- against which a mismatch is recorded. An observed error is never a compatibility
- promise.
+**Follow-up evidence:** the current uncommitted working tree is based on that
+snapshot and contains the bounded evidence corrections described in E7. No
+future commit hash is implied by this record. E1-E5 retain historical evidence
+from the `b20e531` source baseline and the documentation-only warning repair at
+`64c6f976`; E6 records the committed PR14 snapshot; E7 records the follow-up
+working-tree evidence. This is not an A1 closeout, a target-architecture
+implementation claim, or an approval to repair production behavior. Source code
+and executed tests are the authority for current behavior; accepted ADR text is
+the contract against which a mismatch is recorded. An observed error is never a
+compatibility promise.
 
 ## Reading the matrix
 
@@ -41,7 +46,7 @@ The compatibility paths are kept separate throughout:
 
 ### E1 — Repository tests
 
-At the revision above:
+At the committed evidence snapshot above; follow-up commands are recorded in E7:
 
 | Command | Outcome | Evidence boundary |
 | --- | --- | --- |
@@ -55,20 +60,37 @@ At the revision above:
 | `cargo test --all-features --doc` | **27 passed** (**post-warning-fix**) | Applicable doctests passed after the documentation example changes. |
 | `cargo fmt --all -- --check` | Exit 0 (**post-warning-fix**) | Formatting check after the documentation-only source changes. |
 | `cargo test --all-features --test cli_test --test executor --test test_elf_loader --test commits_test -- --nocapture` | **100 passed** (**pre-warning-fix baseline**) | Focused Rust tests before the documentation-only warning repair; not rerun in this pass. |
+| `cargo test --all-features --test executor -- --nocapture` | **57 passed** (**committed PR14 snapshot `b16a787`**) | Strengthened public `load_and_run` result, zero-limit, file-path, no-logger, and logger-artifact assertions; no production source changed. |
+| `cargo test --all-features` | Exit 0 (**committed PR14 snapshot `b16a787`, before E7**); **809** library tests, **57** executor tests, **14** persistent public-behavior tests, **27** doctests, and all reported integration suites passed | The existing generated `add.elf` allowed `test_add_program` to pass in this run; this does not establish that the host cross-assembler/linker is installed. |
 | `cargo test --all-features --lib` | **809 passed** (**pre-warning-fix baseline**) | Unit/component evidence before the documentation-only warning repair; not rerun in this pass. |
 | `cargo test --all-features --test test_add_direct -- --nocapture` | Test process passed, but `test_add_program` **skipped** because `riscv64-unknown-elf-as` was unavailable (**host baseline**) | No project-authored guest ELF was executed by this host run. |
 | `./scripts/compile_riscv_tests.sh` | Exit 1: `riscv64-unknown-elf-as` unavailable (**host baseline**) | Host-only guest fixture compilation was unavailable. |
 | `./scripts/run_elf_tests.sh` | Exit 1: no generated `.elf` files (**host baseline**) | Host-only guest suite did not run. |
 | `docker run --rm --init -v "$PWD:/workspace" -w /workspace ruscv-sim-dev bash -c 'export PATH=/opt/riscv/bin:$PATH; ./scripts/compile_riscv_tests.sh && cargo test --all-features --test test_add_direct -- --nocapture && ./scripts/run_elf_tests.sh'` | Exit 0: 46 ELF files compiled; `test_add_program` passed with exit code 0/cycles 53; ELF runner passed **46/46** (**pre-warning-fix guest evidence**) | Docker supplied the missing cross-toolchain and Spike; this guest run was not repeated during the warning-only repair. |
+| `cargo fmt --all -- --check` | Exit 0 (**committed PR14 snapshot `b16a787`, pre-E7**) | Formatting passed after adding the persistent fixture/test files. |
+| `cargo check --all-features` | Exit 0 (**committed PR14 snapshot `b16a787`, pre-E7**) | All-feature compilation passed with the persistent fixture/test files. |
+| `cargo clippy --all-features --all-targets -- -D warnings` | Exit 0 (**committed PR14 snapshot `b16a787`, pre-E7**) | Strict Clippy passed, including integration-test targets. |
+| `cargo test --all-features` | Exit 0 (**committed PR14 snapshot `b16a787`, pre-E7**); **809** library tests, **14** persistent public-behavior tests, and all reported integration suites passed; `test_add_program` returned from its host-toolchain skip path | Host has no RISC-V cross assembler/linker, so this is not host guest-ELF execution evidence. The dedicated persistent fixture suite is self-contained. |
+| `cargo doc --all-features --no-deps` | Exit 0 with zero warnings (**committed PR14 snapshot `b16a787`, pre-E7**) | Documentation remains warning-free after the persistent test additions. |
+| `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps` | Exit 0 with zero warnings (**committed PR14 snapshot `b16a787`, pre-E7**) | Strict rustdoc remains clean. |
+| `cargo test --all-features --doc` | **27 passed** (**committed PR14 snapshot `b16a787`, pre-E7**) | All applicable doctests passed. |
+| `docker run --rm --init -v "$PWD:/workspace" -w /workspace ruscv-sim-dev bash -c 'export PATH=/opt/riscv/bin:$PATH; ./scripts/compile_riscv_tests.sh && cargo test --all-features --test test_add_direct -- --nocapture && ./scripts/run_elf_tests.sh'` | Exit 0: 46 ELF files compiled; `test_add_program` passed with exit code 0/cycles 53; ELF runner passed **46/46** (**guest evidence before final executor-test strengthening**) | The Docker run predates the final executor assertion strengthening and was not rerun by the independent PR14 reviewer or in the E7 follow-up. Production code was unchanged; retain this as prior guest evidence, not exact-head reviewer evidence. It was repeated through `newgrp docker` because the host shell lacked direct Docker-socket permission. |
 
-The initial repository quality gate recorded 77 rustdoc warnings. The current
+The initial repository quality gate recorded 77 rustdoc warnings. The
 warning-only repair passed both ordinary and `-D warnings` rustdoc builds, plus
-27 applicable doctests and formatting. The check, Clippy, full Rust test, focused
-test, and 809-library-test rows marked pre-warning-fix are retained as prior
-baseline evidence, not presented as reruns. Likewise, the Docker guest row is
-prior guest evidence and was not repeated during this documentation pass. The
-repository's old CI definitions and checked-in reference logs are not substituted
-for an A1 run.
+27 applicable doctests and formatting. The current second-batch rows record the
+same quality gate with the persistent fixtures/tests present; the focused
+executor and full-test rows record the committed PR14 snapshot; and the older
+pre-warning-fix rows remain historical baseline evidence. The committed full run
+used an existing generated `add.elf`, while the host-only compile limitation and
+the prior Docker row remain recorded separately. The E7 follow-up quality gate
+is recorded below. The repository's old CI definitions and checked-in reference
+logs are not substituted for an A1 run.
+
+PR14 is based on `a1-public-behavior-inventory`, not `main`. Because the workflow
+filters `pull_request.branches: [main]`, `gh pr checks 14` reported no checks and
+no check-run rollup. This is an inapplicable workflow result, not a pending or
+passing CI result.
 
 #### Rustdoc warning repair scope
 
@@ -174,6 +196,157 @@ reported `ruscv-sim 0.1.0` for `--version`. With `--verbose`, a real run printed
 `Tohost address: 0x0000000000000000` before later debug output showed the selected
 ELF address; that misleading diagnostic is [G-05](public-behavior-gaps.md#g-05--verbose-tohost-diagnostic-is-misleading).
 
+### E6 — Persistent second-batch fixtures and tests
+
+The committed PR14 snapshot adds `tests/common/public_elf.rs` and
+`tests/public_behavior.rs` without changing production code, APIs, dependencies,
+or CI. The fixture builder emits a minimal ELF64 little-endian `ET_EXEC`
+`EM_RISCV` image with one `PT_LOAD`, a nonzero base (`0x80000000`), optional
+`.tohost`/`.signature` metadata, a file-backed byte region, and a larger
+zero-filled memory extent. Its instruction encoders are limited to the RV64I
+instructions used by the named tests; they are not an ISA implementation.
+
+The focused command was:
+
+```text
+cargo test --all-features --test public_behavior -- --nocapture
+```
+
+It passed **14 tests**. The persistent assertions are:
+
+| Test | Assertion in the committed snapshot |
+| --- | --- |
+| `elf_segments_preserve_file_bytes_and_zero_fill` | Loader entry/base, code bytes, a file-backed byte, signature metadata/data, a zero byte at `0x2fff`, and allocated memory size; the probe was inside the minimum 64 KiB allocation and did not prove `p_memsz`. Corrected in E7. |
+| `public_zero_fill_is_observed_by_guest_execution` | Guest loaded the zero-filled probe at `0x80002fff` and exited code 0 in 6 cycles, but the probe was inside the minimum allocation and could not detect an ignored `p_memsz`. Corrected in E7. |
+| `public_entry_and_nonzero_base_execute_from_the_declared_entry` | Guest entry offset `0x100`, nonzero base, exit code, exact cycle count, final PC, and timeout/error state. |
+| `public_ram_store_and_load_affect_the_same_image` | Guest stores and reloads an exit payload through RAM, then exits code 42 after 8 cycles. |
+| `default_limit_path_returns_an_early_guest_exit` | `None` limit follows the default-limit path and observes an early exit; it does not claim the 10,000,000-cycle exhaustion boundary. |
+| `exact_limits_include_zero_and_the_final_exit_slot` | Exact zero, pre-exit, and final-slot limits assert cycles, PC, timeout text, and successful exit. |
+| `cli_propagates_zero_and_nonzero_guest_exit_codes` | CLI process statuses 0 and 42 plus printed result fields. |
+| `alternative_exit_encoding_is_observed_on_the_public_path` | Public alternative high-bit exit encoding returns code 42 in 5 cycles. |
+| `tohost_precedence_selects_elf_then_cli_override_then_fixed_endpoint` | ELF section selection, CLI RAM override, and fixed-endpoint timeout are distinguished by code/cycles/status. |
+| `uart_bytes_are_emitted_by_the_cli_elf_path` | CLI stdout contains the exact `A1!` plus newline bytes and a successful result. |
+| `signature_bytes_are_returned_after_public_execution` | Public result contains signature address `0x80002000` and exact bytes `[0, 17, 34, 51, 68, 85, 102, 119]`. |
+| `flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` | Flat `write_mem`/`read_mem` bytes round-trip; the same ELF exits in the CLI but times out in `RiscVSimulator`, reproducing G-01. |
+| `public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` | Actual public log has four lines with zero opcodes and no `mem` suffix, reproducing G-03/G-09. |
+| `out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped` | A child process running the out-of-range aligned helper read is allowed a 2-second bound, then killed and waited, reproducing G-02 without an unbounded test process. |
+
+Most of these tests are stronger evidence than the older smoke tests because
+they assert state, process status, output, exact bytes, exact cycle/PC values, or
+actual log artifacts. The two committed zero-fill assertions had a coverage
+blind spot: their probe was inside the allocator's minimum window. E7 adds a
+public extent probe and a component prefilled-buffer test to separate `p_memsz`
+coverage from explicit BSS clearing. The known-defect tests intentionally
+document incorrect observations and are linked to the gap register; they do not
+convert those observations into compatibility promises.
+
+The committed PR14 snapshot also strengthens the public `load_and_run` coverage
+in `tests/executor.rs`. The former `test_load_and_run_small_memory` was renamed
+to `test_load_and_run_with_one_cycle_budget` because `load_and_run` does not expose
+a caller-selected memory size. The following tests now use the persistent valid
+nonzero-base fixture rather than the old zero-length ELF and assert actual
+results:
+
+- `test_load_and_run_zero_cycles` checks exit code, zero cycles, entry PC,
+  timeout state, and exact timeout text.
+- `test_load_and_run_without_logger` and `test_load_and_run_file_path` check
+  successful exit, cycles, final PC, and error/timeout state.
+- `test_log_commit_path_with_logger` checks the result and the three emitted
+  lines' hart/privilege/PC shape. It intentionally does **not** assert the
+  known-bad nonzero-base opcode field; G-03/G-09 remain explicit reproduction
+  evidence in `public_behavior.rs`.
+- `test_htif_exit_code_non_exit`, the tohost-selection tests, verbose output,
+  signature extraction, and the large-limit test now assert their bounded
+  result; `test_load_and_run_with_signature` also asserts the exact artifact.
+
+The focused executor command passed **57 tests** in the committed PR14 snapshot:
+
+```text
+cargo test --all-features --test executor -- --nocapture
+```
+
+In the committed 14-test snapshot, the first 11 rows above were intended as
+compatibility characterization, but the two zero-fill rows had the limitation
+noted above. E7 corrects that limitation. The flat-library ELF contrast (G-01),
+public commit-log observation (G-03/G-09), and bounded out-of-range `read_mem`
+case (G-02) remain defect reproductions, not compatibility passes. E7's
+handshake-failure and early-exit cases validate the reproduction harness's
+cleanup paths, not simulator compatibility. Other legacy executor/component
+smoke tests remain outside this targeted strengthening.
+
+### E7 — Follow-up evidence corrections based on `b16a787`
+
+The current uncommitted working tree is based on the committed PR14 snapshot
+`b16a7872cf62e51dc204d9ea122b6c5223c15f96`. It changes only test fixtures,
+test harness code, and evidence wording; no production code, public API,
+dependency, CI, or address/limit behavior changed. These corrections are not
+assigned a future commit hash.
+
+#### Zero-fill evidence
+
+The fixture now uses `p_memsz = 0x18000`, which makes the loader allocation
+`0x20000` when `p_memsz` is honored, rather than the `0x10000` minimum that also
+masked the earlier test. The public path test loads `0x80017fff`, beyond that
+minimum window, and therefore fails if the loader ignores the segment extent.
+The separate component test
+`elf_loader_clears_bss_in_prefilled_memory` initializes the destination buffer
+to `0x5a` before calling `ElfLoader::load_into_memory` and asserts that the same
+BSS probe becomes zero. This distinguishes allocation/extent evidence from
+explicit BSS clearing; neither test is evidence for the other layer.
+
+Controlled mutations were performed only in temporary copies and removed after
+the run:
+
+| Temporary mutation | Focused command outcome |
+| --- | --- |
+| `memory_footprint` changed from using `p_memsz` to `p_filesz` | `public_zero_fill_is_observed_by_guest_execution` exited **101** with a test failure. |
+| `load_into_memory` BSS loop changed from `0..mem_size` to `0..file_size` | `elf_loader_clears_bss_in_prefilled_memory` exited **101** with a test failure. |
+
+#### G-02 harness safety
+
+The child now writes a `ready` marker, through the `RUSCV_SIM_READ_MEM_READY`
+path passed in the environment, after constructing `RiscVSimulator` and before
+calling `read_mem`. The parent polls that marker with a deadline and starts the
+two-second hang window only after the marker is observed. Child stdout/stderr are
+piped and included in failure diagnostics. `KillOnDrop` owns every spawned child;
+its normal timeout path performs `kill()` followed by `wait()`, and its `Drop`
+implementation performs the same best-effort cleanup for panic/error paths. The
+recursive `RUSCV_SIM_READ_MEM_CHILD` environment guard and `--exact` invocation
+remain in place.
+
+The three harness paths were each run exactly:
+
+| Test | Result |
+| --- | --- |
+| `out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped` | 1 passed in about 2.01 s; ready observed before the two-second hang window, then child killed and reaped. |
+| `out_of_range_flat_read_mem_handshake_failure_is_reaped` | 1 passed in about 0.25 s; missing ready was bounded and child was cleaned up. |
+| `out_of_range_flat_read_mem_early_exit_is_reaped` | 1 passed in about 0.01 s; child exit before ready was detected, diagnostics retained, and child was reaped. |
+
+The post-run process check found no matching `public_behavior` read-mem child
+processes. The full follow-up public-behavior run passed **17 tests** (the
+original 14 plus the prefilled-BSS test and two harness-path tests):
+
+```text
+cargo test --all-features --test public_behavior -- --nocapture
+```
+
+The follow-up quality checks were:
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | Exit 0. |
+| `cargo check --all-features` | Exit 0. |
+| `cargo clippy --all-features --all-targets -- -D warnings` | Exit 0. |
+| `cargo test --all-features --test executor -- --nocapture` | **57 passed**. |
+| `cargo test --all-features` | Exit 0; **809** library tests, **57** executor tests, **17** public-behavior tests, **27** doctests, and all reported integration suites passed. The existing generated `add.elf` allowed `test_add_program` to pass; this is not host cross-toolchain evidence. |
+| `cargo doc --all-features --no-deps` | Exit 0 with zero warnings. |
+| `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps` | Exit 0 with zero warnings. |
+
+The follow-up did not rerun Docker. The 46/46 guest result in E1 predates the
+final executor-test strengthening and was not independently rerun by the PR14
+reviewer; production code was unchanged, so it remains prior guest evidence,
+not exact-follow-up-head evidence.
+
 ## Compatibility matrix
 
 ### CLI, API inputs, ELF loading, and limits
@@ -184,38 +357,38 @@ ELF address; that misleading diagnostic is [G-05](public-behavior-gaps.md#g-05--
 | Input and error boundary | Invalid/missing input must remain distinguishable from a guest result; `load_and_run` exposes loader errors. | `ElfLoader::load` validates ELF identity; `load_and_run_file` maps file reads to `ExecutorError::ElfLoadError`; CLI exits 1 on `Err`. | `test_cli_run_missing_elf`, `test_cli_run_invalid_elf`, `test_load_and_run_invalid_elf`, `test_load_and_run_truncated_elf`: **strong** error-status assertions. | Focused tests passed. **Verified** for the exercised invalid inputs; malformed ELF coverage is not exhaustive. |
 | `ExecutionResult` and terminal presentation | Preserve exit code, completed cycle count, final PC, timeout/error distinction, and optional signature artifact; CLI prints the result and exits with `exit_code`. | `src/executor.rs::ExecutionResult` and `load_and_run`; `src/main.rs::print_result` and `std::process::exit(result.exit_code as i32)`. | `test_execution_result_defaults`, `test_execution_result_custom`, `test_execution_result_timeout`, and `test_execution_result_signature` are **weak-to-medium** because most values are manually constructed. | E2 observed actual exit/cycle/PC/timeout values and process statuses. **Verified** for the listed paths; broad error taxonomy remains unverified. |
 | Accepted ELF input | Current loader accepts ELF64, little-endian, `ET_EXEC`, machine `EM_RISCV`, and rejects other identity fields. | `src/elf.rs::ElfLoader::load`. | `src/elf.rs::test_elf_load`, `test_load_elf_file_function`: **strong** for hand-built valid ELF; invalid-input tests are **strong** for rejection. | E2 used valid ELF64/RISC-V inputs. **Verified** for this profile, not for arbitrary ELF variants. |
-| PT_LOAD file bytes | Load each PT_LOAD's `p_filesz` bytes at its `p_vaddr`-relative location. | `ElfLoader::memory_footprint`, `load_into_memory`, and `load_elf_file` create a relative buffer and copy each segment. | `test_load_into_memory` and `test_load_elf_file_function`: **strong** for two segments and selected bytes, but not all overlap/permission cases. | E2 guest file-byte check passed. **Verified** for the exercised segment layout; permissions and overlap behavior are unverified. |
-| PT_LOAD zero-fill | Bytes from `p_filesz` through `p_memsz` must be represented as zero-filled memory. | `load_into_memory` zeroes the tail of each segment; the initial `Vec` is also zeroed. | Existing loader test checks initial values but does not assert a `p_filesz < p_memsz` byte directly (**weak** for this requirement). | E2 `zero-fill.elf` loaded a file byte and a distinct zero-filled byte and exited 0. **Verified** for that layout. |
-| Entry point | Preserve ELF `e_entry` as the guest PC; do not replace it with the storage base. | `ElfLoader::entry_point`; CLI calls `core.reset(entry_point, 0)`, while the library calls `core.reset(entry_point, base_addr)`. | `test_elf_load` and `test_load_elf_file_function`: **strong** entry assertions; generic execution tests are weaker. | E2 entry-offset fixture executed from `0x20000100` and returned final PC `0x2000010c`. **Verified** for a non-base entry. |
-| Nonzero load base and address meaning | Preserve guest addresses while allowing the current flat image to be stored relative to its lowest load address. | CLI stores relative bytes in `SimpleMemory`, routes them through `SystemBus(ram_base=base_addr)`, and resets the core with base 0; `MemoryAdapter` therefore passes guest addresses unchanged on CLI. | `test_memory_adapter_va_to_pa` and `test_memory_adapter_different_base`: **strong** component assertions; `test_add_program` would be public-path evidence but was skipped. | E2 executed at `0x80000000` and passed. **Verified** for execution; commit logging has the reproduced nonzero-base opcode defect in E4. |
-| RAM effects | Guest RAM stores and loads must affect the same public RAM image. | `SystemBus` routes RAM addresses to `SimpleMemory`; `RiscvCore::step` uses the bus for instruction and data memory. | `test_system_bus_routing`: **strong** typed RAM round-trip; most `load_and_run` tests are **weak**. | E2 `ram.elf` stored and loaded a value before exit. **Verified** for the exercised aligned dword path. |
-| Default limit | Keep the default maximum at 10,000,000 completed loop iterations/cycles in the compatibility path; this is not `mcycle`/`minstret` or virtual time. | `DEFAULT_MAX_CYCLES = 10_000_000`; `Option::unwrap_or` in both `load_and_run` and `RiscVSimulator::run`. | `test_simulator_run_default_cycles`: **weak**; it fails quickly on an empty instruction and does not reach the default bound. | E2 no-option run exited before the bound. The numeric exhaustion boundary was not run. **Unverified** for default-limit exhaustion. |
-| Zero limit | `--max-cycles 0` performs no instruction and returns a timeout result with zero cycles. | `while cycles < max_cycles` is skipped; timeout result is built with `cycles = 0`. | `test_load_and_run_zero_cycles`: **weak** (`Ok` or `Err`); no strong existing assertion. | E2 observed `TIMEOUT`, cycles 0, final PC at entry. **Verified**. |
-| Exact finite limit | A nonzero finite limit permits at most that many successful loop iterations; an exit on the last permitted instruction remains observable. | `cycles` increments immediately after `core.step`; tohost is checked before the loop condition is evaluated again. | `test_simulator_run_with_max_cycles` and large-limit tests are **weak**; they do not assert exact count. | E2 max 5 timed out at 5; max 6 observed exit at 6. **Verified** for exact-limit and final-slot ordering. |
+| PT_LOAD file bytes | Load each PT_LOAD's `p_filesz` bytes at its `p_vaddr`-relative location. | `ElfLoader::memory_footprint`, `load_into_memory`, and `load_elf_file` create a relative buffer and copy each segment. | `test_load_into_memory`, `test_load_elf_file_function`, and persistent `public_behavior::elf_segments_preserve_file_bytes_and_zero_fill`: **strong** for selected bytes; overlap/permission cases remain unverified. | E2 and E6 assert code and data bytes through the loader; E6 also executes the same fixture. **Verified** for the exercised segment layout; permissions and overlap behavior are unverified. |
+| PT_LOAD zero-fill | Bytes from `p_filesz` through `p_memsz` must be represented as zero-filled memory. | `load_into_memory` zeroes the tail of each segment; the initial `Vec` is also zeroed. | E7 `public_behavior::elf_segments_preserve_file_bytes_and_zero_fill` and `public_zero_fill_is_observed_by_guest_execution` use a probe beyond the 64 KiB minimum allocation; E7 `elf_loader_clears_bss_in_prefilled_memory` supplies a nonzero buffer: **strong**, with public and component evidence separated. | E7's public probe detects an ignored `p_memsz`; its component prefill test detects removal of explicit BSS clearing. **Verified** for the exercised layout and explicit clear operation; other segment/overlap cases remain unverified. |
+| Entry point | Preserve ELF `e_entry` as the guest PC; do not replace it with the storage base. | `ElfLoader::entry_point`; CLI calls `core.reset(entry_point, 0)`, while the library calls `core.reset(entry_point, base_addr)`. | `test_elf_load`, `test_load_elf_file_function`, and persistent `public_behavior::public_entry_and_nonzero_base_execute_from_the_declared_entry`: **strong** entry, cycle, and final-PC assertions. | E2 and E6 entry-offset fixtures executed from a nonzero entry and asserted the final PC. **Verified** for a non-base entry. |
+| Nonzero load base and address meaning | Preserve guest addresses while allowing the current flat image to be stored relative to its lowest load address. | CLI stores relative bytes in `SimpleMemory`, routes them through `SystemBus(ram_base=base_addr)`, and resets the core with base 0; `MemoryAdapter` therefore passes guest addresses unchanged on CLI. | `test_memory_adapter_va_to_pa`, `test_memory_adapter_different_base`, and persistent `public_behavior::public_entry_and_nonzero_base_execute_from_the_declared_entry`: **strong** component/public assertions; `test_add_program` is guest evidence. | E2 and E6 executed at `0x80000000` and asserted results. **Verified** for execution; commit logging has the reproduced nonzero-base opcode defect in E4/E6. |
+| RAM effects | Guest RAM stores and loads must affect the same public RAM image. | `SystemBus` routes RAM addresses to `SimpleMemory`; `RiscvCore::step` uses the bus for instruction and data memory. | `test_system_bus_routing` and persistent `public_behavior::public_ram_store_and_load_affect_the_same_image`: **strong** typed/public round-trips. | E2 and E6 stored and loaded a value before exit; E6 asserted code 42 and 8 cycles. **Verified** for the exercised aligned dword path. |
+| Default limit | Keep the default maximum at 10,000,000 completed loop iterations/cycles in the compatibility path; this is not `mcycle`/`minstret` or virtual time. | `DEFAULT_MAX_CYCLES = 10_000_000`; `Option::unwrap_or` in both `load_and_run` and `RiscVSimulator::run`. | `test_simulator_run_default_cycles` remains a weak empty-instruction smoke test; persistent `public_behavior::default_limit_path_returns_an_early_guest_exit` is **strong** for the no-option path but does not exhaust the bound. | E2 and E6 no-option runs exited before the bound. The numeric exhaustion boundary was not run. **Unverified** for default-limit exhaustion. |
+| Zero limit | `--max-cycles 0` performs no instruction and returns a timeout result with zero cycles. | `while cycles < max_cycles` is skipped; timeout result is built with `cycles = 0`. | Persistent `public_behavior::exact_limits_include_zero_and_the_final_exit_slot`: **strong** exit code, cycles, final PC, timeout flag, and exact error text. | E2 and E6 observed `TIMEOUT`, cycles 0, and final PC at entry. **Verified**. |
+| Exact finite limit | A nonzero finite limit permits at most that many successful loop iterations; an exit on the last permitted instruction remains observable. | `cycles` increments immediately after `core.step`; tohost is checked before the loop condition is evaluated again. | Persistent `public_behavior::exact_limits_include_zero_and_the_final_exit_slot`: **strong** assertions for max 5 and max 6, including the final-slot exit. | E2 and E6 max 5 timed out at 5; max 6 observed exit at 6. **Verified** for exact-limit and final-slot ordering. |
 | Execution error count | A failed `core.step` returns an error result without incrementing `cycles`; timeout is separate from execution error. | `load_and_run` increments only in the `Ok(())` arm and returns an error-shaped `ExecutionResult` in the `Err` arm. | `test_execution_result_error` is a **weak** manually constructed result; invalid-instruction public execution was not asserted with exact fields. | E2 zero/limit cases verified timeout counts; exact public execution-error count remains **Unverified**. |
 
 ### Exit, tohost, UART, signature, and logs
 
 | Surface | Contract requirement | Current implementation | Existing test / assertion strength | A1 evidence and disposition |
 | --- | --- | --- | --- | --- |
-| Exit encodings | Recognize the supported standard HTIF payload and the project alternative high-bit marker; report the decoded guest code. | `try_extract_exit_code` handles `(payload >> 1)` for standard `device=0/cmd=0` and `(1<<63) \| code` alternative. | `executor::test_htif_exit_code_extraction`, `test_htif_exit_code_alternative_format`, `test_htif_exit_code_standard_format`: **strong** for pure extraction; indirect wrapper tests are weaker. | E2 returned 0, 1, and 42 with matching process statuses. **Verified** for supported encodings. |
-| Nonzero exit | A guest nonzero exit is a guest result, not a loader error; CLI propagates the code as its process status. | `ExecutionResult.exit_code` is set from tohost; CLI calls `exit(result.exit_code as i32)`. | Existing tests do not assert an actual CLI nonzero guest status (**weak/missing**). | E2 code 1 and code 42 produced statuses 1 and 42. **Verified** for the transient programs; codes outside host process range are unverified. |
-| To-host precedence | `tohost_addr` precedence is CLI override, then ELF `.tohost`/symbol, then fixed `0x40008000`. | `load_and_run`: `tohost_addr.or(elf_tohost).unwrap_or(DEFAULT_TOHOST)`; loader discovers `.tohost` then `tohost` symbol. | `test_load_and_run_tohost_override`, `test_load_and_run_default_tohost`: **weak**; `test_tohost_symbol_from_elf` and `test_fib_tohost_address` skip when guest ELFs are absent. | E2 selected ELF address with no override, selected the first CLI RAM override, and timed out when explicitly selecting fixed HTIF for a guest that did not write it. **Verified** for section metadata and CLI override. Symbol fallback remains **Unverified** in this environment. |
-| HTIF endpoint and final observation | Fixed `0x40008000` dword writes invoke the callback; selected RAM tohost is polled after each successful instruction and a recognized value is cleared. | `SystemBus::write_dword/read_dword`, HTIF callback, `load_and_run` post-success polling, and `clear_tohost`. Byte/half/word fixed-HTIF access is rejected. | `test_system_bus_read_htif`, `test_system_bus_write_htif`: **medium** (read/value or `Ok`, but callback value is not asserted); `test_system_bus_*_uart_*` are strong for width rejection. | E2 fixed-endpoint and RAM-endpoint exits were observed, including final-slot exit. Post-run clearing of a selected RAM signal is source-supported but has no public assertion. **Unverified** for retained memory state after return. |
-| UART public output | Public ELF path retains byte MMIO at `0x10000000`, output callback bytes, and rejection of multi-byte UART register access. | `SystemBus` routes byte accesses to `Uart16550`; UART callback is installed in `load_and_run`; its native window is `0x100` while the UART/TLM model declares `UART_SIZE = 8`. | `test_system_bus_routing`: **strong** byte register round-trip; `test_system_bus_read/write_uart_{half,word,dword}`: **strong** rejection; UART unit tests are component evidence. | E2 emitted `A1!\n` through the public path. **Verified** for byte TX and unsupported multi-byte accesses. The `0x08..0xff` routing mismatch is [G-04](public-behavior-gaps.md#g-04--native-uart-routing-window-exceeds-the-uart-declared-range). |
-| Signature metadata and artifact | `.signature` discovery is host-side; absent means no artifact, zero-size means an empty artifact, and bytes are returned post-run without guest execution. | Loader records `SignatureInfo`; `dump_signature` reads the region after exit/timeout and `ExecutionResult` carries address/data. Read errors are currently swallowed by `.ok().flatten()` in result construction. | `test_dump_signature_none` and `test_dump_signature_zero_size`: **strong** helper behavior; `test_execution_result_signature`: **weak** (manual result); no existing public nonzero-byte assertion. | E2 public run reported address/length and the temporary API harness returned the exact eight bytes. **Verified** for absent/zero helper cases and a nonzero public artifact. Error propagation remains [G-06](public-behavior-gaps.md#g-06--signature-read-errors-are-suppressed-in-run-results). |
-| Commit-log format | `--log-commits` retains the Spike-shaped hart/privilege/PC/opcode/register format; memory suffixes must not be advertised as current public output unless emitted. | `CommitLogger::log_commit` formats register changes and optional `MemoryAccess`; public loop re-fetches an opcode and passes `mem_access = None`. | `test_log_commit_format`, register-change tests, memory formatter tests, and `test_log_commit_path_with_logger`: formatter tests are **strong** for supplied inputs; public path test is **weak** because it does not inspect the file. | E4 inspected actual files. Base-zero opcode/register lines match the format; nonzero-base opcodes were zero and stores had no memory suffix. **Reproduced defects**; see [G-03](public-behavior-gaps.md#g-03--public-commit-log-loses-opcodes-for-nonzero-elf-bases) and [G-09](public-behavior-gaps.md#g-09--public-commit-log-omits-memory-access-suffixes). |
-| Verbose diagnostics | Verbose mode may expose load/run diagnostics without changing the result. | `src/main.rs` prints the user option value before `load_and_run`; executor prints selected ELF tohost later. | `test_cli_run_verbose_flag`, `test_load_and_run_verbose_output`: **weak** no-panic tests. | E5 showed the initial address was `0x0` even though the selected ELF address was `0x30001000`. The execution result was still bounded. **Reproduced defect** for diagnostic accuracy; see G-05. |
+| Exit encodings | Recognize the supported standard HTIF payload and the project alternative high-bit marker; report the decoded guest code. | `try_extract_exit_code` handles `(payload >> 1)` for standard `device=0/cmd=0` and `(1<<63) \| code` alternative. | `executor::test_htif_exit_code_extraction` and persistent `public_behavior::alternative_exit_encoding_is_observed_on_the_public_path`: **strong** pure/public assertions. The legacy `test_htif_exit_code_alternative_format` and `test_htif_exit_code_standard_format` are **weak** wrapper tests: they ignore out-of-range writes and only assert `is_ok()`, so they are excluded from behavior proof. | E2 and E6 returned standard codes 0/1/42 and alternative code 42. **Verified** for the exercised public encodings; the two legacy wrapper tests are not supporting evidence. |
+| Nonzero exit | A guest nonzero exit is a guest result, not a loader error; CLI propagates the code as its process status. | `ExecutionResult.exit_code` is set from tohost; CLI calls `exit(result.exit_code as i32)`. | Persistent `public_behavior::cli_propagates_zero_and_nonzero_guest_exit_codes` asserts actual process statuses 0 and 42 and output; older tests remain smoke-only. | E2 and E6 code 1/42 programs produced matching statuses. **Verified** for the persistent programs; codes outside host process range are unverified. |
+| To-host precedence | `tohost_addr` precedence is CLI override, then ELF `.tohost`/symbol, then fixed `0x40008000`. | `load_and_run`: `tohost_addr.or(elf_tohost).unwrap_or(DEFAULT_TOHOST)`; loader discovers `.tohost` then `tohost` symbol. | Persistent `public_behavior::tohost_precedence_selects_elf_then_cli_override_then_fixed_endpoint` asserts each branch with exact cycles/status; `test_tohost_symbol_from_elf` and `test_fib_tohost_address` still skip when guest ELFs are absent. | E2 and E6 selected ELF address with no override, selected the first CLI RAM override, and timed out when selecting fixed HTIF for a guest that did not write it. **Verified** for section metadata and CLI override. Symbol fallback remains **Unverified** in this environment. |
+| HTIF endpoint and final observation | Fixed `0x40008000` dword writes invoke the callback; selected RAM tohost is polled after each successful instruction and a recognized value is cleared. | `SystemBus::write_dword/read_dword`, HTIF callback, `load_and_run` post-success polling, and `clear_tohost`. Byte/half/word fixed-HTIF access is rejected. | `test_system_bus_read_htif`, `test_system_bus_write_htif`: **medium** (read/value or `Ok`, but callback value is not asserted); persistent `public_behavior::exact_limits_include_zero_and_the_final_exit_slot` and `tohost_precedence_selects_elf_then_cli_override_then_fixed_endpoint`: **strong** public timing/selection assertions; UART width tests are strong for rejection. | E2 and E6 fixed-endpoint and RAM-endpoint exits were observed, including final-slot exit. Post-run clearing of a selected RAM signal is source-supported but has no public assertion. **Unverified** for retained memory state after return. |
+| UART public output | Public ELF path retains byte MMIO at `0x10000000`, output callback bytes, and rejection of multi-byte UART register access. | `SystemBus` routes byte accesses to `Uart16550`; UART callback is installed in `load_and_run`; its native window is `0x100` while the UART/TLM model declares `UART_SIZE = 8`. | Persistent `public_behavior::uart_bytes_are_emitted_by_the_cli_elf_path` asserts exact CLI bytes/result; `test_system_bus_routing` is strong for byte register round-trip; `test_system_bus_read/write_uart_{half,word,dword}` is strong for rejection; UART unit tests are component evidence. | E2 and E6 emitted `A1!\n` through the public path. **Verified** for byte TX and unsupported multi-byte accesses. The `0x08..0xff` routing mismatch is [G-04](public-behavior-gaps.md#g-04--native-uart-routing-window-exceeds-the-uart-declared-range). |
+| Signature metadata and artifact | `.signature` discovery is host-side; absent means no artifact, zero-size means an empty artifact, and bytes are returned post-run without guest execution. | Loader records `SignatureInfo`; `dump_signature` reads the region after exit/timeout and `ExecutionResult` carries address/data. Read errors are currently swallowed by `.ok().flatten()` in result construction. | `test_dump_signature_none` and `test_dump_signature_zero_size`: **strong** helper behavior; `test_load_and_run_with_signature` and persistent `public_behavior::signature_bytes_are_returned_after_public_execution`: **strong** address/byte assertions; `test_execution_result_signature` remains a weak manual-result test. | E2 and E6 public runs returned address/length and exact bytes. **Verified** for absent/zero helper cases and a nonzero public artifact. Error propagation remains [G-06](public-behavior-gaps.md#g-06--signature-read-errors-are-suppressed-in-run-results). |
+| Commit-log format | `--log-commits` retains the Spike-shaped hart/privilege/PC/opcode/register format; memory suffixes must not be advertised as current public output unless emitted. | `CommitLogger::log_commit` formats register changes and optional `MemoryAccess`; public loop re-fetches an opcode and passes `mem_access = None`. | `test_log_commit_format`, register-change tests, and memory formatter tests are **strong** for supplied inputs; the current `test_log_commit_path_with_logger` is **strong** for the result and emitted line count/PC shape but deliberately does not assert the known-bad opcode or missing suffix; persistent `public_behavior::public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` inspects every actual public line. | E4 and E6 inspected actual files. Base-zero opcode/register lines match the format; nonzero-base opcodes were zero and stores had no memory suffix. **Reproduced defects**; see [G-03](public-behavior-gaps.md#g-03--public-commit-log-loses-opcodes-for-nonzero-elf-bases) and [G-09](public-behavior-gaps.md#g-09--public-commit-log-omits-memory-access-suffixes). |
+| Verbose diagnostics | Verbose mode may expose load/run diagnostics without changing the result. | `src/main.rs` prints the user option value before `load_and_run`; executor prints selected ELF tohost later. | `test_cli_run_verbose_flag` remains a **weak** CLI no-panic check; current `test_load_and_run_verbose_output` is **strong** for the bounded successful result but does not assert diagnostic text. | E5 showed the initial address was `0x0` even though the selected ELF address was `0x30001000`. The execution result was still bounded. **Reproduced defect** for diagnostic accuracy; see G-05. |
 
 ### Flat-library state, memory helpers, and configuration differences
 
 | Surface | Contract requirement | Current implementation | Existing test / assertion strength | A1 evidence and disposition |
 | --- | --- | --- | --- | --- |
-| `RiscVSimulator` construction and lifecycle | Keep the public wrapper, load/step/run methods, configured/default limit concept, and helper names while configurations remain distinct. | `src/executor.rs::RiscVSimulator` owns a `RiscvCore`, `SimpleMemory`, `tohost`, limit, signature, and verbose flag; `load_elf` reconstructs the flat memory/core. | `test_simulator_creation`, `test_simulator_invalid_elf`, `test_simulator_load_elf_file`, `test_simulator_step`, `test_simulator_run_until_exit`: mostly **weak** (no panic or generic `Ok`). | E3 exercised load/run on the same ELF as the CLI and a manually flat-offset program. The wrapper is available, but its ELF tohost behavior diverges. **Reproduced defect/configuration gap**, G-01. |
+| `RiscVSimulator` construction and lifecycle | Keep the public wrapper, load/step/run methods, configured/default limit concept, and helper names while configurations remain distinct. | `src/executor.rs::RiscVSimulator` owns a `RiscvCore`, `SimpleMemory`, `tohost`, limit, signature, and verbose flag; `load_elf` reconstructs the flat memory/core. | Persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` asserts entry, helper bytes, CLI success, and flat-run timeout; older lifecycle tests remain smoke/medium checks. | E3 and E6 exercised load/run on the same ELF as the CLI. The wrapper is available, but its ELF tohost behavior diverges. **Reproduced defect/configuration gap**, G-01. |
 | State inspection and mutation | `state()` exposes current state and `state_mut()`/core helpers remain available to library callers. | `RiscVSimulator::state`, `state_mut`, `reset_core`, `step_once`, and `get_core_state`; `CoreState` exposes PC, registers, privilege, CSR/FPU fields. | `test_simulator_state_access`, `test_simulator_state_mut`, `test_core_initialization`, `test_core_reset`: **medium** for access/defaults; mutation effects are not asserted. | API access and defaults passed in E1/E3. **Verified** for surface availability and reset/default observations; cross-run state isolation and arbitrary mutation effects are **Unverified**. |
 | Flat memory construction and loading | `SimpleMemory` provides thread-safe flat bytes, typed little-endian reads/writes, and `load_program` loads relative to offset 0; its base argument is compatibility-only. | `src/memory/mod.rs::SimpleMemory`; all typed methods enforce natural alignment except byte access; `load_program` ignores `_base_addr`. | `test_memory_read_write`, `test_memory_misaligned`, `test_load_program`, and executor typed sign/zero-extension tests: **strong** for tested values. | E1 and E3 read/write round-trips passed. **Verified** for tested aligned/byte/relative behavior; bounds and overflow edges are not exhaustive. |
-| `read_mem` / `write_mem` helpers | Public byte-oriented helpers should return requested bytes or a bounded error and should permit flat-memory writes. | `write_mem` loops byte writes; `read_mem` opportunistically uses dword/word/half reads and falls back to bytes. | `test_simulator_read_write_mem` and `test_simulator_write_mem_large`: **strong** for in-range data; `test_simulator_read_mem_unaligned`: **weak** (`Ok` or `Err`). | In-range round-trip passed. Out-of-range `read_mem` failed to return under a two-second bound. **Reproduced defect**, G-02. |
-| CLI versus flat-library configuration | The CLI may use native RAM/UART/HTIF mapping while the flat wrapper uses its own explicit configuration; evidence must not merge them. | CLI: `SystemBus`, RAM base at ELF lowest `p_vaddr`, UART `0x10000000`, fixed HTIF callback, core reset base 0. Library: relative `SimpleMemory`, core reset with ELF base, no `SystemBus` UART/HTIF device map. | `test_system_bus_configs`, `test_memory_adapter_*`, and wrapper tests are **component/weak** for the distinction. | E2/E3 show the distinction directly: same ELF succeeds via CLI but times out/errors via wrapper until a flat offset tohost is configured. **Verified configuration difference; reproduced library gap is G-01.** |
+| `read_mem` / `write_mem` helpers | Public byte-oriented helpers should return requested bytes or a bounded error and should permit flat-memory writes. | `write_mem` loops byte writes; `read_mem` opportunistically uses dword/word/half reads and falls back to bytes. | `test_simulator_read_write_mem` and `test_simulator_write_mem_large` are **strong** for in-range data; persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` asserts an in-range round-trip; persistent `out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped` is a bounded known-defect reproduction. | E3 and E6 in-range round-trips passed. The out-of-range aligned read failed to return within two seconds; the child was killed and reaped. **Reproduced defect**, G-02. |
+| CLI versus flat-library configuration | The CLI may use native RAM/UART/HTIF mapping while the flat wrapper uses its own explicit configuration; evidence must not merge them. | CLI: `SystemBus`, RAM base at ELF lowest `p_vaddr`, UART `0x10000000`, fixed HTIF callback, core reset base 0. Library: relative `SimpleMemory`, core reset with ELF base, no `SystemBus` UART/HTIF device map. | `test_system_bus_configs` and `test_memory_adapter_*` are component evidence; persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` is **strong** for the CLI/library contrast. | E2/E3/E6 show the distinction directly: the same ELF succeeds via CLI but times out in the wrapper because its absolute tohost address is read against relative memory. **Verified configuration difference; reproduced library gap is G-01.** |
 | ISA/path boundary | A passing component instruction test is not a claim that the public ELF path supports that extension end to end. | `RiscvCore::step` uses the active decoder/executor; RV64C/MMU/TLM/peripheral components are not all wired into this public loop. | The 809 library tests include many component tests; the host-only `test_add_direct` run was skipped, while the Docker run executed the add ELF and the 46-file runner set. | **Unverified** for extension-wide or external compliance support. The 46 guest programs are bounded project-authored evidence, not a compliance claim. |
 
 ## Known stale or non-authoritative inputs
@@ -230,19 +403,21 @@ ELF address; that misleading diagnostic is [G-05](public-behavior-gaps.md#g-05--
 
 ## Bounded follow-up proposal (not a new active plan)
 
-The next delivery batch should remain limited to evidence quality:
+The second batch has made the scoped transient evidence persistent. A subsequent
+bounded decision or repair scope should:
 
-1. Add a small, persistent fixture/test set for the E2 scenarios whose current
-   proof is transient: zero-fill, non-base entry, exact/final-slot limits,
-   precedence, UART bytes, and signature bytes.
-2. Turn the E3/G-02 reproductions into focused regression tests only after the
-   intended disposition is approved; do not silently repair production behavior
-   in the evidence batch.
-3. Decide separately whether G-01, G-03, G-04, G-05, G-06, and G-09 are repair
-   scope or documented compatibility gaps. Until then, none is a supported
-   behavior.
-4. Re-run the guest suite only when the RISC-V cross-toolchain is available, and
-   record actual ELF outputs rather than relying on CI definitions or old logs.
+1. Decide separately whether G-01, G-02, G-03, G-04, G-05, G-06, and G-09 are
+   production-repair scope or documented compatibility limitations. The new tests
+   intentionally do not make that decision.
+2. If a repair is approved, retain the persistent tests as regressions and add
+   only the minimum implementation change needed for the selected gap; do not
+   silently alter address maps, limit semantics, APIs, or logging contracts.
+3. Add focused evidence for the remaining unverified boundaries only when their
+   intended contract is defined: default-limit exhaustion, tohost symbol fallback,
+   signature read failures, the UART boundary, and broader error classification.
+4. Re-run the guest suite with the project Docker image or a compatible host
+   toolchain, and record actual ELF outputs rather than relying on CI definitions
+   or old logs.
 
 This proposal does not start a second milestone and does not claim that A1 is
 complete.

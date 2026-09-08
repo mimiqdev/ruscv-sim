@@ -5,51 +5,95 @@
 //! - load_and_run complete paths
 //! - ELF loading and execution
 
+pub mod common;
+
+use common::public_elf as fixture;
 use ruscv_sim::executor::{
     load_and_run, load_and_run_file, ExecutionResult, ExecutorError, RiscVSimulator, SystemBus,
 };
 use ruscv_sim::MemoryInterface;
 use tempfile::TempDir;
 
-/// Test: log_commit is called during execution with commit logger
-/// This tests the code path at executor.rs L770-775
+const FIXED_TOHOST: u64 = 0x4000_8000;
+
+fn fixed_exit_elf() -> Vec<u8> {
+    let code = [
+        fixture::standard_exit(0),
+        fixture::lui(4, 0x40008),
+        fixture::sd(5, 4, 0),
+    ];
+    fixture::elf_with_code(&code, 0, true, false, 0x3000)
+}
+
+fn fixed_exit_elf_without_section() -> Vec<u8> {
+    let code = [
+        fixture::standard_exit(0),
+        fixture::lui(4, 0x40008),
+        fixture::sd(5, 4, 0),
+    ];
+    fixture::elf_with_code(&code, 0, false, false, 0x3000)
+}
+
+fn elf_section_exit_elf() -> Vec<u8> {
+    let code = [
+        fixture::standard_exit(0),
+        fixture::auipc(4, 1),
+        fixture::addi(4, 4, -4),
+        fixture::sd(5, 4, 0),
+    ];
+    fixture::elf_with_code(&code, 0, true, false, 0x3000)
+}
+
+fn signature_exit_elf() -> Vec<u8> {
+    let code = [
+        fixture::auipc(4, 1),
+        fixture::standard_exit(0),
+        fixture::sd(5, 4, 0),
+    ];
+    fixture::elf_with_code(&code, 0, true, true, 0x3000)
+}
+
+fn no_exit_elf() -> Vec<u8> {
+    let code = vec![fixture::nop(); 8];
+    fixture::elf_with_code(&code, 0, true, false, 0x3000)
+}
+
+fn assert_successful_exit(result: ExecutionResult, cycles: u64) {
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.cycles, cycles);
+    assert_eq!(result.final_pc, fixture::BASE + cycles * 4);
+    assert!(!result.timed_out);
+    assert!(result.error.is_none());
+}
+
+/// Test: the logger path returns a successful result and writes structured lines.
+/// The assertion deliberately checks line shape and PCs, not the known bad opcode
+/// value produced for nonzero ELF bases.
 #[test]
 fn test_log_commit_path_with_logger() {
     let temp_dir = TempDir::new().unwrap();
     let log_file = temp_dir.path().join("commits.log");
+    let elf = fixed_exit_elf();
 
-    // Create minimal ELF that just exits
-    // This is a very simple ELF header structure
-    let minimal_elf = create_minimal_elf();
+    let result = load_and_run(&elf, Some(10), Some(FIXED_TOHOST), Some(&log_file), false).unwrap();
+    assert_successful_exit(result, 3);
 
-    let result = load_and_run(
-        &minimal_elf,
-        Some(10),
-        Some(0x40008000),
-        Some(&log_file),
-        false,
-    );
-
-    // Result should indicate either success or expected failure
-    // The important thing is the logger was invoked
-    let _ = result;
+    let log = std::fs::read_to_string(&log_file).unwrap();
+    let lines = log.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 3);
+    assert!(lines.iter().all(|line| line.starts_with("core   0: 3 ")));
+    assert!(lines[0].contains("0x0000000080000000"));
+    assert!(lines[2].contains("0x0000000080000008"));
 }
 
 /// Test: load_and_run with no logger (None path)
 #[test]
 fn test_load_and_run_without_logger() {
-    let minimal_elf = create_minimal_elf();
+    let elf = elf_section_exit_elf();
 
-    let result = load_and_run(
-        &minimal_elf,
-        Some(10),
-        Some(0x40008000),
-        None, // No logger
-        false,
-    );
+    let result = load_and_run(&elf, Some(10), None, None, false).unwrap();
 
-    // Should handle gracefully without logger
-    let _ = result;
+    assert_successful_exit(result, 4);
 }
 
 /// Test: load_and_run_file calls load_and_run internally
@@ -57,48 +101,42 @@ fn test_load_and_run_without_logger() {
 fn test_load_and_run_file_path() {
     let temp_dir = TempDir::new().unwrap();
     let elf_file = temp_dir.path().join("test.elf");
-
-    let minimal_elf = create_minimal_elf();
-    std::fs::write(&elf_file, &minimal_elf).unwrap();
+    std::fs::write(&elf_file, fixed_exit_elf()).unwrap();
 
     let result = load_and_run_file(
         elf_file.to_str().unwrap(),
         Some(10),
-        Some(0x40008000),
+        Some(FIXED_TOHOST),
         None,
         false,
-    );
+    )
+    .unwrap();
 
-    // File-based loading should work
-    let _ = result;
+    assert_successful_exit(result, 3);
 }
 
 /// Test: load_and_run with zero max_cycles
 #[test]
 fn test_load_and_run_zero_cycles() {
-    let minimal_elf = create_minimal_elf();
+    let result = load_and_run(&fixed_exit_elf(), Some(0), Some(FIXED_TOHOST), None, false).unwrap();
 
-    let result = load_and_run(
-        &minimal_elf,
-        Some(0), // Zero cycles
-        Some(0x40008000),
-        None,
-        false,
-    );
-
-    // Should complete immediately
-    assert!(result.is_ok() || result.is_err());
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.cycles, 0);
+    assert_eq!(result.final_pc, fixture::BASE);
+    assert!(result.timed_out);
+    assert_eq!(result.error.as_deref(), Some("Timeout after 0 cycles"));
 }
 
-/// Test: load_and_run with very small memory
+/// Test: a one-cycle public budget stops before the second instruction.
 #[test]
-fn test_load_and_run_small_memory() {
-    let minimal_elf = create_minimal_elf();
+fn test_load_and_run_with_one_cycle_budget() {
+    let result = load_and_run(&fixed_exit_elf(), Some(1), Some(FIXED_TOHOST), None, false).unwrap();
 
-    // Should still attempt to load even with minimal config
-    let result = load_and_run(&minimal_elf, Some(1), Some(0x40008000), None, false);
-
-    let _ = result;
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.cycles, 1);
+    assert_eq!(result.final_pc, fixture::BASE + 4);
+    assert!(result.timed_out);
+    assert_eq!(result.error.as_deref(), Some("Timeout after 1 cycles"));
 }
 
 /// Test: load_and_run with invalid ELF data
@@ -249,12 +287,14 @@ fn test_htif_exit_code_zero() {
 /// Test: HTIF exit code extraction with non-exit value
 #[test]
 fn test_htif_exit_code_non_exit() {
-    // This tests the code path where try_extract_exit_code returns None
-    // Create a minimal ELF that won't trigger exit
-    let minimal_elf = create_minimal_elf();
-    let result = load_and_run(&minimal_elf, Some(5), Some(0x40008000), None, false);
-    // Should complete without exit signal
-    let _ = result;
+    // A valid guest that never writes to tohost must reach the cycle limit.
+    let result = load_and_run(&no_exit_elf(), Some(5), Some(FIXED_TOHOST), None, false).unwrap();
+
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.cycles, 5);
+    assert_eq!(result.final_pc, fixture::BASE + 20);
+    assert!(result.timed_out);
+    assert_eq!(result.error.as_deref(), Some("Timeout after 5 cycles"));
 }
 
 /// Test: HTIF exit code extraction with alternative format
@@ -673,49 +713,34 @@ fn test_executor_error_core() {
 /// Test: load_and_run with tohost_addr override
 #[test]
 fn test_load_and_run_tohost_override() {
-    let minimal_elf = create_minimal_elf();
+    let result =
+        load_and_run(&fixed_exit_elf(), Some(10), Some(FIXED_TOHOST), None, false).unwrap();
 
-    let result = load_and_run(
-        &minimal_elf,
-        Some(10),
-        Some(0x4000_8000), // Explicit tohost address
-        None,
-        false,
-    );
-
-    assert!(result.is_ok() || result.is_err());
+    assert_successful_exit(result, 3);
 }
 
 /// Test: load_and_run with default tohost (None)
 #[test]
 fn test_load_and_run_default_tohost() {
-    let minimal_elf = create_minimal_elf();
-
     let result = load_and_run(
-        &minimal_elf,
+        &fixed_exit_elf_without_section(),
         Some(10),
-        None, // Use default tohost
+        None,
         None,
         false,
-    );
+    )
+    .unwrap();
 
-    assert!(result.is_ok() || result.is_err());
+    assert_successful_exit(result, 3);
 }
 
 /// Test: load_and_run with tohost_addr and log_commits both None
 #[test]
 fn test_load_and_run_both_none() {
-    let minimal_elf = create_minimal_elf();
+    let result =
+        load_and_run(&fixed_exit_elf(), Some(10), Some(FIXED_TOHOST), None, false).unwrap();
 
-    let result = load_and_run(
-        &minimal_elf,
-        Some(10),
-        Some(0x40008000),
-        None, // No log file
-        false,
-    );
-
-    assert!(result.is_ok() || result.is_err());
+    assert_successful_exit(result, 3);
 }
 
 /// Helper function to create a minimal ELF file for testing
@@ -800,43 +825,37 @@ fn test_simulator_run_until_exit() {
 /// Test: load_and_run with verbose output
 #[test]
 fn test_load_and_run_verbose_output() {
-    let minimal_elf = create_minimal_elf();
+    let result = load_and_run(&fixed_exit_elf(), Some(5), Some(FIXED_TOHOST), None, true).unwrap();
 
-    // Verbose mode should not panic
-    let result = load_and_run(
-        &minimal_elf,
-        Some(5),
-        Some(0x40008000),
-        None,
-        true, // verbose
-    );
-    assert!(result.is_ok() || result.is_err());
+    assert_successful_exit(result, 3);
 }
 
 /// Test: load_and_run with signature extraction
 #[test]
 fn test_load_and_run_with_signature() {
-    // This tests the path where dump_signature is called
-    // Create minimal ELF
-    let minimal_elf = create_minimal_elf();
+    let result = load_and_run(&signature_exit_elf(), Some(5), None, None, false).unwrap();
 
-    let result = load_and_run(&minimal_elf, Some(5), Some(0x40008000), None, false);
-    assert!(result.is_ok() || result.is_err());
+    assert_eq!(result.signature_addr, Some(fixture::SIGNATURE));
+    assert_eq!(
+        result.signature_data,
+        Some(fixture::SIGNATURE_BYTES.to_vec())
+    );
+    assert_successful_exit(result, 3);
 }
 
 /// Test: load_and_run with very large max_cycles
 #[test]
 fn test_load_and_run_large_max_cycles() {
-    let minimal_elf = create_minimal_elf();
-
     let result = load_and_run(
-        &minimal_elf,
+        &fixed_exit_elf(),
         Some(100_000_000), // Large max_cycles
-        Some(0x40008000),
+        Some(FIXED_TOHOST),
         None,
         false,
-    );
-    assert!(result.is_ok() || result.is_err());
+    )
+    .unwrap();
+
+    assert_successful_exit(result, 3);
 }
 
 /// Test: SystemBus read_word_sext
