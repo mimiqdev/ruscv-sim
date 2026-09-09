@@ -10,7 +10,9 @@ A1 was accepted with its documented limitations on 2026-09-08. Its records are:
 - [Full pre-closeout acceptance assessment](../archive/milestones/a1-acceptance-assessment.md),
   preserving verification, residual-gap rationale and the successor recommendation.
 - [Original A1 contract](../archive/milestones/a1-public-behavior-baseline.md).
-- [A2 — the only active milestone](../dev-plan.md), narrowly scoped to G-02.
+- [A2 — the only active milestone](../dev-plan.md), reliable flat-library ELF
+  execution and inspection. Its capability contract supersedes the historical
+  G-02-only successor selection; A1's acceptance remains unchanged.
 
 The historical assessment's recommendation/pending-confirmation language is not
 current status. A1 completion does not mean the recorded runtime defects are
