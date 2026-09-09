@@ -1009,13 +1009,19 @@ fn test_simulator_read_write_mem() {
 fn test_simulator_read_mem_unaligned() {
     let sim = RiscVSimulator::new(0x1000);
 
-    // Write aligned data
     let data = vec![0xAA, 0xBB, 0xCC, 0xDD];
-    let _ = sim.write_mem(0x100, &data);
+    sim.write_mem(0x100, &data).unwrap();
 
-    // Read unaligned
-    let result = sim.read_mem(0x101, 2);
-    assert!(result.is_ok() || result.is_err());
+    assert_eq!(sim.read_mem(0x101, 2).unwrap(), vec![0xBB, 0xCC]);
+}
+
+#[test]
+fn test_simulator_read_mem_empty_and_out_of_range() {
+    let sim = RiscVSimulator::new(0x1000);
+
+    assert_eq!(sim.read_mem(0x2000, 0).unwrap(), Vec::<u8>::new());
+    assert!(sim.read_mem(0x2000, 4).is_err());
+    assert!(sim.read_mem(u64::MAX - 7, 16).is_err());
 }
 
 /// Test: RiscVSimulator write_mem with large data

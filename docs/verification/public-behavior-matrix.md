@@ -4,7 +4,7 @@
 
 **Authority:** Informational as-of A1 evidence; original scope is preserved in the [archived A1 contract](../archive/milestones/a1-public-behavior-baseline.md), while compatibility requirements are stated in [ADR-0003 §9](../architecture/decisions/0003-runner-machine-and-platform-ownership.md#9-compatibility-constraints-for-the-current-product)
 
-**Last reviewed:** 2026-09-08; individual verification runs retain their recorded scope
+**Last reviewed:** 2026-09-09; A1 rows retain their 2026-09-08 recorded scope. A2 T1 updates only the `read_mem` helper row and G-02 test names.
 
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)
@@ -232,7 +232,7 @@ It passed **14 tests**. The persistent assertions are:
 | `signature_bytes_are_returned_after_public_execution` | Public result contains signature address `0x80002000` and exact bytes `[0, 17, 34, 51, 68, 85, 102, 119]`. |
 | `flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` | Flat `write_mem`/`read_mem` bytes round-trip; the same ELF exits in the CLI but times out in `RiscVSimulator`, reproducing G-01. |
 | `public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` | Actual public log has four lines with zero opcodes and no `mem` suffix, reproducing G-03/G-09. |
-| `out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped` | A child process running the out-of-range aligned helper read is allowed a 2-second bound, then killed and waited, reproducing G-02 without an unbounded test process. |
+| `out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped` | A1 child-process hang reproduction for G-02; replaced in A2 T1 by `out_of_range_flat_read_mem_returns_error_without_hanging`. |
 
 Most of these tests are stronger evidence than the older smoke tests because
 they assert state, process status, output, exact bytes, exact cycle/PC values, or
@@ -270,12 +270,13 @@ cargo test --all-features --test executor -- --nocapture
 
 In the committed 14-test snapshot, the first 11 rows above were intended as
 compatibility characterization, but the two zero-fill rows had the limitation
-noted above. E7 corrects that limitation. The flat-library ELF contrast (G-01),
-public commit-log observation (G-03/G-09), and bounded out-of-range `read_mem`
-case (G-02) remain defect reproductions, not compatibility passes. E7's
-handshake-failure and early-exit cases validate the reproduction harness's
-cleanup paths, not simulator compatibility. Other legacy executor/component
-smoke tests remain outside this targeted strengthening.
+noted above. E7 corrects that limitation. The flat-library ELF contrast (G-01)
+and public commit-log observation (G-03/G-09) remain defect reproductions, not
+compatibility passes. The A1 G-02 row was a bounded hang reproduction; A2 T1
+replaced it with an error-return regression. E7's handshake-failure and
+early-exit cases still validate harness cleanup, not CLI/library equivalence.
+Other legacy executor/component smoke tests remain outside this targeted
+strengthening.
 
 ### E7 — Follow-up evidence corrections based on `b16a787`
 
@@ -391,9 +392,30 @@ not exact-follow-up-head evidence.
 | `RiscVSimulator` construction and lifecycle | Keep the public wrapper, load/step/run methods, configured/default limit concept, and helper names while configurations remain distinct. | `src/executor.rs::RiscVSimulator` owns a `RiscvCore`, `SimpleMemory`, `tohost`, limit, signature, and verbose flag; `load_elf` reconstructs the flat memory/core. | Persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` asserts entry, helper bytes, CLI success, and flat-run timeout; older lifecycle tests remain smoke/medium checks. | E3 and E6 exercised load/run on the same ELF as the CLI. The wrapper is available, but its ELF tohost behavior diverges. **Reproduced defect/configuration gap**, G-01. |
 | State inspection and mutation | `state()` exposes current state and `state_mut()`/core helpers remain available to library callers. | `RiscVSimulator::state`, `state_mut`, `reset_core`, `step_once`, and `get_core_state`; `CoreState` exposes PC, registers, privilege, CSR/FPU fields. | `test_simulator_state_access`, `test_simulator_state_mut`, `test_core_initialization`, `test_core_reset`: **medium** for access/defaults; mutation effects are not asserted. | API access and defaults passed in E1/E3. **Verified** for surface availability and reset/default observations; cross-run state isolation and arbitrary mutation effects are **Unverified**. |
 | Flat memory construction and loading | `SimpleMemory` provides thread-safe flat bytes, typed little-endian reads/writes, and `load_program` loads relative to offset 0; its base argument is compatibility-only. | `src/memory/mod.rs::SimpleMemory`; all typed methods enforce natural alignment except byte access; `load_program` ignores `_base_addr`. | `test_memory_read_write`, `test_memory_misaligned`, `test_load_program`, and executor typed sign/zero-extension tests: **strong** for tested values. | E1 and E3 read/write round-trips passed. **Verified** for tested aligned/byte/relative behavior; bounds and overflow edges are not exhaustive. |
-| `read_mem` / `write_mem` helpers | Public byte-oriented helpers should return requested bytes or a bounded error and should permit flat-memory writes. | `write_mem` loops byte writes; `read_mem` opportunistically uses dword/word/half reads and falls back to bytes. | `test_simulator_read_write_mem` and `test_simulator_write_mem_large` are **strong** for in-range data; persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` asserts an in-range round-trip; persistent `out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped` is a bounded known-defect reproduction. | E3 and E6 in-range round-trips passed. The out-of-range aligned read failed to return within two seconds; the child was killed and reaped. **Reproduced defect**, G-02. |
+| `read_mem` / `write_mem` helpers | Public byte-oriented helpers should return requested bytes or a bounded error and should permit flat-memory writes. | `write_mem` loops byte writes; `read_mem` returns empty for `size == 0`, rejects overflowing nonempty ranges, and otherwise reads bytes in address order or returns `ExecutorError`. | `test_simulator_read_write_mem` is **strong** for in-range data; `test_simulator_read_mem_unaligned` asserts exact unaligned bytes; `test_simulator_read_mem_empty_and_out_of_range` covers empty/error returns. Persistent A2 T1 tests assert exact bytes, empty/overflow/crossing errors, state preservation, and that `new(0x1000).read_mem(0x2000, 4)` returns `Err` inside the bounded child harness. | A1 E3/E6 in-range round-trips passed and the aligned out-of-range read hung. A2 T1 repaired G-02; closing G-02 does not complete A2. |
 | CLI versus flat-library configuration | The CLI may use native RAM/UART/HTIF mapping while the flat wrapper uses its own explicit configuration; evidence must not merge them. | CLI: `SystemBus`, RAM base at ELF lowest `p_vaddr`, UART `0x10000000`, fixed HTIF callback, core reset base 0. Library: relative `SimpleMemory`, core reset with ELF base, no `SystemBus` UART/HTIF device map. | `test_system_bus_configs` and `test_memory_adapter_*` are component evidence; persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` is **strong** for the CLI/library contrast. | E2/E3/E6 show the distinction directly: the same ELF succeeds via CLI but times out in the wrapper because its absolute tohost address is read against relative memory. **Verified configuration difference; reproduced library gap is G-01.** |
 | ISA/path boundary | A passing component instruction test is not a claim that the public ELF path supports that extension end to end. | `RiscvCore::step` uses the active decoder/executor; RV64C/MMU/TLM/peripheral components are not all wired into this public loop. | The 809 library tests include many component tests; the host-only `test_add_direct` run was skipped, while the Docker run executed the add ELF and the 46-file runner set. | **Unverified** for extension-wide or external compliance support. The 46 guest programs are bounded project-authored evidence, not a compliance claim. |
+
+## A2 T1 inspection evidence
+
+A2 T1 repaired G-02 in `RiscVSimulator::read_mem`. The A1 hang observations above
+remain historical. Current assertions live in `tests/public_behavior.rs` and
+`tests/executor.rs`:
+
+| Test | Assertion |
+| --- | --- |
+| `out_of_range_flat_read_mem_returns_error_without_hanging` | The original `new(0x1000).read_mem(0x2000, 4)` request returns `Err` in the bounded child after the ready marker; a hang is still killed and reaped. |
+| `out_of_range_flat_read_mem_handshake_failure_is_reaped` | Missing ready remains bounded and the child is cleaned up. |
+| `out_of_range_flat_read_mem_early_exit_is_reaped` | Child exit before ready is detected, diagnostics retained, and the child is reaped. |
+| `flat_read_mem_returns_exact_bytes_for_aligned_unaligned_and_mixed_lengths` | Exact little-endian bytes for aligned/unaligned and mixed lengths, including the final valid byte; PC/registers/privilege unchanged. |
+| `flat_read_mem_empty_requests_do_not_access_memory` | `size == 0` returns an empty vector at in-range, out-of-range and `u64::MAX` addresses without changing state. |
+| `flat_read_mem_rejects_out_of_range_crossing_and_overflow_without_wrapping` | Out-of-range starts, range crossing, and address overflow return errors without wrapping or mutating state. |
+| `flat_read_mem_does_not_execute_or_mutate_after_guest_step` | Successful and failing inspection after a retired NOP leave PC, `x5` and RAM unchanged. |
+| `test_simulator_read_mem_unaligned` | Unaligned in-range bytes are exact. |
+| `test_simulator_read_mem_empty_and_out_of_range` | Empty out-of-range reads succeed; nonempty out-of-range and overflow reads error. |
+
+These rows cover T1 only. G-01, signatures, image replacement and integrated
+load/run/inspect acceptance remain A2 T2–T4 work.
 
 ## Known stale or non-authoritative inputs
 

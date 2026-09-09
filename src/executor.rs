@@ -1066,82 +1066,37 @@ impl RiscVSimulator {
         &self.memory
     }
 
-    /// Read from memory
+    /// Read `size` bytes from a flat storage offset.
+    ///
+    /// `addr` is a backend storage offset, not an ELF/guest virtual address and
+    /// not a translated physical address. An empty request returns an empty
+    /// vector without accessing memory. A nonempty in-range request returns
+    /// exactly the requested bytes in ascending address order. A nonempty range
+    /// that is out of range or overflows the address space returns
+    /// [`ExecutorError`] and does not wrap, retry without progress, fabricate
+    /// bytes, or return a partial vector as success. Inspection does not execute
+    /// guest instructions or modify PC, registers, or RAM.
     pub fn read_mem(&self, addr: u64, size: usize) -> Result<Vec<u8>, ExecutorError> {
-        let mut data = vec![0u8; size];
-        let mut current_addr = addr;
-        let mut offset = 0;
+        if size == 0 {
+            return Ok(Vec::new());
+        }
 
-        while offset < size {
-            let remaining = size - offset;
-            let guard = self.memory.lock().unwrap();
+        if addr.checked_add((size - 1) as u64).is_none() {
+            return Err(ExecutorError::ExecutionError(format!(
+                "Memory read error: address 0x{addr:016x} size {size} overflows the address space"
+            )));
+        }
 
-            // Try to read in larger chunks when possible
-            if remaining >= 8 && current_addr.is_multiple_of(8) {
-                // Read 8 bytes at a time when aligned
-                match guard.read_dword(current_addr) {
-                    Ok(val) => {
-                        for i in 0..8 {
-                            data[offset + i] = (val >> (i * 8)) as u8;
-                        }
-                        drop(guard);
-                        current_addr += 8;
-                        offset += 8;
-                    }
-                    Err(_) => {
-                        // Fall back to word read
-                        if remaining >= 4 && current_addr.is_multiple_of(4) {
-                            drop(guard);
-                            continue;
-                        }
-                        drop(guard);
-                        // Fall through to byte-by-byte read
-                    }
-                }
-            } else if remaining >= 4 && current_addr.is_multiple_of(4) {
-                // Read 4 bytes at a time
-                match guard.read_word(current_addr) {
-                    Ok(val) => {
-                        data[offset] = val as u8;
-                        data[offset + 1] = (val >> 8) as u8;
-                        data[offset + 2] = (val >> 16) as u8;
-                        data[offset + 3] = (val >> 24) as u8;
-                        drop(guard);
-                        current_addr += 4;
-                        offset += 4;
-                    }
-                    Err(_) => {
-                        // Fall through to byte-by-byte read
-                    }
-                }
-            } else if remaining >= 2 && current_addr.is_multiple_of(2) {
-                // Read 2 bytes at a time
-                match guard.read_half(current_addr) {
-                    Ok(val) => {
-                        data[offset] = val as u8;
-                        data[offset + 1] = (val >> 8) as u8;
-                        drop(guard);
-                        current_addr += 2;
-                        offset += 2;
-                    }
-                    Err(_) => {
-                        // Fall through to byte-by-byte read
-                    }
-                }
-            } else {
-                // Read one byte
-                match guard.read_byte(current_addr) {
-                    Ok(byte) => {
-                        data[offset] = byte;
-                        current_addr += 1;
-                        offset += 1;
-                    }
-                    Err(e) => {
-                        return Err(ExecutorError::ExecutionError(format!(
-                            "Memory read error at 0x{:016x}: {}",
-                            current_addr, e
-                        )));
-                    }
+        let mut data = Vec::with_capacity(size);
+        let guard = self.memory.lock().unwrap();
+        for offset in 0..size {
+            let current_addr = addr + offset as u64;
+            match guard.read_byte(current_addr) {
+                Ok(byte) => data.push(byte),
+                Err(e) => {
+                    return Err(ExecutorError::ExecutionError(format!(
+                        "Memory read error at 0x{current_addr:016x}: {e}"
+                    )));
                 }
             }
         }
