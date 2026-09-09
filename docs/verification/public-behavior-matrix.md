@@ -405,7 +405,7 @@ remain historical. Current assertions live in `tests/public_behavior.rs` and
 | Test | Assertion |
 | --- | --- |
 | `out_of_range_flat_read_mem_returns_error_without_hanging` | The original `new(0x1000).read_mem(0x2000, 4)` request returns `Err` in the bounded child after the ready marker; a hang is still killed and reaped. |
-| `out_of_range_flat_read_mem_handshake_failure_is_reaped` | Missing ready remains bounded and the child is cleaned up. |
+| `out_of_range_flat_read_mem_handshake_failure_is_reaped` | Missing ready times out against a live child, then the child is killed and reaped. This is harness cleanup, not the G-02 hang regression. |
 | `out_of_range_flat_read_mem_early_exit_is_reaped` | Child exit before ready is detected, diagnostics retained, and the child is reaped. |
 | `flat_read_mem_returns_exact_bytes_for_aligned_unaligned_and_mixed_lengths` | Exact little-endian bytes for aligned/unaligned and mixed lengths, including the final valid byte; PC/registers/privilege unchanged. |
 | `flat_read_mem_empty_requests_do_not_access_memory` | `size == 0` returns an empty vector at in-range, out-of-range and `u64::MAX` addresses without changing state. |

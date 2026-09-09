@@ -656,13 +656,18 @@ fn out_of_range_flat_read_mem_returns_error_without_hanging() {
             eprintln!("read_mem child exiting before ready handshake");
             return;
         }
-        if mode != "skip-ready" {
-            let ready_path = std::path::PathBuf::from(
-                std::env::var_os(READ_MEM_READY_ENV).expect("ready path missing"),
-            );
-            std::fs::write(&ready_path, b"ready")
-                .unwrap_or_else(|error| panic!("failed to signal ready handshake: {error}"));
+        if mode == "skip-ready" {
+            // Stay alive without the ready marker so the parent can exercise
+            // ready-timeout + kill/reap against a live child. This is harness
+            // cleanup coverage, not the G-02 hang regression.
+            thread::park();
+            panic!("skip-ready child was unparked");
         }
+        let ready_path = std::path::PathBuf::from(
+            std::env::var_os(READ_MEM_READY_ENV).expect("ready path missing"),
+        );
+        std::fs::write(&ready_path, b"ready")
+            .unwrap_or_else(|error| panic!("failed to signal ready handshake: {error}"));
         let result = simulator.read_mem(0x2000, 4);
         assert!(
             result.is_err(),
@@ -692,6 +697,10 @@ fn out_of_range_flat_read_mem_handshake_failure_is_reaped() {
     assert!(!outcome.ready, "{outcome:?}");
     assert!(!outcome.survived_hang_window, "{outcome:?}");
     assert!(outcome.status.is_some(), "{outcome:?}");
+    assert!(
+        outcome.diagnostics.contains("ready handshake timed out"),
+        "{outcome:?}"
+    );
     assert!(outcome.cleanup_error.is_none(), "{outcome:?}");
 }
 
