@@ -12,7 +12,7 @@ RUNNER = pathlib.Path(__file__).with_name("run.py").resolve()
 
 
 class RunnerTests(unittest.TestCase):
-    def probe(self, failure=False, instruction="00000013 addi"):
+    def probe(self, failure=False, instruction="00000013 addi", mappings=""):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             for name in [".a5/evidence", ".a5/work/smoke/elfs", "bin", "target/release"]:
@@ -25,8 +25,8 @@ class RunnerTests(unittest.TestCase):
                              0x80001000, 64, 64, 8)
             (root / ".a5/work/smoke/elfs/test.elf").write_bytes(data)
             tools = {
-                "bin/riscv64-unknown-elf-objdump": f"print('80000000: {instruction}')",
-                "bin/riscv64-unknown-elf-nm": "print('0000000080001000 d signature_base')",
+                "bin/riscv64-unknown-elf-objdump": f"print({('80000000: ' + instruction)!r})",
+                "bin/riscv64-unknown-elf-nm": f"print({('0000000080001000 d signature_base' + mappings)!r})",
                 "target/release/ruscv-sim": (
                     "import pathlib,sys\n"
                     "bad = pathlib.Path(sys.argv[2]).read_bytes()[200] != 0\n"
@@ -67,6 +67,18 @@ class RunnerTests(unittest.TestCase):
         result, _, audit = self.probe(instruction="0001 c.nop")
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(audit["unsupported"])
+
+    def test_embedded_data_requires_mapping_symbol(self):
+        instruction = "00000013 addi\n80000004: deadbeef .word\n80000008: 00000013 addi"
+        result, _, _ = self.probe(instruction=instruction)
+        self.assertNotEqual(result.returncode, 0)
+        result, _, audit = self.probe(
+            instruction=instruction,
+            mappings="\n80000000 t $x\n80000004 t $d\n80000008 t $x",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(audit["mapped_inline_data_words"], 1)
+        self.assertEqual(audit["instructions"], 2)
 
 
 if __name__ == "__main__":

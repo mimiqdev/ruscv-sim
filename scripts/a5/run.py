@@ -1,5 +1,6 @@
 """Audit linked instructions and run intact/corrupt ACT4 ELFs via the public CLI."""
 import hashlib
+import bisect
 import json
 import pathlib
 import re
@@ -13,6 +14,11 @@ assert len(elfs) == 1, elfs
 elf = elfs[0]
 objdump = subprocess.check_output(["riscv64-unknown-elf-objdump", "-d", "-M", "no-aliases", str(elf)], text=True)
 (evidence / "linked.objdump").write_text(objdump)
+symbols = subprocess.check_output(["riscv64-unknown-elf-nm", "--special-syms", "-n", str(elf)], text=True)
+(evidence / "symbols.txt").write_text(symbols)
+mapping = sorted((int(address, 16), name.startswith("$d")) for address, name in
+                 re.findall(r"^([0-9a-f]+) \w (\$[dx]\S*)$", symbols, re.M))
+mapping_addresses = [address for address, is_data in mapping]
 # Base-I audit includes startup and failure-reporting code; opcode classes
 # alone would incorrectly allow M/B instructions that share OP encodings.
 allowed = {0x03, 0x0f, 0x13, 0x17, 0x1b, 0x23, 0x33, 0x37, 0x3b, 0x63, 0x67, 0x6f}
@@ -21,17 +27,29 @@ lb lh lw ld lbu lhu lwu sb sh sw sd
 addi slti sltiu xori ori andi slli srli srai
 add sub sll slt sltu xor srl sra or and
 addiw slliw srliw sraiw addw subw sllw srlw sraw fence fence.tso""".split())
-instructions = re.findall(r"^\s*[0-9a-f]+:\s+([0-9a-f]{4,8})\s+(\S+)", objdump, re.M)
+decoded = re.findall(r"^\s*([0-9a-f]+):\s+([0-9a-f]{4,8})\s+(\S+)", objdump, re.M)
+instructions, inline_data = [], []
+for address, word, op in decoded:
+    index = bisect.bisect_right(mapping_addresses, int(address, 16)) - 1
+    # ACT4 SIGUPD embeds inst/diagnostic-string pointers after its failure
+    # call, skipped by branch/return. Honor assembler $d mapping symbols,
+    # not a blanket exemption for unknown instructions or all .word output.
+    if index >= 0 and mapping[index][1]:
+        inline_data.append((address, word, op))
+    else:
+        instructions.append((word, op))
 assert instructions, "No disassembly"
 unsupported = [(word, op) for word, op in instructions
                if len(word) != 8 or int(word, 16) & 0x7f not in allowed or op not in mnemonics]
-(evidence / "audit.json").write_text(json.dumps({"instructions": len(instructions), "unsupported": unsupported}, indent=2))
+(evidence / "audit.json").write_text(json.dumps({
+    "instructions": len(instructions), "unsupported": unsupported,
+    "mapped_inline_data_words": len(inline_data),
+    "mnemonics": sorted({op for word, op in instructions}),
+}, indent=2))
 assert not unsupported, unsupported
 # Flip the first actual expected result, after the initial signature canary.
 # Find signature_base using the linked symbol table, then map its VA through
 # PT_LOAD rather than guessing file offsets. Code and exit hooks stay intact.
-symbols = subprocess.check_output(["riscv64-unknown-elf-nm", str(elf)], text=True)
-(evidence / "symbols.txt").write_text(symbols)
 match = re.search(r"^([0-9a-f]+) \w signature_base$", symbols, re.M)
 assert match, "Missing signature_base"
 address = int(match[1], 16) + 8

@@ -41,6 +41,18 @@ because the DUT also needs `rvtest_config.h`, independently of the model macros.
 The next revision supplies this header with PMP count/grain zero and no
 optional ISA definitions. No simulator failure or ISA fix is implicated.
 
+### Linux attempt 3: signature ELF linked; Sail vector setting rejected
+
+[Run 34617153819](https://github.com/mimiqdev/ruscv-sim/actions/runs/34617153819)
+at `0f722ee` linked the signature ELF and disassembled it, but Sail rejected
+the oracle configuration: V uses `support_level: Full`, not the `supported`
+boolean disabled for the other extensions. The final allowed rerun explicitly
+sets `support_level: Disabled`; it does not enable F, D or Zicsr to conceal the
+mistake. Inspection also identified ACT4's inline diagnostic pointers after
+SIGUPD failure calls. The instruction audit uses assembler `$d`/`$x` mapping
+symbols to distinguish those embedded data words from executable instructions;
+unknown words in instruction ranges remain audit failures.
+
 ## Initial reconnaissance (historical, before the Linux experiment)
 
 **State:** Environment/source reconnaissance; generation and public-CLI smoke

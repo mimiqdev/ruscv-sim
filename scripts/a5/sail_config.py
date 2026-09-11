@@ -18,6 +18,9 @@ def disable_optional(node):
 
 
 disable_optional(config["extensions"])
+# V uses an enum, not the boolean `supported` field used by other ISAs.
+# Run 34617153819 rejected the inherited Full setting with F/D/Zicsr off.
+config["extensions"]["V"]["support_level"] = "Disabled"
 config["base"]["writable_misa"] = False
 config["memory"]["pmp"]["count"] = 0
 config["memory"]["pmp"]["usable_count"] = 0

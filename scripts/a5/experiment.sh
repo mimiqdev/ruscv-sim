@@ -36,8 +36,8 @@ cp -R tests/env "$ROOT/.a5/selection/"
 bundle exec uv run --frozen --python 3.12.12 --package act act \
   "$ROOT/.a5/config/test_config.yaml" --test-dir "$ROOT/.a5/selection" \
   --workdir "$ROOT/.a5/work" --extensions I --jobs 1 --verbose
-python3 "$ROOT/scripts/a5/validate_controls.py" "$ROOT"
 cd "$ROOT"
 rustup toolchain install 1.93.1 --profile minimal
 cargo +1.93.1 build --locked --release
 python3 scripts/a5/run.py
+python3 scripts/a5/validate_controls.py "$ROOT"
