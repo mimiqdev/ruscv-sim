@@ -4,7 +4,7 @@
 
 **Active milestone:** A3 — Shared Image Placement and Result Path
 
-**Status:** Active — implementation not yet started
+**Status:** Active — T1–T3 delivered; capability acceptance pending
 
 **Authority:** Normative milestone contract
 

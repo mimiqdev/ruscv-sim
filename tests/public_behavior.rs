@@ -1764,6 +1764,8 @@ fn shared_result_shapes_hold_for_timeout_and_instruction_error() {
     let cli_error = run_fixture(&broken, Some(6), None);
     let (_, library_error) = load_and_run_library(&broken, 6);
 
+    assert_eq!(cli_error.exit_code, 1);
+    assert_eq!(library_error.exit_code, 1);
     assert_eq!(cli_error.cycles, 0);
     assert_eq!(library_error.cycles, 0);
     assert_eq!(cli_error.final_pc, library_error.final_pc);

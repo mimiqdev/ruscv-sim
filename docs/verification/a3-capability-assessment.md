@@ -68,9 +68,10 @@ contract until the maintainer accepts completion.
 The full quality gate and strict rustdoc are recorded per change in the pull
 requests below. Every merge revision ran the complete `main` pipeline — release
 build, binary smoke test, guest compilation and the project-authored ELF runner at
-**46 total / 46 passed / 0 failed**: `c67cb19` and `ca78cd0`. The matrix,
-gap register and current-state documents were updated with each change, and the
-gap register gained the CLI `--tohost` surface for the pre-existing G-11 panic.
+**46 total / 46 passed / 0 failed**: `c67cb19` and `ca78cd0`. Each change updated
+the records it affected: T1 changed the matrix, current-state and gap register
+(the CLI `--tohost` surface for the pre-existing G-11 panic), T2 the matrix and
+current-state, and T3 the equivalence record below.
 
 ### 5. Capability acceptance
 
@@ -102,6 +103,10 @@ separate approval, and the closeout record belongs to the maintainer.
   repaired and not scheduled.
 - **A2's retained gaps** — G-03, G-04, G-05, the CLI half of G-06, G-07, G-08,
   G-09 — remain open and unscheduled.
+- **Inherited unverified boundaries** from the A2 assessment remain true here:
+  the 10,000,000-cycle default is never exercised to exhaustion, and only the
+  `.tohost` section path has committed fixtures, so the `tohost` symbol fallback
+  stays unverified. Both matter to any successor that touches budget accounting.
 - **Out of scope by contract**: Runner/Machine/Platform composition, precise Hart
   observations, devices in the wrapper, MMU/PMP, multi-hart, interrupts,
   SystemC/TLM, new ISA support, and ACT4 or any external-suite compliance.
@@ -121,27 +126,36 @@ review context, with the coding worktree unmodified:
 
 ## Successor recommendation
 
-**Recommended: one bounded run-control path.** A3 removed the last two
-duplicated responsibilities in the host-side path — placement and result
-construction — and each removal was justified by defects that duplication had
-already produced (G-01, G-10, G-12 for placement and retention; the A2 exit
-sequence for results). The one remaining duplication of the same kind is the run
-loop itself: both entry points separately implement stepping, budget accounting,
-exit detection order and RAM-signal clearing, and that duplication already
-produced a wrapper-only defect (G-10, where only one loop cleared the signal
-after retaining the exit). A bounded successor would give both entry points one
-internal stop policy — the same discipline as A3 — with the existing A1–A3
-suites required to pass unchanged and new evidence that both entry points reach
-the same stop decision for the same image, budget and signal. It would not
-implement the Machine/Platform composition, which stays a separate decision.
+**Recommended: one bounded run-control path.** A3 removed two duplicated
+responsibilities from the host-side path — placement and result construction —
+and each removal was justified by defects that duplication had already produced
+(G-01 and G-12 for placement, G-10 for exit retention in the result path). The
+largest remaining duplication of the same kind is the run loop: both entry points
+separately implement stepping, budget accounting, exit-detection order and
+RAM-signal clearing, and that duplication already produced a wrapper-only defect,
+where only one loop cleared the signal after retaining the exit (G-10). A bounded
+successor would give both entry points one internal stop policy — the same
+discipline as A3 — with the existing A1–A3 suites required to pass unchanged and
+new evidence that both entry points reach the same stop decision for the same
+image, budget and signal. It would not implement the Machine/Platform composition
+described by
+[ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md),
+which stays a separate decision.
+
+Image installation is duplicated too: `load_and_run` and `load_elf` each build
+their own RAM, load the program, construct a core and reset it, differing only by
+configuration. It is the same host-side path but a separate responsibility, and
+the run-control recommendation above does not depend on it; a maintainer who
+wants one milestone for the whole path could include it in the approved scope.
 
 **Considered and not recommended now:** a bounded batch repairing the retained
 public-behavior defects (G-03, G-04, G-05, the CLI half of G-06, G-11). Those are
 reproduced or source-observed defects worth repairing eventually, but they are
 independent of each other and of the architecture sequence, so a batch would mix
 unrelated work into one milestone without the single testable capability A2 and
-A3 each had. The evidence for the run-control path is also stronger: it is the
-last shared responsibility in the public path, and one loop has already drifted.
+A3 each had. The evidence for the run-control path is stronger: it owns the
+drift that A3's predecessor repairs kept exposing, and one loop has already
+drifted in the run path itself.
 
 Neither option is approved here. Selecting, scheduling and approving a successor
 is the maintainer's decision, and the next milestone contract must be written
