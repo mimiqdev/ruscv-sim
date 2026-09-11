@@ -610,9 +610,55 @@ fn flat_library_rejects_a_declared_tohost_the_flat_image_cannot_represent() {
         fixture::elf_with_placement(&code, 0, fixture::BASE, Some(fixture::BASE + 0x20_0000), 0);
     assert!(beyond_memory.load_elf(&beyond).is_err());
 
+    let mut overflow = RiscVSimulator::new(0x1_0000);
+    let wrapping = fixture::elf_with_placement(&code, 0, 0, Some(u64::MAX - 7), 0);
+    assert!(overflow.load_elf(&wrapping).is_err());
+
+    // An in-memory but misaligned signal can never be read by the dword poll.
+    let mut misaligned = RiscVSimulator::new(0x1_0000);
+    let skewed = fixture::elf_with_placement(
+        &code,
+        0,
+        fixture::BASE,
+        Some(fixture::BASE + fixture::TOHOST_SEGMENT_OFFSET + 4),
+        0,
+    );
+    let error = misaligned.load_elf(&skewed).unwrap_err();
+    assert!(
+        format!("{error}").contains("eight-byte aligned"),
+        "unexpected error: {error}"
+    );
+
     let mut representable = RiscVSimulator::new(0x1_0000);
     let in_range = fixture::elf_with_placement(&code, 0, fixture::BASE, Some(fixture::TOHOST), 0);
     assert!(representable.load_elf(&in_range).is_ok());
+}
+
+#[test]
+fn flat_library_rejected_placement_leaves_the_previous_image_runnable() {
+    let good = fixture::elf_with_code(
+        &declared_tohost_writer(fixture::standard_exit(1)),
+        0,
+        true,
+        false,
+        0,
+    );
+    let rejected = fixture::elf_with_placement(
+        &declared_tohost_writer(fixture::standard_exit(0)),
+        0,
+        fixture::BASE,
+        Some(fixture::BASE - 8),
+        0,
+    );
+
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    simulator.load_elf(&good).unwrap();
+    assert!(simulator.load_elf(&rejected).is_err());
+
+    let result = simulator.run(Some(12)).unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.cycles, 4);
+    assert!(!result.timed_out);
 }
 
 #[test]

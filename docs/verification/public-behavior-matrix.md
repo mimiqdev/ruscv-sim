@@ -431,7 +431,8 @@ assertions live in `tests/public_behavior.rs`:
 | `flat_library_manual_tohost_before_load_is_superseded_by_image_metadata` | The documented before-load precedence: the image's declared signal wins. |
 | `flat_library_manual_tohost_survives_a_load_without_metadata` | A manual offset is kept when the image declares none. |
 | `flat_library_image_without_metadata_does_not_reuse_the_previous_tohost` | A second image without metadata times out instead of inheriting the first image's offset. |
-| `flat_library_rejects_a_declared_tohost_the_flat_image_cannot_represent` | Below-base and beyond-memory declared tohost offsets fail the load; a representable one loads. |
+| `flat_library_rejects_a_declared_tohost_the_flat_image_cannot_represent` | Below-base, beyond-memory, overflowing and misaligned declared tohost offsets fail the load; a representable one loads. |
+| `flat_library_rejected_placement_leaves_the_previous_image_runnable` | A rejected placement propagates the error before wrapper state changes, so the previous image still exits correctly. |
 | `flat_library_bounds_zero_budget_and_final_slot_exits` | Zero budget executes nothing and times out; the final permitted slot exits without a timeout. |
 | `flat_library_distinguishes_guest_exit_timeout_and_execution_error` | Retained exit, timeout, and execution error are distinct result shapes with correct accounting. |
 

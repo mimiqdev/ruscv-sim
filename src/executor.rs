@@ -895,6 +895,11 @@ impl RiscVSimulator {
                 "{what} address 0x{guest_addr:016x} maps to flat offset 0x{offset:016x}, outside the {memory_size:#x}-byte image memory"
             )));
         }
+        if !offset.is_multiple_of(8) {
+            return Err(ExecutorError::ExecutionError(format!(
+                "{what} address 0x{guest_addr:016x} maps to flat offset 0x{offset:016x}, which the exit poll cannot read eight-byte aligned"
+            )));
+        }
         Ok(offset)
     }
 
@@ -919,9 +924,9 @@ impl RiscVSimulator {
     /// Loading replaces the previous image and its exit configuration.
     ///
     /// # Errors
-    /// A declared tohost that the flat image cannot represent, because it is
-    /// below the image base or outside the image memory, fails the load instead
-    /// of silently timing out later.
+    /// A declared tohost that the flat image cannot use, because it is below the
+    /// image base, outside the image memory, or not eight-byte aligned at its
+    /// flat offset, fails the load instead of silently timing out later.
     ///
     /// # Returns
     /// The entry point address from the ELF header
@@ -935,6 +940,18 @@ impl RiscVSimulator {
             loaded.base_addr,
         );
         self.signature = sig;
+
+        // Resolve image-derived exit metadata before mutating wrapper state, so a
+        // placement the flat image cannot represent leaves the wrapper unchanged.
+        let image_tohost = match tohost {
+            Some(addr) => Some(Self::image_flat_offset(
+                base_addr,
+                addr,
+                memory.len(),
+                "ELF tohost",
+            )?),
+            None => None,
+        };
 
         // NOTE: This implementation is simplified and still uses SimpleMemory internally
         // if created via new(). It does not support SystemBus yet.
@@ -957,18 +974,10 @@ impl RiscVSimulator {
         // load is superseded when the image declares its own tohost; an image
         // without metadata must not inherit the previous image's derived offset.
         self.base_addr = base_addr;
-        self.image_tohost = match tohost {
-            Some(addr) => {
-                self.manual_tohost = None;
-                Some(Self::image_flat_offset(
-                    base_addr,
-                    addr,
-                    memory.len(),
-                    "ELF tohost",
-                )?)
-            }
-            None => None,
-        };
+        if image_tohost.is_some() {
+            self.manual_tohost = None;
+        }
+        self.image_tohost = image_tohost;
 
         // Reset core to entry point with base address for VA translation
         self.core.reset(entry_point, base_addr);

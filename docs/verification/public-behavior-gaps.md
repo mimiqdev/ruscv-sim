@@ -141,12 +141,22 @@ a second active plan.
 ### G-10 — Flat-library `run` loses a nonzero guest exit code when clearing the signal
 
 - **Disposition:** **Repaired** in A2 T2. A2 recorded it as source-observed before the repair.
-- **Surface:** `RiscVSimulator::run` / `RiscVSimulator::get_result`.
+- **Surface:** `RiscVSimulator::run`, which delegated to a private `get_result` before the repair.
 - **Implementation evidence:** `run` decoded an exit code from the RAM tohost value, cleared the signal, and then called `get_result`, which re-read the now-zero signal value. The reported `exit_code` was therefore `0` for any guest exit, including a nonzero failure code.
 - **Reproduction:** A bounded harness loaded a `0x80000000`-base image, called `set_tohost(0x100)`, and ran a guest that stored the standard payload `3` (exit code `1`) at flat offset `0x100`. Before the repair the result was `{exit=0, cycles=4, pc=0x80000010, timed_out=false, error=None}`. After the repair the same run reports `exit=1`.
 - **Existing tests:** `flat_library_retains_the_nonzero_exit_before_clearing_the_signal` is **strong**: it asserts the nonzero exit and that the flat signal bytes are cleared afterwards. `flat_library_reports_zero_and_nonzero_guest_exits` covers codes `0`, `1`, and `42`. `flat_library_distinguishes_guest_exit_timeout_and_execution_error` separates a retained guest exit from a timeout and from an execution error.
 - **Impact:** A guard against a nonzero failure exit was silently reported as success. This is a result-surface repair; it does not by itself complete A2.
 - **Selected successor scope:** [A2](../dev-plan.md) T2. T3–T4 remain open.
+
+### G-11 — A manual flat tohost near the top of the address space panics the exit poll
+
+- **Disposition:** **Reproduced defect** (pre-existing, not repaired).
+- **Surface:** `RiscVSimulator::set_tohost` followed by `RiscVSimulator::run`.
+- **Implementation evidence:** `SimpleMemory::read_dword` computes `addr + 8 > self.size` without a checked add, and the wrapper's poll passes the configured flat offset through unchanged. An extreme manual offset therefore overflows in the bound check instead of failing the poll.
+- **Reproduction:** With a loaded one-instruction image, `set_tohost(0xFFFF_FFFF_FFFF_FFF8)` then `run(Some(4))` panicked at `src/memory/mod.rs:105` with `attempt to add with overflow` (debug build). The same panic occurs at the pre-T2 revision `2769f56`, so A2 T2 neither introduced nor changed it.
+- **Existing tests:** None. The A2 T2 placement tests cover image-derived offsets, which are now range-checked and aligned at load, so they cannot reach this path. Only a manual flat offset at the top of the address space does.
+- **Impact:** A public setter combined with `run` can panic instead of returning a bounded error. The exit poll for a selected offset should report an error or a distinguishable timeout shape.
+- **Next decision:** Choose between a checked bound in the flat memory accessors and a validated manual offset in the wrapper, and record whether the memory-wide hardening is in scope. Neither is part of A2 T2.
 
 ## Persistent second-batch evidence
 
