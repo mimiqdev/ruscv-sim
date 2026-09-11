@@ -640,7 +640,7 @@ fn flat_library_rejected_placement_leaves_the_previous_image_runnable() {
         &declared_tohost_writer(fixture::standard_exit(1)),
         0,
         true,
-        false,
+        true,
         0,
     );
     let rejected = fixture::elf_with_placement(
@@ -659,6 +659,11 @@ fn flat_library_rejected_placement_leaves_the_previous_image_runnable() {
     assert_eq!(result.exit_code, 1);
     assert_eq!(result.cycles, 4);
     assert!(!result.timed_out);
+    assert_eq!(
+        result.signature_addr,
+        Some(fixture::SIGNATURE),
+        "the rejected image must not replace the loaded image's signature metadata"
+    );
 }
 
 #[test]

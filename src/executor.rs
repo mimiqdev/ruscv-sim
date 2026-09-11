@@ -939,8 +939,6 @@ impl RiscVSimulator {
             loaded.tohost,
             loaded.base_addr,
         );
-        self.signature = sig;
-
         // Resolve image-derived exit metadata before mutating wrapper state, so a
         // placement the flat image cannot represent leaves the wrapper unchanged.
         let image_tohost = match tohost {
@@ -952,6 +950,8 @@ impl RiscVSimulator {
             )?),
             None => None,
         };
+
+        self.signature = sig;
 
         // NOTE: This implementation is simplified and still uses SimpleMemory internally
         // if created via new(). It does not support SystemBus yet.

@@ -4,7 +4,7 @@
 
 **Authority:** Informational; this register supports the [A1 public behavior matrix](public-behavior-matrix.md) and does not authorize production repair
 
-**Last reviewed:** 2026-09-08; individual verification runs retain their recorded scope
+**Last reviewed:** 2026-09-11; individual verification runs retain their recorded scope
 
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)

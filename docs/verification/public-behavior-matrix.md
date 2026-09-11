@@ -4,7 +4,7 @@
 
 **Authority:** Informational as-of A1 evidence; original scope is preserved in the [archived A1 contract](../archive/milestones/a1-public-behavior-baseline.md), while compatibility requirements are stated in [ADR-0003 §9](../architecture/decisions/0003-runner-machine-and-platform-ownership.md#9-compatibility-constraints-for-the-current-product)
 
-**Last reviewed:** 2026-09-09; A1 rows retain their 2026-09-08 recorded scope. A2 T1 and T2 update the `read_mem` helper row, the flat-library lifecycle/config rows, and the G-01/G-02 test names.
+**Last reviewed:** 2026-09-11; A1 rows retain their 2026-09-08 recorded scope. A2 T1 and T2 update the `read_mem` helper row, the flat-library lifecycle/config rows, and the G-01/G-02 test names.
 
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)
