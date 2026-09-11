@@ -8,7 +8,7 @@
 
 This is the full A3 capability assessment as accepted. Current navigation lives
 in [the verification index](../../verification/a3-capability-assessment.md) and
-the only active plan is [A4](../../dev-plan.md).
+the successor plan was [A4](a4-shared-run-control-and-image-installation.md).
 
 ---
 
@@ -26,7 +26,7 @@ record.
 
 ## Purpose
 
-[A3](../../dev-plan.md) defines one bounded capability: the CLI `load_and_run` and
+[A3](a3-shared-image-placement-and-result-path.md) defines one bounded capability: the CLI `load_and_run` and
 the `RiscVSimulator` facade resolve an image's declared metadata and build their
 `ExecutionResult` through one internal path, so the two public entry points cannot
 drift on placement, exit retention or artifact reporting.

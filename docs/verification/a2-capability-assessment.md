@@ -14,8 +14,10 @@ A2 was accepted with its documented limitations on 2026-09-11. Its records are:
 - [Original A2 contract](../archive/milestones/a2-reliable-flat-library-workflow.md).
 - [A3 closeout](../archive/milestones/a3-closeout-record.md), which shared image
   placement and result construction between the entry points.
-- [A4 — the only active milestone](../dev-plan.md), one host-side path for run
-  control and image installation.
+- [A4 closeout proposal](../archive/milestones/a4-closeout-record.md), verified
+  shared run control and installation; formal acceptance pending.
+- [A5 prospective contract](../dev-plan.md), ACT4 RV64I external compatibility;
+  detailed approval pending through the closeout PR merge.
 
 The A2 matrix sections and gap-register entries below this directory remain
 as-of evidence until subsequent verified changes update specific entries.

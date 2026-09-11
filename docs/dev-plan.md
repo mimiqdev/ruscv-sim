@@ -1,175 +1,195 @@
-# Active Development Plan
+# Development Plan
 
 **Project:** `ruscv-sim`
 
-**Active milestone:** A4 — One Host-Side Path for Run Control and Image Installation
+**Prospective milestone:** A5 — ACT4 RV64I External Compatibility Baseline
 
-**Status:** Active — bounded T1 decision and T2 installation merged; T3 integrated tests and [capability assessment](verification/a4-capability-assessment.md) locally verified, with committed-head independent review and merge-time evidence pending
+**Status:** Draft — direction approved; detailed contract pending maintainer approval through the A4 closeout PR merge
 
-**Authority:** Normative milestone contract
+**Authority:** Proposed normative milestone contract; not yet implementation authorization
 
-**Approved / started:** 2026-09-11
+**Prepared:** 2026-09-11
 
-This is the only current milestone contract. [A3 is completed](archive/milestones/a3-closeout-record.md)
-with documented limitations and its full [capability assessment](archive/milestones/a3-capability-assessment.md).
-Milestone identifiers are not releases.
+This is the only current prospective milestone contract. The
+[A4 closeout](archive/milestones/a4-closeout-record.md) records completed
+implementation and verification; formal acceptance and this successor contract
+are proposed together, not already merged. A5 continues the A0–A4 milestone
+sequence, not a release number or a revival of the
+[superseded M8 plan](archive/milestones/m8-act4-rv64i-superseded.md).
 
 ## Objective
 
-The CLI `load_and_run` and the `RiscVSimulator` facade install an image and reach
-their stop decision through one internal path, so the two largest remaining
-duplicated host-side responsibilities cannot drift between the configurations.
-After A3 shared image placement and result construction, both entry points still
-separately implement stepping with budget accounting, exit-detection order and
-RAM-signal clearing, and both still build RAM, load the program, construct a core
-and reset it. Each configuration keeps its own signal sources and its own
-override precedence; sharing the decision does not merge those.
+Generate and execute an explicit, reproducible ACT4 RV64I selection with
+Sail-derived expected values through **`ruscv-sim run`**, and repair bounded
+base-integer defects it exposes with public-path regressions. Deliver external
+compatibility evidence for that entire selection, not another internal extraction
+or a claim of RISC-V certification.
 
-The drift evidence is concrete: G-10 was a wrapper-only defect in exactly this
-code, where one loop cleared the RAM signal after decoding the exit while the
-other retained it. This milestone removes the duplication that allowed it. It is
-not the Runner/Machine/Platform migration and does not claim those boundaries
-integrated.
+[A4's assessment](archive/milestones/a4-capability-assessment.md#one-successor-proposal-act4-rv64i-external-compatibility-validation)
+recommended this pivot: shared host control and installation now have integrated
+evidence, but the public ISA path has no selected external baseline.
+[`Opcode::MiscMem`](../src/decode/mod.rs#L248) is still rejected, including
+base-I FENCE. Component presence and project-authored guest passes do not establish
+extension-wide support.
 
-## Starting evidence and boundary
+## Scope and selection contract
 
-- [A3 closeout](archive/milestones/a3-closeout-record.md) and its
-  [capability assessment](archive/milestones/a3-capability-assessment.md) record
-  what A3 shared, what remains duplicated, and the retained configuration
-  differences that must survive this change.
-- [`load_and_run`](../src/executor.rs) and [`RiscVSimulator`](../src/executor.rs)
-  each own a loop and an installation sequence today.
-- The [matrix](verification/public-behavior-matrix.md) CLI-versus-library row,
-  its A3 equivalence section and the [gap register](verification/public-behavior-gaps.md)
-  are the compatibility baseline.
-- [ADR-0003 §9](architecture/decisions/0003-runner-machine-and-platform-ownership.md)
-  keeps both entry points available and requires the CLI and flat-library
-  configurations to stay explicit. One run-control owner is the accepted target;
-  this milestone implements a bounded step of it, not the composition.
+Use `riscv/riscv-arch-test` **ACT4 4.0.0**, pinned at
+[`a7c99303516f4e668f7488f172043392e23b9dfd`](https://github.com/riscv/riscv-arch-test/tree/a7c99303516f4e668f7488f172043392e23b9dfd),
+with self-checking ELFs containing Sail-derived expected values, on the current
+single-Hart native RAM/UART/HTIF configuration. No test-only instruction engine,
+direct ISA-function harness, legacy RISCOF plugin or legacy signature-dump
+comparison may substitute for public CLI execution.
 
-The supported configuration stays one Hart, synchronous flat RAM or bus RAM,
-little-endian ELF64 fixtures using already exercised instructions, and bounded
-allocations and requests.
+The selection is **all generated cases in the pinned upstream RV64I inventory
+that meet the declared unprivileged, non-trapping profile**, not a hand-picked
+green subset. Inventory source cases before running the DUT, and map every case
+to inclusion or a specific architectural/environment exclusion. Include integer
+ALU, RV64 word operations, branches/jumps, loads/stores and base-I FENCE wherever
+the pinned suite provides cases. Identify absent upstream coverage explicitly;
+add a focused public FENCE regression even if upstream offers no suitable case.
+Do not invent an approximate test count.
+
+Allowed boundary exclusions are tests whose purpose requires architectural trap
+entry (including ECALL/EBREAK trap behavior and misaligned/access-fault traps),
+privilege/CSR/MMU/PMP/interrupt behavior, other ISA extensions or unavailable
+concurrent/device ordering. List their exact source identifiers, reason and
+coverage consequence in a machine-readable exclusion manifest. Incidental startup,
+linker or pass/fail macro requirements must first be adapted to the declared
+profile; they are not a license to exclude the base instruction under test.
+FENCE.I is **Zifencei**, not base I.
+
+Freeze the source selection, profile parameters and exclusions at the feasibility
+gate in a reviewed repository record before claiming full-selection success.
+Required base-I failures, missing generation outputs and unsupported execution
+must remain failures/blockers, never be silently removed to make counts green.
+Any later denominator or profile change requires an explicit maintainer decision,
+recorded rationale and regenerated evidence. If the full profile cannot be
+generated without out-of-scope architecture, stop for that decision.
+
+## Early feasibility gate
+
+The pinned [upstream README](https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/README.md)
+names Sail **0.10**, GCC 15/Binutils 2.44 or LLVM/Clang 21, Make/Python and
+UDB configuration. Neither Sail 0.13.1 nor any exact working pairing has been
+verified here. The existing [development image](development-environment.md)
+and guest CI toolchain do not establish an ACT4/Sail environment.
+
+First prove one compatible ACT4/Sail/compiler pairing from a clean documented
+workspace or container, including submodule revisions and required UDB/Ruby/
+Bundler/Python dependencies. Commit a concise immutable tool/dependency manifest
+and setup command; record actual compiler/model versions and container digest
+if used. Prefer upstream generation machinery and one thin execution harness,
+not a new orchestration framework.
+
+Generate and run a named small smoke selection with Sail expected values, inspect
+startup and linked code for undeclared ISA requirements, and prove both guest
+pass and guest-failure signaling through the public CLI. Record unsuccessful
+setup attempts and blockers. The smoke result proves feasibility only: **it
+cannot close A5 or be labeled the complete RV64I selection**. If tool compatibility
+or generation is unavailable, report that blocker before implementing speculative
+infrastructure or expanding simulator architecture.
 
 ## Required observable behavior
 
-### One run-control decision
+- Checked-in DUT configuration, linker script and pass/fail macros map to the
+  existing native exit path. A documented command builds Sail-checked ELFs from
+  the pinned sources; a separate or combined command runs them through the
+  release CLI. Preserve the oracle; do not patch expected results to fit the DUT.
+- Emit an enumerated generated-ELF manifest with source/variant identity, profile,
+  hashes and tool revisions. Derive source, generated-variant and executed-ELF
+  counts separately from the exact build. Detect missing/duplicate/extra outputs,
+  empty selections and generation failures; none may count as a pass.
+- Invoke the public CLI for every selected ELF with explicit cycle and host
+  wall-time limits. Retain invocation, stdout/stderr, simulator revision, ELF
+  hash and per-test machine-readable outcome. Distinguish guest pass, guest fail,
+  cycle/wall timeout, unsupported execution, and simulator/harness failure.
+  Ambiguous output is a failure, not success inferred from process status alone.
+- Fail-closed negative controls cover a known failing guest/self-check,
+  nontermination, an invalid/unsupported instruction and a missing or malformed
+  ELF; also prove missing results and a generation failure make the overall job
+  fail. Run controls through the same harness, not an independent success path.
+- Reproduce each in-scope ISA defect before repair and add focused Rust and/or
+  public ELF regressions. Minimal decoder/dispatcher/ISA fixes for required
+  base-I behavior are in scope. FENCE must be correct for synchronous,
+  single-Hart ordered memory without inventing a concurrent platform model;
+  FENCE.I support is not implied. Keep PC, `x0`, retirement and memory effects
+  explicit. Out-of-scope discoveries require a decision rather than scope drift.
 
-- A single internal owner decides, for a retired instruction or a failure,
-  whether the run continues, stops with a guest exit, stops with a timeout or
-  stops with an execution error, and reports how many instructions retired.
-- Budget semantics are decided there and keep their current behavior: zero budget
-  executes no instruction and reports a timeout; exhaustion reports a timeout with
-  the exact text in use; an exit in the final permitted slot is not a timeout.
-- Exit handling is decided there with their current ordering per configuration:
-  which observable signal is checked first, that a decoded exit is retained before
-  its RAM signal is cleared, and that no path re-reads a cleared signal.
-- Each configuration still supplies its own signal sources — the native bus
-  observes the HTIF endpoint and a selected RAM address, the flat library observes
-  its selected offset — and keeps its own address form for that selection.
+## Architecture and compatibility constraints
 
-### One image installation
+The [accepted ADRs](architecture/decisions/README.md),
+[principles](architecture/principles.md) and
+[external-test boundary](verification/external-riscv-tests.md) remain authoritative.
+One Rust Hart owns ISA semantics. Test setup and result classification remain
+host orchestration; storage placement is not guest translation.
 
-- A single internal path installs a loaded image for a configuration: it creates
-  the configuration's memory, loads the program, constructs the core and resets it
-  to the entry point, given that configuration's memory backend.
-- The CLI keeps its bus composition (RAM at the image base, UART, HTIF callback)
-  and the flat library keeps its bare flat memory; installation shares the
-  sequence, not the configuration.
+Use existing public APIs, CLI options, exit encoding and native configuration.
+Preserve A1–A4 compatibility tests without deletion or weakening. A deliberately
+repaired base-I rejection may change to successful execution only with a
+reproducing regression and explicit documentation; an unrelated public behavior
+change requires separate approval. This milestone does not implement or claim
+the ADR target Runner/Machine/Platform or precise Hart outcome boundaries.
 
-### Preserved compatibility
+## Non-goals and re-evaluated gaps
 
-- Public signatures, CLI options and output, `read_mem`/`write_mem`/`set_tohost`
-  address meanings, exit encodings, device behavior, artifact policy and the
-  retained differences recorded in the A3 assessment are unchanged.
-- The two loops are not merged into one loop, and the milestone does not claim the
-  Machine/Platform composition.
+No trap/privilege/interrupt/MMU/PMP integration, multi-Hart, SystemC/TLM,
+platform migration, merged run loops, devices in the flat facade, new non-I ISA
+extensions, acceleration, performance target, OS boot, RV64G certification or
+whole-ISA compliance claim. No legacy RISCOF adapter or general-purpose suite
+framework. No automatic revival of the old M8 checklist.
 
-## Task decomposition and PR cadence
-
-These are delivery tasks under one milestone, not additional milestones. They may
-be split or combined into reviewable PRs without changing the acceptance goal.
-
-| Task | Contribution | Dependency / evidence |
-| --- | --- | --- |
-| T1 — Shared run-control decision | One owner for the budget, stop reason, exit ordering and signal clearing, used by both loops, with the configurations still supplying their own signal sources. | The A1–A3 exit, limit and equivalence tests must pass unchanged, plus focused tests for the decision itself. |
-| T2 — Shared image installation | One sequence that installs a loaded image for a configuration, given its memory backend. | The CLI and flat suites must pass unchanged, plus installation tests for both configurations. |
-| T3 — Integrated equivalence and documentation | Prove through committed tests that both entry points keep their documented behavior on the shared path, and record what changed. | Depends on T1–T2; exact-head review, full gate and merge-time guest evidence. |
-
-Preserve before changing: reproduce any behavior difference before adjusting it,
-and keep new discoveries explicit in the gap register instead of silently adding
-them to this milestone.
-
-## Architectural constraints
-
-The [accepted ADRs](architecture/decisions/README.md), particularly
-[ADR-0003](architecture/decisions/0003-runner-machine-and-platform-ownership.md),
-and [principles](architecture/principles.md) remain authoritative:
-
-- One Hart, one ISA engine. The shared path decides and installs; it does not
-  execute instructions itself, and it does not change instruction semantics.
-- Host image handling stays separate from Hart-initiated physical transactions.
-  Storage adaptation is not guest virtual-to-physical translation.
-- Public entry points keep their names and behavior; prefer private helpers. Any
-  new public item needs a stated reason and rustdoc.
-- The milestone does not consolidate the two loops and does not claim
-  Machine/Platform boundaries integrated.
-
-## Non-goals and retained gaps
-
-- Runner/Machine/Platform composition, new ports or boundaries, precise Hart
-  outcomes/observations, scheduler or interrupt integration, merged run loops.
-- Devices in the flat wrapper, MMU/PMP/paging, multi-hart, SystemC/TLM, new ISA
-  support, acceleration, and ACT4 or any external architecture-suite compliance.
-- Repairing G-03, G-04, G-05, the CLI half of G-06, G-07, G-08, G-09 or G-11;
-  changing CLI options or the CLI signature-failure policy; `write_mem`
-  transactional semantics; arbitrary allocation hardening; poisoned-lock or
-  blocking-backend termination guarantees.
-- Exhausting the default cycle limit or adding `tohost` symbol-fallback fixtures;
-  those remain recorded unverified boundaries.
-- Performance work and benchmark targets.
-
-These exclusions bound the milestone; they are not extra future milestones.
+[Retained gaps](verification/public-behavior-gaps.md) G-03/G-04/G-05/CLI G-06/
+G-08/G-09/G-11 and inherited default-limit/symbol-fallback/inspection limits
+are not scheduled here. G-07 informs reproducible external tooling, not a promise
+to install tools on every host. A discovery blocking a required case is reported
+for explicit disposition; these exclusions cannot be used to discard required
+base-integer failures.
 
 ## Deliverables and acceptance criteria
 
-Deliver one run-control decision, one installation path, focused regressions,
-integrated equivalence evidence and updated records. Completion requires all of
-the following:
+1. **Feasible pinned generation.** A clean environment reproduces the documented
+   ACT4/Sail generation and smoke workflow with immutable pins and truthful
+   startup/profile evidence. The reviewed selection inventory and exclusions
+   cover the entire pinned RV64I source inventory; exact counts replace guesses.
+2. **Fail-closed public execution.** The bounded harness executes every selected
+   ELF through `ruscv-sim run`, produces complete machine-readable results and
+   retained diagnostics, and passes all negative-control assertions above.
+3. **Full selected compatibility.** Every ELF required by the frozen selection
+   is generated and passes; required generated = executed = passed, with zero
+   unexpected skips/missing cases/failures. Report exclusions separately. Smoke
+   success alone is insufficient. Every repaired defect has a local regression
+   and the FENCE gap has an explicit verified disposition.
+4. **Reproducible CI evidence.** CI actually provisions the pinned environment,
+   generates with Sail and executes the full selection and negative controls.
+   Retain tool/configuration/selection manifests, generated-ELF hashes, generation
+   logs, per-test outcomes, totals and failure-reproduction artifacts. Document
+   artifact retrieval and retention. A cache is allowed only with validated pins
+   and provenance plus a recorded clean generation run; unexplained cached ELFs
+   or Cargo-only success cannot satisfy this criterion.
+5. **Capability acceptance.** Record independent review of the exact committed
+   implementation head, the full six-command Rust gate, public CLI regressions,
+   current separately compiled project-authored guest results and successful
+   full-selection ACT4 CI at the reviewed head or verified merge. Update the
+   matrix, gap register, current-state and external-test instructions with exact
+   revisions/counts/limitations. The final assessment says *selected external
+   compatibility*, not certification, and proposes at most one successor.
 
-1. **One run-control decision.** Both entry points reach their stop decision
-   through the same internal owner; no loop keeps a private copy of the budget,
-   stop-reason, exit-ordering or signal-clearing logic. Tests cover zero budget,
-   exhaustion, the final-slot exit, exit retention before clearing, and the
-   ordering of the signals each configuration observes.
-2. **One installation path.** Both entry points install a loaded image through
-   the same sequence, each supplying its own memory backend; the CLI keeps its
-   device composition and the flat library stays bare.
-3. **Behavior preserved.** Every A1–A3 CLI and flat-library test passes unchanged;
-   none is deleted or weakened. The retained differences recorded in the A3
-   assessment remain accurate.
-4. **Evidence is current.** Full quality gate, strict rustdoc, public CLI/ELF
-   regressions and the merge-time guest compilation/execution run are recorded for
-   the reviewed implementation or verified merge. Matrix, gap register and
-   current-state documents identify precisely what changed and what remains
-   unverified.
-5. **Capability acceptance, not task counting.** A final assessment maps these
-   scenarios to committed tests, records limitations and independent review, and
-   proposes at most one successor from remaining architectural needs. T1 alone, or
-   merely deleting duplicated lines, cannot close A4.
-
-The quality gate is `cargo fmt --all -- --check`, `cargo check --all-features`,
+The full gate is `cargo fmt --all -- --check`, `cargo check --all-features`,
 `cargo clippy --all-features --all-targets -- -D warnings`,
-`cargo test --all-features`, `cargo doc --all-features --no-deps`, plus
+`cargo test --all-features`, `cargo doc --all-features --no-deps`, and
 `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`.
-Use the [development environment](development-environment.md) and
-[guest commands](verification/bare-metal-tests.md). Record unavailable tools and
-verification gaps explicitly; unmet capability criteria cannot be silently
-reclassified as optional tasks.
+Use the [guest commands](verification/bare-metal-tests.md); record unavailable
+tools and early-return Cargo tests honestly.
 
-## Closeout
+## Delivery and closeout
 
-Keep this as the only active contract. After capability acceptance and required
-review/merge evidence, archive completion, limitations and revision identifiers;
-re-evaluate unfinished work and select one separately approved successor.
-Task/PR granularity does not determine milestone granularity.
+Reviewable delivery order: (1) feasible pinned generation, truthful inventory
+and smoke gate; (2) full-selection CLI harness, negative controls and bounded
+repairs; (3) clean CI generation/execution and final capability assessment.
+These are tasks under one milestone, not three acceptance milestones.
+
+Formal work requires approval of this contract. After every criterion has
+recorded evidence and required review/merge, archive completion, limitations and
+revision identifiers, re-evaluate unfinished work and select one separately
+approved successor. Task completion cannot substitute for capability acceptance.

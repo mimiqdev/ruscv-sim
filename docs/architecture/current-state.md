@@ -107,9 +107,12 @@ The [A4 assessment](../verification/a4-capability-assessment.md) records the
 bounded shared run-control and installation owners for **two public entry loops**,
 not `RiscvCore::run`. T3's same-ELF tests combine nonzero entry offsets with
 guest data load/store, artifacts, budget/error/exit boundaries and replacement
-installation. They are locally verified; committed-head independent review and
-T3 merge-time evidence remain pending. This does not integrate the broader
-composition or establish external RV64I compatibility.
+installation. T3 was independently approved at exact head `810bf839` and merged
+as `e47a1b0`; its full gate and merge-time 46/46 separately compiled guest
+evidence are recorded in the [A4 closeout](../archive/milestones/a4-closeout-record.md).
+Formal closeout and the [A5 prospective contract](../dev-plan.md) await closeout
+merge approval. This does not integrate the broader composition or establish
+external RV64I compatibility.
 
 ## 4. Component integration inventory
 
@@ -142,7 +145,7 @@ composition or establish external RV64I compatibility.
 | --- | --- | --- |
 | Frontend | `src/main.rs` directly calls `load_and_run_file` | Introduce a frontend-facing application API without exposing concrete machine internals or embedding presentation in the runner. |
 | Loader | `elf.rs` parses and flattens the image; `load_and_run` places it | Define a load-image contract that places segments through Machine/Platform ownership and does not masquerade as address translation. |
-| Runner | Separate loops in `load_and_run` and `RiscVSimulator` use shared `RunControl` decisions and result construction | The bounded current continue/guest-exit/timeout/execution-error rule is shared; full Runner/Machine/Platform composition, precise Hart outcomes, debug stops and non-lossy fact handling remain unintegrated. The A4 T3 assessment records local integrated evidence; committed-head review and merge-time evidence remain pending. |
+| Runner | Separate loops in `load_and_run` and `RiscVSimulator` use shared `RunControl` decisions and result construction | The bounded current continue/guest-exit/timeout/execution-error rule is shared; full Runner/Machine/Platform composition, precise Hart outcomes, debug stops and non-lossy fact handling remain unintegrated. The [A4 closeout](../archive/milestones/a4-closeout-record.md) records integrated tests, exact-head review and successful final merge CI; formal closeout remains proposed. |
 | Machine | No explicit type composes Hart and Platform | Define the composition/lifecycle boundary while preserving one `RiscvCore` semantics implementation. |
 | Hart | `RiscvCore` owns active state/decode/execute but also ELF-base address adaptation and concrete memory traits | Remove loader-specific addressing and depend only on approved architectural ports; define structured step/run outcomes. |
 | Retirement/observation | `load_and_run` snapshots registers around `step`; commit memory access is absent | Make retirement/trap information originate at the Hart boundary and support observers without re-fetching or reconstructing effects externally. |
