@@ -10,11 +10,14 @@ A1 was accepted with its documented limitations on 2026-09-08. Its records are:
 - [Full pre-closeout acceptance assessment](../archive/milestones/a1-acceptance-assessment.md),
   preserving verification, residual-gap rationale and the successor recommendation.
 - [Original A1 contract](../archive/milestones/a1-public-behavior-baseline.md).
-- [A2 — the only active milestone](../dev-plan.md), reliable flat-library ELF
-  execution and inspection. Its capability contract supersedes the historical
-  G-02-only successor selection; A1's acceptance remains unchanged.
+- [A2 closeout](../archive/milestones/a2-closeout-record.md), which superseded
+  the historical G-02-only successor selection; A1's acceptance remains
+  unchanged.
+- [A3 — the only active milestone](../dev-plan.md), one shared image-placement
+  and result-construction path behind both public entry points.
 
 The historical assessment's recommendation/pending-confirmation language is not
-current status. A1 completion does not mean the recorded runtime defects are
-fixed or that the target architecture is implemented. The matrix and gap register
-remain as-of evidence until subsequent verified changes update specific entries.
+current status. A1 and A2 completion does not mean the recorded runtime defects
+are fixed or that the target architecture is implemented. The matrix and gap
+register remain as-of evidence until subsequent verified changes update specific
+entries.
