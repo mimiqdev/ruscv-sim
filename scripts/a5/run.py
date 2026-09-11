@@ -7,6 +7,8 @@ import re
 import struct
 import subprocess
 
+from cli_result import classify
+
 root = pathlib.Path.cwd()
 evidence = root / ".a5/evidence"
 elfs = list((root / ".a5/work").glob("**/elfs/**/*.elf"))
@@ -71,17 +73,24 @@ control.write_bytes(data)
 results = []
 for name, path in [("intact", elf), ("corrupt", control)]:
     command = [str(root / "target/release/ruscv-sim"), "run", str(path), "--max-cycles", "1000000"]
+    timed_out = False
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=60)
-        output = result.stdout + result.stderr
+        stdout, stderr = result.stdout, result.stderr
         rc = result.returncode
-    except subprocess.TimeoutExpired:
-        output, rc = "Host timeout", None
-    (evidence / f"{name}.txt").write_text(output)
-    status = ("guest-pass" if rc == 0 and "Status:     SUCCESS" in output and "Error:" not in output
-              else "guest-fail" if rc == 1 and "Status:     FAILED" in output and "Error:" not in output
-              else "simulator-or-runner-failure")
-    results.append({"case": name, "command": command, "returncode": rc, "classification": status,
+    except subprocess.TimeoutExpired as error:
+        # TimeoutExpired may carry bytes even with text=True.
+        def text(value):
+            return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
+        stdout, stderr, rc = text(error.stdout), text(error.stderr), None
+        timed_out = True
+    except OSError as error:
+        stdout, stderr, rc = "", str(error), None
+    (evidence / f"{name}.txt").write_text(stdout + stderr)
+    (evidence / f"{name}.stdout.txt").write_text(stdout)
+    (evidence / f"{name}.stderr.txt").write_text(stderr)
+    outcome = classify(stdout, stderr, rc, timed_out=timed_out)
+    results.append({"case": name, "command": command, "returncode": rc, **outcome,
                     "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
 report = {"mutation": {"address": hex(address), "offset": offset, "before": old, "after": data[offset]},
           "results": results}
