@@ -41,7 +41,8 @@ handoff is recorded in the [A0 closeout record](../../archive/milestones/a0-clos
 [A1's subsequent closeout](../../archive/milestones/a1-closeout-record.md),
 [the A2 closeout](../../archive/milestones/a2-closeout-record.md) and
 [the A3 closeout](../../archive/milestones/a3-closeout-record.md) record their
-limitations and successor decisions. [A4's closeout proposal](../../archive/milestones/a4-closeout-record.md)
-records completed implementation and verification, with formal acceptance pending.
-[A5](../../dev-plan.md) is the only prospective milestone contract; its detailed
-approval remains pending through the closeout PR merge.
+limitations and successor decisions. [A4's closeout](../../archive/milestones/a4-closeout-record.md)
+and the detailed [A5 contract](../../dev-plan.md) were approved by
+[PR #31](https://github.com/mimiqdev/ruscv-sim/pull/31), merged as
+`a4804341f4ae0a5344beea7ef6c53667e1912c93` on 2026-09-11.
+A5 is the only current milestone; approval does not establish ACT4 feasibility.

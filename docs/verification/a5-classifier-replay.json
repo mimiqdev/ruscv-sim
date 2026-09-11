@@ -1,0 +1,93 @@
+{
+  "scope": "PR32 P2 fail-closed classifier repair; retained ELF replay only",
+  "reviewed_base": "90fc50d24f430baacbeb760001cf77758bc05619",
+  "locally_tested_code_commit": "4c04f4536e1c377ce16d6754d14c20ebfd07d35c",
+  "revision_note": "This record was added after testing the named committed code revision; its containing documentation commit is not its own test identifier.",
+  "preserved_linux_generation_commit": "9f52fe1eb1edd2ef80fdf8a7289326f6f0727319",
+  "preserved_generation_record": "a5-feasibility-results.json",
+  "artifact": {
+    "id": 10271109348,
+    "run": "https://github.com/mimiqdev/ruscv-sim/actions/runs/34617871221",
+    "url": "https://github.com/mimiqdev/ruscv-sim/actions/runs/34617871221/artifacts/10271109348",
+    "verified_zip_sha256": "1bdf672d423faeca9ab5220dc74d0f54905b8fec789456d972e6544dabbed90c",
+    "expires_at": "2026-09-25T15:48:21Z"
+  },
+  "local_environment": {"host": "Darwin arm64", "python": "3.9.6", "rustc": "1.98.0 (88d9e12ae 2026-08-18)"},
+  "verification": [
+    "python3 scripts/a5/test_runner.py: 11 passed",
+    "cargo check --all-features: passed",
+    "cargo build --locked --release: passed",
+    "python3 scripts/a5/replay_retained.py .a5/retained: passed",
+    "bash -n scripts/a5/experiment.sh: passed",
+    "Python AST for scripts/a5/*.py: passed",
+    "JSON parsing for docs/verification/a5-*.json: passed (this new record parsed on documentation verification)",
+    "YAML parsing for scripts/a5/*.yaml and .github/workflows/a5-feasibility.yml: passed",
+    "git diff --check: passed"
+  ],
+  "replay": {
+    "command": "target/release/ruscv-sim run <retained-or-remutated-elf> --max-cycles 1000000",
+    "host_timeout_seconds": 60,
+    "runner": "scripts/a5/run.py",
+    "binutils_queries": "substituted hash-verified original linked.objdump and symbols.txt; no fresh binutils audit",
+    "fresh_stdout_matches_retained_combined_outputs": true,
+    "fresh_stderr_empty": true,
+    "intact": {
+      "sha256": "56b1efd50a01eb92a4ac8d81e8beb8e90f30f9529c42fdd610dd1ebd4cadedd8",
+      "stdout_sha256": "e9173c66a4ff1bd2ed9b9efae5ecd2e655b20fbda94b2a98e150fc502fab6abf",
+      "classification": "guest-pass", "returncode": 0, "exit_code": 0,
+      "status": "SUCCESS", "cycles": 4327, "final_pc": "0x0000000080015038"
+    },
+    "corrupt": {
+      "sha256": "33b913f22dcfd625e1dfeb06c2e253c6531a5be2befee2514b675c66fd936d54",
+      "stdout_sha256": "68a5ed22ed4e26023713f5838c774a40720768cfc7ce7c03e0d8a71f005d9a1d",
+      "classification": "guest-fail", "returncode": 1, "exit_code": 1,
+      "status": "FAILED", "cycles": 1130, "final_pc": "0x0000000080015050",
+      "mutation": {"address": "0x80013978", "file_offset": 84344, "before": 217, "after": 216},
+      "only_one_byte_changed": true,
+      "remutated_elf_matches_retained_control": true
+    },
+    "missing_elf": {
+      "returncode": 1, "classification": "simulator-or-runner-failure",
+      "reason": "simulator-stderr", "stdout_empty": true,
+      "stderr": "Error: Execution failed: ELF loading failed: I/O error: No such file or directory (os error 2)\n"
+    }
+  },
+  "generation_input_comparison": {
+    "from": "9f52fe1eb1edd2ef80fdf8a7289326f6f0727319",
+    "to": "4c04f4536e1c377ce16d6754d14c20ebfd07d35c",
+    "byte_identical_sha256": {
+      ".github/workflows/a5-feasibility.yml": "809ef24b04435c15afd0e44958acd500b19a6326082b367615b2cd72096f4213",
+      "scripts/a5/experiment.sh": "24c6a48bb0dbffe8a2bbe7373c8a1d309cd6e379db8af91154e3ac914af998ba",
+      "scripts/a5/link.ld": "90f18d00caf5b1afaa82925bca6c7c719962163d6ad7352cdd7857c4586ee56b",
+      "scripts/a5/provision.py": "56d209a4150c5444b4497f7fa573a9d85367abe05cb63c9cba9d62fa4601e4bc",
+      "scripts/a5/ruscv-rv64i-smoke.yaml": "3313d9ee8ad42a338b6fbfd52ba978d83a2b79f67e29a419bda9f0d53ba5e492",
+      "scripts/a5/rvmodel_macros.h": "d48140aa48660ae5c34c4ca33504f94d6316ce3317dc705a949f58982fef20eb",
+      "scripts/a5/rvtest_config.h": "93c4d63cb7557e87ff5475a439ebeaf4798313a543806610dd6e080508ffb5dc",
+      "scripts/a5/sail_config.py": "9ec6ba5ee718b22129a15a9e4a964207f2103c7b489894ea837b857187fc305e",
+      "scripts/a5/test_config.yaml": "ba6e0098e804bcaf61a1f9a2830054fd4eeefdf409d97e07a52fbca8ffc48394",
+      "scripts/a5/udb_overlay.py": "76eaa591e622806e837233d200c85cadadad45180925105cb960a6ab627ce881",
+      "scripts/a5/validate_controls.py": "52f4901243af9962194f8da335778641adb31596906a0cbdf7b977ad95104da0"
+    },
+    "pins_semantically_identical": [
+      "act4 entire object (revision, submodule, dependency hashes, tool versions)",
+      "linux_x86_64_candidates except executed status booleans",
+      "base_i_source_reconnaissance directory, sources, source_count, proposed_smoke_source, required_extensions_header, march_header, mxlen_header"
+    ],
+    "pins_differences": "status, execution_evidence, executed flags, observed result counts and count_scope only",
+    "rust_source_and_cargo_inputs_identical": true,
+    "execution_inputs_intentionally_changed": ["scripts/a5/run.py", "scripts/a5/test_runner.py"],
+    "new_execution_verification_inputs": ["scripts/a5/cli_result.py", "scripts/a5/replay_retained.py"],
+    "all_executable_inputs_identical": false
+  },
+  "limits": {
+    "linux_generation_rerun": false,
+    "linux_attempts_total": 4,
+    "fresh_binutils_audit": false,
+    "full_rust_gate_rerun": false,
+    "production_or_isa_or_oracle_changes": false,
+    "repair_linux_ci_verified": false,
+    "final_head_independent_review_pending": true,
+    "merged": false,
+    "a5_accepted": false
+  }
+}

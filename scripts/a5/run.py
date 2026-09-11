@@ -1,0 +1,99 @@
+"""Audit linked instructions and run intact/corrupt ACT4 ELFs via the public CLI."""
+import hashlib
+import bisect
+import json
+import pathlib
+import re
+import struct
+import subprocess
+
+from cli_result import classify
+
+root = pathlib.Path.cwd()
+evidence = root / ".a5/evidence"
+elfs = list((root / ".a5/work").glob("**/elfs/**/*.elf"))
+assert len(elfs) == 1, elfs
+elf = elfs[0]
+objdump = subprocess.check_output(["riscv64-unknown-elf-objdump", "-d", "-M", "no-aliases", str(elf)], text=True)
+(evidence / "linked.objdump").write_text(objdump)
+symbols = subprocess.check_output(["riscv64-unknown-elf-nm", "--special-syms", "-n", str(elf)], text=True)
+(evidence / "symbols.txt").write_text(symbols)
+mapping = sorted((int(address, 16), name.startswith("$d")) for address, name in
+                 re.findall(r"^([0-9a-f]+) \w (\$[dx]\S*)$", symbols, re.M))
+mapping_addresses = [address for address, is_data in mapping]
+# Base-I audit includes startup and failure-reporting code; opcode classes
+# alone would incorrectly allow M/B instructions that share OP encodings.
+allowed = {0x03, 0x0f, 0x13, 0x17, 0x1b, 0x23, 0x33, 0x37, 0x3b, 0x63, 0x67, 0x6f}
+mnemonics = set("""lui auipc jal jalr beq bne blt bge bltu bgeu
+lb lh lw ld lbu lhu lwu sb sh sw sd
+addi slti sltiu xori ori andi slli srli srai
+add sub sll slt sltu xor srl sra or and
+addiw slliw srliw sraiw addw subw sllw srlw sraw fence fence.tso""".split())
+decoded = re.findall(r"^\s*([0-9a-f]+):\s+([0-9a-f]{4,8})\s+(\S+)", objdump, re.M)
+instructions, inline_data = [], []
+for address, word, op in decoded:
+    index = bisect.bisect_right(mapping_addresses, int(address, 16)) - 1
+    # ACT4 SIGUPD embeds inst/diagnostic-string pointers after its failure
+    # call, skipped by branch/return. Honor assembler $d mapping symbols,
+    # not a blanket exemption for unknown instructions or all .word output.
+    if index >= 0 and mapping[index][1]:
+        inline_data.append((address, word, op))
+    else:
+        instructions.append((word, op))
+assert instructions, "No disassembly"
+unsupported = [(word, op) for word, op in instructions
+               if len(word) != 8 or int(word, 16) & 0x7f not in allowed or op not in mnemonics]
+(evidence / "audit.json").write_text(json.dumps({
+    "instructions": len(instructions), "unsupported": unsupported,
+    "mapped_inline_data_words": len(inline_data),
+    "mnemonics": sorted({op for word, op in instructions}),
+}, indent=2))
+assert not unsupported, unsupported
+# Flip the first actual expected result, after the initial signature canary.
+# Find signature_base using the linked symbol table, then map its VA through
+# PT_LOAD rather than guessing file offsets. Code and exit hooks stay intact.
+match = re.search(r"^([0-9a-f]+) \w signature_base$", symbols, re.M)
+assert match, "Missing signature_base"
+address = int(match[1], 16) + 8
+data = bytearray(elf.read_bytes())
+assert data[:6] == b"\x7fELF\x02\x01"
+phoff = struct.unpack_from("<Q", data, 32)[0]
+phsize, phnum = struct.unpack_from("<HH", data, 54)
+offsets = []
+for i in range(phnum):
+    kind, flags, offset, va, pa, filesz, memsz, align = struct.unpack_from("<IIQQQQQQ", data, phoff + i * phsize)
+    if kind == 1 and va <= address < va + filesz:
+        offsets.append(offset + address - va)
+assert len(offsets) == 1, offsets
+offset = offsets[0]
+old = data[offset]
+data[offset] ^= 1
+control = evidence / "I-add-00.corrupt.elf"
+control.write_bytes(data)
+results = []
+for name, path in [("intact", elf), ("corrupt", control)]:
+    command = [str(root / "target/release/ruscv-sim"), "run", str(path), "--max-cycles", "1000000"]
+    timed_out = False
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        stdout, stderr = result.stdout, result.stderr
+        rc = result.returncode
+    except subprocess.TimeoutExpired as error:
+        # TimeoutExpired may carry bytes even with text=True.
+        def text(value):
+            return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
+        stdout, stderr, rc = text(error.stdout), text(error.stderr), None
+        timed_out = True
+    except OSError as error:
+        stdout, stderr, rc = "", str(error), None
+    (evidence / f"{name}.txt").write_text(stdout + stderr)
+    (evidence / f"{name}.stdout.txt").write_text(stdout)
+    (evidence / f"{name}.stderr.txt").write_text(stderr)
+    outcome = classify(stdout, stderr, rc, timed_out=timed_out)
+    results.append({"case": name, "command": command, "returncode": rc, **outcome,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+report = {"mutation": {"address": hex(address), "offset": offset, "before": old, "after": data[offset]},
+          "results": results}
+(evidence / "results.json").write_text(json.dumps(report, indent=2) + "\n")
+print(json.dumps(report, indent=2))
+assert [r["classification"] for r in results] == ["guest-pass", "guest-fail"], report
