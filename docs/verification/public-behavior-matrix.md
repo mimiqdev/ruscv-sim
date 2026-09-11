@@ -496,8 +496,8 @@ exit, artifact and replacement assertion. New unit tests cover the shared owner:
 | `test_placement_absent_metadata_is_none` | An image that declares nothing yields no tohost and no artifact in both forms. |
 | `test_placement_signature_range_boundaries` | The last addressable byte resolves, one past it fails, and an empty range needs no bytes while an offset outside the image memory is still refused. |
 
-Exit retention and artifact composition remain constructed separately in each
-entry point; that is A3 T2.
+Exit retention and artifact composition were still constructed separately in
+each entry point at that point; A3 T2 shared that construction, below.
 
 ## A3 T2 shared result evidence
 

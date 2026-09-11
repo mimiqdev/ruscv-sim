@@ -1370,14 +1370,14 @@ impl RiscVSimulator {
         .build(self.artifact_outcome())
     }
 
-    /// Read the loaded image's declared signature artifact from flat memory.
-    ///
-    /// The returned address is the guest metadata address from the image, while
-    /// the bytes come from the corresponding flat offset. Absent metadata yields
-    /// no artifact, a zero-length region yields an empty artifact, and a region
-    /// that cannot be mapped or read yields an explicit diagnostic instead of
-    /// silent absence.
     /// Read the image's declared signature region from the flat image.
+    ///
+    /// The region is addressed through the shared placement resolution, so bytes
+    /// come from the offset corresponding to the guest metadata. Absent metadata
+    /// yields [`ArtifactOutcome::Absent`], a zero-length region yields
+    /// [`ArtifactOutcome::Empty`] without a mapping check, and a region that
+    /// cannot be mapped or read yields [`ArtifactOutcome::Failed`] instead of
+    /// silent absence.
     fn artifact_outcome(&self) -> ArtifactOutcome {
         let Some(info) = self.image.signature_info() else {
             return ArtifactOutcome::Absent;
