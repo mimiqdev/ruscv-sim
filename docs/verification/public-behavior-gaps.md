@@ -105,12 +105,12 @@ a second active plan.
 
 ### G-06 — Signature read errors are suppressed in run results
 
-- **Disposition:** **Source-observed gap; error path unverified**.
+- **Disposition:** **Repaired for the flat-library path** in A2 T3; the CLI `load_and_run` path remains a **source-observed gap** with an unverified error path.
 - **Surface:** `ExecutionResult.signature_data` after a signature read failure.
-- **Implementation evidence:** All `load_and_run` result paths call `dump_signature(...).ok().flatten()`, so a read error becomes `None` while `signature_addr` may remain `Some`.
-- **Existing tests:** `test_dump_signature_none`, `test_dump_signature_zero_size`, and the current `test_load_and_run_with_signature` are **strong** for successful helper/public artifact cases; no public test injects a signature-region read failure.
-- **Impact:** The result cannot distinguish “no data,” “empty signature,” and “signature read failed” through `signature_data` alone. The current behavior must not be advertised as successful signature capture on an unreadable range.
-- **Next decision:** Decide the result/error contract and add a focused reproduction/regression if a repair is authorized.
+- **Implementation evidence:** All `load_and_run` result paths still call `dump_signature(...).ok().flatten()`, so a CLI read error becomes `None` while `signature_addr` may remain `Some`. `RiscVSimulator::signature_artifact` no longer suppresses: a declared region the flat image cannot represent leaves `signature_data` as `None` **and** appends an explicit diagnostic to `ExecutionResult.error`, without disturbing exit, cycles, final PC or a primary failure. The helper's byte-read arm is defensive parity: once the checked mapping passes, the range is inside the flat buffer, so the observed artifact failures are mapping failures rather than backend read failures. A2's non-goals exclude redesigning the CLI signature-failure policy, so that path is unchanged and still cannot be advertised as successful capture.
+- **Existing tests:** For the flat path, `flat_library_distinguishes_absent_empty_and_unreadable_signatures` is **strong** for the three distinguishable outcomes, and `flat_library_keeps_the_run_when_the_signature_is_unreadable` is **strong** for preserved accounting and for a primary timeout/execution error surviving alongside the artifact failure. For the CLI path, `test_dump_signature_none`, `test_dump_signature_zero_size`, and `test_load_and_run_with_signature` remain **strong** for successful cases; no public CLI test injects a signature-region read failure.
+- **Impact:** The flat-library result now distinguishes “no metadata,” “empty artifact,” and “artifact read failed”. The CLI limitation must stay explicit.
+- **Next decision:** If the CLI surface is repaired later, decide the result/error contract there and add a focused reproduction; that is not part of A2.
 
 ### G-07 — Host-only guest ELF commands require the project toolchain/container
 
@@ -157,6 +157,16 @@ a second active plan.
 - **Existing tests:** None. The A2 T2 placement tests cover image-derived offsets, which are now range-checked and aligned at load, so they cannot reach this path. Only a manual flat offset at the top of the address space does.
 - **Impact:** A public setter combined with `run` can panic instead of returning a bounded error. The exit poll for a selected offset should report an error or a distinguishable timeout shape.
 - **Next decision:** Choose between a checked bound in the flat memory accessors and a validated manual offset in the wrapper, and record whether the memory-wide hardening is in scope. Neither is part of A2 T2.
+
+### G-12 — Flat-library signature artifact was read at the guest address and suppressed
+
+- **Disposition:** **Repaired** in A2 T3.
+- **Surface:** `RiscVSimulator::run` result construction for `ExecutionResult.signature_data`.
+- **Implementation evidence:** The wrapper passed the image's signature metadata `vaddr` straight to `dump_signature` against its flat `SimpleMemory`, and discarded the `ExecutorError` with `.ok().flatten()`. For any nonzero-base image the guest address is not a flat offset, so the read failed and the artifact was silently absent while `signature_addr` still reported the guest address.
+- **Reproduction:** A `0x80000000`-base image with a declared `.signature` at `0x80002000`, whose guest stored `0x5a` at the first signature byte and then exited through its declared tohost, returned `{exit=0, cycles=8, signature_addr=Some(0x80002000), signature_data=None, error=None}` before the repair. The same run now returns `signature_data=Some([0x5a, 17, 34, 51, 68, 85, 102, 119])`. A declared-but-unmappable region at `0x80200000` returned `signature_data=None` with no diagnostic; it now returns an explicit `Signature artifact unavailable: …` message while preserving the run.
+- **Existing tests:** `flat_library_returns_guest_written_signature_bytes_at_nonzero_base` and `flat_library_returns_signature_bytes_at_base_zero` are **strong** for guest-written bytes plus the guest metadata address; `flat_library_distinguishes_absent_empty_and_unreadable_signatures` and `flat_library_keeps_the_run_when_the_signature_is_unreadable` cover the artifact outcomes and preserved accounting; `flat_library_replaces_image_metadata_and_ram_on_a_second_load` covers replacement. At the pre-T3 revision the new suite reports `33 passed; 4 failed`.
+- **Impact:** The flat library reported an address with no bytes and no explanation. This repair is T3 only; the integrated workflow remains open.
+- **Selected successor scope:** [A2](../dev-plan.md) T3 is this artifact repair. T4 remains open.
 
 ## Persistent second-batch evidence
 

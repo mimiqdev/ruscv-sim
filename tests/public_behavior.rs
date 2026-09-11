@@ -353,14 +353,48 @@ fn signature_bytes_are_returned_after_public_execution() {
     assert!(result.error.is_none());
 }
 
+/// Store the exit payload at the image's declared tohost from `entry_offset`.
+///
+/// The address is built from the AUIPC at `entry_offset + 4`, so the delta is
+/// split to stay inside the ADDI immediate range and the sequence can sit
+/// anywhere in the image.
+fn tohost_writer_at(entry_offset: usize, exit_instruction: u32) -> Vec<u32> {
+    let pc = entry_offset as i64 + 4;
+    let delta = fixture::TOHOST_SEGMENT_OFFSET as i64 - pc;
+    let upper = (delta + 0x800) >> 12;
+    let lower = delta - (upper << 12);
+    vec![
+        exit_instruction,
+        fixture::auipc(4, upper as u32),
+        fixture::addi(4, 4, lower as i32),
+        fixture::sd(5, 4, 0),
+    ]
+}
+
 /// Guest that writes an exit payload to its image-declared `.tohost`.
 fn declared_tohost_writer(exit_instruction: u32) -> Vec<u32> {
-    padded(vec![
-        exit_instruction,
-        fixture::auipc(4, 1),
-        fixture::addi(4, 4, -4),
-        fixture::sd(5, 4, 0),
-    ])
+    padded(tohost_writer_at(0, exit_instruction))
+}
+
+/// Guest that stores `value` at `guest_offset` and then exits through the
+/// image's declared tohost.
+fn signature_writer(value: u8, guest_offset: i64, exit_code: u32) -> Vec<u32> {
+    let pc = 4i64;
+    let delta = guest_offset - pc;
+    let upper = (delta + 0x800) >> 12;
+    let lower = delta - (upper << 12);
+    let mut code = vec![
+        fixture::addi(5, 0, i32::from(value)),
+        fixture::auipc(4, upper as u32),
+        fixture::addi(4, 4, lower as i32),
+        fixture::sb(5, 4, 0),
+    ];
+    let exit_offset = code.len() * 4;
+    code.extend(tohost_writer_at(
+        exit_offset,
+        fixture::standard_exit(exit_code),
+    ));
+    padded(code)
 }
 
 /// Guest that writes an exit payload to `guest_offset` from the image base.
@@ -1184,4 +1218,254 @@ fn flat_read_mem_does_not_execute_or_mutate_after_guest_step() {
     assert_eq!(core_snapshot(&simulator), before);
     assert_eq!(simulator.read_mem(0, FLAT_MEM_SIZE).unwrap(), memory_before);
     assert_eq!(simulator.state().regs[5], 0x1111_2222_3333_4444);
+}
+
+const SIGNATURE_WRITTEN_BYTE: u8 = 0x5a;
+
+fn expected_signature_bytes() -> Vec<u8> {
+    let mut expected = fixture::SIGNATURE_BYTES.to_vec();
+    expected[0] = SIGNATURE_WRITTEN_BYTE;
+    expected
+}
+
+#[test]
+fn flat_library_returns_guest_written_signature_bytes_at_nonzero_base() {
+    let elf = fixture::elf_with_code(
+        &signature_writer(
+            SIGNATURE_WRITTEN_BYTE,
+            fixture::SIGNATURE_SEGMENT_OFFSET as i64,
+            0,
+        ),
+        0,
+        true,
+        true,
+        0,
+    );
+    let (simulator, result) = load_and_run_library(&elf, 20);
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.cycles, 8);
+    assert_eq!(result.final_pc, fixture::BASE + 0x20);
+    assert!(!result.timed_out);
+    assert!(result.error.is_none());
+    assert_eq!(result.signature_addr, Some(fixture::SIGNATURE));
+    assert_eq!(result.signature_data, Some(expected_signature_bytes()));
+    assert_eq!(
+        simulator
+            .read_mem(fixture::SIGNATURE_SEGMENT_OFFSET, 8)
+            .unwrap(),
+        expected_signature_bytes(),
+        "the artifact must be the flat bytes the guest wrote"
+    );
+}
+
+#[test]
+fn flat_library_returns_signature_bytes_at_base_zero() {
+    let base = 0u64;
+    let elf = fixture::elf_with_signature(
+        &signature_writer(SIGNATURE_WRITTEN_BYTE, 0x2000, 0),
+        0,
+        base,
+        Some(base + fixture::TOHOST_SEGMENT_OFFSET),
+        Some((base + fixture::SIGNATURE_SEGMENT_OFFSET, 8)),
+        0,
+    );
+    let (_, result) = load_and_run_library(&elf, 20);
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.cycles, 8);
+    assert_eq!(
+        result.signature_addr,
+        Some(base + fixture::SIGNATURE_SEGMENT_OFFSET)
+    );
+    assert_eq!(result.signature_data, Some(expected_signature_bytes()));
+    assert!(result.error.is_none());
+}
+
+#[test]
+fn flat_library_distinguishes_absent_empty_and_unreadable_signatures() {
+    let guest = padded(declared_tohost_writer(fixture::standard_exit(0)));
+    let absent =
+        fixture::elf_with_signature(&guest, 0, fixture::BASE, Some(fixture::TOHOST), None, 0);
+    let empty = fixture::elf_with_signature(
+        &guest,
+        0,
+        fixture::BASE,
+        Some(fixture::TOHOST),
+        Some((fixture::SIGNATURE, 0)),
+        0,
+    );
+    let unreadable = fixture::elf_with_signature(
+        &guest,
+        0,
+        fixture::BASE,
+        Some(fixture::TOHOST),
+        Some((fixture::BASE + 0x20_0000, 8)),
+        0,
+    );
+
+    let (_, absent_result) = load_and_run_library(&absent, 12);
+    assert_eq!(absent_result.exit_code, 0);
+    assert_eq!(absent_result.cycles, 4);
+    assert!(!absent_result.timed_out);
+    assert_eq!(absent_result.signature_addr, None);
+    assert_eq!(absent_result.signature_data, None);
+    assert!(absent_result.error.is_none(), "{absent_result:?}");
+
+    let (_, empty_result) = load_and_run_library(&empty, 12);
+    assert_eq!(empty_result.exit_code, 0);
+    assert_eq!(empty_result.cycles, 4);
+    assert_eq!(empty_result.signature_addr, Some(fixture::SIGNATURE));
+    assert_eq!(empty_result.signature_data, Some(Vec::new()));
+    assert!(empty_result.error.is_none(), "{empty_result:?}");
+
+    let (_, unreadable_result) = load_and_run_library(&unreadable, 12);
+    assert_eq!(unreadable_result.exit_code, 0);
+    assert_eq!(unreadable_result.cycles, 4);
+    assert_eq!(
+        unreadable_result.signature_addr,
+        Some(fixture::BASE + 0x20_0000)
+    );
+    assert_eq!(unreadable_result.signature_data, None);
+    let error = unreadable_result
+        .error
+        .as_deref()
+        .expect("an unusable declared region must not be silently absent");
+    assert!(error.contains("Signature artifact unavailable"), "{error}");
+    assert!(!unreadable_result.timed_out);
+}
+
+#[test]
+fn flat_library_keeps_the_run_when_the_signature_is_unreadable() {
+    let guest = padded(declared_tohost_writer(fixture::standard_exit(1)));
+    let readable = fixture::elf_with_signature(
+        &guest,
+        0,
+        fixture::BASE,
+        Some(fixture::TOHOST),
+        Some((fixture::SIGNATURE, 8)),
+        0,
+    );
+    let unreadable = fixture::elf_with_signature(
+        &guest,
+        0,
+        fixture::BASE,
+        Some(fixture::TOHOST),
+        Some((fixture::BASE + 0x20_0000, 8)),
+        0,
+    );
+
+    let (good_simulator, good) = load_and_run_library(&readable, 12);
+    let (bad_simulator, bad) = load_and_run_library(&unreadable, 12);
+
+    assert_eq!(bad.exit_code, good.exit_code);
+    assert_eq!(bad.cycles, good.cycles);
+    assert_eq!(bad.final_pc, good.final_pc);
+    assert_eq!(bad.timed_out, good.timed_out);
+    assert!(good.error.is_none());
+    assert_eq!(good.signature_addr, Some(fixture::SIGNATURE));
+    assert_eq!(bad.signature_addr, Some(fixture::BASE + 0x20_0000));
+    assert!(good.signature_data.is_some());
+    assert_eq!(bad.signature_data, None);
+
+    assert_eq!(
+        bad_simulator.read_mem(0, 0x1000).unwrap(),
+        good_simulator.read_mem(0, 0x1000).unwrap(),
+        "reading the artifact must not change guest state"
+    );
+
+    let timeout_elf = fixture::elf_with_signature(
+        &padded(vec![fixture::nop()]),
+        0,
+        fixture::BASE,
+        Some(fixture::TOHOST),
+        Some((fixture::BASE + 0x20_0000, 8)),
+        0,
+    );
+    let (_, timed_out) = load_and_run_library(&timeout_elf, 6);
+    assert!(timed_out.timed_out);
+    assert_eq!(timed_out.cycles, 6);
+    let timeout_error = timed_out.error.as_deref().unwrap();
+    assert!(
+        timeout_error.contains("Timeout after 6 cycles"),
+        "{timeout_error}"
+    );
+    assert!(
+        timeout_error.contains("Signature artifact unavailable"),
+        "the primary failure must be preserved alongside the artifact failure: {timeout_error}"
+    );
+
+    let broken_elf = fixture::elf_with_signature(
+        &[0x0000_0000],
+        0,
+        fixture::BASE,
+        Some(fixture::TOHOST),
+        Some((fixture::BASE + 0x20_0000, 8)),
+        0,
+    );
+    let (_, broken) = load_and_run_library(&broken_elf, 6);
+    assert_eq!(broken.cycles, 0);
+    let broken_error = broken.error.as_deref().unwrap();
+    assert!(broken_error.contains("Execution error"), "{broken_error}");
+    assert!(
+        broken_error.contains("Signature artifact unavailable"),
+        "{broken_error}"
+    );
+}
+
+#[test]
+fn flat_library_replaces_image_metadata_and_ram_on_a_second_load() {
+    let first = fixture::elf_with_code(
+        &signature_writer(
+            SIGNATURE_WRITTEN_BYTE,
+            fixture::SIGNATURE_SEGMENT_OFFSET as i64,
+            3,
+        ),
+        0,
+        true,
+        true,
+        0,
+    );
+    let second = fixture::elf_with_code(
+        &padded(declared_tohost_writer(fixture::standard_exit(7))),
+        0,
+        true,
+        false,
+        0,
+    );
+
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    simulator.load_elf(&first).unwrap();
+    let first_result = simulator.run(Some(20)).unwrap();
+    assert_eq!(first_result.exit_code, 3);
+    assert_eq!(first_result.signature_addr, Some(fixture::SIGNATURE));
+    assert_eq!(
+        first_result.signature_data,
+        Some(expected_signature_bytes())
+    );
+
+    simulator.load_elf(&second).unwrap();
+    let second_result = simulator.run(Some(20)).unwrap();
+    assert_eq!(second_result.exit_code, 7);
+    assert_eq!(second_result.cycles, 4);
+    assert!(!second_result.timed_out);
+    assert!(second_result.error.is_none(), "{second_result:?}");
+    assert_eq!(second_result.signature_addr, None);
+    assert_eq!(second_result.signature_data, None);
+    assert_eq!(
+        simulator
+            .read_mem(fixture::SIGNATURE_SEGMENT_OFFSET, 8)
+            .unwrap(),
+        vec![0u8; 8],
+        "the second image must replace the first image's RAM"
+    );
+
+    simulator.load_elf(&first).unwrap();
+    let third_result = simulator.run(Some(20)).unwrap();
+    assert_eq!(third_result.exit_code, 3);
+    assert_eq!(third_result.signature_addr, Some(fixture::SIGNATURE));
+    assert_eq!(
+        third_result.signature_data,
+        Some(expected_signature_bytes())
+    );
 }

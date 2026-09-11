@@ -873,10 +873,16 @@ impl RiscVSimulator {
             .unwrap_or(DEFAULT_TOHOST)
     }
 
-    /// Convert an image-declared guest address into a flat storage offset
+    /// Convert an image-declared guest range into a checked flat storage offset.
+    ///
+    /// `len` is the number of bytes the caller needs at that offset. The
+    /// conversion is checked, so an address below the image base, a range that
+    /// overflows the address space, or a range that leaves the image memory is
+    /// an error rather than a wrapped or truncated offset.
     fn image_flat_offset(
         base_addr: u64,
         guest_addr: u64,
+        len: u64,
         memory_size: usize,
         what: &str,
     ) -> Result<u64, ExecutorError> {
@@ -885,7 +891,7 @@ impl RiscVSimulator {
                 "{what} address 0x{guest_addr:016x} is below image base 0x{base_addr:016x}"
             ))
         })?;
-        let end = offset.checked_add(8).ok_or_else(|| {
+        let end = offset.checked_add(len).ok_or_else(|| {
             ExecutorError::ExecutionError(format!(
                 "{what} address 0x{guest_addr:016x} overlaps the end of the address space"
             ))
@@ -893,11 +899,6 @@ impl RiscVSimulator {
         if end > memory_size as u64 {
             return Err(ExecutorError::ExecutionError(format!(
                 "{what} address 0x{guest_addr:016x} maps to flat offset 0x{offset:016x}, outside the {memory_size:#x}-byte image memory"
-            )));
-        }
-        if !offset.is_multiple_of(8) {
-            return Err(ExecutorError::ExecutionError(format!(
-                "{what} address 0x{guest_addr:016x} maps to flat offset 0x{offset:016x}, which the exit poll cannot read eight-byte aligned"
             )));
         }
         Ok(offset)
@@ -942,12 +943,16 @@ impl RiscVSimulator {
         // Resolve image-derived exit metadata before mutating wrapper state, so a
         // placement the flat image cannot represent leaves the wrapper unchanged.
         let image_tohost = match tohost {
-            Some(addr) => Some(Self::image_flat_offset(
-                base_addr,
-                addr,
-                memory.len(),
-                "ELF tohost",
-            )?),
+            Some(addr) => {
+                let offset =
+                    Self::image_flat_offset(base_addr, addr, 8, memory.len(), "ELF tohost")?;
+                if !offset.is_multiple_of(8) {
+                    return Err(ExecutorError::ExecutionError(format!(
+                        "ELF tohost address 0x{addr:016x} maps to flat offset 0x{offset:016x}, which the exit poll cannot read eight-byte aligned"
+                    )));
+                }
+                Some(offset)
+            }
             None => None,
         };
 
@@ -1116,7 +1121,9 @@ impl RiscVSimulator {
     /// Build an execution result from already-observed state.
     ///
     /// The exit code is supplied by the caller because the guest's RAM signal
-    /// may already have been cleared.
+    /// may already have been cleared. The signature artifact is read from the
+    /// image's declared range in flat memory and reported alongside, without
+    /// disturbing the exit, cycle count or final PC.
     fn finish(
         &self,
         cycles: u64,
@@ -1124,9 +1131,12 @@ impl RiscVSimulator {
         timed_out: bool,
         error: Option<String>,
     ) -> ExecutionResult {
-        let sig_data = dump_signature(&self.memory, self.signature.as_ref())
-            .ok()
-            .flatten();
+        let (signature_addr, signature_data, artifact_error) = self.signature_artifact();
+        let error = match (error, artifact_error) {
+            (primary, None) => primary,
+            (None, Some(artifact)) => Some(artifact),
+            (Some(primary), Some(artifact)) => Some(format!("{primary}; {artifact}")),
+        };
 
         ExecutionResult {
             exit_code,
@@ -1134,8 +1144,44 @@ impl RiscVSimulator {
             final_pc: self.core.state().pc,
             timed_out,
             error,
-            signature_addr: self.signature.as_ref().map(|s| s.vaddr),
-            signature_data: sig_data,
+            signature_addr,
+            signature_data,
+        }
+    }
+
+    /// Read the loaded image's declared signature artifact from flat memory.
+    ///
+    /// The returned address is the guest metadata address from the image, while
+    /// the bytes come from the corresponding flat offset. Absent metadata yields
+    /// no artifact, a zero-length region yields an empty artifact, and a region
+    /// that cannot be mapped or read yields an explicit diagnostic instead of
+    /// silent absence.
+    fn signature_artifact(&self) -> (Option<u64>, Option<Vec<u8>>, Option<String>) {
+        let Some(info) = self.signature.as_ref() else {
+            return (None, None, None);
+        };
+        let addr = info.vaddr;
+        let size = info.size;
+
+        if size == 0 {
+            return (Some(addr), Some(Vec::new()), None);
+        }
+
+        let memory_size = self.memory.lock().unwrap().size();
+        match Self::image_flat_offset(self.base_addr, addr, size, memory_size, "ELF signature") {
+            Ok(offset) => match self.read_mem(offset, size as usize) {
+                Ok(bytes) => (Some(addr), Some(bytes), None),
+                Err(error) => (
+                    Some(addr),
+                    None,
+                    Some(format!("Signature artifact unavailable: {error}")),
+                ),
+            },
+            Err(error) => (
+                Some(addr),
+                None,
+                Some(format!("Signature artifact unavailable: {error}")),
+            ),
         }
     }
 
