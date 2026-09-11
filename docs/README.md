@@ -29,7 +29,7 @@ Target architecture is not implementation status. Component presence is not end-
 - [Architecture principles](architecture/principles.md)
 - [Architecture decision records](architecture/decisions/README.md) — ADR-0001 through ADR-0004 accepted on 2026-09-07
 - [A0 closeout record](archive/milestones/a0-closeout-record.md) — accepted architecture, completion evidence and limitations
-- [Implementation scope navigation](architecture/first-implementation-scope.md) — A1 completed; A2 establishes reliable flat-library ELF execution and inspection; the broader migration candidate remains unapproved
+- [Implementation scope navigation](architecture/first-implementation-scope.md) — A1 and A2 completed; A3 shares image placement and result construction between the public entry points; the broader migration candidate remains unapproved
 
 ## Verification
 

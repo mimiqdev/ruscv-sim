@@ -45,7 +45,7 @@ Test language follows the layer rather than the simulator implementation languag
 ## Verification documents
 
 - [A1 acceptance and closeout](a1-acceptance-assessment.md) — completed baseline, explicit limitations and the bounded A2 handoff
-- [A2 capability assessment](a2-capability-assessment.md) — the flat-library workflow mapped to committed tests, retained CLI differences, limitations and one successor recommendation
+- [A2 acceptance and closeout](a2-capability-assessment.md) — completed flat-library workflow, explicit limitations and the A3 handoff
 - [A1 public behavior compatibility matrix](public-behavior-matrix.md) — CLI/ELF and flat-library inventory plus persistent second-batch tests
 - [A1 public behavior defect and gap register](public-behavior-gaps.md) — bounded reproductions and unverified limits
 - [Project-authored bare-metal tests](bare-metal-tests.md)

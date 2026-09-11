@@ -48,7 +48,7 @@ a second active plan.
   The A1 persistent contrast test at base `0x80000000` observed `exit_code=1`, `cycles=20`, `timed_out=true`, `Timeout after 20 cycles` while the CLI exited at cycle 4. It is now `public_behavior::flat_library_elf_tohost_metadata_selects_the_ram_exit_signal`, which keeps the CLI contrast and requires the library to observe the same declared exit at cycle 4. The A1 manually configured flat-offset case still works through an explicit `set_tohost` flat offset.
 - **Existing tests:** `flat_library_elf_tohost_metadata_selects_the_ram_exit_signal`, `flat_library_reports_zero_and_nonzero_guest_exits`, `flat_library_reports_base_zero_placement`, `flat_library_manual_flat_tohost_overrides_image_metadata`, `flat_library_manual_tohost_before_load_is_superseded_by_image_metadata`, `flat_library_manual_tohost_survives_a_load_without_metadata`, `flat_library_image_without_metadata_does_not_reuse_the_previous_tohost`, and `flat_library_rejects_a_declared_tohost_the_flat_image_cannot_represent` are **strong** for correspondence, exit selection, precedence and rejected placements. Against them, `test_simulator_creation`, `test_simulator_setters`, `test_simulator_run_with_max_cycles`, and `test_simulator_run_default_cycles` remain **weak** because they do not assert an image exit.
 - **Impact:** The wrapper now observes an image's declared RAM exit at zero and nonzero bases, and the accepted `set_tohost` precedence is documented on `RiscVSimulator`. This repair is T2 only; artifacts and integrated acceptance remain open.
-- **Selected successor scope:** [A2](../dev-plan.md) T2 is this placement/completion repair. T3–T4 remain open.
+- **Selected successor scope:** [A2](../archive/milestones/a2-closeout-record.md) T2 repaired this placement/completion gap; A2 is complete with documented limitations.
 
 ### G-02 — Flat-library `read_mem` can loop indefinitely on an out-of-range aligned read
 
@@ -58,7 +58,7 @@ a second active plan.
 - **Reproduction:** A1 reproduced `RiscVSimulator::new(0x1000).read_mem(0x2000, 4)` hanging: a temporary harness printed `before` and returned status `124` under `timeout 2s`. The persistent child harness still constructs the simulator, writes a ready marker, then performs that exact read. After T1 the child must receive `Err` and exit successfully inside the hang window; a hang regression is still killed and reaped. Companion tests keep missing-ready and early-exit cleanup coverage.
 - **Existing tests:** `public_behavior::out_of_range_flat_read_mem_returns_error_without_hanging` is **strong** for the original request returning an error without hanging. Handshake-failure and early-exit tests remain **strong** for harness cleanup. `flat_read_mem_returns_exact_bytes_for_aligned_unaligned_and_mixed_lengths`, `flat_read_mem_empty_requests_do_not_access_memory`, `flat_read_mem_rejects_out_of_range_crossing_and_overflow_without_wrapping`, and `flat_read_mem_does_not_execute_or_mutate_after_guest_step` are **strong** for exact bytes, empty/overflow/crossing errors, and state preservation. `test_simulator_read_mem_unaligned` now asserts exact unaligned bytes; `test_simulator_read_mem_empty_and_out_of_range` covers empty and error returns.
 - **Impact:** The public inspection helper no longer hangs on the reproduced out-of-range aligned read. Closing G-02 does not complete A2; load/run/result/artifact work remains.
-- **Selected successor scope:** [A2](../dev-plan.md) T1 is this inspection repair. T2–T4 remain open.
+- **Selected successor scope:** [A2](../archive/milestones/a2-closeout-record.md) T1 repaired this inspection gap; A2 is complete with documented limitations.
 
 ### G-03 — Public commit log loses opcodes for nonzero ELF bases
 
@@ -146,7 +146,7 @@ a second active plan.
 - **Reproduction:** A bounded harness loaded a `0x80000000`-base image, called `set_tohost(0x100)`, and ran a guest that stored the standard payload `3` (exit code `1`) at flat offset `0x100`. Before the repair the result was `{exit=0, cycles=4, pc=0x80000010, timed_out=false, error=None}`. After the repair the same run reports `exit=1`.
 - **Existing tests:** `flat_library_retains_the_nonzero_exit_before_clearing_the_signal` is **strong**: it asserts the nonzero exit and that the flat signal bytes are cleared afterwards. `flat_library_reports_zero_and_nonzero_guest_exits` covers codes `0`, `1`, and `42`. `flat_library_distinguishes_guest_exit_timeout_and_execution_error` separates a retained guest exit from a timeout and from an execution error.
 - **Impact:** A guard against a nonzero failure exit was silently reported as success. This is a result-surface repair; it does not by itself complete A2.
-- **Selected successor scope:** [A2](../dev-plan.md) T2. T3–T4 remain open.
+- **Selected successor scope:** [A2](../archive/milestones/a2-closeout-record.md) T2 repaired this result gap; A2 is complete with documented limitations.
 
 ### G-11 — A manual flat tohost near the top of the address space panics the exit poll
 
@@ -166,7 +166,7 @@ a second active plan.
 - **Reproduction:** A `0x80000000`-base image with a declared `.signature` at `0x80002000`, whose guest stored `0x5a` at the first signature byte and then exited through its declared tohost, returned `{exit=0, cycles=8, signature_addr=Some(0x80002000), signature_data=None, error=None}` before the repair. The same run now returns `signature_data=Some([0x5a, 17, 34, 51, 68, 85, 102, 119])`. A declared-but-unmappable region at `0x80200000` returned `signature_data=None` with no diagnostic; it now returns an explicit `Signature artifact unavailable: …` message while preserving the run.
 - **Existing tests:** `flat_library_returns_guest_written_signature_bytes_at_nonzero_base` and `flat_library_returns_signature_bytes_at_base_zero` are **strong** for guest-written bytes plus the guest metadata address; `flat_library_distinguishes_absent_empty_and_unreadable_signatures` and `flat_library_keeps_the_run_when_the_signature_is_unreadable` cover the artifact outcomes and preserved accounting; `flat_library_replaces_image_metadata_and_ram_on_a_second_load` covers replacement. At the pre-T3 revision the new suite reports `33 passed; 4 failed`.
 - **Impact:** The flat library reported an address with no bytes and no explanation. This repair is T3 only; the integrated workflow remains open.
-- **Selected successor scope:** [A2](../dev-plan.md) T3 is this artifact repair. T4 remains open.
+- **Selected successor scope:** [A2](../archive/milestones/a2-closeout-record.md) T3 repaired this artifact gap; A2 is complete with documented limitations.
 
 ## Persistent second-batch evidence
 

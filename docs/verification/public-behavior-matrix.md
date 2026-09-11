@@ -464,7 +464,7 @@ These rows cover T3 only.
 
 A2 T4 proves the capability as one workflow and records the retained CLI
 differences; the criterion-by-criterion mapping is in the
-[A2 capability assessment](a2-capability-assessment.md).
+[archived A2 capability assessment](../archive/milestones/a2-capability-assessment.md).
 
 | Test | Assertion |
 | --- | --- |
@@ -487,14 +487,15 @@ T1–T3 sections above cover the individual boundaries.
 
 ## Bounded follow-up proposal (not a new active plan)
 
-A1 is complete with documented limits. [A2](../dev-plan.md) now defines the
-flat-library load/run/result/inspection capability. G-02 was repaired by A2 T1,
-G-01/G-10 by A2 T2, and G-12 with the flat half of G-06 by A2 T3; A2 T4 adds the
-integrated workflow, retained-difference evidence and the
-[capability assessment](a2-capability-assessment.md). Whether A2 is accepted and
-what follows it remain the maintainer's decisions. The contract, not this as-of
-evidence record, defines acceptance. These remaining options do not add work
-beyond that contract:
+A1 and A2 are complete with documented limitations;
+[the A2 closeout](../archive/milestones/a2-closeout-record.md) holds their
+dispositions. G-02 was repaired by A2 T1, G-01/G-10 by A2 T2, and G-12 with the
+flat half of G-06 by A2 T3; A2 T4 added the integrated workflow,
+retained-difference evidence and the
+[archived capability assessment](../archive/milestones/a2-capability-assessment.md).
+[The active plan](../dev-plan.md) is A3, one shared image-placement and
+result-construction path. These remaining options are not scheduled by A3 and
+must be re-evaluated before any of them becomes work:
 
 1. Decide separately whether G-03, G-04, G-05, the CLI portion of G-06, and G-09
    are production-repair scope or documented compatibility limitations. The A1
@@ -510,5 +511,7 @@ beyond that contract:
    toolchain, and record actual ELF outputs rather than relying on CI definitions
    or old logs.
 
-These options do not expand A2. A1's completion and limitations are recorded in
-its [closeout record](../archive/milestones/a1-closeout-record.md).
+These options do not expand A3 and must be re-evaluated before any becomes
+work. A1's completion and limitations are recorded in
+its [closeout record](../archive/milestones/a1-closeout-record.md), and A2's in
+[the A2 closeout](../archive/milestones/a2-closeout-record.md).
