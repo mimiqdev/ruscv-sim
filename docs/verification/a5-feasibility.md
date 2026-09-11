@@ -11,6 +11,27 @@ on PR events), has a 30-minute timeout, read-only permissions and 14-day
 artifacts. Standard CI is unchanged. Workspaces, not the developer's host,
 hold tool archives and caches. No generated-ELF cache is used.
 
+### Linux attempt 1: concrete UDB/ACT4 integration mismatch
+
+[Run 34615874009](https://github.com/mimiqdev/ruscv-sim/actions/runs/34615874009)
+at `2bae583` provisioned the fixed tools and dependencies, but generated no ELF:
+UDB 0.1.9 rejected `MXLEN: 64` because that parameter is defined only by `Sm`.
+ACT4's `act.py` nonetheless requires `config_params["MXLEN"]` for all tests.
+Source inspection additionally found that UDB `FullConfig` itself requires
+MXLEN. An ACT4-only injection therefore cannot preserve genuine validation and
+was rejected before execution. Rather than invent privileged-machine support,
+[`udb_overlay.py`](../../scripts/a5/udb_overlay.py) uses UDB's supported
+`arch_overlay` mechanism to change **only** MXLEN's `definedBy` provenance from
+Sm to I. It asserts the original schema hash and retains all width constraints.
+The original, one-line diff, adapted schema and both hashes are artifacts.
+RV64 width already describes this simulator; it does not add Sm, CSR or trap
+capabilities. ACT4's extension selection and UDB validation are not bypassed.
+
+This is an **adapted-profile feasibility probe**, not canonical ACT4/UDB
+compatibility or approval of the final A5 profile. The schema choice remains
+subject to independent review before freezing that profile. Test source,
+signature oracle, self-check generation and guest startup remain upstream code.
+
 ## Initial reconnaissance (historical, before the Linux experiment)
 
 **State:** Environment/source reconnaissance; generation and public-CLI smoke

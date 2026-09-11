@@ -24,6 +24,7 @@ python3 scripts/a5/sail_config.py
 cd .a5/upstream
 export BUNDLE_GEMFILE="$PWD/framework/src/act/data/Gemfile"
 bundle install
+python3 "$ROOT/scripts/a5/udb_overlay.py" "$(bundle show udb)" "$ROOT"
 # The upstream calls `udb` directly, not `bundle exec udb`.
 export PATH="$(ruby -e 'print Gem.bindir'):$PATH"
 bundle exec uv run --frozen --python 3.12.12 --package act act --help > "$ROOT/.a5/evidence/act-help.txt"
