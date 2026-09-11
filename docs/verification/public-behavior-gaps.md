@@ -4,7 +4,7 @@
 
 **Authority:** Informational; this register supports the [A1 public behavior matrix](public-behavior-matrix.md) and does not authorize production repair
 
-**Last reviewed:** 2026-09-08; individual verification runs retain their recorded scope
+**Last reviewed:** 2026-09-11; individual verification runs retain their recorded scope
 
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)
@@ -34,10 +34,10 @@ a second active plan.
 
 ### G-01 — Flat-library ELF tohost address is not adapted to relative memory
 
-- **Disposition:** **Reproduced defect**.
+- **Disposition:** **Repaired** in A2 T2. Historical A1 status was **Reproduced defect**.
 - **Surface:** `RiscVSimulator::load_elf` / `run` versus CLI `load_and_run`.
 - **Contract context:** [ADR-0003 §9](../architecture/decisions/0003-runner-machine-and-platform-ownership.md#9-compatibility-constraints-for-the-current-product) keeps `RiscVSimulator` available and requires the CLI and flat-library configurations to remain explicit; it does not bless a wrapper that silently misses its guest exit.
-- **Implementation evidence:** `src/executor.rs::RiscVSimulator::load_elf` loads the `LoadedElf.memory` buffer relative to `base_addr`, resets the core with `base_addr`, and stores `loaded.tohost` without converting it to a flat offset. `RiscVSimulator::run` calls `SimpleMemory::read_dword(self.tohost)` directly.
+- **Implementation evidence:** The A1 defect was that `load_elf` loaded the `LoadedElf.memory` buffer relative to `base_addr`, reset the core with `base_addr`, and stored `loaded.tohost` without converting it to a flat offset, so `run` polled `SimpleMemory` at the guest address. `load_elf` now converts declared tohost metadata with checked base subtraction and rejects a tohost the flat image cannot represent. `run` polls the resulting flat offset.
 - **Reproduction:** The same transient ELF with entry/base `0x30000000` and `.tohost = 0x30001000` exited through the CLI at cycle 7. The library harness returned:
 
   ```text
@@ -45,10 +45,10 @@ a second active plan.
   flat_offset_exit={exit=0, cycles=3, timeout=false, error=None}
   ```
 
-  The persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` test repeats the contrast at base `0x80000000`: the CLI exits at cycle 4, while `RiscVSimulator::load_elf` followed by `run(Some(20))` returns `exit_code=1`, `cycles=20`, `timed_out=true`, and `Timeout after 20 cycles`. The manually configured flat-offset case from the first batch succeeded only after setting `tohost=0x100` and placing the program/exit value at that offset.
-- **Existing tests:** The persistent test is **strong** for the configuration contrast. The targeted `load_and_run` tests in `tests/executor.rs` now use valid fixtures and assert their results; `test_simulator_creation`, `test_simulator_setters`, `test_simulator_run_with_max_cycles`, and `test_simulator_run_default_cycles` remain **weak** for this flat-library ELF behavior because they do not assert an ELF tohost exit.
-- **Impact:** The wrapper's public ELF success/exit behavior is not equivalent to the CLI. Do not claim flat-library ELF/tohost compatibility from the CLI runs.
-- **Selected successor scope:** [A2](../dev-plan.md) includes this repair as part of the flat-library load/run/result/inspection capability, not as an independent milestone. The persistent reproduction remains current evidence until a verified implementation replaces it with a correct-exit regression.
+  The A1 persistent contrast test at base `0x80000000` observed `exit_code=1`, `cycles=20`, `timed_out=true`, `Timeout after 20 cycles` while the CLI exited at cycle 4. It is now `public_behavior::flat_library_elf_tohost_metadata_selects_the_ram_exit_signal`, which keeps the CLI contrast and requires the library to observe the same declared exit at cycle 4. The A1 manually configured flat-offset case still works through an explicit `set_tohost` flat offset.
+- **Existing tests:** `flat_library_elf_tohost_metadata_selects_the_ram_exit_signal`, `flat_library_reports_zero_and_nonzero_guest_exits`, `flat_library_reports_base_zero_placement`, `flat_library_manual_flat_tohost_overrides_image_metadata`, `flat_library_manual_tohost_before_load_is_superseded_by_image_metadata`, `flat_library_manual_tohost_survives_a_load_without_metadata`, `flat_library_image_without_metadata_does_not_reuse_the_previous_tohost`, and `flat_library_rejects_a_declared_tohost_the_flat_image_cannot_represent` are **strong** for correspondence, exit selection, precedence and rejected placements. Against them, `test_simulator_creation`, `test_simulator_setters`, `test_simulator_run_with_max_cycles`, and `test_simulator_run_default_cycles` remain **weak** because they do not assert an image exit.
+- **Impact:** The wrapper now observes an image's declared RAM exit at zero and nonzero bases, and the accepted `set_tohost` precedence is documented on `RiscVSimulator`. This repair is T2 only; artifacts and integrated acceptance remain open.
+- **Selected successor scope:** [A2](../dev-plan.md) T2 is this placement/completion repair. T3–T4 remain open.
 
 ### G-02 — Flat-library `read_mem` can loop indefinitely on an out-of-range aligned read
 
@@ -137,6 +137,26 @@ a second active plan.
 - **Existing tests:** `test_log_commit_with_memory_load`, `test_log_commit_with_memory_store`, and `test_memory_access_helpers` are **strong** for formatter/helper inputs; the persistent public-path test is **strong** for the current omission; the current `test_log_commit_path_with_logger` is **strong** for result, line count, and PC/privilege shape, but deliberately does not inspect the known-bad opcode or missing suffix.
 - **Impact:** Current public commit logs cannot be used as complete memory-side-effect traces. The formatter's capability is not current public-path behavior.
 - **Next decision:** Decide whether public memory annotation is required and how it should be captured; no repair is made here.
+
+### G-10 — Flat-library `run` loses a nonzero guest exit code when clearing the signal
+
+- **Disposition:** **Repaired** in A2 T2. A2 recorded it as source-observed before the repair.
+- **Surface:** `RiscVSimulator::run`, which delegated to a private `get_result` before the repair.
+- **Implementation evidence:** `run` decoded an exit code from the RAM tohost value, cleared the signal, and then called `get_result`, which re-read the now-zero signal value. The reported `exit_code` was therefore `0` for any guest exit, including a nonzero failure code.
+- **Reproduction:** A bounded harness loaded a `0x80000000`-base image, called `set_tohost(0x100)`, and ran a guest that stored the standard payload `3` (exit code `1`) at flat offset `0x100`. Before the repair the result was `{exit=0, cycles=4, pc=0x80000010, timed_out=false, error=None}`. After the repair the same run reports `exit=1`.
+- **Existing tests:** `flat_library_retains_the_nonzero_exit_before_clearing_the_signal` is **strong**: it asserts the nonzero exit and that the flat signal bytes are cleared afterwards. `flat_library_reports_zero_and_nonzero_guest_exits` covers codes `0`, `1`, and `42`. `flat_library_distinguishes_guest_exit_timeout_and_execution_error` separates a retained guest exit from a timeout and from an execution error.
+- **Impact:** A guard against a nonzero failure exit was silently reported as success. This is a result-surface repair; it does not by itself complete A2.
+- **Selected successor scope:** [A2](../dev-plan.md) T2. T3–T4 remain open.
+
+### G-11 — A manual flat tohost near the top of the address space panics the exit poll
+
+- **Disposition:** **Reproduced defect** (pre-existing, not repaired).
+- **Surface:** `RiscVSimulator::set_tohost` followed by `RiscVSimulator::run`.
+- **Implementation evidence:** `SimpleMemory::read_dword` computes `addr + 8 > self.size` without a checked add, and the wrapper's poll passes the configured flat offset through unchanged. An extreme manual offset therefore overflows in the bound check instead of failing the poll.
+- **Reproduction:** With a loaded one-instruction image, `set_tohost(0xFFFF_FFFF_FFFF_FFF8)` then `run(Some(4))` panicked at `src/memory/mod.rs:105` with `attempt to add with overflow` (debug build). The same panic occurs at the pre-T2 revision `2769f56`, so A2 T2 neither introduced nor changed it.
+- **Existing tests:** None. The A2 T2 placement tests cover image-derived offsets, which are now range-checked and aligned at load, so they cannot reach this path. Only a manual flat offset at the top of the address space does.
+- **Impact:** A public setter combined with `run` can panic instead of returning a bounded error. The exit poll for a selected offset should report an error or a distinguishable timeout shape.
+- **Next decision:** Choose between a checked bound in the flat memory accessors and a validated manual offset in the wrapper, and record whether the memory-wide hardening is in scope. Neither is part of A2 T2.
 
 ## Persistent second-batch evidence
 
