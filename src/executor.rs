@@ -697,6 +697,18 @@ impl AddressForm {
             }
         }
     }
+
+    /// The virtual-to-physical base the core is reset with in this form.
+    ///
+    /// The bus form maps RAM at the image base on the bus itself, so the core
+    /// passes guest addresses through unchanged; the flat form stores the
+    /// image at the start of its buffer, so the core subtracts the image base.
+    fn core_translation_base(self) -> u64 {
+        match self {
+            AddressForm::Bus => 0,
+            AddressForm::Flat { base_addr, .. } => base_addr,
+        }
+    }
 }
 
 /// Where a loaded image declares its exit signal and signature artifact.
@@ -768,6 +780,38 @@ impl ImagePlacement {
     }
 }
 
+/// The image-installation sequence both entry points share.
+///
+/// It creates RAM sized to the loaded image, loads the program bytes at the
+/// start of storage, wraps that RAM in the configuration's memory backend,
+/// constructs the core over the backend and resets it to the entry point with
+/// the translation base of the configuration's address form.
+///
+/// The backend is where the configurations differ, and it stays with the
+/// caller: the native bus composes the RAM with its devices, the flat library
+/// uses the RAM unchanged. Installation shares the sequence, not the
+/// configuration.
+fn install_image(
+    program: &[u8],
+    base_addr: u64,
+    entry_point: u64,
+    form: AddressForm,
+    verbose: bool,
+    backend: impl FnOnce(Arc<Mutex<SimpleMemory>>) -> Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
+) -> (RiscvCore, Arc<Mutex<dyn MemoryInterface + Send + Sync>>) {
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(program.len())));
+    {
+        let guard = ram.lock().unwrap();
+        guard.load_program(program, base_addr);
+    }
+
+    let memory = backend(ram);
+    let mut core = RiscvCore::new(memory.clone(), memory.clone());
+    core.set_verbose(verbose);
+    core.reset(entry_point, form.core_translation_base());
+    (core, memory)
+}
+
 /// Load and execute an ELF file
 ///
 /// # Arguments
@@ -815,66 +859,56 @@ pub fn load_and_run(
         .or(placement.tohost(AddressForm::Bus)?)
         .unwrap_or(DEFAULT_TOHOST);
 
-    // Step 2: Allocate and initialize memory
+    // Step 2: Guard the image size before installation.
     let mem_size = memory.len();
     if mem_size == 0 {
         return Err(ExecutorError::MemoryAllocationFailed);
     }
 
-    // Create RAM
-    let ram = Arc::new(Mutex::new(SimpleMemory::new(mem_size)));
-    {
-        let mem_guard = ram.lock().unwrap();
-        mem_guard.load_program(&memory, base_addr);
-    }
-
-    // Create UART
-    let uart = Arc::new(Mutex::new(Uart16550::new(0x10000000)));
-
-    // Set UART output callback to print to stdout
-    // Note: No explicit flush here - stdout will be flushed at program exit
-    {
-        let mut uart_guard = uart.lock().unwrap();
-        uart_guard.set_output_callback(|byte| {
-            print!("{}", byte as char);
-        });
-    }
-
-    // Create System Bus
-    let bus = Arc::new(Mutex::new(SystemBus::new(
-        ram.clone(),
-        uart.clone(),
-        base_addr,
-        mem_size,
-    )));
-
-    // Create exit signal tracker for HTIF callback
+    // Exit signal tracker recorded by the HTIF write callback below.
     let exit_code = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(u32::MAX)); // u32::MAX = not set
     let exit_code_clone = exit_code.clone();
 
-    // Register HTIF write callback
-    {
-        let mut bus_guard = bus.lock().unwrap();
-        let exit_code_inner = exit_code_clone.clone();
-        bus_guard.set_htif_write_callback(move |value| {
-            // Check if this is an exit signal
-            if let Some(code) = try_extract_exit_code(value) {
-                exit_code_inner.store(code, std::sync::atomic::Ordering::SeqCst);
+    // Step 3: Install the image and construct the core through the shared
+    // sequence. This configuration's backend composes the loaded RAM at the
+    // image base with the UART and the HTIF endpoint on the system bus; the
+    // bus maps guest addresses itself, so the core is reset with the bus
+    // form's pass-through translation base.
+    let (mut core, bus_interface) = install_image(
+        &memory,
+        base_addr,
+        entry_point,
+        AddressForm::Bus,
+        verbose,
+        |ram| {
+            // UART output goes to stdout. No explicit flush here - stdout
+            // will be flushed at program exit.
+            let uart = Arc::new(Mutex::new(Uart16550::new(0x10000000)));
+            {
+                let mut uart_guard = uart.lock().unwrap();
+                uart_guard.set_output_callback(|byte| {
+                    print!("{}", byte as char);
+                });
             }
-        });
-    }
 
-    // Cast to MemoryInterface trait object
-    let bus_interface: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = bus;
+            let bus = Arc::new(Mutex::new(SystemBus::new(ram, uart, base_addr, mem_size)));
 
-    // Step 3: Create and configure core
-    let mut core = RiscvCore::new(bus_interface.clone(), bus_interface.clone());
-    core.set_verbose(verbose);
+            // Register HTIF write callback
+            {
+                let mut bus_guard = bus.lock().unwrap();
+                let exit_code_inner = exit_code_clone.clone();
+                bus_guard.set_htif_write_callback(move |value| {
+                    // Check if this is an exit signal
+                    if let Some(code) = try_extract_exit_code(value) {
+                        exit_code_inner.store(code, std::sync::atomic::Ordering::SeqCst);
+                    }
+                });
+            }
 
-    // Reset core with entry point and base address 0 for SystemBus mapping
-    // SystemBus expects PA = VA (identity mapping) or explicit ranges
-    // With base_addr=0 in Core, VA is passed directly to SystemBus.
-    core.reset(entry_point, 0);
+            let bus_interface: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = bus;
+            bus_interface
+        },
+    );
 
     // Create commit logger if requested
     let mut commit_logger: Option<CommitLogger> = log_commits
@@ -1259,22 +1293,24 @@ impl RiscVSimulator {
             }
         }
 
-        // NOTE: This implementation is simplified and still uses SimpleMemory internally
-        // if created via new(). It does not support SystemBus yet.
-        // For full support, use load_and_run.
-
-        // Create new memory and load program
-        // We create a SimpleMemory here because RiscVSimulator is typically used for
-        // unit tests or benchmarks that expect a simple flat memory environment.
-        // For full system simulation (UART, etc.), load_and_run should be used.
-        let ram = Arc::new(Mutex::new(SimpleMemory::new(memory.len())));
-        {
-            let guard = ram.lock().unwrap();
-            guard.load_program(&memory, base_addr);
-        }
-        self.memory = ram;
-        self.core = RiscvCore::new(self.memory.clone(), self.memory.clone());
-        self.core.set_verbose(self.verbose);
+        // Install the image and construct the core through the shared
+        // sequence. This configuration's backend is the flat RAM itself: no
+        // devices are composed, so use load_and_run for the native bus. The
+        // image is stored relative to its base, so the core is reset with the
+        // flat form's subtracting translation base.
+        let (core, flat_memory) = install_image(
+            &memory,
+            base_addr,
+            entry_point,
+            image.address_form(),
+            self.verbose,
+            |ram| {
+                let flat: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = ram;
+                flat
+            },
+        );
+        self.memory = flat_memory;
+        self.core = core;
 
         // Replace image-owned metadata. A manual offset set before this load is
         // superseded when the image declares its own tohost; an image without
@@ -1283,9 +1319,6 @@ impl RiscVSimulator {
             self.manual_tohost = None;
         }
         self.image = image;
-
-        // Reset core to entry point with base address for VA translation
-        self.core.reset(entry_point, base_addr);
 
         Ok(entry_point)
     }
@@ -1947,5 +1980,84 @@ mod tests {
         let alternative = RunControl::take_ram_exit((1u64 << 63) | 42, || cleared += 1);
         assert_eq!(alternative, Some(42));
         assert_eq!(cleared, 2);
+    }
+
+    /// ADDI x5, x0, 7 - one retirable instruction for installation tests.
+    const ADDI_X5_7: u32 = 0x0070_0293;
+
+    #[test]
+    fn test_install_image_loads_the_program_and_resets_to_the_entry_point() {
+        let base = 0x8000_0000u64;
+        let program = ADDI_X5_7.to_le_bytes();
+        let mut seen_by_backend = None;
+
+        let (core, memory) = install_image(
+            &program,
+            base,
+            base,
+            AddressForm::Flat {
+                base_addr: base,
+                memory_size: program.len() as u64,
+            },
+            false,
+            |ram| {
+                // The backend receives the RAM with the program already loaded.
+                seen_by_backend = Some(ram.lock().unwrap().read_word(0).unwrap());
+                let flat: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = ram;
+                flat
+            },
+        );
+
+        assert_eq!(seen_by_backend, Some(ADDI_X5_7));
+        assert_eq!(core.state().pc, base);
+        assert_eq!(memory.lock().unwrap().read_word(0).unwrap(), ADDI_X5_7);
+    }
+
+    #[test]
+    fn test_install_image_flat_form_subtracts_the_image_base() {
+        let base = 0x8000_1000u64;
+        let program = ADDI_X5_7.to_le_bytes();
+
+        let (mut core, _memory) = install_image(
+            &program,
+            base,
+            base,
+            AddressForm::Flat {
+                base_addr: base,
+                memory_size: program.len() as u64,
+            },
+            false,
+            |ram| {
+                let flat: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = ram;
+                flat
+            },
+        );
+
+        // The fetch at the guest entry point resolves to storage offset zero.
+        core.step().expect("the flat form must translate the fetch");
+        assert_eq!(core.state().regs[5], 7);
+        assert_eq!(core.state().pc, base + 4);
+    }
+
+    #[test]
+    fn test_install_image_bus_form_passes_guest_addresses_through() {
+        let base = 0x8000_2000u64;
+        let program = ADDI_X5_7.to_le_bytes();
+
+        let (mut core, _memory) =
+            install_image(&program, base, base, AddressForm::Bus, false, |ram| {
+                // The bus configuration composes its devices around the RAM
+                // and maps guest addresses itself.
+                let uart = Arc::new(Mutex::new(Uart16550::new(0x1000_0000)));
+                let bus: Arc<Mutex<dyn MemoryInterface + Send + Sync>> =
+                    Arc::new(Mutex::new(SystemBus::new(ram, uart, base, 4)));
+                bus
+            });
+
+        // The core passes the guest address through; the bus maps it to RAM.
+        core.step()
+            .expect("the bus form must map the fetch at the guest address");
+        assert_eq!(core.state().regs[5], 7);
+        assert_eq!(core.state().pc, base + 4);
     }
 }
