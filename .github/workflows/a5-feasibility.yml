@@ -1,0 +1,50 @@
+name: A5 Linux feasibility
+on:
+  push:
+    branches: [a5-feasibility]
+    paths:
+      - '.github/workflows/a5-feasibility.yml'
+      - 'scripts/a5/**'
+      - 'docs/verification/a5-feasibility-pins.json'
+permissions:
+  contents: read
+concurrency:
+  group: a5-feasibility-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      UV_CACHE_DIR: ${{ github.workspace }}/.a5/cache/uv
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.a5/tools/python
+      BUNDLE_USER_HOME: ${{ github.workspace }}/.a5/cache/bundle
+      BUNDLE_PATH: ${{ github.workspace }}/.a5/tools/gems
+      CARGO_HOME: ${{ github.workspace }}/.a5/cache/cargo
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '3.4.9'
+          bundler: '4.0.8'
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Provision and generate one upstream self-checking ELF
+        shell: bash
+        run: |
+          mkdir -p .a5/evidence
+          set -o pipefail
+          bash scripts/a5/experiment.sh 2>&1 | tee .a5/evidence/experiment.log
+      - name: Retain bounded experiment evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: a5-feasibility-${{ github.sha }}
+          path: |
+            .a5/evidence
+            .a5/work
+            .a5/config
+          retention-days: 14
+          if-no-files-found: warn

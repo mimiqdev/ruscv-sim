@@ -1,0 +1,226 @@
+# A5 Linux feasibility experiment
+
+The dedicated `a5-feasibility` branch now contains a bounded Linux experiment:
+[`a5-feasibility.yml`](../../.github/workflows/a5-feasibility.yml) provisions
+pinned tools, validates the minimal I-only UDB configuration, invokes upstream
+ACT4 self-check generation for `I-add-00.S`, audits the linked opcode classes,
+and runs intact and deliberately corrupted expected-result ELFs through the
+same public CLI. Results are pending the first Linux run; A5 is not complete.
+The job runs only for relevant pushes to this experimental branch (not again
+on PR events), has a 30-minute timeout, read-only permissions and 14-day
+artifacts. Standard CI is unchanged. Workspaces, not the developer's host,
+hold tool archives and caches. No generated-ELF cache is used.
+
+## Initial reconnaissance (historical, before the Linux experiment)
+
+**State:** Environment/source reconnaissance; generation and public-CLI smoke
+remain unverified. This report does not pass the A5 early feasibility gate.
+
+**Contract:** [A5](../dev-plan.md), approved in
+[PR #31](https://github.com/mimiqdev/ruscv-sim/pull/31), merged at
+`a4804341f4ae0a5344beea7ef6c53667e1912c93` on 2026-09-11 at 14:48:15 UTC.
+The implementation base for this investigation is that same revision.
+Approval is not evidence of external compatibility.
+
+## What was actually exercised
+
+- Cloned ACT4 and detached at
+  `a7c99303516f4e668f7488f172043392e23b9dfd` (4.0.0). Read source, build,
+  configuration and dependency files from this checkout, not upstream `main`.
+  The only gitlink is the documentation submodule recorded in the
+  [machine-readable pins](a5-feasibility-pins.json); it was not initialized.
+- Enumerated the 51 tracked assembly sources under `tests/rv64i/I` and checked
+  their `REQUIRED_EXTENSIONS`, `MXLEN` and `MARCH` headers. The manifest names
+  each source; this is source reconnaissance, not generated-variant counting.
+- Ran `make --dry-run` in that checkout. It printed upstream generation
+  commands, including `mise exec -- uv run act`. It did **not** provision tools
+  or generate anything. Bare `make` defaults to Spike configurations, not a
+  truthful `ruscv-sim` DUT profile.
+- Downloaded the exact Linux x86_64 Sail and GCC archives in the manifest.
+  SHA-256 of both downloaded files matched their GitHub release asset digests.
+  Archive availability/integrity is verified; neither binary was executed.
+- Probed this host: Darwin arm64, Python 3.9.6, Ruby 2.6.10, GNU Make 3.81.
+  No Docker, RISC-V GCC, Sail, OCaml, opam, dune, CMake or Ninja on `PATH`.
+  `mise` is available, but was not asked to install anything or change host
+  configuration. No downloaded installer was executed.
+- Apple Clang reports 21.0.0, but an actual RISC-V assembly probe failed:
+
+  ```sh
+  printf '.text\n.globl _start\n_start: addi a0, zero, 1\n' |
+    clang --target=riscv64-unknown-elf -march=rv64i -mabi=lp64 \
+      -x assembler -c -o target/a5-feasibility/clang-probe.o -
+  ```
+
+  Diagnostic: `Unknown command line argument '-riscv-add-build-attributes'`.
+  No object was produced. A matching Clang version number is insufficient.
+
+No ACT4 ELF was generated, executed or passed. No guest pass/fail controls,
+Sail signatures, linked instruction audit, clean CI run or Rust ISA repairs
+are claimed. No Rust source or public behavior changed.
+
+## Pinned upstream findings
+
+All upstream links below refer to the fixed [ACT4 tree][act4].
+
+| Evidence | Consequence |
+| --- | --- |
+| [`README.md`][readme] and [`framework/src/act/config.py`][config] | Sail model must report exactly `0.10`; 0.13.1 is not an acceptable substitution. README recommends GCC 15/Binutils 2.44 or LLVM 21; the implementation's Clang minimum check is 20, not a tested Apple toolchain promise. |
+| [`.mise.toml`][mise], [`framework/pyproject.toml`][python], [`Gemfile.lock`][gems] | Pinned checkout specifies Ruby 3.4.9, uv 0.11.6, Python >=3.12, Bundler 4.0.8 and UDB gem 0.1.9. Python 3.12.12 in the manifest is an **experimental choice**, not an upstream exact pin or verified installation. |
+| [`parse_udb_config.py`][udb] | Generation calls `bundle check` / `bundle install`, then `udb validate cfg` and `udb list extensions`. Keep Ruby gems/cache in the workspace and honor the lock. UDB is a gem dependency here, not an ACT4 git submodule. Its lock also includes native-library consumers such as Z3/FFI. |
+| [`regress.yml`][ci] | Pinned upstream CI already pairs Sail 0.10 with the 2025.07.16 Ubuntu 22.04 GCC archive. That is stronger candidate evidence than choosing a newer toolchain arbitrarily, but not a `ruscv-sim` run. |
+| [`build_plan.py`][build] | Upstream compiles a `.sig.elf`, runs Sail, processes its signature, then recompiles with `RVTEST_SELFCHECK`. Use this path rather than reimplementing the oracle. |
+
+## Source and startup boundary
+
+The 51 files under `tests/rv64i/I` all declare `REQUIRED_EXTENSIONS: ['I']`,
+`MXLEN: 64`, and `MARCH: rv64i_zicsr`. The latter is an assembler permission,
+**not** authorization to declare Zicsr in the DUT's capabilities. Final linked
+code still needs auditing, including failure-reporting paths.
+
+[`I-fence-00.S`][fence] exists. It covers ordinary fences, `fence.tso`, reserved
+encodings and hints. These must not be dropped because
+[`Opcode::MiscMem`](../../src/decode/mod.rs#L248) is currently rejected.
+FENCE.I belongs to Zifencei, not base I. No ECALL or EBREAK
+source is present in this base-I directory; broader trap/extension directories
+still require exact enumeration and architectural exclusion review.
+
+The directory name `tests/rv64i` also contains non-I extension suites. The 51
+is **not** a reviewed denominator for the whole A5 contract. Full source
+selection/exclusions and generated variants remain unfrozen. Required cases
+must not disappear when UDB selection, generation or execution fails.
+
+[`rvtest_setup.h`][startup] gates trap/PMP setup behind trap macros. Empty DUT
+boot is an upstream-supported hook; the base-I startup does not by itself prove
+that trap integration is necessary. Its temporary `.option rvc` for alignment
+is another reason to inspect the linked bytes rather than claim C support.
+[`failure_code.h`][failure] gates trap CSR diagnostics; those paths also need
+checking under the eventual profile. [`check_defines.h`][defines] requires
+interrupt macro names even for an unprivileged test. Unavailable operations
+should expand to assembler errors if invoked, not silently become no-ops or
+cause fake interrupt capability declarations.
+
+Sail's upstream exit macros use HTIF values 1/3. The native
+[`tohost` handling](../../src/executor.rs#L500) is the intended DUT exit route.
+Do not copy the upstream max-profile UART/interrupt/PMP/extension declarations
+into a `ruscv-sim` profile. The final DUT configuration, Sail configuration,
+linker placement, printing and pass/fail macros are **not prepared or validated**
+in this slice.
+
+## Next experiment: Linux, not host modification
+
+**Recommendation:** use one manually authorized GitHub-hosted Ubuntu 22.04
+x86_64 experiment, following the pinned upstream prebuilt GCC/Sail route.
+This project already uses GitHub-hosted Ubuntu in
+[its CI](../../.github/workflows/ci.yml). Local missing tools are a limitation
+of this host, **not evidence that ACT4 is infeasible for the project**.
+
+Alternatives are a workspace-local native Sail/OCaml and cross-compiler build,
+or a Linux VM/container. The first needs a substantially larger unverified
+bootstrap; the second requires an unavailable host runtime and approval to
+install/configure it. Linux CI avoids those host changes. Do not execute the
+upstream `curl | sudo` installer recipes.
+
+The minimal proposed experiment is one manual-only job (not a required check):
+
+1. Check out the reviewed simulator revision and the ACT4 commit in the
+   manifest. Use a fresh work directory, no generated-ELF cache. Verify the
+   three dependency-file hashes before resolving dependencies.
+2. Download and SHA-256 verify the two named Linux archives, then extract
+   under the job workspace. Record `sail_riscv_sim --version`,
+   `riscv64-unknown-elf-gcc --version` and
+   `riscv64-unknown-elf-objdump --version`; require Sail exactly 0.10 and
+   GCC major >=15. Record runner image identity and shared-library dependencies.
+3. Provision Ruby 3.4.9, Bundler 4.0.8, uv 0.11.6 and Python 3.12.12 using
+   reviewed pinned setup actions/assets. Set workspace-local `GEM_HOME`,
+   `BUNDLE_PATH`, `UV_CACHE_DIR` and `UV_PYTHON_INSTALL_DIR`. Run
+   `bundle _4.0.8_ install` with `BUNDLE_FROZEN=true` in
+   `framework/src/act/data`, and `uv sync --locked --python 3.12.12` at
+   the ACT4 root. Verify `udb` is on `PATH`; the framework explicitly checks
+   it. Missing Z3/native dependencies must fail and be reported, not bypassed.
+4. Validate a truthful unprivileged RV64I DUT profile with `include_priv_tests:
+   false`; do not adapt a max-profile by leaving extra implemented extensions.
+   Copy only the named smoke source `tests/rv64i/I/I-add-00.S` and upstream
+   `tests/env` into a separate smoke input tree, retaining source hashes.
+   Generate through `uv run --locked act <dut-test-config.yaml> --test-dir
+   <smoke-input-tree> --workdir <fresh-output> --extensions I --jobs 1 --verbose`.
+   The placeholders are deliberate: **this is a proposed experiment, not an
+   executable setup recipe or finished DUT configuration**.
+5. Require exactly the named final self-check ELF and Sail signature before
+   compiling the release CLI. Audit startup, the test and both exit paths.
+   Run the intact ELF and a separately hashed deliberate self-check-failure
+   control through the same bounded `ruscv-sim run` harness. Preserve the
+   original Sail oracle; never replace expected values in a reported DUT pass.
+   Use explicit cycle and host wall-time limits. Reject missing/ambiguous
+   outcomes and unexpected extra outputs. A nonzero process status alone is
+   not enough to prove guest failure signaling.
+6. Retain tool versions, locks, source/ELF hashes, generation logs, disassembly,
+   invocation/stdout/stderr and structured results on both success and failure.
+   Bound the job at 30 minutes and artifacts at 14 days for this experiment.
+   Only then decide whether to freeze the full inventory or report a concrete
+   profile/dependency blocker. Smoke cannot close A5.
+
+No workflow, DUT adapter or execution harness is represented as ready to run:
+writing a guessed profile and speculative success classifier before the tools
+can be exercised would hide the remaining feasibility work. The next input
+needed is **authorization to publish and dispatch that bounded Linux
+experiment**, or access to an already provisioned Linux workspace. No commit,
+push, PR or dispatch has been performed.
+
+## Reproducing the source evidence locally
+
+These read-only checks need only Git and Python 3.9+, not ACT4 dependencies.
+Clone under ignored `target/` and detach at the manifest's ACT4 commit first:
+
+```sh
+mkdir -p target/a5-feasibility
+git clone --no-checkout https://github.com/riscv/riscv-arch-test.git \
+  target/a5-feasibility/act4
+git -C target/a5-feasibility/act4 checkout --detach \
+  a7c99303516f4e668f7488f172043392e23b9dfd
+python3 - <<'PY'
+import hashlib
+import json
+import pathlib
+import subprocess
+
+root = pathlib.Path("target/a5-feasibility/act4")
+pins = json.loads(pathlib.Path(
+    "docs/verification/a5-feasibility-pins.json").read_text())
+def git(*args):
+    return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
+assert git("rev-parse", "HEAD") == pins["act4"]["commit"]
+assert not git("status", "--porcelain", "--untracked-files=all")
+for name, expected in pins["act4"]["dependency_files_sha256"].items():
+    assert hashlib.sha256((root / name).read_bytes()).hexdigest() == expected, name
+inventory = pins["base_i_source_reconnaissance"]
+files = sorted((root / inventory["directory"]).glob("*.S"))
+assert [f.name for f in files] == inventory["sources"]
+assert len(files) == inventory["source_count"] == 51
+for file in files:
+    text = file.read_text()
+    for header in ("# REQUIRED_EXTENSIONS: ['I']", "#   MXLEN: 64",
+                   "# MARCH: rv64i_zicsr"):
+        assert header in text, (file, header)
+print("Pinned source/dependency evidence matches; no generation or DUT result.")
+PY
+```
+
+Verification for this documentation-only slice: the above manifest checks,
+download hashes and `git diff --check`. Rust quality gates are not rerun
+because no Rust code changed; previous gate evidence is not an ACT4 run.
+Downloads and cloned upstream trees remain under ignored `target/`, not in
+the change.
+
+[act4]: https://github.com/riscv/riscv-arch-test/tree/a7c99303516f4e668f7488f172043392e23b9dfd
+[readme]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/README.md
+[config]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/framework/src/act/config.py
+[mise]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/.mise.toml
+[python]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/framework/pyproject.toml
+[gems]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/framework/src/act/data/Gemfile.lock
+[udb]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/framework/src/act/parse_udb_config.py
+[ci]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/.github/workflows/regress.yml
+[build]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/framework/src/act/build_plan.py
+[fence]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/tests/rv64i/I/I-fence-00.S
+[startup]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/tests/env/rvtest_setup.h
+[failure]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/tests/env/failure_code.h
+[defines]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/tests/env/check_defines.h

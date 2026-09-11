@@ -2,20 +2,24 @@
 
 **Project:** `ruscv-sim`
 
-**Prospective milestone:** A5 — ACT4 RV64I External Compatibility Baseline
+**Current milestone:** A5 — ACT4 RV64I External Compatibility Baseline
 
-**Status:** Draft — direction approved; detailed contract pending maintainer approval through the A4 closeout PR merge
+**Status:** Approved — early feasibility investigation; generation and smoke gate not yet passed
 
-**Authority:** Proposed normative milestone contract; not yet implementation authorization
+**Authority:** Normative milestone contract approved by [PR #31](https://github.com/mimiqdev/ruscv-sim/pull/31), merged as `a4804341f4ae0a5344beea7ef6c53667e1912c93` on 2026-09-11
 
 **Prepared:** 2026-09-11
 
-This is the only current prospective milestone contract. The
+This is the only current milestone contract. The
 [A4 closeout](archive/milestones/a4-closeout-record.md) records completed
 implementation and verification; formal acceptance and this successor contract
-are proposed together, not already merged. A5 continues the A0–A4 milestone
+were approved together in PR #31. A5 continues the A0–A4 milestone
 sequence, not a release number or a revival of the
 [superseded M8 plan](archive/milestones/m8-act4-rv64i-superseded.md).
+
+The [first feasibility investigation](verification/a5-feasibility.md) records
+pinned source/tool evidence and the remaining Linux execution dependency.
+It is not a generation, smoke, full-selection or milestone acceptance result.
 
 ## Objective
 
@@ -189,7 +193,7 @@ and smoke gate; (2) full-selection CLI harness, negative controls and bounded
 repairs; (3) clean CI generation/execution and final capability assessment.
 These are tasks under one milestone, not three acceptance milestones.
 
-Formal work requires approval of this contract. After every criterion has
+Formal work was authorized by approval of this contract in PR #31. After every criterion has
 recorded evidence and required review/merge, archive completion, limitations and
 revision identifiers, re-evaluate unfinished work and select one separately
 approved successor. Task completion cannot substitute for capability acceptance.

@@ -29,13 +29,14 @@ Target architecture is not implementation status. Component presence is not end-
 - [Architecture principles](architecture/principles.md)
 - [Architecture decision records](architecture/decisions/README.md) — ADR-0001 through ADR-0004 accepted on 2026-09-07
 - [A0 closeout record](archive/milestones/a0-closeout-record.md) — accepted architecture, completion evidence and limitations
-- [Implementation scope navigation](architecture/first-implementation-scope.md) — A1–A3 completed; A4 implementation/verification complete with formal closeout proposed; A5 ACT4 detailed contract pending approval; broader migration remains unapproved
+- [Implementation scope navigation](architecture/first-implementation-scope.md) — A1–A4 completed; A5 ACT4 detailed contract approved in PR #31; broader migration remains unapproved
 
 ## Verification
 
 - [Verification architecture](verification/README.md)
 - [A1 closeout and acceptance evidence](archive/milestones/a1-closeout-record.md)
-- [A4 acceptance and closeout](verification/a4-capability-assessment.md) — final criterion evidence, independent review and merge CI; formal closeout and the sole prospective A5 contract await approval
+- [A4 acceptance and closeout](verification/a4-capability-assessment.md) — final criterion evidence, independent review and merge CI; closeout and the A5 contract approved in PR #31
+- [A5 feasibility investigation](verification/a5-feasibility.md) — pinned source/tool probes, Linux experiment proposal and explicit unverified boundaries; no ACT4 pass claim
 - [A1 public behavior compatibility matrix](verification/public-behavior-matrix.md)
 - [A1 public behavior defect and gap register](verification/public-behavior-gaps.md)
 - [Project-authored bare-metal tests](verification/bare-metal-tests.md)

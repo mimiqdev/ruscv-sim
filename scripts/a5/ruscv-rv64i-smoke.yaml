@@ -1,0 +1,9 @@
+$schema: config_schema.json#
+kind: architecture configuration
+type: fully configured
+name: ruscv-rv64i-smoke
+description: Nontrapping RV64I smoke selection only; not a complete machine capability claim.
+implemented_extensions:
+  - { name: I, version: "= 2.1" }
+params:
+  MXLEN: 64

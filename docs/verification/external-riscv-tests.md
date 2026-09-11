@@ -41,3 +41,8 @@ The validation toolchain may contain C++, C, assembly, Python, Ruby, shell, or o
 ## Naming
 
 “RISC-V tests” is ambiguous. A concrete milestone must name the exact upstream repository, branch or specification framework, revision, selection, reference model, and compiler environment.
+
+The approved [A5 contract](../dev-plan.md) selects pinned ACT4 4.0.0 for
+investigation. Its [initial feasibility report](a5-feasibility.md) records source
+and tool probes only; generation, a public-CLI smoke run and full-selection
+compatibility remain unverified.
