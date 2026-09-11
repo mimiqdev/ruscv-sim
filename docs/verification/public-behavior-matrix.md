@@ -539,6 +539,29 @@ suites. The tests run the same image through `load_and_run` and
 | `shared_result_shapes_hold_for_timeout_and_instruction_error` | Both exhaust the same budget with identical cycles, PC and timeout text, and both report an instruction error at the same boundary without claiming a guest exit. The differing message shape is pinned: the CLI names the PC, the flat library reports the boundary through `final_pc`. |
 | `shared_placement_selection_rule_holds_in_both_entry_points` | The same selection rule holds in both configurations — an explicit override wins over the image's declaration — in each configuration's own address form: a bus address for the CLI, a flat storage offset for the library. |
 
+## A4 T1 shared run-control evidence
+
+A4 T1 moved the instruction budget, the retirement count, the timeout diagnostic
+and the decode-before-clear exit rule into one internal owner, `RunControl` in
+`src/executor.rs`, used by both loops. Each loop still owns its stepping, its own
+signal sources in its own order, its commit logging and its diagnostic wording;
+the shared part decides, it does not observe.
+
+The A1–A3 CLI and flat-library suites pass unchanged, including every budget,
+final-slot, exit-retention, artifact and equivalence assertion. New unit tests
+cover the owner:
+
+| Test | Assertion |
+| --- | --- |
+| `test_run_control_counts_only_retired_instructions` | The budget admits exactly the permitted instructions, the count tracks retirement, and the timeout text names the budget in force. |
+| `test_run_control_zero_budget_executes_nothing` | A zero budget admits no instruction and reports a zero-cycle timeout. |
+| `test_run_control_retains_the_exit_before_clearing_the_signal` | A standard or alternative payload is decoded and retained before the signal is cleared, and a value without an exit command leaves the signal untouched. |
+
+Signal ordering is preserved but is not separately testable: every observation
+round follows one instruction, and a single instruction writes at most one
+signal, so each round offers at most one new exit. The ordering rule therefore
+remains per configuration and unobservable from the public API.
+
 ## Known stale or non-authoritative inputs
 
 - `tests/bare-metal-riscv-test/README.md` describes `rv64i/add.elf` as returning
