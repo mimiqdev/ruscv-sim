@@ -17,12 +17,13 @@ Milestone identifiers are not releases.
 ## Objective
 
 The CLI `load_and_run` and the `RiscVSimulator` facade install an image and reach
-their stop decision through one internal path, so the last two duplicated
-host-side responsibilities cannot drift between the configurations. After A3
-shared image placement and result construction, these are the remaining
-duplications in the same path: both entry points separately implement stepping
-with budget accounting, exit-detection order and RAM-signal clearing, and both
-separately build RAM, load the program, construct a core and reset it.
+their stop decision through one internal path, so the two largest remaining
+duplicated host-side responsibilities cannot drift between the configurations.
+After A3 shared image placement and result construction, both entry points still
+separately implement stepping with budget accounting, exit-detection order and
+RAM-signal clearing, and both still build RAM, load the program, construct a core
+and reset it. Each configuration keeps its own signal sources and its own
+override precedence; sharing the decision does not merge those.
 
 The drift evidence is concrete: G-10 was a wrapper-only defect in exactly this
 code, where one loop cleared the RAM signal after decoding the exit while the

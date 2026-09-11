@@ -9,8 +9,9 @@ completed on 2026-09-08, [A2](../archive/milestones/a2-closeout-record.md)
 completed on 2026-09-11 and [A3](../archive/milestones/a3-closeout-record.md)
 completed on 2026-09-11, all with documented limitations. The sole
 [active A4 contract](../dev-plan.md) shares the run-control decision and image
-installation between the CLI and the flat-library entry points. A2's and A3's
-earlier scope corrections are historical and are not reopened here.
+installation between the CLI and the flat-library entry points. A2's G-02-only
+successor selection and its own scope correction remain historical and are not
+reopened here.
 
 The [original full-migration candidate](../archive/milestones/a0-full-migration-candidate.md)
 is preserved as historical input. It was not approved: physical/composition

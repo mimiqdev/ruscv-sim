@@ -551,15 +551,16 @@ suites. The tests run the same image through `load_and_run` and
 
 ## Bounded follow-up proposal (not a new active plan)
 
-A1 and A2 are complete with documented limitations;
-[the A2 closeout](../archive/milestones/a2-closeout-record.md) holds their
+A1, A2 and A3 are complete with documented limitations;
+[the A2 closeout](../archive/milestones/a2-closeout-record.md) and
+[the A3 closeout](../archive/milestones/a3-closeout-record.md) hold their
 dispositions. G-02 was repaired by A2 T1, G-01/G-10 by A2 T2, and G-12 with the
-flat half of G-06 by A2 T3; A2 T4 added the integrated workflow,
-retained-difference evidence and the
-[archived capability assessment](../archive/milestones/a2-capability-assessment.md).
-[The active plan](../dev-plan.md) is A3, one shared image-placement and
-result-construction path. These remaining options are not scheduled by A3 and
-must be re-evaluated before any of them becomes work:
+flat half of G-06 by A2 T3; A2 T4 added the integrated workflow and its
+[archived capability assessment](../archive/milestones/a2-capability-assessment.md),
+and A3 shared image placement and result construction between the entry points.
+[The active plan](../dev-plan.md) is A4, one host-side path for run control and
+image installation. These remaining options are not scheduled by A4 and must be
+re-evaluated before any of them becomes work:
 
 1. Decide separately whether G-03, G-04, G-05, the CLI portion of G-06, and G-09
    are production-repair scope or documented compatibility limitations. The A1
@@ -575,7 +576,8 @@ must be re-evaluated before any of them becomes work:
    toolchain, and record actual ELF outputs rather than relying on CI definitions
    or old logs.
 
-These options do not expand A3 and must be re-evaluated before any becomes
+These options do not expand A4 and must be re-evaluated before any becomes
 work. A1's completion and limitations are recorded in
-its [closeout record](../archive/milestones/a1-closeout-record.md), and A2's in
-[the A2 closeout](../archive/milestones/a2-closeout-record.md).
+its [closeout record](../archive/milestones/a1-closeout-record.md), A2's in
+[the A2 closeout](../archive/milestones/a2-closeout-record.md), and A3's in
+[the A3 closeout](../archive/milestones/a3-closeout-record.md).

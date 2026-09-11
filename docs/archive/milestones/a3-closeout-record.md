@@ -54,14 +54,16 @@ development host has no RISC-V toolchain or Docker, so local guest execution is
 not claimed.
 
 Independent read-only review targeted each committed head in a separate context,
-with the coding worktree unmodified: three rounds for T1 (approve after a
-45-scenario differential; findings on the documented poll invariant, the G-11
-CLI surface and the quoting of a probe address, all addressed), two for T2
-(approve after a 36-record differential; findings on a spliced doc comment and a
-superseded sentence, both addressed), and three for T3 (approve after mutation
-testing showed each new equivalence test fails when the shared path is broken;
-findings on inherited limitations, an overstated duplication claim, a record
-sentence, an unasserted exit code and a missing ADR link, all addressed). One
+with the coding worktree unmodified: two recorded rounds for T1 (PR #23's two
+comments), one for T2 (PR #24's single comment) and three for T3 (PR #25's three
+comments), covering each change's first review plus its follow-up verifications.
+T1 was approved after a 45-scenario differential, with findings on the documented
+poll invariant, the G-11 CLI surface and the quoting of a probe address; T2 after
+a 36-record differential, with findings on a spliced doc comment and a superseded
+sentence; T3 after mutation testing showed each new equivalence test fails when
+the shared path is broken, with findings on inherited limitations, an overstated
+duplication claim, a record sentence, an unasserted exit code and a missing ADR
+link. All were addressed. One
 residual nit is recorded in PR #25: the record-update sentence does not list
 `docs/dev-plan.md` among the documents T3 touched.
 
