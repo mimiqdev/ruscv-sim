@@ -1,17 +1,19 @@
-//! Persistent A1 public behavior tests.
+//! Persistent public behavior tests.
 //!
 //! These tests exercise the public CLI/ELF and flat-library paths with small,
 //! hand-built RV64I ELF fixtures. The fixtures use only ADDI, AUIPC, LUI, ORI,
 //! LBU, LD, SB, SD, SLLI, and the public RAM/UART/HTIF configurations under
-//! test. They intentionally keep known defects as explicit reproductions instead
-//! of turning them into compatibility claims.
+//! test. A1 reproductions remain explicit for unrepaired gaps. A2 T1 replaces the
+//! G-02 hang reproduction with a bounded error-return regression and exact
+//! inspection assertions.
 
 mod common;
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use common::public_elf as fixture;
 use ruscv_sim::elf::{load_elf_file, ElfLoader};
-use ruscv_sim::executor::{load_and_run, RiscVSimulator};
+use ruscv_sim::executor::{load_and_run, ExecutorError, RiscVSimulator};
+use ruscv_sim::PrivilegeMode;
 use std::io::{Cursor, Read};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
@@ -416,7 +418,7 @@ fn public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps() {
 const READ_MEM_CHILD_ENV: &str = "RUSCV_SIM_READ_MEM_CHILD";
 const READ_MEM_READY_ENV: &str = "RUSCV_SIM_READ_MEM_READY";
 const READ_MEM_CHILD_MODE_ENV: &str = "RUSCV_SIM_READ_MEM_CHILD_MODE";
-const READ_MEM_TEST_NAME: &str = "out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped";
+const READ_MEM_TEST_NAME: &str = "out_of_range_flat_read_mem_returns_error_without_hanging";
 
 #[derive(Debug)]
 struct ChildRun {
@@ -646,7 +648,7 @@ fn run_read_mem_child(
 }
 
 #[test]
-fn out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped() {
+fn out_of_range_flat_read_mem_returns_error_without_hanging() {
     if std::env::var_os(READ_MEM_CHILD_ENV).is_some() {
         let simulator = RiscVSimulator::new(0x1000);
         let mode = std::env::var(READ_MEM_CHILD_MODE_ENV).unwrap();
@@ -654,24 +656,34 @@ fn out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped() {
             eprintln!("read_mem child exiting before ready handshake");
             return;
         }
-        if mode != "skip-ready" {
-            let ready_path = std::path::PathBuf::from(
-                std::env::var_os(READ_MEM_READY_ENV).expect("ready path missing"),
-            );
-            std::fs::write(&ready_path, b"ready")
-                .unwrap_or_else(|error| panic!("failed to signal ready handshake: {error}"));
+        if mode == "skip-ready" {
+            // Stay alive without the ready marker so the parent can exercise
+            // ready-timeout + kill/reap against a live child. This is harness
+            // cleanup coverage, not the G-02 hang regression.
+            thread::park();
+            panic!("skip-ready child was unparked");
         }
-        let _ = simulator.read_mem(0x2000, 4);
-        panic!("out-of-range read_mem unexpectedly returned");
+        let ready_path = std::path::PathBuf::from(
+            std::env::var_os(READ_MEM_READY_ENV).expect("ready path missing"),
+        );
+        std::fs::write(&ready_path, b"ready")
+            .unwrap_or_else(|error| panic!("failed to signal ready handshake: {error}"));
+        let result = simulator.read_mem(0x2000, 4);
+        assert!(
+            result.is_err(),
+            "out-of-range aligned read_mem must return an error, got {result:?}"
+        );
+        return;
     }
 
     let outcome = run_read_mem_child(false, false, Duration::from_secs(2), Duration::from_secs(2));
     assert!(outcome.ready, "{outcome:?}");
-    assert!(outcome.survived_hang_window, "{outcome:?}");
+    assert!(!outcome.survived_hang_window, "{outcome:?}");
     assert!(
-        matches!(outcome.status.as_ref(), Some(status) if !status.success()),
+        matches!(outcome.status.as_ref(), Some(status) if status.success()),
         "{outcome:?}"
     );
+    assert!(outcome.cleanup_error.is_none(), "{outcome:?}");
 }
 
 #[test]
@@ -685,6 +697,10 @@ fn out_of_range_flat_read_mem_handshake_failure_is_reaped() {
     assert!(!outcome.ready, "{outcome:?}");
     assert!(!outcome.survived_hang_window, "{outcome:?}");
     assert!(outcome.status.is_some(), "{outcome:?}");
+    assert!(
+        outcome.diagnostics.contains("ready handshake timed out"),
+        "{outcome:?}"
+    );
     assert!(outcome.cleanup_error.is_none(), "{outcome:?}");
 }
 
@@ -710,4 +726,126 @@ fn out_of_range_flat_read_mem_early_exit_is_reaped() {
         "{outcome:?}"
     );
     assert!(outcome.cleanup_error.is_none(), "{outcome:?}");
+}
+
+const FLAT_MEM_SIZE: usize = 0x1000;
+const NOP: u32 = 0x0000_0013;
+
+fn pattern_byte(offset: usize) -> u8 {
+    (offset % 251) as u8
+}
+
+fn simulator_with_pattern() -> RiscVSimulator {
+    let simulator = RiscVSimulator::new(FLAT_MEM_SIZE);
+    let pattern: Vec<u8> = (0..FLAT_MEM_SIZE).map(pattern_byte).collect();
+    simulator.write_mem(0, &pattern).unwrap();
+    simulator
+}
+
+fn expected_bytes(addr: u64, size: usize) -> Vec<u8> {
+    (0..size)
+        .map(|offset| pattern_byte(addr as usize + offset))
+        .collect()
+}
+
+fn core_snapshot(simulator: &RiscVSimulator) -> (u64, [u64; 32], PrivilegeMode) {
+    let state = simulator.state();
+    (state.pc, state.regs, state.privilege)
+}
+
+fn assert_read_error(result: Result<Vec<u8>, ExecutorError>) {
+    assert!(
+        result.is_err(),
+        "expected a bounded inspection error, got {result:?}"
+    );
+}
+
+#[test]
+fn flat_read_mem_returns_exact_bytes_for_aligned_unaligned_and_mixed_lengths() {
+    let simulator = simulator_with_pattern();
+    let before = core_snapshot(&simulator);
+    let cases = [
+        (0x00u64, 1usize),
+        (0x00, 2),
+        (0x00, 4),
+        (0x00, 8),
+        (0x00, 16),
+        (0x01, 1),
+        (0x01, 2),
+        (0x01, 3),
+        (0x02, 2),
+        (0x03, 5),
+        (0x07, 9),
+        (0x100, 6),
+        (0xffc, 4),
+        (0xfff, 1),
+    ];
+
+    for (addr, size) in cases {
+        assert_eq!(
+            simulator.read_mem(addr, size).unwrap(),
+            expected_bytes(addr, size),
+            "addr=0x{addr:x} size={size}"
+        );
+    }
+
+    assert_eq!(core_snapshot(&simulator), before);
+    assert_eq!(
+        simulator.read_mem(0, FLAT_MEM_SIZE).unwrap(),
+        expected_bytes(0, FLAT_MEM_SIZE)
+    );
+}
+
+#[test]
+fn flat_read_mem_empty_requests_do_not_access_memory() {
+    let simulator = simulator_with_pattern();
+    let before = core_snapshot(&simulator);
+    let memory_before = simulator.read_mem(0, FLAT_MEM_SIZE).unwrap();
+
+    for addr in [0u64, 0xfff, 0x1000, 0x2000, u64::MAX] {
+        assert_eq!(simulator.read_mem(addr, 0).unwrap(), Vec::<u8>::new());
+    }
+
+    assert_eq!(core_snapshot(&simulator), before);
+    assert_eq!(simulator.read_mem(0, FLAT_MEM_SIZE).unwrap(), memory_before);
+}
+
+#[test]
+fn flat_read_mem_rejects_out_of_range_crossing_and_overflow_without_wrapping() {
+    let simulator = simulator_with_pattern();
+    let before = core_snapshot(&simulator);
+    let memory_before = simulator.read_mem(0, FLAT_MEM_SIZE).unwrap();
+
+    assert_read_error(simulator.read_mem(0x2000, 4));
+    assert_read_error(simulator.read_mem(0x2000, 8));
+    assert_read_error(simulator.read_mem(0x1000, 1));
+    assert_read_error(simulator.read_mem(0xffe, 4));
+    assert_read_error(simulator.read_mem(0, FLAT_MEM_SIZE + 1));
+    assert_read_error(simulator.read_mem(u64::MAX, 1));
+    assert_read_error(simulator.read_mem(u64::MAX - 7, 16));
+    assert_read_error(simulator.read_mem(u64::MAX, 2));
+
+    assert_eq!(core_snapshot(&simulator), before);
+    assert_eq!(simulator.read_mem(0, FLAT_MEM_SIZE).unwrap(), memory_before);
+}
+
+#[test]
+fn flat_read_mem_does_not_execute_or_mutate_after_guest_step() {
+    let mut simulator = simulator_with_pattern();
+    simulator.write_mem(0, &NOP.to_le_bytes()).unwrap();
+    simulator.state_mut().pc = 0;
+    simulator.state_mut().regs[5] = 0x1111_2222_3333_4444;
+    simulator.step().unwrap();
+    assert_eq!(simulator.state().pc, 4);
+
+    let before = core_snapshot(&simulator);
+    let memory_before = simulator.read_mem(0, FLAT_MEM_SIZE).unwrap();
+
+    assert_eq!(simulator.read_mem(0, 4).unwrap(), NOP.to_le_bytes());
+    assert_read_error(simulator.read_mem(0x2000, 4));
+    assert_eq!(simulator.read_mem(4, 3).unwrap(), expected_bytes(4, 3));
+
+    assert_eq!(core_snapshot(&simulator), before);
+    assert_eq!(simulator.read_mem(0, FLAT_MEM_SIZE).unwrap(), memory_before);
+    assert_eq!(simulator.state().regs[5], 0x1111_2222_3333_4444);
 }
