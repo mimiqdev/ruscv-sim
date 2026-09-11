@@ -986,7 +986,12 @@ impl RiscVSimulator {
         }
     }
 
-    /// Flat storage offset polled by [`RiscVSimulator::run`] for the exit signal
+    /// Flat storage offset polled by [`RiscVSimulator::run`] for the exit signal.
+    ///
+    /// Re-resolving the image's declared signal cannot fail here: the loaded
+    /// image and its memory are replaced together in [`RiscVSimulator::load_elf`],
+    /// and a declared signal that this configuration cannot address is rejected
+    /// before either is assigned. Keep that pairing if the load path changes.
     fn tohost_offset(&self) -> Result<u64, ExecutorError> {
         match self.manual_tohost {
             Some(addr) => Ok(addr),

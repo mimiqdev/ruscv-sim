@@ -151,8 +151,8 @@ a second active plan.
 ### G-11 — A manual flat tohost near the top of the address space panics the exit poll
 
 - **Disposition:** **Reproduced defect** (pre-existing, not repaired).
-- **Surface:** `RiscVSimulator::set_tohost` followed by `RiscVSimulator::run`.
-- **Implementation evidence:** `SimpleMemory::read_dword` computes `addr + 8 > self.size` without a checked add, and the wrapper's poll passes the configured flat offset through unchanged. An extreme manual offset therefore overflows in the bound check instead of failing the poll.
+- **Surface:** `RiscVSimulator::set_tohost` followed by `RiscVSimulator::run`, and the CLI `--tohost` option followed by a run.
+- **Implementation evidence:** `SimpleMemory::read_dword` computes `addr + 8 > self.size` without a checked add, and the wrapper's poll passes the configured flat offset through unchanged. An extreme manual offset therefore overflows in the bound check instead of failing the poll. The same unchecked pattern exists in `SystemBus::read_dword`, which the CLI reaches through `--tohost`; an A3 T1 differential probe with `--tohost 0xFFFF_FFFF_FFFF_FFFF` panicked at `src/executor.rs` in `SystemBus::read_dword`, identically before and after that change.
 - **Reproduction:** With a loaded one-instruction image, `set_tohost(0xFFFF_FFFF_FFFF_FFF8)` then `run(Some(4))` panicked at `src/memory/mod.rs:105` with `attempt to add with overflow` (debug build). The same panic occurs at the pre-T2 revision `2769f56`, so A2 T2 neither introduced nor changed it.
 - **Existing tests:** None. The A2 T2 placement tests cover image-derived offsets, which are now range-checked and aligned at load, so they cannot reach this path. Only a manual flat offset at the top of the address space does.
 - **Impact:** A public setter combined with `run` can panic instead of returning a bounded error. The exit poll for a selected offset should report an error or a distinguishable timeout shape.
