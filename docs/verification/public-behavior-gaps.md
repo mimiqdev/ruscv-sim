@@ -187,9 +187,12 @@ Five focused decision tests and two new
 [`a4_run_control`](../../tests/a4_run_control.rs) public regressions directly
 exercise these rules; exact coverage and local verification are recorded in the
 [matrix](public-behavior-matrix.md#a4-t1-shared-run-control-evidence).
-The implementation closes the bounded ownership gap, not A4. T3 assessment,
-formal review/merge evidence and separately compiled guest evidence remain
-pending. All previously retained public gaps keep their dispositions.
+The implementation closes the bounded ownership gap, not A4. The
+[A4 assessment](a4-capability-assessment.md) distinguishes the verified merged
+base (including its separately compiled 46/46 guest run) from the locally
+verified T3 integrated tests. T3 committed-head independent review and its
+merge-time guest evidence remain pending. All previously retained public gaps
+keep their dispositions; no new public defect was found by T3.
 
 ## Persistent second-batch evidence
 

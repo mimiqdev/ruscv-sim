@@ -13,6 +13,13 @@ installation between the CLI and the flat-library entry points. A2's G-02-only
 successor selection and its own scope correction remain historical and are not
 reopened here.
 
+The [A4 capability assessment](../verification/a4-capability-assessment.md)
+records integrated evidence for the two public entry loops, not
+`RiscvCore::run`. T3 is locally verified but still needs committed-head
+independent review and merge-time evidence. Its one successor proposal pivots to
+ACT4 RV64I external compatibility validation; the detailed next contract still
+requires approval at A4 closeout.
+
 The [original full-migration candidate](../archive/milestones/a0-full-migration-candidate.md)
 is preserved as historical input. It was not approved: physical/composition
 migration, precise Hart outcomes and observation, and Runner consolidation are

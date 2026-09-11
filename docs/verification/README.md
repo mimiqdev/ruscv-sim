@@ -47,6 +47,7 @@ Test language follows the layer rather than the simulator implementation languag
 - [A1 acceptance and closeout](a1-acceptance-assessment.md) — completed baseline, explicit limitations and the bounded A2 handoff
 - [A2 acceptance and closeout](a2-capability-assessment.md) — completed flat-library workflow, explicit limitations and the A3 handoff
 - [A3 acceptance and closeout](a3-capability-assessment.md) — completed shared placement and result construction, explicit limitations and the A4 handoff
+- [A4 capability assessment](a4-capability-assessment.md) — shared run control and installation, integrated public equivalence evidence, pending T3 review/merge evidence and one proposed ACT4 successor
 - [A1 public behavior compatibility matrix](public-behavior-matrix.md) — CLI/ELF and flat-library inventory plus persistent second-batch tests
 - [A1 public behavior defect and gap register](public-behavior-gaps.md) — bounded reproductions and unverified limits
 - [Project-authored bare-metal tests](bare-metal-tests.md)
