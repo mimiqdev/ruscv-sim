@@ -78,7 +78,8 @@ class AccountingTests(unittest.TestCase):
 
     def good(self):
         generated = generation(self.plan, self.work, 0)
-        results = [{"elf": v["elf"], "classification": "guest-pass",
+        results = [{"source": v["source"], "variant": v["variant"],
+                    "elf": v["elf"], "classification": "guest-pass",
                     "sha256": v["artifacts"]["elf"]["sha256"]} for v in generated["variants"]]
         return generated, results
 
@@ -87,6 +88,35 @@ class AccountingTests(unittest.TestCase):
         self.assertTrue(summarize(self.plan, generated, results)["success"])
         self.assertEqual(generated["generated_selfcheck_elfs"], 51)
         self.assertEqual(generated["generated_signature_elfs"], 51)
+
+    def assert_metadata_rejected(self, generated, results):
+        expected_error = f"execution identity mismatch: {results[0]['elf']}"
+        baseline = summarize(self.plan, generated, results)
+        self.assertNotIn(expected_error, baseline["errors"])
+        for key in ("source", "variant"):
+            for value in (None, "", "wrong", [], 64):
+                with self.subTest(key=key, value=value):
+                    changed = copy.deepcopy(results)
+                    changed[0][key] = value
+                    summary = summarize(self.plan, generated, changed)
+                    self.assertFalse(summary["success"])
+                    self.assertCountEqual(summary["errors"], baseline["errors"] + [expected_error])
+            with self.subTest(key=key, missing=True):
+                changed = copy.deepcopy(results)
+                del changed[0][key]
+                self.assertIn(expected_error, summarize(self.plan, generated, changed)["errors"])
+        changed = copy.deepcopy(results)
+        changed[0]["source"] = results[1]["source"]
+        self.assertIn(expected_error, summarize(self.plan, generated, changed)["errors"])
+
+    def test_complete_identity_required_with_valid_paths_hashes_and_passes(self):
+        self.assert_metadata_rejected(*self.good())
+
+    def test_retained_results_metadata_negative_controls(self):
+        # Replay metadata checks on retained Linux identities without claiming
+        # new guest execution. Existing failures must not mask these controls.
+        report = json.loads(Path("docs/verification/a5-accounting-results.json").read_text())
+        self.assert_metadata_rejected(report["generation"], report["execution"]["results"])
 
     def test_empty_missing_duplicate_extra_plan_and_results(self):
         for variants in [[], self.plan["variants"][:-1], self.plan["variants"] * 2,

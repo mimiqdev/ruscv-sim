@@ -118,7 +118,12 @@ def summarize(plan, generated, results):
         errors.append(str(error))
     expected_hashes = {v["elf"]: v["artifacts"].get("elf", {}).get("sha256")
                        for v in generated["variants"]}
+    expected_identities = {v["elf"]: (v["source"], v["variant"], v["elf"])
+                           for v in generated["variants"]}
     for result in results:
+        identity = tuple(result.get(key) for key in ("source", "variant", "elf"))
+        if identity != expected_identities.get(result["elf"]):
+            errors.append(f"execution identity mismatch: {result['elf']}")
         if result.get("classification") != "guest-pass":
             errors.append(f"{result['elf']}: {result.get('classification')}: {result.get('reason')}")
         if not result.get("sha256") or result["sha256"] != expected_hashes.get(result["elf"]):
