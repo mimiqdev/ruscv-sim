@@ -4,7 +4,7 @@
 
 **Authority:** Informational as-of A1 evidence; original scope is preserved in the [archived A1 contract](../archive/milestones/a1-public-behavior-baseline.md), while compatibility requirements are stated in [ADR-0003 §9](../architecture/decisions/0003-runner-machine-and-platform-ownership.md#9-compatibility-constraints-for-the-current-product)
 
-**Last reviewed:** 2026-09-11; A1 rows retain their 2026-09-08 recorded scope. A2 T1 and T2 update the `read_mem` helper row, the flat-library lifecycle/config rows, and the G-01/G-02 test names.
+**Last reviewed:** 2026-09-11; A1 rows retain their 2026-09-08 recorded scope. A2 T1 and T2 update the `read_mem` helper row, the flat-library lifecycle/config rows and the G-01/G-02 test names; A2 T3 updates the signature-artifact rows.
 
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)
@@ -381,7 +381,7 @@ not exact-follow-up-head evidence.
 | To-host precedence | `tohost_addr` precedence is CLI override, then ELF `.tohost`/symbol, then fixed `0x40008000`. | `load_and_run`: `tohost_addr.or(elf_tohost).unwrap_or(DEFAULT_TOHOST)`; loader discovers `.tohost` then `tohost` symbol. | Persistent `public_behavior::tohost_precedence_selects_elf_then_cli_override_then_fixed_endpoint` asserts each branch with exact cycles/status; `test_tohost_symbol_from_elf` and `test_fib_tohost_address` still skip when guest ELFs are absent. | E2 and E6 selected ELF address with no override, selected the first CLI RAM override, and timed out when selecting fixed HTIF for a guest that did not write it. **Verified** for section metadata and CLI override. Symbol fallback remains **Unverified** in this environment. |
 | HTIF endpoint and final observation | Fixed `0x40008000` dword writes invoke the callback; selected RAM tohost is polled after each successful instruction and a recognized value is cleared. | `SystemBus::write_dword/read_dword`, HTIF callback, `load_and_run` post-success polling, and `clear_tohost`. Byte/half/word fixed-HTIF access is rejected. | `test_system_bus_read_htif`, `test_system_bus_write_htif`: **medium** (read/value or `Ok`, but callback value is not asserted); persistent `public_behavior::exact_limits_include_zero_and_the_final_exit_slot` and `tohost_precedence_selects_elf_then_cli_override_then_fixed_endpoint`: **strong** public timing/selection assertions; UART width tests are strong for rejection. | E2 and E6 fixed-endpoint and RAM-endpoint exits were observed, including final-slot exit. Post-run clearing of a selected RAM signal is source-supported but has no public assertion. **Unverified** for retained memory state after return. |
 | UART public output | Public ELF path retains byte MMIO at `0x10000000`, output callback bytes, and rejection of multi-byte UART register access. | `SystemBus` routes byte accesses to `Uart16550`; UART callback is installed in `load_and_run`; its native window is `0x100` while the UART/TLM model declares `UART_SIZE = 8`. | Persistent `public_behavior::uart_bytes_are_emitted_by_the_cli_elf_path` asserts exact CLI bytes/result; `test_system_bus_routing` is strong for byte register round-trip; `test_system_bus_read/write_uart_{half,word,dword}` is strong for rejection; UART unit tests are component evidence. | E2 and E6 emitted `A1!\n` through the public path. **Verified** for byte TX and unsupported multi-byte accesses. The `0x08..0xff` routing mismatch is [G-04](public-behavior-gaps.md#g-04--native-uart-routing-window-exceeds-the-uart-declared-range). |
-| Signature metadata and artifact | `.signature` discovery is host-side; absent means no artifact, zero-size means an empty artifact, and bytes are returned post-run without guest execution. | Loader records `SignatureInfo`; `dump_signature` reads the region after exit/timeout and `ExecutionResult` carries address/data. Read errors are currently swallowed by `.ok().flatten()` in result construction. | `test_dump_signature_none` and `test_dump_signature_zero_size`: **strong** helper behavior; `test_load_and_run_with_signature` and persistent `public_behavior::signature_bytes_are_returned_after_public_execution`: **strong** address/byte assertions; `test_execution_result_signature` remains a weak manual-result test. | E2 and E6 public runs returned address/length and exact bytes. **Verified** for absent/zero helper cases and a nonzero public artifact. Error propagation remains [G-06](public-behavior-gaps.md#g-06--signature-read-errors-are-suppressed-in-run-results). |
+| Signature metadata and artifact | `.signature` discovery is host-side; absent means no artifact, zero-size means an empty artifact, and bytes are returned post-run without guest execution. | Loader records `SignatureInfo`. The CLI `load_and_run` still reads the region through `dump_signature` and swallows read errors with `.ok().flatten()`. The flat wrapper resolves the guest metadata address to a checked flat offset and reads it through the bounded helper; an unusable region yields an explicit diagnostic. | `test_dump_signature_none` and `test_dump_signature_zero_size`: **strong** helper behavior; `test_load_and_run_with_signature` and persistent `public_behavior::signature_bytes_are_returned_after_public_execution`: **strong** address/byte assertions for the CLI; `test_execution_result_signature` remains a weak manual-result test. The A2 T3 flat-library artifact tests assert bytes, address, absent/empty/unreadable outcomes and preserved accounting. | E2 and E6 public runs returned address/length and exact bytes for the CLI. **Verified** for absent/zero helper cases, a nonzero CLI artifact, and the flat-library artifact path after A2 T3. The CLI error path remains [G-06](public-behavior-gaps.md#g-06--signature-read-errors-are-suppressed-in-run-results); the repaired flat-library path was [G-12](public-behavior-gaps.md#g-12--flat-library-signature-artifact-was-read-at-the-guest-address-and-suppressed). |
 | Commit-log format | `--log-commits` retains the Spike-shaped hart/privilege/PC/opcode/register format; memory suffixes must not be advertised as current public output unless emitted. | `CommitLogger::log_commit` formats register changes and optional `MemoryAccess`; public loop re-fetches an opcode and passes `mem_access = None`. | `test_log_commit_format`, register-change tests, and memory formatter tests are **strong** for supplied inputs; the current `test_log_commit_path_with_logger` is **strong** for the result and emitted line count/PC shape but deliberately does not assert the known-bad opcode or missing suffix; persistent `public_behavior::public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` inspects every actual public line. | E4 and E6 inspected actual files. Base-zero opcode/register lines match the format; nonzero-base opcodes were zero and stores had no memory suffix. **Reproduced defects**; see [G-03](public-behavior-gaps.md#g-03--public-commit-log-loses-opcodes-for-nonzero-elf-bases) and [G-09](public-behavior-gaps.md#g-09--public-commit-log-omits-memory-access-suffixes). |
 | Verbose diagnostics | Verbose mode may expose load/run diagnostics without changing the result. | `src/main.rs` prints the user option value before `load_and_run`; executor prints selected ELF tohost later. | `test_cli_run_verbose_flag` remains a **weak** CLI no-panic check; current `test_load_and_run_verbose_output` is **strong** for the bounded successful result but does not assert diagnostic text. | E5 showed the initial address was `0x0` even though the selected ELF address was `0x30001000`. The execution result was still bounded. **Reproduced defect** for diagnostic accuracy; see G-05. |
 
@@ -389,7 +389,7 @@ not exact-follow-up-head evidence.
 
 | Surface | Contract requirement | Current implementation | Existing test / assertion strength | A1 evidence and disposition |
 | --- | --- | --- | --- | --- |
-| `RiscVSimulator` construction and lifecycle | Keep the public wrapper, load/step/run methods, configured/default limit concept, and helper names while configurations remain distinct. | `src/executor.rs::RiscVSimulator` owns a `RiscvCore`, `SimpleMemory`, manual/image tohost selection, image base, limit, signature, and verbose flag; `load_elf` reconstructs the flat memory/core and derives the image's flat exit offset. | `public_behavior::flat_library_elf_tohost_metadata_selects_the_ram_exit_signal` asserts entry, helper bytes, CLI parity, and the library exit; the A2 T2 exit/limit/precedence tests assert codes, cycles, PC and timeout shapes. Older lifecycle tests remain smoke/medium checks. | E3 and E6 exercised load/run on the same ELF as the CLI. A2 T2 made the wrapper observe the image's declared RAM exit. **Repaired**, G-01; the remaining divergence is documented in the CLI-versus-library row. |
+| `RiscVSimulator` construction and lifecycle | Keep the public wrapper, load/step/run methods, configured/default limit concept, and helper names while configurations remain distinct. | `src/executor.rs::RiscVSimulator` owns a `RiscvCore`, `SimpleMemory`, manual/image tohost selection, image base, limit, signature, and verbose flag; `load_elf` reconstructs the flat memory/core and resolves the image's flat exit offset and artifact placement. | `public_behavior::flat_library_elf_tohost_metadata_selects_the_ram_exit_signal` asserts entry, helper bytes, CLI parity, and the library exit; the A2 T2 exit/limit/precedence tests assert codes, cycles, PC and timeout shapes. Older lifecycle tests remain smoke/medium checks. | E3 and E6 exercised load/run on the same ELF as the CLI. A2 T2 made the wrapper observe the image's declared RAM exit. **Repaired**, G-01; the remaining divergence is documented in the CLI-versus-library row. |
 | State inspection and mutation | `state()` exposes current state and `state_mut()`/core helpers remain available to library callers. | `RiscVSimulator::state`, `state_mut`, `reset_core`, `step_once`, and `get_core_state`; `CoreState` exposes PC, registers, privilege, CSR/FPU fields. | `test_simulator_state_access`, `test_simulator_state_mut`, `test_core_initialization`, `test_core_reset`: **medium** for access/defaults; mutation effects are not asserted. | API access and defaults passed in E1/E3. **Verified** for surface availability and reset/default observations; cross-run state isolation and arbitrary mutation effects are **Unverified**. |
 | Flat memory construction and loading | `SimpleMemory` provides thread-safe flat bytes, typed little-endian reads/writes, and `load_program` loads relative to offset 0; its base argument is compatibility-only. | `src/memory/mod.rs::SimpleMemory`; all typed methods enforce natural alignment except byte access; `load_program` ignores `_base_addr`. | `test_memory_read_write`, `test_memory_misaligned`, `test_load_program`, and executor typed sign/zero-extension tests: **strong** for tested values. | E1 and E3 read/write round-trips passed. **Verified** for tested aligned/byte/relative behavior; bounds and overflow edges are not exhaustive. |
 | `read_mem` / `write_mem` helpers | Public byte-oriented helpers should return requested bytes or a bounded error and should permit flat-memory writes. | `write_mem` loops byte writes; `read_mem` returns empty for `size == 0`, rejects overflowing nonempty ranges, and otherwise reads bytes in address order or returns `ExecutorError`. | `test_simulator_read_write_mem` is **strong** for in-range data; `test_simulator_read_mem_unaligned` asserts exact unaligned bytes; `test_simulator_read_mem_empty_and_out_of_range` covers empty/error returns. Persistent A2 T1 tests assert exact bytes, empty/overflow/crossing errors, state preservation, and that `new(0x1000).read_mem(0x2000, 4)` returns `Err` inside the bounded child harness. | A1 E3/E6 in-range round-trips passed and the aligned out-of-range read hung. A2 T1 repaired G-02; closing G-02 does not complete A2. |
@@ -436,9 +436,24 @@ assertions live in `tests/public_behavior.rs`:
 | `flat_library_bounds_zero_budget_and_final_slot_exits` | Zero budget executes nothing and times out; the final permitted slot exits without a timeout. |
 | `flat_library_distinguishes_guest_exit_timeout_and_execution_error` | Retained exit, timeout, and execution error are distinct result shapes with correct accounting. |
 
-These rows cover T2 only. Signature artifacts, the integrated
-load/run/result/inspect acceptance and the CLI-versus-library documentation of
-retained differences remain A2 T3–T4 work.
+These rows cover T2 only.
+
+## A2 T3 artifact and image-replacement evidence
+
+A2 T3 repaired G-12 and the flat-library half of G-06 in
+`RiscVSimulator::signature_artifact`. Current assertions live in
+`tests/public_behavior.rs`:
+
+| Test | Assertion |
+| --- | --- |
+| `flat_library_returns_guest_written_signature_bytes_at_nonzero_base` | Guest-written byte and image bytes are returned together with the guest metadata address, and match the flat bytes. |
+| `flat_library_returns_signature_bytes_at_base_zero` | Base-zero placement returns the same bytes with raw offsets. |
+| `flat_library_distinguishes_absent_empty_and_unreadable_signatures` | Absent yields no artifact, zero length yields an empty artifact, and an unmappable region yields an explicit diagnostic rather than silent absence. |
+| `flat_library_keeps_the_run_when_the_signature_is_unreadable` | Exit, cycles, final PC and guest RAM are identical with a readable and an unreadable declared region; a primary timeout or execution error survives alongside the artifact diagnostic. |
+| `flat_library_replaces_image_metadata_and_ram_on_a_second_load` | A second image replaces RAM and metadata, the first image's artifact does not leak, and reloading the first image restores it. |
+
+These rows cover T3 only. The integrated load/run/result/inspect acceptance and
+the CLI-versus-library documentation of retained differences remain A2 T4 work.
 
 ## Known stale or non-authoritative inputs
 
@@ -453,10 +468,11 @@ retained differences remain A2 T3–T4 work.
 ## Bounded follow-up proposal (not a new active plan)
 
 A1 is complete with documented limits. [A2](../dev-plan.md) now defines the
-flat-library load/run/result/inspection capability. G-02 was repaired by A2 T1
-and G-01/G-10 by A2 T2; flat signature handling and integrated acceptance remain
-open. The contract, not this as-of evidence record, defines its acceptance.
-These remaining options do not add work beyond that contract:
+flat-library load/run/result/inspection capability. G-02 was repaired by A2 T1,
+G-01/G-10 by A2 T2, and G-12 with the flat half of G-06 by A2 T3; the integrated
+acceptance workflow remains open. The contract, not this as-of evidence record,
+defines its acceptance. These remaining options do not add work beyond that
+contract:
 
 1. Decide separately whether G-03, G-04, G-05, the CLI portion of G-06, and G-09
    are production-repair scope or documented compatibility limitations. The A1
@@ -466,7 +482,8 @@ These remaining options do not add work beyond that contract:
    silently alter address maps, limit semantics, APIs, or logging contracts.
 3. Add focused evidence for the remaining unverified boundaries only when their
    intended contract is defined: default-limit exhaustion, tohost symbol fallback,
-   signature read failures, the UART boundary, and broader error classification.
+   the CLI signature read failure, the UART boundary, and broader error
+   classification.
 4. Re-run the guest suite with the project Docker image or a compatible host
    toolchain, and record actual ELF outputs rather than relying on CI definitions
    or old logs.

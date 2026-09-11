@@ -124,7 +124,7 @@ pub fn elf_with_code(
         entry_offset,
         BASE,
         with_tohost_section.then_some(TOHOST),
-        with_signature_section,
+        with_signature_section.then_some((SIGNATURE, SIGNATURE_BYTES.len() as u64)),
         memory_size,
     )
 }
@@ -142,7 +142,30 @@ pub fn elf_with_placement(
     tohost_addr: Option<u64>,
     memory_size: usize,
 ) -> Vec<u8> {
-    build_elf(code, entry_offset, base, tohost_addr, false, memory_size)
+    build_elf(code, entry_offset, base, tohost_addr, None, memory_size)
+}
+
+/// Construct a minimal ELF64/RISC-V executable with an explicit base and an
+/// explicit `.signature` section address and size.
+///
+/// `signature` of `None` declares no section; a size above eight bytes is
+/// filled with zero bytes beyond the fixture's signature pattern.
+pub fn elf_with_signature(
+    code: &[u32],
+    entry_offset: usize,
+    base: u64,
+    tohost_addr: Option<u64>,
+    signature: Option<(u64, u64)>,
+    memory_size: usize,
+) -> Vec<u8> {
+    build_elf(
+        code,
+        entry_offset,
+        base,
+        tohost_addr,
+        signature,
+        memory_size,
+    )
 }
 
 fn build_elf(
@@ -150,7 +173,7 @@ fn build_elf(
     entry_offset: usize,
     base: u64,
     tohost_addr: Option<u64>,
-    with_signature_section: bool,
+    signature: Option<(u64, u64)>,
     memory_size: usize,
 ) -> Vec<u8> {
     let code_size = code
@@ -170,8 +193,9 @@ fn build_elf(
     }
     segment[FILE_BYTE_OFFSET] = FILE_BYTE;
 
-    if with_signature_section {
-        segment[0x2000..0x2008].copy_from_slice(&SIGNATURE_BYTES);
+    if let Some((_, size)) = signature {
+        let copied = (size as usize).min(SIGNATURE_BYTES.len());
+        segment[0x2000..0x2000 + copied].copy_from_slice(&SIGNATURE_BYTES[..copied]);
     }
 
     let mut section_names = vec![0u8];
@@ -191,14 +215,14 @@ fn build_elf(
             alignment: 8,
         });
     }
-    if with_signature_section {
+    if let Some((address, size)) = signature {
         sections.push(SectionDefinition {
             name: signature_name,
             section_type: 1,
             flags: 0x3,
-            address: base + SIGNATURE_SEGMENT_OFFSET,
+            address,
             offset: LOAD_OFFSET as u64 + SIGNATURE_SEGMENT_OFFSET,
-            size: SIGNATURE_BYTES.len() as u64,
+            size,
             alignment: 8,
         });
     }
