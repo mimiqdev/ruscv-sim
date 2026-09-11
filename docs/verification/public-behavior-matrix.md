@@ -475,6 +475,30 @@ differences; the criterion-by-criterion mapping is in the
 The workflow test also covers the artifact half of criterion 4 end to end; the
 T1–T3 sections above cover the individual boundaries.
 
+## A3 T1 shared placement evidence
+
+A3 T1 replaced the wrapper's private guest-to-offset conversion with one internal
+placement owner (`AddressForm` and `ImagePlacement` in `src/executor.rs`) that
+both public entry points use. The bus configuration passes image/guest addresses
+through, because its RAM mapping already places the image at the base; the flat
+configuration converts them with checked arithmetic. Per-use rules stay at the
+call site: the exit poll still requires an eight-byte aligned offset, and the
+library's zero-length artifact rule still short-circuits before conversion.
+
+The A1/A2 CLI and flat-library suites pass unchanged, including every placement,
+exit, artifact and replacement assertion. New unit tests cover the shared owner:
+
+| Test | Assertion |
+| --- | --- |
+| `test_placement_resolves_both_address_forms` | The same declared `tohost` and signature resolve to the guest address in the bus form and to the offset in the flat form, while the reported signature address stays the guest metadata address. |
+| `test_placement_base_zero_uses_raw_offsets` | Both forms coincide at base zero. |
+| `test_placement_rejects_unaddressable_flat_ranges` | Below-base, beyond-image and address-space-overflow placements are errors in the flat form and pass through unchanged in the bus form. |
+| `test_placement_absent_metadata_is_none` | An image that declares nothing yields no tohost and no artifact in both forms. |
+| `test_placement_signature_range_boundaries` | The last addressable byte resolves, one past it fails, and an empty range needs no bytes while an offset outside the image memory is still refused. |
+
+Exit retention and artifact composition remain constructed separately in each
+entry point; that is A3 T2.
+
 ## Known stale or non-authoritative inputs
 
 - `tests/bare-metal-riscv-test/README.md` describes `rv64i/add.elf` as returning
