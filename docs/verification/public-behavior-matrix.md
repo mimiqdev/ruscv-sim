@@ -458,8 +458,22 @@ otherwise unmappable address is reported as an empty artifact rather than a
 failure. Empty is distinguished from absent by `signature_addr`, and from
 unreadable by the presence of a diagnostic.
 
-These rows cover T3 only. The integrated load/run/result/inspect acceptance and
-the CLI-versus-library documentation of retained differences remain A2 T4 work.
+These rows cover T3 only.
+
+## A2 T4 integrated acceptance evidence
+
+A2 T4 proves the capability as one workflow and records the retained CLI
+differences; the criterion-by-criterion mapping is in the
+[A2 capability assessment](a2-capability-assessment.md).
+
+| Test | Assertion |
+| --- | --- |
+| `integrated_load_run_result_inspect_workflow` | One nonzero-base image runs real work (store, load, modify), writes its declared signature byte, exits through its declared tohost with code 42 at cycle 16, and exposes exact registers, RAM bytes and artifact; inspection leaves PC, registers, privilege and RAM unchanged. |
+| `integrated_workflow_records_the_retained_cli_device_difference` | A declared RAM tohost exits identically in both configurations, while a UART store is served by the CLI device map and fails as an execution error in the flat wrapper, which has no device mapping. |
+| `flat_library_executes_from_a_nonzero_entry_offset` | Entry `0x8000_0100` executes from the declared offset, exits at cycle 4 with final PC `0x8000_0110`, and the image's file bytes are readable at flat `0x100`. |
+
+The workflow test also covers the artifact half of criterion 4 end to end; the
+T1–T3 sections above cover the individual boundaries.
 
 ## Known stale or non-authoritative inputs
 
@@ -475,10 +489,12 @@ the CLI-versus-library documentation of retained differences remain A2 T4 work.
 
 A1 is complete with documented limits. [A2](../dev-plan.md) now defines the
 flat-library load/run/result/inspection capability. G-02 was repaired by A2 T1,
-G-01/G-10 by A2 T2, and G-12 with the flat half of G-06 by A2 T3; the integrated
-acceptance workflow remains open. The contract, not this as-of evidence record,
-defines its acceptance. These remaining options do not add work beyond that
-contract:
+G-01/G-10 by A2 T2, and G-12 with the flat half of G-06 by A2 T3; A2 T4 adds the
+integrated workflow, retained-difference evidence and the
+[capability assessment](a2-capability-assessment.md). Whether A2 is accepted and
+what follows it remain the maintainer's decisions. The contract, not this as-of
+evidence record, defines acceptance. These remaining options do not add work
+beyond that contract:
 
 1. Decide separately whether G-03, G-04, G-05, the CLI portion of G-06, and G-09
    are production-repair scope or documented compatibility limitations. The A1
