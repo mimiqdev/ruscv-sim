@@ -70,8 +70,9 @@ requests below. Every merge revision ran the complete `main` pipeline — releas
 build, binary smoke test, guest compilation and the project-authored ELF runner at
 **46 total / 46 passed / 0 failed**: `c67cb19` and `ca78cd0`. Each change updated
 the records it affected: T1 changed the matrix, current-state and gap register
-(the CLI `--tohost` surface for the pre-existing G-11 panic), T2 the matrix and
-current-state, and T3 the equivalence record below.
+(the CLI `--tohost` surface for the pre-existing G-11 panic); T2 the matrix and
+current-state; T3 the matrix equivalence section, current-state, the verification
+index and this record.
 
 ### 5. Capability acceptance
 
