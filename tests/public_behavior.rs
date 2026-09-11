@@ -3,16 +3,17 @@
 //! These tests exercise the public CLI/ELF and flat-library paths with small,
 //! hand-built RV64I ELF fixtures. The fixtures use only ADDI, AUIPC, LUI, ORI,
 //! LBU, LD, SB, SD, SLLI, and the public RAM/UART/HTIF configurations under
-//! test. A1 reproductions remain explicit for unrepaired gaps. A2 T1 replaces the
-//! G-02 hang reproduction with a bounded error-return regression and exact
-//! inspection assertions.
+//! test. A1 reproductions remain explicit for unrepaired gaps. A2 T1 replaced the
+//! G-02 hang reproduction with a bounded error-return regression, and A2 T2
+//! replaced the G-01 contrast with a correct flat-library exit regression plus
+//! placement, precedence and limit assertions.
 
 mod common;
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use common::public_elf as fixture;
 use ruscv_sim::elf::{load_elf_file, ElfLoader};
-use ruscv_sim::executor::{load_and_run, ExecutorError, RiscVSimulator};
+use ruscv_sim::executor::{load_and_run, ExecutionResult, ExecutorError, RiscVSimulator};
 use ruscv_sim::PrivilegeMode;
 use std::io::{Cursor, Read};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -352,18 +353,53 @@ fn signature_bytes_are_returned_after_public_execution() {
     assert!(result.error.is_none());
 }
 
-#[test]
-fn flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted() {
-    let code = vec![
-        fixture::addi(5, 0, 1),
+/// Guest that writes an exit payload to its image-declared `.tohost`.
+fn declared_tohost_writer(exit_instruction: u32) -> Vec<u32> {
+    padded(vec![
+        exit_instruction,
         fixture::auipc(4, 1),
         fixture::addi(4, 4, -4),
         fixture::sd(5, 4, 0),
-    ]
-    .into_iter()
-    .chain(std::iter::repeat_n(fixture::nop(), 24))
-    .collect::<Vec<_>>();
-    let elf = fixture::elf_with_code(&code, 0, true, false, 0x3000);
+    ])
+}
+
+/// Guest that writes an exit payload to `guest_offset` from the image base.
+///
+/// The address is built from the AUIPC at `entry + 4`, so the delta is split
+/// into an upper and a lower part to stay inside the ADDI immediate range.
+fn fixed_offset_writer(exit_instruction: u32, guest_offset: i64) -> Vec<u32> {
+    let delta = guest_offset - 4;
+    let upper = (delta + 0x800) >> 12;
+    let lower = delta - (upper << 12);
+    padded(vec![
+        exit_instruction,
+        fixture::auipc(4, upper as u32),
+        fixture::addi(4, 4, lower as i32),
+        fixture::sd(5, 4, 0),
+    ])
+}
+
+fn padded(mut code: Vec<u32>) -> Vec<u32> {
+    code.extend(std::iter::repeat_n(fixture::nop(), 24));
+    code
+}
+
+fn load_and_run_library(elf: &[u8], max_cycles: u64) -> (RiscVSimulator, ExecutionResult) {
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    simulator.load_elf(elf).unwrap();
+    let result = simulator.run(Some(max_cycles)).unwrap();
+    (simulator, result)
+}
+
+#[test]
+fn flat_library_elf_tohost_metadata_selects_the_ram_exit_signal() {
+    let elf = fixture::elf_with_code(
+        &declared_tohost_writer(fixture::standard_exit(0)),
+        0,
+        true,
+        false,
+        0x3000,
+    );
 
     let cli_result = run_fixture(&elf, Some(20), None);
     assert_eq!(cli_result.exit_code, 0);
@@ -382,12 +418,261 @@ fn flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted() {
     let entry = simulator.load_elf(&elf).unwrap();
     assert_eq!(entry, fixture::BASE);
     let library_result = simulator.run(Some(20)).unwrap();
-    assert_eq!(library_result.exit_code, 1);
-    assert_eq!(library_result.cycles, 20);
-    assert!(library_result.timed_out);
+    assert_eq!(library_result.exit_code, 0);
+    assert_eq!(library_result.cycles, 4);
+    assert_eq!(library_result.final_pc, fixture::BASE + 0x10);
+    assert!(!library_result.timed_out);
+    assert!(library_result.error.is_none());
+}
+
+#[test]
+fn flat_library_reports_zero_and_nonzero_guest_exits() {
+    for exit_code in [0u32, 1, 42] {
+        let elf = fixture::elf_with_code(
+            &declared_tohost_writer(fixture::standard_exit(exit_code)),
+            0,
+            true,
+            false,
+            0,
+        );
+        let (_, result) = load_and_run_library(&elf, 12);
+
+        assert_eq!(result.exit_code, exit_code, "exit code {exit_code}");
+        assert_eq!(result.cycles, 4, "exit code {exit_code}");
+        assert_eq!(result.final_pc, fixture::BASE + 0x10, "exit {exit_code}");
+        assert!(!result.timed_out, "exit code {exit_code}");
+        assert!(result.error.is_none(), "exit code {exit_code}");
+    }
+}
+
+#[test]
+fn flat_library_reports_base_zero_placement() {
+    let base = 0u64;
+    let elf = fixture::elf_with_placement(
+        &declared_tohost_writer(fixture::standard_exit(7)),
+        0,
+        base,
+        Some(base + fixture::TOHOST_SEGMENT_OFFSET),
+        0,
+    );
+
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    assert_eq!(simulator.load_elf(&elf).unwrap(), base);
+    let result = simulator.run(Some(12)).unwrap();
+
+    assert_eq!(result.exit_code, 7);
+    assert_eq!(result.cycles, 4);
+    assert_eq!(result.final_pc, base + 0x10);
+    assert!(!result.timed_out);
+    assert!(result.error.is_none());
+}
+
+#[test]
+fn flat_library_retains_the_nonzero_exit_before_clearing_the_signal() {
+    let elf = fixture::elf_with_code(
+        &declared_tohost_writer(fixture::standard_exit(1)),
+        0,
+        true,
+        false,
+        0,
+    );
+    let (simulator, result) = load_and_run_library(&elf, 12);
+
+    assert_eq!(result.exit_code, 1);
+    assert!(result.error.is_none());
     assert_eq!(
-        library_result.error.as_deref(),
-        Some("Timeout after 20 cycles")
+        simulator
+            .read_mem(fixture::TOHOST_SEGMENT_OFFSET, 8)
+            .unwrap(),
+        vec![0u8; 8],
+        "the guest RAM signal is cleared after the exit is reported"
+    );
+}
+
+#[test]
+fn flat_library_manual_flat_tohost_overrides_image_metadata() {
+    let elf = fixture::elf_with_code(
+        &fixed_offset_writer(fixture::standard_exit(1), 0x100),
+        0,
+        true,
+        false,
+        0,
+    );
+
+    // The image declares its tohost at flat 0x1000, but this guest writes to
+    // flat 0x100, so the declared signal is never written.
+    let (_, declared) = load_and_run_library(&elf, 12);
+    assert!(declared.timed_out, "{declared:?}");
+    assert_eq!(declared.cycles, 12);
+
+    // An explicit flat offset set after loading selects the guest's signal.
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    simulator.load_elf(&elf).unwrap();
+    simulator.set_tohost(0x100);
+    let result = simulator.run(Some(12)).unwrap();
+
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.cycles, 4);
+    assert!(!result.timed_out);
+    assert!(result.error.is_none());
+}
+
+#[test]
+fn flat_library_manual_tohost_before_load_is_superseded_by_image_metadata() {
+    let elf = fixture::elf_with_code(
+        &declared_tohost_writer(fixture::standard_exit(1)),
+        0,
+        true,
+        false,
+        0,
+    );
+
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    simulator.set_tohost(0x100);
+    simulator.load_elf(&elf).unwrap();
+    let result = simulator.run(Some(12)).unwrap();
+
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.cycles, 4);
+    assert!(!result.timed_out);
+}
+
+#[test]
+fn flat_library_manual_tohost_survives_a_load_without_metadata() {
+    let elf = fixture::elf_with_code(
+        &fixed_offset_writer(fixture::standard_exit(1), 0x100),
+        0,
+        false,
+        false,
+        0,
+    );
+
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    simulator.set_tohost(0x100);
+    simulator.load_elf(&elf).unwrap();
+    let result = simulator.run(Some(12)).unwrap();
+
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.cycles, 4);
+    assert!(!result.timed_out);
+}
+
+#[test]
+fn flat_library_image_without_metadata_does_not_reuse_the_previous_tohost() {
+    let first = fixture::elf_with_code(
+        &declared_tohost_writer(fixture::standard_exit(4)),
+        0,
+        true,
+        false,
+        0,
+    );
+    let second = fixture::elf_with_code(
+        &fixed_offset_writer(fixture::standard_exit(4), 0x1000),
+        0,
+        false,
+        false,
+        0,
+    );
+
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    simulator.load_elf(&first).unwrap();
+    let first_result = simulator.run(Some(12)).unwrap();
+    assert_eq!(first_result.exit_code, 4);
+
+    simulator.load_elf(&second).unwrap();
+    let second_result = simulator.run(Some(12)).unwrap();
+
+    assert!(
+        second_result.timed_out,
+        "the second image must not inherit the first image's declared tohost: {second_result:?}"
+    );
+    assert_eq!(second_result.cycles, 12);
+    assert_eq!(
+        second_result.error.as_deref(),
+        Some("Timeout after 12 cycles")
+    );
+}
+
+#[test]
+fn flat_library_rejects_a_declared_tohost_the_flat_image_cannot_represent() {
+    let code = declared_tohost_writer(fixture::standard_exit(0));
+
+    let mut below_base = RiscVSimulator::new(0x1_0000);
+    let below = fixture::elf_with_placement(&code, 0, fixture::BASE, Some(fixture::BASE - 8), 0);
+    let error = below_base.load_elf(&below).unwrap_err();
+    assert!(
+        format!("{error}").contains("tohost"),
+        "unexpected error: {error}"
+    );
+
+    let mut beyond_memory = RiscVSimulator::new(0x1_0000);
+    let beyond =
+        fixture::elf_with_placement(&code, 0, fixture::BASE, Some(fixture::BASE + 0x20_0000), 0);
+    assert!(beyond_memory.load_elf(&beyond).is_err());
+
+    let mut representable = RiscVSimulator::new(0x1_0000);
+    let in_range = fixture::elf_with_placement(&code, 0, fixture::BASE, Some(fixture::TOHOST), 0);
+    assert!(representable.load_elf(&in_range).is_ok());
+}
+
+#[test]
+fn flat_library_bounds_zero_budget_and_final_slot_exits() {
+    let elf = fixture::elf_with_code(
+        &declared_tohost_writer(fixture::standard_exit(1)),
+        0,
+        true,
+        false,
+        0,
+    );
+
+    let (_, zero_budget) = load_and_run_library(&elf, 0);
+    assert_eq!(zero_budget.exit_code, 1);
+    assert_eq!(zero_budget.cycles, 0);
+    assert_eq!(zero_budget.final_pc, fixture::BASE);
+    assert!(zero_budget.timed_out);
+    assert_eq!(zero_budget.error.as_deref(), Some("Timeout after 0 cycles"));
+
+    let (_, one_short) = load_and_run_library(&elf, 3);
+    assert_eq!(one_short.cycles, 3);
+    assert!(one_short.timed_out);
+    assert_eq!(one_short.error.as_deref(), Some("Timeout after 3 cycles"));
+
+    let (_, final_slot) = load_and_run_library(&elf, 4);
+    assert_eq!(final_slot.exit_code, 1);
+    assert_eq!(final_slot.cycles, 4);
+    assert!(!final_slot.timed_out);
+    assert!(final_slot.error.is_none());
+}
+
+#[test]
+fn flat_library_distinguishes_guest_exit_timeout_and_execution_error() {
+    let exit_elf = fixture::elf_with_code(
+        &declared_tohost_writer(fixture::standard_exit(1)),
+        0,
+        true,
+        false,
+        0,
+    );
+    let (_, guest_exit) = load_and_run_library(&exit_elf, 12);
+    assert!(!guest_exit.timed_out);
+    assert!(guest_exit.error.is_none());
+
+    let silent_elf = fixture::elf_with_code(&padded(vec![fixture::nop()]), 0, false, false, 0);
+    let (_, timeout) = load_and_run_library(&silent_elf, 8);
+    assert!(timeout.timed_out);
+    assert_eq!(timeout.error.as_deref(), Some("Timeout after 8 cycles"));
+
+    let broken_elf = fixture::elf_with_placement(&[0x0000_0000], 0, fixture::BASE, None, 0);
+    let (_, broken) = load_and_run_library(&broken_elf, 8);
+    assert!(!broken.timed_out);
+    assert_eq!(broken.cycles, 0);
+    assert_eq!(broken.final_pc, fixture::BASE);
+    assert!(
+        broken
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("Execution error")),
+        "{broken:?}"
     );
 }
 

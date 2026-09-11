@@ -4,7 +4,7 @@
 
 **Authority:** Informational as-of A1 evidence; original scope is preserved in the [archived A1 contract](../archive/milestones/a1-public-behavior-baseline.md), while compatibility requirements are stated in [ADR-0003 §9](../architecture/decisions/0003-runner-machine-and-platform-ownership.md#9-compatibility-constraints-for-the-current-product)
 
-**Last reviewed:** 2026-09-09; A1 rows retain their 2026-09-08 recorded scope. A2 T1 updates only the `read_mem` helper row and G-02 test names.
+**Last reviewed:** 2026-09-09; A1 rows retain their 2026-09-08 recorded scope. A2 T1 and T2 update the `read_mem` helper row, the flat-library lifecycle/config rows, and the G-01/G-02 test names.
 
 **Committed evidence snapshot:** `b16a7872cf62e51dc204d9ea122b6c5223c15f96`
 (first submitted PR14 test snapshot)
@@ -230,7 +230,7 @@ It passed **14 tests**. The persistent assertions are:
 | `tohost_precedence_selects_elf_then_cli_override_then_fixed_endpoint` | ELF section selection, CLI RAM override, and fixed-endpoint timeout are distinguished by code/cycles/status. |
 | `uart_bytes_are_emitted_by_the_cli_elf_path` | CLI stdout contains the exact `A1!` plus newline bytes and a successful result. |
 | `signature_bytes_are_returned_after_public_execution` | Public result contains signature address `0x80002000` and exact bytes `[0, 17, 34, 51, 68, 85, 102, 119]`. |
-| `flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` | Flat `write_mem`/`read_mem` bytes round-trip; the same ELF exits in the CLI but times out in `RiscVSimulator`, reproducing G-01. |
+| `flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` | A1 reproduction of G-01: flat `write_mem`/`read_mem` bytes round-trip; the same ELF exits in the CLI but timed out in `RiscVSimulator`. Replaced in A2 T2 by `flat_library_elf_tohost_metadata_selects_the_ram_exit_signal`. |
 | `public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` | Actual public log has four lines with zero opcodes and no `mem` suffix, reproducing G-03/G-09. |
 | `out_of_range_flat_read_mem_reproduction_is_bounded_and_reaped` | A1 child-process hang reproduction for G-02; replaced in A2 T1 by `out_of_range_flat_read_mem_returns_error_without_hanging`. |
 
@@ -270,10 +270,10 @@ cargo test --all-features --test executor -- --nocapture
 
 In the committed 14-test snapshot, the first 11 rows above were intended as
 compatibility characterization, but the two zero-fill rows had the limitation
-noted above. E7 corrects that limitation. The flat-library ELF contrast (G-01)
-and public commit-log observation (G-03/G-09) remain defect reproductions, not
-compatibility passes. The A1 G-02 row was a bounded hang reproduction; A2 T1
-replaced it with an error-return regression. E7's handshake-failure and
+noted above. E7 corrects that limitation. The public commit-log observation
+(G-03/G-09) remains a defect reproduction, not a compatibility pass. The A1
+flat-library ELF contrast (G-01) and the A1 G-02 hang row were repaired in A2
+T1/T2 by the error-return and correct-exit regressions named below. E7's handshake-failure and
 early-exit cases still validate harness cleanup, not CLI/library equivalence.
 Other legacy executor/component smoke tests remain outside this targeted
 strengthening.
@@ -389,11 +389,11 @@ not exact-follow-up-head evidence.
 
 | Surface | Contract requirement | Current implementation | Existing test / assertion strength | A1 evidence and disposition |
 | --- | --- | --- | --- | --- |
-| `RiscVSimulator` construction and lifecycle | Keep the public wrapper, load/step/run methods, configured/default limit concept, and helper names while configurations remain distinct. | `src/executor.rs::RiscVSimulator` owns a `RiscvCore`, `SimpleMemory`, `tohost`, limit, signature, and verbose flag; `load_elf` reconstructs the flat memory/core. | Persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` asserts entry, helper bytes, CLI success, and flat-run timeout; older lifecycle tests remain smoke/medium checks. | E3 and E6 exercised load/run on the same ELF as the CLI. The wrapper is available, but its ELF tohost behavior diverges. **Reproduced defect/configuration gap**, G-01. |
+| `RiscVSimulator` construction and lifecycle | Keep the public wrapper, load/step/run methods, configured/default limit concept, and helper names while configurations remain distinct. | `src/executor.rs::RiscVSimulator` owns a `RiscvCore`, `SimpleMemory`, manual/image tohost selection, image base, limit, signature, and verbose flag; `load_elf` reconstructs the flat memory/core and derives the image's flat exit offset. | `public_behavior::flat_library_elf_tohost_metadata_selects_the_ram_exit_signal` asserts entry, helper bytes, CLI parity, and the library exit; the A2 T2 exit/limit/precedence tests assert codes, cycles, PC and timeout shapes. Older lifecycle tests remain smoke/medium checks. | E3 and E6 exercised load/run on the same ELF as the CLI. A2 T2 made the wrapper observe the image's declared RAM exit. **Repaired**, G-01; the remaining divergence is documented in the CLI-versus-library row. |
 | State inspection and mutation | `state()` exposes current state and `state_mut()`/core helpers remain available to library callers. | `RiscVSimulator::state`, `state_mut`, `reset_core`, `step_once`, and `get_core_state`; `CoreState` exposes PC, registers, privilege, CSR/FPU fields. | `test_simulator_state_access`, `test_simulator_state_mut`, `test_core_initialization`, `test_core_reset`: **medium** for access/defaults; mutation effects are not asserted. | API access and defaults passed in E1/E3. **Verified** for surface availability and reset/default observations; cross-run state isolation and arbitrary mutation effects are **Unverified**. |
 | Flat memory construction and loading | `SimpleMemory` provides thread-safe flat bytes, typed little-endian reads/writes, and `load_program` loads relative to offset 0; its base argument is compatibility-only. | `src/memory/mod.rs::SimpleMemory`; all typed methods enforce natural alignment except byte access; `load_program` ignores `_base_addr`. | `test_memory_read_write`, `test_memory_misaligned`, `test_load_program`, and executor typed sign/zero-extension tests: **strong** for tested values. | E1 and E3 read/write round-trips passed. **Verified** for tested aligned/byte/relative behavior; bounds and overflow edges are not exhaustive. |
 | `read_mem` / `write_mem` helpers | Public byte-oriented helpers should return requested bytes or a bounded error and should permit flat-memory writes. | `write_mem` loops byte writes; `read_mem` returns empty for `size == 0`, rejects overflowing nonempty ranges, and otherwise reads bytes in address order or returns `ExecutorError`. | `test_simulator_read_write_mem` is **strong** for in-range data; `test_simulator_read_mem_unaligned` asserts exact unaligned bytes; `test_simulator_read_mem_empty_and_out_of_range` covers empty/error returns. Persistent A2 T1 tests assert exact bytes, empty/overflow/crossing errors, state preservation, and that `new(0x1000).read_mem(0x2000, 4)` returns `Err` inside the bounded child harness. | A1 E3/E6 in-range round-trips passed and the aligned out-of-range read hung. A2 T1 repaired G-02; closing G-02 does not complete A2. |
-| CLI versus flat-library configuration | The CLI may use native RAM/UART/HTIF mapping while the flat wrapper uses its own explicit configuration; evidence must not merge them. | CLI: `SystemBus`, RAM base at ELF lowest `p_vaddr`, UART `0x10000000`, fixed HTIF callback, core reset base 0. Library: relative `SimpleMemory`, core reset with ELF base, no `SystemBus` UART/HTIF device map. | `test_system_bus_configs` and `test_memory_adapter_*` are component evidence; persistent `public_behavior::flat_library_helpers_round_trip_bytes_but_elf_tohost_is_not_adapted` is **strong** for the CLI/library contrast. | E2/E3/E6 show the distinction directly: the same ELF succeeds via CLI but times out in the wrapper because its absolute tohost address is read against relative memory. **Verified configuration difference; reproduced library gap is G-01.** |
+| CLI versus flat-library configuration | The CLI may use native RAM/UART/HTIF mapping while the flat wrapper uses its own explicit configuration; evidence must not merge them. | CLI: `SystemBus`, RAM base at ELF lowest `p_vaddr`, UART `0x10000000`, fixed HTIF callback, core reset base 0. Library: relative `SimpleMemory`, core reset with ELF base, no `SystemBus` UART/HTIF device map. | `test_system_bus_configs` and `test_memory_adapter_*` are component evidence; `public_behavior::flat_library_elf_tohost_metadata_selects_the_ram_exit_signal` is **strong** for the CLI/library parity, and the A2 T2 placement tests cover the library-only tohost rules. | E2/E3/E6 observed the A1 divergence. A2 T2 made the same ELF exit identically in both configurations for a declared RAM tohost, while the CLI retains UART/HTIF device ability the flat wrapper does not claim. **Verified configuration difference; G-01 repaired.** |
 | ISA/path boundary | A passing component instruction test is not a claim that the public ELF path supports that extension end to end. | `RiscvCore::step` uses the active decoder/executor; RV64C/MMU/TLM/peripheral components are not all wired into this public loop. | The 809 library tests include many component tests; the host-only `test_add_direct` run was skipped, while the Docker run executed the add ELF and the 46-file runner set. | **Unverified** for extension-wide or external compliance support. The 46 guest programs are bounded project-authored evidence, not a compliance claim. |
 
 ## A2 T1 inspection evidence
@@ -414,8 +414,30 @@ remain historical. Current assertions live in `tests/public_behavior.rs` and
 | `test_simulator_read_mem_unaligned` | Unaligned in-range bytes are exact. |
 | `test_simulator_read_mem_empty_and_out_of_range` | Empty out-of-range reads succeed; nonempty out-of-range and overflow reads error. |
 
-These rows cover T1 only. G-01, signatures, image replacement and integrated
-load/run/inspect acceptance remain A2 T2–T4 work.
+These rows cover T1 only.
+
+## A2 T2 placement and completion evidence
+
+A2 T2 repaired G-01 and G-10 in `RiscVSimulator::load_elf`/`run`. Current
+assertions live in `tests/public_behavior.rs`:
+
+| Test | Assertion |
+| --- | --- |
+| `flat_library_elf_tohost_metadata_selects_the_ram_exit_signal` | The CLI and library observe the same declared exit at cycle 4; helper bytes still round-trip. |
+| `flat_library_reports_zero_and_nonzero_guest_exits` | Guest codes `0`, `1`, and `42` are reported with the writing instruction's cycle and PC. |
+| `flat_library_reports_base_zero_placement` | Base-zero image entry, exit and PC use raw offsets. |
+| `flat_library_retains_the_nonzero_exit_before_clearing_the_signal` | A nonzero exit survives the RAM signal clear, which leaves eight zero bytes. |
+| `flat_library_manual_flat_tohost_overrides_image_metadata` | A declared signal the guest never writes times out; `set_tohost` after loading selects the guest's signal. |
+| `flat_library_manual_tohost_before_load_is_superseded_by_image_metadata` | The documented before-load precedence: the image's declared signal wins. |
+| `flat_library_manual_tohost_survives_a_load_without_metadata` | A manual offset is kept when the image declares none. |
+| `flat_library_image_without_metadata_does_not_reuse_the_previous_tohost` | A second image without metadata times out instead of inheriting the first image's offset. |
+| `flat_library_rejects_a_declared_tohost_the_flat_image_cannot_represent` | Below-base and beyond-memory declared tohost offsets fail the load; a representable one loads. |
+| `flat_library_bounds_zero_budget_and_final_slot_exits` | Zero budget executes nothing and times out; the final permitted slot exits without a timeout. |
+| `flat_library_distinguishes_guest_exit_timeout_and_execution_error` | Retained exit, timeout, and execution error are distinct result shapes with correct accounting. |
+
+These rows cover T2 only. Signature artifacts, the integrated
+load/run/result/inspect acceptance and the CLI-versus-library documentation of
+retained differences remain A2 T3–T4 work.
 
 ## Known stale or non-authoritative inputs
 
@@ -430,10 +452,10 @@ load/run/inspect acceptance remain A2 T2–T4 work.
 ## Bounded follow-up proposal (not a new active plan)
 
 A1 is complete with documented limits. [A2](../dev-plan.md) now defines the
-flat-library load/run/result/inspection capability, including G-01 and G-02,
-flat signature handling and image replacement checks. The contract, not this
-as-of evidence record, defines its acceptance. These remaining options do not
-add work beyond that contract:
+flat-library load/run/result/inspection capability. G-02 was repaired by A2 T1
+and G-01/G-10 by A2 T2; flat signature handling and integrated acceptance remain
+open. The contract, not this as-of evidence record, defines its acceptance.
+These remaining options do not add work beyond that contract:
 
 1. Decide separately whether G-03, G-04, G-05, the CLI portion of G-06, and G-09
    are production-repair scope or documented compatibility limitations. The A1

@@ -811,13 +811,36 @@ pub fn run_until_exit(
 }
 
 /// Simplified RISC-V Simulator wrapper
+///
+/// The wrapper owns one flat RAM image. Guest virtual addresses are converted to
+/// flat storage offsets by subtracting the loaded image's base address; those
+/// flat offsets are the same address space used by [`RiscVSimulator::read_mem`],
+/// [`RiscVSimulator::write_mem`] and [`RiscVSimulator::set_tohost`].
+///
+/// # Exit signal configuration
+///
+/// The exit signal polled by [`RiscVSimulator::run`] is selected in this order:
+///
+/// 1. An explicit [`RiscVSimulator::set_tohost`] flat offset.
+/// 2. The `.tohost`/`tohost` metadata of the loaded image, converted from its
+///    guest address to a flat offset at load time.
+/// 3. The default tohost address.
+///
+/// Loading an image that declares its own tohost discards a manual offset set
+/// *before* the load, so the image's declared signal wins. Calling `set_tohost`
+/// after loading always overrides the image. Loading an image with no declared
+/// tohost clears a previous image's derived offset instead of reusing it.
 pub struct RiscVSimulator {
     /// The RISC-V core
     core: RiscvCore,
     /// Shared memory
     memory: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
-    /// tohost address for exit detection
-    tohost: u64,
+    /// Explicit flat storage offset set through `set_tohost`
+    manual_tohost: Option<u64>,
+    /// Flat storage offset derived from the loaded image's tohost metadata
+    image_tohost: Option<u64>,
+    /// Base address of the loaded image (guest address - base = flat offset)
+    base_addr: u64,
     /// Maximum cycles
     max_cycles: u64,
     /// Signature section info
@@ -834,11 +857,45 @@ impl RiscVSimulator {
         Self {
             core,
             memory,
-            tohost: DEFAULT_TOHOST,
+            manual_tohost: None,
+            image_tohost: None,
+            base_addr: 0,
             max_cycles: DEFAULT_MAX_CYCLES,
             signature: None,
             verbose: false,
         }
+    }
+
+    /// Flat storage offset polled by [`RiscVSimulator::run`] for the exit signal
+    fn tohost_offset(&self) -> u64 {
+        self.manual_tohost
+            .or(self.image_tohost)
+            .unwrap_or(DEFAULT_TOHOST)
+    }
+
+    /// Convert an image-declared guest address into a flat storage offset
+    fn image_flat_offset(
+        base_addr: u64,
+        guest_addr: u64,
+        memory_size: usize,
+        what: &str,
+    ) -> Result<u64, ExecutorError> {
+        let offset = guest_addr.checked_sub(base_addr).ok_or_else(|| {
+            ExecutorError::ExecutionError(format!(
+                "{what} address 0x{guest_addr:016x} is below image base 0x{base_addr:016x}"
+            ))
+        })?;
+        let end = offset.checked_add(8).ok_or_else(|| {
+            ExecutorError::ExecutionError(format!(
+                "{what} address 0x{guest_addr:016x} overlaps the end of the address space"
+            ))
+        })?;
+        if end > memory_size as u64 {
+            return Err(ExecutorError::ExecutionError(format!(
+                "{what} address 0x{guest_addr:016x} maps to flat offset 0x{offset:016x}, outside the {memory_size:#x}-byte image memory"
+            )));
+        }
+        Ok(offset)
     }
 
     /// Set verbosity
@@ -847,16 +904,24 @@ impl RiscVSimulator {
         self.core.set_verbose(verbose);
     }
 
-    /// Load ELF data into memory
+    /// Load ELF data into memory and reset the core to its entry point.
     ///
-    /// # Address Handling
-    /// This method loads the ELF program at the addresses specified by the ELF
-    /// headers. The `base_addr` from the ELF is used to correctly place segments
-    /// in memory, but the core is reset with `base_addr` for VA-to-PA translation.
+    /// # Address handling
+    /// The image is loaded into the wrapper's flat RAM relative to the lowest
+    /// segment address, and the core is reset with that base so guest addresses
+    /// translate to flat offsets by subtraction. The image's declared
+    /// `.tohost`/`tohost` metadata is converted the same way, so
+    /// [`RiscVSimulator::run`] polls the signal the guest actually writes. This
+    /// is storage adaptation for the flat configuration; it is not guest
+    /// virtual-to-physical translation and it grants no UART/HTIF device
+    /// mapping. Use [`load_and_run`] for the native bus configuration.
     ///
-    /// Note: This differs from `load_and_run` which uses SystemBus with
-    /// identity mapping (VA = PA). This method uses SimpleMemory which expects
-    /// the program to be loaded at the correct virtual addresses.
+    /// Loading replaces the previous image and its exit configuration.
+    ///
+    /// # Errors
+    /// A declared tohost that the flat image cannot represent, because it is
+    /// below the image base or outside the image memory, fails the load instead
+    /// of silently timing out later.
     ///
     /// # Returns
     /// The entry point address from the ELF header
@@ -875,8 +940,6 @@ impl RiscVSimulator {
         // if created via new(). It does not support SystemBus yet.
         // For full support, use load_and_run.
 
-        // This is a partial fix to allow compilation.
-        // Ideally RiscVSimulator should be refactored to use SystemBus as well.
         // Create new memory and load program
         // We create a SimpleMemory here because RiscVSimulator is typically used for
         // unit tests or benchmarks that expect a simple flat memory environment.
@@ -890,10 +953,22 @@ impl RiscVSimulator {
         self.core = RiscvCore::new(self.memory.clone(), self.memory.clone());
         self.core.set_verbose(self.verbose);
 
-        // Update tohost address
-        if let Some(addr) = tohost {
-            self.tohost = addr;
-        }
+        // Replace image-owned exit configuration. A manual offset set before this
+        // load is superseded when the image declares its own tohost; an image
+        // without metadata must not inherit the previous image's derived offset.
+        self.base_addr = base_addr;
+        self.image_tohost = match tohost {
+            Some(addr) => {
+                self.manual_tohost = None;
+                Some(Self::image_flat_offset(
+                    base_addr,
+                    addr,
+                    memory.len(),
+                    "ELF tohost",
+                )?)
+            }
+            None => None,
+        };
 
         // Reset core to entry point with base address for VA translation
         self.core.reset(entry_point, base_addr);
@@ -913,9 +988,18 @@ impl RiscVSimulator {
         self.max_cycles = cycles;
     }
 
-    /// Set tohost address
+    /// Set the flat storage offset polled for the guest exit signal.
+    ///
+    /// `addr` is an offset into the wrapper's flat RAM, the same address space
+    /// used by [`RiscVSimulator::read_mem`] and [`RiscVSimulator::write_mem`]. It
+    /// is not an ELF/guest virtual address and is not translated.
+    ///
+    /// An explicit offset overrides image-declared tohost metadata. When it is
+    /// called before [`RiscVSimulator::load_elf`], the loaded image's own
+    /// declared tohost still takes precedence; call it after loading to override
+    /// the image.
     pub fn set_tohost(&mut self, addr: u64) {
-        self.tohost = addr;
+        self.manual_tohost = Some(addr);
     }
 
     /// Step one instruction
@@ -925,12 +1009,20 @@ impl RiscVSimulator {
             .map_err(|e| ExecutorError::ExecutionError(e.to_string()))
     }
 
-    /// Run until exit or timeout
+    /// Run until the guest exits, the budget is exhausted, or a step fails.
+    ///
+    /// The exit signal is polled at the configured flat storage offset after
+    /// every retired instruction. A decoded guest exit is retained before the
+    /// RAM signal is cleared, so a nonzero exit code is reported exactly once.
+    /// The reported cycle count and `final_pc` describe the instruction that
+    /// wrote the signal. A zero budget executes no instruction and reports a
+    /// timeout, and an exit in the final permitted slot is not a timeout.
     pub fn run(&mut self, max_cycles: Option<u64>) -> Result<ExecutionResult, ExecutorError> {
         let max_cycles = max_cycles.unwrap_or(self.max_cycles);
+        let tohost = self.tohost_offset();
         let mut cycles = 0u64;
 
-        // Track last tohost value to detect changes
+        // Track last tohost value for verbose diagnostics
         let mut last_tohost_value: u64 = 0;
 
         while cycles < max_cycles {
@@ -940,25 +1032,19 @@ impl RiscVSimulator {
                     cycles += 1;
                 }
                 Err(e) => {
-                    let sig_data = dump_signature(&self.memory, self.signature.as_ref())
-                        .ok()
-                        .flatten();
-                    return Ok(ExecutionResult {
-                        exit_code: 1,
+                    return Ok(self.finish(
                         cycles,
-                        final_pc: self.core.state().pc,
-                        timed_out: false,
-                        error: Some(format!("Execution error: {}", e)),
-                        signature_addr: self.signature.as_ref().map(|s| s.vaddr),
-                        signature_data: sig_data,
-                    });
+                        1,
+                        false,
+                        Some(format!("Execution error: {}", e)),
+                    ));
                 }
             }
 
             // Check for tohost write AFTER executing instruction
             // This ensures we detect the write immediately
-            let guard = self.memory.lock().unwrap();
-            match guard.read_dword(self.tohost) {
+            let observed = self.memory.lock().unwrap().read_dword(tohost);
+            match observed {
                 Ok(tohost_value) => {
                     // Track tohost value changes for debugging
                     if self.verbose && tohost_value != last_tohost_value {
@@ -977,10 +1063,10 @@ impl RiscVSimulator {
                         if self.verbose {
                             eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
                         }
-                        // Clear tohost after processing (Spike-compatible behavior)
-                        drop(guard);
-                        clear_tohost(&self.memory, self.tohost, self.verbose);
-                        return Ok(self.get_result(cycles));
+                        // Clear tohost after processing (Spike-compatible behavior),
+                        // keeping the decoded guest exit for the result.
+                        clear_tohost(&self.memory, tohost, self.verbose);
+                        return Ok(self.finish(cycles, exit_code, false, None));
                     } else if tohost_value != 0 && self.verbose {
                         // Non-zero but without exit command marker - possible memory corruption or other command
                         eprintln!("[WARN] tohost has non-command value: {:#x}", tohost_value);
@@ -998,7 +1084,6 @@ impl RiscVSimulator {
                     }
                 }
             }
-            drop(guard);
         }
 
         // Timeout - final debug output
@@ -1011,31 +1096,25 @@ impl RiscVSimulator {
             );
         }
 
-        // Timeout
-        let sig_data = dump_signature(&self.memory, self.signature.as_ref())
-            .ok()
-            .flatten();
-        Ok(ExecutionResult {
-            exit_code: 1,
+        Ok(self.finish(
             cycles,
-            final_pc: self.core.state().pc,
-            timed_out: true,
-            error: Some(format!("Timeout after {} cycles", max_cycles)),
-            signature_addr: self.signature.as_ref().map(|s| s.vaddr),
-            signature_data: sig_data,
-        })
+            1,
+            true,
+            Some(format!("Timeout after {} cycles", max_cycles)),
+        ))
     }
 
-    /// Get execution result
-    fn get_result(&self, cycles: u64) -> ExecutionResult {
-        let exit_code = {
-            let guard = self.memory.lock().unwrap();
-            match guard.read_dword(self.tohost) {
-                Ok(value) => try_extract_exit_code(value).unwrap_or_default(),
-                Err(_) => 0,
-            }
-        };
-
+    /// Build an execution result from already-observed state.
+    ///
+    /// The exit code is supplied by the caller because the guest's RAM signal
+    /// may already have been cleared.
+    fn finish(
+        &self,
+        cycles: u64,
+        exit_code: u32,
+        timed_out: bool,
+        error: Option<String>,
+    ) -> ExecutionResult {
         let sig_data = dump_signature(&self.memory, self.signature.as_ref())
             .ok()
             .flatten();
@@ -1044,8 +1123,8 @@ impl RiscVSimulator {
             exit_code,
             cycles,
             final_pc: self.core.state().pc,
-            timed_out: false,
-            error: None,
+            timed_out,
+            error,
             signature_addr: self.signature.as_ref().map(|s| s.vaddr),
             signature_data: sig_data,
         }

@@ -2,10 +2,12 @@
 
 use std::cmp::max;
 
+pub const TOHOST_SEGMENT_OFFSET: u64 = 0x1000;
+pub const SIGNATURE_SEGMENT_OFFSET: u64 = 0x2000;
 pub const BASE: u64 = 0x8000_0000;
-pub const TOHOST: u64 = BASE + 0x1000;
-pub const ALTERNATE_TOHOST: u64 = BASE + 0x1008;
-pub const SIGNATURE: u64 = BASE + 0x2000;
+pub const TOHOST: u64 = BASE + TOHOST_SEGMENT_OFFSET;
+pub const ALTERNATE_TOHOST: u64 = BASE + TOHOST_SEGMENT_OFFSET + 8;
+pub const SIGNATURE: u64 = BASE + SIGNATURE_SEGMENT_OFFSET;
 pub const SIGNATURE_BYTES: [u8; 8] = [0, 17, 34, 51, 68, 85, 102, 119];
 pub const LOAD_OFFSET: usize = 0x1000;
 pub const FILE_DATA_SIZE: usize = 0x2008;
@@ -117,6 +119,40 @@ pub fn elf_with_code(
     with_signature_section: bool,
     memory_size: usize,
 ) -> Vec<u8> {
+    build_elf(
+        code,
+        entry_offset,
+        BASE,
+        with_tohost_section.then_some(TOHOST),
+        with_signature_section,
+        memory_size,
+    )
+}
+
+/// Construct a minimal ELF64/RISC-V executable with an explicit base and
+/// optional explicit `.tohost` section address (no signature section).
+///
+/// Used to exercise image placement and tohost correspondence, including bases
+/// and declared tohost locations that the flat library configuration cannot
+/// represent.
+pub fn elf_with_placement(
+    code: &[u32],
+    entry_offset: usize,
+    base: u64,
+    tohost_addr: Option<u64>,
+    memory_size: usize,
+) -> Vec<u8> {
+    build_elf(code, entry_offset, base, tohost_addr, false, memory_size)
+}
+
+fn build_elf(
+    code: &[u32],
+    entry_offset: usize,
+    base: u64,
+    tohost_addr: Option<u64>,
+    with_signature_section: bool,
+    memory_size: usize,
+) -> Vec<u8> {
     let code_size = code
         .len()
         .checked_mul(4)
@@ -144,13 +180,13 @@ pub fn elf_with_code(
     let shstrtab_name = append_string(&mut section_names, ".shstrtab");
 
     let mut sections = Vec::new();
-    if with_tohost_section {
+    if let Some(address) = tohost_addr {
         sections.push(SectionDefinition {
             name: tohost_name,
             section_type: 1,
             flags: 0x3,
-            address: TOHOST,
-            offset: LOAD_OFFSET as u64 + 0x1000,
+            address,
+            offset: LOAD_OFFSET as u64 + TOHOST_SEGMENT_OFFSET,
             size: 8,
             alignment: 8,
         });
@@ -160,8 +196,8 @@ pub fn elf_with_code(
             name: signature_name,
             section_type: 1,
             flags: 0x3,
-            address: SIGNATURE,
-            offset: LOAD_OFFSET as u64 + 0x2000,
+            address: base + SIGNATURE_SEGMENT_OFFSET,
+            offset: LOAD_OFFSET as u64 + SIGNATURE_SEGMENT_OFFSET,
             size: SIGNATURE_BYTES.len() as u64,
             alignment: 8,
         });
@@ -180,7 +216,7 @@ pub fn elf_with_code(
     write_u16(&mut elf, 16, 2);
     write_u16(&mut elf, 18, 243);
     write_u32(&mut elf, 20, 1);
-    write_u64(&mut elf, 24, BASE + entry_offset as u64);
+    write_u64(&mut elf, 24, base + entry_offset as u64);
     write_u64(&mut elf, 32, 64);
     write_u64(&mut elf, 40, section_table_offset as u64);
     write_u16(&mut elf, 52, 64);
@@ -194,8 +230,8 @@ pub fn elf_with_code(
     write_u32(&mut elf, program_header, 1);
     write_u32(&mut elf, program_header + 4, 7);
     write_u64(&mut elf, program_header + 8, LOAD_OFFSET as u64);
-    write_u64(&mut elf, program_header + 16, BASE);
-    write_u64(&mut elf, program_header + 24, BASE);
+    write_u64(&mut elf, program_header + 16, base);
+    write_u64(&mut elf, program_header + 24, base);
     write_u64(&mut elf, program_header + 32, file_data_size as u64);
     write_u64(&mut elf, program_header + 40, memory_size as u64);
     write_u64(&mut elf, program_header + 48, 0x1000);
