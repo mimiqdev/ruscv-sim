@@ -525,6 +525,20 @@ replacement and retained-difference assertion. New unit tests cover the owner:
 The two loops still own their own stepping, exit detection, signal clearing and
 limit policy; sharing the result construction does not merge them.
 
+## A3 T3 equivalence evidence
+
+A3 T3 pins what the shared path guarantees across both entry points, so the
+equivalence is committed evidence rather than an inference from two separate
+suites. The tests run the same image through `load_and_run` and
+`RiscVSimulator`:
+
+| Test | Assertion |
+| --- | --- |
+| `shared_result_returns_the_same_artifact_bytes_in_both_entry_points` | Exit, cycles, final PC, signature metadata address and artifact bytes are identical where the configurations agree. |
+| `shared_result_keeps_each_configurations_artifact_policy` | For one image whose declared region cannot be read, both report the same exit, cycles, final PC and metadata address, while the CLI keeps its documented silent absence and the flat library reports the explicit diagnostic. |
+| `shared_result_shapes_hold_for_timeout_and_instruction_error` | Both exhaust the same budget with identical cycles, PC and timeout text, and both report an instruction error at the same boundary without claiming a guest exit. The differing message shape is pinned: the CLI names the PC, the flat library reports the boundary through `final_pc`. |
+| `shared_placement_selection_rule_holds_in_both_entry_points` | The same selection rule holds in both configurations — an explicit override wins over the image's declaration — in each configuration's own address form: a bus address for the CLI, a flat storage offset for the library. |
+
 ## Known stale or non-authoritative inputs
 
 - `tests/bare-metal-riscv-test/README.md` describes `rv64i/add.elf` as returning
