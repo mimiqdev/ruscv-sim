@@ -1673,3 +1673,147 @@ fn integrated_workflow_records_the_retained_cli_device_difference() {
         .expect("the flat wrapper has no device mapping for the UART aperture");
     assert!(error.contains("Execution error"), "{error}");
 }
+
+#[test]
+fn shared_result_returns_the_same_artifact_bytes_in_both_entry_points() {
+    let code = signature_writer(
+        SIGNATURE_WRITTEN_BYTE,
+        fixture::SIGNATURE_SEGMENT_OFFSET as i64,
+        0,
+    );
+    let elf = fixture::elf_with_code(&code, 0, true, true, 0);
+
+    let cli = run_fixture(&elf, Some(20), None);
+    let (_, library) = load_and_run_library(&elf, 20);
+
+    assert_eq!(cli.exit_code, library.exit_code);
+    assert_eq!(cli.cycles, library.cycles);
+    assert_eq!(cli.final_pc, library.final_pc);
+    assert_eq!(cli.signature_addr, library.signature_addr);
+    assert_eq!(cli.signature_data, library.signature_data);
+    assert_eq!(cli.signature_addr, Some(fixture::SIGNATURE));
+    assert_eq!(cli.signature_data, Some(expected_signature_bytes()));
+    assert!(cli.error.is_none());
+    assert!(library.error.is_none());
+}
+
+#[test]
+fn shared_result_keeps_each_configurations_artifact_policy() {
+    // One image whose declared signature region sits below the image base, so
+    // the read fails in both configurations and only the policy differs.
+    let guest = padded(declared_tohost_writer(fixture::standard_exit(1)));
+    let elf = fixture::elf_with_signature(
+        &guest,
+        0,
+        fixture::BASE,
+        Some(fixture::TOHOST),
+        Some((fixture::BASE - 8, 8)),
+        0,
+    );
+
+    let cli = run_fixture(&elf, Some(12), None);
+    let (_, library) = load_and_run_library(&elf, 12);
+
+    // The observed run is identical in both configurations.
+    assert_eq!(cli.exit_code, 1);
+    assert_eq!(library.exit_code, 1);
+    assert_eq!(cli.cycles, 4);
+    assert_eq!(library.cycles, 4);
+    assert_eq!(cli.final_pc, library.final_pc);
+    assert!(!cli.timed_out && !library.timed_out);
+    assert_eq!(cli.signature_addr, Some(fixture::BASE - 8));
+    assert_eq!(library.signature_addr, Some(fixture::BASE - 8));
+    assert_eq!(cli.signature_data, None);
+    assert_eq!(library.signature_data, None);
+
+    // The documented difference: the CLI suppresses, the flat library reports.
+    assert!(
+        cli.error.is_none(),
+        "the CLI keeps its documented silent absence: {cli:?}"
+    );
+    let error = library
+        .error
+        .as_deref()
+        .expect("the flat library reports an unusable declared region");
+    assert!(error.contains("Signature artifact unavailable"), "{error}");
+}
+
+#[test]
+fn shared_result_shapes_hold_for_timeout_and_instruction_error() {
+    // A guest that never exits: both configurations exhaust the same budget.
+    let silent = fixture::elf_with_code(&padded(vec![fixture::nop()]), 0, true, false, 0);
+    let cli_timeout = run_fixture(&silent, Some(6), None);
+    let (_, library_timeout) = load_and_run_library(&silent, 6);
+
+    assert_eq!(cli_timeout.exit_code, 1);
+    assert_eq!(library_timeout.exit_code, 1);
+    assert_eq!(cli_timeout.cycles, 6);
+    assert_eq!(library_timeout.cycles, 6);
+    assert_eq!(cli_timeout.final_pc, library_timeout.final_pc);
+    assert!(cli_timeout.timed_out && library_timeout.timed_out);
+    assert_eq!(cli_timeout.error.as_deref(), Some("Timeout after 6 cycles"));
+    assert_eq!(
+        library_timeout.error.as_deref(),
+        Some("Timeout after 6 cycles")
+    );
+
+    // An instruction error: both report a failure at the same boundary and
+    // claim no guest exit. The message shape is a retained difference, pinned
+    // here rather than assumed.
+    let broken = fixture::elf_with_code(&[0x0000_0000], 0, true, false, 0);
+    let cli_error = run_fixture(&broken, Some(6), None);
+    let (_, library_error) = load_and_run_library(&broken, 6);
+
+    assert_eq!(cli_error.cycles, 0);
+    assert_eq!(library_error.cycles, 0);
+    assert_eq!(cli_error.final_pc, library_error.final_pc);
+    assert!(!cli_error.timed_out && !library_error.timed_out);
+
+    let cli_message = cli_error.error.as_deref().unwrap();
+    let library_message = library_error.error.as_deref().unwrap();
+    assert!(
+        cli_message.contains("Execution error at PC"),
+        "{cli_message}"
+    );
+    assert!(
+        library_message.starts_with("Execution error"),
+        "{library_message}"
+    );
+    assert!(
+        !library_message.contains(" at PC "),
+        "the flat library reports the boundary through final_pc instead: {library_message}"
+    );
+}
+
+#[test]
+fn shared_placement_selection_rule_holds_in_both_entry_points() {
+    // The guest writes its exit payload at flat 0x100 while the image declares
+    // its tohost at 0x1000, so only an explicit override observes the signal.
+    let elf = fixture::elf_with_code(
+        &padded(fixed_offset_writer(fixture::standard_exit(2), 0x100)),
+        0,
+        true,
+        false,
+        0,
+    );
+
+    // CLI: the option is a bus address and wins over the image declaration.
+    let declared = run_fixture(&elf, Some(12), None);
+    assert!(declared.timed_out, "the declared signal is never written");
+    let overridden = run_fixture(&elf, Some(12), Some(fixture::BASE + 0x100));
+    assert_eq!(overridden.exit_code, 2);
+    assert_eq!(overridden.cycles, 4);
+    assert!(!overridden.timed_out);
+
+    // Flat library: the same rule with a storage offset instead of a bus address.
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    simulator.load_elf(&elf).unwrap();
+    let declared = simulator.run(Some(12)).unwrap();
+    assert!(declared.timed_out, "the declared signal is never written");
+    simulator.load_elf(&elf).unwrap();
+    simulator.set_tohost(0x100);
+    let overridden = simulator.run(Some(12)).unwrap();
+    assert_eq!(overridden.exit_code, 2);
+    assert_eq!(overridden.cycles, 4);
+    assert!(!overridden.timed_out);
+}
