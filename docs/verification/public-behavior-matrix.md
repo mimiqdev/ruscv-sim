@@ -496,8 +496,34 @@ exit, artifact and replacement assertion. New unit tests cover the shared owner:
 | `test_placement_absent_metadata_is_none` | An image that declares nothing yields no tohost and no artifact in both forms. |
 | `test_placement_signature_range_boundaries` | The last addressable byte resolves, one past it fails, and an empty range needs no bytes while an offset outside the image memory is still refused. |
 
-Exit retention and artifact composition remain constructed separately in each
-entry point; that is A3 T2.
+Exit retention and artifact composition were still constructed separately in
+each entry point at that point; A3 T2 shared that construction, below.
+
+## A3 T2 shared result evidence
+
+A3 T2 replaced the five separate `ExecutionResult` constructions (four in
+`load_and_run`, one in the wrapper) with one internal owner, `ResultInputs` in
+`src/executor.rs`. It assembles the observed exit, cycle count, final PC,
+timeout flag, primary failure and signature artifact, and merges an artifact
+failure into the existing error surface. The artifact-failure policy is an
+explicit input — `ArtifactPolicy::Suppress` for the CLI's documented behavior,
+`ArtifactPolicy::Report` for the flat library — instead of an implicit property
+of whichever read happened to run. Because the exit code is an input, no path
+can re-read a RAM signal it already cleared.
+
+The A1/A2 suites pass unchanged, including every exit, limit, artifact,
+replacement and retained-difference assertion. New unit tests cover the owner:
+
+| Test | Assertion |
+| --- | --- |
+| `test_result_inputs_assembles_observed_facts` | Exit, cycles, final PC, timeout flag, artifact bytes and the guest metadata address are carried through unchanged. |
+| `test_result_inputs_reports_or_suppresses_artifact_failures` | The same failed read yields an explicit diagnostic under `Report` and silent absence under `Suppress`, with the exit and metadata address intact either way. |
+| `test_result_inputs_preserves_a_primary_failure` | A timeout or execution error survives alongside an artifact diagnostic, primary first, and is unchanged when the policy suppresses. |
+| `test_result_inputs_absent_and_empty_artifacts` | An absent region yields no artifact, and an empty one yields an empty artifact rather than a failure. |
+| `test_result_inputs_timeout_shape_is_caller_supplied` | A caller-supplied failure keeps its distinct timeout shape, code and accounting. |
+
+The two loops still own their own stepping, exit detection, signal clearing and
+limit policy; sharing the result construction does not merge them.
 
 ## Known stale or non-authoritative inputs
 

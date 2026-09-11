@@ -31,6 +31,115 @@ pub struct ExecutionResult {
     pub signature_data: Option<Vec<u8>>,
 }
 
+/// What a configuration's attempt to read its declared signature region produced.
+///
+/// The two entry points read the region differently — the native bus through
+/// [`dump_signature`], the flat library through its bounded inspection helper —
+/// but they describe the outcome the same way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ArtifactOutcome {
+    /// The image declares no signature region.
+    Absent,
+    /// The declared region was read.
+    Read(Vec<u8>),
+    /// The declared region is empty, which needs no bytes.
+    Empty,
+    /// The declared region could not be read; the message is diagnostic.
+    Failed(String),
+}
+
+/// How a configuration reports a declared region it could not read.
+///
+/// The policy is an explicit input to the shared result construction rather than
+/// a property of the read, because the two entry points document different
+/// behavior: the CLI suppresses signature read errors, and the flat library
+/// reports them through the result's error surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArtifactPolicy {
+    /// Add the failure to the result's error surface.
+    Report,
+    /// Keep the documented CLI behavior of silent absence.
+    Suppress,
+}
+
+/// The observed facts one run produced, in either entry point.
+///
+/// The exit code is supplied by the caller because a guest's RAM signal may
+/// already have been cleared: nothing here reads memory, so no path can re-read
+/// a signal it already consumed.
+#[derive(Debug, Clone)]
+struct ResultInputs<'a> {
+    /// The guest's exit code, or the configuration's failure code.
+    exit_code: u32,
+    /// Completed cycles.
+    cycles: u64,
+    /// Final program counter describing the boundary of the run.
+    final_pc: u64,
+    /// Whether the budget was exhausted rather than the guest exiting.
+    timed_out: bool,
+    /// The primary failure, if the run ended in one.
+    error: Option<String>,
+    /// The image's declared signature metadata, if any.
+    signature: Option<&'a SignatureInfo>,
+    /// How an unreadable declared region is reported.
+    artifact_policy: ArtifactPolicy,
+}
+
+impl<'a> ResultInputs<'a> {
+    fn new(
+        exit_code: u32,
+        cycles: u64,
+        final_pc: u64,
+        timed_out: bool,
+        error: Option<String>,
+        signature: Option<&'a SignatureInfo>,
+        artifact_policy: ArtifactPolicy,
+    ) -> Self {
+        Self {
+            exit_code,
+            cycles,
+            final_pc,
+            timed_out,
+            error,
+            signature,
+            artifact_policy,
+        }
+    }
+
+    /// Build the public result from the observed facts and artifact outcome.
+    ///
+    /// A primary failure is preserved; an artifact failure is appended when the
+    /// policy reports it, so the exit, cycle count, final PC and the primary
+    /// failure all survive artifact reporting.
+    fn build(self, artifact: ArtifactOutcome) -> ExecutionResult {
+        let (signature_data, artifact_error) = match artifact {
+            ArtifactOutcome::Absent => (None, None),
+            ArtifactOutcome::Read(bytes) => (Some(bytes), None),
+            ArtifactOutcome::Empty => (Some(Vec::new()), None),
+            ArtifactOutcome::Failed(message) => match self.artifact_policy {
+                ArtifactPolicy::Report => (None, Some(message)),
+                ArtifactPolicy::Suppress => (None, None),
+            },
+        };
+
+        let error = match (self.error, artifact_error) {
+            (primary, None) => primary,
+            (None, Some(artifact)) => Some(artifact),
+            (Some(primary), Some(artifact)) => Some(format!("{primary}; {artifact}")),
+        };
+
+        ExecutionResult {
+            exit_code: self.exit_code,
+            cycles: self.cycles,
+            final_pc: self.final_pc,
+            timed_out: self.timed_out,
+            error,
+            signature_addr: self.signature.map(|info| info.vaddr),
+            signature_data,
+        }
+    }
+}
+
 /// Executor errors
 #[derive(Error, Debug)]
 pub enum ExecutorError {
@@ -442,6 +551,44 @@ pub(crate) fn clear_tohost(
     }
 }
 
+/// Read the image's declared signature region through the native bus.
+///
+/// The bus configuration reads at the guest address, and its documented policy
+/// suppresses a failed read: the caller passes [`ArtifactPolicy::Suppress`].
+fn read_bus_artifact(
+    bus: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
+    signature: Option<&SignatureInfo>,
+) -> ArtifactOutcome {
+    match dump_signature(bus, signature) {
+        Ok(Some(bytes)) if bytes.is_empty() => ArtifactOutcome::Empty,
+        Ok(Some(bytes)) => ArtifactOutcome::Read(bytes),
+        Ok(None) => ArtifactOutcome::Absent,
+        Err(error) => ArtifactOutcome::Failed(format!("Signature artifact unavailable: {error}")),
+    }
+}
+
+/// Build the CLI configuration's result from observed facts and its artifact read.
+fn cli_result(
+    bus: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
+    placement: &ImagePlacement,
+    exit_code: u32,
+    cycles: u64,
+    final_pc: u64,
+    timed_out: bool,
+    error: Option<String>,
+) -> ExecutionResult {
+    ResultInputs::new(
+        exit_code,
+        cycles,
+        final_pc,
+        timed_out,
+        error,
+        placement.signature_info(),
+        ArtifactPolicy::Suppress,
+    )
+    .build(read_bus_artifact(bus, placement.signature_info()))
+}
+
 use std::path::Path;
 
 /// Address form a configuration uses for image-declared metadata.
@@ -757,18 +904,15 @@ pub fn load_and_run(
                     }
                     // Reset for potential re-use
                     exit_code.store(u32::MAX, std::sync::atomic::Ordering::SeqCst);
-                    let sig_data = dump_signature(&bus_interface, placement.signature_info())
-                        .ok()
-                        .flatten();
-                    return Ok(ExecutionResult {
-                        exit_code: htif_exit,
+                    return Ok(cli_result(
+                        &bus_interface,
+                        &placement,
+                        htif_exit,
                         cycles,
-                        final_pc: core.state().pc,
-                        timed_out: false,
-                        error: None,
-                        signature_addr: placement.signature_info().map(|s| s.vaddr),
-                        signature_data: sig_data,
-                    });
+                        core.state().pc,
+                        false,
+                        None,
+                    ));
                 }
 
                 // Check for tohost write (exit signal) after EVERY instruction
@@ -796,19 +940,15 @@ pub fn load_and_run(
                                 // Clear tohost after processing (Spike-compatible behavior)
                                 drop(mem_guard);
                                 clear_tohost(&bus_interface, tohost_pa, verbose);
-                                let sig_data =
-                                    dump_signature(&bus_interface, placement.signature_info())
-                                        .ok()
-                                        .flatten();
-                                return Ok(ExecutionResult {
-                                    exit_code: exit_code_val,
+                                return Ok(cli_result(
+                                    &bus_interface,
+                                    &placement,
+                                    exit_code_val,
                                     cycles,
-                                    final_pc: core.state().pc,
-                                    timed_out: false,
-                                    error: None,
-                                    signature_addr: placement.signature_info().map(|s| s.vaddr),
-                                    signature_data: sig_data,
-                                });
+                                    core.state().pc,
+                                    false,
+                                    None,
+                                ));
                             } else if tohost_value != 0 && verbose {
                                 // Non-zero but without exit command marker - possible memory corruption or other command
                                 eprintln!(
@@ -836,21 +976,18 @@ pub fn load_and_run(
                 }
             }
             Err(e) => {
-                let sig_data = dump_signature(&bus_interface, placement.signature_info())
-                    .ok()
-                    .flatten();
-                return Ok(ExecutionResult {
-                    exit_code: 1,
+                return Ok(cli_result(
+                    &bus_interface,
+                    &placement,
+                    1,
                     cycles,
-                    final_pc: current_pc,
-                    timed_out: false,
-                    error: Some(format!(
+                    current_pc,
+                    false,
+                    Some(format!(
                         "Execution error at PC 0x{:016x}: {}",
                         current_pc, e
                     )),
-                    signature_addr: placement.signature_info().map(|s| s.vaddr),
-                    signature_data: sig_data,
-                });
+                ));
             }
         }
     }
@@ -865,18 +1002,15 @@ pub fn load_and_run(
         );
     }
 
-    let sig_data = dump_signature(&bus_interface, placement.signature_info())
-        .ok()
-        .flatten();
-    Ok(ExecutionResult {
-        exit_code: 1, // Non-zero indicates abnormal termination
+    Ok(cli_result(
+        &bus_interface,
+        &placement,
+        1, // Non-zero indicates abnormal termination
         cycles,
-        final_pc: core.state().pc,
-        timed_out: true,
-        error: Some(format!("Timeout after {} cycles", max_cycles)),
-        signature_addr: placement.signature_info().map(|s| s.vaddr),
-        signature_data: sig_data,
-    })
+        core.state().pc,
+        true,
+        Some(format!("Timeout after {} cycles", max_cycles)),
+    ))
 }
 
 /// Load and execute an ELF file from a file path
@@ -1214,9 +1348,9 @@ impl RiscVSimulator {
     /// Build an execution result from already-observed state.
     ///
     /// The exit code is supplied by the caller because the guest's RAM signal
-    /// may already have been cleared. The signature artifact is read from the
-    /// image's declared range in flat memory and reported alongside, without
-    /// disturbing the exit, cycle count or final PC.
+    /// may already have been cleared. This configuration reports an unreadable
+    /// declared region; the exit, cycle count, final PC and any primary failure
+    /// are preserved.
     fn finish(
         &self,
         cycles: u64,
@@ -1224,40 +1358,34 @@ impl RiscVSimulator {
         timed_out: bool,
         error: Option<String>,
     ) -> ExecutionResult {
-        let (signature_addr, signature_data, artifact_error) = self.signature_artifact();
-        let error = match (error, artifact_error) {
-            (primary, None) => primary,
-            (None, Some(artifact)) => Some(artifact),
-            (Some(primary), Some(artifact)) => Some(format!("{primary}; {artifact}")),
-        };
-
-        ExecutionResult {
+        ResultInputs::new(
             exit_code,
             cycles,
-            final_pc: self.core.state().pc,
+            self.core.state().pc,
             timed_out,
             error,
-            signature_addr,
-            signature_data,
-        }
+            self.image.signature_info(),
+            ArtifactPolicy::Report,
+        )
+        .build(self.artifact_outcome())
     }
 
-    /// Read the loaded image's declared signature artifact from flat memory.
+    /// Read the image's declared signature region from the flat image.
     ///
-    /// The returned address is the guest metadata address from the image, while
-    /// the bytes come from the corresponding flat offset. Absent metadata yields
-    /// no artifact, a zero-length region yields an empty artifact, and a region
-    /// that cannot be mapped or read yields an explicit diagnostic instead of
+    /// The region is addressed through the shared placement resolution, so bytes
+    /// come from the offset corresponding to the guest metadata. Absent metadata
+    /// yields [`ArtifactOutcome::Absent`], a zero-length region yields
+    /// [`ArtifactOutcome::Empty`] without a mapping check, and a region that
+    /// cannot be mapped or read yields [`ArtifactOutcome::Failed`] instead of
     /// silent absence.
-    fn signature_artifact(&self) -> (Option<u64>, Option<Vec<u8>>, Option<String>) {
+    fn artifact_outcome(&self) -> ArtifactOutcome {
         let Some(info) = self.image.signature_info() else {
-            return (None, None, None);
+            return ArtifactOutcome::Absent;
         };
-        let addr = info.vaddr;
         let size = info.size;
 
         if size == 0 {
-            return (Some(addr), Some(Vec::new()), None);
+            return ArtifactOutcome::Empty;
         }
 
         match self
@@ -1265,18 +1393,14 @@ impl RiscVSimulator {
             .signature_address(info, self.image.address_form())
         {
             Ok(offset) => match self.read_mem(offset, size as usize) {
-                Ok(bytes) => (Some(addr), Some(bytes), None),
-                Err(error) => (
-                    Some(addr),
-                    None,
-                    Some(format!("Signature artifact unavailable: {error}")),
-                ),
+                Ok(bytes) => ArtifactOutcome::Read(bytes),
+                Err(error) => {
+                    ArtifactOutcome::Failed(format!("Signature artifact unavailable: {error}"))
+                }
             },
-            Err(error) => (
-                Some(addr),
-                None,
-                Some(format!("Signature artifact unavailable: {error}")),
-            ),
+            Err(error) => {
+                ArtifactOutcome::Failed(format!("Signature artifact unavailable: {error}"))
+            }
         }
     }
 
@@ -1593,5 +1717,118 @@ mod tests {
                 empty_beyond.address_form()
             )
             .is_err());
+    }
+
+    fn inputs<'a>(
+        error: Option<String>,
+        signature: Option<&'a SignatureInfo>,
+        artifact_policy: ArtifactPolicy,
+    ) -> ResultInputs<'a> {
+        ResultInputs::new(7, 42, 0x8000_1000, false, error, signature, artifact_policy)
+    }
+
+    #[test]
+    fn test_result_inputs_assembles_observed_facts() {
+        let info = signature(0x8000_2000, 8);
+        let result = inputs(None, Some(&info), ArtifactPolicy::Report)
+            .build(ArtifactOutcome::Read(vec![1, 2, 3]));
+
+        assert_eq!(result.exit_code, 7);
+        assert_eq!(result.cycles, 42);
+        assert_eq!(result.final_pc, 0x8000_1000);
+        assert!(!result.timed_out);
+        assert!(result.error.is_none());
+        assert_eq!(result.signature_addr, Some(0x8000_2000));
+        assert_eq!(result.signature_data, Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn test_result_inputs_reports_or_suppresses_artifact_failures() {
+        let info = signature(0x8000_2000, 8);
+        let failure = "Signature artifact unavailable: outside the image";
+
+        let reported = inputs(None, Some(&info), ArtifactPolicy::Report)
+            .build(ArtifactOutcome::Failed(failure.to_string()));
+        assert_eq!(reported.error.as_deref(), Some(failure));
+        assert_eq!(reported.signature_data, None);
+        assert_eq!(reported.signature_addr, Some(0x8000_2000));
+        assert_eq!(reported.exit_code, 7);
+
+        let suppressed = inputs(None, Some(&info), ArtifactPolicy::Suppress)
+            .build(ArtifactOutcome::Failed(failure.to_string()));
+        assert!(
+            suppressed.error.is_none(),
+            "the CLI policy keeps its documented silent absence"
+        );
+        assert_eq!(suppressed.signature_data, None);
+        assert_eq!(suppressed.signature_addr, Some(0x8000_2000));
+    }
+
+    #[test]
+    fn test_result_inputs_preserves_a_primary_failure() {
+        let info = signature(0x8000_2000, 8);
+        let result = inputs(
+            Some("Timeout after 6 cycles".to_string()),
+            Some(&info),
+            ArtifactPolicy::Report,
+        )
+        .build(ArtifactOutcome::Failed(
+            "Signature artifact unavailable".to_string(),
+        ));
+
+        assert_eq!(
+            result.error.as_deref(),
+            Some("Timeout after 6 cycles; Signature artifact unavailable"),
+            "the primary failure comes first and survives"
+        );
+        assert_eq!(result.exit_code, 7);
+        assert_eq!(result.cycles, 42);
+        assert_eq!(result.final_pc, 0x8000_1000);
+
+        let suppressed = inputs(
+            Some("Timeout after 6 cycles".to_string()),
+            Some(&info),
+            ArtifactPolicy::Suppress,
+        )
+        .build(ArtifactOutcome::Failed(
+            "Signature artifact unavailable".to_string(),
+        ));
+        assert_eq!(suppressed.error.as_deref(), Some("Timeout after 6 cycles"));
+    }
+
+    #[test]
+    fn test_result_inputs_absent_and_empty_artifacts() {
+        let absent = inputs(None, None, ArtifactPolicy::Report).build(ArtifactOutcome::Absent);
+        assert_eq!(absent.signature_addr, None);
+        assert_eq!(absent.signature_data, None);
+        assert!(absent.error.is_none());
+
+        let info = signature(0x8000_2000, 0);
+        let empty = inputs(None, Some(&info), ArtifactPolicy::Report).build(ArtifactOutcome::Empty);
+        assert_eq!(empty.signature_addr, Some(0x8000_2000));
+        assert_eq!(empty.signature_data, Some(Vec::new()));
+        assert!(
+            empty.error.is_none(),
+            "an empty declared region is not a failure"
+        );
+    }
+
+    #[test]
+    fn test_result_inputs_timeout_shape_is_caller_supplied() {
+        let result = ResultInputs::new(
+            1,
+            0,
+            0x8000_0000,
+            true,
+            Some("Timeout after 0 cycles".to_string()),
+            None,
+            ArtifactPolicy::Report,
+        )
+        .build(ArtifactOutcome::Absent);
+
+        assert!(result.timed_out);
+        assert_eq!(result.cycles, 0);
+        assert_eq!(result.final_pc, 0x8000_0000);
+        assert_eq!(result.error.as_deref(), Some("Timeout after 0 cycles"));
     }
 }
