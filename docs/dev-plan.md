@@ -4,7 +4,7 @@
 
 **Active milestone:** A4 — One Host-Side Path for Run Control and Image Installation
 
-**Status:** Active — bounded T1 decision and T2 installation implemented; T3 capability assessment and required review/merge evidence remain pending
+**Status:** Active — bounded T1 decision and T2 installation merged; T3 integrated tests and [capability assessment](verification/a4-capability-assessment.md) locally verified, with committed-head independent review and merge-time evidence pending
 
 **Authority:** Normative milestone contract
 

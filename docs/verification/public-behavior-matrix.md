@@ -587,12 +587,15 @@ suite, the new two-test `a4_run_control` suite, all other Rust integration
 suites, and 27 doctests. Focused runs of the five `run_decision` unit tests and
 both public suites also passed. No A1–A3 test was changed or weakened.
 
-This is uncommitted implementation evidence, not exact-head formal review or
-merge evidence. The separately compiled 46 guest ELF tests were not rebuilt or
-run for this change; Cargo tests do not establish that result. A4 remains active:
-T3's full capability assessment, independent review, required guest evidence and
-separately approved successor decision remain subsequent work. No ACT4
-verification or successor approval is claimed.
+The paragraph above records the pre-commit local verification, not a guest-suite
+run. The bounded decision completion subsequently merged as `b461744` through
+PR #29, following independent approval of exact head `b788114`; merge CI
+[34605659612](https://github.com/mimiqdev/ruscv-sim/actions/runs/34605659612)
+separately compiled and executed 46/46 project guests. The
+[A4 assessment](a4-capability-assessment.md#recorded-merged-base-evidence-and-independent-review)
+records that merged-base evidence separately from T3, which still needs its own
+committed-head review and merge-time evidence. A4 remains active; no ACT4
+verification or next-contract approval is claimed.
 
 ## A4 T2 shared image installation evidence
 
@@ -621,6 +624,31 @@ owner:
 | `test_install_image_loads_the_program_and_resets_to_the_entry_point` | The backend receives the RAM with the program already loaded, and the returned core starts at the entry point over the backend the caller supplied. |
 | `test_install_image_flat_form_subtracts_the_image_base` | Under the flat form, the first fetch at a nonzero guest entry point resolves to storage offset zero and the instruction retires. |
 | `test_install_image_bus_form_passes_guest_addresses_through` | Under the bus form, the core passes the guest address through and the composed bus maps it to the loaded RAM, and the instruction retires. |
+
+T2 merged as `dd45c86` through PR #28; its independent review and successful
+merge-time 46/46 guest evidence are recorded in the
+[A4 assessment](a4-capability-assessment.md#recorded-merged-base-evidence-and-independent-review).
+The component tests above use entry offset zero, not the integrated T3 case.
+
+## A4 T3 integrated equivalence evidence
+
+[`tests/a4_integrated_equivalence.rs`](../../tests/a4_integrated_equivalence.rs#L1)
+adds two public-path tests without changing any existing A1–A3 test or fixture.
+Both APIs receive the same ELF bytes; expected results are asserted independently
+for each, so equality alone cannot mask a shared error.
+
+| Test | Assertion |
+| --- | --- |
+| `nonzero_entry_data_workflow_agrees_at_run_control_boundaries` | Nonzero base **and entry offset `0x180`**, guest load of file-backed seed 17, store/reload of computed value 42, returned artifact and reload-derived nonzero exit. Budgets 0/10/11/12 pin zero/exhaustion/final-slot/early-exit behavior; an invalid exit instruction pins error after data effects without retirement or timeout. Exact counts, PC, metadata and bytes are asserted. |
+| `replacement_load_restores_data_and_entry_before_the_same_public_workflow` | A reused flat facade replaces dirty RAM, BSS, prior code, pending signal, registers and manual exit selection before running at entry offset `0x240`; it agrees with a fresh CLI installation on exit 43, 11 retirements, PC and artifact. This tests fresh installation, not general Machine reset. |
+
+The [full assessment](a4-capability-assessment.md) maps every active acceptance
+criterion, preserves configuration differences and records the six-command local
+gate (2026-09-11), including 2/2 new tests and unchanged public suites. These are
+uncommitted T3 results, not formal independent review or merge evidence.
+No local cross-toolchain or Docker is available, and `test_add_program` returns
+early for a missing assembler; Cargo success is not separately compiled guest
+evidence. Prior merged-base 46/46 runs are not a T3 rerun. A4 is not closed.
 
 ## Known stale or non-authoritative inputs
 
