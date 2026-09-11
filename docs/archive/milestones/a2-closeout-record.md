@@ -44,8 +44,8 @@ test binaries and 1519 tests with `public_behavior` at 40.
 
 | Change | Pull request | Pull-request CI | Merge-time `main` CI |
 | --- | --- | --- | --- |
-| T1 | [#18](https://github.com/mimiqdev/ruscv-sim/pull/18) | [34317298202](https://github.com/mimiqdev/ruscv-sim/actions/runs/34317298202) | [34563091440](https://github.com/mimiqdev/ruscv-sim/actions/runs/34563091440) |
-| T2 | [#19](https://github.com/mimiqdev/ruscv-sim/pull/19) | [34563726811](https://github.com/mimiqdev/ruscv-sim/actions/runs/34563726811), [34564985487](https://github.com/mimiqdev/ruscv-sim/actions/runs/34564985487) | [34565495232](https://github.com/mimiqdev/ruscv-sim/actions/runs/34565495232) |
+| T1 | [#18](https://github.com/mimiqdev/ruscv-sim/pull/18) | [34317298202](https://github.com/mimiqdev/ruscv-sim/actions/runs/34317298202), [34317830549](https://github.com/mimiqdev/ruscv-sim/actions/runs/34317830549) | [34563091440](https://github.com/mimiqdev/ruscv-sim/actions/runs/34563091440) |
+| T2 | [#19](https://github.com/mimiqdev/ruscv-sim/pull/19) | [34563726811](https://github.com/mimiqdev/ruscv-sim/actions/runs/34563726811), [34564540465](https://github.com/mimiqdev/ruscv-sim/actions/runs/34564540465), [34564985487](https://github.com/mimiqdev/ruscv-sim/actions/runs/34564985487) | [34565495232](https://github.com/mimiqdev/ruscv-sim/actions/runs/34565495232) |
 | T3 | [#20](https://github.com/mimiqdev/ruscv-sim/pull/20) | [34565905461](https://github.com/mimiqdev/ruscv-sim/actions/runs/34565905461), [34566390018](https://github.com/mimiqdev/ruscv-sim/actions/runs/34566390018) | [34568407238](https://github.com/mimiqdev/ruscv-sim/actions/runs/34568407238) |
 | T4 | [#21](https://github.com/mimiqdev/ruscv-sim/pull/21) | [34568682493](https://github.com/mimiqdev/ruscv-sim/actions/runs/34568682493), [34571107641](https://github.com/mimiqdev/ruscv-sim/actions/runs/34571107641) | [34572206745](https://github.com/mimiqdev/ruscv-sim/actions/runs/34572206745) |
 
@@ -63,8 +63,10 @@ panic as G-11 instead of fixing it silently); two for T3 (including verification
 that a documentation-only follow-up was documentation-only and that every
 corrected claim matched the code); two for T4 (which found a contract-named
 scenario missing from the flat library, repaired by adding
-`flat_library_executes_from_a_nonzero_entry_offset`). Review findings were
-addressed on the same branch and re-reviewed against the new head.
+`flat_library_executes_from_a_nonzero_entry_offset`). T2, T3 and T4 findings
+were addressed on the same branch and re-reviewed against the new head; T1's
+follow-up handshake-test change was verified by its own local run and CI with no
+repeat review recorded.
 
 ## Accepted limitations and re-evaluated unfinished work
 
@@ -88,9 +90,9 @@ Retained, not scheduled by this closeout:
   unrepairable inside A2's scope.
 
 Unverified boundaries carried as limitations rather than commitments:
-default-limit exhaustion, the `tohost` symbol fallback path, 32-bit host
-behaviour, poisoned-lock and blocking-backend termination guarantees, and
-`write_mem` transactional semantics.
+default-limit exhaustion, the `tohost` symbol fallback path, poisoned-lock and
+blocking-backend termination guarantees, and `write_mem` transactional
+semantics.
 
 Not implemented and not claimed: Runner/Machine/Platform composition, precise
 Hart outcome/observation boundaries, devices inside the flat wrapper, MMU/PMP,

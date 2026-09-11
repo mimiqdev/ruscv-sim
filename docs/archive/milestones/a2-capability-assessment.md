@@ -147,7 +147,7 @@ review context, with the coding worktree unmodified:
 | Change | Pull request | Outcome |
 | --- | --- | --- |
 | T1 | [#18](https://github.com/mimiqdev/ruscv-sim/pull/18) | No actionable defects; the reviewer reproduced the pre-repair hang and verified the fix. |
-| T2 | [#19](https://github.com/mimiqdev/ruscv-sim/pull/19) | Three rounds. Reviewers independently reproduced both defects at base and the fixes at head, and found misaligned-placement acceptance, partial mutation on a rejected load, and a wording error; all were repaired with regressions. A pre-existing panic was registered as G-11 rather than silently fixed. |
+| T2 | [#19](https://github.com/mimiqdev/ruscv-sim/pull/19) | Three rounds. The first round independently reproduced both documented defects (G-01 and G-10) at base and their fixes at head; later rounds found misaligned-placement acceptance, partial mutation on a rejected load, and a wording error, all repaired with regressions. A pre-existing panic was registered as G-11 rather than silently fixed. |
 | T3 | [#20](https://github.com/mimiqdev/ruscv-sim/pull/20) | A reviewer reproduced `33 passed; 4 failed` at base and `37 passed` at head, then verified the documentation-only follow-up as documentation-only with all corrected claims matching the code. |
 
 Review findings were addressed on the same branch and re-reviewed against the

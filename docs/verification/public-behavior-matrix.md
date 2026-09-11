@@ -511,5 +511,7 @@ must be re-evaluated before any of them becomes work:
    toolchain, and record actual ELF outputs rather than relying on CI definitions
    or old logs.
 
-These options do not expand A2. A1's completion and limitations are recorded in
-its [closeout record](../archive/milestones/a1-closeout-record.md).
+These options do not expand A3 and must be re-evaluated before any becomes
+work. A1's completion and limitations are recorded in
+its [closeout record](../archive/milestones/a1-closeout-record.md), and A2's in
+[the A2 closeout](../archive/milestones/a2-closeout-record.md).

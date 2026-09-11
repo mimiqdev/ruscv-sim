@@ -126,7 +126,7 @@ and [principles](architecture/principles.md) remain authoritative:
   outcomes/observations, scheduler or interrupt integration.
 - Devices in the flat wrapper, MMU/PMP/paging, multi-hart, SystemC/TLM, new ISA
   support, acceleration, and ACT4 or any external architecture-suite compliance.
-- Repairing G-03, G-04, G-05, the CLI half of G-06, G-08 or G-11; changing CLI
+- Repairing G-03, G-04, G-05, the CLI half of G-06, G-07, G-08, G-09 or G-11; changing CLI
   options or the CLI signature-failure policy; `write_mem` transactional
   semantics; arbitrary allocation hardening; poisoned-lock or blocking-backend
   termination guarantees.
