@@ -1597,6 +1597,36 @@ fn integrated_load_run_result_inspect_workflow() {
 }
 
 #[test]
+fn flat_library_executes_from_a_nonzero_entry_offset() {
+    let entry_offset = 0x100usize;
+    let exit_instruction = fixture::standard_exit(1);
+    let elf = fixture::elf_with_code(
+        &padded(tohost_writer_at(entry_offset, exit_instruction)),
+        entry_offset,
+        true,
+        false,
+        0,
+    );
+
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    let entry = simulator.load_elf(&elf).unwrap();
+    assert_eq!(entry, fixture::BASE + entry_offset as u64);
+
+    let result = simulator.run(Some(16)).unwrap();
+
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.cycles, 4);
+    assert_eq!(result.final_pc, fixture::BASE + entry_offset as u64 + 0x10);
+    assert!(!result.timed_out);
+    assert!(result.error.is_none(), "{result:?}");
+    assert_eq!(
+        simulator.read_mem(entry_offset as u64, 4).unwrap(),
+        exit_instruction.to_le_bytes().to_vec(),
+        "the image's file bytes are readable at the flat entry offset"
+    );
+}
+
+#[test]
 fn integrated_workflow_records_the_retained_cli_device_difference() {
     // A declared RAM tohost: the CLI and the flat library agree.
     let parity_elf = fixture::elf_with_code(

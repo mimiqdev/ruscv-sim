@@ -41,6 +41,7 @@ contract until the maintainer accepts completion.
 | Nonzero base, declared tohost, guest work, signature and a nonzero exit | `integrated_load_run_result_inspect_workflow` | entry `0x8000_0000`, exit `42`, 16 cycles, final PC `0x8000_0040`, `x6=0x8000_0100`, `x7=69`, RAM byte `0x45`, signature `[0x5a, 17, 34, 51, 68, 85, 102, 119]` |
 | Zero and nonzero guest exits | `flat_library_reports_zero_and_nonzero_guest_exits` | codes `0`, `1`, `42` with the writing instruction's cycle and PC |
 | Base zero | `flat_library_reports_base_zero_placement` | raw offsets, exit `7`, 4 cycles |
+| Nonzero entry offset | `flat_library_executes_from_a_nonzero_entry_offset` | entry `0x8000_0100`, exit `1` at cycle 4, final PC `0x8000_0110`, file bytes visible at flat `0x100` |
 | Declared tohost selected from the image | `flat_library_elf_tohost_metadata_selects_the_ram_exit_signal` | CLI and library both exit at cycle 4 |
 | File bytes and BSS preserved by the loader | `elf_segments_preserve_file_bytes_and_zero_fill`, `elf_loader_clears_bss_in_prefilled_memory`, `public_zero_fill_is_observed_by_guest_execution` | committed A1 evidence, unchanged |
 
@@ -81,7 +82,9 @@ contract until the maintainer accepts completion.
 The public signatures, the CLI `load_and_run` path, the flat `read_mem`,
 `write_mem` and `set_tohost` address meanings, and the CLI device behaviour are
 unchanged. The full quality gate, strict rustdoc and the public CLI/ELF
-regressions are recorded per change in the pull requests below. Guest program
+regressions are recorded in the pull requests below; each record names the
+commands it actually covers, and this assessment's head carries a fresh local
+strict-rustdoc run. Guest program
 compilation and execution is verified by the `main` push CI at the merge
 revisions: release build, binary smoke test, guest compilation and the
 project-authored ELF runner at **46 total / 46 passed / 0 failed** for both
@@ -150,9 +153,13 @@ existing CLI and flat-library suites, including the A2 workflow test, pass
 against the shared path.
 
 **Considered and not recommended now:** another batch of individual gap repairs
-(G-03/G-05/G-06 CLI/G-08). Those are bounded and useful, but they are the same
-shape of work that produced A2's recurring address and result drift; repeating it
-without a shared placement path keeps generating the same class of defect. The
+(for example G-03, G-05, the CLI half of G-06, G-08). Those are bounded and
+useful, and the batch is mostly CLI-side work, so the shape argument against it
+is thematic rather than causal. The stronger reason to prefer the consolidation
+first is that three of A2's four repairs (G-01, G-10, G-12) were defects in the
+flat wrapper's own placement, metadata and result paths, each repaired with
+wrapper-specific logic that mirrors the CLI rather than sharing it; G-02 is the
+loosest member of that pattern because it is an inspection-loop defect. The
 larger full-migration candidate in
 [the A0 record](../archive/milestones/a0-full-migration-candidate.md) remains
 unapproved reference material and is a separate, bigger decision than this

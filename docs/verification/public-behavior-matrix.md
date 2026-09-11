@@ -470,6 +470,7 @@ differences; the criterion-by-criterion mapping is in the
 | --- | --- |
 | `integrated_load_run_result_inspect_workflow` | One nonzero-base image runs real work (store, load, modify), writes its declared signature byte, exits through its declared tohost with code 42 at cycle 16, and exposes exact registers, RAM bytes and artifact; inspection leaves PC, registers, privilege and RAM unchanged. |
 | `integrated_workflow_records_the_retained_cli_device_difference` | A declared RAM tohost exits identically in both configurations, while a UART store is served by the CLI device map and fails as an execution error in the flat wrapper, which has no device mapping. |
+| `flat_library_executes_from_a_nonzero_entry_offset` | Entry `0x8000_0100` executes from the declared offset, exits at cycle 4 with final PC `0x8000_0110`, and the image's file bytes are readable at flat `0x100`. |
 
 The workflow test also covers the artifact half of criterion 4 end to end; the
 T1–T3 sections above cover the individual boundaries.
