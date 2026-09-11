@@ -1,0 +1,99 @@
+{
+  "status": "adapted-profile-smoke-passed-not-canonical-profile-or-a5-acceptance",
+  "date": "2026-09-11",
+  "tested_commit": "9f52fe1eb1edd2ef80fdf8a7289326f6f0727319",
+  "pr": "https://github.com/mimiqdev/ruscv-sim/pull/32",
+  "linux_run": "https://github.com/mimiqdev/ruscv-sim/actions/runs/34617871221",
+  "standard_ci": "https://github.com/mimiqdev/ruscv-sim/actions/runs/34617878242",
+  "attempts": [
+    {"commit": "2bae583dd193c558b5a04bca183299ea8a70b808", "run": 34615874009, "result": "UDB MXLEN defined only by Sm"},
+    {"commit": "2116b3477b81693786389ae1ce4494193e187ba0", "run": 34616533721, "result": "adapted UDB valid, required rvtest_config.h missing"},
+    {"commit": "0f722eebf5a116dc6d8b7abfe04986179e6f66ed", "run": 34617153819, "result": "signature ELF linked, Sail V support_level not disabled"},
+    {"commit": "9f52fe1eb1edd2ef80fdf8a7289326f6f0727319", "run": 34617871221, "result": "success"}
+  ],
+  "artifact": {
+    "id": 10271109348,
+    "sha256": "1bdf672d423faeca9ab5220dc74d0f54905b8fec789456d972e6544dabbed90c",
+    "expires_at": "2026-09-25T15:48:21Z",
+    "url": "https://github.com/mimiqdev/ruscv-sim/actions/runs/34617871221/artifacts/10271109348"
+  },
+  "tools": {
+    "runner_image": "ubuntu22/20260907.292.1",
+    "ruby": "3.4.9",
+    "bundler": "4.0.8",
+    "uv": "0.11.6",
+    "python": "3.12.12",
+    "udb": "0.1.9",
+    "sail": "0.10",
+    "gcc": "15.1.0",
+    "binutils": "2.44",
+    "rust": "1.93.1"
+  },
+  "profile": {
+    "implemented_extensions": ["I"],
+    "mxlen": 64,
+    "udb_adaptation": "MXLEN definedBy.extension.name changed Sm to I; all original constraints retained",
+    "original_mxlen_sha256": "2de45bf488b72952ab339ba335bf8a95f760918840d776b1f30e6df0bfadc368",
+    "overlay_mxlen_sha256": "9f7e097cd29ddd39057f12fa4f62da5410dae3787ab40c703fb39302ffb7b750",
+    "invalid_width_128": "rejected by genuine UDB schema validation",
+    "sail_config_sha256": "cb46211f88305cc03c3a53dbe72efbcd34deb40563c9ecf7b9876fdfa196117f",
+    "canonical_profile_approved": false
+  },
+  "selection": {
+    "source": "tests/rv64i/I/I-add-00.S",
+    "source_sha256": "49674805467e027909965f5627839d721f5688c86d7c846264c1ff9d32353e08",
+    "assembly_regenerated_from_testplan": false,
+    "upstream_selfcheck_pipeline_executed": true,
+    "signature_elf_count": 1,
+    "selfcheck_elf_count": 1,
+    "executed_selfcheck_elf_count": 1,
+    "passed_selfcheck_elf_count": 1,
+    "deliberate_failure_control_count": 1,
+    "full_selection_denominator": null,
+    "signature_sha256": "520dd9f9034b10ccc2aefb526c76da285225e21b768a257858f17c5a833dca91",
+    "processed_results_sha256": "edfaeafc0400ee077905eb019cb4cbcf5e2443e1b461021c6365ba581511cef8"
+  },
+  "audit": {
+    "instructions": 5316,
+    "mapped_inline_data_words": 2052,
+    "unsupported": [],
+    "mnemonics": ["add", "addi", "andi", "auipc", "beq", "blt", "bne", "jal", "jalr", "ld", "lhu", "lui", "lw", "lwu", "or", "sb", "sd", "slli", "srai", "srl", "srli", "sw"]
+  },
+  "execution": {
+    "command": "target/release/ruscv-sim run <elf> --max-cycles 1000000",
+    "host_timeout_seconds": 60,
+    "intact": {
+      "sha256": "56b1efd50a01eb92a4ac8d81e8beb8e90f30f9529c42fdd610dd1ebd4cadedd8",
+      "classification": "guest-pass",
+      "status": "SUCCESS",
+      "returncode": 0,
+      "cycles": 4327,
+      "final_pc": "0x80015038"
+    },
+    "control": {
+      "sha256": "33b913f22dcfd625e1dfeb06c2e253c6531a5be2befee2514b675c66fd936d54",
+      "classification": "guest-fail",
+      "status": "FAILED",
+      "returncode": 1,
+      "cycles": 1130,
+      "final_pc": "0x80015050",
+      "mutation": {"address": "0x80013978", "file_offset": 84344, "before": 217, "after": 216},
+      "only_one_expected_result_byte_changed": true
+    },
+    "macos_public_cli_replay": "identical statuses, cycles and final PCs"
+  },
+  "local_verification": [
+    "cargo fmt --all -- --check",
+    "cargo check --all-features",
+    "cargo clippy --all-features --all-targets -- -D warnings",
+    "cargo test --all-features",
+    "cargo doc --all-features --no-deps",
+    "python3 scripts/a5/test_runner.py (5 passed)",
+    "bash -n scripts/a5/experiment.sh",
+    "Python AST, JSON and YAML parsing",
+    "git diff --check"
+  ],
+  "rust_behavior_changed": false,
+  "independently_reviewed": false,
+  "merged": false
+}

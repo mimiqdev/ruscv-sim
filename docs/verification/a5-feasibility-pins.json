@@ -1,5 +1,6 @@
 {
-  "status": "investigated-not-generated",
+  "status": "linux-adapted-profile-smoke-passed-not-a5-complete",
+  "execution_evidence": "a5-feasibility-results.json",
   "act4": {
     "repository": "https://github.com/riscv/riscv-arch-test",
     "release": "4.0.0",
@@ -27,7 +28,7 @@
       "url": "https://github.com/riscv/sail-riscv/releases/download/0.10/sail-riscv-Linux-x86_64.tar.gz",
       "sha256": "cb66af6efb5d1ebb812cf19ca2156c2b1020881f08f16c40136da7e84af299ca",
       "download_hash_verified": true,
-      "executed": false
+      "executed": true
     },
     {
       "tool": "RISC-V GCC and Binutils",
@@ -35,7 +36,7 @@
       "url": "https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2025.07.16/riscv64-elf-ubuntu-22.04-gcc-nightly-2025.07.16-nightly.tar.xz",
       "sha256": "ac2f8e84071c8bfc6b8a7ff1c4023c840e43ef6ed5072394d80a050907b9c8cb",
       "download_hash_verified": true,
-      "executed": false
+      "executed": true
     }
   ],
   "base_i_source_reconnaissance": {
@@ -99,8 +100,9 @@
       "I-xori-00.S"
     ],
     "proposed_smoke_source": "tests/rv64i/I/I-add-00.S",
-    "generated_elf_count": 0,
-    "executed_elf_count": 0,
-    "passed_elf_count": 0
+    "generated_elf_count": 1,
+    "executed_elf_count": 1,
+    "passed_elf_count": 1,
+    "count_scope": "selected self-check ELF only; signature ELF and deliberate failure control counted separately in execution evidence"
   }
 }

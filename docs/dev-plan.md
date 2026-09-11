@@ -4,7 +4,7 @@
 
 **Current milestone:** A5 — ACT4 RV64I External Compatibility Baseline
 
-**Status:** Approved — early feasibility investigation; generation and smoke gate not yet passed
+**Status:** Approved — adapted-profile Linux smoke passed; canonical profile review and full-selection acceptance remain open
 
 **Authority:** Normative milestone contract approved by [PR #31](https://github.com/mimiqdev/ruscv-sim/pull/31), merged as `a4804341f4ae0a5344beea7ef6c53667e1912c93` on 2026-09-11
 
@@ -17,9 +17,10 @@ were approved together in PR #31. A5 continues the A0–A4 milestone
 sequence, not a release number or a revival of the
 [superseded M8 plan](archive/milestones/m8-act4-rv64i-superseded.md).
 
-The [first feasibility investigation](verification/a5-feasibility.md) records
-pinned source/tool evidence and the remaining Linux execution dependency.
-It is not a generation, smoke, full-selection or milestone acceptance result.
+The [feasibility experiment](verification/a5-feasibility.md) records a successful
+pinned Linux generation/public-CLI smoke and expected-result failure control.
+It uses an explicit UDB width-provenance adaptation awaiting independent review;
+it is not canonical-profile approval, full-selection or milestone acceptance.
 
 ## Objective
 

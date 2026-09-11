@@ -1,15 +1,94 @@
 # A5 Linux feasibility experiment
 
-The dedicated `a5-feasibility` branch now contains a bounded Linux experiment:
+**Outcome:** The bounded Linux **adapted-profile** smoke experiment passed.
+One intact ACT4 self-checking `I-add-00.elf` passed through the public CLI;
+changing one expected-result byte made the same runner report a guest failure,
+not a simulator error. **A5 is not complete**, and the UDB schema adaptation
+is not yet approved as the canonical A5 profile.
+
+**Tested revision:** `9f52fe1eb1edd2ef80fdf8a7289326f6f0727319`, based on
+approved-plan revision `a4804341f4ae0a5344beea7ef6c53667e1912c93`.
+[PR #32](https://github.com/mimiqdev/ruscv-sim/pull/32) is experimental and
+unmerged. Independent exact-head review remains required.
+
+The dedicated `a5-feasibility` branch contains the bounded Linux experiment:
 [`a5-feasibility.yml`](../../.github/workflows/a5-feasibility.yml) provisions
 pinned tools, validates the minimal I-only UDB configuration, invokes upstream
-ACT4 self-check generation for `I-add-00.S`, audits the linked opcode classes,
+ACT4 self-check generation for `I-add-00.S`, audits linked instructions,
 and runs intact and deliberately corrupted expected-result ELFs through the
-same public CLI. Results are pending the first Linux run; A5 is not complete.
+same public CLI.
 The job runs only for relevant pushes to this experimental branch (not again
 on PR events), has a 30-minute timeout, read-only permissions and 14-day
 artifacts. Standard CI is unchanged. Workspaces, not the developer's host,
 hold tool archives and caches. No generated-ELF cache is used.
+
+## Actual successful Linux evidence
+
+[Run 34617871221](https://github.com/mimiqdev/ruscv-sim/actions/runs/34617871221)
+completed successfully on 2026-09-11 in 4m21s. It was the fourth total attempt,
+the third and final allowed rerun. Earlier failures are recorded below; no
+additional Linux run was used to write this report.
+
+| Case | Public CLI status / process exit | Cycles | Final PC |
+| --- | --- | --- | --- |
+| Intact upstream self-check ELF | `SUCCESS` / 0 | 4327 | `0x80015038` |
+| Expected-result byte XOR 1 | `FAILED` / 1 | 1130 | `0x80015050` |
+
+Both commands used `ruscv-sim run <elf> --max-cycles 1000000`, with a 60-second
+host timeout in [`run.py`](../../scripts/a5/run.py). Neither emitted an
+`Error:` or timeout. The control changes byte `0xd9` to `0xd8` at file offset
+84344, guest address `0x80013978` (`signature_base + 8`, after the canary).
+Instruction bytes, pass/fail macros and all other ELF bytes are unchanged.
+The final PCs are immediately after the respective HTIF stores of 1 and 3.
+
+The linked instruction audit covered 5316 instructions and found 22 base-I
+mnemonics, no compressed instructions, CSR/trap operations, or other optional
+ISA mnemonics. It separately counted 2052 inline data words identified by
+assembler mapping symbols, including failure diagnostic pointers; this is not
+a formal proof of arbitrary control-flow reachability. Entry at `0x80000000`
+calls the upstream model-boot hook at `0x80015000`, which transfers to
+`rvtest_init` at `0x80000020`; only base-I instructions were emitted there.
+The assembly header's `rv64i_zicsr` remains an assembler permission, not a DUT
+extension declaration.
+
+The UDB-generated extension list is exactly `I`. The width-provenance overlay
+does not infer Sm, and an independent negative configuration with `MXLEN: 128`
+was rejected with `Parameter value violates the schema`. The ACT4 source,
+selection logic, Sail oracle and self-check pipeline are unpatched. This run
+used upstream's checked-in generated assembly source; it did not regenerate
+that assembly from the testplan generator.
+
+The [durable result manifest](a5-feasibility-results.json) records hashes,
+commands, counts and run provenance. The
+[artifact](https://github.com/mimiqdev/ruscv-sim/actions/runs/34617871221/artifacts/10271109348)
+contains full tool/version output, UDB original/overlay/diff, Sail configuration,
+signature and processed results, signature/self-check ELFs, disassembly, logs,
+negative control and execution reports. Its retention expires
+**2026-09-25 15:48:21 UTC**; the source/config/scripts and summarized evidence
+remain in Git, not the generated binaries.
+
+### Verification and limits
+
+- [Standard CI at the tested revision](https://github.com/mimiqdev/ruscv-sim/actions/runs/34617878242)
+  passed. Locally, all five repository quality gates passed: fmt check, check,
+  strict clippy, all-feature tests and rustdoc. Five stdlib runner tests passed
+  (classification, mutation, optional ISA rejection and inline-data audit).
+- Downloaded the Linux-produced intact/control artifacts and replayed both on
+  the macOS host's public CLI: identical exits, cycle counts and PCs. No Sail,
+  compiler, Ruby or global host installation was needed for replay.
+- The final report/pins-only commit uses `[skip ci]` to respect the experiment
+  budget; executable scripts, workflow and simulator remain at the tested
+  revision. No separate review, approval, merge or milestone acceptance is
+  claimed by this report.
+- Only one upstream source/self-check ELF was selected. The 51-source inventory
+  is **not** the full-selection denominator. Broader selection/exclusion review,
+  full corpus results, omitted/duplicate accounting, further negative controls,
+  canonical profile review and final A5 acceptance remain open.
+- No Rust ISA fixes were made. FENCE and other previously documented public-path
+  limits remain. This smoke does not establish full RV64I compliance, privileged
+  support, or all ACT4 framework/profile compatibility.
+
+## Attempt history and profile adaptation
 
 ### Linux attempt 1: concrete UDB/ACT4 integration mismatch
 
@@ -55,8 +134,9 @@ unknown words in instruction ranges remain audit failures.
 
 ## Initial reconnaissance (historical, before the Linux experiment)
 
-**State:** Environment/source reconnaissance; generation and public-CLI smoke
-remain unverified. This report does not pass the A5 early feasibility gate.
+**State at that time:** Environment/source reconnaissance; generation and
+public-CLI smoke were unverified. See the actual Linux evidence above for the
+subsequent adapted-profile result and remaining acceptance limits.
 
 **Contract:** [A5](../dev-plan.md), approved in
 [PR #31](https://github.com/mimiqdev/ruscv-sim/pull/31), merged at
@@ -64,7 +144,7 @@ remain unverified. This report does not pass the A5 early feasibility gate.
 The implementation base for this investigation is that same revision.
 Approval is not evidence of external compatibility.
 
-## What was actually exercised
+### Historical reconnaissance commands
 
 - Cloned ACT4 and detached at
   `a7c99303516f4e668f7488f172043392e23b9dfd` (4.0.0). Read source, build,
@@ -96,7 +176,7 @@ Approval is not evidence of external compatibility.
   Diagnostic: `Unknown command line argument '-riscv-add-build-attributes'`.
   No object was produced. A matching Clang version number is insufficient.
 
-No ACT4 ELF was generated, executed or passed. No guest pass/fail controls,
+At this initial reconnaissance stage, no ACT4 ELF was generated, executed or passed. No guest pass/fail controls,
 Sail signatures, linked instruction audit, clean CI run or Rust ISA repairs
 are claimed. No Rust source or public behavior changed.
 
@@ -145,10 +225,11 @@ Sail's upstream exit macros use HTIF values 1/3. The native
 [`tohost` handling](../../src/executor.rs#L500) is the intended DUT exit route.
 Do not copy the upstream max-profile UART/interrupt/PMP/extension declarations
 into a `ruscv-sim` profile. The final DUT configuration, Sail configuration,
-linker placement, printing and pass/fail macros are **not prepared or validated**
-in this slice.
+linker placement, printing and pass/fail macros were not prepared during the
+initial reconnaissance. The scripts and successful Linux artifact above now
+provide that evidence for the one-source adapted-profile smoke only.
 
-## Next experiment: Linux, not host modification
+## Historical Linux proposal (superseded by the executed workflow above)
 
 **Recommendation:** use one manually authorized GitHub-hosted Ubuntu 22.04
 x86_64 experiment, following the pinned upstream prebuilt GCC/Sail route.
@@ -201,12 +282,12 @@ The minimal proposed experiment is one manual-only job (not a required check):
    Only then decide whether to freeze the full inventory or report a concrete
    profile/dependency blocker. Smoke cannot close A5.
 
-No workflow, DUT adapter or execution harness is represented as ready to run:
-writing a guessed profile and speculative success classifier before the tools
-can be exercised would hide the remaining feasibility work. The next input
-needed is **authorization to publish and dispatch that bounded Linux
-experiment**, or access to an already provisioned Linux workspace. No commit,
-push, PR or dispatch has been performed.
+At the proposal stage, no workflow, DUT adapter or execution harness was ready
+to run. Publishing and bounded CI were subsequently authorized, implemented
+and exercised in PR #32 as recorded above. The executed workflow uses a
+branch-specific push trigger, not the originally proposed manual dispatch,
+because a new workflow cannot be manually dispatched before it exists on the
+default branch.
 
 ## Reproducing the source evidence locally
 
@@ -247,11 +328,11 @@ print("Pinned source/dependency evidence matches; no generation or DUT result.")
 PY
 ```
 
-Verification for this documentation-only slice: the above manifest checks,
-download hashes and `git diff --check`. Rust quality gates are not rerun
-because no Rust code changed; previous gate evidence is not an ACT4 run.
-Downloads and cloned upstream trees remain under ignored `target/`, not in
-the change.
+The initial documentation-only slice checked the manifest, download hashes
+and `git diff --check`, without rerunning Rust gates. The subsequent implemented
+experiment ran all five Rust quality gates and the CLI evidence recorded above.
+Downloads and cloned upstream trees remain ignored workspace data, not committed
+source.
 
 [act4]: https://github.com/riscv/riscv-arch-test/tree/a7c99303516f4e668f7488f172043392e23b9dfd
 [readme]: https://github.com/riscv/riscv-arch-test/blob/a7c99303516f4e668f7488f172043392e23b9dfd/README.md

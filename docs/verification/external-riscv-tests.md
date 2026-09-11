@@ -42,7 +42,8 @@ The validation toolchain may contain C++, C, assembly, Python, Ruby, shell, or o
 
 “RISC-V tests” is ambiguous. A concrete milestone must name the exact upstream repository, branch or specification framework, revision, selection, reference model, and compiler environment.
 
-The approved [A5 contract](../dev-plan.md) selects pinned ACT4 4.0.0 for
-investigation. Its [initial feasibility report](a5-feasibility.md) records source
-and tool probes only; generation, a public-CLI smoke run and full-selection
-compatibility remain unverified.
+The approved [A5 contract](../dev-plan.md) selects pinned ACT4 4.0.0.
+Its [feasibility report](a5-feasibility.md) records one successful Linux
+self-check generation and public-CLI smoke with a deliberate failure control,
+using an explicit UDB width-provenance adaptation. This is not canonical-profile
+approval or full-selection compatibility; no complete suite integration is claimed.
