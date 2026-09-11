@@ -541,11 +541,20 @@ suites. The tests run the same image through `load_and_run` and
 
 ## A4 T1 shared run-control evidence
 
-A4 T1 moved the instruction budget, the retirement count, the timeout diagnostic
-and the decode-before-clear exit rule into one internal owner, `RunControl` in
-`src/executor.rs`, used by both loops. Each loop still owns its stepping, its own
-signal sources in its own order, its commit logging and its diagnostic wording;
-the shared part decides, it does not observe.
+A4 T1's initial helpers shared the instruction budget, retirement count, timeout
+diagnostic and decode-before-clear RAM rule, but left both loops independently
+selecting their stop reasons. Bounded T1 completion makes
+[`RunControl::start` and `RunControl::after_step`](../../src/executor.rs) the
+single decision owner: zero budget selects timeout before stepping; failure
+selects execution error without retirement or observation; success retires once,
+traverses configured observers lazily in order, and selects the first guest exit
+before deciding exhaustion or continuation.
+
+The configurations supply ordered observer lists (CLI HTIF then selected RAM;
+flat selected RAM only), address forms, stepping, commit logging and diagnostic
+wording. The loops format the returned `RunDecision`; they do not select their
+own stop reason. RAM observers use the same decode-before-clear helper. No loops
+or backend compositions were merged.
 
 The A1–A3 CLI and flat-library suites pass unchanged, including every budget,
 final-slot, exit-retention, artifact and equivalence assertion. New unit tests
@@ -557,10 +566,33 @@ cover the owner:
 | `test_run_control_zero_budget_executes_nothing` | A zero budget admits no instruction and reports a zero-cycle timeout. |
 | `test_run_control_retains_the_exit_before_clearing_the_signal` | A standard or alternative payload is decoded and retained before the signal is cleared, and a value without an exit command leaves the signal untouched. |
 
-Signal ordering is preserved but is not separately testable: every observation
-round follows one instruction, and a single instruction writes at most one
-signal, so each round offers at most one new exit. The ordering rule therefore
-remains per configuration and unobservable from the public API.
+The earlier claim that signal ordering was not separately testable was too
+strong. Lazy observation can be tested directly, and skipping a lower-priority
+read can also be distinguished through public verbose diagnostics.
+
+| Added test | Assertion |
+| --- | --- |
+| `test_run_decision_zero_budget_never_steps_or_observes` | The initial decision prevents both stepping and observation at zero budget. |
+| `test_run_decision_continue_then_exhaustion` | Successful steps retire once, observe the updated count, continue while budget remains, then select timeout. |
+| `test_run_decision_error_does_not_retire_or_observe` | A failing step after one retirement returns the original error, leaves the count unchanged and never invokes a pending-exit observer. |
+| `test_run_decision_first_exit_skips_lower_priority_observer_on_final_slot` | The first exit wins over exhaustion and the lower-priority observer is never invoked. |
+| `test_run_decision_observes_in_order_and_retains_ram_exit_on_final_slot` | A silent primary observer precedes RAM observation; clearing occurs after decode and the nonzero code survives the clear. |
+| [`failed_first_instruction_does_not_consume_a_pending_ram_exit`](../../tests/a4_run_control.rs) | Both public configurations report an execution error, not the already-present exit or a timeout; flat RAM retains its unconsumed signal. |
+| [`cli_final_slot_htif_exit_skips_ram_poll_and_timeout_diagnostics`](../../tests/a4_run_control.rs) | A CLI ELF exits via HTIF in slot 1000; the lower-priority unmapped RAM read and periodic/timeout diagnostics do not occur. |
+
+Local implementation verification: the full quality gate and strict rustdoc in
+the active plan passed. `cargo test --all-features` passed 830 library unit tests,
+the unchanged 44-test `public_behavior` suite, the unchanged 58-test `executor`
+suite, the new two-test `a4_run_control` suite, all other Rust integration
+suites, and 27 doctests. Focused runs of the five `run_decision` unit tests and
+both public suites also passed. No A1–A3 test was changed or weakened.
+
+This is uncommitted implementation evidence, not exact-head formal review or
+merge evidence. The separately compiled 46 guest ELF tests were not rebuilt or
+run for this change; Cargo tests do not establish that result. A4 remains active:
+T3's full capability assessment, independent review, required guest evidence and
+separately approved successor decision remain subsequent work. No ACT4
+verification or successor approval is claimed.
 
 ## A4 T2 shared image installation evidence
 

@@ -598,13 +598,21 @@ use std::path::Path;
 /// decoded before it is cleared, so a run cannot lose the guest's code and no
 /// path can re-read a signal it already consumed.
 ///
-/// It decides; it does not observe. Each configuration still supplies its own
-/// signal sources in its own order and its own address form, owns how a failed
-/// instruction is worded, and owns how the result is built.
+/// Configurations supply an ordered list of lazy signal observers, address
+/// forms, diagnostics and result construction. This owner alone traverses that
+/// list and selects the stop reason after accounting for the step.
 #[derive(Debug)]
 struct RunControl {
     cycles: u64,
     max_cycles: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RunDecision<E> {
+    Continue,
+    GuestExit(u32),
+    Timeout,
+    ExecutionError(E),
 }
 
 impl RunControl {
@@ -626,6 +634,36 @@ impl RunControl {
         self.cycles += 1;
     }
 
+    /// Decide whether execution may begin (including the zero-budget case).
+    fn start<E>(&self) -> RunDecision<E> {
+        if self.may_execute() {
+            RunDecision::Continue
+        } else {
+            RunDecision::Timeout
+        }
+    }
+
+    /// Account for a step, then observe configured signals in priority order.
+    ///
+    /// Failure does not retire or observe. The first exit short-circuits later
+    /// observers and wins even in the final budget slot.
+    fn after_step<E>(
+        &mut self,
+        step: Result<(), E>,
+        observers: &mut [&mut dyn FnMut(u64) -> Option<u32>],
+    ) -> RunDecision<E> {
+        if let Err(error) = step {
+            return RunDecision::ExecutionError(error);
+        }
+        self.retire();
+        for observe in observers {
+            if let Some(code) = observe(self.cycles) {
+                return RunDecision::GuestExit(code);
+            }
+        }
+        self.start()
+    }
+
     /// Instructions retired so far.
     fn cycles(&self) -> u64 {
         self.cycles
@@ -638,8 +676,8 @@ impl RunControl {
 
     /// Apply the exit rule to an observed RAM signal.
     ///
-    /// The decoded code is retained and returned before `clear` runs, so a
-    /// caller cannot clear the signal first and report a zeroed code. A value
+    /// The decoded code is retained before `clear` runs and returned afterwards,
+    /// so a caller cannot clear the signal first and report a zeroed code. A value
     /// that carries no exit command decodes to `None` and leaves the signal
     /// untouched for the next observation.
     fn take_ram_exit(observed: u64, clear: impl FnOnce()) -> Option<u32> {
@@ -932,7 +970,7 @@ pub fn load_and_run(
         .transpose()?;
 
     // Step 4: Execution loop. The budget, the retirement count and the exit rule
-    // live in the shared run control; this loop owns stepping, signal order,
+    // live in the shared run control; this loop supplies stepping, signal order,
     // commit logging and its own diagnostics.
     let mut control = RunControl::new(max_cycles);
     let mut last_tohost_value: u64 = 0;
@@ -946,7 +984,8 @@ pub fn load_and_run(
                   entry_point, tohost_pa);
     }
 
-    while control.may_execute() {
+    let mut decision = control.start();
+    while matches!(decision, RunDecision::Continue) {
         // Read current PC for result
         let current_pc = core.state().pc;
         let pc_before = current_pc;
@@ -962,114 +1001,105 @@ pub fn load_and_run(
         let regs_before = core.state().regs;
 
         // Execute one instruction
-        match core.step() {
-            Ok(()) => {
-                control.retire();
+        let step = core.step();
+        if step.is_ok() {
+            // Capture register state after execution
+            let regs_after = core.state().regs;
 
-                // Capture register state after execution
-                let regs_after = core.state().regs;
+            // Log commit if logger is active
+            if let Some(ref mut logger) = commit_logger {
+                // Get privilege mode (3 = machine mode)
+                let privilege = core.state().privilege as u8;
 
-                // Log commit if logger is active
-                if let Some(ref mut logger) = commit_logger {
-                    // Get privilege mode (3 = machine mode)
-                    let privilege = core.state().privilege as u8;
+                // Try to detect memory access
+                let mem_access = None; // Simplified: detect in executor if needed
 
-                    // Try to detect memory access
-                    let mem_access = None; // Simplified: detect in executor if needed
-
-                    // Log the commit
-                    let _ = logger.log_commit(
-                        0, // hartid
-                        privilege,
-                        pc_before,
-                        instruction,
-                        &regs_before,
-                        &regs_after,
-                        mem_access,
-                    );
+                // Log the commit
+                let _ = logger.log_commit(
+                    0, // hartid
+                    privilege,
+                    pc_before,
+                    instruction,
+                    &regs_before,
+                    &regs_after,
+                    mem_access,
+                );
+            }
+        }
+        let mut observe_htif = |_| {
+            // Check for exit signal from HTIF callback first
+            // This handles writes to HTIF MMIO at 0x40008000
+            let htif_exit = exit_code.load(std::sync::atomic::Ordering::SeqCst);
+            if htif_exit != u32::MAX {
+                if verbose {
+                    eprintln!("[DEBUG] HTIF exit signal detected: code={}", htif_exit);
                 }
-
-                // Check for exit signal from HTIF callback first
-                // This handles writes to HTIF MMIO at 0x40008000
-                let htif_exit = exit_code.load(std::sync::atomic::Ordering::SeqCst);
-                if htif_exit != u32::MAX {
-                    if verbose {
-                        eprintln!("[DEBUG] HTIF exit signal detected: code={}", htif_exit);
-                    }
-                    // Reset for potential re-use
-                    exit_code.store(u32::MAX, std::sync::atomic::Ordering::SeqCst);
-                    return Ok(cli_result(
-                        &bus_interface,
-                        &placement,
-                        htif_exit,
-                        control.cycles(),
-                        core.state().pc,
-                        false,
-                        None,
-                    ));
-                }
-
-                // Check for tohost write (exit signal) after EVERY instruction
-                // This ensures we detect the write immediately
-                if let Ok(mem_guard) = bus_interface.lock() {
-                    match mem_guard.read_dword(tohost_pa) {
-                        Ok(tohost_value) => {
-                            // Track tohost value changes for debugging
-                            if verbose && tohost_value != last_tohost_value {
-                                eprintln!(
-                                    "[DEBUG] Cycle {}: tohost changed from 0x{:016x} to 0x{:016x}",
-                                    control.cycles(),
-                                    last_tohost_value,
-                                    tohost_value
-                                );
-                                last_tohost_value = tohost_value;
-                            }
-
-                            // The shared exit rule decodes the value and clears
-                            // the signal only after the code is retained.
-                            drop(mem_guard);
-                            if let Some(exit_code_val) =
-                                RunControl::take_ram_exit(tohost_value, || {
-                                    clear_tohost(&bus_interface, tohost_pa, verbose)
-                                })
-                            {
-                                if verbose {
-                                    eprintln!(
-                                        "[DEBUG] Exit signal detected: code={}",
-                                        exit_code_val
-                                    );
-                                }
-                                return Ok(cli_result(
-                                    &bus_interface,
-                                    &placement,
-                                    exit_code_val,
-                                    control.cycles(),
-                                    core.state().pc,
-                                    false,
-                                    None,
-                                ));
-                            } else if tohost_value != 0 && verbose {
-                                // Non-zero but without exit command marker - possible memory corruption or other command
-                                eprintln!(
-                                    "[WARN] tohost has non-command value: {:#x}",
-                                    tohost_value
-                                );
-                            }
+                // Reset for potential re-use
+                exit_code.store(u32::MAX, std::sync::atomic::Ordering::SeqCst);
+                return Some(htif_exit);
+            }
+            None
+        };
+        let mut observe_ram = |cycles: u64| {
+            // Check for tohost write (exit signal) after EVERY instruction
+            // This ensures we detect the write immediately
+            if let Ok(mem_guard) = bus_interface.lock() {
+                match mem_guard.read_dword(tohost_pa) {
+                    Ok(tohost_value) => {
+                        // Track tohost value changes for debugging
+                        if verbose && tohost_value != last_tohost_value {
+                            eprintln!(
+                                "[DEBUG] Cycle {}: tohost changed from 0x{:016x} to 0x{:016x}",
+                                cycles, last_tohost_value, tohost_value
+                            );
+                            last_tohost_value = tohost_value;
                         }
-                        Err(e) => {
-                            // Only log errors periodically to avoid spam
-                            if verbose && control.cycles().is_multiple_of(1000) {
-                                eprintln!(
-                                    "[DEBUG] Cycle {}: tohost read failed: {}",
-                                    control.cycles(),
-                                    e
-                                );
+
+                        // The shared exit rule decodes the value and clears
+                        // the signal only after the code is retained.
+                        drop(mem_guard);
+                        if let Some(exit_code_val) = RunControl::take_ram_exit(tohost_value, || {
+                            clear_tohost(&bus_interface, tohost_pa, verbose)
+                        }) {
+                            if verbose {
+                                eprintln!("[DEBUG] Exit signal detected: code={}", exit_code_val);
                             }
+                            return Some(exit_code_val);
+                        } else if tohost_value != 0 && verbose {
+                            // Non-zero but without exit command marker - possible memory corruption or other command
+                            eprintln!("[WARN] tohost has non-command value: {:#x}", tohost_value);
+                        }
+                    }
+                    Err(e) => {
+                        // Only log errors periodically to avoid spam
+                        if verbose && cycles.is_multiple_of(1000) {
+                            eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
                         }
                     }
                 }
+            }
 
-                // Debug output every 1000 cycles
+            None
+        };
+        // Priority is configuration data; RunControl traverses it lazily.
+        decision = control.after_step(
+            step.map_err(|e| format!("Execution error at PC 0x{:016x}: {}", current_pc, e)),
+            &mut [&mut observe_htif, &mut observe_ram],
+        );
+        match &decision {
+            RunDecision::GuestExit(code) => {
+                return Ok(cli_result(
+                    &bus_interface,
+                    &placement,
+                    *code,
+                    control.cycles(),
+                    core.state().pc,
+                    false,
+                    None,
+                ));
+            }
+            RunDecision::Continue | RunDecision::Timeout => {
+                // Preserve periodic diagnostics on the final timeout slot.
                 if verbose && control.cycles().is_multiple_of(1000) {
                     let state = core.state();
                     eprintln!(
@@ -1082,7 +1112,7 @@ pub fn load_and_run(
                     );
                 }
             }
-            Err(e) => {
+            RunDecision::ExecutionError(error) => {
                 return Ok(cli_result(
                     &bus_interface,
                     &placement,
@@ -1090,10 +1120,7 @@ pub fn load_and_run(
                     control.cycles(),
                     current_pc,
                     false,
-                    Some(format!(
-                        "Execution error at PC 0x{:016x}: {}",
-                        current_pc, e
-                    )),
+                    Some(error.clone()),
                 ));
             }
         }
@@ -1374,64 +1401,67 @@ impl RiscVSimulator {
         // Track last tohost value for verbose diagnostics
         let mut last_tohost_value: u64 = 0;
 
-        while control.may_execute() {
+        let mut decision = control.start();
+        while matches!(decision, RunDecision::Continue) {
             // Execute one instruction first
-            match self.step() {
-                Ok(()) => {
-                    control.retire();
-                }
-                Err(e) => {
-                    return Ok(self.finish(
-                        control.cycles(),
-                        1,
-                        false,
-                        Some(format!("Execution error: {}", e)),
-                    ));
-                }
-            }
+            let step = self.step().map_err(|e| format!("Execution error: {}", e));
 
-            // Check for tohost write AFTER executing instruction
-            // This ensures we detect the write immediately
-            let observed = self.memory.lock().unwrap().read_dword(tohost);
-            match observed {
-                Ok(tohost_value) => {
-                    // Track tohost value changes for debugging
-                    if self.verbose && tohost_value != last_tohost_value {
-                        eprintln!(
+            let mut observe_ram = |cycles: u64| {
+                // Check for tohost write AFTER executing instruction
+                // This ensures we detect the write immediately
+                let observed = self.memory.lock().unwrap().read_dword(tohost);
+                match observed {
+                    Ok(tohost_value) => {
+                        // Track tohost value changes for debugging
+                        if self.verbose && tohost_value != last_tohost_value {
+                            eprintln!(
                             "[DEBUG] Cycle {}: PC=0x{:010x}, tohost changed from 0x{:016x} to 0x{:016x}",
-                            control.cycles(),
+                            cycles,
                             self.core.state().pc,
                             last_tohost_value,
                             tohost_value
                         );
-                        last_tohost_value = tohost_value;
-                    }
-
-                    // The shared exit rule decodes the value and clears the signal
-                    // only after the code is retained.
-                    if let Some(exit_code) = RunControl::take_ram_exit(tohost_value, || {
-                        clear_tohost(&self.memory, tohost, self.verbose)
-                    }) {
-                        if self.verbose {
-                            eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
+                            last_tohost_value = tohost_value;
                         }
-                        return Ok(self.finish(control.cycles(), exit_code, false, None));
-                    } else if tohost_value != 0 && self.verbose {
-                        // Non-zero but without exit command marker - possible memory corruption or other command
-                        eprintln!("[WARN] tohost has non-command value: {:#x}", tohost_value);
+
+                        // The shared exit rule decodes the value and clears the signal
+                        // only after the code is retained.
+                        if let Some(exit_code) = RunControl::take_ram_exit(tohost_value, || {
+                            clear_tohost(&self.memory, tohost, self.verbose)
+                        }) {
+                            if self.verbose {
+                                eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
+                            }
+                            return Some(exit_code);
+                        } else if tohost_value != 0 && self.verbose {
+                            // Non-zero but without exit command marker - possible memory corruption or other command
+                            eprintln!("[WARN] tohost has non-command value: {:#x}", tohost_value);
+                        }
+                    }
+                    Err(e) => {
+                        // Only log errors periodically to avoid spam
+                        if self.verbose && cycles.is_multiple_of(1000) {
+                            eprintln!(
+                                "[DEBUG] Cycle {}: PC=0x{:010x}, tohost read failed: {}",
+                                cycles,
+                                self.core.state().pc,
+                                e
+                            );
+                        }
                     }
                 }
-                Err(e) => {
-                    // Only log errors periodically to avoid spam
-                    if self.verbose && control.cycles().is_multiple_of(1000) {
-                        eprintln!(
-                            "[DEBUG] Cycle {}: PC=0x{:010x}, tohost read failed: {}",
-                            control.cycles(),
-                            self.core.state().pc,
-                            e
-                        );
-                    }
+                None
+            };
+            // The flat configuration has only its selected RAM observer.
+            decision = control.after_step(step, &mut [&mut observe_ram]);
+            match &decision {
+                RunDecision::GuestExit(code) => {
+                    return Ok(self.finish(control.cycles(), *code, false, None));
                 }
+                RunDecision::ExecutionError(error) => {
+                    return Ok(self.finish(control.cycles(), 1, false, Some(error.clone())));
+                }
+                RunDecision::Continue | RunDecision::Timeout => {}
             }
         }
 
@@ -1980,6 +2010,108 @@ mod tests {
         let alternative = RunControl::take_ram_exit((1u64 << 63) | 42, || cleared += 1);
         assert_eq!(alternative, Some(42));
         assert_eq!(cleared, 2);
+    }
+
+    #[test]
+    fn test_run_decision_zero_budget_never_steps_or_observes() {
+        let mut control = RunControl::new(0);
+        let mut decision = control.start::<&str>();
+        let mut steps = 0;
+        while matches!(decision, RunDecision::Continue) {
+            steps += 1;
+            decision = control.after_step(
+                Ok(()),
+                &mut [&mut |_| panic!("zero budget must not observe a signal")],
+            );
+        }
+        assert_eq!(decision, RunDecision::Timeout);
+        assert_eq!(steps, 0);
+        assert_eq!(control.cycles(), 0);
+    }
+
+    #[test]
+    fn test_run_decision_continue_then_exhaustion() {
+        let mut control = RunControl::new(2);
+        assert_eq!(control.start::<&str>(), RunDecision::Continue);
+        let mut observed = Vec::new();
+        let mut observe = |cycles| {
+            observed.push(cycles);
+            None
+        };
+        assert_eq!(
+            control.after_step::<&str>(Ok(()), &mut [&mut observe]),
+            RunDecision::Continue
+        );
+        assert_eq!(
+            control.after_step::<&str>(Ok(()), &mut [&mut observe]),
+            RunDecision::Timeout
+        );
+        assert_eq!(observed, [1, 2]);
+        assert_eq!(control.cycles(), 2);
+        assert_eq!(control.timeout_message(), "Timeout after 2 cycles");
+    }
+
+    #[test]
+    fn test_run_decision_error_does_not_retire_or_observe() {
+        let mut control = RunControl::new(2);
+        assert_eq!(
+            control.after_step::<&str>(Ok(()), &mut []),
+            RunDecision::Continue
+        );
+        assert_eq!(
+            control.after_step(
+                Err("step failed"),
+                &mut [&mut |_| { panic!("a failing step must not consume even a pending exit") }]
+            ),
+            RunDecision::ExecutionError("step failed")
+        );
+        assert_eq!(control.cycles(), 1);
+    }
+
+    #[test]
+    fn test_run_decision_first_exit_skips_lower_priority_observer_on_final_slot() {
+        let mut control = RunControl::new(1);
+        assert_eq!(
+            control.after_step::<&str>(
+                Ok(()),
+                &mut [
+                    &mut |cycles| {
+                        assert_eq!(cycles, 1);
+                        Some(42)
+                    },
+                    &mut |_| panic!("lower-priority RAM must not be observed after HTIF exit"),
+                ],
+            ),
+            RunDecision::GuestExit(42)
+        );
+        assert_eq!(control.cycles(), 1);
+    }
+
+    #[test]
+    fn test_run_decision_observes_in_order_and_retains_ram_exit_on_final_slot() {
+        let observations = std::cell::RefCell::new(Vec::new());
+        let signal = std::cell::Cell::new(3);
+        let mut control = RunControl::new(1);
+        let decision = control.after_step::<&str>(
+            Ok(()),
+            &mut [
+                &mut |_| {
+                    observations.borrow_mut().push("htif");
+                    None
+                },
+                &mut |_| {
+                    observations.borrow_mut().push("ram");
+                    RunControl::take_ram_exit(signal.get(), || {
+                        observations.borrow_mut().push("clear");
+                        signal.set(0);
+                    })
+                },
+            ],
+        );
+        assert_eq!(*observations.borrow(), ["htif", "ram", "clear"]);
+        assert_eq!(signal.get(), 0);
+        assert_eq!(decision, RunDecision::GuestExit(1));
+        assert_eq!(control.cycles(), 1);
     }
 
     /// ADDI x5, x0, 7 - one retirable instruction for installation tests.

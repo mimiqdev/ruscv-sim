@@ -168,6 +168,29 @@ a second active plan.
 - **Impact:** The flat library reported an address with no bytes and no explanation. This repair is T3 only; the integrated workflow remains open.
 - **Selected successor scope:** [A2](../archive/milestones/a2-closeout-record.md) T3 repaired this artifact gap; A2 is complete with documented limitations.
 
+## A4 bounded stop-decision ownership gap
+
+The initial A4 T1 helper shared accounting and RAM decode-before-clear but left
+`load_and_run` and `RiscVSimulator::run` independently branching on step errors,
+guest exits and exhaustion. This was an internal contract gap, not a new
+reproduced public behavior defect or a reopening of G-10.
+
+[`RunControl::start` / `after_step`](../../src/executor.rs) now own the
+continue/guest-exit/timeout/execution-error selection and retirement accounting.
+The configurations supply their ordered lazy observers, and the owner traverses
+them with first-exit short-circuiting. The CLI supplies HTIF before selected RAM;
+the flat library supplies only selected RAM. Existing RAM decode-before-clear
+and configuration-specific diagnostics, address forms and artifact policies
+remain unchanged.
+
+Five focused decision tests and two new
+[`a4_run_control`](../../tests/a4_run_control.rs) public regressions directly
+exercise these rules; exact coverage and local verification are recorded in the
+[matrix](public-behavior-matrix.md#a4-t1-shared-run-control-evidence).
+The implementation closes the bounded ownership gap, not A4. T3 assessment,
+formal review/merge evidence and separately compiled guest evidence remain
+pending. All previously retained public gaps keep their dispositions.
+
 ## Persistent second-batch evidence
 
 The committed PR14 snapshot's persistent command passed **14 tests**. The
