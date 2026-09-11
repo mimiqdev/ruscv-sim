@@ -6,10 +6,12 @@ changing one expected-result byte made the same runner report a guest failure,
 not a simulator error. **A5 is not complete**, and the UDB schema adaptation
 is not yet approved as the canonical A5 profile.
 
-**Tested revision:** `9f52fe1eb1edd2ef80fdf8a7289326f6f0727319`, based on
+**Linux generation revision:** `9f52fe1eb1edd2ef80fdf8a7289326f6f0727319`, based on
 approved-plan revision `a4804341f4ae0a5344beea7ef6c53667e1912c93`.
 [PR #32](https://github.com/mimiqdev/ruscv-sim/pull/32) is experimental and
 unmerged. Independent exact-head review remains required.
+The subsequent [classifier repair and local replay](#fail-closed-classifier-repair-and-local-replay)
+have separate evidence; the successful Linux job did not test that repair.
 
 The dedicated `a5-feasibility` branch contains the bounded Linux experiment:
 [`a5-feasibility.yml`](../../.github/workflows/a5-feasibility.yml) provisions
@@ -76,10 +78,11 @@ remain in Git, not the generated binaries.
 - Downloaded the Linux-produced intact/control artifacts and replayed both on
   the macOS host's public CLI: identical exits, cycle counts and PCs. No Sail,
   compiler, Ruby or global host installation was needed for replay.
-- The final report/pins-only commit uses `[skip ci]` to respect the experiment
-  budget; executable scripts, workflow and simulator remain at the tested
-  revision. No separate review, approval, merge or milestone acceptance is
-  claimed by this report.
+- The original report/pins-only commit `90fc50d` used `[skip ci]` to respect
+  the experiment budget. Its executable scripts, workflow and simulator
+  matched the Linux-tested revision. The classifier has since changed as
+  recorded below; not all executable inputs still match that revision.
+  No approval, merge or milestone acceptance is claimed by this report.
 - Only one upstream source/self-check ELF was selected. The 51-source inventory
   is **not** the full-selection denominator. Broader selection/exclusion review,
   full corpus results, omitted/duplicate accounting, further negative controls,
@@ -87,6 +90,100 @@ remain in Git, not the generated binaries.
 - No Rust ISA fixes were made. FENCE and other previously documented public-path
   limits remain. This smoke does not establish full RV64I compliance, privileged
   support, or all ACT4 framework/profile compatibility.
+
+## Fail-closed classifier repair and local replay
+
+Review of `90fc50d24f430baacbeb760001cf77758bc05619` reproduced a P2 defect:
+the runner accepted contradictory SUCCESS/FAILED text according to process
+status, and accepted a status line without exit code, cycles or final PC.
+Those are harness ambiguities, not evidence of guest pass or guest failure.
+
+**Locally tested repair revision:** `4c04f4536e1c377ce16d6754d14c20ebfd07d35c`.
+The [separate machine-readable replay record](a5-classifier-replay.json)
+identifies this already-committed code revision, rather than inventing a hash
+for the documentation commit containing the record.
+
+[`cli_result.classify`](../../scripts/a5/cli_result.py#L10), called by
+[`run.py`](../../scripts/a5/run.py#L92), follows the actual
+[`print_result`](../../src/main.rs#L105) renderer. It requires exactly one
+complete terminal execution-result block with each mandatory field exactly
+once, in rendered order. It rejects malformed, duplicate, contradictory or
+missing fields/blocks; out-of-range numeric values; inconsistent status,
+guest exit and POSIX process exit; timeout, Error fields and nonempty stderr.
+Rejections remain `simulator-or-runner-failure`, with a diagnostic `reason`,
+not `guest-fail`. Parsed result fields are retained when available. The runner
+now also retains stdout and stderr separately and preserves partial timeout
+output. Guest console lines preceding the block are not host result fields.
+The text CLI has no authenticated framing: a guest that imitates a complete
+result block makes the output ambiguous and is rejected, not trusted.
+
+At the repair revision, 11 stdlib tests passed, including both contradictory
+status directions, absent/duplicate/malformed mandatory fields and delimiters,
+status/exit/returncode consistency, numeric bounds, optional signature
+validation, simulator errors, timeout, console text and runner-level rejection.
+The old three-line classifier was separately replayed against contradictory
+and incomplete fixtures: it returned guest-pass/guest-fail; the fix rejected
+all three. No production Rust, ISA, oracle or generation changes were made.
+
+The original artifact ZIP was downloaded and its SHA-256 verified against
+`1bdf672d423faeca9ab5220dc74d0f54905b8fec789456d972e6544dabbed90c`.
+[`replay_retained.py`](../../scripts/a5/replay_retained.py#L1) verifies the
+individual original outputs, audit text and both ELF hashes, reparses the
+retained outputs, then executes **the fixed `run.py` with the real rebuilt
+release CLI** for both cases. Only the two binutils queries are replaced with
+the hash-verified retained Linux disassembly/symbol text; this is not a fresh
+binutils audit. The runner regenerates the control from the retained intact
+ELF and verifies byte-for-byte equality with the retained control, including
+the sole change at offset 84344 (`d9` → `d8`).
+
+The local Darwin arm64 replay with Python 3.9.6 and Rust 1.98.0 reproduced
+intact rc/exit 0, 4327 cycles, PC `0x80015038`, and corrupt rc/exit 1,
+1130 cycles, PC `0x80015050`. Both stdout files are byte-identical to the
+original Linux combined outputs; both fresh stderr files are empty. A real
+missing-ELF invocation returned rc 1 with an ELF-loading I/O diagnostic on
+stderr and was correctly classified as simulator/runner failure.
+
+Reproduce **replay only**, not a fifth Linux generation attempt:
+
+```sh
+mkdir -p .a5/retained
+gh api repos/mimiqdev/ruscv-sim/actions/artifacts/10271109348/zip > .a5/artifact.zip
+shasum -a 256 .a5/artifact.zip
+unzip .a5/artifact.zip -d .a5/retained
+python3 scripts/a5/test_runner.py
+cargo check --all-features
+cargo build --locked --release
+python3 scripts/a5/replay_retained.py .a5/retained
+bash -n scripts/a5/experiment.sh
+```
+
+Fresh replay diagnostics and results are retained under `.a5/replay-evidence/`.
+The source artifact expires **2026-09-25T15:48:21Z**; after expiry, these
+commands need a separately preserved verified copy, not guessed replacement
+ELFs. Python AST, all A5 JSON, experiment YAML/workflow parsing and
+`git diff --check` also passed at the repair revision. The full Rust gate was
+not rerun for this Python-only fix; Rust check and release build passed.
+
+### Preserved generation inputs, not identical execution inputs
+
+Byte comparison from Linux generation revision `9f52fe1` to repair revision
+`4c04f45` found the workflow, `experiment.sh`, `provision.py`, DUT YAML/header
+configuration, linker/model macros, UDB overlay, Sail configuration and
+`validate_controls.py` unchanged. Their SHA-256 values are in the replay
+record. `src/`, `Cargo.toml` and `Cargo.lock` also have no differences.
+For the pins JSON, the ACT4 revision/submodule/dependency hashes and tool
+versions, archive URLs/hashes, source inventory and named smoke source are
+unchanged. Its differences are status/evidence metadata, two `executed`
+booleans, observed counts and count-scope text—not generation inputs.
+
+`run.py` and its tests intentionally changed; `cli_result.py` and the replay
+verification script are new. Thus Sail generation and the original Linux
+static audit remain evidence **at `9f52fe1`**, while fixed classification and
+public-CLI replay have local evidence **at `4c04f45`**. No claim is made that
+all executable inputs are identical or that the repair passed Linux CI.
+Both follow-up commits use `[skip ci]` to preserve the exhausted four-attempt
+generation budget. Independent final-head review remains required; PR #32
+has not been merged and this repair does not close A5.
 
 ## Attempt history and profile adaptation
 

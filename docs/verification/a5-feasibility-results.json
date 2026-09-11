@@ -2,6 +2,8 @@
   "status": "adapted-profile-smoke-passed-not-canonical-profile-or-a5-acceptance",
   "date": "2026-09-11",
   "tested_commit": "9f52fe1eb1edd2ef80fdf8a7289326f6f0727319",
+  "tested_commit_scope": "preserved Linux Sail generation and original runner; subsequent classifier repair has separate local evidence",
+  "classifier_repair_evidence": "a5-classifier-replay.json",
   "pr": "https://github.com/mimiqdev/ruscv-sim/pull/32",
   "linux_run": "https://github.com/mimiqdev/ruscv-sim/actions/runs/34617871221",
   "standard_ci": "https://github.com/mimiqdev/ruscv-sim/actions/runs/34617878242",
