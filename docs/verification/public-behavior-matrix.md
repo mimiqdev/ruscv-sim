@@ -562,6 +562,34 @@ round follows one instruction, and a single instruction writes at most one
 signal, so each round offers at most one new exit. The ordering rule therefore
 remains per configuration and unobservable from the public API.
 
+## A4 T2 shared image installation evidence
+
+A4 T2 moved the installation sequence — create RAM sized to the loaded image,
+load the program bytes, construct the core over the configuration's memory
+backend and reset it to the entry point — into one internal owner,
+`install_image` in `src/executor.rs`, used by both entry points. The backend
+stays with the caller: the CLI composes the loaded RAM at the image base with
+its UART and HTIF devices on the system bus, the flat library uses the bare
+RAM. The core's reset translation base is derived from the configuration's
+address form (`AddressForm::core_translation_base`): pass-through for the bus
+form, image-base subtraction for the flat form — the same two forms A3
+introduced for metadata resolution.
+
+Retained per configuration, unchanged: the CLI's empty-image
+`MemoryAllocationFailed` guard stays in the CLI caller, the device composition
+and HTIF exit callback stay with the bus backend, and the wrapper keeps its
+load-time tohost validation ahead of the shared sequence and its metadata
+replacement rules after successful installation.
+
+The A1–A3 CLI and flat-library suites pass unchanged. New unit tests cover the
+owner:
+
+| Test | Assertion |
+| --- | --- |
+| `test_install_image_loads_the_program_and_resets_to_the_entry_point` | The backend receives the RAM with the program already loaded, and the returned core starts at the entry point over the backend the caller supplied. |
+| `test_install_image_flat_form_subtracts_the_image_base` | Under the flat form, the first fetch at a nonzero guest entry point resolves to storage offset zero and the instruction retires. |
+| `test_install_image_bus_form_passes_guest_addresses_through` | Under the bus form, the core passes the guest address through and the composed bus maps it to the loaded RAM, and the instruction retires. |
+
 ## Known stale or non-authoritative inputs
 
 - `tests/bare-metal-riscv-test/README.md` describes `rv64i/add.elf` as returning
