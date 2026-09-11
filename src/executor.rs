@@ -601,7 +601,7 @@ use std::path::Path;
 /// It decides; it does not observe. Each configuration still supplies its own
 /// signal sources in its own order and its own address form, owns how a failed
 /// instruction is worded, and owns how the result is built.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct RunControl {
     cycles: u64,
     max_cycles: u64,
