@@ -2,48 +2,47 @@
 
 **Project:** `ruscv-sim`
 
-**Active milestone:** A3 — Shared Image Placement and Result Path
+**Active milestone:** A4 — One Host-Side Path for Run Control and Image Installation
 
-**Status:** Active — T1–T3 delivered; capability acceptance pending
+**Status:** Active — implementation not yet started
 
 **Authority:** Normative milestone contract
 
 **Approved / started:** 2026-09-11
 
-This is the only current milestone contract. [A2 is completed](archive/milestones/a2-closeout-record.md)
-with documented limitations and its full [capability assessment](archive/milestones/a2-capability-assessment.md).
+This is the only current milestone contract. [A3 is completed](archive/milestones/a3-closeout-record.md)
+with documented limitations and its full [capability assessment](archive/milestones/a3-capability-assessment.md).
 Milestone identifiers are not releases.
 
 ## Objective
 
-The CLI `load_and_run` and the `RiscVSimulator` facade resolve an image's declared
-metadata and build their `ExecutionResult` through one internal path, so the two
-public entry points cannot drift on placement, exit retention or artifact
-reporting, while their distinct configurations and their distinct externally
-visible policies stay explicit.
+The CLI `load_and_run` and the `RiscVSimulator` facade install an image and reach
+their stop decision through one internal path, so the last two duplicated
+host-side responsibilities cannot drift between the configurations. After A3
+shared image placement and result construction, these are the remaining
+duplications in the same path: both entry points separately implement stepping
+with budget accounting, exit-detection order and RAM-signal clearing, and both
+separately build RAM, load the program, construct a core and reset it.
 
-The observed defect shape is concrete: three of A2's four repairs (G-01 tohost
-placement, G-10 exit retention, G-12 signature placement) were divergences
-between the wrapper's own placement/result logic and the CLI's, each repaired
-with wrapper-specific code that mirrors the CLI rather than sharing it. This
-milestone removes the duplication that kept producing them. It is not the
-Runner/Machine/Platform migration and does not claim those boundaries
+The drift evidence is concrete: G-10 was a wrapper-only defect in exactly this
+code, where one loop cleared the RAM signal after decoding the exit while the
+other retained it. This milestone removes the duplication that allowed it. It is
+not the Runner/Machine/Platform migration and does not claim those boundaries
 integrated.
 
 ## Starting evidence and boundary
 
-- [A2 closeout](archive/milestones/a2-closeout-record.md) and its
-  [capability assessment](archive/milestones/a2-capability-assessment.md) record
-  the four repairs, the retained CLI-versus-library differences and the
-  limitations carried forward.
+- [A3 closeout](archive/milestones/a3-closeout-record.md) and its
+  [capability assessment](archive/milestones/a3-capability-assessment.md) record
+  what A3 shared, what remains duplicated, and the retained configuration
+  differences that must survive this change.
 - [`load_and_run`](../src/executor.rs) and [`RiscVSimulator`](../src/executor.rs)
-  each own their placement arithmetic and their result construction today.
-- The [matrix](verification/public-behavior-matrix.md) CLI-versus-library row and
-  the assessment's retained-differences table are the compatibility baseline;
-  the [gap register](verification/public-behavior-gaps.md) records what remains
-  unrepaired.
+  each own a loop and an installation sequence today.
+- The [matrix](verification/public-behavior-matrix.md) CLI-versus-library row,
+  its A3 equivalence section and the [gap register](verification/public-behavior-gaps.md)
+  are the compatibility baseline.
 - [ADR-0003 §9](architecture/decisions/0003-runner-machine-and-platform-ownership.md)
-  keeps both public entry points available and requires the CLI and flat-library
+  keeps both entry points available and requires the CLI and flat-library
   configurations to stay explicit. One run-control owner is the accepted target;
   this milestone implements a bounded step of it, not the composition.
 
@@ -53,42 +52,37 @@ allocations and requests.
 
 ## Required observable behavior
 
-### One placement path
+### One run-control decision
 
-- A single internal owner maps image-declared metadata (`.tohost`/`tohost`,
-  `.signature`) plus a configuration (image base, and whether the caller needs a
-  bus address or a flat storage offset) to the address form that configuration
-  polls or reads, using checked arithmetic.
-- Base zero, nonzero base, a nonzero entry offset, a below-base address, an
-  address-space overflow and a range that leaves the image memory are handled in
-  that one place. Per-use requirements such as the exit poll's eight-byte
-  alignment stay explicit at the calling site rather than becoming a hidden
-  property of the shared conversion.
-- Both entry points obtain their polling and artifact addresses from it. No
-  second implementation of the same arithmetic remains.
+- A single internal owner decides, for a retired instruction or a failure,
+  whether the run continues, stops with a guest exit, stops with a timeout or
+  stops with an execution error, and reports how many instructions retired.
+- Budget semantics are decided there and keep their current behavior: zero budget
+  executes no instruction and reports a timeout; exhaustion reports a timeout with
+  the exact text in use; an exit in the final permitted slot is not a timeout.
+- Exit handling is decided there with their current ordering per configuration:
+  which observable signal is checked first, that a decoded exit is retained before
+  its RAM signal is cleared, and that no path re-reads a cleared signal.
+- Each configuration still supplies its own signal sources — the native bus
+  observes the HTIF endpoint and a selected RAM address, the flat library observes
+  its selected offset — and keeps its own address form for that selection.
 
-### One result path
+### One image installation
 
-- A single internal owner builds `ExecutionResult` from the observed exit, the
-  completed cycle count, the final PC, the signature artifact and any primary
-  failure.
-- A decoded guest exit is retained before any RAM signal is cleared, and no path
-  re-reads a signal it has already cleared.
-- The artifact failure policy is an explicit input to the shared path: the CLI
-  keeps its current suppression behavior and the flat library keeps its explicit
-  diagnostic. Changing the CLI policy is not part of this milestone.
-- Zero budget, an explicit or configured limit, an exit in the final permitted
-  slot, a timeout and an instruction error keep their current distinct shapes and
-  successful-step accounting in both configurations.
+- A single internal path installs a loaded image for a configuration: it creates
+  the configuration's memory, loads the program, constructs the core and resets it
+  to the entry point, given that configuration's memory backend.
+- The CLI keeps its bus composition (RAM at the image base, UART, HTIF callback)
+  and the flat library keeps its bare flat memory; installation shares the
+  sequence, not the configuration.
 
 ### Preserved compatibility
 
-- Public signatures, CLI options, `read_mem`/`write_mem`/`set_tohost` flat
-  address meanings, exit encodings, device behavior and the documented manual
-  tohost precedence are unchanged.
-- The retained CLI-versus-library differences recorded in the A2 assessment stay
-  as documented, except where this contract explicitly changes behavior; none of
-  them change here.
+- Public signatures, CLI options and output, `read_mem`/`write_mem`/`set_tohost`
+  address meanings, exit encodings, device behavior, artifact policy and the
+  retained differences recorded in the A3 assessment are unchanged.
+- The two loops are not merged into one loop, and the milestone does not claim the
+  Machine/Platform composition.
 
 ## Task decomposition and PR cadence
 
@@ -97,8 +91,8 @@ be split or combined into reviewable PRs without changing the acceptance goal.
 
 | Task | Contribution | Dependency / evidence |
 | --- | --- | --- |
-| T1 — Shared placement resolution | One checked mapping from image metadata to the configuration's address form, used by both entry points; per-use alignment stays explicit. | The A2 placement tests must pass unchanged, plus focused equivalence and boundary tests. |
-| T2 — Shared result construction | One builder for exit, cycles, PC, artifact and primary failure, with the artifact policy passed in explicitly and the exit retained before clearing. | The A2 exit, limit, artifact and replacement tests must pass unchanged, plus policy tests for both configurations. |
+| T1 — Shared run-control decision | One owner for the budget, stop reason, exit ordering and signal clearing, used by both loops, with the configurations still supplying their own signal sources. | The A1–A3 exit, limit and equivalence tests must pass unchanged, plus focused tests for the decision itself. |
+| T2 — Shared image installation | One sequence that installs a loaded image for a configuration, given its memory backend. | The CLI and flat suites must pass unchanged, plus installation tests for both configurations. |
 | T3 — Integrated equivalence and documentation | Prove through committed tests that both entry points keep their documented behavior on the shared path, and record what changed. | Depends on T1–T2; exact-head review, full gate and merge-time guest evidence. |
 
 Preserve before changing: reproduce any behavior difference before adjusting it,
@@ -111,55 +105,57 @@ The [accepted ADRs](architecture/decisions/README.md), particularly
 [ADR-0003](architecture/decisions/0003-runner-machine-and-platform-ownership.md),
 and [principles](architecture/principles.md) remain authoritative:
 
-- One Hart, one ISA engine. This milestone shares host-side helpers; it does not
-  add a second execution loop or change instruction semantics.
-- Host image handling and inspection stay separate from Hart-initiated physical
-  transactions. Storage adaptation is not guest virtual-to-physical translation.
+- One Hart, one ISA engine. The shared path decides and installs; it does not
+  execute instructions itself, and it does not change instruction semantics.
+- Host image handling stays separate from Hart-initiated physical transactions.
+  Storage adaptation is not guest virtual-to-physical translation.
 - Public entry points keep their names and behavior; prefer private helpers. Any
   new public item needs a stated reason and rustdoc.
-- The milestone does not consolidate the two run loops and does not claim
+- The milestone does not consolidate the two loops and does not claim
   Machine/Platform boundaries integrated.
 
 ## Non-goals and retained gaps
 
 - Runner/Machine/Platform composition, new ports or boundaries, precise Hart
-  outcomes/observations, scheduler or interrupt integration.
+  outcomes/observations, scheduler or interrupt integration, merged run loops.
 - Devices in the flat wrapper, MMU/PMP/paging, multi-hart, SystemC/TLM, new ISA
   support, acceleration, and ACT4 or any external architecture-suite compliance.
-- Repairing G-03, G-04, G-05, the CLI half of G-06, G-07, G-08, G-09 or G-11; changing CLI
-  options or the CLI signature-failure policy; `write_mem` transactional
-  semantics; arbitrary allocation hardening; poisoned-lock or blocking-backend
-  termination guarantees.
+- Repairing G-03, G-04, G-05, the CLI half of G-06, G-07, G-08, G-09 or G-11;
+  changing CLI options or the CLI signature-failure policy; `write_mem`
+  transactional semantics; arbitrary allocation hardening; poisoned-lock or
+  blocking-backend termination guarantees.
+- Exhausting the default cycle limit or adding `tohost` symbol-fallback fixtures;
+  those remain recorded unverified boundaries.
 - Performance work and benchmark targets.
 
 These exclusions bound the milestone; they are not extra future milestones.
 
 ## Deliverables and acceptance criteria
 
-Deliver one shared placement path and one shared result path, focused
-regressions, integrated equivalence evidence and updated records. Completion
-requires all of the following:
+Deliver one run-control decision, one installation path, focused regressions,
+integrated equivalence evidence and updated records. Completion requires all of
+the following:
 
-1. **One placement owner.** Both public entry points resolve image-declared
-   metadata through the same internal path; no duplicated guest-to-configuration
-   arithmetic remains. Tests cover base zero, nonzero base, a nonzero entry
-   offset, below-base, beyond-image, overflow and the per-use alignment rule.
-2. **One result owner.** Exit retention, timeout/error shapes and artifact
-   composition are constructed in one place, with the artifact policy explicit
-   per configuration; no path re-reads a cleared signal. Zero budget, exhaustion
-   and final-slot exits keep their current assertions in both configurations.
-3. **Behavior preserved.** Every A1 and A2 CLI and flat-library test passes
-   unchanged; none is deleted or weakened. The documented retained differences
-   remain accurate.
+1. **One run-control decision.** Both entry points reach their stop decision
+   through the same internal owner; no loop keeps a private copy of the budget,
+   stop-reason, exit-ordering or signal-clearing logic. Tests cover zero budget,
+   exhaustion, the final-slot exit, exit retention before clearing, and the
+   ordering of the signals each configuration observes.
+2. **One installation path.** Both entry points install a loaded image through
+   the same sequence, each supplying its own memory backend; the CLI keeps its
+   device composition and the flat library stays bare.
+3. **Behavior preserved.** Every A1–A3 CLI and flat-library test passes unchanged;
+   none is deleted or weakened. The retained differences recorded in the A3
+   assessment remain accurate.
 4. **Evidence is current.** Full quality gate, strict rustdoc, public CLI/ELF
-   regressions and the merge-time guest compilation/execution run are recorded
-   for the reviewed implementation or verified merge. Matrix, gap register and
+   regressions and the merge-time guest compilation/execution run are recorded for
+   the reviewed implementation or verified merge. Matrix, gap register and
    current-state documents identify precisely what changed and what remains
    unverified.
 5. **Capability acceptance, not task counting.** A final assessment maps these
    scenarios to committed tests, records limitations and independent review, and
-   proposes at most one successor from remaining architectural needs. T1 alone,
-   or merely deleting duplicated lines, cannot close A3.
+   proposes at most one successor from remaining architectural needs. T1 alone, or
+   merely deleting duplicated lines, cannot close A4.
 
 The quality gate is `cargo fmt --all -- --check`, `cargo check --all-features`,
 `cargo clippy --all-features --all-targets -- -D warnings`,
