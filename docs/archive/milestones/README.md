@@ -14,6 +14,10 @@ Archived files are not active plans. They may describe component-level completio
 
 ## Records
 
+- [A3: Shared image placement and result path — completion record](a3-closeout-record.md)
+  - [Original milestone contract](a3-shared-image-placement-and-result-path.md)
+  - [Capability assessment](a3-capability-assessment.md)
+
 - [A2: Reliable flat-library ELF execution and inspection — completion record](a2-closeout-record.md)
   - [Original milestone contract](a2-reliable-flat-library-workflow.md)
   - [Capability assessment](a2-capability-assessment.md)

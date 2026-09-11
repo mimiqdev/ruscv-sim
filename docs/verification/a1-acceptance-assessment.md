@@ -13,11 +13,13 @@ A1 was accepted with its documented limitations on 2026-09-08. Its records are:
 - [A2 closeout](../archive/milestones/a2-closeout-record.md), which superseded
   the historical G-02-only successor selection; A1's acceptance remains
   unchanged.
-- [A3 — the only active milestone](../dev-plan.md), one shared image-placement
-  and result-construction path behind both public entry points.
+- [A3 closeout](../archive/milestones/a3-closeout-record.md), which shared image
+  placement and result construction between the entry points.
+- [A4 — the only active milestone](../dev-plan.md), one host-side path for run
+  control and image installation.
 
 The historical assessment's recommendation/pending-confirmation language is not
-current status. A1 and A2 completion does not mean the recorded runtime defects
-are fixed or that the target architecture is implemented. The matrix and gap
+current status. A1, A2 and A3 completion does not mean the recorded runtime
+defects are fixed or that the target architecture is implemented. The matrix and gap
 register remain as-of evidence until subsequent verified changes update specific
 entries.
