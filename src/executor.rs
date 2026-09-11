@@ -444,6 +444,125 @@ pub(crate) fn clear_tohost(
 
 use std::path::Path;
 
+/// Address form a configuration uses for image-declared metadata.
+///
+/// Both public entry points address the same loaded image differently: the
+/// native bus maps RAM at the image base, so a guest address is already the
+/// address the bus takes, while the flat library holds the image relative to its
+/// base and addresses it by a checked storage offset.
+#[derive(Debug, Clone, Copy)]
+enum AddressForm {
+    /// Native bus configuration: image/guest addresses pass through unchanged.
+    Bus,
+    /// Flat configuration: image/guest addresses resolve to buffer offsets.
+    Flat { base_addr: u64, memory_size: u64 },
+}
+
+impl AddressForm {
+    /// Resolve an image-declared guest range into this configuration's address.
+    ///
+    /// The flat form is checked: an address below the image base, a range that
+    /// overflows the address space, or a range that leaves the image buffer is
+    /// an explicit error rather than a wrapped or truncated offset. Per-use
+    /// requirements such as the exit poll's eight-byte alignment are enforced by
+    /// the caller, not here.
+    fn resolve(self, guest_addr: u64, len: u64, what: &str) -> Result<u64, ExecutorError> {
+        match self {
+            AddressForm::Bus => Ok(guest_addr),
+            AddressForm::Flat {
+                base_addr,
+                memory_size,
+            } => {
+                let offset = guest_addr.checked_sub(base_addr).ok_or_else(|| {
+                    ExecutorError::ExecutionError(format!(
+                        "{what} address 0x{guest_addr:016x} is below image base 0x{base_addr:016x}"
+                    ))
+                })?;
+                let end = offset.checked_add(len).ok_or_else(|| {
+                    ExecutorError::ExecutionError(format!(
+                        "{what} address 0x{guest_addr:016x} overlaps the end of the address space"
+                    ))
+                })?;
+                if end > memory_size {
+                    return Err(ExecutorError::ExecutionError(format!(
+                        "{what} address 0x{guest_addr:016x} maps to flat offset 0x{offset:016x}, outside the {memory_size:#x}-byte image memory"
+                    )));
+                }
+                Ok(offset)
+            }
+        }
+    }
+}
+
+/// Where a loaded image declares its exit signal and signature artifact.
+///
+/// One owner holds the image's placement facts so both entry points resolve them
+/// through the same checked conversion instead of each implementing its own.
+#[derive(Debug, Clone, Default)]
+struct ImagePlacement {
+    /// Lowest load-segment address of the image.
+    base_addr: u64,
+    /// Bytes addressable in the configuration's image buffer or RAM window.
+    memory_size: u64,
+    /// Image-declared exit signal, as a guest address.
+    tohost: Option<u64>,
+    /// Image-declared signature region, as guest metadata.
+    signature: Option<SignatureInfo>,
+}
+
+impl ImagePlacement {
+    fn new(
+        base_addr: u64,
+        memory_size: usize,
+        tohost: Option<u64>,
+        signature: Option<SignatureInfo>,
+    ) -> Self {
+        Self {
+            base_addr,
+            memory_size: memory_size as u64,
+            tohost,
+            signature,
+        }
+    }
+
+    /// The address form the flat library configuration addresses images in.
+    fn address_form(&self) -> AddressForm {
+        AddressForm::Flat {
+            base_addr: self.base_addr,
+            memory_size: self.memory_size,
+        }
+    }
+
+    /// The image's declared exit signal in the requested address form.
+    ///
+    /// Absent metadata yields `None`; a placement this configuration cannot
+    /// address is an error.
+    fn tohost(&self, form: AddressForm) -> Result<Option<u64>, ExecutorError> {
+        self.tohost
+            .map(|addr| form.resolve(addr, 8, "ELF tohost"))
+            .transpose()
+    }
+
+    /// The address of a declared signature region in the requested address form.
+    fn signature_address(
+        &self,
+        info: &SignatureInfo,
+        form: AddressForm,
+    ) -> Result<u64, ExecutorError> {
+        form.resolve(info.vaddr, info.size, "ELF signature")
+    }
+
+    /// The image's declared signature metadata, including its guest address.
+    fn signature_info(&self) -> Option<&SignatureInfo> {
+        self.signature.as_ref()
+    }
+
+    /// The image-declared exit signal as a guest address, if it declares one.
+    fn tohost_guest(&self) -> Option<u64> {
+        self.tohost
+    }
+}
+
 /// Load and execute an ELF file
 ///
 /// # Arguments
@@ -479,11 +598,17 @@ pub fn load_and_run(
                   entry_point, base_addr, memory.len(), elf_tohost);
     }
 
+    // The bus configuration maps RAM at the image base, so image-declared
+    // metadata resolves to its own guest address.
+    let placement = ImagePlacement::new(base_addr, memory.len(), elf_tohost, signature);
+
     // Determine tohost address with priority:
     // 1. Command line provided address (tohost_addr)
     // 2. Address from ELF .tohost section (elf_tohost)
     // 3. Default address (DEFAULT_TOHOST)
-    let tohost = tohost_addr.or(elf_tohost).unwrap_or(DEFAULT_TOHOST);
+    let tohost = tohost_addr
+        .or(placement.tohost(AddressForm::Bus)?)
+        .unwrap_or(DEFAULT_TOHOST);
 
     // Step 2: Allocate and initialize memory
     let mem_size = memory.len();
@@ -632,7 +757,7 @@ pub fn load_and_run(
                     }
                     // Reset for potential re-use
                     exit_code.store(u32::MAX, std::sync::atomic::Ordering::SeqCst);
-                    let sig_data = dump_signature(&bus_interface, signature.as_ref())
+                    let sig_data = dump_signature(&bus_interface, placement.signature_info())
                         .ok()
                         .flatten();
                     return Ok(ExecutionResult {
@@ -641,7 +766,7 @@ pub fn load_and_run(
                         final_pc: core.state().pc,
                         timed_out: false,
                         error: None,
-                        signature_addr: signature.map(|s| s.vaddr),
+                        signature_addr: placement.signature_info().map(|s| s.vaddr),
                         signature_data: sig_data,
                     });
                 }
@@ -671,16 +796,17 @@ pub fn load_and_run(
                                 // Clear tohost after processing (Spike-compatible behavior)
                                 drop(mem_guard);
                                 clear_tohost(&bus_interface, tohost_pa, verbose);
-                                let sig_data = dump_signature(&bus_interface, signature.as_ref())
-                                    .ok()
-                                    .flatten();
+                                let sig_data =
+                                    dump_signature(&bus_interface, placement.signature_info())
+                                        .ok()
+                                        .flatten();
                                 return Ok(ExecutionResult {
                                     exit_code: exit_code_val,
                                     cycles,
                                     final_pc: core.state().pc,
                                     timed_out: false,
                                     error: None,
-                                    signature_addr: signature.map(|s| s.vaddr),
+                                    signature_addr: placement.signature_info().map(|s| s.vaddr),
                                     signature_data: sig_data,
                                 });
                             } else if tohost_value != 0 && verbose {
@@ -710,7 +836,7 @@ pub fn load_and_run(
                 }
             }
             Err(e) => {
-                let sig_data = dump_signature(&bus_interface, signature.as_ref())
+                let sig_data = dump_signature(&bus_interface, placement.signature_info())
                     .ok()
                     .flatten();
                 return Ok(ExecutionResult {
@@ -722,7 +848,7 @@ pub fn load_and_run(
                         "Execution error at PC 0x{:016x}: {}",
                         current_pc, e
                     )),
-                    signature_addr: signature.map(|s| s.vaddr),
+                    signature_addr: placement.signature_info().map(|s| s.vaddr),
                     signature_data: sig_data,
                 });
             }
@@ -739,7 +865,7 @@ pub fn load_and_run(
         );
     }
 
-    let sig_data = dump_signature(&bus_interface, signature.as_ref())
+    let sig_data = dump_signature(&bus_interface, placement.signature_info())
         .ok()
         .flatten();
     Ok(ExecutionResult {
@@ -748,7 +874,7 @@ pub fn load_and_run(
         final_pc: core.state().pc,
         timed_out: true,
         error: Some(format!("Timeout after {} cycles", max_cycles)),
-        signature_addr: signature.map(|s| s.vaddr),
+        signature_addr: placement.signature_info().map(|s| s.vaddr),
         signature_data: sig_data,
     })
 }
@@ -837,14 +963,10 @@ pub struct RiscVSimulator {
     memory: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
     /// Explicit flat storage offset set through `set_tohost`
     manual_tohost: Option<u64>,
-    /// Flat storage offset derived from the loaded image's tohost metadata
-    image_tohost: Option<u64>,
-    /// Base address of the loaded image (guest address - base = flat offset)
-    base_addr: u64,
+    /// Loaded image placement; resolved through the shared address forms
+    image: ImagePlacement,
     /// Maximum cycles
     max_cycles: u64,
-    /// Signature section info
-    signature: Option<SignatureInfo>,
     /// Verbose output flag
     verbose: bool,
 }
@@ -858,50 +980,26 @@ impl RiscVSimulator {
             core,
             memory,
             manual_tohost: None,
-            image_tohost: None,
-            base_addr: 0,
+            image: ImagePlacement::default(),
             max_cycles: DEFAULT_MAX_CYCLES,
-            signature: None,
             verbose: false,
         }
     }
 
-    /// Flat storage offset polled by [`RiscVSimulator::run`] for the exit signal
-    fn tohost_offset(&self) -> u64 {
-        self.manual_tohost
-            .or(self.image_tohost)
-            .unwrap_or(DEFAULT_TOHOST)
-    }
-
-    /// Convert an image-declared guest range into a checked flat storage offset.
+    /// Flat storage offset polled by [`RiscVSimulator::run`] for the exit signal.
     ///
-    /// `len` is the number of bytes the caller needs at that offset. The
-    /// conversion is checked, so an address below the image base, a range that
-    /// overflows the address space, or a range that leaves the image memory is
-    /// an error rather than a wrapped or truncated offset.
-    fn image_flat_offset(
-        base_addr: u64,
-        guest_addr: u64,
-        len: u64,
-        memory_size: usize,
-        what: &str,
-    ) -> Result<u64, ExecutorError> {
-        let offset = guest_addr.checked_sub(base_addr).ok_or_else(|| {
-            ExecutorError::ExecutionError(format!(
-                "{what} address 0x{guest_addr:016x} is below image base 0x{base_addr:016x}"
-            ))
-        })?;
-        let end = offset.checked_add(len).ok_or_else(|| {
-            ExecutorError::ExecutionError(format!(
-                "{what} address 0x{guest_addr:016x} overlaps the end of the address space"
-            ))
-        })?;
-        if end > memory_size as u64 {
-            return Err(ExecutorError::ExecutionError(format!(
-                "{what} address 0x{guest_addr:016x} maps to flat offset 0x{offset:016x}, outside the {memory_size:#x}-byte image memory"
-            )));
+    /// Re-resolving the image's declared signal cannot fail here: the loaded
+    /// image and its memory are replaced together in [`RiscVSimulator::load_elf`],
+    /// and a declared signal that this configuration cannot address is rejected
+    /// before either is assigned. Keep that pairing if the load path changes.
+    fn tohost_offset(&self) -> Result<u64, ExecutorError> {
+        match self.manual_tohost {
+            Some(addr) => Ok(addr),
+            None => Ok(self
+                .image
+                .tohost(self.image.address_form())?
+                .unwrap_or(DEFAULT_TOHOST)),
         }
-        Ok(offset)
     }
 
     /// Set verbosity
@@ -940,23 +1038,19 @@ impl RiscVSimulator {
             loaded.tohost,
             loaded.base_addr,
         );
-        // Resolve image-derived exit metadata before mutating wrapper state, so a
-        // placement the flat image cannot represent leaves the wrapper unchanged.
-        let image_tohost = match tohost {
-            Some(addr) => {
-                let offset =
-                    Self::image_flat_offset(base_addr, addr, 8, memory.len(), "ELF tohost")?;
-                if !offset.is_multiple_of(8) {
-                    return Err(ExecutorError::ExecutionError(format!(
-                        "ELF tohost address 0x{addr:016x} maps to flat offset 0x{offset:016x}, which the exit poll cannot read eight-byte aligned"
-                    )));
-                }
-                Some(offset)
+        // Resolve image-derived metadata before mutating wrapper state, so a
+        // placement this configuration cannot address leaves the wrapper
+        // unchanged.
+        let image = ImagePlacement::new(base_addr, memory.len(), tohost, sig);
+        if let (Some(guest), Some(offset)) =
+            (image.tohost_guest(), image.tohost(image.address_form())?)
+        {
+            if !offset.is_multiple_of(8) {
+                return Err(ExecutorError::ExecutionError(format!(
+                    "ELF tohost address 0x{guest:016x} maps to flat offset 0x{offset:016x}, which the exit poll cannot read eight-byte aligned"
+                )));
             }
-            None => None,
-        };
-
-        self.signature = sig;
+        }
 
         // NOTE: This implementation is simplified and still uses SimpleMemory internally
         // if created via new(). It does not support SystemBus yet.
@@ -975,14 +1069,13 @@ impl RiscVSimulator {
         self.core = RiscvCore::new(self.memory.clone(), self.memory.clone());
         self.core.set_verbose(self.verbose);
 
-        // Replace image-owned exit configuration. A manual offset set before this
-        // load is superseded when the image declares its own tohost; an image
-        // without metadata must not inherit the previous image's derived offset.
-        self.base_addr = base_addr;
-        if image_tohost.is_some() {
+        // Replace image-owned metadata. A manual offset set before this load is
+        // superseded when the image declares its own tohost; an image without
+        // metadata must not inherit the previous image's derived offset.
+        if image.tohost_guest().is_some() {
             self.manual_tohost = None;
         }
-        self.image_tohost = image_tohost;
+        self.image = image;
 
         // Reset core to entry point with base address for VA translation
         self.core.reset(entry_point, base_addr);
@@ -1033,7 +1126,7 @@ impl RiscVSimulator {
     /// timeout, and an exit in the final permitted slot is not a timeout.
     pub fn run(&mut self, max_cycles: Option<u64>) -> Result<ExecutionResult, ExecutorError> {
         let max_cycles = max_cycles.unwrap_or(self.max_cycles);
-        let tohost = self.tohost_offset();
+        let tohost = self.tohost_offset()?;
         let mut cycles = 0u64;
 
         // Track last tohost value for verbose diagnostics
@@ -1157,7 +1250,7 @@ impl RiscVSimulator {
     /// that cannot be mapped or read yields an explicit diagnostic instead of
     /// silent absence.
     fn signature_artifact(&self) -> (Option<u64>, Option<Vec<u8>>, Option<String>) {
-        let Some(info) = self.signature.as_ref() else {
+        let Some(info) = self.image.signature_info() else {
             return (None, None, None);
         };
         let addr = info.vaddr;
@@ -1167,8 +1260,10 @@ impl RiscVSimulator {
             return (Some(addr), Some(Vec::new()), None);
         }
 
-        let memory_size = self.memory.lock().unwrap().size();
-        match Self::image_flat_offset(self.base_addr, addr, size, memory_size, "ELF signature") {
+        match self
+            .image
+            .signature_address(info, self.image.address_form())
+        {
             Ok(offset) => match self.read_mem(offset, size as usize) {
                 Ok(bytes) => (Some(addr), Some(bytes), None),
                 Err(error) => (
@@ -1331,5 +1426,172 @@ mod tests {
 
         // Verify we can still access the simulator
         assert_eq!(sim.state().pc, 0);
+    }
+
+    const PLACEMENT_BASE: u64 = 0x8000_0000;
+
+    fn signature(vaddr: u64, size: u64) -> SignatureInfo {
+        SignatureInfo {
+            vaddr,
+            size,
+            file_offset: 0,
+        }
+    }
+
+    #[test]
+    fn test_placement_resolves_both_address_forms() {
+        let placement = ImagePlacement::new(
+            PLACEMENT_BASE,
+            0x1_0000,
+            Some(PLACEMENT_BASE + 0x1000),
+            Some(signature(PLACEMENT_BASE + 0x2000, 8)),
+        );
+
+        // The bus configuration maps RAM at the image base, so the guest
+        // address is the address it polls and reads.
+        assert_eq!(
+            placement.tohost(AddressForm::Bus).unwrap(),
+            Some(PLACEMENT_BASE + 0x1000)
+        );
+        assert_eq!(
+            placement
+                .signature_address(placement.signature_info().unwrap(), AddressForm::Bus)
+                .unwrap(),
+            PLACEMENT_BASE + 0x2000
+        );
+
+        // The flat configuration addresses the same metadata as offsets.
+        assert_eq!(
+            placement.tohost(placement.address_form()).unwrap(),
+            Some(0x1000)
+        );
+        assert_eq!(
+            placement
+                .signature_address(
+                    placement.signature_info().unwrap(),
+                    placement.address_form()
+                )
+                .unwrap(),
+            0x2000
+        );
+        assert_eq!(
+            placement.signature_info().map(|info| info.vaddr),
+            Some(PLACEMENT_BASE + 0x2000),
+            "the reported signature address stays the guest metadata address"
+        );
+    }
+
+    #[test]
+    fn test_placement_base_zero_uses_raw_offsets() {
+        let placement = ImagePlacement::new(0, 0x1_0000, Some(0x1000), None);
+
+        assert_eq!(
+            placement.tohost(placement.address_form()).unwrap(),
+            Some(0x1000)
+        );
+        assert_eq!(
+            placement.tohost(AddressForm::Bus).unwrap(),
+            Some(0x1000),
+            "both forms coincide at base zero"
+        );
+    }
+
+    #[test]
+    fn test_placement_rejects_unaddressable_flat_ranges() {
+        let below_base =
+            ImagePlacement::new(PLACEMENT_BASE, 0x1_0000, Some(PLACEMENT_BASE - 8), None);
+        assert!(below_base.tohost(below_base.address_form()).is_err());
+
+        let beyond_image = ImagePlacement::new(
+            PLACEMENT_BASE,
+            0x1_0000,
+            Some(PLACEMENT_BASE + 0x1_0000),
+            None,
+        );
+        assert!(
+            beyond_image.tohost(beyond_image.address_form()).is_err(),
+            "the eight-byte dword must fit inside the image memory"
+        );
+
+        let overflowing = ImagePlacement::new(0, 0x1_0000, Some(u64::MAX - 7), None);
+        assert!(overflowing.tohost(overflowing.address_form()).is_err());
+
+        // The bus form performs no conversion, so it neither wraps nor invents
+        // an address: the configuration's own device map decides what exists.
+        assert_eq!(
+            overflowing.tohost(AddressForm::Bus).unwrap(),
+            Some(u64::MAX - 7)
+        );
+    }
+
+    #[test]
+    fn test_placement_absent_metadata_is_none() {
+        let placement = ImagePlacement::new(PLACEMENT_BASE, 0x1_0000, None, None);
+
+        assert_eq!(placement.tohost(AddressForm::Bus).unwrap(), None);
+        assert_eq!(placement.tohost(placement.address_form()).unwrap(), None);
+        assert!(placement.signature_info().is_none());
+    }
+
+    #[test]
+    fn test_placement_signature_range_boundaries() {
+        // The last byte of the image is addressable; one past it is not.
+        let ends_at_limit = ImagePlacement::new(
+            PLACEMENT_BASE,
+            0x1000,
+            None,
+            Some(signature(PLACEMENT_BASE + 0x800, 0x800)),
+        );
+        assert_eq!(
+            ends_at_limit
+                .signature_address(
+                    ends_at_limit.signature_info().unwrap(),
+                    ends_at_limit.address_form()
+                )
+                .unwrap(),
+            0x800
+        );
+
+        let one_past = ImagePlacement::new(
+            PLACEMENT_BASE,
+            0x1000,
+            None,
+            Some(signature(PLACEMENT_BASE + 0x800, 0x801)),
+        );
+        assert!(one_past
+            .signature_address(one_past.signature_info().unwrap(), one_past.address_form())
+            .is_err());
+
+        // An empty range needs no bytes; the library's empty-artifact rule
+        // short-circuits before this call, and the conversion still refuses an
+        // offset that leaves the image memory entirely.
+        let empty_at_limit = ImagePlacement::new(
+            PLACEMENT_BASE,
+            0x1000,
+            None,
+            Some(signature(PLACEMENT_BASE + 0x1000, 0)),
+        );
+        assert_eq!(
+            empty_at_limit
+                .signature_address(
+                    empty_at_limit.signature_info().unwrap(),
+                    empty_at_limit.address_form()
+                )
+                .unwrap(),
+            0x1000
+        );
+
+        let empty_beyond = ImagePlacement::new(
+            PLACEMENT_BASE,
+            0x1000,
+            None,
+            Some(signature(PLACEMENT_BASE + 0x1001, 0)),
+        );
+        assert!(empty_beyond
+            .signature_address(
+                empty_beyond.signature_info().unwrap(),
+                empty_beyond.address_form()
+            )
+            .is_err());
     }
 }
