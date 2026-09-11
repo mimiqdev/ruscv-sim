@@ -13,11 +13,18 @@ assert len(elfs) == 1, elfs
 elf = elfs[0]
 objdump = subprocess.check_output(["riscv64-unknown-elf-objdump", "-d", "-M", "no-aliases", str(elf)], text=True)
 (evidence / "linked.objdump").write_text(objdump)
-# Strict base-I opcode audit includes startup and failure-reporting code.
+# Base-I audit includes startup and failure-reporting code; opcode classes
+# alone would incorrectly allow M/B instructions that share OP encodings.
 allowed = {0x03, 0x0f, 0x13, 0x17, 0x1b, 0x23, 0x33, 0x37, 0x3b, 0x63, 0x67, 0x6f}
+mnemonics = set("""lui auipc jal jalr beq bne blt bge bltu bgeu
+lb lh lw ld lbu lhu lwu sb sh sw sd
+addi slti sltiu xori ori andi slli srli srai
+add sub sll slt sltu xor srl sra or and
+addiw slliw srliw sraiw addw subw sllw srlw sraw fence fence.tso""".split())
 instructions = re.findall(r"^\s*[0-9a-f]+:\s+([0-9a-f]{4,8})\s+(\S+)", objdump, re.M)
 assert instructions, "No disassembly"
-unsupported = [(word, op) for word, op in instructions if len(word) != 8 or int(word, 16) & 0x7f not in allowed]
+unsupported = [(word, op) for word, op in instructions
+               if len(word) != 8 or int(word, 16) & 0x7f not in allowed or op not in mnemonics]
 (evidence / "audit.json").write_text(json.dumps({"instructions": len(instructions), "unsupported": unsupported}, indent=2))
 assert not unsupported, unsupported
 # Flip the first actual expected result, after the initial signature canary.
@@ -53,7 +60,7 @@ for name, path in [("intact", elf), ("corrupt", control)]:
     except subprocess.TimeoutExpired:
         output, rc = "Host timeout", None
     (evidence / f"{name}.txt").write_text(output)
-    status = ("guest-pass" if rc == 0 and "Status:     SUCCESS" in output
+    status = ("guest-pass" if rc == 0 and "Status:     SUCCESS" in output and "Error:" not in output
               else "guest-fail" if rc == 1 and "Status:     FAILED" in output and "Error:" not in output
               else "simulator-or-runner-failure")
     results.append({"case": name, "command": command, "returncode": rc, "classification": status,

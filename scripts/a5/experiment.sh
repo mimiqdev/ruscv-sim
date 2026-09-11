@@ -4,9 +4,10 @@ set -euo pipefail
 ROOT=$(pwd)
 export PATH="$ROOT/.a5/tools/sail/bin:$ROOT/.a5/tools/gcc/bin:$PATH"
 mkdir -p .a5/{tools,evidence,config,selection/rv64i/I}
+python3 scripts/a5/test_runner.py
 python3 scripts/a5/provision.py
 uv python install 3.12.12
-cp scripts/a5/{test_config.yaml,ruscv-rv64i-smoke.yaml,rvmodel_macros.h,link.ld} .a5/config/
+cp scripts/a5/{test_config.yaml,ruscv-rv64i-smoke.yaml,rvmodel_macros.h,rvtest_config.h,link.ld} .a5/config/
 # Derive a complete Sail configuration from the pinned upstream schema example.
 # This describes the oracle, NOT extra DUT capabilities. Disable optional ISAs.
 python3 scripts/a5/sail_config.py
@@ -35,6 +36,7 @@ cp -R tests/env "$ROOT/.a5/selection/"
 bundle exec uv run --frozen --python 3.12.12 --package act act \
   "$ROOT/.a5/config/test_config.yaml" --test-dir "$ROOT/.a5/selection" \
   --workdir "$ROOT/.a5/work" --extensions I --jobs 1 --verbose
+python3 "$ROOT/scripts/a5/validate_controls.py" "$ROOT"
 cd "$ROOT"
 rustup toolchain install 1.93.1 --profile minimal
 cargo +1.93.1 build --locked --release

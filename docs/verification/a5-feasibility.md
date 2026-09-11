@@ -32,6 +32,15 @@ compatibility or approval of the final A5 profile. The schema choice remains
 subject to independent review before freezing that profile. Test source,
 signature oracle, self-check generation and guest startup remain upstream code.
 
+### Linux attempt 2: adapted UDB validation passed; missing DUT header
+
+[Run 34616533721](https://github.com/mimiqdev/ruscv-sim/actions/runs/34616533721)
+at `2116b34` genuinely validated the adapted configuration and emitted an
+extension list containing **only I** (no inferred Sm). Compilation then stopped
+because the DUT also needs `rvtest_config.h`, independently of the model macros.
+The next revision supplies this header with PMP count/grain zero and no
+optional ISA definitions. No simulator failure or ISA fix is implicated.
+
 ## Initial reconnaissance (historical, before the Linux experiment)
 
 **State:** Environment/source reconnaissance; generation and public-CLI smoke
