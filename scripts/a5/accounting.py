@@ -65,6 +65,12 @@ def generation(plan, work, returncode):
         exact(expected, actual, "generated ELFs")
     except ValueError as error:
         errors.append(str(error))
+    for key, suffix in (("signature", "*.sig"), ("expected_results", "*.results")):
+        try:
+            exact([v[key] for v in variants],
+                  [str(p.relative_to(work)) for p in work.rglob(suffix)], key)
+        except ValueError as error:
+            errors.append(str(error))
     records = []
     for variant in variants:
         record = {**variant, "artifacts": {}}
@@ -165,6 +171,9 @@ def main():
         results.append({"source": variant["source"], "variant": variant["variant"], "elf": variant["elf"],
                         "sha256": sha256(work / variant["elf"]), **result})
     summary = summarize(plan, generated, results)
+    # Include audit errors discovered during execution in the retained generation
+    # record as well as the suite summary.
+    (evidence / "generated-manifest.json").write_text(json.dumps(generated, indent=2) + "\n")
     report = {"simulator_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "simulator_sha256": sha256(Path("target/release/ruscv-sim")),
               "configuration_sha256": {str(p): sha256(p) for p in sorted(Path(".a5/config").rglob("*")) if p.is_file()},

@@ -7,11 +7,28 @@ import tempfile
 import unittest
 
 from accounting import execute, exact, generation, make_plan, summarize, verify_plan
+from cli_result import classify
 from inventory import MANIFEST, disposition, metadata, selected
 from test_runner import FAIL, PASS, FOOTER
 
 
 class InventoryTests(unittest.TestCase):
+    def test_retained_linux_accounting_and_strict_classification(self):
+        report = json.loads(Path("docs/verification/a5-accounting-results.json").read_text())
+        plan = make_plan(json.loads(MANIFEST.read_text()))
+        execution = report["execution"]
+        self.assertEqual(summarize(plan, report["generation"], execution["results"]), execution["summary"])
+        self.assertFalse(execution["summary"]["success"])
+        self.assertEqual(execution["summary"]["executed_elfs"], 51)
+        self.assertEqual(execution["summary"]["passed_elfs"], 44)
+        for result in execution["results"]:
+            diagnostics = report["diagnostics"][result["source"]]
+            actual = classify(diagnostics["stdout"], diagnostics["stderr"], result["returncode"],
+                              max_cycles=result["max_cycles"])
+            self.assertTrue(all(actual[key] == result[key] for key in actual))
+        self.assertTrue(all(report["local_retained_accounting_controls"].values()))
+        self.assertTrue(report["public_guest_controls"]["success"])
+
     def test_profile_identity_and_pending_decisions(self):
         profile = json.loads(Path("scripts/a5/profile-proposal.json").read_text())
         manifest = json.loads(MANIFEST.read_text())
@@ -102,8 +119,11 @@ class AccountingTests(unittest.TestCase):
                         path.write_bytes(b"")
                     self.assertTrue(generation(self.plan, self.work, 0)["errors"])
                     path.write_bytes(original)
-        (self.work / "extra.elf").write_bytes(b"extra")
-        self.assertTrue(generation(self.plan, self.work, 0)["errors"])
+        for suffix in (".elf", ".sig", ".results"):
+            extra = self.work / ("extra" + suffix)
+            extra.write_bytes(b"extra")
+            self.assertTrue(generation(self.plan, self.work, 0)["errors"])
+            extra.unlink()
         with self.assertRaises(ValueError):
             exact(["a"], ["a", "a"], "duplicate generation")
 

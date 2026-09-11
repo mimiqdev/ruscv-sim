@@ -1,13 +1,6 @@
 name: A5 Linux feasibility
 on:
   workflow_dispatch:
-  # Bounded pre-merge accounting validation only. Docs-only evidence commits
-  # do not repeat ACT4. Remove this branch trigger after this slice.
-  push:
-    branches: [a5-pinned-selection-accounting]
-    paths:
-      - '.github/workflows/a5-feasibility.yml'
-      - 'scripts/a5/**'
 permissions:
   contents: read
 concurrency:

@@ -176,9 +176,9 @@ A5_SELECTION=proposal bash scripts/a5/experiment.sh
 ```
 
 `A5_SELECTION=smoke` retains the original one-source workflow. The A5 workflow
-uses `workflow_dispatch` for future explicit runs and a narrowly scoped
-pre-merge branch push trigger for this accounting validation. Docs-only evidence
-commits do not rerun ACT4. This slice is bounded to **at most two Linux ACT4
+now uses **only `workflow_dispatch`** for future explicit runs. A narrowly scoped
+pre-merge branch push trigger was used once for accounting validation and then
+removed; final-head/evidence commits do not rerun ACT4. This slice is bounded to **at most two Linux ACT4
 attempts, 30 minutes each**; required ordinary PR CI is separate.
 No `[skip ci]` commits or unrelated Codecov repair is used.
 
@@ -203,10 +203,69 @@ replay in [`a5-classifier-replay.json`](a5-classifier-replay.json).
 Its retained artifact expires **2026-09-25**. This slice does not overwrite
 those hashes or run a fifth old feasibility experiment.
 
-Local verification for this slice: 20 Python tests, deterministic pinned
+Local verification for this slice: 21 Python tests, deterministic pinned
 inventory reconstruction, shell syntax, and all six commands in the A5 Rust
 gate passed. The local host lacks `riscv64-unknown-elf-gcc`; Cargo tests that
 early-return without external tools are not new separately compiled guest
-evidence. Linux generation/control evidence and final-head required PR checks
-must be recorded separately before review; profile freeze and merge remain
-maintainer decisions.
+evidence. Profile freeze and merge remain maintainer decisions.
+
+## Bounded Linux accounting evidence
+
+**Attempt 1 only:** [run 34624439277](https://github.com/mimiqdev/ruscv-sim/actions/runs/34624439277)
+at `4e8a947300f6012d83b991017df4247cda06a449`, duration 4m9s, concluded
+**failure**, correctly. Generation returned zero; **51 sources produced 51
+self-check variants and 51 separate signature ELFs**. All 51 self-check ELFs
+were executed: **44 guest-pass, one guest-fail, six simulator-error results**.
+No missing generated cases or missing execution results; no linked-audit
+rejections. This is provisional complete accounting, **not** full-selection
+compatibility or a frozen 51-source denominator.
+
+| Required source | Result | Retained first diagnostic |
+| --- | --- | --- |
+| `I-beq-00.S` | simulator error | PC `0x80009800`, invalid memory address `0xbaa00d3616bec80d` |
+| `I-bge-00.S` | simulator error | PC `0x80009800`, invalid instruction `0x800097ec` |
+| `I-bgeu-00.S` | simulator error | PC `0x8000981c`, invalid memory address `0x3f33662176fd1ca1` |
+| `I-blt-00.S` | simulator error | PC `0x80009800`, invalid instruction `0x800097ec` |
+| `I-bltu-00.S` | guest fail | Exit 1, 5,528 cycles, PC `0x8001c050`, no simulator error |
+| `I-bne-00.S` | simulator error | PC `0x80009800`, invalid memory address `0x9ab3534837563804` |
+| `I-fence-00.S` | simulator error | Unimplemented instruction at PC `0x80000260`, 150 retired cycles |
+
+All identifiers in this table are under `tests/rv64i/I/`. All seven remain
+required blockers. The branch symptoms are **not yet root-caused**: these
+observations alone do not distinguish an adapter/layout problem from an ISA
+defect. Do not implement speculative Rust branch repairs from this table.
+The FENCE observation reproduces the known `MiscMem` rejection; the next
+bounded repair PR still needs a focused public regression and the full gate.
+
+The same execution function also ran six real public controls: pass, deliberate
+guest fail, cycle nontermination, invalid instruction, malformed ELF, and missing
+ELF. All matched expectations. Host wall-time handling is covered by the local
+fake-process control; it is not relabeled a Linux guest-timeout experiment.
+
+[`a5-accounting-results.json`](a5-accounting-results.json) durably retains all
+source/variant identities, generated hashes, invocations, per-case host result
+fields, stdout/stderr, audit summaries, tool versions, profile/config hashes,
+and control diagnostics. Artifact **10274071547**, 21,676,628 bytes, expires
+**2026-09-25T16:56:08Z**; its locally verified full-archive SHA-256 is
+`08682429f62b8deaf656e1013dd1e11ad54795609353b48087f3810977cdbbd1`.
+
+The follow-up accounting guards also reject extra `.sig` and `.results` files.
+They were verified locally against the exact hash-checked artifact, along with
+empty/missing/duplicate/extra result records, missing generation artifacts and a
+failed generation command. All 12 retained-data negative assertions passed.
+This replay does not rerun a guest or spend another Linux attempt:
+
+```bash
+gh api repos/mimiqdev/ruscv-sim/actions/artifacts/10274071547/zip > .a5/accounting-artifact.zip
+python3 scripts/a5/replay_accounting.py .a5/accounting-artifact.zip
+```
+
+Download performance on the local host required bounded explicit HTTP ranges;
+the reassembled complete archive hash was checked before evidence replay.
+An incomplete download cannot pass the replay's SHA-256 check.
+
+Required PR quality CI [34624444279](https://github.com/mimiqdev/ruscv-sim/actions/runs/34624444279)
+succeeded at the Linux experiment head `4e8a947`. Final-head required PR CI is
+reported separately on PR #33; this earlier success is not substituted for it.
+Only one of the two authorized Linux attempts was used. No second generation
+is necessary to validate the accounting-only follow-up against retained data.
