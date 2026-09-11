@@ -591,6 +591,64 @@ fn cli_result(
 
 use std::path::Path;
 
+/// The run-control decision both entry points share.
+///
+/// It owns the instruction budget, counts retired instructions, names the
+/// timeout diagnostic and applies the exit rule: an observed RAM exit signal is
+/// decoded before it is cleared, so a run cannot lose the guest's code and no
+/// path can re-read a signal it already consumed.
+///
+/// It decides; it does not observe. Each configuration still supplies its own
+/// signal sources in its own order and its own address form, owns how a failed
+/// instruction is worded, and owns how the result is built.
+#[derive(Debug)]
+struct RunControl {
+    cycles: u64,
+    max_cycles: u64,
+}
+
+impl RunControl {
+    /// Start a run with a fixed instruction budget.
+    fn new(max_cycles: u64) -> Self {
+        Self {
+            cycles: 0,
+            max_cycles,
+        }
+    }
+
+    /// Whether another instruction may retire inside the budget.
+    fn may_execute(&self) -> bool {
+        self.cycles < self.max_cycles
+    }
+
+    /// Record one retired instruction.
+    fn retire(&mut self) {
+        self.cycles += 1;
+    }
+
+    /// Instructions retired so far.
+    fn cycles(&self) -> u64 {
+        self.cycles
+    }
+
+    /// The timeout diagnostic a configuration reports when the budget ends the run.
+    fn timeout_message(&self) -> String {
+        format!("Timeout after {} cycles", self.max_cycles)
+    }
+
+    /// Apply the exit rule to an observed RAM signal.
+    ///
+    /// The decoded code is retained and returned before `clear` runs, so a
+    /// caller cannot clear the signal first and report a zeroed code. A value
+    /// that carries no exit command decodes to `None` and leaves the signal
+    /// untouched for the next observation.
+    fn take_ram_exit(observed: u64, clear: impl FnOnce()) -> Option<u32> {
+        let code = try_extract_exit_code(observed)?;
+        clear();
+        Some(code)
+    }
+}
+
 /// Address form a configuration uses for image-declared metadata.
 ///
 /// Both public entry points address the same loaded image differently: the
@@ -839,8 +897,10 @@ pub fn load_and_run(
         })
         .transpose()?;
 
-    // Step 4: Execution loop
-    let mut cycles = 0u64;
+    // Step 4: Execution loop. The budget, the retirement count and the exit rule
+    // live in the shared run control; this loop owns stepping, signal order,
+    // commit logging and its own diagnostics.
+    let mut control = RunControl::new(max_cycles);
     let mut last_tohost_value: u64 = 0;
 
     // Convert tohost virtual address to physical address for checking
@@ -852,7 +912,7 @@ pub fn load_and_run(
                   entry_point, tohost_pa);
     }
 
-    while cycles < max_cycles {
+    while control.may_execute() {
         // Read current PC for result
         let current_pc = core.state().pc;
         let pc_before = current_pc;
@@ -870,7 +930,7 @@ pub fn load_and_run(
         // Execute one instruction
         match core.step() {
             Ok(()) => {
-                cycles += 1;
+                control.retire();
 
                 // Capture register state after execution
                 let regs_after = core.state().regs;
@@ -908,7 +968,7 @@ pub fn load_and_run(
                         &bus_interface,
                         &placement,
                         htif_exit,
-                        cycles,
+                        control.cycles(),
                         core.state().pc,
                         false,
                         None,
@@ -924,27 +984,32 @@ pub fn load_and_run(
                             if verbose && tohost_value != last_tohost_value {
                                 eprintln!(
                                     "[DEBUG] Cycle {}: tohost changed from 0x{:016x} to 0x{:016x}",
-                                    cycles, last_tohost_value, tohost_value
+                                    control.cycles(),
+                                    last_tohost_value,
+                                    tohost_value
                                 );
                                 last_tohost_value = tohost_value;
                             }
 
-                            // Check if tohost contains a valid exit signal
-                            if let Some(exit_code_val) = try_extract_exit_code(tohost_value) {
+                            // The shared exit rule decodes the value and clears
+                            // the signal only after the code is retained.
+                            drop(mem_guard);
+                            if let Some(exit_code_val) =
+                                RunControl::take_ram_exit(tohost_value, || {
+                                    clear_tohost(&bus_interface, tohost_pa, verbose)
+                                })
+                            {
                                 if verbose {
                                     eprintln!(
                                         "[DEBUG] Exit signal detected: code={}",
                                         exit_code_val
                                     );
                                 }
-                                // Clear tohost after processing (Spike-compatible behavior)
-                                drop(mem_guard);
-                                clear_tohost(&bus_interface, tohost_pa, verbose);
                                 return Ok(cli_result(
                                     &bus_interface,
                                     &placement,
                                     exit_code_val,
-                                    cycles,
+                                    control.cycles(),
                                     core.state().pc,
                                     false,
                                     None,
@@ -959,19 +1024,27 @@ pub fn load_and_run(
                         }
                         Err(e) => {
                             // Only log errors periodically to avoid spam
-                            if verbose && cycles.is_multiple_of(1000) {
-                                eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
+                            if verbose && control.cycles().is_multiple_of(1000) {
+                                eprintln!(
+                                    "[DEBUG] Cycle {}: tohost read failed: {}",
+                                    control.cycles(),
+                                    e
+                                );
                             }
                         }
                     }
                 }
 
                 // Debug output every 1000 cycles
-                if verbose && cycles.is_multiple_of(1000) {
+                if verbose && control.cycles().is_multiple_of(1000) {
                     let state = core.state();
                     eprintln!(
                         "[DEBUG] Cycle {}: PC=0x{:010x}, ra={}, sp={}, gp={}",
-                        cycles, current_pc, state.regs[1], state.regs[2], state.regs[3]
+                        control.cycles(),
+                        current_pc,
+                        state.regs[1],
+                        state.regs[2],
+                        state.regs[3]
                     );
                 }
             }
@@ -980,7 +1053,7 @@ pub fn load_and_run(
                     &bus_interface,
                     &placement,
                     1,
-                    cycles,
+                    control.cycles(),
                     current_pc,
                     false,
                     Some(format!(
@@ -996,7 +1069,7 @@ pub fn load_and_run(
     if verbose {
         eprintln!(
             "[DEBUG] Timeout at cycle {}: PC=0x{:016x}, tohost=0x{:016x}",
-            cycles,
+            control.cycles(),
             core.state().pc,
             last_tohost_value
         );
@@ -1006,10 +1079,10 @@ pub fn load_and_run(
         &bus_interface,
         &placement,
         1, // Non-zero indicates abnormal termination
-        cycles,
+        control.cycles(),
         core.state().pc,
         true,
-        Some(format!("Timeout after {} cycles", max_cycles)),
+        Some(control.timeout_message()),
     ))
 }
 
@@ -1261,20 +1334,22 @@ impl RiscVSimulator {
     pub fn run(&mut self, max_cycles: Option<u64>) -> Result<ExecutionResult, ExecutorError> {
         let max_cycles = max_cycles.unwrap_or(self.max_cycles);
         let tohost = self.tohost_offset()?;
-        let mut cycles = 0u64;
+        // The budget, the retirement count and the exit rule come from the shared
+        // run control; this loop owns stepping and its own diagnostics.
+        let mut control = RunControl::new(max_cycles);
 
         // Track last tohost value for verbose diagnostics
         let mut last_tohost_value: u64 = 0;
 
-        while cycles < max_cycles {
+        while control.may_execute() {
             // Execute one instruction first
             match self.step() {
                 Ok(()) => {
-                    cycles += 1;
+                    control.retire();
                 }
                 Err(e) => {
                     return Ok(self.finish(
-                        cycles,
+                        control.cycles(),
                         1,
                         false,
                         Some(format!("Execution error: {}", e)),
@@ -1291,7 +1366,7 @@ impl RiscVSimulator {
                     if self.verbose && tohost_value != last_tohost_value {
                         eprintln!(
                             "[DEBUG] Cycle {}: PC=0x{:010x}, tohost changed from 0x{:016x} to 0x{:016x}",
-                            cycles,
+                            control.cycles(),
                             self.core.state().pc,
                             last_tohost_value,
                             tohost_value
@@ -1299,15 +1374,15 @@ impl RiscVSimulator {
                         last_tohost_value = tohost_value;
                     }
 
-                    // Check for exit signal using consistent extraction logic
-                    if let Some(exit_code) = try_extract_exit_code(tohost_value) {
+                    // The shared exit rule decodes the value and clears the signal
+                    // only after the code is retained.
+                    if let Some(exit_code) = RunControl::take_ram_exit(tohost_value, || {
+                        clear_tohost(&self.memory, tohost, self.verbose)
+                    }) {
                         if self.verbose {
                             eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
                         }
-                        // Clear tohost after processing (Spike-compatible behavior),
-                        // keeping the decoded guest exit for the result.
-                        clear_tohost(&self.memory, tohost, self.verbose);
-                        return Ok(self.finish(cycles, exit_code, false, None));
+                        return Ok(self.finish(control.cycles(), exit_code, false, None));
                     } else if tohost_value != 0 && self.verbose {
                         // Non-zero but without exit command marker - possible memory corruption or other command
                         eprintln!("[WARN] tohost has non-command value: {:#x}", tohost_value);
@@ -1315,10 +1390,10 @@ impl RiscVSimulator {
                 }
                 Err(e) => {
                     // Only log errors periodically to avoid spam
-                    if self.verbose && cycles.is_multiple_of(1000) {
+                    if self.verbose && control.cycles().is_multiple_of(1000) {
                         eprintln!(
                             "[DEBUG] Cycle {}: PC=0x{:010x}, tohost read failed: {}",
-                            cycles,
+                            control.cycles(),
                             self.core.state().pc,
                             e
                         );
@@ -1331,18 +1406,13 @@ impl RiscVSimulator {
         if self.verbose {
             eprintln!(
                 "[DEBUG] Timeout at cycle {}: PC=0x{:010x}, tohost=0x{:016x}",
-                cycles,
+                control.cycles(),
                 self.core.state().pc,
                 last_tohost_value
             );
         }
 
-        Ok(self.finish(
-            cycles,
-            1,
-            true,
-            Some(format!("Timeout after {} cycles", max_cycles)),
-        ))
+        Ok(self.finish(control.cycles(), 1, true, Some(control.timeout_message())))
     }
 
     /// Build an execution result from already-observed state.
@@ -1830,5 +1900,52 @@ mod tests {
         assert_eq!(result.cycles, 0);
         assert_eq!(result.final_pc, 0x8000_0000);
         assert_eq!(result.error.as_deref(), Some("Timeout after 0 cycles"));
+    }
+
+    #[test]
+    fn test_run_control_counts_only_retired_instructions() {
+        let mut control = RunControl::new(3);
+        assert!(control.may_execute());
+        assert_eq!(control.cycles(), 0);
+
+        for expected in 1..=3 {
+            control.retire();
+            assert_eq!(control.cycles(), expected);
+        }
+
+        assert!(
+            !control.may_execute(),
+            "the budget is exhausted after the permitted instructions"
+        );
+        assert_eq!(control.timeout_message(), "Timeout after 3 cycles");
+    }
+
+    #[test]
+    fn test_run_control_zero_budget_executes_nothing() {
+        let control = RunControl::new(0);
+
+        assert!(!control.may_execute());
+        assert_eq!(control.cycles(), 0);
+        assert_eq!(control.timeout_message(), "Timeout after 0 cycles");
+    }
+
+    #[test]
+    fn test_run_control_retains_the_exit_before_clearing_the_signal() {
+        let mut cleared = 0u32;
+
+        // Standard HTIF payload for exit code 1.
+        let code = RunControl::take_ram_exit(3, || cleared += 1);
+        assert_eq!(code, Some(1));
+        assert_eq!(cleared, 1, "the decoded exit is retained, then cleared");
+
+        // A value without the exit command leaves the signal untouched.
+        let none = RunControl::take_ram_exit(0, || cleared += 1);
+        assert_eq!(none, None);
+        assert_eq!(cleared, 1, "a non-exit value must not clear the signal");
+
+        // An alternative high-bit encoding is decoded the same way.
+        let alternative = RunControl::take_ram_exit((1u64 << 63) | 42, || cleared += 1);
+        assert_eq!(alternative, Some(42));
+        assert_eq!(cleared, 2);
     }
 }
