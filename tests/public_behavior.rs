@@ -376,19 +376,26 @@ fn declared_tohost_writer(exit_instruction: u32) -> Vec<u32> {
     padded(tohost_writer_at(0, exit_instruction))
 }
 
-/// Guest that stores `value` at `guest_offset` and then exits through the
-/// image's declared tohost.
-fn signature_writer(value: u8, guest_offset: i64, exit_code: u32) -> Vec<u32> {
-    let pc = 4i64;
+/// Guest that stores `value` at `guest_offset` from the image base.
+///
+/// The address is built from the AUIPC at `entry_offset + 4`.
+fn store_byte_at(entry_offset: usize, value: u8, guest_offset: i64) -> Vec<u32> {
+    let pc = entry_offset as i64 + 4;
     let delta = guest_offset - pc;
     let upper = (delta + 0x800) >> 12;
     let lower = delta - (upper << 12);
-    let mut code = vec![
+    vec![
         fixture::addi(5, 0, i32::from(value)),
         fixture::auipc(4, upper as u32),
         fixture::addi(4, 4, lower as i32),
         fixture::sb(5, 4, 0),
-    ];
+    ]
+}
+
+/// Guest that stores `value` at `guest_offset` and then exits through the
+/// image's declared tohost.
+fn signature_writer(value: u8, guest_offset: i64, exit_code: u32) -> Vec<u32> {
+    let mut code = store_byte_at(0, value, guest_offset);
     let exit_offset = code.len() * 4;
     code.extend(tohost_writer_at(
         exit_offset,
@@ -1303,6 +1310,16 @@ fn flat_library_distinguishes_absent_empty_and_unreadable_signatures() {
         Some((fixture::BASE + 0x20_0000, 8)),
         0,
     );
+    // An empty region needs no mapping, so the same unmappable address stays an
+    // empty artifact rather than a failure.
+    let empty_and_unmappable = fixture::elf_with_signature(
+        &guest,
+        0,
+        fixture::BASE,
+        Some(fixture::TOHOST),
+        Some((fixture::BASE + 0x20_0000, 0)),
+        0,
+    );
 
     let (_, absent_result) = load_and_run_library(&absent, 12);
     assert_eq!(absent_result.exit_code, 0);
@@ -1333,6 +1350,17 @@ fn flat_library_distinguishes_absent_empty_and_unreadable_signatures() {
         .expect("an unusable declared region must not be silently absent");
     assert!(error.contains("Signature artifact unavailable"), "{error}");
     assert!(!unreadable_result.timed_out);
+
+    let (_, empty_unmappable_result) = load_and_run_library(&empty_and_unmappable, 12);
+    assert_eq!(
+        empty_unmappable_result.signature_addr,
+        Some(fixture::BASE + 0x20_0000)
+    );
+    assert_eq!(empty_unmappable_result.signature_data, Some(Vec::new()));
+    assert!(
+        empty_unmappable_result.error.is_none(),
+        "{empty_unmappable_result:?}"
+    );
 }
 
 #[test]
@@ -1468,4 +1496,150 @@ fn flat_library_replaces_image_metadata_and_ram_on_a_second_load() {
         third_result.signature_data,
         Some(expected_signature_bytes())
     );
+}
+
+const INTEGRATED_DATA_OFFSET: u64 = 0x100;
+const INTEGRATED_DATA_VALUE: i32 = 42;
+const INTEGRATED_RELOADED_VALUE: i32 = 69;
+const INTEGRATED_EXIT_CODE: u32 = 42;
+const INTEGRATED_CYCLES: u64 = 16;
+
+/// Guest that stores and reloads a value, modifies RAM, writes the declared
+/// signature byte, and exits through the image's declared tohost.
+fn integrated_workflow_guest(exit_code: u32) -> Vec<u32> {
+    let mut code = vec![
+        fixture::addi(5, 0, INTEGRATED_DATA_VALUE),
+        fixture::auipc(6, 0),
+        fixture::addi(6, 6, 0xfc),
+        fixture::sd(5, 6, 0),
+        fixture::addi(7, 0, 0),
+        fixture::ld(7, 6, 0),
+        fixture::addi(7, 7, 27),
+        fixture::sb(7, 6, 0),
+    ];
+    let signature_offset = code.len() * 4;
+    code.extend(store_byte_at(
+        signature_offset,
+        SIGNATURE_WRITTEN_BYTE,
+        fixture::SIGNATURE_SEGMENT_OFFSET as i64,
+    ));
+    let exit_offset = code.len() * 4;
+    code.extend(tohost_writer_at(
+        exit_offset,
+        fixture::standard_exit(exit_code),
+    ));
+    padded(code)
+}
+
+#[test]
+fn integrated_load_run_result_inspect_workflow() {
+    let elf = fixture::elf_with_code(
+        &integrated_workflow_guest(INTEGRATED_EXIT_CODE),
+        0,
+        true,
+        true,
+        0,
+    );
+
+    let mut simulator = RiscVSimulator::new(0x1_0000);
+    let entry = simulator.load_elf(&elf).unwrap();
+    assert_eq!(entry, fixture::BASE);
+
+    let result = simulator.run(Some(32)).unwrap();
+
+    // Result: the guest's own nonzero exit, at the writing instruction.
+    assert_eq!(result.exit_code, INTEGRATED_EXIT_CODE);
+    assert_eq!(result.cycles, INTEGRATED_CYCLES);
+    assert_eq!(result.final_pc, fixture::BASE + INTEGRATED_CYCLES * 4);
+    assert!(!result.timed_out);
+    assert!(result.error.is_none(), "{result:?}");
+
+    // Registers left by the workflow.
+    let state = simulator.state();
+    assert_eq!(
+        state.regs[7],
+        u64::try_from(INTEGRATED_RELOADED_VALUE).unwrap()
+    );
+    assert_eq!(state.regs[6], fixture::BASE + INTEGRATED_DATA_OFFSET);
+    assert_eq!(state.pc, fixture::BASE + INTEGRATED_CYCLES * 4);
+
+    // Inspection of the state the guest left behind, before and after.
+    let before_inspection = core_snapshot(&simulator);
+    let ram = simulator.read_mem(INTEGRATED_DATA_OFFSET, 8).unwrap();
+    assert_eq!(
+        ram,
+        vec![
+            u8::try_from(INTEGRATED_RELOADED_VALUE).unwrap(),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+        ]
+    );
+    assert_eq!(result.signature_addr, Some(fixture::SIGNATURE));
+    assert_eq!(result.signature_data, Some(expected_signature_bytes()));
+    assert_eq!(
+        simulator
+            .read_mem(fixture::SIGNATURE_SEGMENT_OFFSET, 8)
+            .unwrap(),
+        expected_signature_bytes()
+    );
+
+    assert_eq!(
+        core_snapshot(&simulator),
+        before_inspection,
+        "inspection must not execute guest code or change PC, registers or privilege"
+    );
+    assert_eq!(simulator.read_mem(INTEGRATED_DATA_OFFSET, 8).unwrap(), ram);
+}
+
+#[test]
+fn integrated_workflow_records_the_retained_cli_device_difference() {
+    // A declared RAM tohost: the CLI and the flat library agree.
+    let parity_elf = fixture::elf_with_code(
+        &padded(declared_tohost_writer(fixture::standard_exit(5))),
+        0,
+        true,
+        false,
+        0,
+    );
+    let cli = run_fixture(&parity_elf, Some(12), None);
+    let (_, library) = load_and_run_library(&parity_elf, 12);
+    assert_eq!(cli.exit_code, 5);
+    assert_eq!(library.exit_code, 5);
+    assert_eq!(cli.cycles, library.cycles);
+    assert_eq!(cli.final_pc, library.final_pc);
+    assert!(!library.timed_out);
+    assert!(library.error.is_none());
+
+    // UART MMIO: the CLI device map serves it and the guest exits through HTIF;
+    // the flat wrapper has no device mapping, so the same store fails instead.
+    let uart_guest = padded(vec![
+        fixture::lui(4, 0x10000),
+        fixture::addi(5, 0, i32::from(b'A')),
+        fixture::sb(5, 4, 0),
+        fixture::addi(6, 0, 1),
+        fixture::lui(4, 0x40008),
+        fixture::sd(6, 4, 0),
+    ]);
+    let uart_elf = fixture::elf_with_code(&uart_guest, 0, false, false, 0);
+
+    let cli_uart = run_fixture(&uart_elf, Some(20), None);
+    assert_eq!(cli_uart.exit_code, 0);
+    assert!(!cli_uart.timed_out);
+    assert!(cli_uart.error.is_none(), "{cli_uart:?}");
+
+    let (_, library_uart) = load_and_run_library(&uart_elf, 20);
+    assert_eq!(library_uart.exit_code, 1);
+    assert_eq!(library_uart.cycles, 2);
+    assert_eq!(library_uart.final_pc, fixture::BASE + 8);
+    assert!(!library_uart.timed_out);
+    let error = library_uart
+        .error
+        .as_deref()
+        .expect("the flat wrapper has no device mapping for the UART aperture");
+    assert!(error.contains("Execution error"), "{error}");
 }
