@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "status": "proposed-not-frozen",
+  "id": "a5-rv64i-nontrapping-proposal-v1",
+  "isa": {"base": "RV64I", "version": "2.1", "xlen": 64, "registers": 32, "ialign_bits": 32},
+  "execution_environment": {
+    "harts": 1,
+    "endianness": "little",
+    "memory": "native SystemBus RAM; identity guest physical addresses",
+    "entry_address": "0x80000000",
+    "exit": "RAM tohost symbol: HTIF 1 pass, 3 fail",
+    "data_alignment": "natural alignment required; successful misaligned access not promised",
+    "trap_entry": false,
+    "csr_privilege_mmu_pmp_interrupt_tests": false,
+    "concurrent_or_device_ordering_claim": false
+  },
+  "adapter": {
+    "configuration": "scripts/a5/ruscv-rv64i-smoke.yaml",
+    "width_overlay": "scripts/a5/udb_overlay.py",
+    "overlay_semantics": "MXLEN provenance Sm -> I only; retains width validation; declares no Sm or Zicsr",
+    "upstream_sources": "unmodified",
+    "incidental_march": "upstream rv64i_zicsr retained for assembly; linked instruction audit must reject actual CSR use",
+    "startup": "rvtest_config.h disables trapping startup; unsupported hooks emit assembly errors",
+    "oracle": "Sail 0.10, pinned derivation sail_config.py; not a DUT extension declaration"
+  },
+  "selection": {
+    "inventory": "docs/verification/a5-source-inventory.json",
+    "proposed_included_sources": 51,
+    "variant_rule": "one XLEN=64 self-check ELF per included source, plus separately accounted Sail signature ELF",
+    "fence": "required, including upstream fence.tso/reserved/hint encodings; MiscMem rejection is a blocker, never an exclusion",
+    "fence_i": "excluded Zifencei, not base I",
+    "freeze_decisions_required": [
+      "Approve adapted MXLEN provenance as the canonical A5 nontrapping test profile",
+      "Approve the proposed naturally aligned EEI boundary and eight successful-Misalign exclusions; the existing trap exclusion alone does not authorize them"
+    ]
+  }
+}

@@ -1,11 +1,13 @@
 name: A5 Linux feasibility
 on:
+  workflow_dispatch:
+  # Bounded pre-merge accounting validation only. Docs-only evidence commits
+  # do not repeat ACT4. Remove this branch trigger after this slice.
   push:
-    branches: [a5-feasibility]
+    branches: [a5-pinned-selection-accounting]
     paths:
       - '.github/workflows/a5-feasibility.yml'
       - 'scripts/a5/**'
-      - 'docs/verification/a5-feasibility-pins.json'
 permissions:
   contents: read
 concurrency:
@@ -16,6 +18,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
+      A5_SELECTION: proposal
       UV_CACHE_DIR: ${{ github.workspace }}/.a5/cache/uv
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.a5/tools/python
       BUNDLE_USER_HOME: ${{ github.workspace }}/.a5/cache/bundle
@@ -34,7 +37,7 @@ jobs:
         with:
           version: '0.11.6'
           enable-cache: false
-      - name: Provision and generate one upstream self-checking ELF
+      - name: Generate and account for provisional selection (not profile approval)
         shell: bash
         run: |
           mkdir -p .a5/evidence
