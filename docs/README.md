@@ -4,7 +4,7 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-09-08
+**Last reviewed:** 2026-09-11
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
@@ -29,13 +29,13 @@ Target architecture is not implementation status. Component presence is not end-
 - [Architecture principles](architecture/principles.md)
 - [Architecture decision records](architecture/decisions/README.md) — ADR-0001 through ADR-0004 accepted on 2026-09-07
 - [A0 closeout record](archive/milestones/a0-closeout-record.md) — accepted architecture, completion evidence and limitations
-- [Implementation scope navigation](architecture/first-implementation-scope.md) — A1–A3 completed; A4 shares run control and image installation between the public entry points; the broader migration candidate remains unapproved
+- [Implementation scope navigation](architecture/first-implementation-scope.md) — A1–A3 completed; A4 implementation/verification complete with formal closeout proposed; A5 ACT4 detailed contract pending approval; broader migration remains unapproved
 
 ## Verification
 
 - [Verification architecture](verification/README.md)
 - [A1 closeout and acceptance evidence](archive/milestones/a1-closeout-record.md)
-- [A4 capability assessment](verification/a4-capability-assessment.md) — local integrated evidence, pending committed-head review/merge evidence and proposed ACT4 direction; not a closeout
+- [A4 acceptance and closeout](verification/a4-capability-assessment.md) — final criterion evidence, independent review and merge CI; formal closeout and the sole prospective A5 contract await approval
 - [A1 public behavior compatibility matrix](verification/public-behavior-matrix.md)
 - [A1 public behavior defect and gap register](verification/public-behavior-gaps.md)
 - [Project-authored bare-metal tests](verification/bare-metal-tests.md)

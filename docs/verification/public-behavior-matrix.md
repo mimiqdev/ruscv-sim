@@ -592,10 +592,10 @@ run. The bounded decision completion subsequently merged as `b461744` through
 PR #29, following independent approval of exact head `b788114`; merge CI
 [34605659612](https://github.com/mimiqdev/ruscv-sim/actions/runs/34605659612)
 separately compiled and executed 46/46 project guests. The
-[A4 assessment](a4-capability-assessment.md#recorded-merged-base-evidence-and-independent-review)
-records that merged-base evidence separately from T3, which still needs its own
-committed-head review and merge-time evidence. A4 remains active; no ACT4
-verification or next-contract approval is claimed.
+[archived A4 assessment](../archive/milestones/a4-capability-assessment.md#recorded-merged-base-evidence-and-independent-review)
+preserves that merged-base evidence separately from T3's final evidence in the
+[A4 closeout](../archive/milestones/a4-closeout-record.md). Formal closeout and
+the detailed A5 contract remain proposed; no ACT4 verification is claimed.
 
 ## A4 T2 shared image installation evidence
 
@@ -627,7 +627,7 @@ owner:
 
 T2 merged as `dd45c86` through PR #28; its independent review and successful
 merge-time 46/46 guest evidence are recorded in the
-[A4 assessment](a4-capability-assessment.md#recorded-merged-base-evidence-and-independent-review).
+[archived A4 assessment](../archive/milestones/a4-capability-assessment.md#recorded-merged-base-evidence-and-independent-review).
 The component tests above use entry offset zero, not the integrated T3 case.
 
 ## A4 T3 integrated equivalence evidence
@@ -642,13 +642,22 @@ for each, so equality alone cannot mask a shared error.
 | `nonzero_entry_data_workflow_agrees_at_run_control_boundaries` | Nonzero base **and entry offset `0x180`**, guest load of file-backed seed 17, store/reload of computed value 42, returned artifact and reload-derived nonzero exit. Budgets 0/10/11/12 pin zero/exhaustion/final-slot/early-exit behavior; an invalid exit instruction pins error after data effects without retirement or timeout. Exact counts, PC, metadata and bytes are asserted. |
 | `replacement_load_restores_data_and_entry_before_the_same_public_workflow` | A reused flat facade replaces dirty RAM, BSS, prior code, pending signal, registers and manual exit selection before running at entry offset `0x240`; it agrees with a fresh CLI installation on exit 43, 11 retirements, PC and artifact. This tests fresh installation, not general Machine reset. |
 
-The [full assessment](a4-capability-assessment.md) maps every active acceptance
+The [full assessment](../archive/milestones/a4-capability-assessment.md) maps every A4 acceptance
 criterion, preserves configuration differences and records the six-command local
-gate (2026-09-11), including 2/2 new tests and unchanged public suites. These are
-uncommitted T3 results, not formal independent review or merge evidence.
+gate (2026-09-11), including 2/2 new tests and unchanged public suites.
+T3 was subsequently independently approved at exact PR #30 head
+`810bf83968226e5390b15b6c73890382bbc895e3`, with no defects and all six commands
+passed. No mutation checks or runtime differential were run.
+[PR CI 34608196803](https://github.com/mimiqdev/ruscv-sim/actions/runs/34608196803)
+succeeded; merge `e47a1b0` ran
+[push CI 34608867200](https://github.com/mimiqdev/ruscv-sim/actions/runs/34608867200)
+successfully, including release/smoke and separate guest compilation/execution:
+**46 total / 46 passed / 0 failed**.
 No local cross-toolchain or Docker is available, and `test_add_program` returns
 early for a missing assembler; Cargo success is not separately compiled guest
-evidence. Prior merged-base 46/46 runs are not a T3 rerun. A4 is not closed.
+evidence. Final evidence satisfies all A4 criteria; formal acceptance of the
+[closeout](../archive/milestones/a4-closeout-record.md) and detailed A5 contract
+is pending through closeout merge. No ACT4 test has been run by this milestone.
 
 ## Known stale or non-authoritative inputs
 
@@ -669,9 +678,12 @@ dispositions. G-02 was repaired by A2 T1, G-01/G-10 by A2 T2, and G-12 with the
 flat half of G-06 by A2 T3; A2 T4 added the integrated workflow and its
 [archived capability assessment](../archive/milestones/a2-capability-assessment.md),
 and A3 shared image placement and result construction between the entry points.
-[The active plan](../dev-plan.md) is A4, one host-side path for run control and
-image installation. These remaining options are not scheduled by A4 and must be
-re-evaluated before any of them becomes work:
+A4's [closeout record](../archive/milestones/a4-closeout-record.md) documents
+completed implementation and verification of shared run control and installation,
+with formal acceptance proposed. [The sole prospective plan](../dev-plan.md)
+is A5, ACT4 RV64I external compatibility, pending detailed-contract approval.
+These remaining options are not automatically scheduled by that proposal and
+must be re-evaluated before any of them becomes work:
 
 1. Decide separately whether G-03, G-04, G-05, the CLI portion of G-06, and G-09
    are production-repair scope or documented compatibility limitations. The A1
@@ -687,7 +699,7 @@ re-evaluated before any of them becomes work:
    toolchain, and record actual ELF outputs rather than relying on CI definitions
    or old logs.
 
-These options do not expand A4 and must be re-evaluated before any becomes
+These options do not expand the prospective A5 scope and must be re-evaluated before any becomes
 work. A1's completion and limitations are recorded in
 its [closeout record](../archive/milestones/a1-closeout-record.md), A2's in
 [the A2 closeout](../archive/milestones/a2-closeout-record.md), and A3's in

@@ -11,7 +11,7 @@ host-side path for the run-control decision and image installation. The
 [A3 closeout record](a3-closeout-record.md) holds the criterion dispositions,
 verification and limitations, and the
 [A3 capability assessment](a3-capability-assessment.md) holds the full mapping.
-[The active plan](../../dev-plan.md) is A4. The full contract text below is
+[The successor plan](a4-shared-run-control-and-image-installation.md) was A4. The full contract text below is
 preserved with relocated links; its Active and pending-acceptance statements
 describe the earlier state.
 

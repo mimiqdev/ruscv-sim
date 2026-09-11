@@ -12,4 +12,8 @@ This directory preserves superseded plans, completed milestones, historical repo
 - [`reference/`](reference/) — old implementation notes, format analyses, and dependency snapshots.
 - Sprint documents in this directory — historical planning records predating the rolling-plan workflow.
 
-Consult [`../dev-plan.md`](../dev-plan.md) for the only active milestone and [`../architecture/README.md`](../architecture/README.md) for the current target architecture.
+Consult [`../dev-plan.md`](../dev-plan.md) for the sole current milestone contract
+(currently prospective A5, detailed approval pending) and
+[`../architecture/README.md`](../architecture/README.md) for the current target
+architecture. [A4's closeout proposal](milestones/a4-closeout-record.md) records
+completed implementation and verification without claiming formal acceptance.

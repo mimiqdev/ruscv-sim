@@ -41,5 +41,7 @@ handoff is recorded in the [A0 closeout record](../../archive/milestones/a0-clos
 [A1's subsequent closeout](../../archive/milestones/a1-closeout-record.md),
 [the A2 closeout](../../archive/milestones/a2-closeout-record.md) and
 [the A3 closeout](../../archive/milestones/a3-closeout-record.md) record their
-limitations and successor decisions. [A4](../../dev-plan.md) is the only active
-milestone contract.
+limitations and successor decisions. [A4's closeout proposal](../../archive/milestones/a4-closeout-record.md)
+records completed implementation and verification, with formal acceptance pending.
+[A5](../../dev-plan.md) is the only prospective milestone contract; its detailed
+approval remains pending through the closeout PR merge.

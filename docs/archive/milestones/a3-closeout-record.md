@@ -12,7 +12,7 @@
 
 The maintainer accepted A3 with its documented limitations and approved **A4 —
 one host-side path for the run-control decision and image installation**.
-[The A4 contract](../../dev-plan.md) replaces A3 as the only active milestone. A3
+[The A4 contract](a4-shared-run-control-and-image-installation.md) replaces A3 as the only active milestone. A3
 removed the two duplicated host-side responsibilities that had produced A2's
 repeated defects; it did not merge the two run loops and did not implement the
 target Runner/Machine/Platform composition.

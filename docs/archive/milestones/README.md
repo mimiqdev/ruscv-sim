@@ -2,7 +2,10 @@
 
 This directory contains completed and explicitly superseded milestone plans with their historical outcomes.
 
-Archived files are not active plans. They may describe component-level completion that predates end-to-end integration or ACT4 verification. Consult `../../dev-plan.md` for the only active milestone.
+Archived files are not active plans. They may describe component-level completion
+that predates end-to-end integration or ACT4 verification. Consult the
+[current contract](../../dev-plan.md) for the sole prospective A5 milestone,
+whose detailed approval remains pending through the A4 closeout PR merge.
 
 ## Rolling process
 
@@ -13,6 +16,12 @@ Archived files are not active plans. They may describe component-level completio
 5. Promote the next milestone into `docs/dev-plan.md`.
 
 ## Records
+
+- [A4: Shared run control and image installation — closeout proposal](a4-closeout-record.md)
+  - Implementation and verification complete; formal acceptance pending closeout PR merge
+  - [Original milestone contract](a4-shared-run-control-and-image-installation.md)
+  - [Capability assessment with final evidence](a4-capability-assessment.md)
+  - [A5 prospective successor contract](../../dev-plan.md), detailed approval pending
 
 - [A3: Shared image placement and result path — completion record](a3-closeout-record.md)
   - [Original milestone contract](a3-shared-image-placement-and-result-path.md)
