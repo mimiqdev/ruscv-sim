@@ -1,0 +1,4546 @@
+{
+  "status": "proposed-not-frozen-suite-failed",
+  "run": 34624439277,
+  "head": "4e8a947300f6012d83b991017df4247cda06a449",
+  "artifact": {
+    "id": 10274071547,
+    "sha256": "08682429f62b8deaf656e1013dd1e11ad54795609353b48087f3810977cdbbd1",
+    "expires_at": "2026-09-25T16:56:08Z",
+    "bytes": 21676628
+  },
+  "tool_versions": "Linux runnervm7g52i 6.8.0-1064-azure #72~22.04.1-Ubuntu SMP Wed Jul 22 23:39:45 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux\nImageOS=ubuntu22 ImageVersion=20260907.292.1\nruby 3.4.9 (2026-03-11 revision 76cca827ab) +PRISM [x86_64-linux]\n4.0.8\nuv 0.11.6 (x86_64-unknown-linux-gnu)\n0.10\nriscv64-unknown-elf-gcc () 15.1.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\nGNU objdump (GNU Binutils) 2.44\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis program is free software; you may redistribute it under the terms of\nthe GNU General Public License version 3 or (at your option) any later version.\nThis program has absolutely no warranty.\n\tlinux-vdso.so.1 (0x00007ffd2c152000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007f9514c02000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f9514800000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007f9514cf7000)\n",
+  "overlay": {
+    "status": "adapted-profile-probe-not-canonical-compatibility",
+    "original_sha256": "2de45bf488b72952ab339ba335bf8a95f760918840d776b1f30e6df0bfadc368",
+    "overlay_sha256": "9f7e097cd29ddd39057f12fa4f62da5410dae3787ab40c703fb39302ffb7b750"
+  },
+  "profile_identity": {
+    "schema_version": 1,
+    "status": "proposed-not-frozen",
+    "act4_commit": "a7c99303516f4e668f7488f172043392e23b9dfd",
+    "profile": "a5-rv64i-nontrapping-proposal-v1",
+    "inventory_sha256": "cfe80868322c76825cef3ac89701ce775bc81f6e6740150a8ec027fed7e23f1a",
+    "profile_sha256": "3c53942a8e3cae9842d0e94a98deb463e27f08f8375af12750a16f5a87575a78",
+    "tool_pins_sha256": "1fe4c4882e338b79ffd75f6fa216c4589cf90a5e649d4d3157eff38b2f7fe9f1"
+  },
+  "generation": {
+    "status": "proposed-not-frozen",
+    "generation_returncode": 0,
+    "required_sources": 51,
+    "required_variants": 51,
+    "generated_selfcheck_elfs": 51,
+    "generated_signature_elfs": 51,
+    "errors": [],
+    "variants": [
+      {
+        "source": "tests/rv64i/I/I-add-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-add-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-add-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-add-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-add-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "b10f0bdf5de05ce70d80c0bdfba640fc82efbd31d40a120e55a1cea1ac44860b",
+            "bytes": 207568
+          },
+          "signature_elf": {
+            "sha256": "7a32415004d3c63eceb07c4aac8e612c6787d5bcc34eec3a08f1c37b42dc949d",
+            "bytes": 207704
+          },
+          "signature": {
+            "sha256": "520dd9f9034b10ccc2aefb526c76da285225e21b768a257858f17c5a833dca91",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "edfaeafc0400ee077905eb019cb4cbcf5e2443e1b461021c6365ba581511cef8",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-addi-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-addi-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-addi-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-addi-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-addi-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "aa62287b5ff7d30f890397edb5c79fbe29404594d9eaed05fb2d3e07df7d3db8",
+            "bytes": 178504
+          },
+          "signature_elf": {
+            "sha256": "259948a402e3f92165af9d55800fff0aa6d328447cc5257a8b44d8ee2b004490",
+            "bytes": 178640
+          },
+          "signature": {
+            "sha256": "2b55c17fca1c6042324cf58ef1821e41eed2e29166fcb925d8c76a6c59f95144",
+            "bytes": 7888
+          },
+          "expected_results": {
+            "sha256": "367d8e68e7f79d9fd4179266a50c9cfda72234bd7bb3d8ccb32e23e7f7283be9",
+            "bytes": 11600
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-addiw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-addiw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-addiw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-addiw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-addiw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "3faf934f7e07cafbaae2f8d5dbe64e17b16869989fbe4e8441b072133923d96b",
+            "bytes": 179392
+          },
+          "signature_elf": {
+            "sha256": "cecb0dcd402a15880ac0561eb6c9c28bfdc1cd085c88e393dd96e47c88597eac",
+            "bytes": 179528
+          },
+          "signature": {
+            "sha256": "55ad0854c21fa5cdc196d0941fb5167452214f735b5999d9276758663f34d9c5",
+            "bytes": 7888
+          },
+          "expected_results": {
+            "sha256": "230230e9a84d5e2d5208ada0b85251458afaf1dd44cf1c8e5c89948d3d3bc763",
+            "bytes": 11600
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-addw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-addw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-addw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-addw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-addw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "7e28ed62799624a4edb3f823d72838be747573d195b254a7067be2a3d758c8a0",
+            "bytes": 208592
+          },
+          "signature_elf": {
+            "sha256": "7b35d430fda4013c792dd6924974c0337e0bac849ca8106a7bc9a6a005e01b33",
+            "bytes": 208728
+          },
+          "signature": {
+            "sha256": "9abc3416d7d766084542ec181c34493ff843bc5749dafdf97eb0b03b63dad26e",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "8acabe45f1c8a47940800a6f12fcf77a2a0575985f17007e971523aeee9d70ef",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-and-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-and-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-and-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-and-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-and-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "4c3354b3bc11c5af04c4fe1f25312feb139c32b59680d4e33d7c147e84dc43bd",
+            "bytes": 207552
+          },
+          "signature_elf": {
+            "sha256": "209be15b8038cd65ceda21f55054a5d9dc93753ef4135f9d58dd95c96261a025",
+            "bytes": 207688
+          },
+          "signature": {
+            "sha256": "993c212c1de6f67efb99643959384d4bb2a7b844a91edbbb9a444aee34763f0b",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "359bb6c6ae58c97af8028827ef3d3d90913ba7ddc197286684ef6af721f9d9f0",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-andi-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-andi-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-andi-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-andi-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-andi-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "67d1a6ed7ffb0230f5adc9d6f7f13a5cd7f2ac040864e0cb240e96c246ea9b30",
+            "bytes": 178488
+          },
+          "signature_elf": {
+            "sha256": "b909cf80f84d5942fb32e58004388a634af02d41ff1dc296091c6a2e69392e16",
+            "bytes": 178624
+          },
+          "signature": {
+            "sha256": "4199d0ef2ce3024da5ba32a8656aed8f682779ec68a4d85e83bfb4fd3b35fdf6",
+            "bytes": 7888
+          },
+          "expected_results": {
+            "sha256": "4ef7e93eb671ebc676d16d612e12c3da106b5ad6dce336bb2a74a1205dd25ca1",
+            "bytes": 11600
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-auipc-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-auipc-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-auipc-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-auipc-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-auipc-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "1e6ac8f596c42d6ddf814ee84e8815368fa9594262bf408ae27eedd1759461fd",
+            "bytes": 36496
+          },
+          "signature_elf": {
+            "sha256": "c835ad59f46c0b22a281472bad5828094bbf97921b60bc5d473588d06b8e4309",
+            "bytes": 36640
+          },
+          "signature": {
+            "sha256": "a30e4b7aeb7d3948752741926b62f0390efd87a18e6a1fd73fe6934c2fa9418f",
+            "bytes": 1224
+          },
+          "expected_results": {
+            "sha256": "21f5480af2745af4e2d62501354711faec608c2195e773d81acb5826467c4d0f",
+            "bytes": 1800
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-beq-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-beq-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-beq-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-beq-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-beq-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "2bfa8160801fb47c52ff9620c3e33bc028e448c39e71a3dea885a930f3537bd5",
+            "bytes": 237320
+          },
+          "signature_elf": {
+            "sha256": "d5fa74e65152a448a15fba2ac7f6ab2360091c2122d80fcdc188ed69a130d387",
+            "bytes": 237456
+          },
+          "signature": {
+            "sha256": "770e3b473c71806d0c332872b3ba4004c51f323a751c76ce9cf4133c6d2f804b",
+            "bytes": 11118
+          },
+          "expected_results": {
+            "sha256": "8f08b694acff5143703f7446b46c3d37723e20f2cade18e9097b0d5b610241df",
+            "bytes": 16350
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-bge-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-bge-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-bge-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-bge-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-bge-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "c068eaa94e5c8b80f5f57a0f0dac8ee8f16f4d3b758c355181e0f7e571a3e19d",
+            "bytes": 237272
+          },
+          "signature_elf": {
+            "sha256": "344163b46e1a868af3e7c61552d46a62aeca92f015ea401c1190dc670400b1a8",
+            "bytes": 237408
+          },
+          "signature": {
+            "sha256": "b0918661dc8c6dee9941d61a90f7f16c8c15061057bd9240f7bd20e1e74825e1",
+            "bytes": 11118
+          },
+          "expected_results": {
+            "sha256": "77242d1940f9e1982f1f09a8f497d7d3a72d30941e845b2ae54d688058017fee",
+            "bytes": 16350
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-bgeu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-bgeu-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-bgeu-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-bgeu-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-bgeu-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "d5aa3a43145c24496bdcf3b045df84a5f9382449bc8396cbaeb06ad738798f92",
+            "bytes": 238072
+          },
+          "signature_elf": {
+            "sha256": "99e6a16dd4b94791d78bae6426ea9329b763dec93ad49eae9a538f7ed19468f6",
+            "bytes": 238216
+          },
+          "signature": {
+            "sha256": "ed56b0b5859538ff67674faffaa94f3a82b8d1abf6b7e1c54086284b0b011450",
+            "bytes": 11118
+          },
+          "expected_results": {
+            "sha256": "17023371a9321809dadbe359468360f959353521f2103ad40d36130e02cc9f1d",
+            "bytes": 16350
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-blt-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-blt-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-blt-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-blt-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-blt-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "414ed9b87729966c346e5c90d5ed65eea3e833e5643da61cb04b9e977851f333",
+            "bytes": 237272
+          },
+          "signature_elf": {
+            "sha256": "7357d358467dbff44521eac379ff623d81fb1ffea22fd7d9bb5db2055b228a74",
+            "bytes": 237408
+          },
+          "signature": {
+            "sha256": "c947cc8f761e03c166530357e64a1d5c6eb5142f83de36370a9a88c45889f729",
+            "bytes": 11118
+          },
+          "expected_results": {
+            "sha256": "6eb3ae6d85ebf483a6adbd8614e105198a67cdfc20bedbb512758b37d75c93cb",
+            "bytes": 16350
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-bltu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-bltu-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-bltu-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-bltu-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-bltu-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "7093f33928027024da68a870fc80813938d953d57d9b879d1164d5027da04c59",
+            "bytes": 238072
+          },
+          "signature_elf": {
+            "sha256": "a0ff19f60f10521f750c07b3a36bc4e46d740eea1424a1a98ae159df291b9877",
+            "bytes": 238216
+          },
+          "signature": {
+            "sha256": "0fb3611cef9d83b7118c39164b29c51f12d795abd9e3bbf14a3b3b5b80d4e4c2",
+            "bytes": 11118
+          },
+          "expected_results": {
+            "sha256": "e65023e96d27ea264334ed138ff54e49660b79b2d77ad88cea6fe7d0cae02977",
+            "bytes": 16350
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-bne-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-bne-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-bne-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-bne-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-bne-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "9bc273ef2712f92ec38ad1c45fb10b44cfa5bd189157936600f02e1247284af6",
+            "bytes": 237288
+          },
+          "signature_elf": {
+            "sha256": "713fd0dda1459aad52b6883902318ca56d26540cf165d9c304b3ed3e87cd3d6a",
+            "bytes": 237424
+          },
+          "signature": {
+            "sha256": "023abfbb8973ab4066cc0685ae7f099e50ba9c45028148c4425e3eb7fd3c468f",
+            "bytes": 11118
+          },
+          "expected_results": {
+            "sha256": "d0175530155df93cedaebf2b9f2430e49d3c4603441ba9fac6aad4aa86fe6dee",
+            "bytes": 16350
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-fence-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-fence-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-fence-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-fence-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-fence-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "a0e8d5fe841b67869af904b29f71b75cc2c08a46c370460e940cb3e44e55f36f",
+            "bytes": 19064
+          },
+          "signature_elf": {
+            "sha256": "8da745eea977bb0df1a841bfab998aeb8ae35b0a5278223641b03b4e06df0d8c",
+            "bytes": 19200
+          },
+          "signature": {
+            "sha256": "d2460a7504c6fbbb34d875d8cd59cc21f1b85a1bcdda821b3dc988579556fcc0",
+            "bytes": 204
+          },
+          "expected_results": {
+            "sha256": "e828d7f0ea95e267dd31930d81e4e167d664d873fb5d216792d50a082dd9a23d",
+            "bytes": 300
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-jal-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-jal-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-jal-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-jal-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-jal-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "772f287995416c4e5fc8681b8b7a661eb00fb8d6ccfdacd99600807cb8899737",
+            "bytes": 160520
+          },
+          "signature_elf": {
+            "sha256": "add08b4569637e7d228eb856711e34b438f97df12a21c1a290b342a22eb65290",
+            "bytes": 160664
+          },
+          "signature": {
+            "sha256": "b41482286e3aa311c6e895a1262b803878bec8040b24936b92cdd55bb5df1274",
+            "bytes": 2074
+          },
+          "expected_results": {
+            "sha256": "5d025196ab53fc1c240718a5ce00922751d8235bcc34ca2e549d4ff79d1c535f",
+            "bytes": 3050
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-jalr-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-jalr-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-jalr-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-jalr-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-jalr-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "ae5a9fb8a30b811860e8347d54d4217cc790af431426335a6efc97875f8ebed8",
+            "bytes": 73960
+          },
+          "signature_elf": {
+            "sha256": "c60b15e6e87dbb999a900d0246d5fec2f96832b511a4c2f34d64e16546806190",
+            "bytes": 74096
+          },
+          "signature": {
+            "sha256": "f1b6c104582a6d35ee84a2b0016e9a0535ed95e8cb240665f5f0e65bd778a322",
+            "bytes": 4250
+          },
+          "expected_results": {
+            "sha256": "b0214507032ba2d1ba6403382583891a0107771a6a0642b48c2a8eb00379c0f4",
+            "bytes": 6250
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lb-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lb-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-lb-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-lb-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-lb-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "afda475dd01a45c6acc3406fabdd9281bf57eaa888fdd58aa708cf945850d0e0",
+            "bytes": 56632
+          },
+          "signature_elf": {
+            "sha256": "ca6c172236cd60eba0add0e142e981a94f88d40e5ca57cfb88c5442638054967",
+            "bytes": 56776
+          },
+          "signature": {
+            "sha256": "0ba050f8af19de43b82b0cf80355b2531ca5ead92a8e2c33484de18e67300f8f",
+            "bytes": 2380
+          },
+          "expected_results": {
+            "sha256": "d26c4cac2c6401757f62e5c3a3252953d1856afc66380a0605ccdd6f5c43757a",
+            "bytes": 3500
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lbu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lbu-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-lbu-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-lbu-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-lbu-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "9bed46fdb2e423a2601dfe0e075ce9e6f5a24c411a880892075d029306af8f43",
+            "bytes": 56888
+          },
+          "signature_elf": {
+            "sha256": "13c1acfe57c9a504a323ec5d36c1dcbcdecc7a527e0ff0cf7b096226590bcfc3",
+            "bytes": 57024
+          },
+          "signature": {
+            "sha256": "330c0f46429444d008dbc21e4b09fd00a457eec6fe5621b15f1d5754ca225c38",
+            "bytes": 2380
+          },
+          "expected_results": {
+            "sha256": "e808634a70c5ce41826cf0b0522605b302260b9ca1a24e33c3aaa4ae1848d6cd",
+            "bytes": 3500
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-ld-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-ld-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-ld-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-ld-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-ld-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "46be9c75739aa8556c6f60268a8bcabf3e7002b5171ed0106f585eeb1fa04c9a",
+            "bytes": 51152
+          },
+          "signature_elf": {
+            "sha256": "4a1c1ff7ba482075b4dbb27637ca4be75615d228f02474e227ee48d42c5e3603",
+            "bytes": 51296
+          },
+          "signature": {
+            "sha256": "e0f7947d89b33b715a9c2f27f5b4d0f022fe39c8ddde88daae6490c50f25781a",
+            "bytes": 2244
+          },
+          "expected_results": {
+            "sha256": "54cf57aa3f4591b086f75c73f1818ce22d16622c4738242764d3698efbcc9d0e",
+            "bytes": 3300
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lh-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lh-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-lh-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-lh-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-lh-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "bdd430f19d519c8b08b26df550f8aa59d53dd0966b63e1362d354efc9d2fa05a",
+            "bytes": 55920
+          },
+          "signature_elf": {
+            "sha256": "ac60dc87ecfa5342bff4de299266aa4f1f6e44ed1d550c1701fdce124ef003e0",
+            "bytes": 56056
+          },
+          "signature": {
+            "sha256": "261bae03016e370783a8f63a0119a83b42c2e736d7ddcab242c0923e77977ce3",
+            "bytes": 2312
+          },
+          "expected_results": {
+            "sha256": "e4bdca83cadb6596094db3bc52bd9e6f20d912114bae73cd2a1f9a6768c47bf5",
+            "bytes": 3400
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lhu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lhu-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-lhu-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-lhu-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-lhu-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "f01427f6ddcf565d384299789268e8f683779fa2313b73c752e487f8a2e04705",
+            "bytes": 56168
+          },
+          "signature_elf": {
+            "sha256": "319e122e5755eea6d30de7ccef2fc95b88417d88b7dc92d0eb00f2acf195e1da",
+            "bytes": 56304
+          },
+          "signature": {
+            "sha256": "59c074e93188e86ea689b58ccb2067a913588545942ac9e700df9eea9b2dadfa",
+            "bytes": 2312
+          },
+          "expected_results": {
+            "sha256": "a54d68786d974c5091a014fe3abbccba38cf5699bb5e92c834f4ce70cb485d71",
+            "bytes": 3400
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lui-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lui-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-lui-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-lui-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-lui-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "5193575fed4cffd75a4acd4119207717aede180ec9710bc9f1889844b65bc172",
+            "bytes": 36240
+          },
+          "signature_elf": {
+            "sha256": "666e965d396b18258ac67ab73904bcbd5080638d24aff4ad778e1cc72aeb965a",
+            "bytes": 36376
+          },
+          "signature": {
+            "sha256": "ecfcbd2c6c5c7945c0b3045f22df7b65412548208f3a292f3b32d7558fdfb22d",
+            "bytes": 1224
+          },
+          "expected_results": {
+            "sha256": "e0e1e8d9f405e0e4c47f72c60683caccd7a9f73d5e02d02c7a86d0c91866b544",
+            "bytes": 1800
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-lw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-lw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-lw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "457eb87cb1c84f1b095622d2e1079f2f3d9ece4b110dd0632fda82358f080150",
+            "bytes": 51464
+          },
+          "signature_elf": {
+            "sha256": "4fe84a6d7e2436af909e1bc2f5b70bfe41d55452cf7ec5c255fa8d557bee502b",
+            "bytes": 51608
+          },
+          "signature": {
+            "sha256": "7ed438bb503acbd9d649a0a84c0106d417acaa5ec71050630bc9ab82f189f568",
+            "bytes": 2278
+          },
+          "expected_results": {
+            "sha256": "881a2263eadadcc1ba3eb0aa00ea85307cf1088b6c7134d3d1d263cb79cb7446",
+            "bytes": 3350
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lwu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lwu-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-lwu-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-lwu-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-lwu-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "9270be692f377924a1ed782987b69aed2893f40bfafb52f59f82075f546293e8",
+            "bytes": 51712
+          },
+          "signature_elf": {
+            "sha256": "506e8bbf34c754daac66ad3852dbd1333955f5add19b0feb37523dcc02a85e49",
+            "bytes": 51848
+          },
+          "signature": {
+            "sha256": "c926ca3b1eb37401839a1823a660d3b5bfcf2f880dfbd6f5579af13fd56a5df5",
+            "bytes": 2278
+          },
+          "expected_results": {
+            "sha256": "9c59bd9cb90a676c8fe96cdcec86cb0173392b151cd3dd9122bb198d96c9674f",
+            "bytes": 3350
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-nop-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-nop-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-nop-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-nop-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-nop-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "1379f30c797039da0fb78a374163c5643a342db250633728d485b73a74a1f840",
+            "bytes": 18440
+          },
+          "signature_elf": {
+            "sha256": "cb44ad224ba285cf94a1492ade385cf990896ff6de482af89c93c0f6b6d3a181",
+            "bytes": 18576
+          },
+          "signature": {
+            "sha256": "d2460a7504c6fbbb34d875d8cd59cc21f1b85a1bcdda821b3dc988579556fcc0",
+            "bytes": 204
+          },
+          "expected_results": {
+            "sha256": "e828d7f0ea95e267dd31930d81e4e167d664d873fb5d216792d50a082dd9a23d",
+            "bytes": 300
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-or-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-or-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-or-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-or-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-or-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "4b5c40e46ddb9b0d6706672312682d7aa0b3572b66a7ccebb4bd16873302adad",
+            "bytes": 206520
+          },
+          "signature_elf": {
+            "sha256": "13f23c0f4dedaf0ac56dfd48a6286408462ce9d66f18e594d65b26510fa5d1b1",
+            "bytes": 206656
+          },
+          "signature": {
+            "sha256": "08423a1b3c96a42550bee0b43d0f85a6f878db8bc436bb10193e5adb23ae8b65",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "2b082d7f873e0810f56af42013ed0cedb100f43fec7aed041619ebeb8920e4e0",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-ori-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-ori-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-ori-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-ori-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-ori-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "8f3d088df2c4fb2f489b208daf62be41e296136b60c0b2082a35a8c3fca39d7f",
+            "bytes": 177568
+          },
+          "signature_elf": {
+            "sha256": "540ed705e958c7a0acebbbff9cd801528ac48e5033adc5170cd7b417f808a6f0",
+            "bytes": 177704
+          },
+          "signature": {
+            "sha256": "59e7aaee3067fe360d6bde3cebfe0a49b49421c24a97529dc05ed8aa04dde4ce",
+            "bytes": 7888
+          },
+          "expected_results": {
+            "sha256": "e8e6cc066a177a14ca0a2afcce635f5a35fb06df511b208c032f11214b4c0aae",
+            "bytes": 11600
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sb-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sb-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sb-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sb-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sb-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "6e8c5dfed39e43ca5d25394c22f3af97aecbece624a27b185c916d9ce9741c1b",
+            "bytes": 55672
+          },
+          "signature_elf": {
+            "sha256": "8878b5bc6a5ba242172812a1374fc4cc6760be3108c041101c38652bdf67ca55",
+            "bytes": 48496
+          },
+          "signature": {
+            "sha256": "13afb6947fc6ae7418572160edd3e9665938d6e033743ade3795491f75eaafb4",
+            "bytes": 4114
+          },
+          "expected_results": {
+            "sha256": "1ed58a65d7d7c3b7aea2b642a482d1c91ce625a18dd7f6ca27eab7910be6bd17",
+            "bytes": 6050
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sd-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sd-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sd-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sd-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sd-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "f1dbf9fa47488788c8b828f185cd1af896a3d5dd4ac528dd1c5a62e1b4bf2fca",
+            "bytes": 54248
+          },
+          "signature_elf": {
+            "sha256": "af979517529118ef5b5d2a46b75e1dafe544c964849eb5b3eb66861b7b6e576d",
+            "bytes": 47312
+          },
+          "signature": {
+            "sha256": "c3b56cd53dfae6c6f1b1b5ef121dd0596d0e02353375db5d3179f9d253b2b278",
+            "bytes": 3570
+          },
+          "expected_results": {
+            "sha256": "006b8d20624cd1eb35649aa5f47801eefb78acd25dc883a44f8b1c488913966a",
+            "bytes": 5250
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sh-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sh-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sh-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sh-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sh-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "eef72f78b3d5d93e7bf2ca5e68c33634a1504fcf9700d266606a5755e42cf0f0",
+            "bytes": 54952
+          },
+          "signature_elf": {
+            "sha256": "21126ac576816e9b1a0c995483e03b47a38834dd37d48a1b0c9ac1bdfc35b2c6",
+            "bytes": 47904
+          },
+          "signature": {
+            "sha256": "0ef32d871b521ba0f66cbebf24f6c51b55f167c5c5d40c70f441db40a8aa2732",
+            "bytes": 3842
+          },
+          "expected_results": {
+            "sha256": "a2df6d49e7971e5367943a27d90d6d9f011a085d45f240ae99bf95c678e8f632",
+            "bytes": 5650
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sll-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sll-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sll-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sll-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sll-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "70ae68c4bf14df46ad42fef8c7d0e6529e381dcb360e6e2d7af1b59cd8e7c530",
+            "bytes": 207552
+          },
+          "signature_elf": {
+            "sha256": "dbcb5b569517e815a61a6c8b84a614a10ebe90895cfc7f424dd5ca47f587194f",
+            "bytes": 207688
+          },
+          "signature": {
+            "sha256": "ef3850e0566140068a26e4b9269a07d5897c123a7547eb18dcc26fb7c5362ae9",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "043f64913681e49f0e1bbd707065082c88f7b0755ad07a16c8b7afbca8e76870",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-slli-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-slli-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-slli-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-slli-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-slli-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "0b9861a46cef9ccf30fa7a79ba82744d8178ceff0b132d9b89b177ba4a985306",
+            "bytes": 132544
+          },
+          "signature_elf": {
+            "sha256": "0085684be5d0bf1b6e15ef7392f698c128d0427acaae73ead19671316e890cc0",
+            "bytes": 132680
+          },
+          "signature": {
+            "sha256": "1b5cb496cc8bafa219bc20d0bfd87e6de2dde813f2d58b0a419bf922f2eb5ec4",
+            "bytes": 5916
+          },
+          "expected_results": {
+            "sha256": "911b924d1be63c169eccfbb9a3efba584172e2ea4884b85079837756fbfba5b3",
+            "bytes": 8700
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-slliw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-slliw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-slliw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-slliw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-slliw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "fb2825b1bd6198ee588b3f666ac1dc2de12265b0bedaf5242f5710313958e945",
+            "bytes": 91664
+          },
+          "signature_elf": {
+            "sha256": "309b76f10f3d447f6f55cad89de585a123cecd94d755f47cb57736fa1aa56120",
+            "bytes": 95896
+          },
+          "signature": {
+            "sha256": "ce9c41162f039e45e31f822a29d3606d04b9edde2d0c7a0bccbe23aeba62ceaf",
+            "bytes": 4012
+          },
+          "expected_results": {
+            "sha256": "aefbdc3a675cae968e0f38ea8883166bae9716c1f4709aa7c142e930d0806805",
+            "bytes": 5900
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sllw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sllw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sllw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sllw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sllw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "95ad0efae0ac72ce9b67e57ab6742cfa9108df27a7def82a1bddc2b70bd417dd",
+            "bytes": 208592
+          },
+          "signature_elf": {
+            "sha256": "ca102f3e6f04fa5beb2e0a93339782cc2600f23040b3d7318f579b510324d7a3",
+            "bytes": 208728
+          },
+          "signature": {
+            "sha256": "d1486c778618ba0752a8d9a99dc6503aee2e8fcdd9809375054d7b6da9af4d0e",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "55171114fefd65716148f4ef137c258f63244493766d37812baa3f70a8721470",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-slt-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-slt-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-slt-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-slt-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-slt-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "deba9b867acd73a1df6e4ad625fe496dcf9edb3b4e321469780f28bf09825e1c",
+            "bytes": 207552
+          },
+          "signature_elf": {
+            "sha256": "d44befc75ff07cec2d8673effe5ff249bf47e93c65f2d1996730ef40bdd92688",
+            "bytes": 207688
+          },
+          "signature": {
+            "sha256": "cd309781e9371c7fe0ec817b81dfce85ad5646f70634d92f669141b496cc6f1d",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "6e186de7ce911d2898edf7f22082a20b8916d1c52e7e9c9883556623e1c12b26",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-slti-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-slti-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-slti-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-slti-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-slti-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "5bc4268a7cce4ea3e883fd3b1285212531ae6e719de2fd099f13b29c4794afd3",
+            "bytes": 178488
+          },
+          "signature_elf": {
+            "sha256": "b49c91fe3e666d821db30a7b9e0e878f6501e0031c6eeaaacc5fdba6ddf0bb0f",
+            "bytes": 178624
+          },
+          "signature": {
+            "sha256": "917836306b60c06223b810fcdb8f8c832c3523fc5f4fece43d34bdbaf60e2811",
+            "bytes": 7888
+          },
+          "expected_results": {
+            "sha256": "1f1e3eb34bd8b662ceeef0f9b52d916f71430cf1110e6a91c1f06be22123050d",
+            "bytes": 11600
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sltiu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sltiu-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sltiu-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sltiu-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sltiu-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "581defe849967a222006890316bcb67b37c671816b67a7b8e88664e3142067ff",
+            "bytes": 179392
+          },
+          "signature_elf": {
+            "sha256": "f5356c41ee8f1989a2929ad00db3943fc3f7c07dea6d43c041c3f90f8eda6003",
+            "bytes": 179528
+          },
+          "signature": {
+            "sha256": "431b6bb6a99dc8c6e07d2c63166c7208bc477b1876bcffa28dfc2c650635b247",
+            "bytes": 7888
+          },
+          "expected_results": {
+            "sha256": "71a0d4ae8a4d17bfdd33d9fcbd6e00747fa72d48501eeaac691d540cc4e525d4",
+            "bytes": 11600
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sltu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sltu-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sltu-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sltu-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sltu-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "a7033d850638846876aafbede73f085192c48a85fbf175b06ea1ca9c44ef60f5",
+            "bytes": 208592
+          },
+          "signature_elf": {
+            "sha256": "1e182f8e56731620f3b94c1393178d980f6eff53d1657d8395cd713c1b81ba9c",
+            "bytes": 208728
+          },
+          "signature": {
+            "sha256": "a5069a2961570b8625723cfafaae195f02db0c84ef4c7a6031623ba2e3091780",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "ac658a1a98118f3ef21e3ca958fe75080f49792fd1185b43dfa120cbc7207216",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sra-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sra-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sra-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sra-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sra-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "0e7bf3e8e0577c83606c4e73179aed4517e10e80e4010fa5c2fa924e8a49895e",
+            "bytes": 207584
+          },
+          "signature_elf": {
+            "sha256": "39ad7b9ebfabf5dad4623c8a7454d6fd7e1fd0356bb026dde5298f11b6d05c44",
+            "bytes": 207720
+          },
+          "signature": {
+            "sha256": "aa7ac3563f448297dce364b2b185e4bd1db4af1f3b67cd44a8aee32fa9f856fc",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "fca9bf0adf0eea5e72e1f8f365dd338da5324f29152ddf061505593c899ec07e",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-srai-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-srai-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-srai-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-srai-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-srai-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "f1985e1f6e26178e1378f84d6f0be0db8df19411493d1ddbaf4cb6fb2d18318e",
+            "bytes": 132560
+          },
+          "signature_elf": {
+            "sha256": "8a9b67b7c4014fa841f2d89f8dd85eafe86422abcee983bd23feb9013dfa8dd4",
+            "bytes": 132696
+          },
+          "signature": {
+            "sha256": "fb732854aefcea103922670f9b3108e957858149ff6578e95f6a6837e8dd93bf",
+            "bytes": 5916
+          },
+          "expected_results": {
+            "sha256": "abfc44ca18ce3663f72d5c5d1b5a37e841fe260b4b5c4e10492f48935644f855",
+            "bytes": 8700
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sraiw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sraiw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sraiw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sraiw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sraiw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "55ce9aba22df567778eb7a2de0c3760645dc600da0a3430781a4db42c1fe776b",
+            "bytes": 91664
+          },
+          "signature_elf": {
+            "sha256": "4cd5f265657898670312dd05ddd2d47a3e674212ec4b5e7ac1c3b78b46fec0c3",
+            "bytes": 95896
+          },
+          "signature": {
+            "sha256": "419c05a3ade81d95c0bfaa91add3cf8677d245759feef8263372ccb9ed7b4e60",
+            "bytes": 4012
+          },
+          "expected_results": {
+            "sha256": "8db432579dec62497bee06d591cb9067fad8af9e62fcf44d9d05689e95eb0021",
+            "bytes": 5900
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sraw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sraw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sraw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sraw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sraw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "b806f073834ef3ad6fcd09e0b14e3902daed07e7a0248ffe15813ee225f86b9a",
+            "bytes": 208592
+          },
+          "signature_elf": {
+            "sha256": "15a0f8fd434fe9d0811c5c32b8369671d55e04a68a499848fb5d2ecc34134f63",
+            "bytes": 208728
+          },
+          "signature": {
+            "sha256": "61376fd9ffa5bad8ebb5cbaa3dd29cac0cb35fe7d8145b799946e16e984af0ec",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "07071f9b48ffa1776593d2cebd3d832f577ae926745444d64b7cd552761b7bfa",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-srl-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-srl-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-srl-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-srl-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-srl-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "334c055c0de32cce7c13be9a330328700be8143d5af05faeeec7710d1c067be8",
+            "bytes": 207536
+          },
+          "signature_elf": {
+            "sha256": "662cb2779a38561125102ce7dedc887a06d4087db8ca19716c3a4bc6a514ffb4",
+            "bytes": 207672
+          },
+          "signature": {
+            "sha256": "a07aa8122ee8cc986c1f598baee176c1d0dc91c151ba5d646a94423860fbe96b",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "f831f04160ee8f501e13b076b4fad38481b09e0e51480dd5c8692e5a12221feb",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-srli-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-srli-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-srli-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-srli-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-srli-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "da21086c5dd10d04319ce5b793a52f095f56a8f9aba09b7fc223a3e2001e854d",
+            "bytes": 132560
+          },
+          "signature_elf": {
+            "sha256": "cf4f267fca8ce4611c957b0f95252b4b225541c96c842bffbb563fc382d72c92",
+            "bytes": 132696
+          },
+          "signature": {
+            "sha256": "380e62af49d7e402ee26049b8bab3c3169f831683d36f8e16c0a72e35e9f65e1",
+            "bytes": 5916
+          },
+          "expected_results": {
+            "sha256": "f34b03bd9971f5427f7ee123a50229b2bd89d589fe2ce0a0f01a372da2133a88",
+            "bytes": 8700
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-srliw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-srliw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-srliw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-srliw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-srliw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "58140314ce4ce6f60110be99f84cf1efe39aec08f0b8f6d849c8eac949830b28",
+            "bytes": 91648
+          },
+          "signature_elf": {
+            "sha256": "bf22ed599d25f804a980ed3399c49e36b005bcb485dd70ab86be8dbcd347d138",
+            "bytes": 95880
+          },
+          "signature": {
+            "sha256": "945945791e6272720edd2f2d7a09bd0fb0b9a4e9f71404756d8a347267eb5623",
+            "bytes": 4012
+          },
+          "expected_results": {
+            "sha256": "39ec6b9b1f7cabcdeef43b7240338f06ad2d32873cd141c49d7ab6e869e15523",
+            "bytes": 5900
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-srlw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-srlw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-srlw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-srlw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-srlw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "182f0a734023209fce012cd90dc5b5d6804115fe0476791f3cf3048a1ae97e7e",
+            "bytes": 208576
+          },
+          "signature_elf": {
+            "sha256": "c91ea89c74b38c638048bebfe9560daea2f8047bef1dabc07ed0f3cb83d32a12",
+            "bytes": 208712
+          },
+          "signature": {
+            "sha256": "b60e0beed20dd4ccf48d3370f495802eac5d614f7aa68184c583aafd66dec344",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "114da37447d9050f82d10de7e937a091c83ca229c02d77c8b5590b1b4669efc8",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sub-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sub-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sub-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sub-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sub-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "cbaff92ce3fa186b134cbb263eb0c846ee790bb86cb70a2f00d04c8f4d2f88e5",
+            "bytes": 207520
+          },
+          "signature_elf": {
+            "sha256": "0c1bdf791e80d0f5affc1e3c170a28a7f18bf5b9ee58bb54592c582bc5b047c5",
+            "bytes": 207656
+          },
+          "signature": {
+            "sha256": "dbcf6e3a44001b179f742a8d99a15f27f5492b1c88f99412769cb49a27b32602",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "a62fc96d4e8bdc7da07ca86908b7272e2fc970e6d017c78b223bd4ffcc1ea0e0",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-subw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-subw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-subw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-subw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-subw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "c5f1f2ed13f9190c1cdc1b923ef656656cd7cd2e718fd03564eceb4750a26211",
+            "bytes": 208592
+          },
+          "signature_elf": {
+            "sha256": "b9b7042bc59052ba09ab7271fe1f7443a1d739c98ad455e496e8998d991c8adc",
+            "bytes": 208728
+          },
+          "signature": {
+            "sha256": "06a1a972c020b7996b347f163c417908b0f53824945247fd16d52690a14e111a",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "d383d1ca3dfc56b0699f32027c86ca020cfa0f35b8ab37832db0767d7362f9d4",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sw-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-sw-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-sw-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-sw-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "d7e843415910787fc97c4e602bc8e2809112d9001d8cae23c55dc9b5bea578dc",
+            "bytes": 54584
+          },
+          "signature_elf": {
+            "sha256": "ea36d2627cd231e197b9383c9ddee6ea59617afaafc16eb52328976cb416ba8b",
+            "bytes": 47592
+          },
+          "signature": {
+            "sha256": "25b61755d1aeccd1ea88035068c1e1ff6d88af2e37e4cff109248ec66a8bba49",
+            "bytes": 3706
+          },
+          "expected_results": {
+            "sha256": "14781db710fdb96dad039829267e38598e33fbc290d594c239e52ff5c46ae00c",
+            "bytes": 5450
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-xor-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-xor-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-xor-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-xor-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-xor-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "85ca78d255d34496e87e34e5825ef0a909ca6feaae0919170c706b896894247a",
+            "bytes": 207568
+          },
+          "signature_elf": {
+            "sha256": "6c79d4478e993b7cf96a0c1ccc9b53a1e88083839667cc7cc40b28effb19c30a",
+            "bytes": 207704
+          },
+          "signature": {
+            "sha256": "f5a338ae184a1ef6174999e24f83949b025b17d34a26de9da2c9a0b1c1e70b8c",
+            "bytes": 8908
+          },
+          "expected_results": {
+            "sha256": "e981157459a364e2f0ddc99b22cd4350ff562bf4b7dfe9d63a93f22836443175",
+            "bytes": 13100
+          }
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-xori-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-xori-00.elf",
+        "signature_elf": "ruscv-rv64i-smoke/build/rv64i/I/I-xori-00.sig.elf",
+        "signature": "ruscv-rv64i-smoke/build/rv64i/I/I-xori-00.sig",
+        "expected_results": "ruscv-rv64i-smoke/build/rv64i/I/I-xori-00.results",
+        "artifacts": {
+          "elf": {
+            "sha256": "e4bbf1ed629f97e9c9c602772040ffe068004adf7d38e0c0c4353c7b87e7595b",
+            "bytes": 178520
+          },
+          "signature_elf": {
+            "sha256": "e7765e23944eb64883a08ece206b90ea19154d77533b0204881e0e1493b570a6",
+            "bytes": 178656
+          },
+          "signature": {
+            "sha256": "2480c930363a8a45b3ddc25e8e3e85f528507f3847ca76cc7d34d09a0986307a",
+            "bytes": 7888
+          },
+          "expected_results": {
+            "sha256": "6f810154e17c9ce09d7e30600ee7bc07a9d862e7da82684718aad2e4ff1aba81",
+            "bytes": 11600
+          }
+        }
+      }
+    ]
+  },
+  "execution": {
+    "simulator_revision": "4e8a947300f6012d83b991017df4247cda06a449",
+    "simulator_sha256": "cd51dd6043e87edc02540fe3a31eae8fddae7d78e18f07797ca2b7d2cbb52e49",
+    "configuration_sha256": {
+      ".a5/config/invalid-width.yaml": "b67adb0479748d3e663346f65757b8f159b24e520c72fc533cdc0b02e640d4f3",
+      ".a5/config/link.ld": "90f18d00caf5b1afaa82925bca6c7c719962163d6ad7352cdd7857c4586ee56b",
+      ".a5/config/overlay/param/MXLEN.yaml": "9f7e097cd29ddd39057f12fa4f62da5410dae3787ab40c703fb39302ffb7b750",
+      ".a5/config/ruscv-rv64i-smoke.yaml": "34b453fd2e584f6d21a1f73226fc81c0b468071de17ead909fd770b77705bbe5",
+      ".a5/config/rvmodel_macros.h": "d48140aa48660ae5c34c4ca33504f94d6316ce3317dc705a949f58982fef20eb",
+      ".a5/config/rvtest_config.h": "93c4d63cb7557e87ff5475a439ebeaf4798313a543806610dd6e080508ffb5dc",
+      ".a5/config/sail.json": "cb46211f88305cc03c3a53dbe72efbcd34deb40563c9ecf7b9876fdfa196117f",
+      ".a5/config/test_config.yaml": "ba6e0098e804bcaf61a1f9a2830054fd4eeefdf409d97e07a52fbca8ffc48394"
+    },
+    "plan_sha256": "8822d90e31a79144aa903e064955f1a817e01e6a8ca321e1aed23e2f69720b82",
+    "summary": {
+      "status": "proposed-not-frozen",
+      "success": false,
+      "errors": [
+        "ruscv-rv64i-smoke/elfs/rv64i/I/I-beq-00.elf: simulator-or-runner-failure: simulator-error",
+        "ruscv-rv64i-smoke/elfs/rv64i/I/I-bge-00.elf: simulator-or-runner-failure: simulator-error",
+        "ruscv-rv64i-smoke/elfs/rv64i/I/I-bgeu-00.elf: simulator-or-runner-failure: simulator-error",
+        "ruscv-rv64i-smoke/elfs/rv64i/I/I-blt-00.elf: simulator-or-runner-failure: simulator-error",
+        "ruscv-rv64i-smoke/elfs/rv64i/I/I-bltu-00.elf: guest-fail: None",
+        "ruscv-rv64i-smoke/elfs/rv64i/I/I-bne-00.elf: simulator-or-runner-failure: simulator-error",
+        "ruscv-rv64i-smoke/elfs/rv64i/I/I-fence-00.elf: simulator-or-runner-failure: simulator-error"
+      ],
+      "required_sources": 51,
+      "required_variants": 51,
+      "generated_selfcheck_elfs": 51,
+      "executed_elfs": 51,
+      "passed_elfs": 44
+    },
+    "results": [
+      {
+        "source": "tests/rv64i/I/I-add-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-add-00.elf",
+        "sha256": "b10f0bdf5de05ce70d80c0bdfba640fc82efbd31d40a120e55a1cea1ac44860b",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-add-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-addi-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-addi-00.elf",
+        "sha256": "aa62287b5ff7d30f890397edb5c79fbe29404594d9eaed05fb2d3e07df7d3db8",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-addi-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2907,
+          "final_pc": "0x0000000080013038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-addiw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-addiw-00.elf",
+        "sha256": "3faf934f7e07cafbaae2f8d5dbe64e17b16869989fbe4e8441b072133923d96b",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-addiw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2907,
+          "final_pc": "0x0000000080013038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-addw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-addw-00.elf",
+        "sha256": "7e28ed62799624a4edb3f823d72838be747573d195b254a7067be2a3d758c8a0",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-addw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-and-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-and-00.elf",
+        "sha256": "4c3354b3bc11c5af04c4fe1f25312feb139c32b59680d4e33d7c147e84dc43bd",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-and-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-andi-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-andi-00.elf",
+        "sha256": "67d1a6ed7ffb0230f5adc9d6f7f13a5cd7f2ac040864e0cb240e96c246ea9b30",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-andi-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2907,
+          "final_pc": "0x0000000080013038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-auipc-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-auipc-00.elf",
+        "sha256": "1e6ac8f596c42d6ddf814ee84e8815368fa9594262bf408ae27eedd1759461fd",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-auipc-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 424,
+          "final_pc": "0x0000000080006038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-beq-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-beq-00.elf",
+        "sha256": "2bfa8160801fb47c52ff9620c3e33bc028e448c39e71a3dea885a930f3537bd5",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-beq-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "simulator-or-runner-failure",
+        "reason": "simulator-error",
+        "execution_result": {
+          "exit_code": 1,
+          "cycles": 4460,
+          "final_pc": "0x0000000080009800",
+          "status": "FAILED",
+          "error": "Execution error at PC 0x0000000080009800: Memory error: Invalid memory address: 0xbaa00d3616bec80d"
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-bge-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-bge-00.elf",
+        "sha256": "c068eaa94e5c8b80f5f57a0f0dac8ee8f16f4d3b758c355181e0f7e571a3e19d",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-bge-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "simulator-or-runner-failure",
+        "reason": "simulator-error",
+        "execution_result": {
+          "exit_code": 1,
+          "cycles": 4539,
+          "final_pc": "0x0000000080009800",
+          "status": "FAILED",
+          "error": "Execution error at PC 0x0000000080009800: Invalid instruction encoding: 0x800097ec"
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-bgeu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-bgeu-00.elf",
+        "sha256": "d5aa3a43145c24496bdcf3b045df84a5f9382449bc8396cbaeb06ad738798f92",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-bgeu-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "simulator-or-runner-failure",
+        "reason": "simulator-error",
+        "execution_result": {
+          "exit_code": 1,
+          "cycles": 4537,
+          "final_pc": "0x000000008000981c",
+          "status": "FAILED",
+          "error": "Execution error at PC 0x000000008000981c: Memory error: Invalid memory address: 0x3f33662176fd1ca1"
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-blt-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-blt-00.elf",
+        "sha256": "414ed9b87729966c346e5c90d5ed65eea3e833e5643da61cb04b9e977851f333",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-blt-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "simulator-or-runner-failure",
+        "reason": "simulator-error",
+        "execution_result": {
+          "exit_code": 1,
+          "cycles": 4548,
+          "final_pc": "0x0000000080009800",
+          "status": "FAILED",
+          "error": "Execution error at PC 0x0000000080009800: Invalid instruction encoding: 0x800097ec"
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-bltu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-bltu-00.elf",
+        "sha256": "7093f33928027024da68a870fc80813938d953d57d9b879d1164d5027da04c59",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-bltu-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-fail",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 1,
+          "cycles": 5528,
+          "final_pc": "0x000000008001c050",
+          "status": "FAILED",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-bne-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-bne-00.elf",
+        "sha256": "9bc273ef2712f92ec38ad1c45fb10b44cfa5bd189157936600f02e1247284af6",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-bne-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "simulator-or-runner-failure",
+        "reason": "simulator-error",
+        "execution_result": {
+          "exit_code": 1,
+          "cycles": 4621,
+          "final_pc": "0x0000000080009800",
+          "status": "FAILED",
+          "error": "Execution error at PC 0x0000000080009800: Memory error: Invalid memory address: 0x9ab3534837563804"
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-fence-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-fence-00.elf",
+        "sha256": "a0e8d5fe841b67869af904b29f71b75cc2c08a46c370460e940cb3e44e55f36f",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-fence-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "simulator-or-runner-failure",
+        "reason": "simulator-error",
+        "execution_result": {
+          "exit_code": 1,
+          "cycles": 150,
+          "final_pc": "0x0000000080000260",
+          "status": "FAILED",
+          "error": "Execution error at PC 0x0000000080000260: Unimplemented instruction"
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-jal-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-jal-00.elf",
+        "sha256": "772f287995416c4e5fc8681b8b7a661eb00fb8d6ccfdacd99600807cb8899737",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-jal-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 15864,
+          "final_pc": "0x0000000080022038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-jalr-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-jalr-00.elf",
+        "sha256": "ae5a9fb8a30b811860e8347d54d4217cc790af431426335a6efc97875f8ebed8",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-jalr-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2826,
+          "final_pc": "0x000000008000b038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lb-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lb-00.elf",
+        "sha256": "afda475dd01a45c6acc3406fabdd9281bf57eaa888fdd58aa708cf945850d0e0",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-lb-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 1060,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lbu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lbu-00.elf",
+        "sha256": "9bed46fdb2e423a2601dfe0e075ce9e6f5a24c411a880892075d029306af8f43",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-lbu-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 1060,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-ld-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-ld-00.elf",
+        "sha256": "46be9c75739aa8556c6f60268a8bcabf3e7002b5171ed0106f585eeb1fa04c9a",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-ld-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 908,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lh-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lh-00.elf",
+        "sha256": "bdd430f19d519c8b08b26df550f8aa59d53dd0966b63e1362d354efc9d2fa05a",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-lh-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 984,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lhu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lhu-00.elf",
+        "sha256": "f01427f6ddcf565d384299789268e8f683779fa2313b73c752e487f8a2e04705",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-lhu-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 984,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lui-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lui-00.elf",
+        "sha256": "5193575fed4cffd75a4acd4119207717aede180ec9710bc9f1889844b65bc172",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-lui-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 416,
+          "final_pc": "0x0000000080006038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lw-00.elf",
+        "sha256": "457eb87cb1c84f1b095622d2e1079f2f3d9ece4b110dd0632fda82358f080150",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-lw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 954,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-lwu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-lwu-00.elf",
+        "sha256": "9270be692f377924a1ed782987b69aed2893f40bfafb52f59f82075f546293e8",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-lwu-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 954,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-nop-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-nop-00.elf",
+        "sha256": "1379f30c797039da0fb78a374163c5643a342db250633728d485b73a74a1f840",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-nop-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 175,
+          "final_pc": "0x0000000080005038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-or-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-or-00.elf",
+        "sha256": "4b5c40e46ddb9b0d6706672312682d7aa0b3572b66a7ccebb4bd16873302adad",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-or-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4319,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-ori-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-ori-00.elf",
+        "sha256": "8f3d088df2c4fb2f489b208daf62be41e296136b60c0b2082a35a8c3fca39d7f",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-ori-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2907,
+          "final_pc": "0x0000000080013038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sb-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sb-00.elf",
+        "sha256": "6e8c5dfed39e43ca5d25394c22f3af97aecbece624a27b185c916d9ce9741c1b",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sb-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 1336,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sd-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sd-00.elf",
+        "sha256": "f1dbf9fa47488788c8b828f185cd1af896a3d5dd4ac528dd1c5a62e1b4bf2fca",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sd-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 1272,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sh-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sh-00.elf",
+        "sha256": "eef72f78b3d5d93e7bf2ca5e68c33634a1504fcf9700d266606a5755e42cf0f0",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sh-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 1308,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sll-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sll-00.elf",
+        "sha256": "70ae68c4bf14df46ad42fef8c7d0e6529e381dcb360e6e2d7af1b59cd8e7c530",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sll-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-slli-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-slli-00.elf",
+        "sha256": "0b9861a46cef9ccf30fa7a79ba82744d8178ceff0b132d9b89b177ba4a985306",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-slli-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2207,
+          "final_pc": "0x0000000080010038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-slliw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-slliw-00.elf",
+        "sha256": "fb2825b1bd6198ee588b3f666ac1dc2de12265b0bedaf5242f5710313958e945",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-slliw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 1543,
+          "final_pc": "0x0000000080009038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sllw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sllw-00.elf",
+        "sha256": "95ad0efae0ac72ce9b67e57ab6742cfa9108df27a7def82a1bddc2b70bd417dd",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sllw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-slt-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-slt-00.elf",
+        "sha256": "deba9b867acd73a1df6e4ad625fe496dcf9edb3b4e321469780f28bf09825e1c",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-slt-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-slti-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-slti-00.elf",
+        "sha256": "5bc4268a7cce4ea3e883fd3b1285212531ae6e719de2fd099f13b29c4794afd3",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-slti-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2907,
+          "final_pc": "0x0000000080013038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sltiu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sltiu-00.elf",
+        "sha256": "581defe849967a222006890316bcb67b37c671816b67a7b8e88664e3142067ff",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sltiu-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2907,
+          "final_pc": "0x0000000080013038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sltu-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sltu-00.elf",
+        "sha256": "a7033d850638846876aafbede73f085192c48a85fbf175b06ea1ca9c44ef60f5",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sltu-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sra-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sra-00.elf",
+        "sha256": "0e7bf3e8e0577c83606c4e73179aed4517e10e80e4010fa5c2fa924e8a49895e",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sra-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-srai-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-srai-00.elf",
+        "sha256": "f1985e1f6e26178e1378f84d6f0be0db8df19411493d1ddbaf4cb6fb2d18318e",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-srai-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2207,
+          "final_pc": "0x0000000080010038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sraiw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sraiw-00.elf",
+        "sha256": "55ce9aba22df567778eb7a2de0c3760645dc600da0a3430781a4db42c1fe776b",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sraiw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 1543,
+          "final_pc": "0x0000000080009038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sraw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sraw-00.elf",
+        "sha256": "b806f073834ef3ad6fcd09e0b14e3902daed07e7a0248ffe15813ee225f86b9a",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sraw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-srl-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-srl-00.elf",
+        "sha256": "334c055c0de32cce7c13be9a330328700be8143d5af05faeeec7710d1c067be8",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-srl-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4319,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-srli-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-srli-00.elf",
+        "sha256": "da21086c5dd10d04319ce5b793a52f095f56a8f9aba09b7fc223a3e2001e854d",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-srli-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2207,
+          "final_pc": "0x0000000080010038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-srliw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-srliw-00.elf",
+        "sha256": "58140314ce4ce6f60110be99f84cf1efe39aec08f0b8f6d849c8eac949830b28",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-srliw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 1543,
+          "final_pc": "0x0000000080009038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-srlw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-srlw-00.elf",
+        "sha256": "182f0a734023209fce012cd90dc5b5d6804115fe0476791f3cf3048a1ae97e7e",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-srlw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sub-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sub-00.elf",
+        "sha256": "cbaff92ce3fa186b134cbb263eb0c846ee790bb86cb70a2f00d04c8f4d2f88e5",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sub-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4319,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-subw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-subw-00.elf",
+        "sha256": "c5f1f2ed13f9190c1cdc1b923ef656656cd7cd2e718fd03564eceb4750a26211",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-subw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-sw-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-sw-00.elf",
+        "sha256": "d7e843415910787fc97c4e602bc8e2809112d9001d8cae23c55dc9b5bea578dc",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-sw-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 1286,
+          "final_pc": "0x0000000080007038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-xor-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-xor-00.elf",
+        "sha256": "85ca78d255d34496e87e34e5825ef0a909ca6feaae0919170c706b896894247a",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-xor-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4327,
+          "final_pc": "0x0000000080015038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      },
+      {
+        "source": "tests/rv64i/I/I-xori-00.S",
+        "variant": "rv64-selfcheck",
+        "elf": "ruscv-rv64i-smoke/elfs/rv64i/I/I-xori-00.elf",
+        "sha256": "e4bbf1ed629f97e9c9c602772040ffe068004adf7d38e0c0c4353c7b87e7595b",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/work/ruscv-rv64i-smoke/elfs/rv64i/I/I-xori-00.elf",
+          "--max-cycles",
+          "1000000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 2915,
+          "final_pc": "0x0000000080013038",
+          "status": "SUCCESS",
+          "error": null
+        }
+      }
+    ]
+  },
+  "diagnostics": {
+    "tests/rv64i/I/I-add-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-addi-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2907\nFinal PC:   0x0000000080013038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3836,
+        "unsupported": [],
+        "mapped_inline_data_words": 1812,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-addiw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2907\nFinal PC:   0x0000000080013038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3836,
+        "unsupported": [],
+        "mapped_inline_data_words": 1812,
+        "mnemonics": [
+          "add",
+          "addi",
+          "addiw",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-addw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "addw",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-and-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "and",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-andi-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2907\nFinal PC:   0x0000000080013038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3836,
+        "unsupported": [],
+        "mapped_inline_data_words": 1812,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-auipc-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     424\nFinal PC:   0x0000000080006038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 960,
+        "unsupported": [],
+        "mapped_inline_data_words": 240,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-beq-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  1\nCycles:     4460\nFinal PC:   0x0000000080009800\nStatus:     FAILED\nError:      Execution error at PC 0x0000000080009800: Memory error: Invalid memory address: 0xbaa00d3616bec80d\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 11796,
+        "unsupported": [],
+        "mapped_inline_data_words": 2572,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-bge-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  1\nCycles:     4539\nFinal PC:   0x0000000080009800\nStatus:     FAILED\nError:      Execution error at PC 0x0000000080009800: Invalid instruction encoding: 0x800097ec\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 11796,
+        "unsupported": [],
+        "mapped_inline_data_words": 2572,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "bge",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-bgeu-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  1\nCycles:     4537\nFinal PC:   0x000000008000981c\nStatus:     FAILED\nError:      Execution error at PC 0x000000008000981c: Memory error: Invalid memory address: 0x3f33662176fd1ca1\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 11796,
+        "unsupported": [],
+        "mapped_inline_data_words": 2572,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "bgeu",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-blt-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  1\nCycles:     4548\nFinal PC:   0x0000000080009800\nStatus:     FAILED\nError:      Execution error at PC 0x0000000080009800: Invalid instruction encoding: 0x800097ec\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 11796,
+        "unsupported": [],
+        "mapped_inline_data_words": 2572,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-bltu-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  1\nCycles:     5528\nFinal PC:   0x000000008001c050\nStatus:     FAILED\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 11796,
+        "unsupported": [],
+        "mapped_inline_data_words": 2572,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bltu",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-bne-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  1\nCycles:     4621\nFinal PC:   0x0000000080009800\nStatus:     FAILED\nError:      Execution error at PC 0x0000000080009800: Memory error: Invalid memory address: 0x9ab3534837563804\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 11796,
+        "unsupported": [],
+        "mapped_inline_data_words": 2572,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-fence-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  1\nCycles:     150\nFinal PC:   0x0000000080000260\nStatus:     FAILED\nError:      Execution error at PC 0x0000000080000260: Unimplemented instruction\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 650,
+        "unsupported": [],
+        "mapped_inline_data_words": 14,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "fence",
+          "fence.tso",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-jal-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     15864\nFinal PC:   0x0000000080022038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 28260,
+        "unsupported": [],
+        "mapped_inline_data_words": 444,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-jalr-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2826\nFinal PC:   0x000000008000b038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3660,
+        "unsupported": [],
+        "mapped_inline_data_words": 956,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sub",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-lb-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     1060\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1664,
+        "unsupported": [],
+        "mapped_inline_data_words": 512,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "lb",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-lbu-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     1060\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1664,
+        "unsupported": [],
+        "mapped_inline_data_words": 512,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "lbu",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-ld-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     908\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1504,
+        "unsupported": [],
+        "mapped_inline_data_words": 480,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-lh-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     984\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1584,
+        "unsupported": [],
+        "mapped_inline_data_words": 496,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lh",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-lhu-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     984\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1584,
+        "unsupported": [],
+        "mapped_inline_data_words": 496,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-lui-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     416\nFinal PC:   0x0000000080006038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 952,
+        "unsupported": [],
+        "mapped_inline_data_words": 240,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-lw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     954\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1552,
+        "unsupported": [],
+        "mapped_inline_data_words": 488,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-lwu-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     954\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1552,
+        "unsupported": [],
+        "mapped_inline_data_words": 488,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-nop-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     175\nFinal PC:   0x0000000080005038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 652,
+        "unsupported": [],
+        "mapped_inline_data_words": 4,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-or-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4319\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5308,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-ori-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2907\nFinal PC:   0x0000000080013038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3836,
+        "unsupported": [],
+        "mapped_inline_data_words": 1812,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "ori",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sb-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     1336\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1920,
+        "unsupported": [],
+        "mapped_inline_data_words": 432,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sd-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     1272\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1848,
+        "unsupported": [],
+        "mapped_inline_data_words": 400,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sh-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     1308\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1888,
+        "unsupported": [],
+        "mapped_inline_data_words": 416,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "sh",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sll-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "sll",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-slli-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2207\nFinal PC:   0x0000000080010038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3020,
+        "unsupported": [],
+        "mapped_inline_data_words": 1348,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-slliw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     1543\nFinal PC:   0x0000000080009038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 2244,
+        "unsupported": [],
+        "mapped_inline_data_words": 900,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "slliw",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sllw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "sllw",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-slt-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "slt",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-slti-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2907\nFinal PC:   0x0000000080013038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3836,
+        "unsupported": [],
+        "mapped_inline_data_words": 1812,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "slti",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sltiu-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2907\nFinal PC:   0x0000000080013038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3836,
+        "unsupported": [],
+        "mapped_inline_data_words": 1812,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "sltiu",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sltu-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "sltu",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sra-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "sra",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-srai-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2207\nFinal PC:   0x0000000080010038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3020,
+        "unsupported": [],
+        "mapped_inline_data_words": 1348,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sraiw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     1543\nFinal PC:   0x0000000080009038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 2244,
+        "unsupported": [],
+        "mapped_inline_data_words": 900,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "sraiw",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sraw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "sraw",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-srl-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4319\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5308,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-srli-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2207\nFinal PC:   0x0000000080010038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3020,
+        "unsupported": [],
+        "mapped_inline_data_words": 1348,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-srliw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     1543\nFinal PC:   0x0000000080009038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 2244,
+        "unsupported": [],
+        "mapped_inline_data_words": 900,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "srliw",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-srlw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "srlw",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sub-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4319\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5308,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sub",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-subw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "subw",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-sw-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     1286\nFinal PC:   0x0000000080007038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 1864,
+        "unsupported": [],
+        "mapped_inline_data_words": 408,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-xor-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4327\nFinal PC:   0x0000000080015038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 5316,
+        "unsupported": [],
+        "mapped_inline_data_words": 2052,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw",
+          "xor"
+        ]
+      }
+    },
+    "tests/rv64i/I/I-xori-00.S": {
+      "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     2915\nFinal PC:   0x0000000080013038\nStatus:     SUCCESS\n=====================================\n",
+      "stderr": "",
+      "audit": {
+        "instructions": 3844,
+        "unsupported": [],
+        "mapped_inline_data_words": 1812,
+        "mnemonics": [
+          "add",
+          "addi",
+          "andi",
+          "auipc",
+          "beq",
+          "blt",
+          "bne",
+          "jal",
+          "jalr",
+          "ld",
+          "lhu",
+          "lui",
+          "lw",
+          "lwu",
+          "or",
+          "sb",
+          "sd",
+          "slli",
+          "srai",
+          "srl",
+          "srli",
+          "sw",
+          "xori"
+        ]
+      }
+    }
+  },
+  "public_guest_controls": {
+    "success": true,
+    "results": [
+      {
+        "control": "pass",
+        "sha256": "39abb8bf5509168ba22c720bd7b0f8eff3b3bfb4208c3b03b85995507c7fef46",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/evidence/controls/pass.elf",
+          "--max-cycles",
+          "1000"
+        ],
+        "returncode": 0,
+        "max_cycles": 1000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-pass",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 0,
+          "cycles": 4,
+          "final_pc": "0x0000000080000010",
+          "status": "SUCCESS",
+          "error": null
+        },
+        "stdout": "\n========== Execution Result ==========\nExit Code:  0\nCycles:     4\nFinal PC:   0x0000000080000010\nStatus:     SUCCESS\n=====================================\n",
+        "stderr": ""
+      },
+      {
+        "control": "guest-fail",
+        "sha256": "fe4b912c2907e0918d4a45ed8dc2349b413d31d14c5fad4a4ca1820e2eab417d",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/evidence/controls/guest-fail.elf",
+          "--max-cycles",
+          "1000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000,
+        "host_timeout_seconds": 60,
+        "classification": "guest-fail",
+        "reason": null,
+        "execution_result": {
+          "exit_code": 1,
+          "cycles": 4,
+          "final_pc": "0x0000000080000010",
+          "status": "FAILED",
+          "error": null
+        },
+        "stdout": "\n========== Execution Result ==========\nExit Code:  1\nCycles:     4\nFinal PC:   0x0000000080000010\nStatus:     FAILED\n=====================================\n",
+        "stderr": ""
+      },
+      {
+        "control": "cycle-timeout",
+        "sha256": "110bac7cc4cc35338f6badfa6e0da0c88cbce34a0a54d7d3ae172c6fdf7e86d9",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/evidence/controls/cycle-timeout.elf",
+          "--max-cycles",
+          "1000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000,
+        "host_timeout_seconds": 60,
+        "classification": "simulator-or-runner-failure",
+        "reason": "cycle-timeout",
+        "execution_result": {
+          "exit_code": 1,
+          "cycles": 1000,
+          "final_pc": "0x0000000080000000",
+          "status": "TIMEOUT",
+          "error": "Timeout after 1000 cycles"
+        },
+        "stdout": "\n========== Execution Result ==========\nExit Code:  1\nCycles:     1000\nFinal PC:   0x0000000080000000\nStatus:     TIMEOUT\nError:      Timeout after 1000 cycles\n=====================================\n",
+        "stderr": ""
+      },
+      {
+        "control": "unsupported",
+        "sha256": "25502eec9b8829a0fb347aeb53449dfb54186d2d56a02843896b45cbd49a4715",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/evidence/controls/unsupported.elf",
+          "--max-cycles",
+          "1000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000,
+        "host_timeout_seconds": 60,
+        "classification": "simulator-or-runner-failure",
+        "reason": "simulator-error",
+        "execution_result": {
+          "exit_code": 1,
+          "cycles": 0,
+          "final_pc": "0x0000000080000000",
+          "status": "FAILED",
+          "error": "Execution error at PC 0x0000000080000000: Invalid instruction encoding: 0xffffffff"
+        },
+        "stdout": "\n========== Execution Result ==========\nExit Code:  1\nCycles:     0\nFinal PC:   0x0000000080000000\nStatus:     FAILED\nError:      Execution error at PC 0x0000000080000000: Invalid instruction encoding: 0xffffffff\n=====================================\n",
+        "stderr": ""
+      },
+      {
+        "control": "malformed",
+        "sha256": "ca2828e1dfbcac95c0626b3b06cb6d9f90a391c50cc46797461774d98f5e8c90",
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/evidence/controls/malformed.elf",
+          "--max-cycles",
+          "1000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000,
+        "host_timeout_seconds": 60,
+        "classification": "simulator-or-runner-failure",
+        "reason": "simulator-stderr",
+        "execution_result": null,
+        "stdout": "",
+        "stderr": "Error: Execution failed: ELF loading failed: I/O error: failed to fill whole buffer\n"
+      },
+      {
+        "control": "missing",
+        "sha256": null,
+        "command": [
+          "/home/runner/work/ruscv-sim/ruscv-sim/target/release/ruscv-sim",
+          "run",
+          "/home/runner/work/ruscv-sim/ruscv-sim/.a5/evidence/controls/missing.elf",
+          "--max-cycles",
+          "1000"
+        ],
+        "returncode": 1,
+        "max_cycles": 1000,
+        "host_timeout_seconds": 60,
+        "classification": "simulator-or-runner-failure",
+        "reason": "simulator-stderr",
+        "execution_result": null,
+        "stdout": "",
+        "stderr": "Error: Execution failed: ELF loading failed: I/O error: No such file or directory (os error 2)\n"
+      }
+    ]
+  },
+  "local_retained_accounting_controls": {
+    "empty-results": true,
+    "missing-result": true,
+    "duplicate-result": true,
+    "extra-result": true,
+    "generation-command-failed": true,
+    "missing-elf": true,
+    "missing-signature_elf": true,
+    "missing-signature": true,
+    "missing-expected_results": true,
+    "extra.elf": true,
+    "extra.sig": true,
+    "extra.results": true
+  },
+  "replay_scope": "artifact hashes, strict CLI parser and complete accounting only; no new generation or guest execution"
+}

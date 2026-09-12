@@ -47,3 +47,8 @@ Its [feasibility report](a5-feasibility.md) records one successful Linux
 self-check generation and public-CLI smoke with a deliberate failure control,
 using an explicit UDB width-provenance adaptation. This is not canonical-profile
 approval or full-selection compatibility; no complete suite integration is claimed.
+
+The next [inventory/profile proposal](a5-selection-proposal.md) enumerates the
+complete pinned source tree and implements provisional full-selection accounting.
+Its adapter and successful-misalignment boundary require explicit review and
+freeze approval; generated counts or green host tests cannot approve that profile.
