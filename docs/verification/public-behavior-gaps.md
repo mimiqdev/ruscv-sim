@@ -168,6 +168,27 @@ a second active plan.
 - **Impact:** The flat library reported an address with no bytes and no explanation. This repair is T3 only; the integrated workflow remains open.
 - **Selected successor scope:** [A2](../archive/milestones/a2-closeout-record.md) T3 repaired this artifact gap; A2 is complete with documented limitations.
 
+### G-13 — RV64I conditional branch used a 12-bit sign extension for a 13-bit B-immediate
+
+- **Disposition:** **Reproduced defect** and **Repaired** under A5 (in-scope base-I branch behavior; the milestone contract authorizes minimal base-I ISA fixes with reproduced-before-repair regressions).
+- **Surface:** [`exec_branch`](../../src/isa/rv64i/branch.rs) taken-branch displacement, on the shared decode+execute path used by the public ELF `run`.
+- **Implementation evidence:** The 32-bit decoder in [`src/decode/mod.rs`](../../src/decode/mod.rs) reconstructs the B-type immediate correctly as a raw 13-bit value (`imm[12|10:5|4:1|11]`, bit 0 always 0). `exec_branch` then sign-extended it with `((imm as i32) << 20 >> 20)`, a 12-bit sign extension from bit 11, dropping the true sign bit 12. The fix is the minimal width correction to `((imm as i32) << 19 >> 19)`, sign-extending from bit 12. No comparator predicate, `x0`, PC fall-through, retirement, or memory side effect was changed. This defect is distinct from the still-unimplemented `Opcode::MiscMem`/FENCE gap, which is untouched here.
+- **Reproduction:** With the buggy width, raw decoded B-immediates mapped as `0x0800 -> -2048` (should be +2048), `0x0ffc -> -4` (should be +4092), `0x0ffe -> -2` (should be +4094, the spec maximum reachable positive offset), and `0x1000 -> 0` (should be -4096, the spec minimum). Unit reproduction: five decode+execute boundary tests in `src/isa/rv64i/branch.rs` observed PCs of `0x80001800`, `PC-4`, `PC-2`, and `PC` (no displacement) at base PC `0x80002000` before repair. Public-path reproduction: `public_behavior::public_taken_branch_uses_full_13_bit_forward_displacement` built an ELF whose taken forward `BEQ` (+2048) must skip a wrong exit to reach the success exit; before repair it returned `exit_code=1`, after repair `exit_code=0, cycles=6`.
+- **Existing tests:** `src/isa/rv64i/branch.rs::tests::{test_bimm_positive_2048, test_bimm_positive_4092, test_bimm_positive_max_4094, test_bimm_negative_min_4096, test_bimm_unsigned_predicates_displacement, test_bimm_not_taken_no_displacement}` are **strong** for the boundary displacements across signed/unsigned predicates and taken/not-taken paths on the decode+execute path; `public_behavior::public_taken_branch_uses_full_13_bit_forward_displacement` is **strong** for the full public ELF `run` path. `test_negative_offset` was strengthened to feed the raw decoded immediate (`0x1FE0`) that the decoder actually produces rather than a pre-sign-extended `u32`; it did not previously catch the bug because `-32`'s raw form sets both bit 11 and bit 12, making 12-bit and 13-bit extension coincide.
+- **Impact:** All taken conditional branches with a B-immediate whose bit 12 differs from bit 11 (roughly, positive offsets ≥ +2048 and negative offsets in `[-4096, -2049]`) reached the wrong target. This is the proved defect and its direct regressions.
+- **ACT4 branch replay (bounded, informative):** The retained A5 feasibility artifact `10274071547` (workflow run `34624439277`, head `4e8a947300f6012d83b991017df4247cda06a449`, SHA-256 `08682429f62b8deaf656e1013dd1e11ad54795609353b48087f3810977cdbbd1`) holds the six generated branch ELFs and their recorded pre-fix results. Replaying each unchanged ELF (hashes verified against the manifest) through `target/release/ruscv-sim run <elf> --max-cycles 1000000` at this fix head flipped every one from FAILED to SUCCESS:
+
+  | Case | ELF SHA-256 (prefix) | Before (head `4e8a947`) | After (this fix) |
+  | --- | --- | --- | --- |
+  | `I-beq-00`  | `2bfa8160` | exit 1, FAILED, PC `0x80009800`, Invalid memory address | exit 0, SUCCESS, 5008 cycles, PC `0x8001c038` |
+  | `I-bge-00`  | `c068eaa9` | exit 1, FAILED, PC `0x80009800`, Invalid instruction `0x800097ec` | exit 0, SUCCESS, 5087 cycles, PC `0x8001c038` |
+  | `I-bgeu-00` | `d5aa3a43` | exit 1, FAILED, PC `0x8000981c`, Invalid memory address | exit 0, SUCCESS, 5083 cycles, PC `0x8001c038` |
+  | `I-blt-00`  | `414ed9b8` | exit 1, FAILED, PC `0x80009800`, Invalid instruction `0x800097ec` | exit 0, SUCCESS, 5096 cycles, PC `0x8001c038` |
+  | `I-bltu-00` | `7093f339` | exit 1, guest-fail (self-check mismatch), PC `0x8001c050` | exit 0, SUCCESS, 5098 cycles, PC `0x8001c038` |
+  | `I-bne-00`  | `9bc273ef` | exit 1, FAILED, PC `0x80009800`, Invalid memory address | exit 0, SUCCESS, 5169 cycles, PC `0x8001c038` |
+
+  This replays only the six branch ELFs against a locally built release binary; it is not a full-selection A5 rerun or a freeze. The A5 51-source profile remains provisional and the misalignment/MXLEN decisions remain pending; this entry does not alter that status.
+
 ## A4 bounded stop-decision ownership gap
 
 The initial A4 T1 helper shared accounting and RAM decode-before-clear but left

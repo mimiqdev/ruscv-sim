@@ -81,6 +81,28 @@ pub fn ld(rd: u8, rs1: u8, immediate: i32) -> u32 {
         | 0x03
 }
 
+/// Encode an RV64I BEQ (branch-if-equal) with a signed byte offset.
+///
+/// The B-type immediate is a 13-bit signed byte offset (bit 0 always 0),
+/// scattered as imm[12|10:5|4:1|11]. Used to regression-test full 13-bit branch
+/// displacement on the public ELF path.
+pub fn beq(rs1: u8, rs2: u8, offset: i32) -> u32 {
+    assert!((-4096..=4094).contains(&offset));
+    assert!(offset % 2 == 0, "branch offsets are 2-byte aligned");
+    let imm = offset as u32;
+    let imm12 = (imm >> 12) & 1;
+    let imm11 = (imm >> 11) & 1;
+    let imm10_5 = (imm >> 5) & 0x3f;
+    let imm4_1 = (imm >> 1) & 0xf;
+    (imm12 << 31)
+        | (imm10_5 << 25)
+        | ((rs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | (imm4_1 << 8)
+        | (imm11 << 7)
+        | 0x63
+}
+
 /// Encode an RV64I no-op.
 pub fn nop() -> u32 {
     addi(0, 0, 0)

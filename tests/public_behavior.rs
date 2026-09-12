@@ -1,8 +1,8 @@
 //! Persistent public behavior tests.
 //!
 //! These tests exercise the public CLI/ELF and flat-library paths with small,
-//! hand-built RV64I ELF fixtures. The fixtures use only ADDI, AUIPC, LUI, ORI,
-//! LBU, LD, SB, SD, SLLI, and the public RAM/UART/HTIF configurations under
+//! hand-built RV64I ELF fixtures. The fixtures use only ADDI, AUIPC, BEQ, LUI,
+//! ORI, LBU, LD, SB, SD, SLLI, and the public RAM/UART/HTIF configurations under
 //! test. A1 reproductions remain explicit for unrepaired gaps. A2 T1 replaced the
 //! G-02 hang reproduction with a bounded error-return regression, and A2 T2
 //! replaced the G-01 contrast with a correct flat-library exit regression plus
@@ -129,6 +129,47 @@ fn public_ram_store_and_load_affect_the_same_image() {
 
     assert_eq!(result.exit_code, 42);
     assert_eq!(result.cycles, 8);
+    assert!(!result.timed_out);
+    assert!(result.error.is_none());
+}
+
+#[test]
+fn public_taken_branch_uses_full_13_bit_forward_displacement() {
+    // A taken forward BEQ with a +2048 offset (raw B-immediate 0x0800: bit 11
+    // set, bit 12 clear) must land exactly 2048 bytes ahead. The prior 12-bit
+    // sign extension turned this into -2048, jumping backward out of the loaded
+    // image; a correct 13-bit sign extension reaches the success exit.
+    const OFFSET: i32 = 2048;
+    let branch_word = 2usize;
+    let target_word = (branch_word * 4 + OFFSET as usize) / 4;
+
+    // Words 0-2 set up and take the branch; words 3-5 are a "wrong" exit
+    // (guest code 1) that only runs if the branch misfires; the success exit
+    // (guest code 0) sits at the branch target.
+    let mut code = vec![
+        fixture::addi(1, 0, 5),
+        fixture::addi(2, 0, 5),
+        fixture::beq(1, 2, OFFSET),
+        fixture::standard_exit(1),
+        fixture::lui(4, 0x40008),
+        fixture::sd(5, 4, 0),
+    ];
+    code.resize(target_word, fixture::nop());
+    code.push(fixture::standard_exit(0));
+    code.push(fixture::lui(4, 0x40008));
+    code.push(fixture::sd(5, 4, 0));
+    let elf = fixture::elf_with_code(&code, 0, true, false, 0x3000);
+
+    let result = run_fixture(&elf, Some(50), Some(0x4000_8000));
+
+    assert_eq!(result.exit_code, 0);
+    // 3 setup/branch instructions plus 3 at the target: the branch skips the
+    // wrong exit and all padding without executing them.
+    assert_eq!(result.cycles, 6);
+    assert_eq!(
+        result.final_pc,
+        fixture::BASE + (target_word as u64 + 3) * 4
+    );
     assert!(!result.timed_out);
     assert!(result.error.is_none());
 }
