@@ -96,6 +96,8 @@ platform. `Opcode::MiscMem` remains unsupported in the public
 A reproducing public regression and any bounded Rust repair are deferred to
 the next PR, with the full gate required before repair acceptance.
 
+> Superseded by [G-14](public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected): base-I FENCE is implemented in PR #35. The blocker analysis above is retained as the pre-fix record.
+
 `tests/rv64i/Zifencei/Zifencei-fence.i-00.S` belongs to Zifencei, not I.
 The selected I sources provide no ECALL/EBREAK trap-entry validation,
 privilege/CSR/MMU/PMP behavior, misaligned-success validation, or concurrent/
@@ -236,6 +238,8 @@ observations alone do not distinguish an adapter/layout problem from an ISA
 defect. Do not implement speculative Rust branch repairs from this table.
 The FENCE observation reproduces the known `MiscMem` rejection; the next
 bounded repair PR still needs a focused public regression and the full gate.
+
+> `I-fence-00.S` is superseded by [G-14](public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected): base-I FENCE is implemented in PR #35. This table is retained as the pinned pre-fix record; the other six rows remain required blockers.
 
 The same execution function also ran six real public controls: pass, deliberate
 guest fail, cycle nontermination, invalid instruction, malformed ELF, and missing

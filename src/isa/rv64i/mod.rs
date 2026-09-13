@@ -183,6 +183,7 @@ pub fn execute(
             }
         }
         Opcode::System => exec_system(instr, state, mem),
+        Opcode::MiscMem => exec_fence(instr, state, mem),
         _ => Err(crate::execute::ExecuteError::InvalidOperation),
     }
 }
@@ -264,5 +265,40 @@ mod tests {
         execute(&instr, &mut state, &mut mem).unwrap();
 
         assert_eq!(state.regs[3], 30);
+    }
+
+    /// `isa::rv64i::execute` and the active `Executor::execute` dispatcher
+    /// must agree on FENCE (`Opcode::MiscMem`). Before this fix, this
+    /// module's dispatcher fell through to its `_` arm and returned
+    /// `Err(InvalidOperation)` for a decoded FENCE while `Executor::execute`
+    /// returned `Ok(())` -- the same decoded instruction, two different
+    /// answers. This test pins agreement so the two dispatchers cannot
+    /// silently drift apart again.
+    #[test]
+    fn test_execute_fence_agrees_with_executor() {
+        use crate::decode::InstructionDecoder;
+        use crate::execute::Executor;
+
+        let word: u32 = 0x0ff0000f; // fence (iorw, iorw)
+        let decoded = InstructionDecoder::new().decode(word).unwrap();
+        assert_eq!(decoded.opcode, Opcode::MiscMem);
+
+        let mut state_a = CoreState::default();
+        state_a.regs[1] = 0x1111_1111_0000_0001;
+        let before_regs = state_a.regs;
+        let mut mem_a = SimpleMemory::new(0x1000);
+
+        let mut state_b = state_a.clone();
+        let mut mem_b = SimpleMemory::new(0x1000);
+
+        let result_a = execute(&decoded, &mut state_a, &mut mem_a);
+        let result_b = Executor::new().execute(&decoded, &mut state_b, &mut mem_b);
+
+        assert!(result_a.is_ok(), "isa::rv64i::execute must accept FENCE");
+        assert!(result_b.is_ok(), "Executor::execute must accept FENCE");
+        assert_eq!(state_a.regs, before_regs, "FENCE must not write any GPR");
+        assert_eq!(state_b.regs, before_regs, "FENCE must not write any GPR");
+        assert!(!state_a.branch_taken);
+        assert!(!state_b.branch_taken);
     }
 }
