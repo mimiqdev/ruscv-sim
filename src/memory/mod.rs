@@ -60,6 +60,23 @@ pub struct SimpleMemory {
     size: usize,
 }
 
+/// Tests a nonempty span without constructing an exclusive endpoint.
+///
+/// Regions extending past u64::MAX expose only their addressable prefix.
+/// The final byte is valid, but an access itself must never wrap through zero.
+pub(crate) fn contains_range(base: u64, size: usize, addr: u64, width: usize) -> bool {
+    let Some(last_delta) = width.checked_sub(1).and_then(|n| u64::try_from(n).ok()) else {
+        return false;
+    };
+    if addr.checked_add(last_delta).is_none() {
+        return false;
+    }
+    addr.checked_sub(base)
+        .and_then(|offset| usize::try_from(offset).ok())
+        .and_then(|offset| size.checked_sub(offset))
+        .is_some_and(|remaining| width <= remaining)
+}
+
 impl SimpleMemory {
     /// Creates a new simple memory block.
     pub fn new(size: usize) -> Self {
@@ -76,6 +93,17 @@ impl SimpleMemory {
             data: RwLock::new(data),
             size,
         }
+    }
+
+    // Bounds precede alignment; retain the original guest offset in errors.
+    fn checked_index(&self, addr: u64, width: usize) -> Result<usize, MemoryError> {
+        if !contains_range(0, self.size, addr, width) {
+            return Err(MemoryError::InvalidAddress(addr));
+        }
+        if !addr.is_multiple_of(width as u64) {
+            return Err(MemoryError::Misaligned(addr, width as u32));
+        }
+        usize::try_from(addr).map_err(|_| MemoryError::InvalidAddress(addr))
     }
 
     /// Loads program data (little-endian).
@@ -101,13 +129,7 @@ impl SimpleMemory {
 
 impl MemoryInterface for SimpleMemory {
     fn read_dword(&self, addr: u64) -> Result<u64, MemoryError> {
-        let addr = addr as usize;
-        if addr + 8 > self.size {
-            return Err(MemoryError::InvalidAddress(addr as u64));
-        }
-        if !addr.is_multiple_of(8) {
-            return Err(MemoryError::Misaligned(addr as u64, 8));
-        }
+        let addr = self.checked_index(addr, 8)?;
 
         let data = self.data.read().unwrap();
         Ok(u64::from_le_bytes([
@@ -123,13 +145,7 @@ impl MemoryInterface for SimpleMemory {
     }
 
     fn read_word(&self, addr: u64) -> Result<u32, MemoryError> {
-        let addr = addr as usize;
-        if addr + 4 > self.size {
-            return Err(MemoryError::InvalidAddress(addr as u64));
-        }
-        if !addr.is_multiple_of(4) {
-            return Err(MemoryError::Misaligned(addr as u64, 4));
-        }
+        let addr = self.checked_index(addr, 4)?;
 
         let data = self.data.read().unwrap();
         Ok(u32::from_le_bytes([
@@ -141,23 +157,14 @@ impl MemoryInterface for SimpleMemory {
     }
 
     fn read_half(&self, addr: u64) -> Result<u16, MemoryError> {
-        let addr = addr as usize;
-        if addr + 2 > self.size {
-            return Err(MemoryError::InvalidAddress(addr as u64));
-        }
-        if !addr.is_multiple_of(2) {
-            return Err(MemoryError::Misaligned(addr as u64, 2));
-        }
+        let addr = self.checked_index(addr, 2)?;
 
         let data = self.data.read().unwrap();
         Ok(u16::from_le_bytes([data[addr], data[addr + 1]]))
     }
 
     fn read_byte(&self, addr: u64) -> Result<u8, MemoryError> {
-        let addr = addr as usize;
-        if addr >= self.size {
-            return Err(MemoryError::InvalidAddress(addr as u64));
-        }
+        let addr = self.checked_index(addr, 1)?;
         let data = self.data.read().unwrap();
         Ok(data[addr])
     }
@@ -190,13 +197,7 @@ impl MemoryInterface for SimpleMemory {
     }
 
     fn write_dword(&mut self, addr: u64, value: u64) -> Result<(), MemoryError> {
-        let addr = addr as usize;
-        if addr + 8 > self.size {
-            return Err(MemoryError::InvalidAddress(addr as u64));
-        }
-        if !addr.is_multiple_of(8) {
-            return Err(MemoryError::Misaligned(addr as u64, 8));
-        }
+        let addr = self.checked_index(addr, 8)?;
 
         let mut data = self.data.write().unwrap();
         let bytes = value.to_le_bytes();
@@ -212,13 +213,7 @@ impl MemoryInterface for SimpleMemory {
     }
 
     fn write_word(&mut self, addr: u64, value: u32) -> Result<(), MemoryError> {
-        let addr = addr as usize;
-        if addr + 4 > self.size {
-            return Err(MemoryError::InvalidAddress(addr as u64));
-        }
-        if !addr.is_multiple_of(4) {
-            return Err(MemoryError::Misaligned(addr as u64, 4));
-        }
+        let addr = self.checked_index(addr, 4)?;
 
         let mut data = self.data.write().unwrap();
         let bytes = value.to_le_bytes();
@@ -230,13 +225,7 @@ impl MemoryInterface for SimpleMemory {
     }
 
     fn write_half(&mut self, addr: u64, value: u16) -> Result<(), MemoryError> {
-        let addr = addr as usize;
-        if addr + 2 > self.size {
-            return Err(MemoryError::InvalidAddress(addr as u64));
-        }
-        if !addr.is_multiple_of(2) {
-            return Err(MemoryError::Misaligned(addr as u64, 2));
-        }
+        let addr = self.checked_index(addr, 2)?;
 
         let mut data = self.data.write().unwrap();
         let bytes = value.to_le_bytes();
@@ -246,10 +235,7 @@ impl MemoryInterface for SimpleMemory {
     }
 
     fn write_byte(&mut self, addr: u64, value: u8) -> Result<(), MemoryError> {
-        let addr = addr as usize;
-        if addr >= self.size {
-            return Err(MemoryError::InvalidAddress(addr as u64));
-        }
+        let addr = self.checked_index(addr, 1)?;
         let mut data = self.data.write().unwrap();
         data[addr] = value;
         Ok(())

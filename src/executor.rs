@@ -6,7 +6,7 @@
 
 use crate::core::{commits::CommitLogger, CoreState, RiscvCore};
 use crate::elf::{load_elf_file, ElfError, SignatureInfo};
-use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
+use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::Uart16550;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -218,21 +218,21 @@ impl SystemBus {
 
     /// Check if address is HTIF MMIO
     fn is_htif(&self, addr: u64) -> bool {
-        addr >= self.htif_base && addr < self.htif_base + self.htif_size as u64
+        contains_range(self.htif_base, self.htif_size, addr, 1)
     }
 
     fn is_ram(&self, addr: u64) -> bool {
-        addr >= self.ram_base && addr < self.ram_base + self.ram_size as u64
+        contains_range(self.ram_base, self.ram_size, addr, 1)
     }
 
     fn is_uart(&self, addr: u64) -> bool {
-        addr >= self.uart_base && addr < self.uart_base + self.uart_size as u64
+        contains_range(self.uart_base, self.uart_size, addr, 1)
     }
 }
 
 impl MemoryInterface for SystemBus {
     fn read_dword(&self, addr: u64) -> Result<u64, MemoryError> {
-        if addr >= self.ram_base && (addr + 8) <= (self.ram_base + self.ram_size as u64) {
+        if contains_range(self.ram_base, self.ram_size, addr, 8) {
             return self.ram.lock().unwrap().read_dword(addr - self.ram_base);
         }
         if self.is_uart(addr) {
@@ -247,7 +247,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn read_word(&self, addr: u64) -> Result<u32, MemoryError> {
-        if addr >= self.ram_base && (addr + 4) <= (self.ram_base + self.ram_size as u64) {
+        if contains_range(self.ram_base, self.ram_size, addr, 4) {
             return self.ram.lock().unwrap().read_word(addr - self.ram_base);
         }
         if self.is_uart(addr) {
@@ -257,7 +257,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn read_half(&self, addr: u64) -> Result<u16, MemoryError> {
-        if addr >= self.ram_base && (addr + 2) <= (self.ram_base + self.ram_size as u64) {
+        if contains_range(self.ram_base, self.ram_size, addr, 2) {
             return self.ram.lock().unwrap().read_half(addr - self.ram_base);
         }
         if self.is_uart(addr) {
@@ -305,7 +305,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn write_dword(&mut self, addr: u64, value: u64) -> Result<(), MemoryError> {
-        if addr >= self.ram_base && (addr + 8) <= (self.ram_base + self.ram_size as u64) {
+        if contains_range(self.ram_base, self.ram_size, addr, 8) {
             return self
                 .ram
                 .lock()
@@ -326,7 +326,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn write_word(&mut self, addr: u64, value: u32) -> Result<(), MemoryError> {
-        if addr >= self.ram_base && (addr + 4) <= (self.ram_base + self.ram_size as u64) {
+        if contains_range(self.ram_base, self.ram_size, addr, 4) {
             return self
                 .ram
                 .lock()
@@ -340,7 +340,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn write_half(&mut self, addr: u64, value: u16) -> Result<(), MemoryError> {
-        if addr >= self.ram_base && (addr + 2) <= (self.ram_base + self.ram_size as u64) {
+        if contains_range(self.ram_base, self.ram_size, addr, 2) {
             return self
                 .ram
                 .lock()

@@ -205,6 +205,71 @@ a second active plan.
 
   The other 50 selected ELFs produced byte-identical `ruscv-sim run` output (stdout+stderr) between the two binaries, confirming this fix changes only the FENCE case. This moves the current A5 pinned RV64I selection from 50/51 to 51/51 successful. This replays only the current 51-ELF selection against locally built release binaries; it is not a full-selection A5 CI rerun, a profile freeze, or A5 acceptance. The A5 51-source denominator remains provisional, and the eight successful-misalignment exclusions and the MXLEN overlay remain pending maintainer decisions.
 
+### G-15 — Overflow-prone storage bounds and native RAM routing
+
+- **Disposition:** **Reproduced defect; bounded repair implemented**. Independent
+  review approved PR #36 at `f32db0a`; merge remains pending. This is a
+  separately authorized robustness repair, not A5 selection progress or an
+  implicit profile change. G-14 records the FENCE repair merged through PR #35.
+- **Surface and rule:** [`SimpleMemory`](../../src/memory/mod.rs) previously
+  narrowed `u64` addresses with `as usize`, then tested unchecked `addr + width`.
+  [`SystemBus`](../../src/executor.rs) likewise added both the access width and
+  region size before comparing endpoints. All reads/writes of widths 1/2/4/8
+  now use the crate-private `contains_range` rule; storage additionally uses
+  `checked_index` before locking/indexing. Sign-/zero-extension methods continue
+  to delegate to those checked reads.
+- **Address-space policy:** A region extending beyond `u64::MAX` exposes only
+  its addressable prefix; a complete access may include the byte at `u64::MAX`
+  but may not wrap through zero. Subtraction-based containment and checked host
+  conversion avoid requiring a representable exclusive endpoint. Storage errors
+  retain the original `u64` offset. Bounds still precede alignment; in-bounds
+  misalignment remains `Misaligned`, and out-of-bounds misalignment returns
+  `InvalidAddress`. Invalid writes do not touch storage.
+- **Reproduced before repair:** On `978cce0`, aarch64 macOS, Rust 1.98.0,
+  `cargo test --test memory_bounds` failed four of the initial five regression
+  tests with arithmetic overflow panics (storage, bus access endpoint, bus
+  region endpoint, public execution). In release, storage `read_half(MAX-1)`
+  with size zero reached an index-out-of-bounds panic; other near-MAX storage
+  accesses and base-zero bus accesses returned `Misaligned` instead of
+  `InvalidAddress`. The final valid byte of high-base RAM was rejected.
+  No successful invalid access was observed. The narrowing defect on 32-bit
+  hosts is latent: it was not reproduced on a 32-bit target.
+- **Public-path evidence:** The hand-built LD/SD fixtures in
+  [`tests/memory_bounds.rs`](../../tests/memory_bounds.rs) exercise both paths.
+  The flat facade subtracts its nonzero loaded base with the intentional
+  `MemoryAdapter::wrapping_sub`; a guest address one byte below that base
+  becomes offset `u64::MAX`. Native CLI cores instead reset with base zero, so
+  the bus fixtures explicitly construct guest address `u64::MAX`.
+  Testing the four separately against an unmodified `978cce0` source archive
+  reproduced debug panics for both loads and both stores. In release the flat
+  pair returned the wrong `Misaligned` error; the native pair already returned
+  a clean `InvalidAddress` after RAM-relative conversion. After repair all four
+  return `InvalidAddress`, with the faulting instruction unretired and its PC
+  unchanged. CLI subprocess tests require exit status 1 and an address-error
+  diagnostic, not a panic.
+- **Preserved behavior and coverage:** Eleven focused tests cover empty/small
+  storage, MAX/MAX-1/MAX-7 and aligned near-end addresses, host-narrowing
+  candidates, final-valid/first-invalid accesses, error ordering, invalid-write
+  nonmutation, extension values/errors, high-base RAM and region overflow.
+  Device tests retain RAM-first routing, UART byte-only access, HTIF dword
+  callbacks and fallthrough when a complete RAM access does not fit.
+  No public API, error variant, lock/storage model, MMU/PMP/trap/ISA behavior,
+  address translation, or normal alignment semantics changes.
+- **Verification:** The six-command Rust gate in `docs/dev-plan.md`,
+  `cargo test --release --all-features`, the A5 Python unit tests (23), and
+  `bash -n scripts/a5/experiment.sh` passed locally. The local RISC-V assembler
+  is unavailable, so `test_add_program` uses its existing early-return path;
+  Cargo success is not a separate 46-guest ELF run. That CI step runs only on
+  push to main, not on this PR.
+- **External limitations:** Artifact `10274071547` metadata was reachable and
+  reported the expected 21,676,628-byte size and SHA-256
+  `08682429f62b8deaf656e1013dd1e11ad54795609353b48087f3810977cdbbd1`,
+  but full and bounded-range download attempts exceeded their 45-second
+  wall limits. No complete archive was hash-verified or replayed, and no new
+  ACT4 generation was attempted. The eight success-misalignment cases and
+  MXLEN decisions remain pending; this repair changes neither the A5 contract,
+  denominator nor profile approval status.
+
 ## A4 bounded stop-decision ownership gap
 
 The initial A4 T1 helper shared accounting and RAM decode-before-clear but left
