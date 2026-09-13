@@ -41,8 +41,8 @@ pub use crate::isa::rv64a::{
 
 // RV64I re-exports (from isa::rv64i)
 pub use crate::isa::rv64i::{
-    exec_auipc, exec_branch, exec_jal, exec_jalr, exec_load, exec_lui, exec_op, exec_op_32,
-    exec_op_imm, exec_op_imm_32, exec_shift, exec_shift_imm, exec_store, exec_system,
+    exec_auipc, exec_branch, exec_fence, exec_jal, exec_jalr, exec_load, exec_lui, exec_op,
+    exec_op_32, exec_op_imm, exec_op_imm_32, exec_shift, exec_shift_imm, exec_store, exec_system,
 };
 
 // RV64D re-exports (from isa::rv64d)
@@ -149,7 +149,7 @@ impl Executor {
             Opcode::OpFp => self.execute_fpu(instr, state, mem),
             Opcode::System => exec_system(instr, state, mem),
             Opcode::Amo => self.execute_amo(instr, state, mem),
-            _ => Err(ExecuteError::InvalidOperation),
+            Opcode::MiscMem => exec_fence(instr, state, mem),
         }
     }
 

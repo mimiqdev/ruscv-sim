@@ -108,6 +108,15 @@ pub fn nop() -> u32 {
     addi(0, 0, 0)
 }
 
+/// Encode a base-I `FENCE` with the default `iorw, iorw` predecessor/successor
+/// set (`fm = 0b0000`). This is the exact encoding (`0x0ff0000f`) the pinned
+/// ACT4 `I-fence-00.S` source emits for a bare `fence` mnemonic; unit coverage
+/// for every other FENCE shape (`fence.tso`, reserved fields, hints) lives in
+/// `src/isa/rv64i/fence.rs`.
+pub fn fence() -> u32 {
+    0x0ff0000f
+}
+
 /// Build a standard HTIF exit payload for a guest code.
 pub fn standard_exit(code: u32) -> u32 {
     let payload = code

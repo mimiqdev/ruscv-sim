@@ -246,7 +246,25 @@ impl InstructionDecoder {
                 decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
             }
             Opcode::MiscMem => {
-                return Err(DecodeError::UnimplementedInstruction);
+                // Base-I FENCE is funct3 = 0b000. FENCE.I (0b001, Zifencei) and
+                // every other MISC-MEM funct3 (e.g. 0b010 for Zicbo CBO ops) are
+                // separate extensions and stay rejected.
+                let funct3_val = ((instruction >> 12) & 0x7) as u8;
+                if funct3_val != 0 {
+                    return Err(DecodeError::UnimplementedInstruction);
+                }
+
+                decoded.format = InstructionFormat::IType;
+                // rs1/rd are reserved for future finer-grain fences and are
+                // decoded here only for trace/disassembly completeness; base
+                // FENCE execution ignores both.
+                decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
+                decoded.funct3 = Some(Funct3::try_from(funct3_val).ok()).flatten();
+                // Raw fm[31:28]|pred[27:24]|succ[23:20] field. Unlike other
+                // I-type immediates this is a set of bit flags, not a signed
+                // offset, so it must not be sign-extended.
+                decoded.imm = Some((instruction >> 20) & 0xFFF);
             }
             Opcode::System => {
                 decoded.format = InstructionFormat::IType;
