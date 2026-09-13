@@ -13,6 +13,7 @@
 //! - **Jump**: Unconditional jump operations (`jump`)
 //! - **LUI/AUIPC**: Upper immediate operations (`lui_auipc`)
 //! - **System**: System and CSR operations (`system`)
+//! - **Fence**: Memory ordering operation (`fence`)
 //!
 //! ## Implemented Instructions
 //!
@@ -59,9 +60,15 @@
 //! - `CSRRW`, `CSRRS`, `CSRRC`: CSR read-write/read-set/read-clear
 //! - `CSRRWI`, `CSRRSI`, `CSRRCI`: CSR immediate variants
 //! - `MRET`, `SRET`, `URET`: Return from trap
+//!
+//! ### Fence Operations
+//! - `FENCE`: Memory ordering (all `pred`/`succ`/`fm` encodings, including
+//!   `FENCE.TSO` and HINTs), a no-op on this synchronous single-Hart machine.
+//!   `FENCE.I` is Zifencei and remains unimplemented.
 
 pub mod alu;
 pub mod branch;
+pub mod fence;
 pub mod jump;
 pub mod load;
 pub mod lui_auipc;
@@ -85,6 +92,9 @@ pub use store::exec_store;
 
 // Re-export branch functions
 pub use branch::exec_branch;
+
+// Re-export FENCE (MISC-MEM) functions
+pub use fence::exec_fence;
 
 // Re-export jump functions
 pub use jump::{exec_jal, exec_jalr};
