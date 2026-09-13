@@ -303,6 +303,11 @@ FENCE.I belongs to Zifencei, not base I. No ECALL or EBREAK
 source is present in this base-I directory; broader trap/extension directories
 still require exact enumeration and architectural exclusion review.
 
+> Superseded by
+> [G-14](public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected):
+> base-I FENCE is implemented in PR #35. This dated feasibility note is
+> otherwise unchanged, and `FENCE.I`/Zifencei remains unimplemented.
+
 The directory name `tests/rv64i` also contains non-I extension suites. The 51
 is **not** a reviewed denominator for the whole A5 contract. Full source
 selection/exclusions and generated variants remain unfrozen. Required cases

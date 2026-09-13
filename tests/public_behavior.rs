@@ -175,6 +175,33 @@ fn public_taken_branch_uses_full_13_bit_forward_displacement() {
 }
 
 #[test]
+fn public_fence_between_ordinary_instructions_executes_as_a_noop() {
+    // Before the base-I FENCE fix, `Opcode::MiscMem` decoded to
+    // `DecodeError::UnimplementedInstruction`, aborting execution the moment
+    // the guest reached a FENCE. A FENCE placed between two ordinary
+    // instructions must now retire as a no-op on this synchronous
+    // single-Hart machine: the value set up before it (an odd payload so the
+    // standard HTIF tohost format decodes it as `payload >> 1`) must reach
+    // the store after it unchanged, and PC/cycle count must advance by
+    // exactly one step per instruction with no extra or skipped step.
+    let code = [
+        fixture::addi(6, 0, 85), // odd payload; 85 >> 1 == 42
+        fixture::fence(),        // fence iorw, iorw: must not fault or disturb x6
+        fixture::lui(4, 0x40008),
+        fixture::sd(6, 4, 0),
+    ];
+    let elf = fixture::elf_with_code(&code, 0, true, false, 0x3000);
+
+    let result = run_fixture(&elf, Some(20), Some(0x4000_8000));
+
+    assert_eq!(result.exit_code, 42);
+    assert_eq!(result.cycles, 4);
+    assert_eq!(result.final_pc, fixture::BASE + 16);
+    assert!(!result.timed_out);
+    assert!(result.error.is_none());
+}
+
+#[test]
 fn default_limit_path_returns_an_early_guest_exit() {
     let code = [
         fixture::standard_exit(0),
