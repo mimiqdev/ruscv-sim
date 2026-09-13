@@ -299,10 +299,14 @@ code still needs auditing, including failure-reporting paths.
 [`I-fence-00.S`][fence] exists. It covers ordinary fences, `fence.tso`, reserved
 encodings and hints. These must not be dropped because
 [`Opcode::MiscMem`](../../src/decode/mod.rs#L248) is currently rejected.
-(Superseded by [G-14](public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected): base-I FENCE is implemented in PR #35; this dated feasibility note is unchanged otherwise.)
 FENCE.I belongs to Zifencei, not base I. No ECALL or EBREAK
 source is present in this base-I directory; broader trap/extension directories
 still require exact enumeration and architectural exclusion review.
+
+> Superseded by
+> [G-14](public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected):
+> base-I FENCE is implemented in PR #35. This dated feasibility note is
+> otherwise unchanged, and `FENCE.I`/Zifencei remains unimplemented.
 
 The directory name `tests/rv64i` also contains non-I extension suites. The 51
 is **not** a reviewed denominator for the whole A5 contract. Full source

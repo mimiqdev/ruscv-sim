@@ -239,7 +239,12 @@ defect. Do not implement speculative Rust branch repairs from this table.
 The FENCE observation reproduces the known `MiscMem` rejection; the next
 bounded repair PR still needs a focused public regression and the full gate.
 
-> `I-fence-00.S` is superseded by [G-14](public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected): base-I FENCE is implemented in PR #35. This table is retained as the pinned pre-fix record; the other six rows remain required blockers.
+> This table is retained as the pinned pre-fix record. Every row has since been
+> repaired: the six conditional-branch rows by
+> [G-13](public-behavior-gaps.md#g-13--rv64i-conditional-branch-used-a-12-bit-sign-extension-for-a-13-bit-b-immediate)
+> (PR #34), and `I-fence-00.S` by
+> [G-14](public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected)
+> (PR #35).
 
 The same execution function also ran six real public controls: pass, deliberate
 guest fail, cycle nontermination, invalid instruction, malformed ELF, and missing
