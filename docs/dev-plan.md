@@ -4,8 +4,8 @@
 
 **Current milestone:** A5 — ACT4 RV64I External Compatibility Baseline
 
-**Status:** Implementation and acceptance evidence complete; formal closeout
-pending independent review and separately authorized merge.
+**Status:** Formally closed out (PR #37 merged `d1834cc6566b342824bca30772cc829953a5c5ef`);
+sole current milestone forwarding record until a successor is approved.
 
 **Authority:** The sole current milestone contract. This forwarding record
 incorporates the [preserved approved A5 contract](archive/milestones/a5-act4-rv64i-external-compatibility.md)
@@ -33,12 +33,13 @@ explain the hash-preserving semantic comparison, reviews and limits.
 
 ## Closeout and successor boundary
 
-The closeout PR proposes A5 capability acceptance only. Merge is not yet
-authorized. No A6 or other successor contract is approved, and no successor
-implementation is scheduled.
+PR #37 formally closed out A5 capability acceptance (merged
+`d1834cc6566b342824bca30772cc829953a5c5ef`) with recorded independent closeout
+review and exact-head CI. No A6 or other successor contract is approved, and no
+successor implementation is scheduled.
 
 The rolling workflow requires an **approved** successor before replacement.
-Therefore A5 remains the one current completed/pending-closeout contract, with
-its original body archived for history, rather than substituting an invented
-successor. After formal closeout it remains completed until a separately approved
-contract replaces this forwarding record. Historical plans are not revived.
+Therefore the completed A5 forwarding record remains the sole current milestone,
+with its original body archived for history, rather than substituting an invented
+successor. It remains completed until a separately approved contract replaces
+this forwarding record. Historical plans are not revived.

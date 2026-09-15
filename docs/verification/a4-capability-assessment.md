@@ -14,7 +14,7 @@ merged as `a4804341f4ae0a5344beea7ef6c53667e1912c93`.
   preserved original mapping with final evidence and historical context.
 - [Original A4 contract](../archive/milestones/a4-shared-run-control-and-image-installation.md).
 - [A5 current contract](../dev-plan.md) and [assessment](a5-capability-assessment.md) —
-  selected external compatibility evidence complete; formal A5 closeout pending.
+  selected external compatibility evidence complete; formally closed out in PR #37.
 
 The matrix and gap register remain current evidence records. Neither A4
 completion nor the A5 proposal is an external ISA-verification result.

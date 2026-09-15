@@ -5,8 +5,8 @@ This directory contains completed and explicitly superseded milestone plans with
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
 [current contract](../../dev-plan.md) for the sole current A5 milestone:
-implementation/evidence complete and formal closeout pending review/merge.
-No successor contract is approved.
+formally closed out in PR #37; sole current milestone forwarding record until
+a successor is approved. No successor contract is approved.
 
 ## Rolling process
 
@@ -23,7 +23,7 @@ No successor contract is approved.
   - [Preserved approved contract](a5-act4-rv64i-external-compatibility.md)
   - [Complete capability assessment](a5-capability-assessment.md)
   - [Current assessment navigation](../../verification/a5-capability-assessment.md)
-  - Formal closeout review/merge pending; no approved successor
+  - Formally closed out in PR #37; no approved successor
 
 - [A4: Shared run control and image installation — closeout proposal](a4-closeout-record.md)
   - Closeout and detailed A5 contract approved in PR #31; original bodies preserve pre-merge status

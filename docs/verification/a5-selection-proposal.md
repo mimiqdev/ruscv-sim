@@ -25,7 +25,8 @@ for an approval-only metadata change.
 The remainder of this record preserves the proposal and pre-fix experiments as
 history. Its pending/provisional/failure wording is not current status; the
 seven original blockers were repaired in PRs #34/#35, and PRs #32–#36 are merged.
-Formal A5 closeout remains subject to independent review and authorized merge.
+A5 is formally closed out (PR #37 merged `d1834cc6566b342824bca30772cc829953a5c5ef`)
+with independent review and exact-head CI recorded.
 
 ## Historical proposal (PR #33)
 

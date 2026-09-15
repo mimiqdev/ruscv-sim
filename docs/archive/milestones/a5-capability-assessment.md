@@ -1,7 +1,6 @@
 # A5 — ACT4 RV64I External Compatibility Assessment
 
-**Status:** Implementation and evidence complete; formal acceptance proposed,
-pending independent closeout review and separately authorized merge.
+**Status:** Formally closed out (PR #37 merged `d1834cc6566b342824bca30772cc829953a5c5ef`).
 
 **Authority:** Informational completion evidence, not a successor contract.
 
@@ -40,7 +39,7 @@ historical evidence, and both bounded ISA repairs have fail-before regressions.
 | 2. Fail-closed public execution | Satisfied. [Accounting](../../../scripts/a5/accounting.py#L1) verifies exact source/variant/ELF identities, output hashes and complete results. [Classifier](../../../scripts/a5/cli_result.py#L1) requires a single complete consistent terminal host block. Each selected ELF uses release `ruscv-sim run`, 1,000,000 cycles and 60 seconds host limit. The final CI runs 23 Python tests and six real CLI controls, including a known failing guest. The earlier feasibility run separately proves expected-value corruption. Missing/extra/duplicate/empty results, missing/empty/extra generated artifacts, failed generation and malformed/ambiguous output cannot pass. See control scope below. |
 | 3. Full selected compatibility | Satisfied. [Final results](../../verification/a5-final-results.json) retain all 51 identities, generated hashes, invocations, outcomes and diagnostics, with zero errors. [Branch regression](../../../tests/public_behavior.rs#L137) and [FENCE regression](../../../tests/public_behavior.rs#L178) accompany the [branch implementation](../../../src/isa/rv64i/branch.rs#L1) and [FENCE semantics/tests](../../../src/isa/rv64i/fence.rs#L1). G-13/G-14 preserve causal pre-fix evidence. Base-I FENCE is an ordered synchronous single-Hart no-op; FENCE.I remains excluded Zifencei. |
 | 4. Reproducible CI evidence | Satisfied. [ACT4 run 34766332271](https://github.com/mimiqdev/ruscv-sim/actions/runs/34766332271) succeeded at the exact final implementation merge in 4m41s on 2026-09-13. [Manual workflow](../../../.github/workflows/a5-feasibility.yml#L1) provisions pins, generates using Sail, runs controls and the full selection, and retains logs, configuration, audits, generated artifacts and results for 14 days. The entire final ZIP was downloaded and its size/SHA-256 verified during reconciliation; the replay below verifies all identities and hashes without new generation. |
-| 5. Capability acceptance | Evidence satisfied; formal disposition pending this PR's independent review and authorized merge. Exact committed implementation reviews and six-command Rust gate records are below. [Standard push CI 34749931575](https://github.com/mimiqdev/ruscv-sim/actions/runs/34749931575) succeeded at the same `f2edf77` and separately compiled/executed **46/46 project-authored guests**, alongside release/smoke and Rust checks. Current-state, matrix, gap and external-test navigation now distinguish this selected evidence from component support and historical pending statements. No successor is approved. |
+| 5. Capability acceptance | Satisfied: formal closeout accepted via PR #37 merge (`d1834cc6566b342824bca30772cc829953a5c5ef`) with independent review and exact-head CI recorded. Exact committed implementation reviews and six-command Rust gate records are below. [Standard push CI 34749931575](https://github.com/mimiqdev/ruscv-sim/actions/runs/34749931575) succeeded at the same `f2edf77` and separately compiled/executed **46/46 project-authored guests**, alongside release/smoke and Rust checks. Current-state, matrix, gap and external-test navigation now distinguish this selected evidence from component support and historical pending statements. No successor is approved. |
 
 ## Source accounting and unchanged-input proof
 
@@ -128,9 +127,9 @@ The six-command gate is `cargo fmt --all -- --check`,
 `cargo test --all-features`, `cargo doc --all-features --no-deps`, and
 `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`.
 These are recorded exact-head implementation checks, not new closeout Rust runs.
-This closeout changes Python evidence handling, approval metadata and documents,
-not Rust code. Standard PR CI supplies its own exact-head quality evidence;
-independent review and merge remain separate.
+This closeout changed Python evidence handling, approval metadata and documents,
+not Rust code. Closeout PR #37 supplied its own exact-head quality evidence,
+recorded independent review, and merged as `d1834cc6566b342824bca30772cc829953a5c5ef`.
 
 ## Retrieval and durable evidence
 
@@ -176,4 +175,4 @@ or global tool installation is claimed.
 synchronous trap-entry/return end-to-end verification, with a separate
 architecturally reviewed contract before implementation. It is **unapproved**;
 this is not an A6 contract, an automatic carry-forward or implementation
-authorization. Formal acceptance of this closeout means A5 only.
+authorization. Formal closeout in PR #37 accepted A5 only.

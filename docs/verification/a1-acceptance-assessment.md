@@ -15,10 +15,10 @@ A1 was accepted with its documented limitations on 2026-09-08. Its records are:
   unchanged.
 - [A3 closeout](../archive/milestones/a3-closeout-record.md), which shared image
   placement and result construction between the entry points.
-- [A4 closeout proposal](../archive/milestones/a4-closeout-record.md), verified
-  shared run control and installation; formal acceptance pending.
-- [A5 prospective contract](../dev-plan.md), ACT4 RV64I external compatibility;
-  detailed approval pending through the closeout PR merge.
+- [A4 closeout record](../archive/milestones/a4-closeout-record.md), verified
+  shared run control and installation; formally approved in PR #31.
+- [A5 closeout record](../archive/milestones/a5-closeout-record.md) and [assessment](a5-capability-assessment.md),
+  ACT4 RV64I external compatibility; formally closed out in PR #37.
 
 The historical assessment's recommendation/pending-confirmation language is not
 current status. A1, A2 and A3 completion does not mean the recorded runtime

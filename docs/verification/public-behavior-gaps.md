@@ -39,8 +39,9 @@ Historical pending/provisional/no-final-rerun statements within the individual
 repair records below describe those earlier runs, not current blockers.
 Their original diagnostic and verification bodies are preserved. These decisions
 do not promise successful misalignment or architectural trap delivery; they do
-not change G-15's separately authorized scope. Formal A5 closeout still requires
-review and authorized merge. No successor implementation is scheduled.
+not change G-15's separately authorized scope. A5 is formally closed out (PR #37
+merged `d1834cc6566b342824bca30772cc829953a5c5ef`). No successor implementation
+is scheduled.
 
 | Disposition | Meaning in this register |
 | --- | --- |

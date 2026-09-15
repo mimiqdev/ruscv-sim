@@ -3,7 +3,7 @@
 > Historical feasibility record. PR #32 is merged; the MXLEN adapter and
 > naturally aligned EEI were explicitly approved on 2026-09-15. The
 > [A5 final assessment](a5-capability-assessment.md) records 51/51 selected
-> passes at `f2edf77` and pending formal closeout. Pre-approval/unmerged
+> passes at `f2edf77` and formal closeout in PR #37. Pre-approval/unmerged
 > statements below retain their original experimental scope.
 
 **Outcome:** The bounded Linux **adapted-profile** smoke experiment passed.
