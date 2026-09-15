@@ -9,15 +9,50 @@ import unittest
 from accounting import execute, exact, generation, make_plan, summarize, verify_plan
 from cli_result import classify
 from inventory import MANIFEST, disposition, metadata, selected
+from replay_accounting import approved_plan
 from test_runner import FAIL, PASS, FOOTER
 
 
 class InventoryTests(unittest.TestCase):
+    def test_approval_rebinding_rejects_nonstatus_changes(self):
+        report = json.loads(Path("docs/verification/a5-final-results.json").read_text())
+        plan = {**report["profile_identity"], "variants": [
+            {k: v for k, v in record.items() if k != "artifacts"}
+            for record in report["generation"]["variants"]]}
+        self.assertEqual(approved_plan(plan), make_plan(json.loads(MANIFEST.read_text())))
+        for key in plan:
+            changed = copy.deepcopy(plan)
+            changed[key] = [] if key == "variants" else "changed"
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                approved_plan(changed)
+
+    def test_final_evidence_schema_identities_and_outcomes(self):
+        report = json.loads(Path("docs/verification/a5-final-results.json").read_text())
+        self.assertEqual(report["status"], "approved-frozen-suite-passed")
+        self.assertEqual(report["head"], "f2edf77f17a76bea3d7062f40f5f4f38ad4eb580")
+        plan = make_plan(json.loads(MANIFEST.read_text()))
+        execution = report["execution"]
+        summary = summarize(plan, report["generation"], execution["results"])
+        self.assertEqual({**summary, "status": execution["summary"]["status"]}, execution["summary"])
+        self.assertTrue(summary["success"])
+        for key in ("required_sources", "required_variants", "generated_selfcheck_elfs",
+                    "executed_elfs", "passed_elfs"):
+            self.assertEqual(summary[key], 51)
+        for result in execution["results"]:
+            diagnostic = report["diagnostics"][result["source"]]
+            classified = classify(diagnostic["stdout"], diagnostic["stderr"],
+                                  result["returncode"], max_cycles=result["max_cycles"])
+            self.assertTrue(all(result[key] == value for key, value in classified.items()))
+        self.assertTrue(report["public_guest_controls"]["success"])
+        self.assertEqual(len(report["local_retained_accounting_controls"]), 12)
+        self.assertTrue(all(report["local_retained_accounting_controls"].values()))
+
     def test_retained_linux_accounting_and_strict_classification(self):
         report = json.loads(Path("docs/verification/a5-accounting-results.json").read_text())
         plan = make_plan(json.loads(MANIFEST.read_text()))
         execution = report["execution"]
-        self.assertEqual(summarize(plan, report["generation"], execution["results"]), execution["summary"])
+        summary = summarize(plan, report["generation"], execution["results"])
+        self.assertEqual({**summary, "status": execution["summary"]["status"]}, execution["summary"])
         self.assertFalse(execution["summary"]["success"])
         self.assertEqual(execution["summary"]["executed_elfs"], 51)
         self.assertEqual(execution["summary"]["passed_elfs"], 44)
@@ -29,10 +64,11 @@ class InventoryTests(unittest.TestCase):
         self.assertTrue(all(report["local_retained_accounting_controls"].values()))
         self.assertTrue(report["public_guest_controls"]["success"])
 
-    def test_profile_identity_and_pending_decisions(self):
+    def test_profile_identity_and_approved_decisions(self):
         profile = json.loads(Path("scripts/a5/profile-proposal.json").read_text())
         manifest = json.loads(MANIFEST.read_text())
-        self.assertEqual(profile["status"], "proposed-not-frozen")
+        self.assertEqual(profile["status"], "approved-frozen")
+        self.assertEqual(manifest["status"], profile["status"])
         self.assertEqual(profile["id"], manifest["profile"])
         self.assertEqual(profile["selection"]["proposed_included_sources"], len(selected(manifest)))
         self.assertEqual(len(profile["selection"]["freeze_decisions_required"]), 2)

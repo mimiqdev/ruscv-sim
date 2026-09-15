@@ -4,8 +4,9 @@ This directory contains completed and explicitly superseded milestone plans with
 
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
-[current contract](../../dev-plan.md) for the sole prospective A5 milestone,
-whose detailed approval remains pending through the A4 closeout PR merge.
+[current contract](../../dev-plan.md) for the sole current A5 milestone:
+implementation/evidence complete and formal closeout pending review/merge.
+No successor contract is approved.
 
 ## Rolling process
 
@@ -17,11 +18,18 @@ whose detailed approval remains pending through the A4 closeout PR merge.
 
 ## Records
 
+- [A5: ACT4 RV64I selected external compatibility — closeout](a5-closeout-record.md)
+  - Frozen profile approved; all 51 required ELFs generated/executed/passed
+  - [Preserved approved contract](a5-act4-rv64i-external-compatibility.md)
+  - [Complete capability assessment](a5-capability-assessment.md)
+  - [Current assessment navigation](../../verification/a5-capability-assessment.md)
+  - Formal closeout review/merge pending; no approved successor
+
 - [A4: Shared run control and image installation — closeout proposal](a4-closeout-record.md)
-  - Implementation and verification complete; formal acceptance pending closeout PR merge
+  - Closeout and detailed A5 contract approved in PR #31; original bodies preserve pre-merge status
   - [Original milestone contract](a4-shared-run-control-and-image-installation.md)
   - [Capability assessment with final evidence](a4-capability-assessment.md)
-  - [A5 prospective successor contract](../../dev-plan.md), detailed approval pending
+  - [Preserved approved A5 contract](a5-act4-rv64i-external-compatibility.md)
 
 - [A3: Shared image placement and result path — completion record](a3-closeout-record.md)
   - [Original milestone contract](a3-shared-image-placement-and-result-path.md)

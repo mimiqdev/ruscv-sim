@@ -4,13 +4,33 @@
 
 **Authority:** Informational
 
-**Last verified:** 2026-09-03 inventory; A4 public-entry-path evidence updated 2026-09-11
+**Last verified:** 2026-09-03 inventory; A4 evidence updated 2026-09-11;
+A5 selected external evidence reconciled 2026-09-15
 
 **Scope:** The public ELF execution path, adjacent library APIs, and the integration status of existing ISS/VP components
 
 This document describes what the repository implements today. It is deliberately separate from the [target architecture](./README.md): target diagrams define intended ownership, while this inventory records current wiring and boundary debt. Source code and verified tests remain authoritative for implementation claims.
 
 ## 1. How to read the status labels
+
+### A5 external compatibility update
+
+At implementation merge `f2edf77f17a76bea3d7062f40f5f4f38ad4eb580`,
+[ACT4 CI 34766332271](https://github.com/mimiqdev/ruscv-sim/actions/runs/34766332271)
+cleanly generated and passed all **51 frozen nontrapping RV64I self-check ELFs**
+through the release public CLI. Standard push CI `34749931575` at the same head
+separately compiled and passed **46/46 project-authored guests**.
+The [assessment](../verification/a5-capability-assessment.md) records approved
+MXLEN test-adapter/natural-alignment decisions, all 1,970 source dispositions,
+exact reviews, hashes and negative controls.
+
+[Branch displacement](../../src/isa/rv64i/branch.rs#L1) and
+[base-I FENCE](../../src/isa/rv64i/fence.rs#L1) are repaired with public
+regressions; [memory bounds](../../tests/memory_bounds.rs#L1) were separately
+hardened in PR #36. This does not integrate architectural trap entry, MMU/PMP,
+privilege/interrupt scheduling, successful misalignment, FENCE.I, or the target
+Runner/Machine/Platform design. Component labels below remain component labels.
+A5 formal closeout awaits review/authorized merge; no successor is approved.
 
 | Label | Meaning |
 | --- | --- |

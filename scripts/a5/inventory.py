@@ -13,7 +13,7 @@ import re
 import subprocess
 
 PIN = "a7c99303516f4e668f7488f172043392e23b9dfd"
-STATUS = "proposed-not-frozen"
+STATUS = "approved-frozen"
 MANIFEST = Path("docs/verification/a5-source-inventory.json")
 
 

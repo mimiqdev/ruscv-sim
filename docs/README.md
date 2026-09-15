@@ -36,7 +36,8 @@ Target architecture is not implementation status. Component presence is not end-
 - [Verification architecture](verification/README.md)
 - [A1 closeout and acceptance evidence](archive/milestones/a1-closeout-record.md)
 - [A4 acceptance and closeout](verification/a4-capability-assessment.md) — final criterion evidence, independent review and merge CI; closeout and the A5 contract approved in PR #31
-- [A5 feasibility experiment](verification/a5-feasibility.md) — tested pinned Linux generation, one adapted-profile ACT4 CLI pass and deliberate guest-failure control; canonical profile/full selection remain unverified
+- [A5 capability assessment and closeout](verification/a5-capability-assessment.md) — frozen profile approved; 51/51 selected ACT4 passes, exact CI/review evidence and limitations; formal closeout review/merge pending
+- [A5 feasibility experiment](verification/a5-feasibility.md) — preserved setup and smoke history, not the final selection result
 - [A1 public behavior compatibility matrix](verification/public-behavior-matrix.md)
 - [A1 public behavior defect and gap register](verification/public-behavior-gaps.md)
 - [Project-authored bare-metal tests](verification/bare-metal-tests.md)

@@ -1,5 +1,11 @@
 # A5 Linux feasibility experiment
 
+> Historical feasibility record. PR #32 is merged; the MXLEN adapter and
+> naturally aligned EEI were explicitly approved on 2026-09-15. The
+> [A5 final assessment](a5-capability-assessment.md) records 51/51 selected
+> passes at `f2edf77` and pending formal closeout. Pre-approval/unmerged
+> statements below retain their original experimental scope.
+
 **Outcome:** The bounded Linux **adapted-profile** smoke experiment passed.
 One intact ACT4 self-checking `I-add-00.elf` passed through the public CLI;
 changing one expected-result byte made the same runner report a guest failure,
@@ -104,7 +110,7 @@ identifies this already-committed code revision, rather than inventing a hash
 for the documentation commit containing the record.
 
 [`cli_result.classify`](../../scripts/a5/cli_result.py#L10), called by
-[`run.py`](../../scripts/a5/run.py#L92), follows the actual
+[`run.py`](../../scripts/a5/run.py#L58), follows the actual
 [`print_result`](../../src/main.rs#L105) renderer. It requires exactly one
 complete terminal execution-result block with each mandatory field exactly
 once, in rendered order. It rejects malformed, duplicate, contradictory or

@@ -1,4 +1,4 @@
-name: A5 Linux feasibility
+name: A5 ACT4 selected compatibility
 on:
   workflow_dispatch:
 permissions:
@@ -30,7 +30,7 @@ jobs:
         with:
           version: '0.11.6'
           enable-cache: false
-      - name: Generate and account for provisional selection (not profile approval)
+      - name: Generate and verify the frozen A5 selection
         shell: bash
         run: |
           mkdir -p .a5/evidence
