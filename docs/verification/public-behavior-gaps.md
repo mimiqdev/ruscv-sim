@@ -23,6 +23,25 @@ a second active plan.
 
 ## Disposition vocabulary
 
+### Current A5 disposition (2026-09-15)
+
+PRs #32–#36 are merged, ending at
+`f2edf77f17a76bea3d7062f40f5f4f38ad4eb580`. G-13 branch and G-14 FENCE are
+repaired; the separate G-15 memory robustness repair is merged, not pending.
+ACT4 CI `34766332271` at that exact head generated and passed all **51/51**
+selected ELFs; standard push CI `34749931575` separately compiled and passed
+**46/46** project-authored guests. The [A5 assessment](a5-capability-assessment.md)
+retains exact review/gate records, final hashes, all-source accounting and limits.
+
+The maintainer explicitly approved both the narrow MXLEN A5 test adapter and
+naturally aligned EEI/eight successful-misalignment exclusions on 2026-09-15.
+Historical pending/provisional/no-final-rerun statements within the individual
+repair records below describe those earlier runs, not current blockers.
+Their original diagnostic and verification bodies are preserved. These decisions
+do not promise successful misalignment or architectural trap delivery; they do
+not change G-15's separately authorized scope. Formal A5 closeout still requires
+review and authorized merge. No successor implementation is scheduled.
+
 | Disposition | Meaning in this register |
 | --- | --- |
 | **Reproduced defect** | A bounded command or API run observed the result; the reproduction and observed output are recorded. |

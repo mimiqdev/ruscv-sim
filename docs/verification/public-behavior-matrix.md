@@ -24,6 +24,25 @@ compatibility promise.
 
 ## Reading the matrix
 
+### Current A5 evidence (2026-09-15)
+
+[A5 assessment](a5-capability-assessment.md) supersedes historical statements
+below that its contract is merely prospective or that selected external
+verification is absent. PR #31 approved A4 closeout/A5 scope; PRs #32–#36 are
+merged. At `f2edf77f17a76bea3d7062f40f5f4f38ad4eb580`, ACT4 CI
+`34766332271` generated/executed/passed **51/51** frozen nontrapping RV64I ELFs,
+and standard push CI `34749931575` separately compiled/executed **46/46**
+project-authored guests. Exact hashes/results and limits are in the assessment.
+
+The public [branch regression](../../tests/public_behavior.rs#L137) and
+[FENCE regression](../../tests/public_behavior.rs#L178) prove G-13/G-14 repairs;
+the [memory-bounds suite](../../tests/memory_bounds.rs#L1) covers separately
+authorized G-15. The approved A5 profile requires naturally aligned data accesses
+and excludes eight successful-misalignment cases. No architectural trap/MMU/
+privilege, FENCE.I or extension-wide certification claim follows.
+Original A1–A4 rows retain their as-of scope. A5 closeout merge remains pending;
+there is no approved A6.
+
 - **Verified** means that the named behavior was exercised or asserted with a
   meaningful value, state, output, or artifact in the named configuration.
 - **Reproduced defect** means that an incorrect, misleading, or unsafe result was

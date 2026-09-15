@@ -19,6 +19,12 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 
 公开 CLI 目前只有 `run`。GDB 服务器和交互式调试器作为 library API 存在，没有单独的调试 binary。ELF 核心循环按 32 位指令取指；压缩指令、页表翻译和 TLM 外设总线还没有全部接到这条路径。
 
+外部验证已有 [A5 固定选择集证据](docs/verification/a5-capability-assessment.md)：
+ACT4 4.0.0 / Sail 生成的 51 个 RV64I 非陷阱自检 ELF 全部通过公开 CLI。
+该范围采用已批准的 MXLEN 测试适配和自然对齐 EEI，明确排除 8 个成功非对齐访问测试；
+不代表完整 ISA 认证、陷阱/MMU 集成或成功非对齐访问支持。A5 正式收尾仍待审查和合并，
+没有自动批准下一里程碑。
+
 ## 快速开始
 
 需要 Stable Rust，以及 `rustfmt` / `clippy`。跑项目自带的裸机 ELF 测试还需要 `riscv64-unknown-elf` 工具链。

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "proposed-not-frozen",
+  "status": "approved-frozen",
   "id": "a5-rv64i-nontrapping-proposal-v1",
   "isa": {"base": "RV64I", "version": "2.1", "xlen": 64, "registers": 32, "ialign_bits": 32},
   "execution_environment": {

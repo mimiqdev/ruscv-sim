@@ -1,6 +1,33 @@
 # A5 pinned inventory and nontrapping profile proposal
 
-**Status: proposed, not frozen; no full-selection success claimed.**
+**Status: approved and frozen on 2026-09-15; 51/51 full-selection success verified.**
+
+## Final decision and evidence
+
+The maintainer explicitly confirmed **both** decisions below on 2026-09-15:
+the MXLEN provenance overlay is the canonical A5 **test adapter**, not a
+whole-machine declaration; and the naturally aligned EEI excludes the eight
+successful-misalignment cases. This is the missing explicit selection-contract
+decision, not an inference from the previous green run.
+
+[ACT4 CI 34766332271](https://github.com/mimiqdev/ruscv-sim/actions/runs/34766332271)
+generated and passed all 51 required ELFs at
+`f2edf77f17a76bea3d7062f40f5f4f38ad4eb580` on 2026-09-13, before this approval.
+The final [assessment](a5-capability-assessment.md) and
+[durable results](a5-final-results.json) verify that the source selection,
+exclusions, adapter, oracle and executable configuration are unchanged.
+Only the profile/inventory `status` bytes change to `approved-frozen`.
+The historical file names, profile ID and decision-list field
+`freeze_decisions_required` remain stable for provenance: those two listed
+requirements are now fulfilled, not outstanding. No new Sail generation is needed
+for an approval-only metadata change.
+
+The remainder of this record preserves the proposal and pre-fix experiments as
+history. Its pending/provisional/failure wording is not current status; the
+seven original blockers were repaired in PRs #34/#35, and PRs #32–#36 are merged.
+Formal A5 closeout remains subject to independent review and authorized merge.
+
+## Historical proposal (PR #33)
 
 This is the next reviewable slice after PR #32, merged as
 `d568d45093bb643884740c751fa595f0f593f4dc`. It implements accounting and

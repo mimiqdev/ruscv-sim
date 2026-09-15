@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "proposed-not-frozen",
+  "status": "approved-frozen",
   "act4_commit": "a7c99303516f4e668f7488f172043392e23b9dfd",
   "scope": "all tracked tests/**/*.S at the pinned revision",
   "profile": "a5-rv64i-nontrapping-proposal-v1",
