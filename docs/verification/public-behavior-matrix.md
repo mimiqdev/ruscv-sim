@@ -40,8 +40,8 @@ the [memory-bounds suite](../../tests/memory_bounds.rs#L1) covers separately
 authorized G-15. The approved A5 profile requires naturally aligned data accesses
 and excludes eight successful-misalignment cases. No architectural trap/MMU/
 privilege, FENCE.I or extension-wide certification claim follows.
-Original A1–A4 rows retain their as-of scope. A5 closeout merge remains pending;
-there is no approved A6.
+Original A1–A4 rows retain their as-of scope. A5 is formally closed out (PR #37
+merged `d1834cc6566b342824bca30772cc829953a5c5ef`); there is no approved A6.
 
 - **Verified** means that the named behavior was exercised or asserted with a
   meaningful value, state, output, or artifact in the named configuration.

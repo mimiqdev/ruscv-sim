@@ -4,7 +4,7 @@
 > The body below preserves the pre-closeout contract and its historical status.
 > Relative links are adjusted for archival placement. The [current forwarding
 > contract](../../dev-plan.md) records the subsequent profile approval and
-> pending formal closeout; no successor contract has been approved.
+> formal closeout in PR #37; no successor contract has been approved.
 
 **Project:** `ruscv-sim`
 

@@ -1,7 +1,6 @@
 # A5 — ACT4 RV64I External Compatibility Closeout
 
-**Status:** Implementation and evidence complete; formal acceptance proposed,
-pending independent closeout review and separately authorized merge.
+**Status:** Formally closed out (PR #37 merged `d1834cc6566b342824bca30772cc829953a5c5ef`).
 
 **Authority:** Informational completion record, not a successor contract.
 
@@ -25,7 +24,7 @@ preserves its historical body, including superseded status claims.
 | Fail-closed public execution | Satisfied: bounded release CLI execution, complete identities/diagnostics and CI negative controls. |
 | Full selected compatibility | Satisfied: 51/51 full generation and passes; branch/FENCE defects reproduced and repaired with public regressions. |
 | Reproducible CI evidence | Satisfied: clean final generation and controls at the exact final implementation merge; full artifact hash verified and durable results retained. |
-| Capability acceptance | Technical evidence satisfied; formal independent closeout review and authorized merge remain pending. |
+| Capability acceptance | Satisfied: formal closeout accepted via PR #37 merge (`d1834cc6566b342824bca30772cc829953a5c5ef`) with independent review and exact-head CI recorded. |
 
 ## Explicit profile decision and provenance
 
@@ -59,9 +58,9 @@ denominator changed, so no new ACT4 generation was needed.
   Rust gate, separate local guest execution or ACT4 generation is claimed for
   this Python/metadata/documentation change.
 
-The closeout PR carries its own exact-head required CI and independent review;
-implementation review records are not falsely relabeled as review of this
-closeout. Merge remains separately authorized.
+Closeout PR #37 completed its own exact-head required CI and independent review,
+merging as `d1834cc6566b342824bca30772cc829953a5c5ef`; implementation review
+records are not falsely relabeled as review of this closeout.
 
 ## Retrieval and durable evidence
 
@@ -87,5 +86,5 @@ an EEI expansion. Remaining gaps are re-evaluated in the full assessment.
 Its sole optional successor suggestion, machine-mode synchronous trap/return
 end-to-end verification, is **unapproved**. No A6 contract or implementation
 authorization is invented. The [one current contract](../../dev-plan.md) remains
-completed/pending-closeout A5 until a successor is separately approved.
-Merging this closeout accepts A5 only.
+the completed A5 forwarding record until a successor is separately approved.
+PR #37 merge accepted A5 only.

@@ -1,6 +1,6 @@
 # A5 Capability Assessment — Navigation
 
-**Status:** Current evidence navigation; formal closeout pending review/merge.
+**Status:** Current evidence navigation; A5 formally closed out.
 
 **Authority:** Informational, not an active or successor milestone contract.
 
@@ -27,5 +27,7 @@ after the successful 2026-09-13 run. This is not certification.
 - [Original 44/51 failed-run record](a5-accounting-results.json) and
   [feasibility history](a5-feasibility.md) — retained, not current blockers.
 
-The closeout PR's independent review and separately authorized merge remain
-pending. The optional single successor recommendation is not an approved A6.
+PR #37 formally closed out A5 (merged `d1834cc6566b342824bca30772cc829953a5c5ef`)
+with recorded independent closeout review and exact-head CI. The optional
+single successor recommendation is not an approved A6; no successor contract
+is approved.

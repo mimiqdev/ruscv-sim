@@ -72,7 +72,7 @@ signature-input ELFs or cached unexplained binaries for this workflow.
 For existing evidence, prefer the
 [hash-verified final artifact replay](../archive/milestones/a5-closeout-record.md#retrieval-and-durable-evidence)
 instead of a new generation run. This verifies historical hashes and outcomes,
-not new guest execution. Formal closeout review/merge remains pending.
+not new guest execution. A5 is formally closed out (PR #37 merged `d1834cc6566b342824bca30772cc829953a5c5ef`).
 
 This is **selected external compatibility**, not whole RV64I certification,
 successful-misalignment/trap support, MMU/privilege integration, or a complete
