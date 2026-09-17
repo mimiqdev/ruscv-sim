@@ -2,44 +2,483 @@
 
 **Project:** `ruscv-sim`
 
-**Current milestone:** A5 — ACT4 RV64I External Compatibility Baseline
+**Current milestone:** A6 — Machine-Mode Synchronous Trap Entry and Return
 
-**Status:** Formally closed out (PR #37 merged `d1834cc6566b342824bca30772cc829953a5c5ef`);
-sole current milestone forwarding record until a successor is approved.
+**Status:** Current
 
-**Authority:** The sole current milestone contract. This forwarding record
-incorporates the [preserved approved A5 contract](archive/milestones/a5-act4-rv64i-external-compatibility.md)
-(PR #31, merged `a4804341f4ae0a5344beea7ef6c53667e1912c93`) with the explicit
-profile decision below. The archived snapshot is not a second active plan.
+**Authority:** Normative milestone contract approved by maintainer authorization on 2026-09-17.
+In accordance with `docs/documentation-policy.md`, this target contract does not claim
+implementation completeness; simulator implementation work begins under this contract.
 
-**Updated:** 2026-09-15
+**Updated:** 2026-09-17
 
-## Approved scope and decision
+---
 
-The objective, constraints, non-goals, deliverables and five acceptance criteria
-remain those of the preserved contract. The maintainer explicitly confirmed both
-decisions in the [selection record](verification/a5-selection-proposal.md) on
-2026-09-15: the narrow MXLEN provenance overlay is the A5 test adapter, and the
-naturally aligned EEI excludes the eight successful-misalignment cases. These
-are not trap exclusions or a whole-machine capability declaration.
+## 1. Context and Purpose
 
-The frozen selection is 51 sources/51 XLEN=64 self-check ELFs out of the
-fully classified 1,970-source pinned inventory. All 51 passed clean ACT4/Sail
-generation and public CLI execution at `f2edf77f17a76bea3d7062f40f5f4f38ad4eb580`.
-That run preceded approval; only approval status changed, not semantic inputs.
-The [closeout](archive/milestones/a5-closeout-record.md) and
-[assessment](verification/a5-capability-assessment.md) map every criterion and
-explain the hash-preserving semantic comparison, reviews and limits.
+Following the formal closeout of Milestone A5 (ACT4 RV64I External Compatibility Baseline, PR #37,
+merged `d1834cc6566b342824bca30772cc829953a5c5ef`), the repository development plan maintained an
+A5 forwarding record until a successor was approved. On 2026-09-17, maintainer authorization
+approved Milestone A6 as the sole current milestone contract. The post-closeout forwarding record is
+preserved in [`docs/archive/milestones/a5-forwarding-record.md`](archive/milestones/a5-forwarding-record.md).
 
-## Closeout and successor boundary
+During Milestones A0–A5, architectural synchronous exceptions (such as `ECALL`, `EBREAK`, illegal
+instructions, misaligned memory addresses, and physical access faults) were treated as non-trapping
+exclusions or converted into simulator host execution errors:
+- `RiscvCore::step` in `src/core/mod.rs` halts execution on fetch, decode, or execution failures,
+  returning an `anyhow::Result::Err` that outer runners convert into a fatal execution error
+  (`RunDecision::ExecutionError`).
+- The existing `TrapHandler` in `src/core/trap.rs` contains standalone component logic and tests, but
+  is not integrated into the public fetch-decode-execute loop in `RiscvCore::step`.
+- In `src/core/trap.rs`, the vectored trap calculation (`TrapHandler::vector_trap`) incorrectly
+  offsets synchronous exceptions by `(cause & 0x7F) << 2`, whereas the RISC-V Privileged
+  Architecture Specification §3.1.7 mandates that all synchronous exceptions vector to `BASE`
+  regardless of whether `mtvec.MODE` is Direct (`0b00`) or Vectored (`0b01`).
+- The `MRET` implementation in `src/isa/rv64i/system.rs` (`exec_mret`) lacks privilege validation
+  (allowing execution outside Machine mode), omits setting `mstatus.MPIE` to 1, and does not
+  explicitly transition `mstatus.MPP` to User mode (`0b00`).
+- Faulting instructions and trap entry do not currently adhere to the non-retirement semantics
+  defined in accepted architecture decision record ADR-0001 (`docs/architecture/decisions/0001-hart-execution-outcome-and-observation.md`)
+  or the turn-budget and continuation contracts in ADR-0004 (`docs/architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md`).
 
-PR #37 formally closed out A5 capability acceptance (merged
-`d1834cc6566b342824bca30772cc829953a5c5ef`) with recorded independent closeout
-review and exact-head CI. No A6 or other successor contract is approved, and no
-successor implementation is scheduled.
+This document establishes the normative milestone contract for **Milestone A6: Machine-Mode
+Synchronous Trap Entry and Return**. It integrates full Machine-mode synchronous trap entry,
+trap return (`MRET`), and guest trap handler execution into the primary execution loop.
 
-The rolling workflow requires an **approved** successor before replacement.
-Therefore the completed A5 forwarding record remains the sole current milestone,
-with its original body archived for history, rather than substituting an invented
-successor. It remains completed until a separately approved contract replaces
-this forwarding record. Historical plans are not revived.
+---
+
+## 2. Objective
+
+Integrate full Machine-mode synchronous trap entry and return into the simulator's core execution loop,
+strictly conforming to the RISC-V Privileged Architecture Specification (v1.12 / v20211203) and
+accepted architecture decisions ADR-0001 through ADR-0004.
+
+When a guest instruction encounters a synchronous exception:
+1. The Hart completes trap entry into Machine mode atomically: architectural trap CSRs (`mepc`,
+   `mcause`, `mtval`, `mstatus`) and current privilege update to their architecturally mandated states.
+2. The program counter redirects to the base address configured in `mtvec` (`mtvec.BASE`) for both
+   Direct and Vectored modes.
+3. The faulting instruction does not retire, commits no destination register or memory write, and does
+   not advance retirement counters (`minstret`), satisfying ADR-0001 §2.
+4. Under the explicitly adopted `continue-to-guest-handler` continuation policy (ADR-0004 §10.3), the
+   Runner retains the `TrapEntered` fact and allows execution to proceed into the guest trap handler.
+5. Each attempted turn (normal retirement or trap entry) consumes one unit of the execution turn
+   budget (`--max-cycles`). Pure recursive unhandled traps consume budget without advancing `minstret`
+   and cleanly terminate via `RunDecision::Timeout` (`timed_out: true`).
+6. Execution of `MRET` in Machine mode restores privilege from `mstatus.MPP`, restores `mstatus.MIE` from
+   `mstatus.MPIE`, sets `mstatus.MPIE` to 1, sets `mstatus.MPP` to User mode (`0b00`), returns execution
+   to `mepc`, and retires as a normal instruction. Executing `MRET` outside Machine mode triggers an
+   `IllegalInstruction` trap entry without applying MRET restoration side effects.
+7. Public CLI runner facilities (`ruscv-sim run`), exit signaling (`tohost` / HTIF), UART MMIO, and
+   cycle limits operate seamlessly during and after trap handling.
+
+---
+
+## 3. Scope Boundaries
+
+### 3.1 In Scope
+
+1. **Machine-Mode Synchronous Exception Mapping:**
+   Classification and mapping of all guest synchronous exception causes defined by RISC-V Privileged
+   Specification §3.1.15 for RV64I:
+   - Cause 0: `InstructionAddressMisaligned` (misaligned branch/jump target PC).
+   - Cause 1: `InstructionAccessFault` (fetch access violation or unmapped physical memory).
+   - Cause 2: `IllegalInstruction` (unrecognized opcodes, invalid format fields, executing privileged
+     instructions without sufficient privilege, or invalid CSR access).
+   - Cause 3: `Breakpoint` (`EBREAK` instruction).
+   - Cause 4: `LoadAddressMisaligned` (data load from an unaligned address in an environment enforcing
+     natural alignment).
+   - Cause 5: `LoadAccessFault` (physical memory access failure or unmapped target on data load).
+   - Cause 6: `StoreAddressMisaligned` (data store or AMO to an unaligned address in an environment
+     enforcing natural alignment).
+   - Cause 7: `StoreAccessFault` (physical memory access failure or unmapped target on data store or AMO).
+   - Cause 8: `EcallU` (Environment call from User mode).
+   - Cause 9: `EcallS` (Environment call from Supervisor mode).
+   - Cause 11: `EcallM` (Environment call from Machine mode).
+
+2. **Machine-Mode Trap CSR State Transitions:**
+   Atomic state update on synchronous exception trap entry:
+   - `mepc`: Written with the virtual address (PC) of the faulting instruction.
+   - `mcause`: Bit 63 (Interrupt) set to 0; bits 62:0 set to the exception code.
+   - `mtval`: Written with exception-specific diagnostic values:
+     - Faulting address for misaligned address and access fault exceptions (Causes 0, 1, 4, 5, 6, 7).
+     - Faulting instruction raw encoding for illegal instructions (Cause 2), or 0 if unavailable.
+     - Zero for environment calls (Causes 8, 9, 11) and breakpoints (Cause 3).
+   - `mstatus`:
+     - `mstatus.MPIE` (bit 7) receives the previous value of `mstatus.MIE` (bit 3).
+     - `mstatus.MIE` (bit 3) is set to 0 (disabling Machine-mode interrupts).
+     - `mstatus.MPP` (bits 12:11) receives the privilege mode of the Hart immediately prior to trap
+       entry (`0b00` for User, `0b01` for Supervisor, `0b11` for Machine).
+   - `privilege`: Hart privilege unconditionally transitions to `PrivilegeMode::Machine`.
+
+3. **`mtvec` Target Calculation Conformance (Privileged Specification §3.1.7):**
+   - Correct `TrapHandler::vector_trap` logic:
+     - `MODE = mtvec[1:0]`: `0b00` = Direct, `0b01` = Vectored, `>= 0b10` = Reserved (handled as Direct).
+     - `BASE = mtvec[63:2] << 2` (4-byte aligned).
+     - For **all** synchronous exceptions (Causes 0–11), trap entry vectors strictly to `BASE`,
+       regardless of whether `mtvec.MODE` is Direct (`0b00`) or Vectored (`0b01`).
+
+4. **`MRET` Instruction Semantics (Privileged Specification §3.1.6.5):**
+   - Strict privilege validation: `MRET` is legal only in Machine mode (`privilege == PrivilegeMode::Machine`).
+   - Rejection semantics: Attempting `MRET` outside Machine mode raises an `IllegalInstruction`
+     exception (Cause 2). No MRET return restoration side effects occur (neither `PC` nor `privilege`
+     is restored from `mepc`/`MPP`), and standard `IllegalInstruction` trap entry into Machine mode
+     completes (saving faulting PC to `mepc`, setting `mstatus.MPIE <- mstatus.MIE`, `mstatus.MIE <- 0`,
+     and `mstatus.MPP <- prior_privilege`).
+   - Legal state restoration:
+     - `mstatus.MIE` receives the value of `mstatus.MPIE`.
+     - `mstatus.MPIE` is set to 1.
+     - Privilege mode is set to the value in `mstatus.MPP`.
+     - `mstatus.MPP` is set to User mode (`0b00`, the least-privileged supported mode in RV64).
+     - Program counter is set to the value of `mepc`.
+   - Retirement: Legally executed `MRET` instructions retire normally, incrementing `minstret`.
+
+5. **Execution Loop Integration, Continuation Policy, and Counting Contract (ADR-0001, ADR-0003, ADR-0004):**
+   - Distinction between Hart semantic outcomes: `InstructionRetired`, `TrapEntered`, and `SimulatorFailure`.
+     The Hart does not report a generic, undifferentiated `Ok(())` that conceals trap entry as retirement.
+   - Selected continuation policy: The execution engine explicitly adopts `continue-to-guest-handler`
+     (ADR-0004 §10.3), retaining the trap fact while allowing execution to proceed into `mtvec.BASE`.
+   - Counting and bounded execution contract:
+     - `minstret` counts strictly retired instructions (`InstructionRetired`). Faulting instructions and
+       trap entries do not increment `minstret`.
+     - Run budget (`--max-cycles`) and execution step counter (`ExecutionResult.cycles`) count started
+       turns (instruction attempts and trap entries).
+     - Zero budget (`--max-cycles 0`): executes 0 turns and immediately halts with timeout (`timed_out: true`).
+     - Normal retirement: 1 turn consumed, 1 instruction retired (`minstret += 1`), `cycles += 1`.
+     - Synchronous trap entry: 1 turn consumed, 0 instructions retired (`minstret` unchanged), `cycles += 1`.
+     - Pure recursive exceptions: each trap entry consumes 1 turn budget slot and leaves `minstret`
+       unchanged; when the budget is reached, the runner terminates cleanly via `RunDecision::Timeout`
+       (`timed_out: true`), preventing host hangs.
+   - Exit signaling: Writes to `tohost` or HTIF MMIO within trap handlers retire normally, and exit
+     detection terminates the run with `RunDecision::GuestExit(code)`.
+
+6. **Verification Suite:**
+   - Unit tests covering trap vectoring, CSR transitions, privilege validation, and `MRET`.
+   - Integration tests in `tests/trap_test.rs` and `tests/executor.rs` verifying loop continuation,
+     counter separation, timeout bounds, and exit detection.
+   - Project-authored bare-metal test programs in `tests/bare-metal-riscv-test/rv64i/`.
+
+### 3.2 Out of Scope (Non-Goals)
+
+The following areas are explicitly excluded from Milestone A6 to keep delivery strictly bounded:
+
+- **Asynchronous Interrupts & Interrupt Controllers:** Interrupt lines, sampling slots, CLINT timer/software
+  interrupts, PLIC external interrupts, interrupt priority arbitration, and `WFI` state transitions
+  (governed separately by ADR-0004).
+- **Supervisor-Mode Traps & Delegation:** `SRET`, user-mode traps (`URET`), and trap delegation registers
+  (`medeleg` / `mideleg`). All synchronous exceptions trap directly to Machine mode.
+- **Virtual Memory & MMU / Sv39 Integration:** Page table walks, `satp` address translation during traps,
+  and page faults (Causes 12, 13, 15). Memory accesses remain physical/flat.
+- **External ACT4 Test Harness Expansion:** Extension of the external ACT4 / Sail compliance harness for
+  trap-testing suites. A6 verification relies on project-authored bare-metal ELFs and focused Rust tests.
+- **Multi-Hart Coordination:** Multi-Hart trap arbitration and inter-processor interrupts.
+- **Debug Mode Traps:** RISC-V Debug Mode (`dcsr`, `dpc`, `dret`) and hardware triggers.
+
+---
+
+## 4. Architectural Constraints and ADR Alignment
+
+Implementation of Milestone A6 must strictly comply with accepted architecture decision records:
+
+1. **ADR-0001 (Hart Execution Outcome and Observation Records):**
+   - One Hart step yields exactly one semantic outcome: `InstructionRetired`, `TrapEntered`, or
+     `SimulatorFailure`.
+   - A faulting instruction raising a synchronous exception produces `TrapEntered`. It does not retire,
+     commits no destination register or memory write, does not advance PC as fall-through, and does not
+     increment retirement counters (`minstret`).
+   - `TrapEntered` requires completed architectural trap entry effects (`mepc`, `mcause`, `mtval`,
+     `mstatus`, `privilege`, and `pc = mtvec.BASE`).
+   - Host resource exhaustion, unmapped host memory, unsupported legal instructions, or simulator
+     invariant failures produce `SimulatorFailure`, which halts the runner with execution error.
+     Internal simulator errors must never be converted into guest trap entries.
+   - Classification of illegal instructions: An encoding defined as illegal by the active RV64I profile
+     raises an `IllegalInstruction` trap (Cause 2). An encoding that is architecturally legal but
+     unsupported by the implementation is a `SimulatorFailure`.
+
+2. **ADR-0002 (Physical-Access Transaction and Fault Contract):**
+   - Architectural address misalignment (Causes 0, 4, 6) is detected by the Hart before issuing a
+     physical transaction; no physical transaction is issued for misaligned accesses.
+   - Memory access faults (Causes 1, 5, 7) originate from physical target rejections (e.g. unmapped
+     address or target access denial) of valid aligned transactions and map to their respective causes
+     based on the initial access category (fetch, load, or store/AMO).
+   - Bus/device errors do not mutate destination registers or commit partial stores.
+   - Transport/adapter protocol failures remain `SimulatorFailure`.
+
+3. **ADR-0003 (Runner, Machine, and Platform Ownership):**
+   - The Runner owns run-control decisions, limits (`--max-cycles`), and terminal exit presentation
+     (`ExecutionResult`).
+   - The Hart owns architectural state, instruction semantics, traps, and outcome facts.
+   - Platform exit detection via `tohost` / HTIF MMIO write ordering is preserved: an instruction
+     inside a trap handler that writes to `tohost` retires first (`InstructionRetired`), and the
+     Runner detects the exit signal at the step boundary.
+
+4. **ADR-0004 (Interrupt, Time, Scheduling, and Stop-Event Boundaries):**
+   - §10.3 Continuation Policy: The minimal ISS baseline policy defaults to `stop-on-synchronous-trap`.
+     Milestone A6 explicitly exercises the permitted alternative by adopting `continue-to-guest-handler`
+     while retaining and reporting the trap fact.
+   - §1.1 & §2 Counting & Turn Budget: A Hart turn is one granted architectural transition slot.
+     `--max-cycles` serves as the outer turn budget. Each started turn (retiring instruction or trap
+     entry) consumes 1 turn budget slot. `minstret` tracks only retired instructions. `mcycle` is Hart-owned
+     and not conflated with the runner budget.
+
+---
+
+## 5. Detailed Technical Specification
+
+### 5.1 Machine-Mode Synchronous Trap Entry
+
+When a synchronous exception occurs during instruction fetch, decode, or execution, the core executes
+the following atomic sequence:
+
+```text
+mepc         <- PC (virtual address of faulting instruction)
+mcause       <- (0 << 63) | exception_code
+mtval        <- diagnostic_value (faulting address, instruction encoding, or 0)
+mstatus.MPIE <- mstatus.MIE
+mstatus.MIE  <- 0
+mstatus.MPP  <- privilege (current privilege mode prior to trap)
+privilege    <- PrivilegeMode::Machine
+PC           <- mtvec.BASE
+```
+
+#### 5.1.1 Exception Cause and `mtval` Specification
+
+| Cause Code | Exception Name | Trigger Condition | Architectural `mtval` Value |
+| :--- | :--- | :--- | :--- |
+| `0` | `InstructionAddressMisaligned` | Jump, branch, or return target PC is not 4-byte aligned (PC[1:0] != 0). | Faulting target address |
+| `1` | `InstructionAccessFault` | Instruction fetch encounters unmapped address or physical access denial. | Faulting fetch address |
+| `2` | `IllegalInstruction` | Unrecognized opcode, reserved field, privileged instruction in lower mode, or invalid CSR access. | Faulting instruction word (or 0 if unavailable) |
+| `3` | `Breakpoint` | Execution of `EBREAK` instruction. | 0 |
+| `4` | `LoadAddressMisaligned` | Data load address not naturally aligned to access size (2, 4, or 8 bytes). | Faulting memory address |
+| `5` | `LoadAccessFault` | Physical bus error, unmapped target, or permission violation on load. | Faulting memory address |
+| `6` | `StoreAddressMisaligned` | Data store/AMO address not naturally aligned to access size. | Faulting memory address |
+| `7` | `StoreAccessFault` | Physical bus error, unmapped target, or permission violation on store. | Faulting memory address |
+| `8` | `EcallU` | `ECALL` executed while `privilege == PrivilegeMode::User`. | 0 |
+| `9` | `EcallS` | `ECALL` executed while `privilege == PrivilegeMode::Supervisor`. | 0 |
+| `11` | `EcallM` | `ECALL` executed while `privilege == PrivilegeMode::Machine`. | 0 |
+
+#### 5.1.2 Vector Base Address Calculation (§3.1.7)
+
+The `mtvec` register layout:
+- Bits `[1:0]` (`MODE`):
+  - `0b00`: **Direct**. All traps set `PC = BASE`.
+  - `0b01`: **Vectored**. Asynchronous interrupts set `PC = BASE + 4 * cause`. **All synchronous exceptions set `PC = BASE`**.
+  - `0b10` / `0b11`: Reserved. Treated as Direct mode (`PC = BASE`).
+- Bits `[63:2]` (`BASE`): Base address of trap vector, 4-byte aligned (`mtvec[63:2] << 2`).
+
+**Invariant:** For all synchronous exceptions (Causes 0–11), the next PC is strictly `BASE` in both
+Direct and Vectored modes.
+
+### 5.2 MRET Instruction Specification (§3.1.6.5)
+
+The `MRET` instruction returns from a trap handled in Machine mode:
+
+```text
+// 1. Privilege Validation
+if privilege != PrivilegeMode::Machine {
+    raise IllegalInstruction (Cause 2)
+    // No MRET state restoration occurs; standard trap entry into Machine mode applies:
+    // mepc <- mret_pc, mcause <- 2, mtval <- mret_instr,
+    // mstatus.MPIE <- mstatus.MIE, mstatus.MIE <- 0, mstatus.MPP <- prior_mode,
+    // privilege <- Machine, PC <- mtvec.BASE
+}
+
+// 2. Architectural State Restoration (Machine mode only)
+mstatus.MIE  <- mstatus.MPIE
+mstatus.MPIE <- 1
+privilege    <- mstatus.MPP
+mstatus.MPP  <- PrivilegeMode::User (0b00)
+PC           <- mepc
+// MRET instruction retires normally (minstret += 1)
+```
+
+### 5.3 Execution Loop Integration and Invariants
+
+1. **Step Transition and Outcome Fact:**
+   In `RiscvCore::step`, when an instruction encounters a synchronous exception:
+   - Trap entry state is atomically applied to the core's CSRs, privilege, and PC (`mtvec.BASE`).
+   - The Hart reports the `TrapEntered` outcome (not `InstructionRetired` and not `SimulatorFailure`).
+   - The step leaves destination registers and memory unmodified.
+   - The Runner receives the `TrapEntered` fact, preserves it for diagnostics/observation, charges
+     one turn to the budget, and continues execution at `mtvec.BASE`.
+
+2. **Retirement and Turn Budget Invariant:**
+   - `minstret` increments only on `InstructionRetired`. Trap entry never increments `minstret`.
+   - `--max-cycles` limits total started turns (instruction attempts and trap entries).
+   - `ExecutionResult.cycles` reports completed turns.
+   - Pure recursive exceptions (e.g. invalid instruction at `mtvec.BASE`) consume 1 turn per trap,
+     do not increment `minstret`, and cleanly stop when `--max-cycles` is exhausted with `RunDecision::Timeout`
+     (`timed_out: true`).
+
+3. **Continuous Execution & Exit Signaling Invariant:**
+   - The guest trap handler may read and write memory, manipulate CSRs, modify `mepc` (e.g. `mepc += 4`
+     to skip a faulting instruction), and execute `MRET`.
+   - A store instruction writing an exit code to `tohost` / HTIF MMIO within the trap handler retires
+     normally (`InstructionRetired`), and the Runner detects exit immediately at the step boundary,
+     returning `RunDecision::GuestExit(code)`.
+
+---
+
+## 6. Deliverables and Task Decomposition
+
+The implementation of Milestone A6 is decomposed into four discrete, reviewable tasks:
+
+### Task 1: Trap CSRs, Cause Mapping, and Vector Calculation Conformance
+- Align `src/core/trap.rs` with RISC-V Privileged Specification §3.1.7:
+  - Update `TrapHandler::vector_trap` to guarantee that all synchronous exceptions vector to `BASE`
+    in both Direct and Vectored modes.
+  - Implement full 64-bit cause mapping and `mtval` diagnostics for Causes 0–11.
+  - Ensure `mstatus` bits (`MPIE`, `MIE`, `MPP`) update accurately on trap entry.
+- Unit tests verifying CSR state transitions and vector address calculations.
+
+### Task 2: Privilege Validation and MRET Conformance
+- Align `src/isa/rv64i/system.rs` (`exec_mret`) with Specification §3.1.6.5:
+  - Add strict privilege check: reject execution when `privilege != PrivilegeMode::Machine` with an
+    `IllegalInstruction` exception.
+  - Guarantee that lower-privilege invocation applies standard `IllegalInstruction` trap entry without
+    MRET return restoration side effects.
+  - Update legal `mstatus` restoration: `MIE <- MPIE`, `MPIE <- 1`, `privilege <- MPP`, `MPP <- User` (`0b00`).
+  - Restore PC from `mepc`.
+- Unit tests validating legal `MRET` state restoration and illegal lower-privilege rejection.
+
+### Task 3: Core Execution Loop Trap Entry Integration and Continuation Policy
+- Integrate `TrapHandler` and continuation policy into `RiscvCore::step` (`src/core/mod.rs`) and
+  runners (`src/executor.rs`):
+  - Catch synchronous exceptions raised during fetch, decode, and execution.
+  - Apply trap entry state atomically (`mepc`, `mcause`, `mtval`, `mstatus`, `privilege`, and `pc`).
+  - Report `TrapEntered` outcome fact distinct from `InstructionRetired` and `SimulatorFailure`.
+  - Enforce ADR-0001 non-retirement: do not increment `minstret` on trap entry.
+  - Apply ADR-0004 counting: charge 1 turn budget slot per attempt/trap entry, enabling `--max-cycles`
+    to terminate recursive trap loops cleanly with timeout.
+  - Enable seamless continuation into guest trap handlers under `continue-to-guest-handler`.
+- Integration tests in `tests/trap_test.rs` and `tests/executor.rs`.
+
+### Task 4: Bare-Metal ELF Test Suite, Toolchain Gap Recording, and Integrated Verification
+- Develop project-authored bare-metal test programs in `tests/bare-metal-riscv-test/rv64i/`:
+  - `trap_ecall.S`: Configures `mtvec`, executes `ECALL` from Machine mode, verifies `mcause == 11`,
+    increments `mepc += 4`, executes `MRET`, verifies resumed execution, and exits via `tohost`.
+  - `trap_illegal.S`: Triggers an illegal instruction, verifies `mcause == 2` and `mtval`, skips
+    instruction via `mepc += 4`, returns via `MRET`, and exits cleanly.
+  - `trap_ebreak.S`: Triggers `EBREAK`, verifies `mcause == 3`, resumes, and exits.
+  - `trap_vectored.S`: Sets `mtvec.MODE = 1` (Vectored), triggers synchronous exception, proves
+    execution vectors to `BASE` (not `BASE + 4 * cause`), and returns.
+  - `trap_mret_priv.S`: Verifies that attempting `MRET` outside Machine mode triggers an
+    `IllegalInstruction` trap without MRET restoration side effects.
+- Record RISC-V toolchain gap and execution status in test runners.
+- End-to-end integration tests in `tests/trap_test.rs` validating public CLI and library facade.
+
+---
+
+## 7. Verification Strategy
+
+Verification for Milestone A6 combines Rust unit tests, simulator integration tests, and bare-metal ELF tests:
+
+1. **Unit Testing (`cargo test --lib`):**
+   - Test `TrapHandler::handle_trap` across all synchronous exception causes.
+   - Verify `vector_trap` under both `MODE = 0` (Direct) and `MODE = 1` (Vectored) for exceptions
+     (vectors to `BASE`) and interrupts (vectors to `BASE + 4 * cause`).
+   - Test `exec_mret` in Machine mode for exact `mstatus` and PC updates.
+   - Test `exec_mret` in User and Supervisor modes for immediate exception rejection and trap entry.
+
+2. **Integration Testing (`tests/trap_test.rs`, `tests/executor.rs`):**
+   - Test stepping a core that encounters an exception: verify PC redirects to `mtvec.BASE` and
+     subsequent steps execute the handler.
+   - Verify the four counting scenarios:
+     - Zero budget (`--max-cycles 0`): 0 turns, immediate timeout.
+     - Normal retirement: advances `minstret` and `cycles`.
+     - Synchronous trap entry: advances `cycles`, leaves `minstret` unchanged.
+     - Pure recursive exception: advances `cycles` until `--max-cycles` timeout with `timed_out: true`.
+   - Verify that the CLI runner (`load_and_run`) and library facade (`RiscVSimulator`) both execute
+     trap handlers without error.
+
+3. **Guest Bare-Metal ELF Testing & Toolchain Status:**
+   - Toolchain requirement: GNU `riscv64-unknown-elf` toolchain (`as`, `ld`, or `gcc`).
+   - Environment status: The local development host environment currently lacks `riscv64-unknown-elf-gcc`
+     in PATH. The container image defined in [`docs/development-environment.md`](development-environment.md)
+     and GitHub Actions CI (`.github/workflows/ci.yml`) supply the cross-toolchain.
+   - Test runner strategy: Bare-metal tests dynamically verify toolchain availability before assembling,
+     skipping assembly when the cross-compiler is absent, while CI compiles and runs the suite.
+   - Verified execution via `ruscv-sim run <elf-file>` checks: exit code 0 via `tohost`, expected output,
+     and completion within cycle budget.
+
+4. **Quality Gates:**
+   Every commit and pull request must satisfy the full local quality gate:
+   ```bash
+   cargo fmt --all -- --check
+   cargo check --all-features
+   cargo clippy --all-features --all-targets -- -D warnings
+   cargo test --all-features
+   cargo doc --all-features --no-deps
+   ```
+
+---
+
+## 8. Testable Acceptance Criteria
+
+Completion and acceptance of Milestone A6 require satisfying all of the following observable criteria:
+
+1. **Synchronous Exception Trap Entry:**
+   When an instruction triggers a synchronous exception (`ECALL`, `EBREAK`, illegal instruction,
+   misaligned load/store, or access fault), the core updates `mepc` to the faulting instruction's PC,
+   `mcause` to the specification cause code (with bit 63 clear), `mtval` to the appropriate diagnostic
+   value (or 0), `mstatus.MPIE` to previous `MIE`, `mstatus.MIE` to 0, `mstatus.MPP` to the prior
+   privilege mode, and transitions privilege to Machine mode.
+
+2. **`mtvec` Target Calculation Conformance:**
+   For all synchronous exceptions, execution vectors strictly to `mtvec.BASE` (clearing bits [1:0]),
+   regardless of whether `mtvec.MODE` is configured as Direct (`0b00`) or Vectored (`0b01`).
+
+3. **ADR-0001 Non-Retirement and ADR-0004 Budget Accounting:**
+   - A step that enters a synchronous trap does not increment retirement counters (`minstret`).
+   - The execution turn budget (`--max-cycles`) is consumed by each attempted step (normal retirement
+     or trap entry).
+   - Four observable counting behaviors are verified:
+     - Zero budget (`--max-cycles 0`): executes 0 turns, immediately halts with `timed_out: true`, `cycles: 0`.
+     - Normal retirement: advances `minstret` by 1 and `cycles` by 1 per retired instruction.
+     - Synchronous trap entry: advances `cycles` by 1, leaving `minstret` unchanged.
+     - Pure recursive exception: advances `cycles` until `--max-cycles` is exhausted, cleanly halting
+       with `RunDecision::Timeout` (`timed_out: true`), with `cycles == max_cycles`.
+
+4. **Continuous Execution into Guest Handler:**
+   Trap entry does not abort the simulator run or return a host `ExecutionError`. Under the selected
+   `continue-to-guest-handler` policy, the core continues instruction fetching and execution starting
+   from `mtvec.BASE`, while the Runner retains the `TrapEntered` fact.
+
+5. **`MRET` State Restoration in Machine Mode:**
+   Execution of `MRET` in Machine mode restores PC to `mepc`, restores `mstatus.MIE` from `mstatus.MPIE`,
+   sets `mstatus.MPIE` to 1, sets current privilege to `mstatus.MPP`, sets `mstatus.MPP` to User mode
+   (`0b00`), and retires as a normal instruction (`minstret += 1`).
+
+6. **`MRET` Privilege Enforcement & Rejection Semantics:**
+   Attempting to execute `MRET` while the core is in User or Supervisor mode raises an `IllegalInstruction`
+   exception (Cause 2). MRET return restoration side effects do not occur (`PC` is not restored from `mepc`,
+   `privilege` is not restored from `mstatus.MPP`, and `mstatus.MIE` is not restored from `mstatus.MPIE`).
+   The core completes standard `IllegalInstruction` trap entry into Machine mode (`mepc <- mret_pc`,
+   `mcause <- 2`, `mstatus.MPIE <- mstatus.MIE`, `mstatus.MIE <- 0`, `mstatus.MPP <- prior_privilege`,
+   `privilege <- Machine`, `PC <- mtvec.BASE`).
+
+7. **End-to-End Bare-Metal Verification:**
+   All project-authored guest bare-metal trap test ELFs (`trap_ecall.elf`, `trap_illegal.elf`,
+   `trap_ebreak.elf`, `trap_vectored.elf`, and `trap_mret_priv.elf`) run through the public CLI
+   (`ruscv-sim run`) and terminate with exit code 0 via `tohost`.
+
+8. **Runner Exit, Diagnostics, and Invariant Preservation:**
+   Public CLI options (`--max-cycles`, `--tohost`, `--verbose`), UART character output, and cycle limit
+   timeout detection operate identically during and after trap handling.
+
+9. **Zero Regressions and Quality Gate Cleanliness:**
+   All pre-existing tests (including A1–A5 integration tests and ACT4 compatibility baselines) and all
+   quality gate checks (`fmt`, `check`, `clippy`, `test`, `doc`) pass without warnings or errors.
+
+---
+
+## 9. Next Steps and Closeout Sequence
+
+1. **Implementation Tasks:** Implement Tasks 1 through 4 on dedicated branches according to the task
+   decomposition.
+2. **Milestone Closeout:** Upon satisfying all nine acceptance criteria with recorded repository
+   verification evidence:
+   - Verify every acceptance criterion with recorded repository evidence.
+   - Author the Milestone A6 capability assessment and closeout record.
+   - Archive the completed contract to `docs/archive/milestones/a6-machine-mode-trap-entry-return.md`.
+   - Propose and obtain approval for the successor milestone contract before replacing `docs/dev-plan.md`.
