@@ -90,12 +90,15 @@ When a guest instruction encounters a synchronous exception:
    - Pure recursive unhandled traps consume 1 started turn slot per trap, advance `ExecutionResult.cycles`,
      leave `minstret` unchanged, and cleanly terminate when `--max-cycles` is exhausted via
      `RunDecision::Timeout` (`timed_out: true`).
-6. Architectural Counter Delivery: Provide single authoritative 64-bit retirement counter storage in
-   the Hart's `CsrFile` under address `machine::MINSTRET` (`0xB02`), with verified coherence between
-   direct CSR read/write access and core execution retirement updates. `minstret` increments strictly
-   upon `InstructionRetired` and remains unchanged on `TrapEntered` or `SimulatorFailure`. The
-   unprivileged `instret` shadow (`0xC02`), counter access control registers (`mcounteren` /
-   `scounteren`), and `mcycle` (`0xB00`) are explicitly deferred to successor milestones.
+6. Architectural Counter Delivery and Write Precedence: Provide single authoritative 64-bit retirement
+   counter storage in the Hart's `CsrFile` under address `machine::MINSTRET` (`0xB02`), with verified
+   coherence between direct CSR read/write access and core execution retirement updates. For instructions
+   that do not write `minstret`, `minstret` increments by 1 upon `InstructionRetired`. For an instruction
+   that explicitly writes `minstret`, the written value takes precedence over and suppresses the implicit
+   +1 retirement increment for that instruction (Privileged Spec v1.12 §3.1.11), while retirement progress
+   and turn budget account for the instruction normally. `minstret` remains unchanged on `TrapEntered`
+   or `SimulatorFailure`. The unprivileged `instret` shadow (`0xC02`), counter access control registers
+   (`mcounteren` / `scounteren`), and `mcycle` (`0xB00`) are explicitly deferred to successor milestones.
 7. Execution of `MRET` in Machine mode restores privilege from `mstatus.MPP`, restores `mstatus.MIE` from
    `mstatus.MPIE`, sets `mstatus.MPIE` to 1, sets `mstatus.MPP` to User mode (`0b00`), clears `mstatus.MPRV`
    to 0 if returning to a mode below Machine (User or Supervisor) while preserving `mstatus.MPRV` if
@@ -199,7 +202,7 @@ When a guest instruction encounters a synchronous exception:
        strictly to Privileged Spec v1.12 §3.1.6.5 without misattributing unconstrained Machine access to
        lower-privilege instructions).
      - Program counter is set to the value of `mepc` (4-byte aligned per WARL `mepc[1:0] == 00`).
-   - Retirement: Legally executed `MRET` instructions retire normally, incrementing `minstret`.
+   - Retirement: Legally executed `MRET` instructions retire normally, incrementing `minstret` by 1.
 
 5. **Execution Loop Integration, Continuation Policy, and Non-Lossy Counting Contract (ADR-0001, ADR-0003, ADR-0004):**
    - Distinction between Hart semantic outcomes: `InstructionRetired`, `TrapEntered`, and `SimulatorFailure`.
@@ -220,16 +223,25 @@ When a guest instruction encounters a synchronous exception:
      subscriber is attached, structured `TrapRecord` / `CommitRecord` data is materialized. When
      observation is disabled, no unbounded retention or per-step record allocation occurs.
    - **Counting and Bounded Execution Contract**:
-     - `minstret` counts strictly retired instructions (`InstructionRetired`). Faulting instructions and
-       trap entries do not increment `minstret`.
+     - `minstret` counts strictly retired instructions (`InstructionRetired`).
+     - For instructions that complete `InstructionRetired` without explicitly writing to `minstret`,
+       `minstret` increments by 1 upon retirement.
+     - For instructions that complete `InstructionRetired` and explicitly write to `minstret`, the
+       written value takes precedence over and suppresses the implicit +1 retirement increment for that
+       instruction (Privileged Spec v1.12 §3.1.11), leaving the counter at the written value at the end
+       of the step. The instruction produces `InstructionRetired`, advances completed turns (`ExecutionResult.cycles`),
+       and consumes 1 started turn slot from the budget.
+     - Faulting instructions (`TrapEntered`) and simulator failures (`SimulatorFailure`) do not retire
+       and never increment `minstret`.
      - Turn budget (`--max-cycles`) limits **started turn slots** (instruction attempts, trap entries,
        and simulator failures).
      - Public execution counter (`ExecutionResult.cycles`) reports **completed execution turns**.
      - Five distinct observable test scenarios:
        1. **Zero budget (`--max-cycles 0`)**: consumes 0 started slots; executes 0 turns; immediately
           halts with `RunDecision::Timeout` (`timed_out: true`, `cycles == 0`, `minstret == 0`).
-       2. **Normal retirement**: consumes 1 started turn slot; completes 1 turn; increments `minstret` by 1
-          and increments `ExecutionResult.cycles` by 1.
+       2. **Normal retirement**: consumes 1 started turn slot; completes 1 turn; increments
+          `ExecutionResult.cycles` by 1. For ordinary instructions, `minstret` increments by 1; for instructions
+          explicitly writing `minstret`, the written value is committed without subsequent +1 increment.
        3. **Synchronous trap entry**: consumes 1 started turn slot; completes 1 turn; increments
           `ExecutionResult.cycles` by 1; `minstret` remains unchanged.
        4. **Pure recursive exception**: each trap entry consumes 1 started turn slot, completes 1 turn,
@@ -242,23 +254,44 @@ When a guest instruction encounters a synchronous exception:
    - Exit signaling: Writes to `tohost` or HTIF MMIO within trap handlers retire normally, and exit
      detection terminates the run with `RunDecision::GuestExit(code)`.
 
-6. **Architectural Counter Deliverable (`minstret`):**
+6. **Architectural Counter Deliverable and Explicit Write Precedence (`minstret`):**
    - Provide single authoritative 64-bit storage in the Hart's `CsrFile` under address `machine::MINSTRET`
      (`0xB02`).
    - No duplicate sibling `CoreState.minstret` field is introduced, avoiding duplicate-authority and
      synchronization hazards.
    - Initialized to 0 on core reset.
    - Machine-mode read and write access.
-   - Increments by 1 strictly upon each `InstructionRetired`. Does not increment on `TrapEntered` or `SimulatorFailure`.
+   - **Explicit Counter Write Precedence (Privileged Spec v1.12 §3.1.11)**:
+     - An explicit write to `minstret` takes precedence over and overrides the implicit +1 increment by
+       the writing instruction itself; the written value is not subsequently incremented by the retirement
+       of that instruction. The written value is observed by subsequent instructions.
+     - **CSR Instruction Write Classification (RISC-V Zicsr Specification)**:
+       - `CSRRW` / `CSRRWI`: Always performs an explicit write to the CSR (regardless of `rs1` or `zimm`
+         value). The destination register `rd` (if `rd != x0`) receives the previous counter value, and
+         the new value is written to `minstret`. The written value overrides the implicit increment
+         (e.g., `CSRRW x0, minstret, x0` leaves `minstret == 0`, not 1).
+       - `CSRRS` / `CSRRC`: Performs a write if and only if `rs1 != x0`. If `rs1 == x0`, the instruction
+         is strictly read-only; no write occurs, `rd` receives the old value, and the instruction's normal
+         retirement increment (+1) applies to `minstret`. If `rs1 != x0`, an explicit write occurs; the
+         computed bit-set or bit-clear value is committed and overrides the implicit increment.
+       - `CSRRSI` / `CSRRCI`: Performs a write if and only if `zimm != 0`. If `zimm == 0`, the instruction
+         is strictly read-only; no write occurs, and normal retirement increment (+1) applies. If `zimm != 0`,
+         an explicit write occurs and overrides the implicit increment.
+     - The *subsequent* retired instruction (assuming it does not write `minstret`) increments `minstret`
+       by 1 from the previously written value.
+     - On `TrapEntered` or `SimulatorFailure`, no instruction retires, no implicit increment occurs, and
+       no write by a faulting instruction commits.
    - Core execution retirement updates and direct CSR read/write access operate directly on this single
-     authoritative value.
+     authoritative value in `CsrFile`.
 
 7. **Verification Suite:**
    - Unit tests covering trap vectoring, CSR transitions, privilege validation, `MRET` (with MPRV
-     transitions), `minstret` CSR read/write, `misa.C` WARL non-writability, and `mepc[1:0]` WARL masking.
+     transitions), `minstret` CSR read/write, write-precedence vs read-only CSR classification,
+     `misa.C` WARL non-writability, and `mepc[1:0]` WARL masking.
    - Integration tests in `tests/trap_test.rs` and `tests/executor.rs` verifying loop continuation,
      per-trap boundary fact consumption during multi-trap execution, induced-fault paths for Causes 0,
-     1, 4, 5, 6, 7, five-scenario counter/budget separation, timeout bounds, and exit detection.
+     1, 4, 5, 6, 7, five-scenario counter/budget separation, counter write-precedence during execution,
+     timeout bounds, and exit detection.
    - Project-authored bare-metal test programs in `tests/bare-metal-riscv-test/rv64i/`.
 
 ### 3.2 Out of Scope (Non-Goals)
@@ -342,8 +375,10 @@ Implementation of Milestone A6 must strictly comply with accepted architecture d
      (retiring instruction, trap entry, or simulator failure) consumes 1 turn budget slot.
    - §10.3 Primary Reason Rank: `SimulatorFailure` (rank 1) outranks `BudgetExhausted` (rank 9). If the
      N-th budget slot fails, the terminal reason is `SimulatorFailure`, not `BudgetExhausted`.
-   - Counter Ownership: `minstret` is Hart-owned and tracks retired instructions. `mcycle` is explicitly
-     deferred; A6 does not define a cycle timing profile or claim full ADR-0004 counter conformance.
+   - Counter Ownership and Write Precedence: `minstret` is Hart-owned and tracks retired instructions.
+     Explicit counter writes take precedence over same-instruction retirement increments (Privileged Spec
+     v1.12 §3.1.11), while the writing instruction completes retirement accounting normally. `mcycle` is
+     explicitly deferred; A6 does not define a cycle timing profile or claim full ADR-0004 counter conformance.
 
 5. **Alignment Consistency and MISA.C WARL Policy:**
    - The public execution engine operates with 32-bit instruction fetch, compressed instructions disabled,
@@ -426,7 +461,7 @@ if new_priv < PrivilegeMode::Machine {
     mstatus.MPRV <- 0
 }
 PC           <- mepc // mepc[1:0] hardwired to 00 under fixed IALIGN=32
-// MRET instruction retires normally (minstret += 1)
+// MRET instruction retires normally (minstret += 1, as MRET does not write minstret)
 ```
 
 ### 5.3 Execution Loop Integration and Invariants
@@ -442,8 +477,13 @@ PC           <- mepc // mepc[1:0] hardwired to 00 under fixed IALIGN=32
    - Subsequent traps in the same run deliver their facts at their respective boundaries, ensuring no
      trap fact is lost unconsumed.
 
-2. **Retirement and Turn Budget Invariant:**
-   - `minstret` increments only on `InstructionRetired`. Trap entry and simulator failure never increment `minstret`.
+2. **Retirement, Counter Write Precedence, and Turn Budget Invariant:**
+   - For an instruction that completes `InstructionRetired` without explicitly writing to `minstret`,
+     `minstret` increments by 1.
+   - For an instruction that completes `InstructionRetired` and explicitly writes to `minstret`, the
+     written value is committed and overrides the implicit +1 increment for that instruction (Privileged
+     Spec v1.12 §3.1.11). The instruction retires and counts normally in completed turns (`ExecutionResult.cycles`).
+   - Trap entry (`TrapEntered`) and simulator failure (`SimulatorFailure`) never increment `minstret`.
    - `--max-cycles` limits total started turn slots (instruction attempts, trap entries, and simulator failures).
    - `ExecutionResult.cycles` reports completed turns.
    - Pure recursive exceptions consume 1 started slot and complete 1 turn per trap, leaving `minstret`
@@ -476,8 +516,12 @@ The implementation of Milestone A6 is decomposed into four discrete, reviewable 
   and CSR instructions (`CSRRW`, `CSRRS`, `CSRRC`). Correct the stale inline comment `// RV64IMAC` in `src/csr/mod.rs`.
 - Enforce `mepc` WARL policy under fixed IALIGN=32: hardwire `mepc[1:0]` to zero (`mepc & !0b11`) on direct
   writes and CSR instructions.
+- Implement CSR write classification for `minstret` access:
+  - `CSRRW` / `CSRRWI`: always writes and activates write-precedence.
+  - `CSRRS` / `CSRRC`: writes only if `rs1 != x0`; read-only if `rs1 == x0`.
+  - `CSRRSI` / `CSRRCI`: writes only if `zimm != 0`; read-only if `zimm == 0`.
 - Unit tests verifying CSR state transitions, vector address calculations, `minstret` CSR read/write,
-  `misa.C` WARL non-writability (direct write and write/set/clear), and `mepc[1:0]` masking.
+  `minstret` write precedence and read-only gating, `misa.C` WARL non-writability, and `mepc[1:0]` masking.
 
 ### Task 2: Privilege Validation and MRET Conformance
 - Align `src/isa/rv64i/system.rs` (`exec_mret`) with Specification §3.1.6.1 and §3.1.6.5:
@@ -498,8 +542,11 @@ The implementation of Milestone A6 is decomposed into four discrete, reviewable 
   - Catch synchronous exceptions raised during fetch, decode, and execution.
   - Apply trap entry state atomically (`mepc`, `mcause`, `mtval`, `mstatus`, `privilege`, and `pc`).
   - Report `TrapEntered` outcome fact distinct from `InstructionRetired` and `SimulatorFailure`.
-  - Enforce ADR-0001 non-retirement: do not increment `minstret` on trap entry or simulator failure;
-    increment `minstret` by 1 on `InstructionRetired` directly in the Hart's `CsrFile`.
+  - Enforce ADR-0001 non-retirement: do not increment `minstret` on trap entry or simulator failure.
+  - Apply retirement counter updates with explicit write precedence (Privileged Spec §3.1.11):
+    - If the retired instruction explicitly wrote `minstret`, commit the written value and suppress
+      the implicit +1 increment for that instruction.
+    - If the retired instruction did not write `minstret`, increment `minstret` by 1.
   - Apply ADR-0003 / ADR-0004 counting: charge 1 started turn slot per attempt/trap entry/failure.
     `SimulatorFailure` consumes a started slot but does not advance `ExecutionResult.cycles` or `minstret`,
     reporting execution error without fabricating `BudgetExhausted`.
@@ -545,6 +592,15 @@ Verification for Milestone A6 combines Rust unit tests, simulator integration te
    - Test `exec_mret` in User and Supervisor modes for immediate exception rejection and standard
      `IllegalInstruction` trap entry.
    - Test `minstret` CSR read/write in Machine mode and reset value.
+   - Test `minstret` explicit write precedence:
+     - `CSRRW` / `CSRRWI`: verify that writing value `V` leaves `minstret == V` (not `V + 1`), even
+       when writing 0 via `rs1 == x0` or `zimm == 0`.
+     - `CSRRS` / `CSRRC`: verify that `rs1 == x0` is strictly read-only (`rd` receives old value,
+       instruction retirement increments counter by +1); verify that `rs1 != x0` writes the new value
+       and overrides the implicit +1 increment.
+     - `CSRRSI` / `CSRRCI`: verify that `zimm == 0` is read-only (counter increments by +1); verify that
+       `zimm != 0` writes the new value and overrides the implicit +1 increment.
+     - Subsequent instruction: verify the instruction following a counter write increments `minstret` by +1.
    - Test `misa.C` WARL behavior: verify that writing, setting, or clearing bits on `misa` leaves bit 2
      (`C`) fixed to 0.
    - Test `mepc[1:0]` WARL masking: verify that direct write or CSR write/set/clear with non-zero low
@@ -569,11 +625,13 @@ Verification for Milestone A6 combines Rust unit tests, simulator integration te
    - **Multi-Trap Non-Lossy Delivery**: verify that consecutive/heterogeneous traps in a single execution
      run deliver their respective `TrapEntered` facts at each trap boundary to the Runner without unconsumed
      overwriting.
-   - **Counter Coherence**: verify that retirement counter updates via core execution retirement and
-     direct `CsrFile` read/write access operate on the same authoritative storage.
+   - **Counter Coherence and Write Precedence in Execution**: verify that retirement counter updates via
+     core execution and direct `CsrFile` read/write access operate on the same authoritative storage,
+     and verify that an instruction executing `csrw minstret, rs1` sets `minstret` to `rs1` without subsequent
+     increment, while the next instruction increments it to `rs1 + 1`.
    - **Five Counting Scenarios**:
      1. Zero budget (`--max-cycles 0`): 0 started slots, immediate timeout (`timed_out: true`, `cycles: 0`, `minstret: 0`).
-     2. Normal retirement: advances `minstret` and `cycles` by 1 per retired instruction.
+     2. Normal retirement: advances `minstret` and `cycles` by 1 per retired instruction (unless explicitly written).
      3. Synchronous trap entry: advances `cycles` by 1, leaves `minstret` unchanged.
      4. Pure recursive exception: advances `cycles` until `--max-cycles` timeout with `timed_out: true`,
         leaving `minstret` unchanged.
@@ -628,13 +686,25 @@ Completion and acceptance of Milestone A6 require satisfying all of the followin
    For all synchronous exceptions, execution vectors strictly to `mtvec.BASE` (clearing bits [1:0]),
    regardless of whether `mtvec.MODE` is configured as Direct (`0b00`) or Vectored (`0b01`).
 
-3. **ADR-0001 Non-Retirement, ADR-0004 Budget Accounting, and `minstret` Counter Delivery:**
+3. **ADR-0001 Non-Retirement, ADR-0004 Budget Accounting, and `minstret` Delivery with Write Precedence:**
    - Single authoritative 64-bit retirement counter storage in the Hart's `CsrFile` under `machine::MINSTRET`
      (`0xB02`), initialized to 0, with verified coherence between core execution retirement updates and
      direct CSR read/write access.
+   - **Counter Write Precedence**: An instruction that explicitly writes to `minstret` commits its written
+     value, overriding the implicit +1 increment for that instruction (Privileged Spec v1.12 §3.1.11); the
+     instruction produces `InstructionRetired`, advances `ExecutionResult.cycles`, and consumes 1 started
+     turn slot. The subsequent instruction increments `minstret` by 1 from the written value.
+   - **CSR Instruction Classification**:
+     - `CSRRW` / `CSRRWI`: Always performs a write, overriding the implicit increment (e.g. `csrw minstret, x0`
+       leaves `minstret == 0`).
+     - `CSRRS` / `CSRRC`: If `rs1 == x0`, strictly read-only; no write occurs, `rd` receives the old value,
+       and the normal +1 retirement increment applies. If `rs1 != x0`, writes the computed value and overrides
+       the implicit +1 increment.
+     - `CSRRSI` / `CSRRCI`: If `zimm == 0`, strictly read-only (normal +1 applies). If `zimm != 0`, writes
+       the computed value and overrides the implicit +1 increment.
    - Five distinct observable counting behaviors are verified:
      - Zero budget (`--max-cycles 0`): executes 0 turns, immediately halts with `timed_out: true`, `cycles: 0`, `minstret: 0`.
-     - Normal retirement: advances `minstret` by 1 and `cycles` by 1 per retired instruction.
+     - Normal retirement: advances `minstret` by 1 and `cycles` by 1 per retired instruction (unless explicitly written).
      - Synchronous trap entry: advances `cycles` by 1, leaving `minstret` unchanged.
      - Pure recursive exception: advances `cycles` until `--max-cycles` is exhausted, cleanly halting
        with `RunDecision::Timeout` (`timed_out: true`), with `cycles == max_cycles` and `minstret` unchanged.
