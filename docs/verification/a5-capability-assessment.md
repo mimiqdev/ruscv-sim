@@ -29,6 +29,6 @@ after the successful 2026-09-13 run. This is not certification.
   [feasibility history](a5-feasibility.md) — retained, not current blockers.
 
 PR #37 formally closed out A5 (merged `d1834cc6566b342824bca30772cc829953a5c5ef`)
-with recorded independent closeout review and exact-head CI. The optional
-single successor recommendation is not an approved A6; no successor contract
-is approved.
+with recorded independent closeout review and exact-head CI. The successor
+milestone contract for Milestone A6 (Machine-Mode Synchronous Trap Entry and Return)
+was subsequently approved on 2026-09-17 (see [dev-plan.md](../dev-plan.md)).

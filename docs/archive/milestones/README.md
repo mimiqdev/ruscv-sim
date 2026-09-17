@@ -17,6 +17,9 @@ Milestone A6 — Machine-Mode Synchronous Trap Entry and Return.
 
 ## Records
 
+- [A6: Machine-mode synchronous trap entry and return — original proposal](a6-trap-entry-return-proposal.md)
+  - Historical proposal snapshot preserved from commit `9429e6a`; superseded by active contract [`../../dev-plan.md`](../../dev-plan.md)
+
 - [A5: ACT4 RV64I selected external compatibility — forwarding record](a5-forwarding-record.md)
   - Post-closeout forwarding record preserved upon Milestone A6 activation
   - [Closeout record](a5-closeout-record.md)

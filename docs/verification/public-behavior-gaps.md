@@ -39,9 +39,10 @@ Historical pending/provisional/no-final-rerun statements within the individual
 repair records below describe those earlier runs, not current blockers.
 Their original diagnostic and verification bodies are preserved. These decisions
 do not promise successful misalignment or architectural trap delivery; they do
-not change G-15's separately authorized scope. A5 is formally closed out (PR #37
-merged `d1834cc6566b342824bca30772cc829953a5c5ef`). No successor implementation
-is scheduled.
+not change G-15's separately authorized scope. A5 was formally closed out in PR #37
+(merged `d1834cc6566b342824bca30772cc829953a5c5ef`). Milestone A6 is approved
+as the sole active milestone contract ([dev-plan.md](../dev-plan.md)); implementation
+work under A6 has not yet commenced.
 
 | Disposition | Meaning in this register |
 | --- | --- |

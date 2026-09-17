@@ -35,15 +35,20 @@ exclusions or converted into simulator host execution errors:
   Architecture Specification §3.1.7 mandates that all synchronous exceptions vector to `BASE`
   regardless of whether `mtvec.MODE` is Direct (`0b00`) or Vectored (`0b01`).
 - The `MRET` implementation in `src/isa/rv64i/system.rs` (`exec_mret`) lacks privilege validation
-  (allowing execution outside Machine mode), omits setting `mstatus.MPIE` to 1, and does not
-  explicitly transition `mstatus.MPP` to User mode (`0b00`).
-- Faulting instructions and trap entry do not currently adhere to the non-retirement semantics
-  defined in accepted architecture decision record ADR-0001 (`docs/architecture/decisions/0001-hart-execution-outcome-and-observation.md`)
-  or the turn-budget and continuation contracts in ADR-0004 (`docs/architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md`).
+  (allowing execution outside Machine mode), omits setting `mstatus.MPIE` to 1, does not explicitly
+  transition `mstatus.MPP` to User mode (`0b00`), and omits clearing `mstatus.MPRV` when returning to
+  a privilege mode below Machine mode, as mandated by RISC-V Privileged Specification v1.12 §3.1.6.1 / §3.1.6.5.
+- The simulator does not currently implement the architectural `minstret` CSR (`0xB02`), and `CoreState`
+  lacks dedicated retirement counter storage. Faulting instructions and trap entry do not currently
+  adhere to the non-retirement semantics defined in accepted architecture decision record ADR-0001
+  (`docs/architecture/decisions/0001-hart-execution-outcome-and-observation.md`) or the started-slot
+  budget versus completed-turn accounting and continuation contracts in ADR-0003 and ADR-0004
+  (`docs/architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md`).
 
 This document establishes the normative milestone contract for **Milestone A6: Machine-Mode
 Synchronous Trap Entry and Return**. It integrates full Machine-mode synchronous trap entry,
-trap return (`MRET`), and guest trap handler execution into the primary execution loop.
+trap return (`MRET`), guest trap handler execution, and architectural `minstret` retirement counter
+tracking into the primary execution loop.
 
 ---
 
@@ -61,15 +66,29 @@ When a guest instruction encounters a synchronous exception:
 3. The faulting instruction does not retire, commits no destination register or memory write, and does
    not advance retirement counters (`minstret`), satisfying ADR-0001 §2.
 4. Under the explicitly adopted `continue-to-guest-handler` continuation policy (ADR-0004 §10.3), the
-   Runner retains the `TrapEntered` fact and allows execution to proceed into the guest trap handler.
-5. Each attempted turn (normal retirement or trap entry) consumes one unit of the execution turn
-   budget (`--max-cycles`). Pure recursive unhandled traps consume budget without advancing `minstret`
-   and cleanly terminate via `RunDecision::Timeout` (`timed_out: true`).
-6. Execution of `MRET` in Machine mode restores privilege from `mstatus.MPP`, restores `mstatus.MIE` from
-   `mstatus.MPIE`, sets `mstatus.MPIE` to 1, sets `mstatus.MPP` to User mode (`0b00`), returns execution
-   to `mepc`, and retires as a normal instruction. Executing `MRET` outside Machine mode triggers an
-   `IllegalInstruction` trap entry without applying MRET restoration side effects.
-7. Public CLI runner facilities (`ruscv-sim run`), exit signaling (`tohost` / HTIF), UART MMIO, and
+   Runner retains the bounded `TrapEntered` fact (exception cause, faulting PC, vector target PC, and
+   continuation policy) and allows execution to proceed into the guest trap handler.
+5. Counting and turn-budget contract (ADR-0003, ADR-0004):
+   - Outer execution budget (`--max-cycles`) bounds **started turn slots** (instruction attempts, trap
+     entries, and simulator failures).
+   - Execution progress counter (`ExecutionResult.cycles`) reports **completed execution turns**.
+   - A step ending in `SimulatorFailure` consumes 1 started turn slot from the budget, but does NOT
+     advance completed turns (`ExecutionResult.cycles`) or retirement (`minstret`), and halts the
+     runner with `RunDecision::ExecutionError` without fabricating `BudgetExhausted`.
+   - Pure recursive unhandled traps consume 1 started turn slot per trap, advance `ExecutionResult.cycles`,
+     leave `minstret` unchanged, and cleanly terminate when `--max-cycles` is exhausted via
+     `RunDecision::Timeout` (`timed_out: true`).
+6. Architectural Counter Delivery: Define, implement, and test Machine-mode readable and writable
+   `minstret` CSR (`0xB02`) in `CoreState` and `CsrFile`, ensuring it increments strictly upon
+   `InstructionRetired` and remains unchanged on `TrapEntered` or `SimulatorFailure`. `mcycle` (`0xB00`)
+   is explicitly deferred to a successor milestone covering interrupt and timer architecture.
+7. Execution of `MRET` in Machine mode restores privilege from `mstatus.MPP`, restores `mstatus.MIE` from
+   `mstatus.MPIE`, sets `mstatus.MPIE` to 1, sets `mstatus.MPP` to User mode (`0b00`), clears `mstatus.MPRV`
+   to 0 if returning to a mode below Machine (User or Supervisor) while preserving `mstatus.MPRV` if
+   returning to Machine mode, returns execution to `mepc`, and retires as a normal instruction.
+   Executing `MRET` outside Machine mode triggers an `IllegalInstruction` trap entry without applying
+   MRET restoration side effects.
+8. Public CLI runner facilities (`ruscv-sim run`), exit signaling (`tohost` / HTIF), UART MMIO, and
    cycle limits operate seamlessly during and after trap handling.
 
 ---
@@ -118,18 +137,24 @@ When a guest instruction encounters a synchronous exception:
      - For **all** synchronous exceptions (Causes 0–11), trap entry vectors strictly to `BASE`,
        regardless of whether `mtvec.MODE` is Direct (`0b00`) or Vectored (`0b01`).
 
-4. **`MRET` Instruction Semantics (Privileged Specification §3.1.6.5):**
+4. **`MRET` Instruction Semantics (Privileged Specification §3.1.6.1 / §3.1.6.5):**
    - Strict privilege validation: `MRET` is legal only in Machine mode (`privilege == PrivilegeMode::Machine`).
    - Rejection semantics: Attempting `MRET` outside Machine mode raises an `IllegalInstruction`
      exception (Cause 2). No MRET return restoration side effects occur (neither `PC` nor `privilege`
-     is restored from `mepc`/`MPP`), and standard `IllegalInstruction` trap entry into Machine mode
-     completes (saving faulting PC to `mepc`, setting `mstatus.MPIE <- mstatus.MIE`, `mstatus.MIE <- 0`,
-     and `mstatus.MPP <- prior_privilege`).
+     is restored from `mepc`/`MPP`, `mstatus.MIE` is not restored from `MPIE`, and `mstatus.MPRV` is not
+     modified by MRET), and standard `IllegalInstruction` trap entry into Machine mode completes (saving
+     faulting PC to `mepc`, setting `mstatus.MPIE <- mstatus.MIE`, `mstatus.MIE <- 0`, and
+     `mstatus.MPP <- prior_privilege`).
    - Legal state restoration:
      - `mstatus.MIE` receives the value of `mstatus.MPIE`.
      - `mstatus.MPIE` is set to 1.
      - Privilege mode is set to the value in `mstatus.MPP`.
      - `mstatus.MPP` is set to User mode (`0b00`, the least-privileged supported mode in RV64).
+     - **`mstatus.MPRV` (bit 17) clearance**: When the new privilege mode established by `mstatus.MPP`
+       is less than Machine mode (User `0b00` or Supervisor `0b01`), `mstatus.MPRV` is set to 0. When
+       the new privilege mode is Machine mode (`0b11`), `mstatus.MPRV` remains unchanged. (This conforms
+       strictly to Privileged Spec v1.12 §3.1.6.5 without misattributing unconstrained Machine access to
+       lower-privilege instructions).
      - Program counter is set to the value of `mepc`.
    - Retirement: Legally executed `MRET` instructions retire normally, incrementing `minstret`.
 
@@ -137,31 +162,60 @@ When a guest instruction encounters a synchronous exception:
    - Distinction between Hart semantic outcomes: `InstructionRetired`, `TrapEntered`, and `SimulatorFailure`.
      The Hart does not report a generic, undifferentiated `Ok(())` that conceals trap entry as retirement.
    - Selected continuation policy: The execution engine explicitly adopts `continue-to-guest-handler`
-     (ADR-0004 §10.3), retaining the trap fact while allowing execution to proceed into `mtvec.BASE`.
+     (ADR-0004 §10.3), retaining the bounded trap fact while allowing execution to proceed into `mtvec.BASE`.
+   - Bounded Hart/Runner Trap Fact: At the step boundary, the Hart provides, and the Runner retains,
+     the latest `TrapEntered` fact exposing at minimum: the architectural exception cause (`mcause`),
+     the faulting PC (`before_pc` / `mepc`), the vector target PC (`after_pc` / `mtvec.BASE`), and the
+     selected continuation policy (`continue-to-guest-handler`).
+   - Observation planes (ADR-0001 §1, §4, §6): Always-present control facts drive outer execution without
+     requiring heap allocation or per-step record streaming. When an observer subscriber is attached,
+     structured `TrapRecord` / `CommitRecord` data is materialized. When observation is disabled, no
+     unbounded retention or per-step record allocation occurs.
    - Counting and bounded execution contract:
      - `minstret` counts strictly retired instructions (`InstructionRetired`). Faulting instructions and
        trap entries do not increment `minstret`.
-     - Run budget (`--max-cycles`) and execution step counter (`ExecutionResult.cycles`) count started
-       turns (instruction attempts and trap entries).
-     - Zero budget (`--max-cycles 0`): executes 0 turns and immediately halts with timeout (`timed_out: true`).
-     - Normal retirement: 1 turn consumed, 1 instruction retired (`minstret += 1`), `cycles += 1`.
-     - Synchronous trap entry: 1 turn consumed, 0 instructions retired (`minstret` unchanged), `cycles += 1`.
-     - Pure recursive exceptions: each trap entry consumes 1 turn budget slot and leaves `minstret`
-       unchanged; when the budget is reached, the runner terminates cleanly via `RunDecision::Timeout`
-       (`timed_out: true`), preventing host hangs.
+     - Turn budget (`--max-cycles`) limits **started turn slots** (instruction attempts, trap entries,
+       and simulator failures).
+     - Public execution counter (`ExecutionResult.cycles`) reports **completed execution turns**.
+     - Five distinct observable test scenarios:
+       1. **Zero budget (`--max-cycles 0`)**: consumes 0 started slots; executes 0 turns; immediately
+          halts with `RunDecision::Timeout` (`timed_out: true`, `cycles == 0`, `minstret == 0`).
+       2. **Normal retirement**: consumes 1 started turn slot; completes 1 turn; increments `minstret` by 1
+          and increments `ExecutionResult.cycles` by 1.
+       3. **Synchronous trap entry**: consumes 1 started turn slot; completes 1 turn; increments
+          `ExecutionResult.cycles` by 1; `minstret` remains unchanged.
+       4. **Pure recursive exception**: each trap entry consumes 1 started turn slot, completes 1 turn,
+          increments `ExecutionResult.cycles` by 1, and leaves `minstret` unchanged; when `--max-cycles`
+          is exhausted, cleanly halts with `RunDecision::Timeout` (`timed_out: true`, `cycles == max_cycles`).
+       5. **SimulatorFailure**: a step that encounters a simulator/host failure consumes 1 started turn
+          slot from the budget, but does NOT complete a turn: leaves `ExecutionResult.cycles` unchanged,
+          leaves `minstret` unchanged, and halts with `RunDecision::ExecutionError` (`error.is_some()`,
+          `timed_out: false`), without fabricating `BudgetExhausted` even if occurring in the final budget slot.
    - Exit signaling: Writes to `tohost` or HTIF MMIO within trap handlers retire normally, and exit
      detection terminates the run with `RunDecision::GuestExit(code)`.
 
-6. **Verification Suite:**
-   - Unit tests covering trap vectoring, CSR transitions, privilege validation, and `MRET`.
+6. **Architectural Counter Deliverable (`minstret`):**
+   - Provide 64-bit architectural counter storage in `CoreState` and readable/writable CSR `minstret`
+     (`0xB02`, and unprivileged read shadow `instret` `0xC02` when permitted by `mcounteren`) in `CsrFile`.
+   - Initialized to 0 on core reset.
+   - Increments by 1 upon each `InstructionRetired`. Does not increment on `TrapEntered` or `SimulatorFailure`.
+
+7. **Verification Suite:**
+   - Unit tests covering trap vectoring, CSR transitions, privilege validation, `MRET` (with MPRV
+     transitions), and `minstret` CSR read/write.
    - Integration tests in `tests/trap_test.rs` and `tests/executor.rs` verifying loop continuation,
-     counter separation, timeout bounds, and exit detection.
+     trap fact observation during continuation, five-scenario counter/budget separation, timeout bounds,
+     and exit detection.
    - Project-authored bare-metal test programs in `tests/bare-metal-riscv-test/rv64i/`.
 
 ### 3.2 Out of Scope (Non-Goals)
 
 The following areas are explicitly excluded from Milestone A6 to keep delivery strictly bounded:
 
+- **`mcycle` and Hardware Performance Counters:** The architectural cycle counter `mcycle` (`0xB00`)
+  and arbitrary hardware performance counters (`mhpmcounter*`) are explicitly deferred to a successor
+  milestone covering interrupt and timer architecture (ADR-0004); Milestone A6 delivers `minstret` for
+  instruction retirement tracking and does not claim full ADR-0004 cycle counter or virtual time conformance.
 - **Asynchronous Interrupts & Interrupt Controllers:** Interrupt lines, sampling slots, CLINT timer/software
   interrupts, PLIC external interrupts, interrupt priority arbitration, and `WFI` state transitions
   (governed separately by ADR-0004).
@@ -205,9 +259,11 @@ Implementation of Milestone A6 must strictly comply with accepted architecture d
    - Transport/adapter protocol failures remain `SimulatorFailure`.
 
 3. **ADR-0003 (Runner, Machine, and Platform Ownership):**
-   - The Runner owns run-control decisions, limits (`--max-cycles`), and terminal exit presentation
-     (`ExecutionResult`).
-   - The Hart owns architectural state, instruction semantics, traps, and outcome facts.
+   - The Runner owns run-control decisions, limits (`--max-cycles`), observer delivery, and terminal exit
+     presentation (`ExecutionResult`).
+   - `ExecutionResult.cycles` preserves the public completed-cycle semantics; failed attempts ending in
+     `SimulatorFailure` do not advance this counter.
+   - The Hart owns architectural state, instruction semantics, traps, counter updates, and outcome facts.
    - Platform exit detection via `tohost` / HTIF MMIO write ordering is preserved: an instruction
      inside a trap handler that writes to `tohost` retires first (`InstructionRetired`), and the
      Runner detects the exit signal at the step boundary.
@@ -217,9 +273,12 @@ Implementation of Milestone A6 must strictly comply with accepted architecture d
      Milestone A6 explicitly exercises the permitted alternative by adopting `continue-to-guest-handler`
      while retaining and reporting the trap fact.
    - §1.1 & §2 Counting & Turn Budget: A Hart turn is one granted architectural transition slot.
-     `--max-cycles` serves as the outer turn budget. Each started turn (retiring instruction or trap
-     entry) consumes 1 turn budget slot. `minstret` tracks only retired instructions. `mcycle` is Hart-owned
-     and not conflated with the runner budget.
+     `--max-cycles` serves as the outer turn budget bounding started turn slots. Each started turn
+     (retiring instruction, trap entry, or simulator failure) consumes 1 turn budget slot.
+   - §10.3 Primary Reason Rank: `SimulatorFailure` (rank 1) outranks `BudgetExhausted` (rank 9). If the
+     N-th budget slot fails, the terminal reason is `SimulatorFailure`, not `BudgetExhausted`.
+   - Counter Ownership: `minstret` is Hart-owned and tracks retired instructions. `mcycle` is explicitly
+     deferred; A6 does not define a cycle timing profile or claim full ADR-0004 counter conformance.
 
 ---
 
@@ -269,7 +328,7 @@ The `mtvec` register layout:
 **Invariant:** For all synchronous exceptions (Causes 0–11), the next PC is strictly `BASE` in both
 Direct and Vectored modes.
 
-### 5.2 MRET Instruction Specification (§3.1.6.5)
+### 5.2 MRET Instruction Specification (§3.1.6.1 / §3.1.6.5)
 
 The `MRET` instruction returns from a trap handled in Machine mode:
 
@@ -286,29 +345,35 @@ if privilege != PrivilegeMode::Machine {
 // 2. Architectural State Restoration (Machine mode only)
 mstatus.MIE  <- mstatus.MPIE
 mstatus.MPIE <- 1
-privilege    <- mstatus.MPP
+new_priv     <- mstatus.MPP
+privilege    <- new_priv
 mstatus.MPP  <- PrivilegeMode::User (0b00)
+if new_priv < PrivilegeMode::Machine {
+    mstatus.MPRV <- 0
+}
 PC           <- mepc
 // MRET instruction retires normally (minstret += 1)
 ```
 
 ### 5.3 Execution Loop Integration and Invariants
 
-1. **Step Transition and Outcome Fact:**
+1. **Step Transition and Bounded Outcome Fact:**
    In `RiscvCore::step`, when an instruction encounters a synchronous exception:
    - Trap entry state is atomically applied to the core's CSRs, privilege, and PC (`mtvec.BASE`).
    - The Hart reports the `TrapEntered` outcome (not `InstructionRetired` and not `SimulatorFailure`).
    - The step leaves destination registers and memory unmodified.
-   - The Runner receives the `TrapEntered` fact, preserves it for diagnostics/observation, charges
-     one turn to the budget, and continues execution at `mtvec.BASE`.
+   - The Runner receives the `TrapEntered` fact, preserves it in its execution state (exposing
+     cause, faulting PC, vector target PC, and continuation policy), charges one started slot to the
+     budget, and continues execution at `mtvec.BASE`.
 
 2. **Retirement and Turn Budget Invariant:**
-   - `minstret` increments only on `InstructionRetired`. Trap entry never increments `minstret`.
-   - `--max-cycles` limits total started turns (instruction attempts and trap entries).
+   - `minstret` increments only on `InstructionRetired`. Trap entry and simulator failure never increment `minstret`.
+   - `--max-cycles` limits total started turn slots (instruction attempts, trap entries, and simulator failures).
    - `ExecutionResult.cycles` reports completed turns.
-   - Pure recursive exceptions (e.g. invalid instruction at `mtvec.BASE`) consume 1 turn per trap,
-     do not increment `minstret`, and cleanly stop when `--max-cycles` is exhausted with `RunDecision::Timeout`
-     (`timed_out: true`).
+   - Pure recursive exceptions consume 1 started slot and complete 1 turn per trap, leaving `minstret`
+     unchanged, and cleanly stop when `--max-cycles` is exhausted with `RunDecision::Timeout` (`timed_out: true`).
+   - Simulator failures consume 1 started slot, leave `ExecutionResult.cycles` and `minstret` unadvanced,
+     and return `RunDecision::ExecutionError` (`timed_out: false`).
 
 3. **Continuous Execution & Exit Signaling Invariant:**
    - The guest trap handler may read and write memory, manipulate CSRs, modify `mepc` (e.g. `mepc += 4`
@@ -323,34 +388,42 @@ PC           <- mepc
 
 The implementation of Milestone A6 is decomposed into four discrete, reviewable tasks:
 
-### Task 1: Trap CSRs, Cause Mapping, and Vector Calculation Conformance
+### Task 1: Trap CSRs, Cause Mapping, Vector Calculation, and Counter Storage
 - Align `src/core/trap.rs` with RISC-V Privileged Specification §3.1.7:
   - Update `TrapHandler::vector_trap` to guarantee that all synchronous exceptions vector to `BASE`
     in both Direct and Vectored modes.
   - Implement full 64-bit cause mapping and `mtval` diagnostics for Causes 0–11.
   - Ensure `mstatus` bits (`MPIE`, `MIE`, `MPP`) update accurately on trap entry.
-- Unit tests verifying CSR state transitions and vector address calculations.
+- Implement architectural `minstret` CSR (`0xB02` in `src/csr/mod.rs` and `CoreState`), readable and
+  writable in Machine mode.
+- Unit tests verifying CSR state transitions, vector address calculations, and `minstret` CSR read/write.
 
 ### Task 2: Privilege Validation and MRET Conformance
-- Align `src/isa/rv64i/system.rs` (`exec_mret`) with Specification §3.1.6.5:
+- Align `src/isa/rv64i/system.rs` (`exec_mret`) with Specification §3.1.6.1 and §3.1.6.5:
   - Add strict privilege check: reject execution when `privilege != PrivilegeMode::Machine` with an
     `IllegalInstruction` exception.
   - Guarantee that lower-privilege invocation applies standard `IllegalInstruction` trap entry without
     MRET return restoration side effects.
   - Update legal `mstatus` restoration: `MIE <- MPIE`, `MPIE <- 1`, `privilege <- MPP`, `MPP <- User` (`0b00`).
+  - Implement `mstatus.MPRV` clearance: set `mstatus.MPRV <- 0` when returning to User or Supervisor
+    mode; preserve `mstatus.MPRV` when returning to Machine mode.
   - Restore PC from `mepc`.
-- Unit tests validating legal `MRET` state restoration and illegal lower-privilege rejection.
+- Unit tests validating legal `MRET` state restoration (including both lower-privilege MPRV clearance
+  and Machine-mode MPRV preservation) and illegal lower-privilege rejection.
 
-### Task 3: Core Execution Loop Trap Entry Integration and Continuation Policy
+### Task 3: Core Execution Loop Trap Entry Integration, Continuation Policy, and Counter Updates
 - Integrate `TrapHandler` and continuation policy into `RiscvCore::step` (`src/core/mod.rs`) and
   runners (`src/executor.rs`):
   - Catch synchronous exceptions raised during fetch, decode, and execution.
   - Apply trap entry state atomically (`mepc`, `mcause`, `mtval`, `mstatus`, `privilege`, and `pc`).
   - Report `TrapEntered` outcome fact distinct from `InstructionRetired` and `SimulatorFailure`.
-  - Enforce ADR-0001 non-retirement: do not increment `minstret` on trap entry.
-  - Apply ADR-0004 counting: charge 1 turn budget slot per attempt/trap entry, enabling `--max-cycles`
-    to terminate recursive trap loops cleanly with timeout.
-  - Enable seamless continuation into guest trap handlers under `continue-to-guest-handler`.
+  - Enforce ADR-0001 non-retirement: do not increment `minstret` on trap entry or simulator failure;
+    increment `minstret` by 1 on `InstructionRetired`.
+  - Apply ADR-0003 / ADR-0004 counting: charge 1 started turn slot per attempt/trap entry/failure.
+    `SimulatorFailure` consumes a started slot but does not advance `ExecutionResult.cycles` or `minstret`,
+    reporting execution error without fabricating `BudgetExhausted`.
+  - Enable seamless continuation into guest trap handlers under `continue-to-guest-handler` while
+    retaining and exposing the bounded trap fact.
 - Integration tests in `tests/trap_test.rs` and `tests/executor.rs`.
 
 ### Task 4: Bare-Metal ELF Test Suite, Toolchain Gap Recording, and Integrated Verification
@@ -377,17 +450,27 @@ Verification for Milestone A6 combines Rust unit tests, simulator integration te
    - Test `TrapHandler::handle_trap` across all synchronous exception causes.
    - Verify `vector_trap` under both `MODE = 0` (Direct) and `MODE = 1` (Vectored) for exceptions
      (vectors to `BASE`) and interrupts (vectors to `BASE + 4 * cause`).
-   - Test `exec_mret` in Machine mode for exact `mstatus` and PC updates.
-   - Test `exec_mret` in User and Supervisor modes for immediate exception rejection and trap entry.
+   - Test `exec_mret` in Machine mode for exact `mstatus` updates:
+     - Case 1: Return to User or Supervisor mode sets `mstatus.MPRV = 0`.
+     - Case 2: Return to Machine mode preserves initial `mstatus.MPRV`.
+   - Test `exec_mret` in User and Supervisor modes for immediate exception rejection and standard
+     `IllegalInstruction` trap entry.
+   - Test `minstret` CSR read/write in Machine mode and reset value.
 
 2. **Integration Testing (`tests/trap_test.rs`, `tests/executor.rs`):**
    - Test stepping a core that encounters an exception: verify PC redirects to `mtvec.BASE` and
      subsequent steps execute the handler.
-   - Verify the four counting scenarios:
-     - Zero budget (`--max-cycles 0`): 0 turns, immediate timeout.
-     - Normal retirement: advances `minstret` and `cycles`.
-     - Synchronous trap entry: advances `cycles`, leaves `minstret` unchanged.
-     - Pure recursive exception: advances `cycles` until `--max-cycles` timeout with `timed_out: true`.
+   - **Retained trap fact observation**: verify that the same run exposes the retained `TrapEntered`
+     fact (cause, faulting PC, vector target PC, and continuation policy) while continuing handler execution.
+   - **Verify the five counting scenarios independently**:
+     1. Zero budget (`--max-cycles 0`): 0 started slots, immediate timeout (`timed_out: true`, `cycles: 0`, `minstret: 0`).
+     2. Normal retirement: advances `minstret` and `cycles` by 1 per retired instruction.
+     3. Synchronous trap entry: advances `cycles` by 1, leaves `minstret` unchanged.
+     4. Pure recursive exception: advances `cycles` until `--max-cycles` timeout with `timed_out: true`,
+        leaving `minstret` unchanged.
+     5. SimulatorFailure: consuming the final budget slot halts with `RunDecision::ExecutionError`
+        (`error.is_some()`, `timed_out: false`), without fabricating `BudgetExhausted` and leaving
+        `cycles` and `minstret` unadvanced.
    - Verify that the CLI runner (`load_and_run`) and library facade (`RiscVSimulator`) both execute
      trap handlers without error.
 
@@ -428,31 +511,37 @@ Completion and acceptance of Milestone A6 require satisfying all of the followin
    For all synchronous exceptions, execution vectors strictly to `mtvec.BASE` (clearing bits [1:0]),
    regardless of whether `mtvec.MODE` is configured as Direct (`0b00`) or Vectored (`0b01`).
 
-3. **ADR-0001 Non-Retirement and ADR-0004 Budget Accounting:**
-   - A step that enters a synchronous trap does not increment retirement counters (`minstret`).
-   - The execution turn budget (`--max-cycles`) is consumed by each attempted step (normal retirement
-     or trap entry).
-   - Four observable counting behaviors are verified:
-     - Zero budget (`--max-cycles 0`): executes 0 turns, immediately halts with `timed_out: true`, `cycles: 0`.
+3. **ADR-0001 Non-Retirement, ADR-0004 Budget Accounting, and `minstret` Counter Delivery:**
+   - Readable and writable `minstret` CSR (`0xB02`) in Machine mode; initialized to 0.
+   - Five distinct observable counting behaviors are verified:
+     - Zero budget (`--max-cycles 0`): executes 0 turns, immediately halts with `timed_out: true`, `cycles: 0`, `minstret: 0`.
      - Normal retirement: advances `minstret` by 1 and `cycles` by 1 per retired instruction.
      - Synchronous trap entry: advances `cycles` by 1, leaving `minstret` unchanged.
      - Pure recursive exception: advances `cycles` until `--max-cycles` is exhausted, cleanly halting
-       with `RunDecision::Timeout` (`timed_out: true`), with `cycles == max_cycles`.
+       with `RunDecision::Timeout` (`timed_out: true`), with `cycles == max_cycles` and `minstret` unchanged.
+     - SimulatorFailure: consumes 1 started slot from budget, leaves `cycles` and `minstret` unchanged,
+       and halts with `RunDecision::ExecutionError` (`error.is_some()`, `timed_out: false`), without
+       fabricating `BudgetExhausted` even if occurring on the final budget slot.
 
-4. **Continuous Execution into Guest Handler:**
+4. **Continuous Execution into Guest Handler & Bounded Trap Fact Retention:**
    Trap entry does not abort the simulator run or return a host `ExecutionError`. Under the selected
    `continue-to-guest-handler` policy, the core continues instruction fetching and execution starting
-   from `mtvec.BASE`, while the Runner retains the `TrapEntered` fact.
+   from `mtvec.BASE`. In the same execution run, the Runner's observable boundary retains and exposes
+   the `TrapEntered` fact (architectural exception cause, faulting PC, vector target PC, and continuation
+   policy), without requiring per-instruction heap allocation when observation is disabled.
 
-5. **`MRET` State Restoration in Machine Mode:**
+5. **`MRET` State Restoration and MPRV Clearance in Machine Mode:**
    Execution of `MRET` in Machine mode restores PC to `mepc`, restores `mstatus.MIE` from `mstatus.MPIE`,
    sets `mstatus.MPIE` to 1, sets current privilege to `mstatus.MPP`, sets `mstatus.MPP` to User mode
    (`0b00`), and retires as a normal instruction (`minstret += 1`).
+   Furthermore, if returning to User mode (`0b00`) or Supervisor mode (`0b01`), `mstatus.MPRV` is set to 0;
+   if returning to Machine mode (`0b11`), `mstatus.MPRV` is preserved.
 
 6. **`MRET` Privilege Enforcement & Rejection Semantics:**
    Attempting to execute `MRET` while the core is in User or Supervisor mode raises an `IllegalInstruction`
    exception (Cause 2). MRET return restoration side effects do not occur (`PC` is not restored from `mepc`,
-   `privilege` is not restored from `mstatus.MPP`, and `mstatus.MIE` is not restored from `mstatus.MPIE`).
+   `privilege` is not restored from `mstatus.MPP`, `mstatus.MIE` is not restored from `mstatus.MPIE`, and
+   `mstatus.MPRV` is not modified by MRET).
    The core completes standard `IllegalInstruction` trap entry into Machine mode (`mepc <- mret_pc`,
    `mcause <- 2`, `mstatus.MPIE <- mstatus.MIE`, `mstatus.MIE <- 0`, `mstatus.MPP <- prior_privilege`,
    `privilege <- Machine`, `PC <- mtvec.BASE`).
