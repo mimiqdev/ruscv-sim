@@ -1,14 +1,18 @@
+# Archived Milestone Proposal: A6 — Machine-Mode Synchronous Trap Entry and Return
+
+> **Archival Notice:** This record preserves the complete original milestone proposal text as authored on 2026-09-16 at commit `9429e6ab2d324bb297ecee78fa1c9b1b52d6494f` (PR #39).
+> It was superseded on 2026-09-17 upon maintainer approval and activation of the reconciled Milestone A6 contract into [`docs/dev-plan.md`](../../dev-plan.md).
+> The body below reproduces the original proposal verbatim from base commit `9429e6ab2d324bb297ecee78fa1c9b1b52d6494f`, including its original Draft status, metadata, and technical content, without retrospective edits. Consult [`docs/dev-plan.md`](../../dev-plan.md) for current authoritative requirements.
+
+---
+
 # Milestone Proposal: A6 — Machine-Mode Synchronous Trap Entry and Return
 
-> **Archived Proposal Snapshot:** Preserved historical proposal text as authored on 2026-09-16 (PR #39, commit `9429e6ab2d324bb297ecee78fa1c9b1b52d6494f`).
-> This proposal was reviewed, reconciled with repository architecture decisions (ADR-0001 through ADR-0004), and activated into [`docs/dev-plan.md`](../../dev-plan.md) on 2026-09-17 as the sole current milestone contract.
-> The historical text below is preserved without retrospective edits; consult [`docs/dev-plan.md`](../../dev-plan.md) for current authoritative requirements.
+**Status:** Draft
 
-**Status:** Historical
+**Authority:** Informational; proposed milestone contract awaiting maintainer review and separate approval under `docs/documentation-policy.md`. This document does not claim implementation completeness, does not authorize simulator implementation work, and does not modify `docs/dev-plan.md`.
 
-**Authority:** Informational; archived proposal record. Current milestone contract is [`docs/dev-plan.md`](../../dev-plan.md).
-
-**Date:** 2026-09-16 (Archived: 2026-09-17)
+**Date:** 2026-09-16
 
 ---
 
