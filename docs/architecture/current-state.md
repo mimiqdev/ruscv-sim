@@ -30,9 +30,10 @@ regressions; [memory bounds](../../tests/memory_bounds.rs#L1) were separately
 hardened in PR #36. This does not integrate architectural trap entry, MMU/PMP,
 privilege/interrupt scheduling, successful misalignment, FENCE.I, or the target
 Runner/Machine/Platform design. Component labels below remain component labels.
-A5 is formally closed out (PR #37 merged `d1834cc6566b342824bca30772cc829953a5c5ef`);
-its forwarding record remains the sole current milestone until a successor is
-approved, and no successor is approved.
+A5 was formally closed out in PR #37 (merged `d1834cc6566b342824bca30772cc829953a5c5ef`).
+The approved successor contract is Milestone A6 (Machine-Mode Synchronous Trap Entry
+and Return, see [dev-plan.md](../dev-plan.md)); simulator implementation work under A6 has
+not yet been integrated into the public path.
 
 | Label | Meaning |
 | --- | --- |

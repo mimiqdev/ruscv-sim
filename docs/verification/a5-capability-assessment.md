@@ -19,8 +19,9 @@ after the successful 2026-09-13 run. This is not certification.
   final CI, reproducibility, artifact retrieval and residual limits.
 - [Preserved approved contract](../archive/milestones/a5-act4-rv64i-external-compatibility.md)
   — historical contract body, not a second current plan.
-- [Current forwarding contract](../dev-plan.md) — completed A5 remains current;
-  no successor has been approved.
+- [Preserved forwarding record](../archive/milestones/a5-forwarding-record.md) — completed
+  A5 forwarding record preserved upon A6 contract activation; see [current milestone contract](../dev-plan.md)
+  for active Milestone A6.
 - [Frozen decision and original proposal](a5-selection-proposal.md).
 - [All 1,970 source dispositions](a5-source-inventory.json).
 - [Final 51-case evidence and controls](a5-final-results.json).
@@ -28,6 +29,6 @@ after the successful 2026-09-13 run. This is not certification.
   [feasibility history](a5-feasibility.md) — retained, not current blockers.
 
 PR #37 formally closed out A5 (merged `d1834cc6566b342824bca30772cc829953a5c5ef`)
-with recorded independent closeout review and exact-head CI. The optional
-single successor recommendation is not an approved A6; no successor contract
-is approved.
+with recorded independent closeout review and exact-head CI. The successor
+milestone contract for Milestone A6 (Machine-Mode Synchronous Trap Entry and Return)
+was subsequently approved on 2026-09-17 (see [dev-plan.md](../dev-plan.md)).

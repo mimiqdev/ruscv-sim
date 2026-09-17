@@ -4,9 +4,8 @@ This directory contains completed and explicitly superseded milestone plans with
 
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
-[current contract](../../dev-plan.md) for the sole current A5 milestone:
-formally closed out in PR #37; sole current milestone forwarding record until
-a successor is approved. No successor contract is approved.
+[current contract](../../dev-plan.md) for the sole current milestone:
+Milestone A6 — Machine-Mode Synchronous Trap Entry and Return.
 
 ## Rolling process
 
@@ -17,6 +16,14 @@ a successor is approved. No successor contract is approved.
 5. Promote the next milestone into `docs/dev-plan.md`.
 
 ## Records
+
+- [A6: Machine-mode synchronous trap entry and return — original proposal](a6-trap-entry-return-proposal.md)
+  - Historical proposal snapshot preserved from commit `9429e6a`; superseded by active contract [`../../dev-plan.md`](../../dev-plan.md)
+
+- [A5: ACT4 RV64I selected external compatibility — forwarding record](a5-forwarding-record.md)
+  - Post-closeout forwarding record preserved upon Milestone A6 activation
+  - [Closeout record](a5-closeout-record.md)
+  - [Preserved approved contract](a5-act4-rv64i-external-compatibility.md)
 
 - [A5: ACT4 RV64I selected external compatibility — closeout](a5-closeout-record.md)
   - Frozen profile approved; all 51 required ELFs generated/executed/passed
