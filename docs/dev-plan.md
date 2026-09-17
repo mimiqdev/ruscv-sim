@@ -38,12 +38,20 @@ exclusions or converted into simulator host execution errors:
   (allowing execution outside Machine mode), omits setting `mstatus.MPIE` to 1, does not explicitly
   transition `mstatus.MPP` to User mode (`0b00`), and omits clearing `mstatus.MPRV` when returning to
   a privilege mode below Machine mode, as mandated by RISC-V Privileged Specification v1.12 §3.1.6.1 / §3.1.6.5.
-- The simulator does not currently implement the architectural `minstret` CSR (`0xB02`), and `CoreState`
-  lacks dedicated retirement counter storage. Faulting instructions and trap entry do not currently
-  adhere to the non-retirement semantics defined in accepted architecture decision record ADR-0001
-  (`docs/architecture/decisions/0001-hart-execution-outcome-and-observation.md`) or the started-slot
-  budget versus completed-turn accounting and non-lossy control delivery in ADR-0003 and ADR-0004
-  (`docs/architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md`).
+- The public execution path (`RiscvCore::step`) operates exclusively on 32-bit RV64I base integer
+  instructions (fixed IALIGN=32). Inspection of `src/csr/mod.rs` confirms that `misa` is initialized
+  to `0x8000_0000_0010_0100` (MXL=2 for RV64, bit 8 for I, bit 20 for U; bit 2 for C is 0). The inline
+  comment `// RV64IMAC` in `src/csr/mod.rs` is a stale descriptive defect; the actual bitmask defines
+  RV64I with User mode, and compressed instructions are not enabled on the public path. Standalone
+  compressed instruction components in `src/isa/rv64c/` are not integrated into `RiscvCore::step`.
+  Consequently, the public execution path adheres strictly to fixed IALIGN=32, where `mepc` bits `[1:0]`
+  are hardwired to zero, `misa.C` is non-writable (fixed to 0), and instruction address misalignment
+  (Cause 0) is generated strictly by computed jump or branch target addresses.
+- The simulator does not currently implement the architectural `minstret` CSR (`0xB02`) in `CsrFile`.
+  Faulting instructions and trap entry do not currently adhere to the non-retirement semantics defined
+  in accepted architecture decision record ADR-0001 (`docs/architecture/decisions/0001-hart-execution-outcome-and-observation.md`)
+  or the started-slot budget versus completed-turn accounting and non-lossy control delivery in ADR-0003
+  and ADR-0004 (`docs/architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md`).
 
 This document establishes the normative milestone contract for **Milestone A6: Machine-Mode
 Synchronous Trap Entry and Return**. It integrates full Machine-mode synchronous trap entry,
@@ -80,12 +88,12 @@ When a guest instruction encounters a synchronous exception:
    - Pure recursive unhandled traps consume 1 started turn slot per trap, advance `ExecutionResult.cycles`,
      leave `minstret` unchanged, and cleanly terminate when `--max-cycles` is exhausted via
      `RunDecision::Timeout` (`timed_out: true`).
-6. Architectural Counter Delivery: Define and implement single authoritative 64-bit retirement counter
-   storage in `CoreState.minstret` with consistent CSR read/write access via `MINSTRET` (`0xB02`) in
-   `CsrFile`, ensuring it increments strictly upon `InstructionRetired` and remains unchanged on
-   `TrapEntered` or `SimulatorFailure`. The unprivileged `instret` shadow (`0xC02`), counter access
-   control registers (`mcounteren` / `scounteren`), and `mcycle` (`0xB00`) are explicitly deferred
-   to successor milestones.
+6. Architectural Counter Delivery: Provide single authoritative 64-bit retirement counter storage in
+   the Hart's `CsrFile` under address `machine::MINSTRET` (`0xB02`), with verified coherence between
+   direct CSR read/write access and core execution retirement updates. `minstret` increments strictly
+   upon `InstructionRetired` and remains unchanged on `TrapEntered` or `SimulatorFailure`. The
+   unprivileged `instret` shadow (`0xC02`), counter access control registers (`mcounteren` /
+   `scounteren`), and `mcycle` (`0xB00`) are explicitly deferred to successor milestones.
 7. Execution of `MRET` in Machine mode restores privilege from `mstatus.MPP`, restores `mstatus.MIE` from
    `mstatus.MPIE`, sets `mstatus.MPIE` to 1, sets `mstatus.MPP` to User mode (`0b00`), clears `mstatus.MPRV`
    to 0 if returning to a mode below Machine (User or Supervisor) while preserving `mstatus.MPRV` if
@@ -105,14 +113,17 @@ When a guest instruction encounters a synchronous exception:
    Classification and mapping of all guest synchronous exception causes defined by RISC-V Privileged
    Specification §3.1.15 for RV64I:
    - Cause 0: `InstructionAddressMisaligned` (misaligned target PC on jump or taken branch).
-     - *Architectural Trigger:* Computed branch or jump target evaluates to an unaligned PC (bits `[1:0] != 0`
-       in base RV64I where IALIGN=32).
-     - *MRET Alignment Rule:* In base RV64I (IALIGN=32), `mepc` is a WARL register with bits `[1:0]`
-       hardwired to zero (Privileged Spec §3.1.14 / §3.1.6.5); writing a misaligned value to `mepc`
-       masks bits `[1:0]`, so `MRET` restoring `PC <- mepc` does not produce an instruction misalignment
-       exception. Cause 0 is strictly induced by unaligned jump/branch target computation.
+     - *Profile & Alignment:* The public execution path is strictly RV64I with fixed IALIGN=32.
+       `misa` bit 2 (`C`) is 0 (`0x8000_0000_0010_0100`). `misa.C` is a WARL field fixed to 0.
+     - *mepc WARL Rule:* Under fixed IALIGN=32, `mepc[1:0]` are hardwired to zero (Privileged Spec
+       §3.1.14 / §3.1.6.5); writing any address to `mepc` masks bits `[1:0]`. Therefore, `MRET`
+       restores `PC <- mepc` with masked bits and cannot produce an instruction misalignment exception.
+     - *Architectural Trigger:* Cause 0 is strictly induced when an unconditional jump (`JAL`, `JALR`)
+       or taken conditional branch evaluates to an unaligned target PC (bits `[1:0] != 0`).
      - *Effects:* `mepc` receives the address of the jump/branch instruction; `mtval` receives the
        misaligned target address. The instruction does not retire.
+     - *Compatibility Boundary:* Preserves Milestone A5 ACT4 RV64I external compatibility without
+       introducing compressed instruction execution into the public ELF path.
    - Cause 1: `InstructionAccessFault` (fetch access violation or unmapped physical memory).
      - *Architectural Trigger:* Instruction fetch targets an unmapped physical address or is rejected
        by the physical memory bus.
@@ -184,7 +195,7 @@ When a guest instruction encounters a synchronous exception:
        the new privilege mode is Machine mode (`0b11`), `mstatus.MPRV` remains unchanged. (This conforms
        strictly to Privileged Spec v1.12 §3.1.6.5 without misattributing unconstrained Machine access to
        lower-privilege instructions).
-     - Program counter is set to the value of `mepc`.
+     - Program counter is set to the value of `mepc` (4-byte aligned per WARL `mepc[1:0] == 00`).
    - Retirement: Legally executed `MRET` instructions retire normally, incrementing `minstret`.
 
 5. **Execution Loop Integration, Continuation Policy, and Non-Lossy Counting Contract (ADR-0001, ADR-0003, ADR-0004):**
@@ -229,14 +240,19 @@ When a guest instruction encounters a synchronous exception:
      detection terminates the run with `RunDecision::GuestExit(code)`.
 
 6. **Architectural Counter Deliverable (`minstret`):**
-   - Provide single authoritative 64-bit storage in `CoreState.minstret` with consistent CSR read/write
-     view via `machine::MINSTRET` (`0xB02`) in `CsrFile`.
+   - Provide single authoritative 64-bit storage in the Hart's `CsrFile` under address `machine::MINSTRET`
+     (`0xB02`).
+   - No duplicate sibling `CoreState.minstret` field is introduced, avoiding duplicate-authority and
+     synchronization hazards.
    - Initialized to 0 on core reset.
+   - Machine-mode read and write access.
    - Increments by 1 strictly upon each `InstructionRetired`. Does not increment on `TrapEntered` or `SimulatorFailure`.
+   - Core execution retirement updates and direct CSR read/write access operate directly on this single
+     authoritative value.
 
 7. **Verification Suite:**
    - Unit tests covering trap vectoring, CSR transitions, privilege validation, `MRET` (with MPRV
-     transitions), and `minstret` CSR read/write.
+     transitions), `minstret` CSR read/write, `misa` bit verification, and `mepc[1:0]` WARL masking.
    - Integration tests in `tests/trap_test.rs` and `tests/executor.rs` verifying loop continuation,
      per-trap boundary fact consumption during multi-trap execution, induced-fault paths for Causes 0,
      1, 4, 5, 6, 7, five-scenario counter/budget separation, timeout bounds, and exit detection.
@@ -253,6 +269,9 @@ The following areas are explicitly excluded from Milestone A6 to keep delivery s
 - **Unprivileged Counter Shadows & Access Control Registers:** The unprivileged `instret` read shadow
   (`0xC02`) and counter privilege gating registers (`mcounteren` / `scounteren`) are explicitly deferred;
   Milestone A6 delivers strictly Machine-mode `minstret` (`0xB02`).
+- **Compressed Instructions (C Extension) on Public Path:** The public execution path operates strictly
+  with fixed IALIGN=32; standalone compressed instruction components in `src/isa/rv64c/` remain an
+  unwired component boundary.
 - **Asynchronous Interrupts & Interrupt Controllers:** Interrupt lines, sampling slots, CLINT timer/software
   interrupts, PLIC external interrupts, interrupt priority arbitration, and `WFI` state transitions
   (governed separately by ADR-0004).
@@ -301,7 +320,8 @@ Implementation of Milestone A6 must strictly comply with accepted architecture d
    - `ExecutionResult.cycles` preserves the public completed-cycle semantics; failed attempts ending in
      `SimulatorFailure` do not advance this counter.
    - The Hart owns architectural state, instruction semantics, traps, counter updates, and outcome facts.
-     `CoreState.minstret` is the single authoritative storage for the retirement counter.
+     The Hart's `CsrFile` holds the single authoritative storage for the retirement counter (`machine::MINSTRET`),
+     accessed coherently by core retirement and CSR operations without duplicate sibling synchronization.
    - Platform exit detection via `tohost` / HTIF MMIO write ordering is preserved: an instruction
      inside a trap handler that writes to `tohost` retires first (`InstructionRetired`), and the
      Runner detects the exit signal at the step boundary.
@@ -317,6 +337,13 @@ Implementation of Milestone A6 must strictly comply with accepted architecture d
      N-th budget slot fails, the terminal reason is `SimulatorFailure`, not `BudgetExhausted`.
    - Counter Ownership: `minstret` is Hart-owned and tracks retired instructions. `mcycle` is explicitly
      deferred; A6 does not define a cycle timing profile or claim full ADR-0004 counter conformance.
+
+5. **ISA Profile and Alignment Consistency:**
+   - The public execution path implements the RV64I base integer ISA profile with fixed IALIGN=32.
+   - `misa` value `0x8000_0000_0010_0100` (`MXL=2`, `I=1`, `U=1`, `C=0`) defines the active architectural
+     extensions. `misa.C` is non-writable (fixed to 0).
+   - Under fixed IALIGN=32, `mepc[1:0]` is hardwired to zero (`mepc & !0b11`).
+   - `MRET` restores PC from `mepc` with masked bits and cannot produce an `InstructionAddressMisaligned` exception.
 
 ---
 
@@ -342,7 +369,7 @@ PC           <- mtvec.BASE
 
 | Cause Code | Exception Name | Trigger Condition | Architectural `mtval` Value |
 | :--- | :--- | :--- | :--- |
-| `0` | `InstructionAddressMisaligned` | Jump, branch, or return target PC is not 4-byte aligned (PC[1:0] != 0). | Faulting target address |
+| `0` | `InstructionAddressMisaligned` | Computed jump or branch target PC is not 4-byte aligned (target[1:0] != 0) under fixed IALIGN=32. | Faulting target address |
 | `1` | `InstructionAccessFault` | Instruction fetch encounters unmapped address or physical access denial. | Faulting fetch address |
 | `2` | `IllegalInstruction` | Unrecognized opcode, reserved field, privileged instruction in lower mode, or invalid CSR access. | Faulting instruction word (or 0 if unavailable) |
 | `3` | `Breakpoint` | Execution of `EBREAK` instruction. | 0 |
@@ -389,7 +416,7 @@ mstatus.MPP  <- PrivilegeMode::User (0b00)
 if new_priv < PrivilegeMode::Machine {
     mstatus.MPRV <- 0
 }
-PC           <- mepc
+PC           <- mepc // mepc[1:0] hardwired to 00 under fixed IALIGN=32
 // MRET instruction retires normally (minstret += 1)
 ```
 
@@ -434,9 +461,12 @@ The implementation of Milestone A6 is decomposed into four discrete, reviewable 
     in both Direct and Vectored modes.
   - Implement full 64-bit cause mapping and `mtval` diagnostics for Causes 0–11.
   - Ensure `mstatus` bits (`MPIE`, `MIE`, `MPP`) update accurately on trap entry.
-- Implement single authoritative 64-bit `CoreState.minstret` storage with consistent Machine-mode
-  read/write CSR view for `MINSTRET` (`0xB02`) in `src/csr/mod.rs`.
-- Unit tests verifying CSR state transitions, vector address calculations, and `minstret` CSR read/write.
+- Implement single authoritative 64-bit storage in `CsrFile` under `machine::MINSTRET` (`0xB02`) with
+  Machine-mode read/write access in `src/csr/mod.rs`.
+- Verify `misa` bit representation (`0x8000_0000_0010_0100`, confirming `C=0`) and enforce WARL
+  `mepc[1:0] == 00` under fixed IALIGN=32.
+- Unit tests verifying CSR state transitions, vector address calculations, `minstret` CSR read/write,
+  `misa` bit values, and `mepc[1:0]` masking.
 
 ### Task 2: Privilege Validation and MRET Conformance
 - Align `src/isa/rv64i/system.rs` (`exec_mret`) with Specification §3.1.6.1 and §3.1.6.5:
@@ -458,7 +488,7 @@ The implementation of Milestone A6 is decomposed into four discrete, reviewable 
   - Apply trap entry state atomically (`mepc`, `mcause`, `mtval`, `mstatus`, `privilege`, and `pc`).
   - Report `TrapEntered` outcome fact distinct from `InstructionRetired` and `SimulatorFailure`.
   - Enforce ADR-0001 non-retirement: do not increment `minstret` on trap entry or simulator failure;
-    increment `minstret` by 1 on `InstructionRetired`.
+    increment `minstret` by 1 on `InstructionRetired` directly in the Hart's `CsrFile`.
   - Apply ADR-0003 / ADR-0004 counting: charge 1 started turn slot per attempt/trap entry/failure.
     `SimulatorFailure` consumes a started slot but does not advance `ExecutionResult.cycles` or `minstret`,
     reporting execution error without fabricating `BudgetExhausted`.
@@ -478,7 +508,13 @@ The implementation of Milestone A6 is decomposed into four discrete, reviewable 
   - `trap_mret_priv.S`: Verifies that attempting `MRET` outside Machine mode triggers an
     `IllegalInstruction` trap without MRET restoration side effects.
 - Develop focused integration tests in `tests/trap_test.rs` inducing Causes 0, 1, 4, 5, 6, 7 through
-  genuine execution and physical bus rejection paths.
+  genuine execution and physical bus rejection paths:
+  - Induce Cause 0 via computed jump/branch to misaligned target PC; verify `mepc`, `mtval`, and non-retirement.
+  - Induce Cause 1 via instruction fetch from unmapped physical memory.
+  - Induce Cause 4 via misaligned load; verify no physical memory read dispatched and `rd` unmodified.
+  - Induce Cause 5 via aligned load encountering physical bus rejection; verify `rd` unmodified.
+  - Induce Cause 6 via misaligned store; verify no physical memory write dispatched and memory unmodified.
+  - Induce Cause 7 via aligned store encountering physical bus rejection; verify memory unmodified.
 - Record RISC-V toolchain gap and execution status in test runners.
 - End-to-end integration tests in `tests/trap_test.rs` validating public CLI and library facade.
 
@@ -498,6 +534,7 @@ Verification for Milestone A6 combines Rust unit tests, simulator integration te
    - Test `exec_mret` in User and Supervisor modes for immediate exception rejection and standard
      `IllegalInstruction` trap entry.
    - Test `minstret` CSR read/write in Machine mode and reset value.
+   - Test `misa` decode (`0x8000_0000_0010_0100`) and WARL masking of `mepc[1:0]` to zero under fixed IALIGN=32.
 
 2. **Integration Testing (`tests/trap_test.rs`, `tests/executor.rs`):**
    - Test stepping a core that encounters an exception: verify PC redirects to `mtvec.BASE` and
@@ -518,6 +555,8 @@ Verification for Milestone A6 combines Rust unit tests, simulator integration te
    - **Multi-Trap Non-Lossy Delivery**: verify that consecutive/heterogeneous traps in a single execution
      run deliver their respective `TrapEntered` facts at each trap boundary to the Runner without unconsumed
      overwriting.
+   - **Counter Coherence**: verify that retirement counter updates via core execution retirement and
+     direct `CsrFile` read/write access operate on the same authoritative storage.
    - **Five Counting Scenarios**:
      1. Zero budget (`--max-cycles 0`): 0 started slots, immediate timeout (`timed_out: true`, `cycles: 0`, `minstret: 0`).
      2. Normal retirement: advances `minstret` and `cycles` by 1 per retired instruction.
@@ -563,17 +602,19 @@ Completion and acceptance of Milestone A6 require satisfying all of the followin
    value (or 0), `mstatus.MPIE` to previous `MIE`, `mstatus.MIE` to 0, `mstatus.MPP` to the prior
    privilege mode, and transitions privilege to Machine mode.
    Causes 0, 1, 4, 5, 6, 7 are verified via genuine execution paths inducing the fault:
+   - Misaligned jumps/branches (Cause 0) evaluate computed target misalignment before fetch under fixed
+     IALIGN=32 and do not retire. `MRET` restores `mepc` with masked bits `[1:0] == 00` without generating Cause 0.
    - Misaligned load/store (Causes 4, 6) issue no physical transaction and leave registers/memory unmodified.
    - Physical access faults (Causes 1, 5, 7) commit no partial register or memory state.
-   - Misaligned jumps (Cause 0) evaluate computed target misalignment before fetch and do not retire.
 
 2. **`mtvec` Target Calculation Conformance:**
    For all synchronous exceptions, execution vectors strictly to `mtvec.BASE` (clearing bits [1:0]),
    regardless of whether `mtvec.MODE` is configured as Direct (`0b00`) or Vectored (`0b01`).
 
 3. **ADR-0001 Non-Retirement, ADR-0004 Budget Accounting, and `minstret` Counter Delivery:**
-   - Single authoritative 64-bit retirement counter storage in `CoreState.minstret`, exposed via
-     readable and writable `minstret` CSR (`0xB02`) in Machine mode; initialized to 0.
+   - Single authoritative 64-bit retirement counter storage in the Hart's `CsrFile` under `machine::MINSTRET`
+     (`0xB02`), initialized to 0, with verified coherence between core execution retirement updates and
+     direct CSR read/write access.
    - Five distinct observable counting behaviors are verified:
      - Zero budget (`--max-cycles 0`): executes 0 turns, immediately halts with `timed_out: true`, `cycles: 0`, `minstret: 0`.
      - Normal retirement: advances `minstret` by 1 and `cycles` by 1 per retired instruction.
