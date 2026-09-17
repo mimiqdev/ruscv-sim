@@ -34,10 +34,11 @@ exclusions or converted into simulator host execution errors:
   offsets synchronous exceptions by `(cause & 0x7F) << 2`, whereas the RISC-V Privileged
   Architecture Specification §3.1.7 mandates that all synchronous exceptions vector to `BASE`
   regardless of whether `mtvec.MODE` is Direct (`0b00`) or Vectored (`0b01`).
-- The `MRET` implementation in `src/isa/rv64i/system.rs` (`exec_mret`) lacks privilege validation
-  (allowing execution outside Machine mode), omits setting `mstatus.MPIE` to 1, does not explicitly
-  transition `mstatus.MPP` to User mode (`0b00`), and omits clearing `mstatus.MPRV` when returning to
-  a privilege mode below Machine mode, as mandated by RISC-V Privileged Specification v1.12 §3.1.6.1 / §3.1.6.5.
+- The `MRET` implementation in `src/isa/rv64i/system.rs` (`exec_mret`) already clears `mstatus.MPP` to
+  User mode (`0b00` via `new_mstatus & !(0b11 << 11)`), which Milestone A6 preserves and verifies.
+  However, it lacks privilege validation (allowing execution outside Machine mode), omits setting
+  `mstatus.MPIE` to 1, and omits clearing `mstatus.MPRV` when returning to a privilege mode below
+  Machine mode, as mandated by RISC-V Privileged Specification v1.12 §3.1.6.1 / §3.1.6.5.
 - The public execution loop (`RiscvCore::step`) uses 32-bit instruction fetch (`read_word`) and advances
   PC by 4 bytes, without supporting 16-bit compressed instructions. The public `Executor` dispatches
   32-bit base integer instructions as well as M, A, F, and D opcodes (per `src/execute/mod.rs`), though
@@ -573,7 +574,7 @@ The implementation of Milestone A6 is decomposed into four discrete, reviewable 
   - Induce Cause 5 via aligned load encountering physical bus rejection; verify `rd` unmodified.
   - Induce Cause 6 via misaligned store; verify no physical memory write dispatched and memory unmodified.
   - Induce Cause 7 via aligned store encountering physical bus rejection; verify memory unmodified.
-- Record RISC-V toolchain gap and execution status in test runners.
+- Record RISC-V cross-toolchain environment status (native host PATH, reproducible container usage, and CI execution) in test runners.
 - End-to-end integration tests in `tests/trap_test.rs` validating public CLI and library facade.
 
 ---
@@ -643,11 +644,31 @@ Verification for Milestone A6 combines Rust unit tests, simulator integration te
 
 3. **Guest Bare-Metal ELF Testing & Toolchain Status:**
    - Toolchain requirement: GNU `riscv64-unknown-elf` toolchain (`as`, `ld`, or `gcc`).
-   - Environment status: The local development host environment currently lacks `riscv64-unknown-elf-gcc`
-     in PATH. The container image defined in [`docs/development-environment.md`](development-environment.md)
-     and GitHub Actions CI (`.github/workflows/ci.yml`) supply the cross-toolchain.
-   - Test runner strategy: Bare-metal tests dynamically verify toolchain availability before assembling,
-     skipping assembly when the cross-compiler is absent, while CI compiles and runs the suite.
+   - Environment status & reproducible container usage:
+     - Native host environment: The development host PATH lacks native `riscv64-unknown-elf-gcc`
+       (and associated assembler/linker tools). Test runners (`tests/test_add_direct.rs`) verify toolchain
+       availability in PATH and gracefully skip assembly when native tools are absent.
+     - Reproducible container workflow: The standard container environment defined in
+       [`docs/development-environment.md`](development-environment.md) (`ghcr.io/mimiqdev/ruscv-sim-dev:main`)
+       supplies the GNU cross-toolchain without modifying host configuration. Reproducible execution uses:
+       ```bash
+       docker run --rm -v "$PWD:/workspace" -w /workspace ghcr.io/mimiqdev/ruscv-sim-dev:main <command>
+       ```
+       (Note: inside the container, standard non-login shells such as `bash -c` retain `/opt/riscv/bin` in PATH,
+       whereas login shells `bash -lc` reset PATH to system defaults).
+     - Local machine observation: On 2026-09-17, local container smoke verification was observed on a local
+       `linux/arm64` host using immutable image index digest `sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c`
+       (providing Rust/Cargo 1.97.1 and GCC 12.2.0). The verified observation was bounded strictly to smoke
+       compilation and execution of a single RISC-V ELF64 program (`tests/test_add_direct.rs`), confirming
+       container toolchain availability; it does not constitute full guest ELF suite execution, nor does it
+       presume the image is pre-pulled across all developer environments.
+     - CI automation & full test suite entry points: Standard `cargo test` does not compile or run the full
+       project guest ELF suite. Compilation of the full suite (`tests/bare-metal-riscv-test/rv64i/` and `rv64m/`)
+       is driven explicitly by [`scripts/compile_riscv_tests.sh`](../scripts/compile_riscv_tests.sh) and executed by
+       [`scripts/run_elf_tests.sh`](../scripts/run_elf_tests.sh), which run in GitHub Actions CI
+       (`.github/workflows/ci.yml`) on Ubuntu runners with `gcc-riscv64-unknown-elf` and `binutils-riscv64-unknown-elf`.
+     - Future A6 bare-metal trap tests (`trap_ecall.S`, `trap_illegal.S`, `trap_ebreak.S`, `trap_vectored.S`,
+       `trap_mret_priv.S`) are deliverables of Task 4 and are not yet implemented.
    - Verified execution via `ruscv-sim run <elf-file>` checks: exit code 0 via `tohost`, expected output,
      and completion within cycle budget.
 
