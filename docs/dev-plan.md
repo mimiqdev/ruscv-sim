@@ -38,15 +38,17 @@ exclusions or converted into simulator host execution errors:
   (allowing execution outside Machine mode), omits setting `mstatus.MPIE` to 1, does not explicitly
   transition `mstatus.MPP` to User mode (`0b00`), and omits clearing `mstatus.MPRV` when returning to
   a privilege mode below Machine mode, as mandated by RISC-V Privileged Specification v1.12 §3.1.6.1 / §3.1.6.5.
-- The public execution path (`RiscvCore::step`) operates exclusively on 32-bit RV64I base integer
-  instructions (fixed IALIGN=32). Inspection of `src/csr/mod.rs` confirms that `misa` is initialized
-  to `0x8000_0000_0010_0100` (MXL=2 for RV64, bit 8 for I, bit 20 for U; bit 2 for C is 0). The inline
-  comment `// RV64IMAC` in `src/csr/mod.rs` is a stale descriptive defect; the actual bitmask defines
-  RV64I with User mode, and compressed instructions are not enabled on the public path. Standalone
-  compressed instruction components in `src/isa/rv64c/` are not integrated into `RiscvCore::step`.
-  Consequently, the public execution path adheres strictly to fixed IALIGN=32, where `mepc` bits `[1:0]`
-  are hardwired to zero, `misa.C` is non-writable (fixed to 0), and instruction address misalignment
-  (Cause 0) is generated strictly by computed jump or branch target addresses.
+- The public execution loop (`RiscvCore::step`) uses 32-bit instruction fetch (`read_word`) and advances
+  PC by 4 bytes, without supporting 16-bit compressed instructions. The public `Executor` dispatches
+  32-bit base integer instructions as well as M, A, F, and D opcodes (per `src/execute/mod.rs`), though
+  as established in `AGENTS.md`, dispatch presence is distinguished from end-to-end verified ISA support.
+  Inspection of `src/csr/mod.rs` shows that `misa` is initialized to `0x8000_0000_0010_0100` (MXL=2 for
+  RV64, bit 8 for I, bit 20 for U; bit 2 for C is 0). The inline source comment `// RV64IMAC` is an
+  erroneous, stale comment that contradicts the actual bit value. However, current `CsrFile::write` has
+  a generic fallback that permits arbitrary writes to `misa`. For Milestone A6, the architectural alignment
+  boundary is defined as 32-bit fetch / C-disabled / fixed IALIGN=32. Making `misa.C` WARL fixed to 0
+  (rejecting attempts to set bit 2 via direct write or CSR write/set/clear) and hardwiring `mepc[1:0]`
+  to zero are explicit implementation deliverables of Milestone A6.
 - The simulator does not currently implement the architectural `minstret` CSR (`0xB02`) in `CsrFile`.
   Faulting instructions and trap entry do not currently adhere to the non-retirement semantics defined
   in accepted architecture decision record ADR-0001 (`docs/architecture/decisions/0001-hart-execution-outcome-and-observation.md`)
@@ -113,17 +115,18 @@ When a guest instruction encounters a synchronous exception:
    Classification and mapping of all guest synchronous exception causes defined by RISC-V Privileged
    Specification §3.1.15 for RV64I:
    - Cause 0: `InstructionAddressMisaligned` (misaligned target PC on jump or taken branch).
-     - *Profile & Alignment:* The public execution path is strictly RV64I with fixed IALIGN=32.
-       `misa` bit 2 (`C`) is 0 (`0x8000_0000_0010_0100`). `misa.C` is a WARL field fixed to 0.
+     - *Alignment Boundary:* The execution loop operates with 32-bit instruction fetch, compressed
+       instructions disabled, and fixed IALIGN=32. Milestone A6 establishes `misa.C` as WARL fixed to 0.
      - *mepc WARL Rule:* Under fixed IALIGN=32, `mepc[1:0]` are hardwired to zero (Privileged Spec
-       §3.1.14 / §3.1.6.5); writing any address to `mepc` masks bits `[1:0]`. Therefore, `MRET`
-       restores `PC <- mepc` with masked bits and cannot produce an instruction misalignment exception.
+       §3.1.14 / §3.1.6.5); writing any address to `mepc` (via direct write or CSR write/set/clear)
+       masks bits `[1:0]`. Therefore, `MRET` restoring `PC <- mepc` restores a 4-byte aligned PC and
+       cannot produce an instruction address misalignment exception.
      - *Architectural Trigger:* Cause 0 is strictly induced when an unconditional jump (`JAL`, `JALR`)
        or taken conditional branch evaluates to an unaligned target PC (bits `[1:0] != 0`).
      - *Effects:* `mepc` receives the address of the jump/branch instruction; `mtval` receives the
        misaligned target address. The instruction does not retire.
-     - *Compatibility Boundary:* Preserves Milestone A5 ACT4 RV64I external compatibility without
-       introducing compressed instruction execution into the public ELF path.
+     - *Compatibility Boundary:* Preserves Milestone A5 ACT4 RV64I external compatibility and existing
+       M/A/F/D dispatch without introducing compressed instruction execution into the public ELF path.
    - Cause 1: `InstructionAccessFault` (fetch access violation or unmapped physical memory).
      - *Architectural Trigger:* Instruction fetch targets an unmapped physical address or is rejected
        by the physical memory bus.
@@ -252,7 +255,7 @@ When a guest instruction encounters a synchronous exception:
 
 7. **Verification Suite:**
    - Unit tests covering trap vectoring, CSR transitions, privilege validation, `MRET` (with MPRV
-     transitions), `minstret` CSR read/write, `misa` bit verification, and `mepc[1:0]` WARL masking.
+     transitions), `minstret` CSR read/write, `misa.C` WARL non-writability, and `mepc[1:0]` WARL masking.
    - Integration tests in `tests/trap_test.rs` and `tests/executor.rs` verifying loop continuation,
      per-trap boundary fact consumption during multi-trap execution, induced-fault paths for Causes 0,
      1, 4, 5, 6, 7, five-scenario counter/budget separation, timeout bounds, and exit detection.
@@ -269,9 +272,13 @@ The following areas are explicitly excluded from Milestone A6 to keep delivery s
 - **Unprivileged Counter Shadows & Access Control Registers:** The unprivileged `instret` read shadow
   (`0xC02`) and counter privilege gating registers (`mcounteren` / `scounteren`) are explicitly deferred;
   Milestone A6 delivers strictly Machine-mode `minstret` (`0xB02`).
-- **Compressed Instructions (C Extension) on Public Path:** The public execution path operates strictly
-  with fixed IALIGN=32; standalone compressed instruction components in `src/isa/rv64c/` remain an
-  unwired component boundary.
+- **Compressed Instructions (C Extension) and Variable IALIGN:** The public execution path operates
+  strictly with 32-bit instruction fetch and fixed IALIGN=32; compressed instruction execution and
+  dynamic IALIGN=16 switching remain out of scope for A6. Standalone compressed instruction components
+  in `src/isa/rv64c/` remain an unwired component boundary.
+- **Whole-Machine Extension Certification:** Milestone A6 scopes trap entry and return; existing
+  instruction dispatch for M, A, F, and D opcodes in `src/execute/mod.rs` is neither disabled nor
+  claimed as end-to-end verified ISA support.
 - **Asynchronous Interrupts & Interrupt Controllers:** Interrupt lines, sampling slots, CLINT timer/software
   interrupts, PLIC external interrupts, interrupt priority arbitration, and `WFI` state transitions
   (governed separately by ADR-0004).
@@ -338,12 +345,14 @@ Implementation of Milestone A6 must strictly comply with accepted architecture d
    - Counter Ownership: `minstret` is Hart-owned and tracks retired instructions. `mcycle` is explicitly
      deferred; A6 does not define a cycle timing profile or claim full ADR-0004 counter conformance.
 
-5. **ISA Profile and Alignment Consistency:**
-   - The public execution path implements the RV64I base integer ISA profile with fixed IALIGN=32.
-   - `misa` value `0x8000_0000_0010_0100` (`MXL=2`, `I=1`, `U=1`, `C=0`) defines the active architectural
-     extensions. `misa.C` is non-writable (fixed to 0).
+5. **Alignment Consistency and MISA.C WARL Policy:**
+   - The public execution engine operates with 32-bit instruction fetch, compressed instructions disabled,
+     and fixed IALIGN=32.
+   - Initial `misa` value `0x8000_0000_0010_0100` (`MXL=2`, `I=1`, `U=1`, `C=0`) has `C=0`. Milestone A6
+     delivers explicit WARL enforcement for `misa`: bit 2 (`C`) cannot be set to 1 by direct CSR writes
+     or CSR write/set/clear instructions.
    - Under fixed IALIGN=32, `mepc[1:0]` is hardwired to zero (`mepc & !0b11`).
-   - `MRET` restores PC from `mepc` with masked bits and cannot produce an `InstructionAddressMisaligned` exception.
+   - `MRET` restores PC from `mepc` with masked bits `[1:0] == 00` and cannot produce an `InstructionAddressMisaligned` exception.
 
 ---
 
@@ -463,10 +472,12 @@ The implementation of Milestone A6 is decomposed into four discrete, reviewable 
   - Ensure `mstatus` bits (`MPIE`, `MIE`, `MPP`) update accurately on trap entry.
 - Implement single authoritative 64-bit storage in `CsrFile` under `machine::MINSTRET` (`0xB02`) with
   Machine-mode read/write access in `src/csr/mod.rs`.
-- Verify `misa` bit representation (`0x8000_0000_0010_0100`, confirming `C=0`) and enforce WARL
-  `mepc[1:0] == 00` under fixed IALIGN=32.
+- Enforce `misa.C` WARL policy in `src/csr/mod.rs`: bit 2 (`C`) remains fixed to 0 across direct CSR writes
+  and CSR instructions (`CSRRW`, `CSRRS`, `CSRRC`). Correct the stale inline comment `// RV64IMAC` in `src/csr/mod.rs`.
+- Enforce `mepc` WARL policy under fixed IALIGN=32: hardwire `mepc[1:0]` to zero (`mepc & !0b11`) on direct
+  writes and CSR instructions.
 - Unit tests verifying CSR state transitions, vector address calculations, `minstret` CSR read/write,
-  `misa` bit values, and `mepc[1:0]` masking.
+  `misa.C` WARL non-writability (direct write and write/set/clear), and `mepc[1:0]` masking.
 
 ### Task 2: Privilege Validation and MRET Conformance
 - Align `src/isa/rv64i/system.rs` (`exec_mret`) with Specification §3.1.6.1 and §3.1.6.5:
@@ -534,7 +545,10 @@ Verification for Milestone A6 combines Rust unit tests, simulator integration te
    - Test `exec_mret` in User and Supervisor modes for immediate exception rejection and standard
      `IllegalInstruction` trap entry.
    - Test `minstret` CSR read/write in Machine mode and reset value.
-   - Test `misa` decode (`0x8000_0000_0010_0100`) and WARL masking of `mepc[1:0]` to zero under fixed IALIGN=32.
+   - Test `misa.C` WARL behavior: verify that writing, setting, or clearing bits on `misa` leaves bit 2
+     (`C`) fixed to 0.
+   - Test `mepc[1:0]` WARL masking: verify that direct write or CSR write/set/clear with non-zero low
+     bits masks bits `[1:0]` to zero under fixed IALIGN=32.
 
 2. **Integration Testing (`tests/trap_test.rs`, `tests/executor.rs`):**
    - Test stepping a core that encounters an exception: verify PC redirects to `mtvec.BASE` and
@@ -606,6 +620,9 @@ Completion and acceptance of Milestone A6 require satisfying all of the followin
      IALIGN=32 and do not retire. `MRET` restores `mepc` with masked bits `[1:0] == 00` without generating Cause 0.
    - Misaligned load/store (Causes 4, 6) issue no physical transaction and leave registers/memory unmodified.
    - Physical access faults (Causes 1, 5, 7) commit no partial register or memory state.
+   - `misa.C` is verified as WARL fixed to 0: attempts to set bit 2 via direct CSR write or CSR instructions
+     (`CSRRW`, `CSRRS`, `CSRRC`) leave `misa.C == 0`, preserving fixed IALIGN=32.
+   - `mepc[1:0]` is verified as hardwired to zero across direct writes and CSR operations.
 
 2. **`mtvec` Target Calculation Conformance:**
    For all synchronous exceptions, execution vectors strictly to `mtvec.BASE` (clearing bits [1:0]),
