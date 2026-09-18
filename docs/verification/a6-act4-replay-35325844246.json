@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "status": "verified-offline-replay",
+  "authority": "Informational retained-evidence verification; not a milestone contract",
+  "verified_at": "2026-09-18",
+  "verified_run": {
+    "id": 35325844246,
+    "url": "https://github.com/mimiqdev/ruscv-sim/actions/runs/35325844246",
+    "source_head": "845c63325db5ac87ab2ff0ed260453dc3b396ae9",
+    "merge_head": "f12b1f80907e92b1c82b33ac669b961cc17f59c9",
+    "artifact": {
+      "id": 10538929657,
+      "bytes": 21675875,
+      "sha256": "9c33a06e458bb99331aad141c44f3604979139d82502216d04d73290bbabf452"
+    }
+  },
+  "tree_relation": {
+    "source_head": "845c63325db5ac87ab2ff0ed260453dc3b396ae9",
+    "merge_head": "f12b1f80907e92b1c82b33ac669b961cc17f59c9",
+    "source_tree": "ce60a0a9c984fd42e43ecbb156e860176ecd6c47",
+    "merge_tree": "ce60a0a9c984fd42e43ecbb156e860176ecd6c47",
+    "equal": true
+  },
+  "selection": {
+    "status": "approved-frozen",
+    "act4_commit": "a7c99303516f4e668f7488f172043392e23b9dfd",
+    "profile": "a5-rv64i-nontrapping-proposal-v1",
+    "plan_sha256": "85c88859f7ab0cb76ea8d62f2dcf69ce6d0fc63177345a496b90cca2515ec24b",
+    "inventory_sha256": "78132f2f0bb001ba4a075f75ca95213189e7da98a2bac0e8d9b6409e0a8e659e",
+    "profile_sha256": "d08675968630ce4d75ed106de844b5690116036bd1a3e87a2fafe67116a0a1d8",
+    "tool_pins_sha256": "1fe4c4882e338b79ffd75f6fa216c4589cf90a5e649d4d3157eff38b2f7fe9f1",
+    "required_sources": 51,
+    "required_variants": 51
+  },
+  "configuration": {
+    "count": 8,
+    "sha256": {
+      ".a5/config/invalid-width.yaml": "b67adb0479748d3e663346f65757b8f159b24e520c72fc533cdc0b02e640d4f3",
+      ".a5/config/link.ld": "90f18d00caf5b1afaa82925bca6c7c719962163d6ad7352cdd7857c4586ee56b",
+      ".a5/config/overlay/param/MXLEN.yaml": "9f7e097cd29ddd39057f12fa4f62da5410dae3787ab40c703fb39302ffb7b750",
+      ".a5/config/ruscv-rv64i-smoke.yaml": "34b453fd2e584f6d21a1f73226fc81c0b468071de17ead909fd770b77705bbe5",
+      ".a5/config/rvmodel_macros.h": "d48140aa48660ae5c34c4ca33504f94d6316ce3317dc705a949f58982fef20eb",
+      ".a5/config/rvtest_config.h": "93c4d63cb7557e87ff5475a439ebeaf4798313a543806610dd6e080508ffb5dc",
+      ".a5/config/sail.json": "cb46211f88305cc03c3a53dbe72efbcd34deb40563c9ecf7b9876fdfa196117f",
+      ".a5/config/test_config.yaml": "ba6e0098e804bcaf61a1f9a2830054fd4eeefdf409d97e07a52fbca8ffc48394"
+    }
+  },
+  "public_cli": {
+    "cases": 51,
+    "classification_counts": {
+      "guest-pass": 51
+    },
+    "linked_audits": 51,
+    "audits_with_instructions": 51,
+    "audits_with_unsupported": 0
+  },
+  "accounting_controls": {
+    "count": 12,
+    "all_rejected": true,
+    "names": [
+      "empty-results",
+      "missing-result",
+      "duplicate-result",
+      "extra-result",
+      "generation-command-failed",
+      "missing-elf",
+      "missing-signature_elf",
+      "missing-signature",
+      "missing-expected_results",
+      "extra.elf",
+      "extra.sig",
+      "extra.results"
+    ]
+  },
+  "guest_controls": {
+    "count": 6,
+    "classification_counts": {
+      "guest-fail": 1,
+      "guest-pass": 1,
+      "simulator-or-runner-failure": 4
+    },
+    "all_replayed": true
+  },
+  "scope": "Offline retained-evidence replay only; no new generation or guest execution. This is the frozen A5 nontrapping RV64I selection, not A6 trap or extension certification."
+}

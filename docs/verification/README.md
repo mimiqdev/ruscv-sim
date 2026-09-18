@@ -52,7 +52,8 @@ Test language follows the layer rather than the simulator implementation languag
 - [A1 public behavior compatibility matrix](public-behavior-matrix.md) — CLI/ELF and flat-library inventory plus persistent second-batch tests
 - [A1 public behavior defect and gap register](public-behavior-gaps.md) — bounded reproductions and unverified limits
 - [Project-authored bare-metal tests](bare-metal-tests.md)
-- [A6 Task 4 trap ELF capability and evidence matrix](a6-capability-assessment.md)
+- [A6 capability and closeout-preparation assessment](a6-capability-assessment.md)
+- [A6 retained A5 ACT4 replay summary](a6-act4-replay-35325844246.json)
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)
 

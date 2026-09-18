@@ -45,4 +45,5 @@ limitations and successor decisions. [A4's closeout](../../archive/milestones/a4
 and the detailed [A5 contract](../../dev-plan.md) were approved by
 [PR #31](https://github.com/mimiqdev/ruscv-sim/pull/31), merged as
 `a4804341f4ae0a5344beea7ef6c53667e1912c93` on 2026-09-11.
-A5 is the only current milestone; approval does not establish ACT4 feasibility.
+A6 is the current approved milestone contract. Its closeout-preparation evidence is
+recorded separately and does not claim final rolling completion or establish a successor.

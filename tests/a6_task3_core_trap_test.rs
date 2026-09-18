@@ -592,6 +592,46 @@ fn runner_counts_trap_entry_as_a_completed_turn_but_not_a_retirement() {
 }
 
 #[test]
+fn zero_budget_does_not_start_a_turn_or_retire() {
+    let mut simulator = RiscVSimulator::new(MEMORY_SIZE);
+    simulator
+        .memory()
+        .lock()
+        .unwrap()
+        .write_word(0, addi(1, 0, 1))
+        .unwrap();
+
+    let result = simulator.run(Some(0)).unwrap();
+    assert_eq!(result.cycles, 0);
+    assert!(result.timed_out);
+    assert_eq!(result.error.as_deref(), Some("Timeout after 0 cycles"));
+    assert_eq!(simulator.state().pc, 0);
+    assert_eq!(simulator.state().csr.read(machine::MINSTRET).unwrap(), 0);
+}
+
+#[test]
+fn runner_consumes_each_recursive_trap_slot_until_timeout() {
+    let mut simulator = RiscVSimulator::new(MEMORY_SIZE);
+    {
+        let mut memory = simulator.memory().lock().unwrap();
+        memory.write_word(0, 0x0000_0073).unwrap();
+        memory.write_word(MTVEC, 0xffff_ffff).unwrap();
+    }
+    simulator
+        .state_mut()
+        .csr
+        .write(machine::MTVEC, MTVEC)
+        .unwrap();
+
+    let result = simulator.run(Some(3)).unwrap();
+    assert_eq!(result.cycles, 3, "each recursive trap completes one turn");
+    assert!(result.timed_out);
+    assert_eq!(result.error.as_deref(), Some("Timeout after 3 cycles"));
+    assert_eq!(result.final_pc, MTVEC);
+    assert_eq!(simulator.state().csr.read(machine::MINSTRET).unwrap(), 0);
+}
+
+#[test]
 fn last_slot_host_failure_consumes_the_slot_without_a_completed_turn() {
     let mut simulator = RiscVSimulator::new(0x100);
     let memory = simulator.memory().clone();

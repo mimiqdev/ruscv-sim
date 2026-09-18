@@ -121,7 +121,11 @@ translated to storage offsets by the wrapper.
 The A6 guest suite verifies synchronous Machine-mode trap entry and return on
 the current public 32-bit-fetch path. It does **not** certify asynchronous
 interrupts, MMU/Sv39 integration, compressed-instruction execution, or the
-M/A/F/D dispatch end to end. It is not an ACT4 extension suite. The A5 ACT4
-baseline remains the previously recorded 51-case non-trapping result at its
-approved exact head; unless a verification record explicitly reports a rerun,
-that baseline has not been rerun on the current A6 Task 4 HEAD.
+M/A/F/D dispatch end to end. It is not an ACT4 extension suite. The A5 ACT4 baseline remains a 51-case nontrapping result and is not an A6
+trap or extension certification. A separate retained run `35325844246` reran
+that frozen selection at source head
+`845c63325db5ac87ab2ff0ed260453dc3b396ae9`, with 51/51 public-CLI passes;
+its offline replay and artifact identity are recorded in
+[`a6-act4-replay-35325844246.json`](a6-act4-replay-35325844246.json). The
+implementation merge `f12b1f80907e92b1c82b33ac669b961cc17f59c9` has the same
+Git tree, but the source and merge commits remain distinct evidence identities.
