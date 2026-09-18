@@ -8,7 +8,7 @@ use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 
 #[test]
 fn failed_first_instruction_does_not_consume_a_pending_ram_exit() {
-    let mut elf = fixture::elf_with_code(&[0], 0, true, false, 0);
+    let mut elf = fixture::elf_with_code(&[0x0000_100f], 0, true, false, 0); // unsupported legal FENCE.I
     let signal = fixture::LOAD_OFFSET + fixture::TOHOST_SEGMENT_OFFSET as usize;
     elf[signal..signal + 8].copy_from_slice(&85u64.to_le_bytes());
 

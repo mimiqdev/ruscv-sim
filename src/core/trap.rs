@@ -24,6 +24,7 @@ use crate::core::{CoreState, PrivilegeMode};
 use crate::csr::machine;
 use crate::csr::supervisor;
 use crate::csr::CsrFile;
+use thiserror::Error;
 
 /// RISC-V trap cause.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,6 +257,14 @@ impl TrapContext {
     }
 }
 
+/// Failure while applying a completed architectural trap entry.
+#[derive(Debug, Error)]
+pub enum TrapEntryError {
+    /// A trap CSR could not be updated through the CSR file.
+    #[error("trap CSR update failed: {0}")]
+    Csr(#[from] crate::csr::CsrError),
+}
+
 /// Trap handler
 #[derive(Debug)]
 pub struct TrapHandler {
@@ -282,30 +291,50 @@ impl TrapHandler {
     /// # Returns
     /// The new PC to jump to (from mtvec/stvec)
     pub fn handle_trap(&mut self, trap: Trap, epc: u64, tval: u64, state: &mut CoreState) -> u64 {
-        // Determine which mode handles this trap
-        let (target_mode, _delegatable) = match trap {
+        // Preserve the historical infallible component API.  The integrated
+        // core uses `handle_trap_checked` so a CSR/backend failure is a typed
+        // SimulatorFailure rather than an inferred guest result.
+        self.handle_trap_checked(trap, epc, tval, state)
+            .unwrap_or(epc)
+    }
+
+    /// Apply trap entry and report any CSR failure without collapsing it into a
+    /// guest-visible trap.  This is the typed boundary used by `RiscvCore`.
+    pub fn handle_trap_checked(
+        &mut self,
+        trap: Trap,
+        epc: u64,
+        tval: u64,
+        state: &mut CoreState,
+    ) -> Result<u64, TrapEntryError> {
+        let source_privilege = state.privilege;
+
+        // Determine which mode handles this trap.  A6's core uses the default
+        // non-delegating handler, while the existing component API retains its
+        // delegation configuration for supervisor-focused tests.
+        let target_mode = match trap {
             Trap::Exception(cause) => {
-                let delegatable = self.delegation.should_delegate_exception(cause);
-                if delegatable && state.privilege != PrivilegeMode::Machine {
-                    (PrivilegeMode::Supervisor, true)
+                if self.delegation.should_delegate_exception(cause)
+                    && source_privilege != PrivilegeMode::Machine
+                {
+                    PrivilegeMode::Supervisor
                 } else {
-                    (PrivilegeMode::Machine, false)
+                    PrivilegeMode::Machine
                 }
             }
             Trap::Interrupt(cause) => {
-                let delegatable = self.delegation.should_delegate_interrupt(cause);
-                if delegatable && state.privilege != PrivilegeMode::Machine {
-                    (PrivilegeMode::Supervisor, true)
+                if self.delegation.should_delegate_interrupt(cause)
+                    && source_privilege != PrivilegeMode::Machine
+                {
+                    PrivilegeMode::Supervisor
                 } else {
-                    (PrivilegeMode::Machine, false)
+                    PrivilegeMode::Machine
                 }
             }
         };
 
-        // Set up trap CSRs based on target mode.  Exception `mtval` is
-        // normalized here because the handler is the component boundary that
-        // commits the architectural trap record; callers still provide the
-        // full-width address or instruction diagnostic for causes that use it.
+        // Exception `mtval` is normalized here at the architectural boundary;
+        // callers retain the full-width address or instruction diagnostic.
         let cause_value = trap.cause_code();
         let trap_value = match trap {
             Trap::Exception(cause) => cause.mtval(tval),
@@ -314,71 +343,64 @@ impl TrapHandler {
 
         match target_mode {
             PrivilegeMode::Machine => {
-                // Trap entry writes Machine CSRs regardless of the source
-                // privilege.  Keep the CSR access-control view synchronized
-                // with the completed architectural mode before performing the
-                // hardware-owned writes.
+                // Trap entry writes Machine CSRs regardless of source mode.
                 state.csr.set_privilege(PrivilegeMode::Machine);
+                state.csr.write(machine::MEPC, epc)?;
+                state.csr.write(machine::MCAUSE, cause_value)?;
+                state.csr.write(machine::MTVAL, trap_value)?;
 
-                let _ = state.csr.write(machine::MEPC, epc);
-                let _ = state.csr.write(machine::MCAUSE, cause_value);
-                let _ = state.csr.write(machine::MTVAL, trap_value);
-
-                // Update mstatus: MPIE = old MIE, MIE = 0, MPP = source mode.
-                let mstatus = state.csr.read(machine::MSTATUS).unwrap_or(0);
+                // MPIE receives the source MIE, MIE is cleared, and MPP records
+                // the privilege that was active at the fault boundary.
+                let mstatus = state.csr.read(machine::MSTATUS)?;
                 let mie = (mstatus >> 3) & 1;
-                let mpp = state.privilege as u64;
+                let new_mstatus =
+                    (mstatus & !0x1888) | (mie << 7) | ((source_privilege as u64) << 11);
+                state.csr.write(machine::MSTATUS, new_mstatus)?;
 
-                let new_mstatus = (mstatus & !0x1888) // Clear MIE, MPIE, MPP
-                    | (mie << 7) // MPIE = old MIE
-                    | (mpp << 11); // MPP = source privilege
-
-                let _ = state.csr.write(machine::MSTATUS, new_mstatus);
                 state.privilege = PrivilegeMode::Machine;
                 state.csr.set_privilege(PrivilegeMode::Machine);
 
                 // Synchronous exceptions use BASE in both mtvec modes;
                 // interrupts retain vectored mode semantics.
-                let mtvec = state.csr.read(machine::MTVEC).unwrap_or(0);
+                let mtvec = state.csr.read(machine::MTVEC)?;
                 let target_pc = self.vector_trap(mtvec, cause_value);
                 state.pc = target_pc;
-                target_pc
+
+                // Keep the legacy public fields as a compatibility mirror;
+                // CsrFile remains the authoritative architectural storage.
+                state.mepc = state.csr.read(machine::MEPC)?;
+                state.mcause = state.csr.read(machine::MCAUSE)?;
+                state.mtval = state.csr.read(machine::MTVAL)?;
+                state.mstatus = state.csr.read(machine::MSTATUS)?;
+                Ok(target_pc)
             }
             PrivilegeMode::Supervisor => {
                 state.csr.set_privilege(PrivilegeMode::Supervisor);
+                state.csr.write(supervisor::SEPC, epc)?;
+                state.csr.write(supervisor::SCAUSE, cause_value)?;
+                state.csr.write(supervisor::STVAL, trap_value)?;
 
-                let _ = state.csr.write(supervisor::SEPC, epc);
-                let _ = state.csr.write(supervisor::SCAUSE, cause_value);
-                let _ = state.csr.write(supervisor::STVAL, trap_value);
-
-                // Update sstatus: SPIE = old SIE, SIE = 0, SPP = source mode.
-                let sstatus = state.csr.read(supervisor::SSTATUS).unwrap_or(0);
+                // SPIE receives SIE, SIE is cleared, and SPP records whether
+                // the source was Supervisor mode.
+                let sstatus = state.csr.read(supervisor::SSTATUS)?;
                 let sie = (sstatus >> 1) & 1;
-                let spp = if state.privilege == PrivilegeMode::Supervisor {
-                    1
-                } else {
-                    0
-                };
+                let spp = u64::from(source_privilege == PrivilegeMode::Supervisor);
+                let new_sstatus = (sstatus & !0x222) | (sie << 5) | (spp << 8);
+                state.csr.write(supervisor::SSTATUS, new_sstatus)?;
 
-                let new_sstatus = (sstatus & !0x222) // Clear SIE, SPIE, SPP
-                    | (sie << 5) // SPIE = old SIE
-                    | (spp << 8); // SPP = source privilege
-
-                let _ = state.csr.write(supervisor::SSTATUS, new_sstatus);
                 state.privilege = PrivilegeMode::Supervisor;
                 state.csr.set_privilege(PrivilegeMode::Supervisor);
-
-                let stvec = state.csr.read(supervisor::STVEC).unwrap_or(0);
+                let stvec = state.csr.read(supervisor::STVEC)?;
                 let target_pc = self.vector_trap(stvec, cause_value);
                 state.pc = target_pc;
-                target_pc
+                Ok(target_pc)
             }
             PrivilegeMode::User => {
-                // This branch is retained for the existing component API; a
-                // configured trap is never targeted at User mode today.
+                // Retained only for the existing component API; configured
+                // traps are not targeted at User mode.
                 state.csr.set_privilege(PrivilegeMode::User);
                 state.pc = epc;
-                epc
+                Ok(epc)
             }
         }
     }

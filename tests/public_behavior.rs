@@ -824,16 +824,10 @@ fn flat_library_distinguishes_guest_exit_timeout_and_execution_error() {
 
     let broken_elf = fixture::elf_with_placement(&[0x0000_0000], 0, fixture::BASE, None, 0);
     let (_, broken) = load_and_run_library(&broken_elf, 8);
-    assert!(!broken.timed_out);
-    assert_eq!(broken.cycles, 0);
-    assert_eq!(broken.final_pc, fixture::BASE);
-    assert!(
-        broken
-            .error
-            .as_deref()
-            .is_some_and(|message| message.contains("Execution error")),
-        "{broken:?}"
-    );
+    assert!(broken.timed_out);
+    assert_eq!(broken.cycles, 8);
+    assert_eq!(broken.final_pc, 0);
+    assert_eq!(broken.error.as_deref(), Some("Timeout after 8 cycles"));
 }
 
 #[test]
@@ -855,7 +849,12 @@ fn public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps() {
     let log = std::fs::read_to_string(&log_path).unwrap();
     let lines = log.lines().collect::<Vec<_>>();
     assert_eq!(lines.len(), 4);
-    assert!(lines.iter().all(|line| line.contains("(0x00000000)")));
+    for (line, instruction) in lines.iter().zip(code) {
+        assert!(
+            line.contains(&format!("({instruction:#010x})")),
+            "commit log must use the Hart-fetched instruction: {line}"
+        );
+    }
     assert!(!lines.iter().any(|line| line.contains(" mem ")));
     assert!(lines[3].contains("0x000000008000000c"));
 }
@@ -1500,9 +1499,13 @@ fn flat_library_keeps_the_run_when_the_signature_is_unreadable() {
         0,
     );
     let (_, broken) = load_and_run_library(&broken_elf, 6);
-    assert_eq!(broken.cycles, 0);
+    assert_eq!(broken.cycles, 6);
     let broken_error = broken.error.as_deref().unwrap();
-    assert!(broken_error.contains("Execution error"), "{broken_error}");
+    assert!(broken.timed_out);
+    assert!(
+        broken_error.contains("Timeout after 6 cycles"),
+        "{broken_error}"
+    );
     assert!(
         broken_error.contains("Signature artifact unavailable"),
         "{broken_error}"
@@ -1732,14 +1735,13 @@ fn integrated_workflow_records_the_retained_cli_device_difference() {
 
     let (_, library_uart) = load_and_run_library(&uart_elf, 20);
     assert_eq!(library_uart.exit_code, 1);
-    assert_eq!(library_uart.cycles, 2);
-    assert_eq!(library_uart.final_pc, fixture::BASE + 8);
-    assert!(!library_uart.timed_out);
-    let error = library_uart
-        .error
-        .as_deref()
-        .expect("the flat wrapper has no device mapping for the UART aperture");
-    assert!(error.contains("Execution error"), "{error}");
+    assert_eq!(library_uart.cycles, 20);
+    assert_eq!(library_uart.final_pc, 0);
+    assert!(library_uart.timed_out);
+    assert_eq!(
+        library_uart.error.as_deref(),
+        Some("Timeout after 20 cycles")
+    );
 }
 
 #[test]
@@ -1834,24 +1836,14 @@ fn shared_result_shapes_hold_for_timeout_and_instruction_error() {
 
     assert_eq!(cli_error.exit_code, 1);
     assert_eq!(library_error.exit_code, 1);
-    assert_eq!(cli_error.cycles, 0);
-    assert_eq!(library_error.cycles, 0);
+    assert_eq!(cli_error.cycles, 6);
+    assert_eq!(library_error.cycles, 6);
     assert_eq!(cli_error.final_pc, library_error.final_pc);
-    assert!(!cli_error.timed_out && !library_error.timed_out);
-
-    let cli_message = cli_error.error.as_deref().unwrap();
-    let library_message = library_error.error.as_deref().unwrap();
-    assert!(
-        cli_message.contains("Execution error at PC"),
-        "{cli_message}"
-    );
-    assert!(
-        library_message.starts_with("Execution error"),
-        "{library_message}"
-    );
-    assert!(
-        !library_message.contains(" at PC "),
-        "the flat library reports the boundary through final_pc instead: {library_message}"
+    assert!(cli_error.timed_out && library_error.timed_out);
+    assert_eq!(cli_error.error.as_deref(), Some("Timeout after 6 cycles"));
+    assert_eq!(
+        library_error.error.as_deref(),
+        Some("Timeout after 6 cycles")
     );
 }
 

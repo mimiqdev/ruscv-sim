@@ -4,7 +4,10 @@
 //! Provides `load_and_run` function for loading and executing ELF files
 //! with tohost exit signal support.
 
-use crate::core::{commits::CommitLogger, CoreState, RiscvCore};
+use crate::core::{
+    commits::CommitLogger, CoreState, RiscvCore, SimulatorFailure, StepOutcome,
+    TrapContinuationPolicy,
+};
 use crate::elf::{load_elf_file, ElfError, SignatureInfo};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::Uart16550;
@@ -17,7 +20,8 @@ use thiserror::Error;
 pub struct ExecutionResult {
     /// Exit code (0 for success, non-zero for failure)
     pub exit_code: u32,
-    /// Number of executed cycles
+    /// Number of completed Hart turns (retirements and synchronous trap entries).
+    /// Started turns that end in `SimulatorFailure` are not included.
     pub cycles: u64,
     /// Final program counter
     pub final_pc: u64,
@@ -71,7 +75,7 @@ enum ArtifactPolicy {
 struct ResultInputs<'a> {
     /// The guest's exit code, or the configuration's failure code.
     exit_code: u32,
-    /// Completed cycles.
+    /// Completed Hart turns.
     cycles: u64,
     /// Final program counter describing the boundary of the run.
     final_pc: u64,
@@ -233,7 +237,11 @@ impl SystemBus {
 impl MemoryInterface for SystemBus {
     fn read_dword(&self, addr: u64) -> Result<u64, MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 8) {
-            return self.ram.lock().unwrap().read_dword(addr - self.ram_base);
+            return self
+                .ram
+                .lock()
+                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
+                .read_dword(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -248,7 +256,11 @@ impl MemoryInterface for SystemBus {
 
     fn read_word(&self, addr: u64) -> Result<u32, MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 4) {
-            return self.ram.lock().unwrap().read_word(addr - self.ram_base);
+            return self
+                .ram
+                .lock()
+                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
+                .read_word(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -258,7 +270,11 @@ impl MemoryInterface for SystemBus {
 
     fn read_half(&self, addr: u64) -> Result<u16, MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 2) {
-            return self.ram.lock().unwrap().read_half(addr - self.ram_base);
+            return self
+                .ram
+                .lock()
+                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
+                .read_half(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -268,11 +284,19 @@ impl MemoryInterface for SystemBus {
 
     fn read_byte(&self, addr: u64) -> Result<u8, MemoryError> {
         if self.is_ram(addr) {
-            return self.ram.lock().unwrap().read_byte(addr - self.ram_base);
+            return self
+                .ram
+                .lock()
+                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
+                .read_byte(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             let offset = addr - self.uart_base;
-            return Ok(self.uart.lock().unwrap().read_reg(offset));
+            return Ok(self
+                .uart
+                .lock()
+                .map_err(|_| MemoryError::Backend("UART lock poisoned".into()))?
+                .read_reg(offset));
         }
         Err(MemoryError::InvalidAddress(addr))
     }
@@ -309,7 +333,7 @@ impl MemoryInterface for SystemBus {
             return self
                 .ram
                 .lock()
-                .unwrap()
+                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
                 .write_dword(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
@@ -330,7 +354,7 @@ impl MemoryInterface for SystemBus {
             return self
                 .ram
                 .lock()
-                .unwrap()
+                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
                 .write_word(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
@@ -344,7 +368,7 @@ impl MemoryInterface for SystemBus {
             return self
                 .ram
                 .lock()
-                .unwrap()
+                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
                 .write_half(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
@@ -358,12 +382,15 @@ impl MemoryInterface for SystemBus {
             return self
                 .ram
                 .lock()
-                .unwrap()
+                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
                 .write_byte(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
             let offset = addr - self.uart_base;
-            self.uart.lock().unwrap().write_reg(offset, value);
+            self.uart
+                .lock()
+                .map_err(|_| MemoryError::Backend("UART lock poisoned".into()))?
+                .write_reg(offset, value);
             return Ok(());
         }
         Err(MemoryError::InvalidAddress(addr))
@@ -593,7 +620,7 @@ use std::path::Path;
 
 /// The run-control decision both entry points share.
 ///
-/// It owns the instruction budget, counts retired instructions, names the
+/// It owns the started-slot budget, counts completed Hart turns, names the
 /// timeout diagnostic and applies the exit rule: an observed RAM exit signal is
 /// decoded before it is cleared, so a run cannot lose the guest's code and no
 /// path can re-read a signal it already consumed.
@@ -603,7 +630,10 @@ use std::path::Path;
 /// list and selects the stop reason after accounting for the step.
 #[derive(Debug)]
 struct RunControl {
+    /// Completed Hart turns (retirements and synchronous trap entries).
     cycles: u64,
+    /// Started execution slots, including a slot that ended in a host failure.
+    started_slots: u64,
     max_cycles: u64,
 }
 
@@ -615,23 +645,42 @@ enum RunDecision<E> {
     ExecutionError(E),
 }
 
+fn format_failure(failure: SimulatorFailure) -> String {
+    format!("{:?}: {}", failure.kind, failure.message)
+}
+
 impl RunControl {
     /// Start a run with a fixed instruction budget.
     fn new(max_cycles: u64) -> Self {
         Self {
             cycles: 0,
+            started_slots: 0,
             max_cycles,
         }
     }
 
-    /// Whether another instruction may retire inside the budget.
+    /// Whether another execution slot may start inside the budget.
     fn may_execute(&self) -> bool {
-        self.cycles < self.max_cycles
+        self.started_slots < self.max_cycles
     }
 
-    /// Record one retired instruction.
-    fn retire(&mut self) {
+    /// Reserve one started slot.  A slot is consumed before the Hart is
+    /// called, so a host/backend failure in the last slot cannot be retried.
+    fn start_slot(&mut self) {
+        debug_assert!(self.may_execute());
+        self.started_slots += 1;
+    }
+
+    /// Record one completed Hart turn.
+    fn complete_turn(&mut self) {
         self.cycles += 1;
+    }
+
+    /// Legacy test/helper spelling: a manually retired turn also starts a slot.
+    #[cfg(test)]
+    fn retire(&mut self) {
+        self.start_slot();
+        self.complete_turn();
     }
 
     /// Decide whether execution may begin (including the zero-budget case).
@@ -643,19 +692,48 @@ impl RunControl {
         }
     }
 
-    /// Account for a step, then observe configured signals in priority order.
+    /// Account for a completed slot, then observe configured signals in
+    /// priority order.  The slot was reserved before the Hart call.
     ///
-    /// Failure does not retire or observe. The first exit short-circuits later
-    /// observers and wins even in the final budget slot.
+    /// A failure consumes its started slot but does not complete a turn or run
+    /// guest-visible stop observers.  A completed trap does complete a turn,
+    /// and the same boundary observers can therefore let tohost retirement win
+    /// over the final-slot timeout.
+    fn after_completed<E>(
+        &mut self,
+        outcome: Result<(), E>,
+        observers: &mut [&mut dyn FnMut(u64) -> Option<u32>],
+    ) -> RunDecision<E> {
+        if let Err(error) = outcome {
+            return RunDecision::ExecutionError(error);
+        }
+        self.complete_turn();
+        for observe in observers {
+            if let Some(code) = observe(self.cycles) {
+                return RunDecision::GuestExit(code);
+            }
+        }
+        if self.may_execute() {
+            RunDecision::Continue
+        } else {
+            RunDecision::Timeout
+        }
+    }
+
+    /// Compatibility helper for existing callers that already reserve no
+    /// explicit slot.  New runners use `start_slot` plus `after_completed`.
+    #[cfg(test)]
     fn after_step<E>(
         &mut self,
         step: Result<(), E>,
         observers: &mut [&mut dyn FnMut(u64) -> Option<u32>],
     ) -> RunDecision<E> {
+        if step.is_ok() {
+            self.retire();
+        }
         if let Err(error) = step {
             return RunDecision::ExecutionError(error);
         }
-        self.retire();
         for observe in observers {
             if let Some(code) = observe(self.cycles) {
                 return RunDecision::GuestExit(code);
@@ -969,7 +1047,7 @@ pub fn load_and_run(
         })
         .transpose()?;
 
-    // Step 4: Execution loop. The budget, the retirement count and the exit rule
+    // Step 4: Execution loop. The started-slot budget, completed-turn count and the exit rule
     // live in the shared run control; this loop supplies stepping, signal order,
     // commit logging and its own diagnostics.
     let mut control = RunControl::new(max_cycles);
@@ -984,48 +1062,42 @@ pub fn load_and_run(
                   entry_point, tohost_pa);
     }
 
-    let mut decision = control.start();
+    let mut decision = control.start::<String>();
     while matches!(decision, RunDecision::Continue) {
-        // Read current PC for result
+        // Reserve the slot before invoking the Hart.  A host failure in this
+        // slot therefore cannot be retried even when it is the final budget
+        // slot.
+        control.start_slot();
+
+        // Capture register state before execution for the optional commit log.
         let current_pc = core.state().pc;
-        let pc_before = current_pc;
-
-        // Get instruction for logging (need to read before step)
-        let instruction = {
-            let mem = bus_interface.lock().unwrap();
-            mem.read_word(pc_before.wrapping_sub(base_addr))
-                .unwrap_or(0)
-        };
-
-        // Capture register state before execution
         let regs_before = core.state().regs;
 
-        // Execute one instruction
-        let step = core.step();
-        if step.is_ok() {
-            // Capture register state after execution
-            let regs_after = core.state().regs;
-
-            // Log commit if logger is active
-            if let Some(ref mut logger) = commit_logger {
-                // Get privilege mode (3 = machine mode)
-                let privilege = core.state().privilege as u8;
-
-                // Try to detect memory access
-                let mem_access = None; // Simplified: detect in executor if needed
-
-                // Log the commit
-                let _ = logger.log_commit(
-                    0, // hartid
-                    privilege,
-                    pc_before,
-                    instruction,
-                    &regs_before,
-                    &regs_after,
-                    mem_access,
-                );
+        // Execute one Hart turn.  Only an InstructionRetired fact is a commit;
+        // TrapEntered consumes a completed turn but is not an instruction
+        // retirement.
+        let outcome = core.step_outcome();
+        let step = match outcome {
+            StepOutcome::InstructionRetired(retired) => {
+                let regs_after = core.state().regs;
+                if let Some(ref mut logger) = commit_logger {
+                    let _ = logger.log_commit(
+                        0,
+                        retired.privilege as u8,
+                        retired.pc,
+                        retired.instruction,
+                        &regs_before,
+                        &regs_after,
+                        None,
+                    );
+                }
+                Ok(())
             }
-        }
+            StepOutcome::TrapEntered(trap) => match trap.continuation {
+                TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
+            },
+            StepOutcome::SimulatorFailure(failure) => Err(format_failure(failure)),
+        };
         let mut observe_htif = |_| {
             // Check for exit signal from HTIF callback first
             // This handles writes to HTIF MMIO at 0x40008000
@@ -1082,7 +1154,7 @@ pub fn load_and_run(
             None
         };
         // Priority is configuration data; RunControl traverses it lazily.
-        decision = control.after_step(
+        decision = control.after_completed(
             step.map_err(|e| format!("Execution error at PC 0x{:016x}: {}", current_pc, e)),
             &mut [&mut observe_htif, &mut observe_ram],
         );
@@ -1386,25 +1458,36 @@ impl RiscVSimulator {
     /// Run until the guest exits, the budget is exhausted, or a step fails.
     ///
     /// The exit signal is polled at the configured flat storage offset after
-    /// every retired instruction. A decoded guest exit is retained before the
+    /// every completed Hart turn. A decoded guest exit is retained before the
     /// RAM signal is cleared, so a nonzero exit code is reported exactly once.
-    /// The reported cycle count and `final_pc` describe the instruction that
-    /// wrote the signal. A zero budget executes no instruction and reports a
+    /// The reported cycle count and `final_pc` describe the completed boundary
+    /// that exposed the signal. A zero budget executes no turn and reports a
     /// timeout, and an exit in the final permitted slot is not a timeout.
     pub fn run(&mut self, max_cycles: Option<u64>) -> Result<ExecutionResult, ExecutorError> {
         let max_cycles = max_cycles.unwrap_or(self.max_cycles);
         let tohost = self.tohost_offset()?;
-        // The budget, the retirement count and the exit rule come from the shared
+        // The started-slot budget, completed-turn count and exit rule come from the shared
         // run control; this loop owns stepping and its own diagnostics.
         let mut control = RunControl::new(max_cycles);
 
         // Track last tohost value for verbose diagnostics
         let mut last_tohost_value: u64 = 0;
 
-        let mut decision = control.start();
+        let mut decision = control.start::<String>();
         while matches!(decision, RunDecision::Continue) {
-            // Execute one instruction first
-            let step = self.step().map_err(|e| format!("Execution error: {}", e));
+            // Reserve the slot before invoking the Hart.  A host failure in the
+            // final slot consumes it without completing a reported turn.
+            control.start_slot();
+            let outcome = self.core.step_outcome();
+            let step = match outcome {
+                StepOutcome::InstructionRetired(_) => Ok(()),
+                StepOutcome::TrapEntered(trap) => match trap.continuation {
+                    TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
+                },
+                StepOutcome::SimulatorFailure(failure) => {
+                    Err(format!("Execution error: {}", format_failure(failure)))
+                }
+            };
 
             let mut observe_ram = |cycles: u64| {
                 // Check for tohost write AFTER executing instruction
@@ -1453,7 +1536,7 @@ impl RiscVSimulator {
                 None
             };
             // The flat configuration has only its selected RAM observer.
-            decision = control.after_step(step, &mut [&mut observe_ram]);
+            decision = control.after_completed(step, &mut [&mut observe_ram]);
             match &decision {
                 RunDecision::GuestExit(code) => {
                     return Ok(self.finish(control.cycles(), *code, false, None));

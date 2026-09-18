@@ -25,7 +25,7 @@ fn data_workflow_elf(entry_offset: usize, increment: i32, fail_at_exit: bool) ->
         fixture::auipc(4, 1),
         fixture::addi(4, 4, -entry - 32), // x4 = guest tohost address
         if fail_at_exit {
-            0 // fail after the data effects, without retiring this instruction
+            0x0000_100f // legal FENCE.I, intentionally unsupported after data effects
         } else {
             fixture::sd(7, 4, 0)
         },
