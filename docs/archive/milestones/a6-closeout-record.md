@@ -1,32 +1,39 @@
-# A6 Closeout-Preparation Record
+# A6 Formal Closeout Record
 
-**Status:** Draft closeout preparation; not a formal milestone closeout
+**Status:** Historical — completed and accepted on 2026-09-18
 
-**Authority:** Historical informational record. The active normative contract
-remains [`../../dev-plan.md`](../../dev-plan.md) until a separately approved
-successor is available.
+**Authority:** Informational historical acceptance record. The sole active
+normative contract is [A7](../../dev-plan.md).
 
-**Prepared:** 2026-09-18
+**Completed / accepted:** 2026-09-18
+
+**Approval:** The maintainer explicitly accepted A6 formal closeout and approved
+activation of the complete A7 non-atomic migration contract and conservative
+compatibility defaults at candidate `2de6e96e45764e2d21731b2a5e619cc23f8338ca`.
+This acceptance is not approval of atomic capability rejection, a release, or
+permission to merge the activation delivery PR.
 
 ## Boundary and disposition
 
-This record prepares the evidence and archive materials for Milestone A6 —
-Machine-Mode Synchronous Trap Entry and Return. It does **not** claim that this
-closeout-preparation PR is merged or that the rolling milestone switch is
-complete. The original contract is preserved in
+This record preserves the evidence and archive materials for Milestone A6 —
+Machine-Mode Synchronous Trap Entry and Return. Closeout preparation was merged
+in [PR #46](https://github.com/mimiqdev/ruscv-sim/pull/46) on
+2026-09-18 at `024d15d546dc3b711f593cd44bb107612fd8b600` (merge timestamp
+`2026-09-18T10:04:05Z`). The maintainer's subsequent explicit acceptance on the
+same date closes A6 and authorizes the A7 plan rotation in this documentation
+change. PR #47 carries that activation and is still subject to review and merge;
+this record does not claim it is already merged. The original contract is preserved in
 [`a6-machine-mode-trap-entry-return.md`](a6-machine-mode-trap-entry-return.md).
 
-Per `docs/dev-plan.md` §9 and `AGENTS.md`, final rolling closeout is a later
-operation: all nine criteria must be rechecked against the committed reviewed
-head, this record must be accepted, and a successor contract must be approved
-before `docs/dev-plan.md` can be replaced. No successor is approved here. This
-work therefore leaves the A6 contract text in `docs/dev-plan.md` unchanged; it
-does not restore an A5 forwarding record, enable A7, migrate old backlog items,
-or weaken documentation policy. Archive preparation and the final rolling-plan
-switch are separate decisions.
+The archived A6 contract §9 and `AGENTS.md` closeout sequence is now fulfilled
+by the nine-criterion acceptance below, preservation of the complete A6 contract,
+and explicit approval of the successor. A7 replaces A6 in `docs/dev-plan.md`;
+no A5 record or accepted ADR is rewritten. This change implements the approved
+documentation transition only, not A7 Rust implementation. The milestone's
+acceptance decision and the activation PR's unmerged delivery state are distinct.
 
 The detailed criterion-to-source/test/command/limitation matrix is in the
-[draft A6 capability assessment](../../verification/a6-capability-assessment.md).
+[A6 capability assessment](../../verification/a6-capability-assessment.md).
 It records evidence rather than checking criteria merely because their task PRs
 merged.
 
@@ -44,7 +51,49 @@ same tree `ce60a0a9c984fd42e43ecbb156e860176ecd6c47`. The exact tree relation is
 recorded and checked by the offline ACT4 replay; it does not turn the old
 verification command into a command run at a later documentation head.
 
-## Acceptance evidence summary
+## Merged preparation CI identity
+
+GitHub PR and Actions metadata checked on 2026-09-18 identify final PR #46
+head `90e7dfe470e93be799f1e8e1047ab438e0285516` and
+[CI run 35331709689](https://github.com/mimiqdev/ruscv-sim/actions/runs/35331709689).
+`Quality and tests` succeeded; Coverage was skipped. Formatting, A5 accounting
+controls, Clippy, Rust tests, documentation and guest-script guards succeeded.
+The release build/smoke and fresh project ELF compile/run steps were **skipped**
+in this PR run. It is not fresh project-guest or ACT4 execution at the merge
+head. The local `b8c0bba...` checks and Task 4 fresh evidence below retain their
+original identities; no old run is relabeled as `024d15d...` evidence.
+
+Separately, exact-merge [main CI 35332790906](https://github.com/mimiqdev/ruscv-sim/actions/runs/35332790906)
+ran at `024d15d546dc3b711f593cd44bb107612fd8b600`. Its `Quality and tests`
+job succeeded, including release build/smoke, fresh project ELF compilation and
+public CLI execution. The log reports **51 total / 51 passed / 0 failed**,
+including the five A6 trap guests. Coverage was skipped. This is new exact-merge
+project evidence, not a relabeling of Task 4 evidence and not a new ACT4 run.
+The nine criterion rows below retain their original preparation references;
+this merge CI additionally verifies their Rust regressions and project guests.
+Remaining acceptance boundaries are the frozen external profile's historical
+revision and the explicit non-goals. The rolling switch is now explicitly approved.
+
+## Final nine-criterion acceptance
+
+The maintainer accepted all nine A6 criteria on 2026-09-18 on the evidence
+below and the detailed [assessment](../../verification/a6-capability-assessment.md).
+The retained preparation table records the original evidence identity, not a
+new test execution at the activation HEAD.
+
+| Criterion | Final disposition | Basis for acceptance |
+| --- | --- | --- |
+| 1. Precise synchronous entry and induced faults | Accepted | Cause/state/no-transaction regressions, WARL/CSR tests, exact-merge Rust gate |
+| 2. Direct/vectored synchronous BASE | Accepted | Trap/vector tests and fresh vectored guest |
+| 3. Non-retirement, budget and counter precedence | Accepted | Core/CSR/RunControl tests, including PR46's zero/recursive assertions at exact merge |
+| 4. Handler continuation and distinct trap boundaries | Accepted | Typed outcomes consumed before next turn, consecutive/recursive tests and five guests |
+| 5. Legal MRET and MPRV restoration | Accepted | MRET conformance tests and guest return |
+| 6. Lower-privilege MRET rejection | Accepted | Typed illegal-instruction/no-return-effects tests and composed guest trap |
+| 7. Five public CLI trap ELFs | Accepted | Main CI 35332790906 freshly passed project 51/51, including all five |
+| 8. Runner/exit/diagnostics invariants | Accepted | Executor/public/peripheral regressions and handler exit ordering |
+| 9. Quality and no regressions in scope | Accepted | Recorded quality gates, exact-merge project run, frozen ACT4 51-case evidence and source identity bridge |
+
+### Historical preparation evidence summary
 
 | Criterion | Preparation disposition | Exact evidence identity | Important limit |
 | --- | --- | --- | --- |
@@ -133,7 +182,7 @@ ELF, large ZIP, private path, or orchestration state is committed. The A5
 `replay_accounting.py` remains an historical verifier for its own hard-coded
 run and is deliberately not overwritten.
 
-## Limitations and pending state
+## Limitations and delivery state
 
 - The A6 evidence covers the public flat RAM/UART/HTIF path and the supported
   Machine-mode synchronous trap profile. It does not certify asynchronous
@@ -148,15 +197,37 @@ run and is deliberately not overwritten.
 - Evidence is bound to the exact revisions above. Any implementation change
   after review requires fresh relevant verification; a documentation commit
   does not retroactively change the guest source identity.
-- This record remains pending independent review and merge of the closeout
-  preparation. It does not state that this PR is complete, merged, released, or
-  a replacement for `docs/dev-plan.md`.
+- PR #46's preparation is merged. A6 is now formally accepted and the approved
+  [A7 contract](../../dev-plan.md) is activated in this documentation change.
+  PR #47 is not claimed merged; review and delivery remain separate. No release
+  or A7 implementation completion is claimed.
+- Existing atomic dispatch is not complete A-extension certification. Split AMO
+  read/write, encoding/width debt and global reservation remain explicit legacy
+  debt; A7 preserves behavior rather than disabling it. A6 acceptance does not
+  assert complete ADR-0002 atomic conformance.
 
-## Final rolling-switch prerequisites
+## Evidence applicability to the documentation activation
 
-Before a future maintainer performs final A6 closeout, the reviewed committed
-head must be checked against all nine rows, the closeout record must be updated
-with that exact head and resolved findings, and a separately approved successor
-contract must exist. Only then may the completed contract be moved as a final
-historical record and `docs/dev-plan.md` be replaced. Until that decision, the
-current A6 contract remains in place unchanged.
+The approved candidate is `2de6e96e45764e2d21731b2a5e619cc23f8338ca`.
+Activation changes only documentation. Exact-head checks compare every tracked
+non-document file with PR46 merge `024d15d546dc3b711f593cd44bb107612fd8b600`,
+including source, tests, build inputs, scripts and CI. Relevant Git identities:
+
+| Protected path | Git tree/blob at PR46 merge, unchanged by activation |
+| --- | --- |
+| `src` | `1e0262344bee52ee3c7d616f62035decacddccfb` |
+| `tests` | `337d1f3da8548eeb98aa272666087ad1080dfb93` |
+| `scripts` | `1e1111777c5f5b7b0f24a89cb1b4227099a9f0c7` |
+| `.github` | `759c47ca4e31bf25b9d9d9ea0260a07108f1d2f7` |
+| `Cargo.toml` | `2a8ee26506188c29c7731125bf579fd39426071d` |
+| `Cargo.lock` | `79e557f5205bb9b70b00bbd0ee0bf138866db71e` |
+
+The ACT4 source `845c633...` has identical `src`, Cargo inputs and CI configuration
+to PR46 merge. Intervening tests/scripts add only the documented closeout
+assertions and offline replay utilities; they do not change the executed
+simulator. This is an evidence-applicability argument, not a fresh ACT4 run.
+Current activation checks cover links, complete archived bodies, approved-scope
+preservation, the unique active contract and protected-file identity. Historical
+Rust/ELF/ACT4 execution remains bound to the revisions above. New activation PR
+CI and independent review apply only to their exact new HEAD, not by inheritance
+from the candidate review.

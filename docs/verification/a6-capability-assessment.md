@@ -1,6 +1,6 @@
-# A6 Capability and Closeout-Preparation Assessment
+# A6 Capability and Acceptance Assessment
 
-**Status:** Draft closeout-preparation evidence record; not a milestone closeout
+**Status:** Current — evidence for A6 formally accepted on 2026-09-18
 
 **Authority:** Informational evidence record. `docs/dev-plan.md` remains the
 sole active normative contract, and source plus executed tests are authoritative
@@ -10,8 +10,14 @@ for implementation claims.
 
 **Scope:** Milestone A6's nine acceptance criteria, the exact Task 4 verification
 identity, and the retained A5 ACT4 replay boundary. This record does not replace
-`docs/dev-plan.md`, approve a successor, or claim that this closeout-preparation
-PR is merged.
+`docs/dev-plan.md` or approve a successor. Closeout preparation merged in
+[PR #46](https://github.com/mimiqdev/ruscv-sim/pull/46) on 2026-09-18 as
+`024d15d546dc3b711f593cd44bb107612fd8b600`. The maintainer subsequently accepted
+all nine A6 criteria and explicitly approved A7 activation on 2026-09-18 at
+candidate `2de6e96e45764e2d21731b2a5e619cc23f8338ca`. The
+[formal closeout](../archive/milestones/a6-closeout-record.md) records the decision
+and protected-source identity bridge. PR #47 delivers the documentation rotation;
+its merge is not claimed here.
 
 ## Evidence identity and status boundary
 
@@ -56,15 +62,37 @@ certification. The historical `scripts/a5/replay_accounting.py` remains
 unchanged; its refusal of this newer run because it intentionally hard-codes an
 older run is expected.
 
+## Merged preparation evidence
+
+GitHub metadata checked on 2026-09-18 confirms PR #46's final head
+`90e7dfe470e93be799f1e8e1047ab438e0285516` and successful
+[CI 35331709689](https://github.com/mimiqdev/ruscv-sim/actions/runs/35331709689)
+`Quality and tests` job. Coverage and the release/fresh project ELF compile/run
+steps were skipped. This PR-head result is not a new guest-suite run at
+`024d15d...`. The [closeout record](../archive/milestones/a6-closeout-record.md)
+retains the earlier `b8c0bba...` local checks and the Task 4 fresh source/tree
+identities; those results are not reassigned to the merge or this document's HEAD.
+
+Exact-merge [main CI 35332790906](https://github.com/mimiqdev/ruscv-sim/actions/runs/35332790906)
+separately succeeded at `024d15d546dc3b711f593cd44bb107612fd8b600`.
+The observed job/log includes Rust checks, release build/smoke, fresh project
+ELF compile/run and **51 total / 51 passed / 0 failed**, including all five A6
+trap guests; Coverage was skipped. This supplies new merge-head regression and
+project evidence for the matrix, without changing the older rows' evidence
+identities. It does not rerun ACT4; run 35325844246 remains the frozen external
+baseline at its original revision.
+
 ## Nine-criterion matrix
 
-Each disposition below is based on the cited source and assertion, not on the
-fact that a task PR merged. `Evidenced for closeout preparation` means the
-criterion has repository evidence at the stated identity; formal milestone
-closeout still requires the closeout record's review/merge boundary and must not
-be inferred from this draft.
+**Final disposition: all nine criteria accepted by the maintainer on 2026-09-18.**
+Each acceptance is based on the cited source/assertions and exact-revision
+execution, not merely PR merge status. The rows below preserve the historical
+preparation disposition and original evidence identities; the formal closeout's
+nine-row final table records acceptance. Exact-merge CI additionally covers the
+PR46 zero-budget/recursive assertions. No historical run is relabeled as an
+activation-HEAD test, and all stated limits remain in force.
 
-| # | Contract clause → source | Concrete test assertion(s) | Command / exact revision evidence | Disposition and limits |
+| # | Contract clause → source | Concrete test assertion(s) | Command / exact revision evidence | Historical preparation disposition and retained limits |
 | --- | --- | --- | --- | --- |
 | 1 | Synchronous entry and causes 0/1/4/5/6/7 → `src/core/mod.rs::step_outcome`, `enter_trap`, `classify_execute_error`; `src/core/trap.rs::handle_trap_checked`; `src/memory/mod.rs` | `test_machine_trap_entry_all_a6_synchronous_causes`; `task4_induced_faults_preserve_boundary_state_and_physical_transactions`; `fetch_load_store_and_control_alignment_faults_have_no_partial_side_effects`; `atomic_misalignment_enters_store_trap_before_any_data_transaction` assert cause, `mepc`, `mtval`, vector PC, unchanged `rd`/memory, `minstret == 0`, and zero transactions for Hart-side misalignment. | `cargo test --test trap_test`; `cargo test --test a6_task3_core_trap_test`; Task 4 fresh Rust/ELF evidence at source `845c633...`, tree equal to merge `f12b1f8...`. | **Evidenced for closeout preparation.** Physical flat-bus faults are covered; MMU/PMP/page faults and unknown adapter completion remain out of scope. |
 | 2 | Direct/vectored target calculation and guest trap behavior → `src/core/trap.rs::vector_trap`; `tests/bare-metal-riscv-test/rv64i/trap_{ecall,illegal,ebreak,vectored}.S` | `test_vector_trap_vectored_mode`, `test_vectored_mode_synchronous_exceptions_use_base`, and `test_vectored_mode_interrupt_offsets` distinguish synchronous BASE from interrupt offsets; the vectored guest's `BASE + 4*cause` sentinel fails if incorrectly reached. | `cargo test --test trap_test`; fresh five-guest build/run in the recorded PR45 verification at `845c633...`/tree `ce60a0a...`; CI `35328370857`. | **Evidenced for closeout preparation.** Only the A6 Machine-mode synchronous profile is claimed; asynchronous interrupt delivery is not integrated into the public core. |
@@ -99,19 +127,22 @@ identity, plan/config hashes, exact 51/51 classification counts, 51 audit
 checks, 12 rejected accounting mutations, six guest-control classifications,
 and the A5-only scope boundary. The ZIP remains external retained evidence.
 
-## Closeout and rolling-plan boundary
+## Formal closeout and successor boundary
 
-This assessment is intentionally a closeout-preparation draft. The active
-normative contract remains [`docs/dev-plan.md`](../dev-plan.md), including its
-§9 sequence. No successor milestone has been approved. Therefore this change
-must not replace `docs/dev-plan.md`, create an A5 forwarding record, enable A7,
-move old backlog items, weaken documentation policy, or alter ISA behavior. The
-archive copy and closeout record distinguish preparation from the later final
-rolling switch: after this work is independently reviewed and merged, a
-maintainer may verify the nine criteria again and separately approve a successor
-before replacing the active plan.
+A6 is formally completed and accepted. The [archived A6 contract](../archive/milestones/a6-machine-mode-trap-entry-return.md)
+retains its complete historical body. The approved [A7 contract](../dev-plan.md)
+is now the sole active plan: non-atomic access migration with conservative
+compatibility defaults, preserving legacy atomic behavior as explicit debt.
+Activation is documentation-only; PR #47 still requires review and merge and
+no A7 implementation is claimed. Accepted ADRs and A5 historical records remain
+unchanged.
 
-Known boundaries retained in the eventual closeout record are: flat physical
+The closeout record supplies protected Git tree/blob identities bridging the
+historical executed evidence to this source-unchanged activation. Current checks
+verify that bridge and documentation consistency, not fresh Rust/guest execution.
+No prior review or CI is claimed as review of the activation HEAD.
+
+Known boundaries retained in the formal closeout record are: flat physical
 RAM/UART/HTIF execution; synchronous Machine-mode traps only; fixed 32-bit
 fetch/IALIGN=32 with C disabled; no MMU/Sv39 wiring, PMP, asynchronous
 interrupts, SRET/delegation integration, Debug Mode, multi-Hart ordering,

@@ -5,7 +5,7 @@ This directory contains completed and explicitly superseded milestone plans with
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
 [current contract](../../dev-plan.md) for the sole current milestone:
-Milestone A6 — Machine-Mode Synchronous Trap Entry and Return.
+Milestone A7 — Non-Atomic Physical-Access Boundary Migration.
 
 ## Rolling process
 
@@ -17,13 +17,16 @@ Milestone A6 — Machine-Mode Synchronous Trap Entry and Return.
 
 ## Records
 
-- [A6: Machine-mode synchronous trap entry and return — closeout preparation](a6-closeout-record.md)
-  - Draft evidence/archive preparation only; not a formal milestone closeout and not a successor contract
-  - [Capability and closeout-preparation assessment](../../verification/a6-capability-assessment.md)
+- [A7: Non-atomic physical-access migration — approved proposal snapshot](a7-non-atomic-physical-access-proposal.md)
+  - Full candidate `2de6e96` approved 2026-09-18; superseded by the active A7 contract, not a second Current plan
+
+- [A6: Machine-mode synchronous trap entry and return — formal closeout](a6-closeout-record.md)
+  - Formally completed/accepted 2026-09-18; preparation merged in PR #46 as `024d15d`, activation delivery PR #47 not claimed merged
+  - [Capability and acceptance assessment](../../verification/a6-capability-assessment.md)
   - [Original A6 contract snapshot](a6-machine-mode-trap-entry-return.md)
 
 - [A6: Machine-mode synchronous trap entry and return — original proposal](a6-trap-entry-return-proposal.md)
-  - Historical proposal snapshot preserved from commit `9429e6a`; superseded by active contract [`../../dev-plan.md`](../../dev-plan.md)
+  - Historical proposal snapshot preserved from commit `9429e6a`; superseded by the [preserved A6 contract](a6-machine-mode-trap-entry-return.md)
 
 - [A5: ACT4 RV64I selected external compatibility — forwarding record](a5-forwarding-record.md)
   - Post-closeout forwarding record preserved upon Milestone A6 activation
@@ -35,7 +38,7 @@ Milestone A6 — Machine-Mode Synchronous Trap Entry and Return.
   - [Preserved approved contract](a5-act4-rv64i-external-compatibility.md)
   - [Complete capability assessment](a5-capability-assessment.md)
   - [Current assessment navigation](../../verification/a5-capability-assessment.md)
-  - Formally closed out in PR #37; no approved successor
+  - Formally closed out in PR #37; subsequently succeeded by the approved A6 contract (historical A5 bodies retain their original status)
 
 - [A4: Shared run control and image installation — closeout proposal](a4-closeout-record.md)
   - Closeout and detailed A5 contract approved in PR #31; original bodies preserve pre-merge status

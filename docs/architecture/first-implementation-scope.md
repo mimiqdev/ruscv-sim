@@ -18,7 +18,7 @@ The [A4 capability assessment](../verification/a4-capability-assessment.md)
 records integrated evidence for the two public entry loops, not
 `RiscvCore::run`. T3 exact-head independent review and final merge CI succeeded,
 including the separate 46/46 guest run. Formal A4 acceptance and the sole
-[current A5 contract](../dev-plan.md), ACT4 RV64I external compatibility,
+[historical A5 contract](../archive/milestones/a5-act4-rv64i-external-compatibility.md), ACT4 RV64I external compatibility,
 were approved in [PR #31](https://github.com/mimiqdev/ruscv-sim/pull/31),
 merged as `a4804341f4ae0a5344beea7ef6c53667e1912c93` on 2026-09-11.
 
@@ -27,6 +27,16 @@ is preserved as historical input. It was not approved: physical/composition
 migration, precise Hart outcomes and observation, and Runner consolidation are
 not commitments of the A5 contract. Those choices require separate
 re-evaluation and approval; remaining gaps are not automatically scheduled.
+
+A5 subsequently closed in PR #37. A6's synchronous trap integration and PR #46
+preparation evidence were formally accepted on 2026-09-18; see the
+[A6 assessment](../verification/a6-capability-assessment.md).
+[A7](../dev-plan.md) is now the sole active contract: fetch and ordinary
+integer/FP load/store migration, preserving legacy atomics on shared storage
+and locking as explicit debt rather than disabling them. The complete contract
+and conservative compatibility defaults are approved. Activation is documentation
+only, not migration implementation, PR merge, or a commitment to the entire old
+migration candidate or full ADR-0002 convergence.
 
 See the [A0 closeout record](../archive/milestones/a0-closeout-record.md) for the
 architecture acceptance evidence and limitations. Accepted ADRs constrain later

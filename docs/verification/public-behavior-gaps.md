@@ -40,9 +40,14 @@ repair records below describe those earlier runs, not current blockers.
 Their original diagnostic and verification bodies are preserved. These decisions
 do not promise successful misalignment or architectural trap delivery; they do
 not change G-15's separately authorized scope. A5 was formally closed out in PR #37
-(merged `d1834cc6566b342824bca30772cc829953a5c5ef`). Milestone A6 is approved
-as the sole active milestone contract ([dev-plan.md](../dev-plan.md)); implementation
-work under A6 has not yet commenced.
+(merged `d1834cc6566b342824bca30772cc829953a5c5ef`). A6 was formally accepted
+on 2026-09-18; implementation and preparation are merged through PR #46
+(`024d15d`). See the [A6 assessment](a6-capability-assessment.md) for exact Rust,
+project-guest and separate ACT4 evidence. [A7](../dev-plan.md) is the approved
+active non-atomic migration contract, with conservative compatibility defaults
+and legacy atomic debt preserved. Documentation activation is not implementation
+or a claim that PR #47 has merged. Historical A1/A5 observations below retain
+their original revisions.
 
 | Disposition | Meaning in this register |
 | --- | --- |
@@ -83,7 +88,17 @@ work under A6 has not yet commenced.
 
 ### G-03 — Public commit log loses opcodes for nonzero ELF bases
 
-- **Disposition:** **Reproduced defect**.
+**A6 update (source inspection at `024d15d`, 2026-09-18): repaired.**
+`src/executor.rs::load_and_run` now logs `retired.instruction` supplied by
+`RiscvCore::step_outcome`, without opcode re-fetch. The persistent test
+`public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` now
+asserts each actual opcode, while retaining the no-memory-suffix assertion.
+Runner GPR snapshots remain; full Hart-owned effect observation is not claimed.
+Exact-merge CI is recorded in the [A6 assessment](a6-capability-assessment.md).
+The following reproduction and test description are historical A1 evidence,
+not current behavior or an outstanding repair task.
+
+- **Historical disposition:** **Reproduced defect**.
 - **Surface:** `--log-commits` on the CLI/public ELF path.
 - **Implementation evidence:** Before `core.step`, `load_and_run` re-fetches the opcode with `pc_before.wrapping_sub(base_addr)`. The CLI core is reset with base 0 and `SystemBus` routes RAM at the ELF base, so this diagnostic read is outside the bus RAM window for a nonzero base; `.unwrap_or(0)` then logs opcode zero.
 - **Reproduction:** The same three-instruction transient program produced correct opcodes at base 0, but at base `0x80000000` produced:
@@ -96,7 +111,7 @@ work under A6 has not yet commenced.
 
 - **Existing tests:** Persistent `public_behavior::public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` is **strong**: it reads all four actual public lines and asserts the zero-opcode observation. The current `test_log_commit_path_with_logger` is **strong** for successful execution, line count, and PC/privilege shape, but deliberately avoids asserting the known-bad opcode; it therefore does not weaken or replace this reproduction. Formatter tests such as `test_log_commit_format` are **strong** for supplied arguments but do not exercise the public re-fetch.
 - **Impact:** Nonzero-base commit logs are not reliable instruction evidence. The zero opcode output must not be treated as a compatibility format.
-- **Next decision:** A later observation/logging scope must choose a fix or an explicit limitation. No source change is made here.
+- **Historical next decision:** A later observation/logging scope was needed. A6 supplied the opcode fix above; memory suffixes remain a separate G-09 limitation.
 
 ### G-04 — Native UART routing window exceeds the UART-declared range
 

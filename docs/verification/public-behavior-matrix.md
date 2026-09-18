@@ -41,9 +41,12 @@ authorized G-15. The approved A5 profile requires naturally aligned data accesse
 and excludes eight successful-misalignment cases. No architectural trap/MMU/
 privilege, FENCE.I or extension-wide certification claim follows.
 Original A1–A4 rows retain their as-of scope. A5 is formally closed out (PR #37
-merged `d1834cc6566b342824bca30772cc829953a5c5ef`). A6 is now the active
-milestone contract; the historical A1–A5 rows below are not A6 Task 4 evidence.
-See the separate [A6 capability and evidence matrix](a6-capability-assessment.md).
+merged `d1834cc6566b342824bca30772cc829953a5c5ef`). A6 was formally accepted
+on 2026-09-18; [A7](../dev-plan.md) is the approved active non-atomic migration
+contract, not an implemented migration. The historical A1–A5 rows below are not
+A6 Task 4 evidence. See the separate [A6 acceptance matrix](a6-capability-assessment.md).
+The historical defect labels below do not override A7's explicit preservation
+ledger for legacy atomic/API behavior; preservation is not certification.
 
 - **Verified** means that the named behavior was exercised or asserted with a
   meaningful value, state, output, or artifact in the named configuration.
