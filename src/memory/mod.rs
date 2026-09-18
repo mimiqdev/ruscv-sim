@@ -14,6 +14,14 @@ pub enum MemoryError {
     Misaligned(u64, u32),
     #[error("Memory access out of bounds")]
     OutOfBounds,
+    /// The target/backend rejected the request because the host-side adapter
+    /// could not complete it.  This is distinct from a guest-visible target
+    /// rejection and must not be guessed from an error string.
+    #[error("Memory backend failure: {0}")]
+    Backend(String),
+    /// The physical-access adapter violated its transport/protocol contract.
+    #[error("Memory protocol failure: {0}")]
+    Protocol(String),
 }
 
 /// Memory interface trait (supports RV64I with 64-bit addresses)

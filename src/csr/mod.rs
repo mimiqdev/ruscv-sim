@@ -277,6 +277,26 @@ impl CsrFile {
         Ok(())
     }
 
+    /// Return the authoritative Machine-mode retirement counter without
+    /// applying the current privilege view.
+    ///
+    /// Retirement is a Hart-owned architectural transition.  A User or
+    /// Supervisor instruction may retire and increment `minstret` even though
+    /// it cannot read or write the Machine CSR through a CSR instruction, so
+    /// the core uses this narrow internal inspection path rather than changing
+    /// the CSR privilege view around a retirement update.
+    pub(crate) fn minstret_value(&self) -> u64 {
+        self.csrs.get(&machine::MINSTRET).copied().unwrap_or(0)
+    }
+
+    /// Increment the single authoritative `minstret` storage for one retired
+    /// instruction.
+    pub(crate) fn increment_minstret(&mut self) -> u64 {
+        let value = self.csrs.entry(machine::MINSTRET).or_insert(0);
+        *value = value.wrapping_add(1);
+        *value
+    }
+
     /// Write a CSR and return the old/new values plus explicit-write fact.
     pub fn write_with_access(&mut self, addr: u16, value: u64) -> Result<CsrAccess, CsrError> {
         let old_value = self.read(addr)?;

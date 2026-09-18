@@ -96,7 +96,9 @@ fn cli_near_max_load_and_store_exit_cleanly() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(text.contains("Invalid memory address"), "{text}");
+        assert!(text.contains("TIMEOUT"), "{text}");
+        assert!(text.contains("Timeout after 10 cycles"), "{text}");
+        assert!(!text.contains("Invalid memory address"), "{text}");
         assert!(!text.contains("panicked"), "{text}");
     }
 }
@@ -252,9 +254,11 @@ fn public_invalid_access(flat: bool, store: bool) {
     } else {
         load_and_run(&elf, Some(10), None, None, false).unwrap()
     };
-    assert!(!result.timed_out);
-    let message = result.error.expect("invalid access must stop execution");
-    assert!(message.contains("Invalid memory address"), "{message}");
-    assert_eq!(result.cycles, if flat { 2 } else { 1 });
-    assert_eq!(result.final_pc, fixture::BASE + result.cycles * 4);
+    // A valid aligned transaction to an unmapped address is now a guest
+    // access-fault trap.  With the default mtvec of zero and no handler, the
+    // runner repeatedly enters the fault path until its bounded turn budget.
+    assert!(result.timed_out);
+    assert_eq!(result.error.as_deref(), Some("Timeout after 10 cycles"));
+    assert_eq!(result.cycles, 10);
+    assert_eq!(result.final_pc, 0);
 }

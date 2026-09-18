@@ -4,7 +4,7 @@
 //! Instruction execution dispatcher with re-exports from ISA modules.
 
 use crate::core::CoreState;
-use crate::csr::CsrError;
+use crate::csr::{CsrAccess, CsrError};
 use crate::decode::Funct3;
 use crate::decode::{DecodedInstruction, Opcode};
 use crate::memory::{MemoryError, MemoryInterface};
@@ -79,14 +79,24 @@ impl Executor {
         Self {}
     }
 
-    /// Execute decoded instruction
-    pub fn execute(
+    /// Execute decoded instruction while retaining the CSR write
+    /// classification for the retirement boundary.
+    ///
+    /// The existing [`Self::execute`] API intentionally remains the public
+    /// compatibility entry point.  The core uses this companion method so a
+    /// CSRRS/CSRRC read-only access cannot be confused with an explicit
+    /// `minstret` write that has the same resulting value.
+    pub fn execute_with_csr_access(
         &mut self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
         mem: &mut dyn MemoryInterface,
-    ) -> Result<(), ExecuteError> {
-        match instr.opcode {
+    ) -> Result<Option<CsrAccess>, ExecuteError> {
+        if instr.opcode == Opcode::System {
+            return exec_system_with_csr_access(instr, state, mem);
+        }
+
+        let result = match instr.opcode {
             Opcode::Lui => exec_lui(instr, state, mem),
             Opcode::Auipc => exec_auipc(instr, state, mem),
             Opcode::Jal => exec_jal(instr, state, mem),
@@ -97,8 +107,7 @@ impl Executor {
             Opcode::LoadFp => self.execute_fpload(instr, state, mem),
             Opcode::StoreFp => self.execute_fpstore(instr, state, mem),
             Opcode::OpImm => {
-                // Dispatch to shift or ALU based on funct3
-                // SLLI, SRLI, SRAI use funct3 Sll or SrlSra
+                // Dispatch to shift or ALU based on funct3.
                 if let Some(funct3) = instr.funct3 {
                     match funct3 {
                         Funct3::Sll | Funct3::SrlSra => exec_shift_imm(instr, state, mem),
@@ -109,13 +118,12 @@ impl Executor {
                 }
             }
             Opcode::Op => {
-                // Check funct7 first to distinguish RV64M (mul/div) from RV64I (ALU)
+                // Check funct7 first to distinguish RV64M (mul/div) from
+                // RV64I (ALU).
                 let funct7 = instr.funct7.unwrap_or(0);
                 if funct7 == 0b000_0001 {
-                    // RV64M multiplication and division instructions
                     self.execute_rv64m(instr, state, mem)
                 } else if let Some(funct3) = instr.funct3 {
-                    // Dispatch to shift or ALU based on funct3
                     match funct3 {
                         Funct3::Sll | Funct3::SrlSra => exec_shift(instr, state, mem),
                         _ => exec_op(instr, state, mem),
@@ -125,11 +133,11 @@ impl Executor {
                 }
             }
             Opcode::OpImm32 => {
-                // Dispatch to shift (for SLLIW/SRLIW/SRAIW) or ALU (for ADDIW)
                 if let Some(funct3) = instr.funct3 {
                     match funct3 {
-                        Funct3::Sll | Funct3::SrlSra => exec_op_imm_32(instr, state, mem),
-                        Funct3::AddSub => exec_op_imm_32(instr, state, mem),
+                        Funct3::Sll | Funct3::SrlSra | Funct3::AddSub => {
+                            exec_op_imm_32(instr, state, mem)
+                        }
                         _ => Err(ExecuteError::InvalidOperation),
                     }
                 } else {
@@ -137,7 +145,6 @@ impl Executor {
                 }
             }
             Opcode::Op32 => {
-                // Dispatch to shift (for SLLW/SRLW/SRAW) or ALU (for ADDW/SUBW)
                 if let Some(funct3) = instr.funct3 {
                     match funct3 {
                         Funct3::Sll | Funct3::SrlSra | Funct3::AddSub => {
@@ -150,10 +157,24 @@ impl Executor {
                 }
             }
             Opcode::OpFp => self.execute_fpu(instr, state, mem),
-            Opcode::System => exec_system(instr, state, mem),
             Opcode::Amo => self.execute_amo(instr, state, mem),
             Opcode::MiscMem => exec_fence(instr, state, mem),
-        }
+            // SYSTEM is handled above so this arm is unreachable, but keeping
+            // it explicit makes the dispatcher exhaustive if Opcode grows.
+            Opcode::System => unreachable!("SYSTEM was handled before dispatch"),
+        };
+
+        result.map(|_| None)
+    }
+
+    /// Execute decoded instruction.
+    pub fn execute(
+        &mut self,
+        instr: &DecodedInstruction,
+        state: &mut CoreState,
+        mem: &mut dyn MemoryInterface,
+    ) -> Result<(), ExecuteError> {
+        self.execute_with_csr_access(instr, state, mem).map(|_| ())
     }
 
     /// Execute FPU (Floating-Point Unit) instructions
