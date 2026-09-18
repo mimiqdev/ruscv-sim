@@ -1,9 +1,11 @@
 # Archived A6 Contract — Machine-Mode Synchronous Trap Entry and Return
 
-> Historical contract snapshot archived for A6 closeout preparation on 2026-09-18.
-> The normative contract body below is preserved from `docs/dev-plan.md`; only
-> this archival note and relative-link repairs are outside the original body.
-> This file is not a successor contract and does not claim milestone completion.
+> Historical completed contract. A6 was formally accepted and closed by the
+> maintainer on 2026-09-18; see [closeout evidence](a6-closeout-record.md).
+> The original contract body below, including its then-Current header, remains
+> unchanged except relative-link repairs. It is not an active contract.
+> [A7](../../dev-plan.md) is the approved successor. The activation delivery PR
+> is not claimed merged by this historical status update.
 
 # Development Plan
 

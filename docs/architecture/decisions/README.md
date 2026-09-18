@@ -45,9 +45,10 @@ limitations and successor decisions. [A4's closeout](../../archive/milestones/a4
 and the detailed [historical A5 contract](../../archive/milestones/a5-act4-rv64i-external-compatibility.md) were approved by
 [PR #31](https://github.com/mimiqdev/ruscv-sim/pull/31), merged as
 `a4804341f4ae0a5344beea7ef6c53667e1912c93` on 2026-09-11.
-A6 is the current approved milestone contract. Its closeout-preparation evidence
-merged in PR #46 (`024d15d`), but final rolling completion and successor activation
-remain pending. The [A7 non-atomic physical-access candidate](../../proposals/a7-physical-access-contract.md)
-is Draft/non-normative: it preserves legacy atomics as debt, not an ADR exception
-permitting split atomics. Accepted ADR Context sections preserve historical motivation;
-use the current inventory and A6 evidence for implemented trap/runner behavior.
+A6 was formally accepted on 2026-09-18 on the recorded implementation and
+PR #46 (`024d15d`) evidence. [A7](../../dev-plan.md) is the approved active
+non-atomic physical-access migration contract, preserving legacy atomics as debt,
+not an ADR exception permitting split atomics. Its activation is documentation
+only; no migration implementation or activation-PR merge is claimed. Accepted
+ADR Context sections preserve historical motivation; use the current inventory
+and A6 evidence for implemented trap/runner behavior.

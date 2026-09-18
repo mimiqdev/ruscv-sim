@@ -28,16 +28,15 @@ migration, precise Hart outcomes and observation, and Runner consolidation are
 not commitments of the A5 contract. Those choices require separate
 re-evaluation and approval; remaining gaps are not automatically scheduled.
 
-A5 subsequently closed in PR #37. A6 is the sole [active contract](../dev-plan.md).
-Its synchronous trap integration and merged PR #46 closeout preparation are
-recorded in the [A6 assessment](../verification/a6-capability-assessment.md);
-final rolling closeout remains pending. The
-[A7 non-atomic physical-access candidate](../proposals/a7-physical-access-contract.md)
-proposes fetch and ordinary load/store migration, preserving legacy atomics on
-shared storage as explicit debt rather than disabling them. Its conservative
-compatibility defaults and complete contract await approval; policy leaves A6
-Current until the documented activation/rotation step. This is not a commitment
-to the entire old migration candidate or full ADR-0002 convergence.
+A5 subsequently closed in PR #37. A6's synchronous trap integration and PR #46
+preparation evidence were formally accepted on 2026-09-18; see the
+[A6 assessment](../verification/a6-capability-assessment.md).
+[A7](../dev-plan.md) is now the sole active contract: fetch and ordinary
+integer/FP load/store migration, preserving legacy atomics on shared storage
+and locking as explicit debt rather than disabling them. The complete contract
+and conservative compatibility defaults are approved. Activation is documentation
+only, not migration implementation, PR merge, or a commitment to the entire old
+migration candidate or full ADR-0002 convergence.
 
 See the [A0 closeout record](../archive/milestones/a0-closeout-record.md) for the
 architecture acceptance evidence and limitations. Accepted ADRs constrain later

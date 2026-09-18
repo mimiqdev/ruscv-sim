@@ -1,17 +1,17 @@
-# Development Plan
+# Archived A7 Proposal — Non-Atomic Physical-Access Migration
 
-**Current milestone:** A7 — Non-Atomic Physical-Access Boundary Migration
+> Historical proposal approved by the maintainer on 2026-09-18 at candidate
+> `2de6e96e45764e2d21731b2a5e619cc23f8338ca`. Superseded by the activated
+> [A7 contract](../../dev-plan.md). The full original Draft body follows;
+> only relative links are repaired. Its pending-approval statements are historical.
 
-**Status:** Current
+# A7 Candidate Contract — Non-Atomic Physical-Access Boundary Migration
 
-**Authority:** Normative milestone contract. The maintainer approved the complete
-revised scope and conservative compatibility defaults on 2026-09-18, at candidate
-`2de6e96e45764e2d21731b2a5e619cc23f8338ca`, and explicitly authorized A6 closeout
-and A7 activation. This target contract does not claim implementation completeness.
-The activation change is documentation-only; it does not start Rust implementation
-or claim that its delivery PR is already merged.
+**Status:** Draft — revised scope; not approved or activated
 
-**Activated:** 2026-09-18
+**Authority:** Informational, non-normative candidate milestone contract. Approval
+to revise the scope is not approval of the complete contract below or permission
+to implement it. This target document does not claim implementation completeness.
 
 **Evidence baseline:** `024d15d546dc3b711f593cd44bb107612fd8b600`, source inspected
 2026-09-18. This change is documentation-only.
@@ -35,39 +35,36 @@ forbidden. The previous A/B/C choice is no longer an activation gate.
 
 The final architecture remains unchanged:
 
-* [ADR-0001](architecture/decisions/0001-hart-execution-outcome-and-observation.md)
+* [ADR-0001](../../architecture/decisions/0001-hart-execution-outcome-and-observation.md)
   owns Hart outcomes, architectural effects and observations.
-* [ADR-0002](architecture/decisions/0002-physical-access-transaction-and-fault.md)
+* [ADR-0002](../../architecture/decisions/0002-physical-access-transaction-and-fault.md)
   requires one physical port, complete raw-byte transfers, fault separation,
   indivisible atomic envelopes and Hart-owned reservation semantics. A7 implements
   only the non-atomic portion. Retained legacy atomics are known nonconformance,
   not an exception added to the ADR or proof of transaction atomicity.
-* [ADR-0003](architecture/decisions/0003-runner-machine-and-platform-ownership.md)
+* [ADR-0003](../../architecture/decisions/0003-runner-machine-and-platform-ownership.md)
   owns placement/composition/Runner responsibilities; offset conversion is not MMU
   translation.
-* [ADR-0004](architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md)
+* [ADR-0004](../../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md)
   owns budget/time/control boundaries; A6's existing accounting is preserved.
 
-Under [documentation policy](documentation-policy.md) and `AGENTS.md`, this is
-the sole Current milestone contract. A6 was formally accepted and closed on
-2026-09-18; its [full contract](archive/milestones/a6-machine-mode-trap-entry-return.md)
-and [closeout evidence](archive/milestones/a6-closeout-record.md) are preserved.
-The [approved proposal snapshot](archive/milestones/a7-non-atomic-physical-access-proposal.md)
-retains drafting history, not a second active contract. Approval covers the full
-scope and preservation ledger below, not incidental behavior tightening or the
-rejected atomic-capability-denial option.
+[Documentation policy](../../documentation-policy.md) rule 2 and `AGENTS.md` require
+[dev-plan.md](../../dev-plan.md) to contain exactly one Current milestone contract.
+It therefore remains **unchanged, with A6 effective**, rather than holding a
+second Current or replacing A6 with an unapproved Draft. This document supplies
+the complete candidate objective, scope, constraints, deliverables and acceptance
+criteria for a later approved replacement. Section 9 gives the exact activation
+sequence; approving this PR as documentation alone does not activate A7.
 
 ## 2. Starting point and evidence identities
 
-The [A6 assessment](verification/a6-capability-assessment.md) and
-[closeout record](archive/milestones/a6-closeout-record.md) record PR #46's
+The [A6 assessment](../../verification/a6-capability-assessment.md) and
+[closeout record](../../archive/milestones/a6-closeout-record.md) record PR #46's
 merge at the baseline above. PR-head CI `35331709689` and exact-merge main CI
 `35332790906` are distinct: the latter freshly compiled and passed 51 project
 ELFs, including five trap guests. Frozen ACT4 run `35325844246` remains evidence
 at source `845c63325db5ac87ab2ff0ed260453dc3b396ae9`, not at this documentation
-HEAD. A6 formal acceptance and this successor's activation were authorized on
-2026-09-18. The documentation delivery PR still requires independent review and
-merge; that workflow state is distinct from the maintainer's acceptance decision.
+HEAD. Final A6 rolling closeout is pending approval of its successor.
 
 | Source / focused regression | Existing behavior to preserve or debt not to overclaim |
 | --- | --- |
@@ -83,7 +80,7 @@ merge; that workflow state is distinct from the maintainer's acceptance decision
 
 ## 3. Scope, non-goals and deliverables
 
-In scope for A7:
+In scope after explicit activation:
 
 1. Non-atomic request/result vocabulary and native RAM/UART/HTIF adapters for
    fetch and ordinary scalar/FP memory transfers, synchronous and single-Hart.
@@ -256,12 +253,12 @@ unified, atomics are transaction-safe, or the A extension is certified.
 
 ## 6. Conservative compatibility ledger
 
-The defaults below are approved preservation rules, not approval of incidental
+The defaults below are proposed preservation rules, not approval of incidental
 behavior tightening. Any deviation requires an explicit decision and exact
 old→new tests. Rejecting option B does not approve HTIF, host-write, placement or
 third-party API changes.
 
-| Surface | Approved conservative default | Measurable boundary / escalation |
+| Surface | Conservative default in this candidate | Measurable boundary / escalation |
 | --- | --- | --- |
 | HTIF span checking | New non-atomic port validates a full span at the existing 8-byte endpoint. Existing public typed `SystemBus` methods and the legacy atomic adapter retain start-address-only behavior. An aligned ordinary guest SD can reach only the base within that endpoint. | Test unshadowed raw port interior-span rejection with no callback, old direct dword calls at base+1 through base+7 with their existing callback/zero-read behavior, and guest misalignment before target access. Legacy SC.W at base+4 can currently reach a dword callback due to width debt: preserve it on the legacy path. No public API tightening is silently authorized; shared target object, explicitly different legacy validation, not claimed universal conformance. |
 | Host `write_mem` | Keep byte-loop semantics outside the migrated guest transaction guarantee; do not add all-or-nothing host writes in A7. It still writes the same RAM seen by both paths. | Characterize an in-range prefix followed by out-of-range failure and retain prefix visibility. Preserve empty writes and offset meaning; characterize overflow/panic behavior in a bounded harness without claiming robustness or requiring a new panic contract. Any hardening is a separate approved change. |
@@ -277,9 +274,8 @@ API surface**; these are not hidden behind a claim of universal unification.
 
 ## 7. Tasks, dependencies and executable acceptance criteria
 
-The tasks below define the approved implementation scope; this activation PR
-performs no Rust implementation. New test names are deliverables, not existing
-tests or observed passes. Run each
+All work below is proposed for activation, not authorized Rust work in this PR.
+New test names are deliverables, not existing tests or observed passes. Run each
 increment's narrow row first; run all rows at the final reviewed implementation
 head. Missing/skipped required tools or tests block acceptance, not count as pass.
 
@@ -314,7 +310,7 @@ frozen pinned setup: **51 ACT4 nontrapping RV64I cases** generated/executed/pass
 linked audits and fail-closed controls. Keep selection unchanged and record
 run/head/artifact hashes. These are two different sets of 51.
 
-The [A6 replay JSON](verification/a6-act4-replay-35325844246.json) retains
+The [A6 replay JSON](../../verification/a6-act4-replay-35325844246.json) retains
 ACT4 `a7c99303516f4e668f7488f172043392e23b9dfd`, source revision, selection and
 configuration hashes. Replaying that ZIP is historical comparison, not fresh A7
 execution. Neither 51-case suite proves atomic correctness; T0/T3/T4 add the
@@ -339,3 +335,43 @@ are true:
    implementation head, with no historical result relabeled as a new run.
 6. Closeout states “non-atomic physical-access migration completed” only. Section
    5.3 remains the unscheduled exit checklist for eventual full convergence.
+
+## 9. Approval and exact activation procedure
+
+The candidate is ready for review as a whole with preservation defaults, not a
+menu that selects atomic rejection. No approval of incidental behavior changes
+is inferred from the scope direction. `docs/dev-plan.md` cannot simultaneously
+be the effective A6 Current contract and an A7 Draft candidate under repository
+policy; keeping it unchanged is the explicit policy-compliant fallback.
+
+After the maintainer **explicitly approves this revised contract/PR for
+activation**, one authorized activation change may do all of the following;
+a separate new implementation effort is not implied by preparing these steps:
+
+1. Recheck the nine A6 criteria against the [assessment](../../verification/a6-capability-assessment.md),
+   exact PR #46/merge CI, fresh project evidence and frozen ACT4 identities.
+   Preserve old source heads and limitations; do not claim A6 fixes atomic debt.
+2. Finalize the [A6 closeout record](../../archive/milestones/a6-closeout-record.md)
+   with approval date, reviewed activation revision, criterion disposition and
+   remaining boundaries. The [archived contract](../../archive/milestones/a6-machine-mode-trap-entry-return.md)
+   already preserves A6's body; verify equality except archive header/link repair
+   and update only the archival disposition, not historical A5 records or ADRs.
+3. Promote **this approved contract's full sections 1–8**, including preservation
+   ledger and legacy debt, into `docs/dev-plan.md` with repaired relative links,
+   A7 Current/Normative header and actual approval date. Convert the Draft-era
+   approval/policy notices in sections 1 and 7 to the recorded activation fact,
+   retaining the technical scope, preservation defaults, evidence revisions and
+   residual debt unchanged; do not copy a stale “A6 remains effective” notice
+   into an activated A7 plan. Replace A6 only in this atomic documentation
+   transition; do not leave two Current contracts. Change
+   this proposal to an informational pointer to the approved contract rather
+   than maintaining a second normative copy; retain drafting provenance in Git.
+4. Update navigation and A6 final disposition together; run link, protected-file
+   and evidence-identity checks at the new exact head, commit/push and obtain
+   independent review. Approval to activate is not permission to merge, tag or
+   release; those authorizations remain separate.
+
+Until that explicit approval, A6 remains effective, this proposal remains Draft,
+and no Rust implementation or plan rotation occurs. Final A6 closeout and A7
+activation can be prepared in the same subsequently approved change, without
+inventing a requirement for another future milestone or preapproving hardening.

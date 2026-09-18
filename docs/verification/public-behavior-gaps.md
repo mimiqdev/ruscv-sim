@@ -40,12 +40,14 @@ repair records below describe those earlier runs, not current blockers.
 Their original diagnostic and verification bodies are preserved. These decisions
 do not promise successful misalignment or architectural trap delivery; they do
 not change G-15's separately authorized scope. A5 was formally closed out in PR #37
-(merged `d1834cc6566b342824bca30772cc829953a5c5ef`). Milestone A6 is approved
-as the sole active milestone contract ([dev-plan.md](../dev-plan.md)).
-A6 implementation and closeout preparation are now merged through PR #46
-(`024d15d`); see the [A6 assessment](a6-capability-assessment.md) for exact
-Rust, project-guest and separate ACT4 evidence. Final rolling closeout remains
-pending. Historical A1/A5 observations below retain their original revisions.
+(merged `d1834cc6566b342824bca30772cc829953a5c5ef`). A6 was formally accepted
+on 2026-09-18; implementation and preparation are merged through PR #46
+(`024d15d`). See the [A6 assessment](a6-capability-assessment.md) for exact Rust,
+project-guest and separate ACT4 evidence. [A7](../dev-plan.md) is the approved
+active non-atomic migration contract, with conservative compatibility defaults
+and legacy atomic debt preserved. Documentation activation is not implementation
+or a claim that PR #47 has merged. Historical A1/A5 observations below retain
+their original revisions.
 
 | Disposition | Meaning in this register |
 | --- | --- |

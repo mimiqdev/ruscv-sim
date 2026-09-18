@@ -33,7 +33,7 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Proposals (not active contracts)
 
-- [A7 non-atomic physical-access migration candidate](proposals/a7-physical-access-contract.md) — Draft/non-normative complete candidate contract. Fetch and ordinary loads/stores migrate; legacy atomics retain behavior as explicit debt, not disabled or certified. Conservative compatibility defaults and the full revised contract await approval. Policy keeps A6 as the sole active contract until the documented approval/rotation step; PR #46 merged closeout preparation only.
+- [Active A7 non-atomic physical-access contract](dev-plan.md) — approved and activated 2026-09-18, following formal A6 acceptance. Fetch and ordinary integer/FP loads/stores are in scope; legacy atomics retain behavior on shared storage/locking as explicit debt, not disabled or certified. Conservative compatibility defaults are approved. Activation is documentation-only; PR #47 is not claimed merged. [Proposal history](archive/milestones/a7-non-atomic-physical-access-proposal.md).
 
 ## Verification
 
@@ -45,7 +45,7 @@ Target architecture is not implementation status. Component presence is not end-
 - [A1 public behavior compatibility matrix](verification/public-behavior-matrix.md)
 - [A1 public behavior defect and gap register](verification/public-behavior-gaps.md)
 - [Project-authored bare-metal tests](verification/bare-metal-tests.md)
-- [A6 capability and closeout-preparation assessment](verification/a6-capability-assessment.md)
+- [A6 capability and acceptance assessment](verification/a6-capability-assessment.md)
 - [A6 retained A5 ACT4 replay summary](verification/a6-act4-replay-35325844246.json)
 - [External RISC-V test integration contract](verification/external-riscv-tests.md)
 - [Commit tracing and differential testing](verification/commit-tracing.md)
