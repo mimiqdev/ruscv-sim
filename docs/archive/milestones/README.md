@@ -1,6 +1,6 @@
 # Archived Milestones
 
-This directory contains completed and explicitly superseded milestone plans with their historical outcomes.
+This directory contains completed and explicitly superseded milestone plans with their historical outcomes, plus clearly labeled preparation records that do not claim completion.
 
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
@@ -16,6 +16,11 @@ Milestone A6 — Machine-Mode Synchronous Trap Entry and Return.
 5. Promote the next milestone into `docs/dev-plan.md`.
 
 ## Records
+
+- [A6: Machine-mode synchronous trap entry and return — closeout preparation](a6-closeout-record.md)
+  - Draft evidence/archive preparation only; not a formal milestone closeout and not a successor contract
+  - [Capability and closeout-preparation assessment](../../verification/a6-capability-assessment.md)
+  - [Original A6 contract snapshot](a6-machine-mode-trap-entry-return.md)
 
 - [A6: Machine-mode synchronous trap entry and return — original proposal](a6-trap-entry-return-proposal.md)
   - Historical proposal snapshot preserved from commit `9429e6a`; superseded by active contract [`../../dev-plan.md`](../../dev-plan.md)

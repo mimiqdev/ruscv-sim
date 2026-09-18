@@ -6,7 +6,8 @@
 
 **Last verified:** 2026-09-18 inventory; A4 evidence updated 2026-09-11;
 A5 selected external evidence reconciled 2026-09-15; A6 Task 4 guest/evidence
-verified at `82f2f8011a0acc4b23deb88c6aab58cebf2e2abc`
+verified at source `845c63325db5ac87ab2ff0ed260453dc3b396ae9` (tree equal to
+implementation merge `f12b1f80907e92b1c82b33ac669b961cc17f59c9`)
 
 **Scope:** The public ELF execution path, adjacent library APIs, and the integration status of existing ISS/VP components
 
@@ -42,10 +43,13 @@ synchronous fetch/decode/execute faults enter Machine-mode traps without retirem
 `minstret` uses explicit-write precedence; and both public runners charge started
 slots separately from completed turns while continuing into guest handlers. Task 4
 adds five self-checking trap guests, fresh isolated ELF build/run scripts, public
-CLI/library integration coverage, and induced-fault transaction assertions; the
-bounded evidence record is [`docs/verification/a6-capability-assessment.md`](../verification/a6-capability-assessment.md).
-This is still Task 4 evidence rather than A6 closeout, and existing A5 ACT4
-results are not silently relabeled as a run on the current HEAD.
+CLI/library integration coverage, and induced-fault transaction assertions. The
+full nine-criterion preparation matrix is [`docs/verification/a6-capability-assessment.md`](../verification/a6-capability-assessment.md),
+and the closeout/archive draft is [`docs/archive/milestones/a6-closeout-record.md`](../archive/milestones/a6-closeout-record.md).
+Task 4's fresh verification is bound to source `845c63325db5ac87ab2ff0ed260453dc3b396ae9`,
+whose tree equals implementation merge `f12b1f80907e92b1c82b33ac669b961cc17f59c9`;
+these are not relabeled as evidence for a later documentation HEAD. Existing A5
+ACT4 results remain separately scoped nontrapping evidence.
 
 | Label | Meaning |
 | --- | --- |

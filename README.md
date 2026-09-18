@@ -23,7 +23,9 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 ACT4 4.0.0 / Sail 生成的 51 个 RV64I 非陷阱自检 ELF 全部通过公开 CLI。
 该范围采用已批准的 MXLEN 测试适配和自然对齐 EEI，明确排除 8 个成功非对齐访问测试；
 不代表完整 ISA 认证、陷阱/MMU 集成或成功非对齐访问支持。A5 已正式收尾（PR #37
-已合并）；在另行批准后续里程碑前，A5 仍是唯一当前里程碑，未批准下一里程碑。
+已合并）。当前合同是已批准的 A6；五个同步陷阱 guest 和诱导故障证据见
+[A6 验收准备记录](docs/verification/a6-capability-assessment.md)，但本次 closeout PR
+仍待独立 review/merge，未启用后继里程碑。
 
 ## 快速开始
 
