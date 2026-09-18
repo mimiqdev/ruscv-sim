@@ -14,19 +14,21 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 TESTS_DIR="${PROJECT_DIR}/tests/bare-metal-riscv-test"
-OUTDIR="${RISCV_TEST_OUTDIR:-${PROJECT_DIR}/target/riscv-elf-tests}"
+
+if ! source "${SCRIPT_DIR}/riscv_elf_paths.sh"; then
+    echo -e "${RED}Error: cannot load path validation helper${NC}" >&2
+    exit 2
+fi
+OUTDIR_REQUESTED="${RISCV_TEST_OUTDIR:-target/riscv-elf-tests}"
+if ! OUTDIR="$(riscv_validate_output_dir "${PROJECT_DIR}" "${OUTDIR_REQUESTED}")"; then
+    exit 2
+fi
+
 RISCV_PREFIX="${RISCV_PREFIX:-riscv64-unknown-elf-}"
 MAX_CYCLES="${RISCV_TEST_MAX_CYCLES:-100000}"
-
-case "${OUTDIR}" in
-    ""|"/"|"${PROJECT_DIR}"|"${TESTS_DIR}")
-        echo -e "${RED}Error: unsafe RISCV_TEST_OUTDIR: ${OUTDIR}${NC}" >&2
-        exit 2
-        ;;
-esac
 
 if [ "${RISCV_TEST_SKIP_BUILD:-0}" != "1" ]; then
     "${SCRIPT_DIR}/compile_riscv_tests.sh"
@@ -80,9 +82,9 @@ check_entry() {
     return 0
 }
 
-# Prefer an explicitly supplied binary.  Otherwise use the configured isolated
-# Cargo target directory and build there, never mixing a host target tree with
-# the container's guest-suite build.
+# An explicit RUSCV_SIM_BIN is a caller-owned override: the caller is
+# responsible for its freshness.  The default path always invokes Cargo so a
+# repeated verification run cannot silently reuse an obsolete simulator.
 if [ -n "${RUSCV_SIM_BIN:-}" ]; then
     RUSCV_BIN="${RUSCV_SIM_BIN}"
 else
@@ -92,16 +94,12 @@ else
         *) CARGO_TARGET_ABS="${PROJECT_DIR}/${CARGO_TARGET_VALUE}" ;;
     esac
     RUSCV_BIN="${CARGO_TARGET_ABS}/release/ruscv-sim"
-    if [ ! -x "${RUSCV_BIN}" ]; then
-        echo -e "${BLUE}Building ruscv-sim in ${CARGO_TARGET_ABS}${NC}"
-        (cd "${PROJECT_DIR}" && \
-            CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
-            cargo build --release --all-features --target-dir "${CARGO_TARGET_ABS}")
-        build_status=$?
-        if [ "${build_status}" -ne 0 ]; then
-            echo -e "${RED}Error: cargo build --release failed${NC}" >&2
-            exit "${build_status}"
-        fi
+    echo -e "${BLUE}Building ruscv-sim in ${CARGO_TARGET_ABS}${NC}"
+    if ! (cd "${PROJECT_DIR}" && \
+        CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
+        cargo build --release --all-features --target-dir "${CARGO_TARGET_ABS}"); then
+        echo -e "${RED}Error: cargo build --release failed${NC}" >&2
+        exit 1
     fi
 fi
 

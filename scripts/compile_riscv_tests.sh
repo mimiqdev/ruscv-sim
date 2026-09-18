@@ -13,24 +13,22 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 TESTS_DIR="${PROJECT_DIR}/tests/bare-metal-riscv-test"
-OUTDIR="${RISCV_TEST_OUTDIR:-${PROJECT_DIR}/target/riscv-elf-tests}"
+
+if ! source "${SCRIPT_DIR}/riscv_elf_paths.sh"; then
+    echo -e "${RED}Error: cannot load path validation helper${NC}" >&2
+    exit 2
+fi
+OUTDIR_REQUESTED="${RISCV_TEST_OUTDIR:-target/riscv-elf-tests}"
+if ! OUTDIR="$(riscv_validate_output_dir "${PROJECT_DIR}" "${OUTDIR_REQUESTED}")"; then
+    exit 2
+fi
 
 RISCV_PREFIX="${RISCV_PREFIX:-riscv64-unknown-elf-}"
 AS="${RISCV_PREFIX}as"
 LD="${RISCV_PREFIX}ld"
-
-# Refuse an accidental source-tree or filesystem-root cleanup.  The default is
-# a disposable target subdirectory and callers may select another disposable
-# directory with RISCV_TEST_OUTDIR.
-case "${OUTDIR}" in
-    ""|"/"|"${PROJECT_DIR}"|"${TESTS_DIR}")
-        echo -e "${RED}Error: unsafe RISCV_TEST_OUTDIR: ${OUTDIR}${NC}" >&2
-        exit 2
-        ;;
-esac
 
 check_toolchain() {
     if ! command -v "${AS}" >/dev/null 2>&1 || ! command -v "${LD}" >/dev/null 2>&1; then
@@ -58,8 +56,14 @@ if [ ! -f "${TESTS_DIR}/linker.ld" ]; then
 fi
 
 # Fresh means fresh: do not reuse a previous source/HEAD's generated ELF.
-rm -rf "${OUTDIR}"
-mkdir -p "${OUTDIR}"
+if ! rm -rf -- "${OUTDIR}"; then
+    echo -e "${RED}Error: failed to clean disposable output: ${OUTDIR}${NC}" >&2
+    exit 2
+fi
+if ! mkdir -p -- "${OUTDIR}"; then
+    echo -e "${RED}Error: failed to create disposable output: ${OUTDIR}${NC}" >&2
+    exit 2
+fi
 
 mapfile -t SOURCES < <(find "${TESTS_DIR}/rv64i" "${TESTS_DIR}/rv64m" -type f -name '*.S' -print | sort)
 if [ "${#SOURCES[@]}" -eq 0 ]; then

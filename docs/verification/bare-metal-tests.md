@@ -29,9 +29,12 @@ a guest pass.
 
 ## Fresh reproducible build and run
 
-The scripts build into a disposable target directory, remove it before each
-normal compile, record the source Git HEAD in `manifest.txt`, verify ELF entry
-`== _start`, and run every discovered RV64I/RV64M ELF through the public CLI.
+The scripts build into a disposable target directory directly below the
+canonical repository `target/` directory, remove it before each normal compile,
+record the source Git HEAD in `manifest.txt`, verify ELF entry `== _start`, and
+run every discovered RV64I/RV64M ELF through the public CLI. The path guard
+rejects source directories, parent aliases, and symlinked roots; its regression
+cases run with `bash scripts/test_riscv_elf_guards.sh`.
 When a bind-mounted worktree cannot resolve its host-side `.git` file, pass the
 host value as `RISCV_SOURCE_HEAD` (the Colima command below does this).
 The default suite output is `target/riscv-elf-tests`; override it with
@@ -48,10 +51,13 @@ RISCV_TEST_SKIP_BUILD=1 ./scripts/run_elf_tests.sh
 
 # Fresh Rust integration: assembles the five A6 sources in a new temp folder,
 # then exercises load_and_run, RiscVSimulator, and ruscv-sim run.
-RUSCV_REQUIRE_RISCV_TOOLCHAIN=1 cargo test --test a6_trap_elf_integration -- --nocapture
+RISCV_REQUIRE_RISCV_TOOLCHAIN=1 cargo test --test a6_trap_elf_integration -- --nocapture
 ```
 
-`run_elf_tests.sh` also compiles afresh when `RISCV_TEST_SKIP_BUILD` is not set:
+`run_elf_tests.sh` also compiles afresh when `RISCV_TEST_SKIP_BUILD` is not set.
+It always invokes Cargo for the default release binary path, so repeated runs
+cannot silently reuse an obsolete simulator. `RUSCV_SIM_BIN` is an explicit,
+caller-owned override; callers using it own binary freshness.
 
 ```bash
 ./scripts/run_elf_tests.sh
@@ -87,7 +93,7 @@ docker run --rm --init \
     CARGO_TARGET_DIR=target/a6-container-cargo \
     RISCV_TEST_OUTDIR=target/a6-container-riscv-elves \
     RISCV_SOURCE_HEAD="${RISCV_SOURCE_HEAD}" \
-    RUSCV_REQUIRE_RISCV_TOOLCHAIN=1; \
+    RISCV_REQUIRE_RISCV_TOOLCHAIN=1; \
     cargo fmt --all -- --check && \
     cargo check --all-features && \
     cargo clippy --all-features --all-targets -- -D warnings && \

@@ -70,8 +70,10 @@ jobs:
       - name: Check documentation
         run: cargo doc --all-features --no-deps
 
-      - name: Check guest scripts
-        run: bash -n scripts/compile_riscv_tests.sh scripts/run_elf_tests.sh
+      - name: Check guest scripts and protected output-path guards
+        run: |
+          bash -n scripts/riscv_elf_paths.sh scripts/compile_riscv_tests.sh scripts/run_elf_tests.sh scripts/test_riscv_elf_guards.sh
+          bash scripts/test_riscv_elf_guards.sh
 
       # Pull requests already exercise the debug/test build above. Build and run
       # the release binary only after code reaches main.

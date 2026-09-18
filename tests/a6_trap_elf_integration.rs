@@ -81,24 +81,17 @@ fn assemble_and_link(
 }
 
 fn cli_binary() -> PathBuf {
-    if let Some(binary) = env::var_os("CARGO_BIN_EXE_ruscv-sim") {
-        return PathBuf::from(binary);
-    }
-
-    let fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/ruscv-sim");
-    assert!(
-        fallback.is_file(),
-        "Cargo did not provide CARGO_BIN_EXE_ruscv-sim and fallback binary is absent at {}",
-        fallback.display()
-    );
-    fallback
+    // Cargo supplies this compile-time path for integration tests.  Do not
+    // fall back to target/debug: isolated CARGO_TARGET_DIR builds must never
+    // accidentally execute a stale default-target binary.
+    PathBuf::from(env!("CARGO_BIN_EXE_ruscv-sim"))
 }
 
 #[test]
 fn a6_trap_guests_pass_through_library_and_cli() {
     let Some((assembler, linker)) = required_toolchain() else {
         let message = "riscv64-unknown-elf-as/ld unavailable; A6 trap ELF integration skipped";
-        if env::var_os("RUSCV_REQUIRE_RISCV_TOOLCHAIN").is_some() {
+        if env::var_os("RISCV_REQUIRE_RISCV_TOOLCHAIN").is_some() {
             panic!("{message}; CI requested a real guest run");
         }
         eprintln!("[SKIP] {message}");
