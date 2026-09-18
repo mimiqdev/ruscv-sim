@@ -18,25 +18,47 @@ failures=0
 
 assert_rejected() {
     local label="$1"
-    local path="$2"
+    local project="$2"
+    local path="$3"
+    local expected="$4"
     local output
-    if output=$(riscv_validate_output_dir "${PROJECT_DIR}" "${path}" 2>&1); then
+    if output=$(riscv_validate_output_dir "${project}" "${path}" 2>&1); then
         echo "[FAIL] ${label}: accepted unsafe path ${path}" >&2
         failures=$((failures + 1))
+    elif [[ "${output}" != *"${expected}"* ]]; then
+        echo "[FAIL] ${label}: expected '${expected}', got: ${output}" >&2
+        failures=$((failures + 1))
     else
-        echo "[PASS] ${label}: rejected ${path}"
+        echo "[PASS] ${label}: rejected ${path} (${expected})"
+    fi
+}
+
+assert_accepted() {
+    local label="$1"
+    local project="$2"
+    local path="$3"
+    local expected="$4"
+    local output
+    if ! output=$(riscv_validate_output_dir "${project}" "${path}" 2>&1); then
+        echo "[FAIL] ${label}: rejected ordinary path ${path}: ${output}" >&2
+        failures=$((failures + 1))
+    elif [ "${output}" != "${expected}" ]; then
+        echo "[FAIL] ${label}: expected canonical path ${expected}, got: ${output}" >&2
+        failures=$((failures + 1))
+    else
+        echo "[PASS] ${label}: accepted ${path}"
     fi
 }
 
 # These are protected repository/source paths.  The trailing slash and lexical
 # aliases cover the bypasses that an exact-string comparison misses.
-assert_rejected "repository with trailing slash" "${PROJECT_DIR}/"
-assert_rejected "repository root" "${PROJECT_DIR}"
-assert_rejected "bare-metal source directory" "${PROJECT_DIR}/tests/bare-metal-riscv-test/rv64i"
-assert_rejected "parent alias into source" "${PROJECT_DIR}/target/../tests/bare-metal-riscv-test/rv64i"
-assert_rejected "target root" "${PROJECT_DIR}/target"
-assert_rejected "dot output component" "${PROJECT_DIR}/target/a6-path-guard-probe/."
-assert_rejected "dot-dot output component" "${PROJECT_DIR}/target/a6-path-guard-probe/.."
+assert_rejected "repository with trailing slash" "${PROJECT_DIR}" "${PROJECT_DIR}/" "output must be directly below"
+assert_rejected "repository root" "${PROJECT_DIR}" "${PROJECT_DIR}" "output must be directly below"
+assert_rejected "bare-metal source directory" "${PROJECT_DIR}" "${PROJECT_DIR}/tests/bare-metal-riscv-test/rv64i" "output must be directly below"
+assert_rejected "parent alias into source" "${PROJECT_DIR}" "${PROJECT_DIR}/target/../tests/bare-metal-riscv-test/rv64i" "output must be directly below"
+assert_rejected "target root" "${PROJECT_DIR}" "${PROJECT_DIR}/target" "output must be directly below"
+assert_rejected "dot output component" "${PROJECT_DIR}" "${PROJECT_DIR}/target/a6-path-guard-probe/." "output must be a named disposable directory"
+assert_rejected "dot-dot output component" "${PROJECT_DIR}" "${PROJECT_DIR}/target/a6-path-guard-probe/.." "output must be a named disposable directory"
 
 # An output symlink and a symlinked target root must not be followed during
 # cleanup.  Both cases live entirely under a temporary directory.
@@ -47,14 +69,24 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p -- "${temporary}/project/target" "${temporary}/outside"
-ln -s -- "${temporary}/outside" "${temporary}/project/target/output-link"
-assert_rejected "output symlink" "${temporary}/project/target/output-link"
-ln -s -- "${temporary}/project/target" "${temporary}/project/target/ancestor-link"
-assert_rejected "symlinked ancestor" "${temporary}/project/target/ancestor-link/output"
+temporary_project="$(cd -- "${temporary}/project" && pwd -P)"
+temporary_outside="$(cd -- "${temporary}/outside" && pwd -P)"
+assert_accepted "ordinary temporary output" "${temporary_project}" \
+    "${temporary_project}/target/ordinary-output" \
+    "${temporary_project}/target/ordinary-output"
+ln -s -- "${temporary_outside}" "${temporary_project}/target/output-link"
+assert_rejected "output symlink" "${temporary_project}" \
+    "${temporary_project}/target/output-link" "output path is a symlink"
+ln -s -- "${temporary_project}/target" "${temporary_project}/target/ancestor-link"
+assert_rejected "symlinked ancestor" "${temporary_project}" \
+    "${temporary_project}/target/ancestor-link/output" "output must be directly below"
 
 mkdir -p -- "${temporary}/symlink-project" "${temporary}/symlink-target"
-ln -s -- "${temporary}/symlink-target" "${temporary}/symlink-project/target"
-assert_rejected "target-root symlink" "${temporary}/symlink-project/target/output"
+temporary_symlink_project="$(cd -- "${temporary}/symlink-project" && pwd -P)"
+temporary_symlink_target="$(cd -- "${temporary}/symlink-target" && pwd -P)"
+ln -s -- "${temporary_symlink_target}" "${temporary_symlink_project}/target"
+assert_rejected "target-root symlink" "${temporary_symlink_project}" \
+    "${temporary_symlink_project}/target/output" "target root is a symlink"
 
 if [ "${failures}" -ne 0 ]; then
     echo "[FAILED] ${failures} ELF output-path guard case(s)" >&2
