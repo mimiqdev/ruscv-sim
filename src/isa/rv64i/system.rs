@@ -7,7 +7,7 @@
 //! - Trap returns: MRET, SRET, URET
 
 use crate::core::{CoreState, PrivilegeMode};
-use crate::csr::{machine, supervisor};
+use crate::csr::{machine, supervisor, CsrAccess};
 use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 
@@ -26,15 +26,29 @@ use crate::execute::ExecuteError;
 pub fn exec_system(
     instr: &DecodedInstruction,
     state: &mut CoreState,
-    _mem: &mut dyn crate::memory::MemoryInterface,
+    mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
-    // For CSR instructions, imm contains CSR address (bits[31:20])
-    // For ECALL/EBREAK, imm contains the function code (0 or 1)
+    exec_system_with_csr_access(instr, state, mem).map(|_| ())
+}
+
+/// Execute a SYSTEM instruction and expose the CSR write classification.
+///
+/// The existing [`exec_system`] API remains the compatibility entry point.
+/// Task 3 can use this companion result to distinguish a read-only CSRRS/CSRRC
+/// from an explicit write to `minstret` without making this helper perform any
+/// retirement accounting itself.
+pub fn exec_system_with_csr_access(
+    instr: &DecodedInstruction,
+    state: &mut CoreState,
+    mem: &mut dyn crate::memory::MemoryInterface,
+) -> Result<Option<CsrAccess>, ExecuteError> {
+    // For CSR instructions, imm contains CSR address (bits[31:20]).
+    // For ECALL/EBREAK, imm contains the function code (0 or 1).
     let Some(imm) = instr.imm else {
         return Err(ExecuteError::InvalidOperation);
     };
 
-    // Check funct3 to determine instruction type
+    // Check funct3 to determine instruction type.
     let funct3 = ((instr.raw >> 12) & 0b111) as u8;
 
     match funct3 {
@@ -44,28 +58,28 @@ pub fn exec_system(
                 0 => Err(ExecuteError::Ecall),
                 1 => Err(ExecuteError::Ebreak),
                 0x302 => {
-                    // MRET
-                    let target = exec_mret(instr, state, _mem)?;
+                    // MRET (Task 2 owns its privilege conformance.)
+                    let target = exec_mret(instr, state, mem)?;
                     state.pc = target;
                     state.branch_taken = true;
-                    Ok(())
+                    Ok(None)
                 }
                 0x102 => {
                     // SRET
-                    let target = exec_sret(instr, state, _mem)?;
+                    let target = exec_sret(instr, state, mem)?;
                     state.pc = target;
                     state.branch_taken = true;
-                    Ok(())
+                    Ok(None)
                 }
                 _ => Err(ExecuteError::InvalidOperation),
             }
         }
-        0b001 => exec_csrrw(instr, state, imm),
-        0b010 => exec_csrrs(instr, state, imm),
-        0b011 => exec_csrrc(instr, state, imm),
-        0b101 => exec_csrrwi(instr, state, imm),
-        0b110 => exec_csrrsi(instr, state, imm),
-        0b111 => exec_csrrci(instr, state, imm),
+        0b001 => exec_csrrw(instr, state, imm).map(Some),
+        0b010 => exec_csrrs(instr, state, imm).map(Some),
+        0b011 => exec_csrrc(instr, state, imm).map(Some),
+        0b101 => exec_csrrwi(instr, state, imm).map(Some),
+        0b110 => exec_csrrsi(instr, state, imm).map(Some),
+        0b111 => exec_csrrci(instr, state, imm).map(Some),
         _ => Err(ExecuteError::InvalidOperation),
     }
 }
@@ -75,24 +89,26 @@ fn exec_csrrw(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     imm: u32,
-) -> Result<(), ExecuteError> {
+) -> Result<CsrAccess, ExecuteError> {
     let csr_addr = (imm & 0xFFF) as u16;
     let rs1 = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let rs1_value = state.regs[rs1];
 
-    // Read old value and write new value
-    let old_value = state
+    // CSRRW always performs an explicit write, including rs1=x0 and a
+    // zero-valued source.  The access fact is consumed by a later retirement
+    // layer; this helper does not increment minstret.
+    let access = state
         .csr
-        .read_write(csr_addr, rs1_value)
+        .write_with_access(csr_addr, rs1_value)
         .map_err(ExecuteError::CsrError)?;
 
-    // Write old value to rd (unless rd=x0)
+    // Write old value to rd (unless rd=x0).
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = access.old_value;
     }
-    Ok(())
+    Ok(access)
 }
 
 /// CSRRS - CSR Read-Set
@@ -100,24 +116,25 @@ fn exec_csrrs(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     imm: u32,
-) -> Result<(), ExecuteError> {
+) -> Result<CsrAccess, ExecuteError> {
     let csr_addr = (imm & 0xFFF) as u16;
     let rs1 = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let rs1_value = state.regs[rs1];
 
-    // Read old value and set bits
-    let old_value = state
+    // CSRRS classifies writes by source-register identity, not source value.
+    // A non-x0 register containing zero is still an explicit write.
+    let access = state
         .csr
-        .read_set(csr_addr, rs1_value)
+        .read_set_classified(csr_addr, rs1_value, rs1 != 0)
         .map_err(ExecuteError::CsrError)?;
 
-    // Write old value to rd (unless rd=x0)
+    // Write old value to rd (unless rd=x0).
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = access.old_value;
     }
-    Ok(())
+    Ok(access)
 }
 
 /// CSRRC - CSR Read-Clear
@@ -125,24 +142,24 @@ fn exec_csrrc(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     imm: u32,
-) -> Result<(), ExecuteError> {
+) -> Result<CsrAccess, ExecuteError> {
     let csr_addr = (imm & 0xFFF) as u16;
     let rs1 = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let rs1_value = state.regs[rs1];
 
-    // Read old value and clear bits
-    let old_value = state
+    // CSRRC has the same identity-based write rule as CSRRS.
+    let access = state
         .csr
-        .read_clear(csr_addr, rs1_value)
+        .read_clear_classified(csr_addr, rs1_value, rs1 != 0)
         .map_err(ExecuteError::CsrError)?;
 
-    // Write old value to rd (unless rd=x0)
+    // Write old value to rd (unless rd=x0).
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = access.old_value;
     }
-    Ok(())
+    Ok(access)
 }
 
 /// CSRRWI - CSR Read-Write Immediate
@@ -150,22 +167,22 @@ fn exec_csrrwi(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     imm: u32,
-) -> Result<(), ExecuteError> {
+) -> Result<CsrAccess, ExecuteError> {
     let csr_addr = (imm & 0xFFF) as u16;
     let zimm = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as u64;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    // Read old value and write immediate
-    let old_value = state
+    // CSRRWI always performs an explicit write, including zimm=0.
+    let access = state
         .csr
-        .read_write(csr_addr, zimm)
+        .write_with_access(csr_addr, zimm)
         .map_err(ExecuteError::CsrError)?;
 
-    // Write old value to rd (unless rd=x0)
+    // Write old value to rd (unless rd=x0).
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = access.old_value;
     }
-    Ok(())
+    Ok(access)
 }
 
 /// CSRRSI - CSR Read-Set Immediate
@@ -173,22 +190,22 @@ fn exec_csrrsi(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     imm: u32,
-) -> Result<(), ExecuteError> {
+) -> Result<CsrAccess, ExecuteError> {
     let csr_addr = (imm & 0xFFF) as u16;
     let zimm = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as u64;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    // Read old value and set bits with immediate
-    let old_value = state
+    // CSRRSI writes iff zimm is non-zero.
+    let access = state
         .csr
-        .read_set(csr_addr, zimm)
+        .read_set_classified(csr_addr, zimm, zimm != 0)
         .map_err(ExecuteError::CsrError)?;
 
-    // Write old value to rd (unless rd=x0)
+    // Write old value to rd (unless rd=x0).
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = access.old_value;
     }
-    Ok(())
+    Ok(access)
 }
 
 /// CSRRCI - CSR Read-Clear Immediate
@@ -196,22 +213,22 @@ fn exec_csrrci(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     imm: u32,
-) -> Result<(), ExecuteError> {
+) -> Result<CsrAccess, ExecuteError> {
     let csr_addr = (imm & 0xFFF) as u16;
     let zimm = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as u64;
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
-    // Read old value and clear bits with immediate
-    let old_value = state
+    // CSRRCI writes iff zimm is non-zero.
+    let access = state
         .csr
-        .read_clear(csr_addr, zimm)
+        .read_clear_classified(csr_addr, zimm, zimm != 0)
         .map_err(ExecuteError::CsrError)?;
 
-    // Write old value to rd (unless rd=x0)
+    // Write old value to rd (unless rd=x0).
     if rd != 0 {
-        state.regs[rd] = old_value;
+        state.regs[rd] = access.old_value;
     }
-    Ok(())
+    Ok(access)
 }
 
 /// MRET - Return from Machine mode trap

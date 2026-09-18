@@ -2,6 +2,7 @@
 //!
 //! Tests basic CSR read/write operations and reset values
 
+use ruscv_sim::core::PrivilegeMode;
 use ruscv_sim::csr::{machine, supervisor, virtualization, CsrError, CsrFile};
 
 // Machine Mode CSR Tests
@@ -16,8 +17,68 @@ fn test_mstatus_reset_value() {
 fn test_misa_reset_value() {
     let csr = CsrFile::new(0);
     let misa = csr.read(machine::MISA).unwrap();
-    // RV64IMAC - MXL=10 (64-bit), I=1, M=1, A=1, C=1
+    // Reset value is RV64IU with C=0; fixed IALIGN remains 32.
     assert_eq!(misa, 0x8000_0000_0010_0100_u64);
+    assert_eq!(misa & (1 << 2), 0);
+}
+
+#[test]
+fn test_minstret_reset_and_machine_read_write() {
+    let mut csr = CsrFile::new(0);
+    assert_eq!(csr.read(machine::MINSTRET).unwrap(), 0);
+
+    let value = 0xFEDC_BA98_7654_3210;
+    csr.write(machine::MINSTRET, value).unwrap();
+    assert_eq!(csr.read(machine::MINSTRET).unwrap(), value);
+}
+
+#[test]
+fn test_minstret_is_machine_only_and_failed_access_has_no_side_effect() {
+    let mut csr = CsrFile::new(0);
+    let value = 0x0123_4567_89AB_CDEF;
+    csr.write(machine::MINSTRET, value).unwrap();
+
+    csr.set_privilege(PrivilegeMode::Supervisor);
+    assert!(matches!(
+        csr.read(machine::MINSTRET),
+        Err(CsrError::PrivilegeViolation(machine::MINSTRET))
+    ));
+    assert!(matches!(
+        csr.write(machine::MINSTRET, 0),
+        Err(CsrError::PrivilegeViolation(machine::MINSTRET))
+    ));
+
+    csr.set_privilege(PrivilegeMode::Machine);
+    assert_eq!(csr.read(machine::MINSTRET).unwrap(), value);
+}
+
+#[test]
+fn test_misa_c_is_warl_fixed_zero_for_direct_writes_and_helpers() {
+    let mut csr = CsrFile::new(0);
+    let base = csr.read(machine::MISA).unwrap();
+
+    csr.write(machine::MISA, base | (1 << 2)).unwrap();
+    assert_eq!(csr.read(machine::MISA).unwrap() & (1 << 2), 0);
+
+    csr.read_set(machine::MISA, 1 << 2).unwrap();
+    assert_eq!(csr.read(machine::MISA).unwrap() & (1 << 2), 0);
+
+    csr.read_clear(machine::MISA, 1 << 2).unwrap();
+    assert_eq!(csr.read(machine::MISA).unwrap() & (1 << 2), 0);
+}
+
+#[test]
+fn test_mepc_low_bits_are_warl_zero_for_direct_writes_and_helpers() {
+    let mut csr = CsrFile::new(0);
+
+    csr.write(machine::MEPC, 0x1234_5678_9ABC_DEF3).unwrap();
+    assert_eq!(csr.read(machine::MEPC).unwrap(), 0x1234_5678_9ABC_DEF0);
+
+    csr.read_set(machine::MEPC, 0b11).unwrap();
+    assert_eq!(csr.read(machine::MEPC).unwrap() & 0b11, 0);
+
+    csr.read_clear(machine::MEPC, 0b01).unwrap();
+    assert_eq!(csr.read(machine::MEPC).unwrap() & 0b11, 0);
 }
 
 #[test]

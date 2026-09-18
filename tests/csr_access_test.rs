@@ -5,6 +5,7 @@
 use ruscv_sim::core::{CoreState, PrivilegeMode};
 use ruscv_sim::csr::machine;
 use ruscv_sim::decode::{DecodedInstruction, InstructionFormat, Opcode};
+use ruscv_sim::isa::rv64i::system::exec_system_with_csr_access;
 use ruscv_sim::memory::SimpleMemory;
 use ruscv_sim::ExecuteError;
 
@@ -340,4 +341,209 @@ fn test_csr_sequence() {
     let instr3 = create_csr_instr(0b011, 12, 3, machine::MEPC);
     exec_system(&instr3, &mut state, &mut mem).unwrap();
     assert_eq!(state.csr.read(machine::MEPC).unwrap(), 0x1000_0000);
+}
+
+#[test]
+fn test_minstret_csr_write_classification_exposes_precedence_fact() {
+    let mut state = CoreState::default();
+    let mut mem = SimpleMemory::new(0x1000);
+    state.csr.write(machine::MINSTRET, 0x100).unwrap();
+
+    // CSRRS with a non-x0 source whose value is zero is still an explicit
+    // write.  The value remains unchanged, but the fact must be preserved for
+    // Task 3's same-instruction retirement precedence.
+    state.regs[5] = 0;
+    let set_with_zero = create_csr_instr(0b010, 10, 5, machine::MINSTRET);
+    let access = exec_system_with_csr_access(&set_with_zero, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert_eq!(access.old_value, 0x100);
+    assert_eq!(access.new_value, 0x100);
+    assert!(access.wrote);
+    assert_eq!(state.csr.read(machine::MINSTRET).unwrap(), 0x100);
+
+    // CSRRS with rs1=x0 is read-only.
+    let read_only = create_csr_instr(0b010, 11, 0, machine::MINSTRET);
+    let access = exec_system_with_csr_access(&read_only, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert_eq!(access.old_value, 0x100);
+    assert_eq!(access.new_value, 0x100);
+    assert!(!access.wrote);
+
+    // CSRRW and CSRRWI always write, including x0/zimm=0.
+    let swap_zero = create_csr_instr(0b001, 12, 0, machine::MINSTRET);
+    let access = exec_system_with_csr_access(&swap_zero, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert_eq!(access.old_value, 0x100);
+    assert_eq!(access.new_value, 0);
+    assert!(access.wrote);
+
+    state.csr.write(machine::MINSTRET, 0x200).unwrap();
+    let swap_immediate_zero = create_csr_instr(0b101, 13, 0, machine::MINSTRET);
+    let access = exec_system_with_csr_access(&swap_immediate_zero, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert_eq!(access.old_value, 0x200);
+    assert_eq!(access.new_value, 0);
+    assert!(access.wrote);
+}
+
+#[test]
+fn test_minstret_immediate_set_clear_classification() {
+    let mut state = CoreState::default();
+    let mut mem = SimpleMemory::new(0x1000);
+    state.csr.write(machine::MINSTRET, 0xF0).unwrap();
+
+    // zimm=0 is read-only for CSRRSI/CSRRCI.
+    let read_set = create_csr_instr(0b110, 10, 0, machine::MINSTRET);
+    let access = exec_system_with_csr_access(&read_set, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert!(!access.wrote);
+    assert_eq!(state.csr.read(machine::MINSTRET).unwrap(), 0xF0);
+
+    // A non-zero zimm writes even if the resulting value is unchanged.
+    let set = create_csr_instr(0b110, 11, 0x0F, machine::MINSTRET);
+    let access = exec_system_with_csr_access(&set, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert!(access.wrote);
+    assert_eq!(access.old_value, 0xF0);
+    assert_eq!(access.new_value, 0xFF);
+
+    let clear = create_csr_instr(0b111, 12, 0x0F, machine::MINSTRET);
+    let access = exec_system_with_csr_access(&clear, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert!(access.wrote);
+    assert_eq!(access.old_value, 0xFF);
+    assert_eq!(access.new_value, 0xF0);
+}
+
+#[test]
+fn test_csrrc_write_classification_preserves_identity_fact() {
+    let mut state = CoreState::default();
+    let mut mem = SimpleMemory::new(0x1000);
+    let initial = 0x100_u64;
+    state.csr.write(machine::MINSTRET, initial).unwrap();
+
+    // CSRRC with rs1=x0 is read-only.
+    let read_only = create_csr_instr(0b011, 10, 0, machine::MINSTRET);
+    let access = exec_system_with_csr_access(&read_only, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert_eq!(access.old_value, initial);
+    assert_eq!(access.new_value, initial);
+    assert!(!access.wrote);
+    assert_eq!(state.regs[10], initial);
+    assert_eq!(state.csr.read(machine::MINSTRET).unwrap(), initial);
+
+    // A non-x0 source whose value is zero still performs an explicit write.
+    // The architectural value is unchanged, but Task 3 must see `wrote=true`.
+    state.regs[5] = 0;
+    let explicit = create_csr_instr(0b011, 11, 5, machine::MINSTRET);
+    let access = exec_system_with_csr_access(&explicit, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert_eq!(access.old_value, initial);
+    assert_eq!(access.new_value, initial);
+    assert!(access.wrote);
+    assert_eq!(state.regs[11], initial);
+    assert_eq!(state.csr.read(machine::MINSTRET).unwrap(), initial);
+}
+
+#[test]
+fn test_csrrci_zero_zimm_is_read_only() {
+    let mut state = CoreState::default();
+    let mut mem = SimpleMemory::new(0x1000);
+    let initial = 0x200_u64;
+    state.csr.write(machine::MINSTRET, initial).unwrap();
+    state.regs[12] = 0xDEAD_BEEF;
+
+    let instr = create_csr_instr(0b111, 12, 0, machine::MINSTRET);
+    let access = exec_system_with_csr_access(&instr, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert_eq!(access.old_value, initial);
+    assert_eq!(access.new_value, initial);
+    assert!(!access.wrote);
+    assert_eq!(state.regs[12], initial);
+    assert_eq!(state.csr.read(machine::MINSTRET).unwrap(), initial);
+}
+
+#[test]
+fn test_csrrc_zero_source_rejects_read_only_csr_without_side_effects() {
+    let mut state = CoreState::default();
+    let mut mem = SimpleMemory::new(0x1000);
+    state.regs[5] = 0;
+    state.regs[13] = 0xDEAD_BEEF;
+    let before = state.csr.read(machine::MHARTID).unwrap();
+
+    // rs1!=x0 is a write attempt even though its value is zero.  MHARTID is
+    // read-only, so CSRRC must fail before changing rd or the CSR.
+    let instr = create_csr_instr(0b011, 13, 5, machine::MHARTID);
+    assert!(exec_system_with_csr_access(&instr, &mut state, &mut mem).is_err());
+    assert_eq!(state.regs[13], 0xDEAD_BEEF);
+    assert_eq!(state.csr.read(machine::MHARTID).unwrap(), before);
+}
+
+#[test]
+fn test_misa_and_mepc_warl_through_immediate_csr_paths() {
+    let mut state = CoreState::default();
+    let mut mem = SimpleMemory::new(0x1000);
+
+    // CSRRWI writes the candidate value, but MISA.C remains zero.
+    let misa_write = create_csr_instr(0b101, 10, 0b00100, machine::MISA);
+    let access = exec_system_with_csr_access(&misa_write, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert!(access.wrote);
+    assert_eq!(state.csr.read(machine::MISA).unwrap() & (1 << 2), 0);
+
+    // CSRRSI/CSRRCI are still explicit writes when zimm is non-zero, even
+    // when WARL leaves the architectural value unchanged.
+    let misa_set = create_csr_instr(0b110, 11, 0b00100, machine::MISA);
+    let access = exec_system_with_csr_access(&misa_set, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert!(access.wrote);
+    assert_eq!(state.csr.read(machine::MISA).unwrap() & (1 << 2), 0);
+
+    let mepc_write = create_csr_instr(0b101, 12, 0b00011, machine::MEPC);
+    let access = exec_system_with_csr_access(&mepc_write, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert!(access.wrote);
+    assert_eq!(state.csr.read(machine::MEPC).unwrap() & 0b11, 0);
+
+    let mepc_set = create_csr_instr(0b110, 13, 0b00001, machine::MEPC);
+    let access = exec_system_with_csr_access(&mepc_set, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert!(access.wrote);
+    assert_eq!(state.csr.read(machine::MEPC).unwrap() & 0b11, 0);
+
+    let mepc_clear = create_csr_instr(0b111, 14, 0b00001, machine::MEPC);
+    let access = exec_system_with_csr_access(&mepc_clear, &mut state, &mut mem)
+        .unwrap()
+        .unwrap();
+    assert!(access.wrote);
+    assert_eq!(state.csr.read(machine::MEPC).unwrap() & 0b11, 0);
+}
+
+#[test]
+fn test_failed_csr_access_preserves_old_value_and_destination() {
+    let mut state = CoreState::default();
+    let mut mem = SimpleMemory::new(0x1000);
+    state.regs[10] = 0xDEAD_BEEF;
+    state.regs[5] = 0;
+    let before = state.csr.read(machine::MHARTID).unwrap();
+
+    // rs1!=x0 means this is a write attempt, so a read-only CSR rejects it.
+    let instr = create_csr_instr(0b010, 10, 5, machine::MHARTID);
+    assert!(exec_system_with_csr_access(&instr, &mut state, &mut mem).is_err());
+    assert_eq!(state.regs[10], 0xDEAD_BEEF);
+    assert_eq!(state.csr.read(machine::MHARTID).unwrap(), before);
 }

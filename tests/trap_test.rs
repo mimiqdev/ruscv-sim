@@ -180,10 +180,12 @@ fn test_vector_trap_vectored_mode() {
     let handler = TrapHandler::new();
     let tvec = 0x8000_0001; // Vectored mode (bits [1:0] = 01)
 
-    // Cause should be masked to 7 bits and multiplied by 4
+    // Synchronous exceptions always use BASE, even in vectored mode.
     assert_eq!(handler.vector_trap(tvec, 0), 0x8000_0000);
-    assert_eq!(handler.vector_trap(tvec, 1), 0x8000_0004);
-    assert_eq!(handler.vector_trap(tvec, 7), 0x8000_001C);
+    assert_eq!(handler.vector_trap(tvec, 1), 0x8000_0000);
+    assert_eq!(handler.vector_trap(tvec, 7), 0x8000_0000);
+
+    // Interrupts retain BASE + 4*cause semantics.
     assert_eq!(
         handler.vector_trap(tvec, 0x8000_0000_0000_0003),
         0x8000_000C
@@ -193,16 +195,17 @@ fn test_vector_trap_vectored_mode() {
 #[test]
 fn test_vector_trap_vectored_mode_wrapping() {
     let handler = TrapHandler::new();
-    // Use a vectored mode address near end of 32-bit address space
-    // 0xFFFF_FFFD has bits[1:0] = 01, which is vectored mode
-    let tvec = 0xFFFF_FFFD;
+    // Use a vectored mode address near end of 64-bit address space.
+    // 0xFFFF_FFFD has bits[1:0] = 01, which is vectored mode.
+    let tvec = 0xFFFF_FFFF_FFFF_FFFD;
 
-    // Test wrapping behavior
-    let result = handler.vector_trap(tvec, 100);
-    // base = 0xFFFF_FFFD & !0x3 = 0xFFFF_FFFC
-    // offset = (100 & 0x7F) << 2 = 100 * 4 = 400 = 0x190
-    // result = 0xFFFF_FFFC + 0x190 = 0x1_0000_018C (wraps in 64-bit)
-    assert_eq!(result, 0x1_0000_018C);
+    // Test wrapping behavior for an interrupt cause.  Synchronous cause 100
+    // would correctly use BASE instead.
+    let result = handler.vector_trap(tvec, (1u64 << 63) | 100);
+    // base = 0xFFFF_FFFF_FFFF_FFFC
+    // offset = 100 * 4 = 0x190
+    // result wraps to 0x18C.
+    assert_eq!(result, 0x18C);
 }
 
 // ========================================
@@ -259,6 +262,82 @@ fn test_handle_exception_updates_mstatus() {
     assert_eq!((mstatus >> 7) & 1, 1); // MPIE = 1
     assert_eq!((mstatus >> 3) & 1, 0); // MIE = 0
     assert_eq!((mstatus >> 11) & 0b11, 3); // MPP = 11 (Machine)
+}
+
+#[test]
+fn test_machine_trap_entry_all_a6_synchronous_causes() {
+    let cases = [
+        (
+            ExceptionCause::InstructionAddressMisaligned,
+            0x1111_2222_3333_4444,
+        ),
+        (
+            ExceptionCause::InstructionAccessFault,
+            0x2222_3333_4444_5555,
+        ),
+        (ExceptionCause::IllegalInstruction, 0x3333_4444_5555_6666),
+        (ExceptionCause::Breakpoint, 0x4444_5555_6666_7777),
+        (ExceptionCause::LoadAddressMisaligned, 0x5555_6666_7777_8888),
+        (ExceptionCause::LoadAccessFault, 0x6666_7777_8888_9999),
+        (
+            ExceptionCause::StoreAddressMisaligned,
+            0x7777_8888_9999_AAAA,
+        ),
+        (ExceptionCause::StoreAccessFault, 0x8888_9999_AAAA_BBBB),
+        (ExceptionCause::EcallU, 0x9999_AAAA_BBBB_CCCC),
+        (ExceptionCause::EcallS, 0xAAAA_BBBB_CCCC_DDDD),
+        (ExceptionCause::EcallM, 0xBBBB_CCCC_DDDD_EEEE),
+    ];
+    let fault_pc = 0x1234_5678_9ABC_D000;
+    let vector_base = 0x8000_1000;
+
+    for (cause, supplied_tval) in cases {
+        let mut handler = TrapHandler::new();
+        let mut context = create_test_context();
+        context.csr.write(machine::MTVEC, vector_base | 1).unwrap();
+        context.csr.write(machine::MSTATUS, 1 << 3).unwrap();
+
+        let target = handler.handle_trap(
+            Trap::Exception(cause),
+            fault_pc,
+            supplied_tval,
+            &mut context,
+        );
+
+        assert_eq!(target, vector_base, "cause {} vector", cause.code());
+        assert_eq!(context.pc, vector_base, "cause {} pc", cause.code());
+        assert_eq!(context.privilege, PrivilegeMode::Machine);
+        assert_eq!(
+            context.csr.read(machine::MEPC).unwrap(),
+            fault_pc,
+            "cause {} mepc",
+            cause.code()
+        );
+        assert_eq!(
+            context.csr.read(machine::MCAUSE).unwrap(),
+            cause.code(),
+            "cause {} mcause",
+            cause.code()
+        );
+        let expected_tval = match cause {
+            ExceptionCause::Breakpoint
+            | ExceptionCause::EcallU
+            | ExceptionCause::EcallS
+            | ExceptionCause::EcallM => 0,
+            _ => supplied_tval,
+        };
+        assert_eq!(
+            context.csr.read(machine::MTVAL).unwrap(),
+            expected_tval,
+            "cause {} mtval",
+            cause.code()
+        );
+
+        let mstatus = context.csr.read(machine::MSTATUS).unwrap();
+        assert_eq!((mstatus >> 7) & 1, 1, "cause {} MPIE", cause.code());
+        assert_eq!((mstatus >> 3) & 1, 0, "cause {} MIE", cause.code());
+        assert_eq!((mstatus >> 11) & 0b11, 0b11, "cause {} MPP", cause.code());
+    }
 }
 
 // ========================================
@@ -376,15 +455,15 @@ fn test_undelegated_exception_stays_in_machine() {
 #[test]
 fn test_trap_context_creation() {
     let ctx = ruscv_sim::core::TrapContext::new(
-        0x1000,
+        0x1234_5678_9ABC_D000,
         ExceptionCause::IllegalInstruction.code(),
-        0xBAD0,
+        0xFEDC_BA98_7654_3210,
         PrivilegeMode::Machine,
     );
 
-    assert_eq!(ctx.epc, 0x1000);
+    assert_eq!(ctx.epc, 0x1234_5678_9ABC_D000);
     assert_eq!(ctx.cause, ExceptionCause::IllegalInstruction.code());
-    assert_eq!(ctx.tval, 0xBAD0);
+    assert_eq!(ctx.tval, 0xFEDC_BA98_7654_3210);
     assert_eq!(ctx.privilege, PrivilegeMode::Machine);
 }
 
@@ -433,14 +512,14 @@ fn test_trap_preserves_privilege_in_mpp() {
 // ========================================
 
 #[test]
-fn test_vectored_mode_exception_offsets() {
+fn test_vectored_mode_synchronous_exceptions_use_base() {
     let handler = TrapHandler::new();
     let tvec = 0x1000 | 0b01; // Vectored mode at 0x1001
 
-    // Test exception offsets
-    assert_eq!(handler.vector_trap(tvec, 0), 0x1000); // Exception 0 -> offset 0
-    assert_eq!(handler.vector_trap(tvec, 1), 0x1004); // Exception 1 -> offset 4
-    assert_eq!(handler.vector_trap(tvec, 11), 0x102C); // Exception 11 -> offset 44
+    // Every synchronous exception uses BASE, not BASE + 4*cause.
+    assert_eq!(handler.vector_trap(tvec, 0), 0x1000);
+    assert_eq!(handler.vector_trap(tvec, 1), 0x1000);
+    assert_eq!(handler.vector_trap(tvec, 11), 0x1000);
 }
 
 #[test]
@@ -484,8 +563,8 @@ fn test_mtvec_vectored_mode() {
     let trap = Trap::Exception(ExceptionCause::IllegalInstruction);
     let new_pc = handler.handle_trap(trap, 0x1000, 0, &mut context);
 
-    // Should be base + 2*4 = 0x8000_0008
-    assert_eq!(new_pc, 0x8000_0008);
+    // Synchronous exceptions use BASE even when MODE=Vectored.
+    assert_eq!(new_pc, 0x8000_0000);
 }
 
 #[test]
