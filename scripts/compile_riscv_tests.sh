@@ -1,171 +1,129 @@
 #!/bin/bash
-# Compile RISC-V ELF test programs
-# Auto-discovers and builds all .S files in tests/bare-metal-riscv-test/rv64i/
+# Assemble and link the project-authored RISC-V ELF suite.
+#
+# The output directory is deliberately outside the source tree.  Every
+# invocation removes that directory before assembling, so an ELF from an older
+# checkout cannot be mistaken for evidence for the current sources.
 
-# Colors for output
+set -u
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TESTS_DIR="${SCRIPT_DIR}/../tests/bare-metal-riscv-test"
-OUTDIR="${TESTS_DIR}"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TESTS_DIR="${PROJECT_DIR}/tests/bare-metal-riscv-test"
+OUTDIR="${RISCV_TEST_OUTDIR:-${PROJECT_DIR}/target/riscv-elf-tests}"
 
-# RISC-V toolchain prefix
 RISCV_PREFIX="${RISCV_PREFIX:-riscv64-unknown-elf-}"
 AS="${RISCV_PREFIX}as"
 LD="${RISCV_PREFIX}ld"
 
-# Assembly and linking flags
-ASFLAGS="-march=rv64ima_zicsr -mabi=lp64"
-LDSCRIPT="-T${TESTS_DIR}/linker.ld"
+# Refuse an accidental source-tree or filesystem-root cleanup.  The default is
+# a disposable target subdirectory and callers may select another disposable
+# directory with RISCV_TEST_OUTDIR.
+case "${OUTDIR}" in
+    ""|"/"|"${PROJECT_DIR}"|"${TESTS_DIR}")
+        echo -e "${RED}Error: unsafe RISCV_TEST_OUTDIR: ${OUTDIR}${NC}" >&2
+        exit 2
+        ;;
+esac
 
-# Exclude list - tests that require unimplemented instructions
-# 
-# 需要 OpImm32 opcode (0011011) 支持的指令:
-#   - addiw, slliw, srliw, sraiw - 32-bit immediate operations
-# 需要 Op32 opcode (0111011) 支持的指令:
-#   - addw, subw, sllw, srlw, sraw - 32-bit register operations
-#
-# CSR 指令已实现
-EXCLUDE_SOURCES=(
-)
-
-# Source files - auto-discover all .S files in rv64i and rv64m directories
-ALL_SOURCES=$(find "${TESTS_DIR}/rv64i" "${TESTS_DIR}/rv64m" -name "*.S" | sed "s|${TESTS_DIR}/||" | sort)
-SOURCES=""
-for src in ${ALL_SOURCES}; do
-    skip=false
-    for exclude in "${EXCLUDE_SOURCES[@]}"; do
-        if [ "$src" = "$exclude" ]; then
-            skip=true
-            break
-        fi
-    done
-    if [ "$skip" = false ]; then
-        SOURCES="${SOURCES} ${src}"
-    fi
-done
-SOURCES=$(echo "${SOURCES}" | tr ' ' '\n' | grep -v '^$' | sort)
-
-# Function to check if toolchain exists
 check_toolchain() {
-    if ! command -v "${AS}" &> /dev/null; then
-        echo -e "${RED}Error: RISC-V toolchain not found${NC}"
-        echo "Expected: ${AS}"
-        echo ""
-        echo "Please install the RISC-V toolchain:"
-        echo "  Ubuntu/Debian: sudo apt-get install gcc-riscv64-unknown-elf"
-        echo "  Or download from: https://github.com/riscv-collab/riscv-gnu-toolchain"
-        echo ""
-        echo "You can also set RISCV_PREFIX to use a different prefix:"
-        echo "  export RISCV_PREFIX=riscv64-linux-gnu-"
-        exit 1
+    if ! command -v "${AS}" >/dev/null 2>&1 || ! command -v "${LD}" >/dev/null 2>&1; then
+        echo -e "${YELLOW}[SKIP] RISC-V assembler/linker unavailable${NC}"
+        echo "  expected assembler: ${AS}"
+        echo "  expected linker:    ${LD}"
+        echo "  install binutils/gcc or set RISCV_PREFIX; exit status 77 means unavailable"
+        return 77
     fi
-    
-    if ! command -v "${LD}" &> /dev/null; then
-        echo -e "${RED}Error: RISC-V linker not found${NC}"
-        echo "Expected: ${LD}"
-        exit 1
-    fi
-    
     echo -e "${GREEN}[OK]${NC} RISC-V toolchain found"
     echo "  Assembler: $(${AS} --version | head -1)"
-    echo "  Linker: $(${LD} --version | head -1)"
-}
-
-# Function to compile a single test
-compile_test() {
-    local src="$1"
-    local name="${src%.S}"
-    local obj="${OUTDIR}/${name}.o"
-    local elf="${OUTDIR}/${name}.elf"
-    
-    echo -e "${BLUE}Compiling ${src}...${NC}"
-    
-    # Assemble
-    echo "  AS  ${src} -> ${name}.o"
-    if ! "${AS}" ${ASFLAGS} "${TESTS_DIR}/${src}" -o "${obj}"; then
-        echo -e "${RED}  [FAIL]${NC} Assembly failed for ${src}"
-        return 1
-    fi
-    
-    # Link
-    echo "  LD  ${name}.o -> ${name}.elf"
-    if ! "${LD}" ${LDSCRIPT} "${obj}" -o "${elf}"; then
-        echo -e "${RED}  [FAIL]${NC} Link failed for ${src}"
-        rm -f "${obj}"
-        return 1
-    fi
-    
-    # Clean up object file
-    rm -f "${obj}"
-    
-    echo -e "${GREEN}  [OK]${NC} Created ${name}.elf"
+    echo "  Linker:    $(${LD} --version | head -1)"
     return 0
 }
 
-# Main
-echo "============================================"
-echo "  Compiling RISC-V Test Programs"
-echo "============================================"
-echo ""
-
-# Check toolchain
-echo -e "${YELLOW}Checking RISC-V toolchain...${NC}"
 check_toolchain
-echo ""
-
-# Check linker script exists
-if [ ! -f "${TESTS_DIR}/linker.ld" ]; then
-    echo -e "${RED}Error: Linker script not found: ${TESTS_DIR}/linker.ld${NC}"
-    exit 1
+check_toolchain_status=$?
+if [ "${check_toolchain_status}" -ne 0 ]; then
+    exit "${check_toolchain_status}"
 fi
 
-# Compile each test
-echo -e "${YELLOW}Compiling test programs...${NC}"
-TESTS_COMPILED=0
-TESTS_FAILED=0
+if [ ! -f "${TESTS_DIR}/linker.ld" ]; then
+    echo -e "${RED}Error: linker script not found: ${TESTS_DIR}/linker.ld${NC}" >&2
+    exit 2
+fi
 
-for src in ${SOURCES}; do
-    if [ -f "${TESTS_DIR}/${src}" ]; then
-        if compile_test "${src}"; then
-            TESTS_COMPILED=$((TESTS_COMPILED + 1))
-        else
-            echo -e "${RED}  [FAIL] Failed to compile ${src}${NC}"
-            TESTS_FAILED=$((TESTS_FAILED + 1))
-        fi
-    else
-        echo -e "${YELLOW}[WARN] Source file not found: ${src}${NC}"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
+# Fresh means fresh: do not reuse a previous source/HEAD's generated ELF.
+rm -rf "${OUTDIR}"
+mkdir -p "${OUTDIR}"
+
+mapfile -t SOURCES < <(find "${TESTS_DIR}/rv64i" "${TESTS_DIR}/rv64m" -type f -name '*.S' -print | sort)
+if [ "${#SOURCES[@]}" -eq 0 ]; then
+    echo -e "${RED}Error: no RISC-V assembly sources found${NC}" >&2
+    exit 2
+fi
+
+compiled=0
+failed=0
+for source in "${SOURCES[@]}"; do
+    relative="${source#"${TESTS_DIR}/"}"
+    name="${relative%.S}"
+    object="${OUTDIR}/${name}.o"
+    elf="${OUTDIR}/${name}.elf"
+    mkdir -p "$(dirname "${object}")"
+
+    echo -e "${BLUE}Compiling ${relative}${NC}"
+    if ! "${AS}" -march=rv64ima_zicsr -mabi=lp64 "${source}" -o "${object}"; then
+        echo -e "${RED}  [FAIL] assembly: ${relative}${NC}" >&2
+        failed=$((failed + 1))
+        continue
     fi
-    echo ""
+    if ! "${LD}" -T "${TESTS_DIR}/linker.ld" "${object}" -o "${elf}"; then
+        echo -e "${RED}  [FAIL] link: ${relative}${NC}" >&2
+        failed=$((failed + 1))
+        rm -f "${object}"
+        continue
+    fi
+    rm -f "${object}"
+    echo -e "${GREEN}  [OK]${NC} ${elf}"
+    compiled=$((compiled + 1))
 done
 
-# Summary
-echo "============================================"
-echo "  Compilation Summary"
-echo "============================================"
-echo -e "  Compiled: ${GREEN}${TESTS_COMPILED}${NC}"
-echo -e "  Failed:   ${RED}${TESTS_FAILED}${NC}"
-echo ""
+source_head="${RISCV_SOURCE_HEAD:-unknown}"
+if [ "${source_head}" = "unknown" ] && source_head_value=$(git -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null); then
+    source_head="${source_head_value}"
+fi
+manifest="${OUTDIR}/manifest.txt"
+{
+    printf 'source_head=%s\n' "${source_head}"
+    printf 'source_dir=%s\n' "${TESTS_DIR}"
+    printf 'output_dir=%s\n' "${OUTDIR}"
+    printf 'toolchain_prefix=%s\n' "${RISCV_PREFIX}"
+    printf 'assembler=%s\n' "${AS}"
+    printf 'linker=%s\n' "${LD}"
+    printf 'source_count=%s\n' "${#SOURCES[@]}"
+    printf 'compiled_count=%s\n' "${compiled}"
+    printf 'failed_count=%s\n' "${failed}"
+} >"${manifest}"
 
-if [ ${TESTS_FAILED} -eq 0 ]; then
-    echo -e "${GREEN}[SUCCESS]${NC} All tests compiled successfully!"
-    echo ""
-    echo "Generated ELF files:"
-    for src in ${SOURCES}; do
-        name="${src%.S}"
-        elf="${OUTDIR}/${name}.elf"
-        if [ -f "${elf}" ]; then
-            echo "  - ${elf}"
-        fi
-    done
-    exit 0
-else
-    echo -e "${RED}[FAILED]${NC} Some tests failed to compile."
+printf '\n============================================\n'
+printf '  Fresh RISC-V ELF compilation summary\n'
+printf '============================================\n'
+printf '  Source HEAD: %s\n' "${source_head}"
+printf '  Sources:     %s\n' "${#SOURCES[@]}"
+printf '  Compiled:    %s\n' "${compiled}"
+printf '  Failed:      %s\n' "${failed}"
+printf '  Output:      %s\n' "${OUTDIR}"
+printf '\n'
+
+if [ "${failed}" -ne 0 ] || [ "${compiled}" -ne "${#SOURCES[@]}" ]; then
+    echo -e "${RED}[FAILED]${NC} guest compilation did not produce every ELF"
     exit 1
 fi
+
+echo -e "${GREEN}[PASS]${NC} fresh assembly/link completed for ${compiled} guest cases"
+exit 0

@@ -1,69 +1,121 @@
 # Project-Authored Bare-Metal Tests
 
-**Status:** Current guide
+**Status:** Current verification guide
 
 **Authority:** Normative for guest tests under `tests/bare-metal-riscv-test/`
 
-**Last verified:** 2026-08-26
+**Last reviewed:** 2026-09-17
 
-## Role
+## Role and evidence boundary
 
-These tests are small RISC-V assembly programs compiled into ELF files and executed through the public CLI path. They are project regressions, not a substitute for an external architecture-compliance suite.
+These small RISC-V assembly programs are compiled into ELF files and executed
+through the public `ruscv-sim run` path. They are project regressions, not an
+external architecture-compliance suite. A passing Rust component test or a
+present source file is not evidence that a guest executed end to end.
 
-## Current layout
+The A6 trap guests are:
 
-```text
-tests/bare-metal-riscv-test/
-├── Makefile
-├── linker.ld
-├── rv64i/*.S
-└── rv64m/*.S
-```
+| Source | Architectural check | Success signal |
+| --- | --- | --- |
+| `rv64i/trap_ecall.S` | Machine `ECALL`, `mcause=11`, `mtval=0`, entry `mstatus`, handler `MEPC += 4`, MRET resume | `tohost` exit 0 |
+| `rv64i/trap_illegal.S` | Illegal encoding, `mcause=2`, raw `mtval`, saved PC and non-retirement | `tohost` exit 0 |
+| `rv64i/trap_ebreak.S` | `EBREAK`, `mcause=3`, `mtval=0`, handler recovery and resume | `tohost` exit 0 |
+| `rv64i/trap_vectored.S` | Synchronous ECALL with `mtvec.MODE=Vectored`; a `BASE+4*cause` landing slot fails | `tohost` exit 0 |
+| `rv64i/trap_mret_priv.S` | Legal MRET to User, User-mode MRET rejection, standard illegal trap state, handler recovery | `tohost` exit 0 |
 
-The Makefile knows extension-directory names beyond RV64I/RV64M, but only source files actually present are built. The helper scripts currently discover RV64I and RV64M sources and ELF files.
+Every guest has explicit success and failure writes. A handler that reaches an
+unexpected path writes a nonzero exit code; timeout or simulator failure is not
+a guest pass.
 
-## Toolchain
+## Fresh reproducible build and run
 
-The default prefix is `riscv64-unknown-elf-`. Override it with `RISCV_PREFIX` when necessary.
+The scripts build into a disposable target directory, remove it before each
+normal compile, record the source Git HEAD in `manifest.txt`, verify ELF entry
+`== _start`, and run every discovered RV64I/RV64M ELF through the public CLI.
+When a bind-mounted worktree cannot resolve its host-side `.git` file, pass the
+host value as `RISCV_SOURCE_HEAD` (the Colima command below does this).
+The default suite output is `target/riscv-elf-tests`; override it with
+`RISCV_TEST_OUTDIR`. A missing cross-toolchain returns status **77** and prints
+`[SKIP]`; assembly/link failures and guest failures return nonzero status.
 
 ```bash
+# Native host, when the cross-toolchain is installed.
+export CARGO_BUILD_JOBS=2
+export CARGO_TARGET_DIR=target/a6-native-cargo
+export RISCV_TEST_OUTDIR=target/a6-native-riscv-elves
 ./scripts/compile_riscv_tests.sh
+RISCV_TEST_SKIP_BUILD=1 ./scripts/run_elf_tests.sh
+
+# Fresh Rust integration: assembles the five A6 sources in a new temp folder,
+# then exercises load_and_run, RiscVSimulator, and ruscv-sim run.
+RUSCV_REQUIRE_RISCV_TOOLCHAIN=1 cargo test --test a6_trap_elf_integration -- --nocapture
+```
+
+`run_elf_tests.sh` also compiles afresh when `RISCV_TEST_SKIP_BUILD` is not set:
+
+```bash
 ./scripts/run_elf_tests.sh
 ```
 
-Or build from the guest-test directory:
+Use the skip-build form only immediately after inspecting the manifest from the
+fresh compile step. Do not run checked-in or stale `.elf` files as A6 evidence.
 
-```bash
-make -C tests/bare-metal-riscv-test
-```
+## Colima ARM64 development image
 
-Run one ELF directly:
-
-```bash
-cargo run -- run tests/bare-metal-riscv-test/rv64i/add.elf --max-cycles 100000
-```
-
-## Link and exit contract
-
-The linker places code at `0x8000_0000` and `.tohost` at `0x8000_1000`. Guest sources align `.tohost` to eight bytes.
-
-Current project-authored tests normally write:
+The recorded development image is immutable:
 
 ```text
-(1 << 63) | exit_code
+ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c
 ```
 
-The simulator also recognizes an HTIF syscall/exit payload. A passing project-authored test exits with code zero; a nonzero exit is a guest-test failure. Timeout or a simulator error must not be reported as a guest pass/fail result.
+For a local Apple Silicon/Colima run, use a four-GB ARM64 VM and separate Cargo
+and guest output directories. The image already places `/opt/riscv/bin` in
+`PATH`; use a non-login `bash -c`, not `bash -lc`, so that path remains intact.
+Do not install tools globally or rebuild the image for this verification.
 
-## Adding a regression
+```bash
+colima start --arch arm64 --memory 4
 
-1. Put the smallest reproducing `.S` program in the appropriate extension directory.
-2. Use the existing `.tohost` section and self-check the architectural result in guest code.
-3. Make success write exit code zero and failure write a stable nonzero code.
-4. Build and run the single ELF.
-5. Add or update a Rust integration test when the regression depends on loader, Runner, or process behavior.
-6. Do not infer extension-wide support from the new test alone.
+IMAGE='ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c'
+SOURCE_HEAD="$(git rev-parse HEAD)"
+docker run --rm --init \
+  --env RISCV_SOURCE_HEAD="$SOURCE_HEAD" \
+  --volume "$PWD:/workspace" \
+  --workdir /workspace \
+  "$IMAGE" \
+  bash -c 'export CARGO_BUILD_JOBS=2 \
+    CARGO_TARGET_DIR=target/a6-container-cargo \
+    RISCV_TEST_OUTDIR=target/a6-container-riscv-elves \
+    RISCV_SOURCE_HEAD="${RISCV_SOURCE_HEAD}" \
+    RUSCV_REQUIRE_RISCV_TOOLCHAIN=1; \
+    cargo fmt --all -- --check && \
+    cargo check --all-features && \
+    cargo clippy --all-features --all-targets -- -D warnings && \
+    cargo test --all-features && \
+    cargo doc --all-features --no-deps && \
+    ./scripts/run_elf_tests.sh'
+```
 
-## CI behavior
+The final output is the authoritative case count for that run. It must name the
+source HEAD from `target/a6-container-riscv-elves/manifest.txt`, the number of
+ELFs, entry-point checks, and `Passed == Total`. A container smoke test is not
+ACT4 evidence.
 
-The Rust test job installs the RISC-V GNU toolchain because at least one integration test assembles a guest program. On pushes to `main`, CI also compiles and runs the project-authored RV64I/RV64M ELF set.
+## Link, memory, and exit contract
+
+The linker places code at `0x8000_0000` and `.tohost` at `0x8000_1000`.
+Guest sources align `.tohost` to eight bytes and write
+`(1 << 63) | exit_code`. The simulator also recognizes the standard HTIF
+payload. The CLI uses the native RAM/UART/HTIF path; `RiscVSimulator` is tested
+separately through its flat-memory library facade, where ELF addresses are
+translated to storage offsets by the wrapper.
+
+## Scope limits
+
+The A6 guest suite verifies synchronous Machine-mode trap entry and return on
+the current public 32-bit-fetch path. It does **not** certify asynchronous
+interrupts, MMU/Sv39 integration, compressed-instruction execution, or the
+M/A/F/D dispatch end to end. It is not an ACT4 extension suite. The A5 ACT4
+baseline remains the previously recorded 51-case non-trapping result at its
+approved exact head; unless a verification record explicitly reports a rerun,
+that baseline has not been rerun on the current A6 Task 4 HEAD.

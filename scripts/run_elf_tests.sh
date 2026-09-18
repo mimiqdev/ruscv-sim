@@ -1,222 +1,178 @@
 #!/bin/bash
-# Run RISC-V ELF tests using ruscv-sim simulator
-# Auto-discovers all .elf files in tests/bare-metal-riscv-test/rv64i/
+# Freshly build and run every project-authored RISC-V ELF through the public CLI.
+#
+# By default this script invokes compile_riscv_tests.sh first.  Set
+# RISCV_TEST_SKIP_BUILD=1 only when a separately recorded fresh manifest is
+# intentionally being consumed.  Missing cross-tools are reported as SKIP with
+# exit status 77, never as a passing zero.
 
+set -u
 
-
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TESTS_DIR="${PROJECT_DIR}/tests/bare-metal-riscv-test"
+OUTDIR="${RISCV_TEST_OUTDIR:-${PROJECT_DIR}/target/riscv-elf-tests}"
+RISCV_PREFIX="${RISCV_PREFIX:-riscv64-unknown-elf-}"
+MAX_CYCLES="${RISCV_TEST_MAX_CYCLES:-100000}"
 
-# Find ruscv-sim binary
-find_ruscv_sim() {
-    # Check release build first, then debug
-    if [ -f "${PROJECT_DIR}/target/release/ruscv-sim" ]; then
-        echo "${PROJECT_DIR}/target/release/ruscv-sim"
-    elif [ -f "${PROJECT_DIR}/target/debug/ruscv-sim" ]; then
-        echo "${PROJECT_DIR}/target/debug/ruscv-sim"
-    else
-        echo ""
+case "${OUTDIR}" in
+    ""|"/"|"${PROJECT_DIR}"|"${TESTS_DIR}")
+        echo -e "${RED}Error: unsafe RISCV_TEST_OUTDIR: ${OUTDIR}${NC}" >&2
+        exit 2
+        ;;
+esac
+
+if [ "${RISCV_TEST_SKIP_BUILD:-0}" != "1" ]; then
+    "${SCRIPT_DIR}/compile_riscv_tests.sh"
+    compile_status=$?
+    if [ "${compile_status}" -ne 0 ]; then
+        # 77 is an explicit unavailable-toolchain result; all other failures
+        # are real build failures.
+        exit "${compile_status}"
     fi
+fi
+
+manifest="${OUTDIR}/manifest.txt"
+if [ ! -f "${manifest}" ]; then
+    echo -e "${RED}Error: no fresh guest manifest at ${manifest}${NC}" >&2
+    echo "Run without RISCV_TEST_SKIP_BUILD=1 to assemble/link first." >&2
+    exit 2
+fi
+
+# Use the cross-binutils tools to confirm that the actual ELF entry is the
+# linker-selected _start symbol.  This prevents a source/ELF mismatch from
+# being hidden by a successful process exit.
+READELF="${RISCV_PREFIX}readelf"
+NM="${RISCV_PREFIX}nm"
+if ! command -v "${READELF}" >/dev/null 2>&1 || ! command -v "${NM}" >/dev/null 2>&1; then
+    echo -e "${RED}Error: entry-point verification tools unavailable (${READELF}, ${NM})${NC}" >&2
+    exit 2
+fi
+
+normalize_hex() {
+    local value="$1"
+    value="${value#0x}"
+    value="${value#0X}"
+    value="${value#0x}"
+    printf '%s' "${value}" | tr '[:upper:]' '[:lower:]' | sed 's/^0*//' | sed 's/^$/0/'
 }
 
-RUSCV_BIN="$(find_ruscv_sim)"
-
-# Function to check if ELF file exists
-check_elf() {
+check_entry() {
     local elf="$1"
-    if [ ! -f "${elf}" ]; then
-        echo -e "${RED}Error: ELF file not found: ${elf}${NC}"
-        echo "Run compile_riscv_tests.sh first to build the test programs."
+    local entry start
+    entry=$("${READELF}" -h "${elf}" | awk '/Entry point address:/ {print $NF; exit}')
+    start=$("${NM}" -n "${elf}" | awk '$3 == "_start" {print $1; exit}')
+    if [ -z "${entry}" ] || [ -z "${start}" ]; then
+        echo -e "${RED}  [FAIL] cannot determine entry/_start for ${elf}${NC}" >&2
         return 1
     fi
+    if [ "$(normalize_hex "${entry}")" != "$(normalize_hex "${start}")" ]; then
+        echo -e "${RED}  [FAIL] entry ${entry} != _start ${start} for ${elf}${NC}" >&2
+        return 1
+    fi
+    echo "  Entry: ${entry} (_start ${start})"
     return 0
 }
 
-# Function to check if ruscv-sim is available
-check_simulator() {
-    if [ -z "${RUSCV_BIN}" ] || [ ! -f "${RUSCV_BIN}" ]; then
-        echo -e "${BLUE}Building ruscv-sim...${NC}"
-        cd "${PROJECT_DIR}"
-        if ! cargo build --release; then
-            echo -e "${RED}Error: cargo build --release failed${NC}"
-            return 1
-        fi
-        RUSCV_BIN="$(find_ruscv_sim)"
-    fi
-    
-    if [ -z "${RUSCV_BIN}" ] || [ ! -f "${RUSCV_BIN}" ]; then
-        echo -e "${RED}Error: ruscv-sim binary not found${NC}"
-        exit 1
-    fi
-    
-    echo -e "${GREEN}[OK]${NC} Simulator: ${RUSCV_BIN}"
-}
-
-# Function to run a single test
-run_test() {
-    local name="$1"
-    local elf="$2"
-    local expected_exit="$3"
-    local description="$4"
-    
-    echo -e "${BLUE}Running test: ${name}${NC}"
-    echo "  File: ${elf}"
-    echo "  Expected exit code: ${expected_exit}"
-    echo "  Description: ${description}"
-    echo ""
-    
-    # Run the simulator
-    local output
-    local exit_status=0
-    
-    # Run simulator and capture output
-    output=$("${RUSCV_BIN}" run "${elf}" --max-cycles 100000 2>&1) || exit_status=$?
-    
-    echo "$output"
-    echo ""
-    
-    if [ $exit_status -eq "$expected_exit" ]; then
-        echo -e "${GREEN}  [PASS]${NC} Exit code = ${exit_status} (expected ${expected_exit})"
-        return 0
-    else
-        echo -e "${RED}  [FAIL]${NC} Exit code = ${exit_status} (expected ${expected_exit})"
-        return 1
-    fi
-}
-
-# Function to run hello test with output verification
-run_hello_test() {
-    local name="$1"
-    local elf="$2"
-    local expected_exit="$3"
-    local description="$4"
-    
-    echo -e "${BLUE}Running test: ${name}${NC}"
-    echo "  File: ${elf}"
-    echo "  Expected exit code: ${expected_exit}"
-    echo "  Description: ${description}"
-    echo ""
-    
-    # Run the simulator
-    local output
-    local exit_status=0
-    
-    # Run simulator and capture output
-    output=$("${RUSCV_BIN}" run "${elf}" --max-cycles 100000 2>&1) || exit_status=$?
-    
-    echo "$output"
-    echo ""
-    
-    # Check exit code
-    if [ $exit_status -ne "$expected_exit" ]; then
-        echo -e "${RED}  [FAIL]${NC} Exit code = ${exit_status} (expected ${expected_exit})"
-        return 1
-    fi
-    
-    # Check output contains "Hello!"
-    if echo "$output" | grep -q "Hello!"; then
-        echo -e "${GREEN}  [PASS]${NC} Exit code = ${exit_status}, output contains 'Hello!'"
-        return 0
-    else
-        echo -e "${RED}  [FAIL]${NC} Output does not contain 'Hello!'"
-        return 1
-    fi
-}
-
-# Main
-echo "============================================"
-echo "  RISC-V ELF Test Runner"
-echo "============================================"
-echo ""
-
-# Check simulator
-echo -e "${YELLOW}Checking simulator...${NC}"
-check_simulator
-echo ""
-
-# Test counter
-TESTS_PASSED=0
-TESTS_FAILED=0
-TEST_NUMBER=0
-
-# Find all .elf files in rv64i and rv64m directories
-echo -e "${YELLOW}Discovering tests...${NC}"
-RV64I_FILES=("${TESTS_DIR}"/rv64i/*.elf)
-RV64M_FILES=("${TESTS_DIR}"/rv64m/*.elf)
-
-# Combine both arrays
-ELF_FILES=()
-for f in "${RV64I_FILES[@]}"; do
-    [ -f "$f" ] && ELF_FILES+=("$f")
-done
-for f in "${RV64M_FILES[@]}"; do
-    [ -f "$f" ] && ELF_FILES+=("$f")
-done
-
-if [ ${#ELF_FILES[@]} -eq 0 ]; then
-    echo -e "${RED}Error: No .elf files found in ${TESTS_DIR}/rv64i/ or ${TESTS_DIR}/rv64m/${NC}"
-    echo "Run compile_riscv_tests.sh first to build the test programs."
-    exit 1
-fi
-
-echo "Found ${#ELF_FILES[@]} test(s)"
-echo ""
-
-# Run each test
-for elf_file in "${ELF_FILES[@]}"; do
-    # Skip if not a file (handles case when glob doesn't match)
-    [ -f "$elf_file" ] || continue
-    
-    # Extract test name from filename
-    test_name=$(basename "$elf_file" .elf)
-    TEST_NUMBER=$((TEST_NUMBER + 1))
-    
-    echo -e "${YELLOW}Test ${TEST_NUMBER}: ${test_name}.elf${NC}"
-    echo "--------------------------------------------"
-    
-    if check_elf "$elf_file"; then
-        # Use special validation for hello test
-        if [ "$test_name" = "hello" ]; then
-            if run_hello_test "$test_name" "$elf_file" "0" "UART output test"; then
-                TESTS_PASSED=$((TESTS_PASSED + 1))
-            else
-                TESTS_FAILED=$((TESTS_FAILED + 1))
-            fi
-        else
-            if run_test "$test_name" "$elf_file" "0" "RV64I instruction test"; then
-                TESTS_PASSED=$((TESTS_PASSED + 1))
-            else
-                TESTS_FAILED=$((TESTS_FAILED + 1))
-            fi
-        fi
-    else
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-    fi
-    echo ""
-done
-
-# Summary
-echo "============================================"
-echo "  Test Summary"
-echo "============================================"
-echo -e "  Total:  ${YELLOW}$((TESTS_PASSED + TESTS_FAILED))${NC}"
-echo -e "  Passed: ${GREEN}${TESTS_PASSED}${NC}"
-echo -e "  Failed: ${RED}${TESTS_FAILED}${NC}"
-echo ""
-
-if [ ${TESTS_FAILED} -eq 0 ]; then
-    echo -e "${GREEN}[SUCCESS]${NC} All tests passed!"
-    exit 0
+# Prefer an explicitly supplied binary.  Otherwise use the configured isolated
+# Cargo target directory and build there, never mixing a host target tree with
+# the container's guest-suite build.
+if [ -n "${RUSCV_SIM_BIN:-}" ]; then
+    RUSCV_BIN="${RUSCV_SIM_BIN}"
 else
-    echo -e "${RED}[FAILED]${NC} Some tests failed."
+    CARGO_TARGET_VALUE="${CARGO_TARGET_DIR:-${PROJECT_DIR}/target/a6-elf-cargo}"
+    case "${CARGO_TARGET_VALUE}" in
+        /*) CARGO_TARGET_ABS="${CARGO_TARGET_VALUE}" ;;
+        *) CARGO_TARGET_ABS="${PROJECT_DIR}/${CARGO_TARGET_VALUE}" ;;
+    esac
+    RUSCV_BIN="${CARGO_TARGET_ABS}/release/ruscv-sim"
+    if [ ! -x "${RUSCV_BIN}" ]; then
+        echo -e "${BLUE}Building ruscv-sim in ${CARGO_TARGET_ABS}${NC}"
+        (cd "${PROJECT_DIR}" && \
+            CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
+            cargo build --release --all-features --target-dir "${CARGO_TARGET_ABS}")
+        build_status=$?
+        if [ "${build_status}" -ne 0 ]; then
+            echo -e "${RED}Error: cargo build --release failed${NC}" >&2
+            exit "${build_status}"
+        fi
+    fi
+fi
+
+if [ ! -x "${RUSCV_BIN}" ]; then
+    echo -e "${RED}Error: simulator binary not found: ${RUSCV_BIN}${NC}" >&2
+    exit 2
+fi
+
+echo -e "${GREEN}[OK]${NC} Simulator: ${RUSCV_BIN}"
+echo -e "${GREEN}[OK]${NC} Guest manifest: ${manifest}"
+grep -E '^(source_head|source_count|compiled_count)=' "${manifest}" || true
+
+mapfile -t ELF_FILES < <(find "${OUTDIR}" -type f -name '*.elf' -print | sort)
+if [ "${#ELF_FILES[@]}" -eq 0 ]; then
+    echo -e "${RED}Error: no ELF files found in ${OUTDIR}${NC}" >&2
+    exit 2
+fi
+
+# Task 4's five guests are required members of the same suite.
+for required in trap_ecall trap_illegal trap_ebreak trap_vectored trap_mret_priv; do
+    if [ ! -f "${OUTDIR}/rv64i/${required}.elf" ]; then
+        echo -e "${RED}Error: required A6 guest missing: ${required}.elf${NC}" >&2
+        exit 2
+    fi
+done
+
+echo "Found ${#ELF_FILES[@]} fresh ELF cases"
+
+passed=0
+failed=0
+number=0
+for elf in "${ELF_FILES[@]}"; do
+    number=$((number + 1))
+    name="$(basename "${elf}" .elf)"
+    echo -e "${YELLOW}Test ${number}/${#ELF_FILES[@]}: ${name}.elf${NC}"
+    echo "  File: ${elf}"
+    if ! check_entry "${elf}"; then
+        failed=$((failed + 1))
+        continue
+    fi
+
+    output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" 2>&1)
+    status=$?
+    printf '%s\n' "${output}"
+    if [ "${status}" -ne 0 ]; then
+        echo -e "${RED}  [FAIL] CLI exit status ${status}, expected 0${NC}"
+        failed=$((failed + 1))
+        continue
+    fi
+    if [ "${name}" = "hello" ] && ! printf '%s\n' "${output}" | grep -q 'Hello!'; then
+        echo -e "${RED}  [FAIL] hello output did not contain Hello!${NC}"
+        failed=$((failed + 1))
+        continue
+    fi
+    echo -e "${GREEN}  [PASS]${NC} CLI exit status 0"
+    passed=$((passed + 1))
+done
+
+printf '\n============================================\n'
+printf '  Fresh RISC-V ELF execution summary\n'
+printf '============================================\n'
+printf '  Total:  %s\n' "$((passed + failed))"
+printf '  Passed: %s\n' "${passed}"
+printf '  Failed: %s\n' "${failed}"
+printf '  Cases:  %s\n' "${#ELF_FILES[@]}"
+printf '\n'
+
+if [ "${failed}" -ne 0 ]; then
+    echo -e "${RED}[FAILED]${NC} one or more public CLI ELF cases failed"
     exit 1
 fi
+
+echo -e "${GREEN}[PASS]${NC} all ${passed} fresh ELF cases passed through the public CLI"
+exit 0
