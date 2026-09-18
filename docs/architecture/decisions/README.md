@@ -47,6 +47,7 @@ and the detailed [historical A5 contract](../../archive/milestones/a5-act4-rv64i
 `a4804341f4ae0a5344beea7ef6c53667e1912c93` on 2026-09-11.
 A6 is the current approved milestone contract. Its closeout-preparation evidence
 merged in PR #46 (`024d15d`), but final rolling completion and successor activation
-remain pending. The [A7 physical-access proposal](../../proposals/a7-physical-access-contract.md)
-is Draft/non-normative. Accepted ADR Context sections preserve historical motivation;
+remain pending. The [A7 non-atomic physical-access candidate](../../proposals/a7-physical-access-contract.md)
+is Draft/non-normative: it preserves legacy atomics as debt, not an ADR exception
+permitting split atomics. Accepted ADR Context sections preserve historical motivation;
 use the current inventory and A6 evidence for implemented trap/runner behavior.

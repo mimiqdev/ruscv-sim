@@ -131,8 +131,12 @@ move old backlog items, weaken documentation policy, or alter ISA behavior. The
 archive copy and closeout record distinguish the now-merged preparation from the
 later final rolling switch: a maintainer must verify the nine criteria again and
 separately approve a successor before replacing the active plan. The
-[A7 proposal](../proposals/a7-physical-access-contract.md) is Draft and
-non-normative; approval to draft it is not approval or activation of its contract.
+[A7 non-atomic migration candidate](../proposals/a7-physical-access-contract.md)
+is Draft and non-normative. The scope direction preserves legacy atomic behavior
+as debt and rejects disabling it, but the full revised contract and preservation
+ledger still await approval. Documentation policy keeps A6 effective until that
+approval; the candidate specifies how one activation change can finalize A6 and
+rotate the active plan together without relabeling historical evidence.
 
 Known boundaries retained in the eventual closeout record are: flat physical
 RAM/UART/HTIF execution; synchronous Machine-mode traps only; fixed 32-bit

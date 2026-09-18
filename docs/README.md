@@ -33,7 +33,7 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Proposals (not active contracts)
 
-- [A7 unified physical-access boundary](proposals/a7-physical-access-contract.md) — Draft/non-normative; atomic scope and compatibility choices require approval. A6 remains the active contract; PR #46 merged closeout preparation, not successor activation.
+- [A7 non-atomic physical-access migration candidate](proposals/a7-physical-access-contract.md) — Draft/non-normative complete candidate contract. Fetch and ordinary loads/stores migrate; legacy atomics retain behavior as explicit debt, not disabled or certified. Conservative compatibility defaults and the full revised contract await approval. Policy keeps A6 as the sole active contract until the documented approval/rotation step; PR #46 merged closeout preparation only.
 
 ## Verification
 

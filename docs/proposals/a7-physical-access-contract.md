@@ -1,230 +1,287 @@
-# A7 Proposal — Unified Physical-Access Boundary
+# A7 Candidate Contract — Non-Atomic Physical-Access Boundary Migration
 
-**Status:** Draft — not approved or activated
+**Status:** Draft — revised scope; not approved or activated
 
-**Authority:** Informational, non-normative proposal. Approval to draft is not
-approval of this contract or implementation. This document does not claim
-implementation completeness and does not replace [dev-plan.md](../dev-plan.md).
+**Authority:** Informational, non-normative candidate milestone contract. Approval
+to revise the scope is not approval of the complete contract below or permission
+to implement it. This target document does not claim implementation completeness.
 
-**Evidence baseline:** `024d15d546dc3b711f593cd44bb107612fd8b600`, inspected
-2026-09-18. Only documentation changes are proposed here.
+**Evidence baseline:** `024d15d546dc3b711f593cd44bb107612fd8b600`, source inspected
+2026-09-18. This change is documentation-only.
 
-## 1. Objective and authority
+## 1. Objective, decision and authority
 
-Converge the two public execution configurations on **one transport-neutral
-physical transaction contract**, implementing the bounded public-path portion of
-[ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md).
-A common trait name alone is insufficient: fetch, integer and floating-point
-data accesses, and atomic attempts must reach the same semantic boundary without
-a fallback to the old typed-memory path. RAM, UART and HTIF remain targets, not
-Hart semantics. This is not a proposal to activate MMU translation or to deliver
-the entire future Machine composition.
+Migrate **instruction fetch and ordinary integer/FP loads and stores** in both
+public execution configurations to a transport-neutral physical boundary with
+explicit physical address, width, access category, raw bytes and typed results.
+Keep architectural address interpretation, alignment, load extension, exception
+mapping and retirement with the Hart. Preserve public behavior, including
+existing successful atomic programs, without copying storage or adding another
+ISA implementation.
 
-[ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md)
-owns outcomes, fault mapping and architectural effects;
-[ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md)
-owns placement/composition/Runner responsibilities;
-[ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md)
-owns budget/time/control boundaries. These accepted decisions constrain this
-proposal; their historical Context sections are not a current implementation
-inventory. [Documentation policy](../documentation-policy.md) and the unchanged
-A6 active contract remain authoritative until a separate activation decision.
+This is a **staged non-atomic migration**, not “all physical accesses unified.”
+AMO/LRSC repair and a complete atomic operation envelope are outside A7. The
+maintainer rejected the previous capability-rejection option B: disabling or
+rejecting existing successful atomic paths is not a deliverable or fallback.
+Reclassifying those paths as unsupported-instruction simulator failures is also
+forbidden. The previous A/B/C choice is no longer an activation gate.
 
-## 2. Starting point: retain A6, do not implement it twice
+The final architecture remains unchanged:
+
+* [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md)
+  owns Hart outcomes, architectural effects and observations.
+* [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md)
+  requires one physical port, complete raw-byte transfers, fault separation,
+  indivisible atomic envelopes and Hart-owned reservation semantics. A7 implements
+  only the non-atomic portion. Retained legacy atomics are known nonconformance,
+  not an exception added to the ADR or proof of transaction atomicity.
+* [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md)
+  owns placement/composition/Runner responsibilities; offset conversion is not MMU
+  translation.
+* [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md)
+  owns budget/time/control boundaries; A6's existing accounting is preserved.
+
+[Documentation policy](../documentation-policy.md) rule 2 and `AGENTS.md` require
+[dev-plan.md](../dev-plan.md) to contain exactly one Current milestone contract.
+It therefore remains **unchanged, with A6 effective**, rather than holding a
+second Current or replacing A6 with an unapproved Draft. This document supplies
+the complete candidate objective, scope, constraints, deliverables and acceptance
+criteria for a later approved replacement. Section 9 gives the exact activation
+sequence; approving this PR as documentation alone does not activate A7.
+
+## 2. Starting point and evidence identities
 
 The [A6 assessment](../verification/a6-capability-assessment.md) and
-[archive record](../archive/milestones/a6-closeout-record.md) distinguish merged
-closeout preparation from the still-pending rolling-plan switch. PR #46 merged
-as the baseline above. Historical test results retain their original revisions.
+[closeout record](../archive/milestones/a6-closeout-record.md) record PR #46's
+merge at the baseline above. PR-head CI `35331709689` and exact-merge main CI
+`35332790906` are distinct: the latter freshly compiled and passed 51 project
+ELFs, including five trap guests. Frozen ACT4 run `35325844246` remains evidence
+at source `845c63325db5ac87ab2ff0ed260453dc3b396ae9`, not at this documentation
+HEAD. Final A6 rolling closeout is pending approval of its successor.
 
-| Actual baseline source / focused regression | Implemented fact or remaining debt |
+| Source / focused regression | Existing behavior to preserve or debt not to overclaim |
 | --- | --- |
-| `src/core/mod.rs::step_outcome`, `enter_trap`, `classify_execute_error`; `tests/a6_task3_core_trap_test.rs`, `tests/trap_test.rs` | Typed retirement/trap/failure outcomes, Machine-mode synchronous entry, pre-transaction alignment, staged Hart state and original-address `mtval` already exist. `step` is a compatibility wrapper. No interrupt sampling or MMU wiring. |
-| `src/csr/mod.rs`, `src/isa/rv64i/system.rs`; `tests/csr_access_test.rs`, `tests/mret_conformance_test.rs` | MRET restoration/privilege checks, fixed C-disabled IALIGN=32, `mepc` masking, authoritative `minstret` and explicit-write precedence are A6 work to preserve. |
-| `src/executor.rs::RunControl`, both public loops; `tests/a4_run_control.rs`, `tests/a4_integrated_equivalence.rs` | Shared started-slot limits, completed-turn reporting, exit decisions and installation already exist; no full Machine lifecycle abstraction. |
-| `src/executor.rs::load_and_run`; `tests/public_behavior.rs::public_commit_log_reproduces_nonzero_base_opcode_and_memory_suffix_gaps` | Logging uses Hart-fetched opcode/privilege and only retired outcomes; no opcode re-fetch. Runner still snapshots GPRs for logger deltas, and passes `mem_access = None`. Full ADR-0001 observations are not implemented. |
-| `src/memory/mod.rs`, `src/core/mod.rs::MemoryAdapter`, `src/isa/rv64i/{load,store}.rs`, `src/isa/rv64{f,d}/load_store.rs` | Typed reads/writes and load-extension helpers remain the active boundary. Fetch and data have separate handles. ELF-base subtraction is storage adaptation despite stale source comments calling it VA translation. |
-| `src/executor.rs::SystemBus`; `tests/memory_bounds.rs`, `tests/executor.rs` | RAM validates complete typed spans; UART is byte-only in a 0x100-byte public window; HTIF is dword-only but checks only its starting address. RAM-first route precedence and device fallthrough are observable. |
-| `src/isa/rv64a/{amo,lr_sc}.rs`, `src/execute/mod.rs::execute_amo`; `tests/amo_test.rs` | AMO helpers use ordinary word read then word write. LR/SC use a process-global reservation, not staged Hart state. Existing helper tests do not establish an atomic port, competing-write invalidation, or correct public A-extension decoding. See §5. |
-| `src/mmu/physical.rs`, `src/mmu/sv39.rs`; `tests/ad_bits_test.rs`, `tests/translation_test.rs` | Separate byte/dword physical interface; walker collapses memory errors into `AccessFault`. A/D writes are separate transactions. Component only, not a ready public-path adapter. |
-| `src/tlm/{traits,payload,bus,status}.rs`, `src/peripherals/uart16550.rs`; `tests/tlm_tests.rs` | Separate payload/status/delay/DMI vocabulary; no atomic envelope. UART TLM target consumes the first byte, unlike the public width checks. Core's optional TLM field is unused. Component presence is not adapter parity. |
+| `src/core/mod.rs::step_outcome`, `enter_trap`, `classify_execute_error`; `tests/a6_task3_core_trap_test.rs`, `tests/trap_test.rs` | Typed retirement/trap/failure outcomes, synchronous Machine entry, Hart pre-transaction alignment and original-address `mtval` already exist. `step` is a compatibility wrapper. |
+| `src/csr/mod.rs`, `src/isa/rv64i/system.rs`; CSR and MRET tests | MRET restoration/privilege checks, C-disabled IALIGN=32, `mepc` masking and authoritative `minstret` with explicit-write precedence are implemented, not A7 deliverables to redo. |
+| `src/executor.rs::RunControl`, `install_image`, both public loops; `tests/a4_integrated_equivalence.rs` | Shared placement, installation and run decisions; started-slot budget versus completed turns. No full Machine abstraction. |
+| `src/executor.rs::load_and_run`; public commit-log test | Hart-fetched opcode/privilege is logged only on retirement, without refetch. Runner GPR snapshots and `mem_access = None` remain observation debt. |
+| `src/memory/mod.rs`, `src/core/mod.rs::MemoryAdapter`, `src/isa/rv64i/{load,store}.rs`, `src/isa/rv64{f,d}/load_store.rs` | Typed accesses and extension helpers remain active; ELF-base subtraction is storage adaptation. |
+| `src/executor.rs::SystemBus`; `tests/memory_bounds.rs`, `tests/executor.rs` | RAM whole-span checks and RAM-first routing; UART byte-only public 0x100-byte window; HTIF dword methods check only the starting address. |
+| `src/execute/mod.rs::execute_amo`, `src/isa/rv64a/{amo,lr_sc}.rs`; `tests/amo_test.rs` | AMO word read/write pairs, encoding/width defects and global reservation. Helper arithmetic tests are not public A-extension certification. |
+| `src/mmu/{physical,sv39}.rs`; translation/A-D tests | Separate physical interface, walker error collapsing, separate A/D writes. Not wired to public core. |
+| `src/tlm/{traits,payload,bus,status}.rs`, `src/peripherals/uart16550.rs`; TLM tests | Separate status/delay/DMI vocabulary, no atomic envelope; TLM UART width behavior differs. Optional core TLM field is unused. |
 
-## 3. Proposed scope and non-goals
+## 3. Scope, non-goals and deliverables
 
-In scope after approval: native synchronous single-Hart physical request/result
-vocabulary, raw RAM and existing UART/HTIF adapters, Hart-side typed compatibility
-helpers, both public facades, failure injection, migration characterization and
-exact-head regression evidence. Concrete Rust signatures are design choices, not
-prescribed here. Public names and callable APIs remain available, including
-`MemoryInterface`, `SystemBus`, `RiscvCore`, `load_and_run`, `RiscVSimulator`,
-inspection and stepping helpers. Compatibility wrappers must delegate to the
-same semantic implementation rather than retain an independent execution path.
+In scope after explicit activation:
 
-Not in scope: new ISA instructions or extension certification; MMU/Sv39/PMP
-wiring; page faults; asynchronous interrupts, CLINT/PLIC, WFI scheduling;
-SystemC/C++/FFI, TLM public execution or DMI acceleration; multiple Harts/DMA;
-full Machine lifecycle, debugger composition, scheduler, virtual-time engine,
-`mcycle` or new observation schemas. No automatic A8/A9 commitment follows.
-Future integration directions are non-normative candidates only.
+1. Non-atomic request/result vocabulary and native RAM/UART/HTIF adapters for
+   fetch and ordinary scalar/FP memory transfers, synchronous and single-Hart.
+2. Both public facades (`load_and_run`/CLI and `RiscVSimulator`) using that
+   boundary for the specified Hart accesses, retaining their configuration
+   differences. Public APIs remain callable; compatibility adapters are explicit.
+3. A minimal internal compatibility bridge for unchanged legacy atomic dispatch
+   over the **same storage/device domain**, not a new engine or memory copy.
+4. Negative physical-result tests, migration characterizations, mixed ordinary /
+   legacy atomic regression tests, public equivalence checks, and exact-head
+   evidence including A6 and both separately scoped 51-case suites.
+5. A current inventory and residual-debt ledger that identify the legacy path and
+   state precisely what remains before full ADR-0002 convergence.
 
-Atomic migration is an explicit **approval gate**, not an exception to ADR-0002.
-The alternatives in §5 must be resolved before activation. A smaller milestone
-may reject unavailable target capabilities, but cannot secretly preserve split
-atomic execution under a “unified” name.
+Non-goals: new ISA semantics, atomic encoding/width fixes, `aq`/`rl` repair,
+per-Hart reservation conversion, AMO/SC indivisibility, complete atomic envelopes,
+new atomic capability denial; MMU/Sv39/PMP/page faults; asynchronous interrupts,
+CLINT/PLIC/WFI; SystemC/FFI/TLM public wiring or DMI; multi-Hart/DMA/coherence;
+full Machine lifecycle, scheduler/virtual time, `mcycle`, new trace schemas or
+extension certification. Host `write_mem` hardening is not bundled into this
+migration. No A8/A9 schedule or automatic future commitment is created.
 
-## 4. Proposed semantic contract
+## 4. Non-atomic semantic contract
 
-### 4.1 Request and ownership
+### 4.1 Request, bytes and address ownership
 
-One request identifies an explicit 64-bit **physical address**, nonempty width
-(at least 1/2/4/8 bytes), semantic category (fetch, data read, data write, atomic),
-and raw write bytes or an atomic operation envelope. A response matches that
-request. Page-walk origin can be represented for future adapters, but no public
-walk is enabled in A7. Host installation/inspection is not a synthetic Hart
-access; it reuses target storage/range validation without retirement or traps.
+Each migrated request carries a 64-bit physical address, explicit nonzero width
+(1/2/4/8 bytes), category **Fetch / DataRead / DataWrite**, and exactly the write
+bytes when applicable. A response is tied to that request. This vocabulary is
+not an atomic envelope: an AMO's two legacy subcalls must not be presented as a
+conforming atomic transaction merely because they transfer bytes.
 
-* Byte `i` is at `paddr + i`. Fetch/read success returns exactly `width` bytes;
-  write success has no invented read value. Integer encoding is explicitly
-  little-endian, independent of host layout. Hart performs signed/unsigned load
-  extension, narrowing, FP interpretation, decode and destination updates.
-* Hart retains effective/original address, access stage, privilege checks,
-  alignment policy, trap cause and retirement. Misaligned fetch/data attempts
-  issue **zero** physical requests. Target width denial of an aligned access is
-  not a Hart misalignment exception.
-* The selected physical map validates the entire nonwrapping span before target
-  invocation. Overflow, unmapped range, unsupported width/category, and a span
-  crossing targets are target rejection; no splitting or width substitution.
-  Zero width or mismatched request payload length is a caller/protocol failure,
-  not a legal empty guest transaction. Empty host inspections remain valid.
-* Fetch is explicit, not an ordinary data read guessed from width. Current
-  4-byte RAM fetch behavior remains; UART/HTIF do not gain fetch support merely
-  because a data method exists. Tests distinguish fetch/load/store fault causes.
-* Hart is physically identity-addressed in these configurations. The backend
-  adapter owns checked `paddr - ram_base` or image-base-to-storage-offset
-  conversion. Guest PC and `mtval` remain guest addresses. Flat public
-  `read_mem`/`write_mem`/`set_tohost` remain offset APIs; their compatibility
-  conversion happens at the facade, not inside ISA code. Image placement still
-  owns metadata resolution. No subtraction is MMU translation; no double
-  subtraction is allowed. Nonaligned image bases need explicit characterization
-  of legacy offset-alignment rejection before changing it (§6).
+* Byte `i` corresponds to `paddr + i`; success returns exactly the requested
+  number of bytes or complete write acknowledgment, without an invented value.
+  Integer serialization is little-endian, independent of host integer layout.
+  Hart owns signed/unsigned extension, narrowing, FP interpretation and decode.
+* Hart owns effective/original address, privilege, alignment and trap cause.
+  Misaligned ordinary fetch/load/store issues no physical request. Preserve A6's
+  atomic prechecks as well, without claiming new atomic semantics. Target width
+  rejection of an aligned request is an access fault, not misalignment.
+* Validate the entire nonwrapping physical span before invoking a migrated
+  target. Overflow, absent/denied target, unsupported width/category or no single
+  target for the full span is target rejection. No cross-target stitching,
+  implicit byte splitting, truncation or substituted width. Zero-width guest
+  requests and mismatched payload sizes are caller/protocol failures. Empty
+  host inspections retain their existing semantics, outside this request model.
+* Fetch remains a distinct category; current aligned 4-byte RAM fetch works.
+  UART/HTIF gain no instruction-fetch ability. Fault tests distinguish causes
+  1/5/7 for fetch/load/store, not a width-based guess.
+* Native bus addresses remain guest physical addresses. Flat configuration's
+  guest address maps to its existing image-relative storage offset in the
+  backend/compatibility layer; preserve checked base subtraction exactly once.
+  Neither conversion nor `ImagePlacement` metadata resolution is translation.
+  Guest PC and `mtval` never become host offsets. Flat `read_mem`, `write_mem`
+  and `set_tohost` retain public offset meaning. Legacy atomics retain the same
+  address conversion and reservation-key address form as before (see §5).
 
-### 4.2 Results: no generic “memory error” shortcut
+### 4.2 Typed results and architectural mapping
 
-| Physical result | Boundary guarantee | Hart / Runner consequence |
+| Result | Meaning and guarantee | Hart / Runner behavior |
 | --- | --- | --- |
-| Complete success | Exact bytes or complete write/atomic result; successful target side effects included | Hart completes the instruction normally when all architectural requirements succeed. |
-| Guest target rejection | Valid request cannot complete: range overflow, absent/denied target, unsupported width/atomic capability, target-reported bus/device error; preserve physical span/category/width and target context | Hart selects cause 1 for fetch, 5 for load/LR, 7 for store/SC/AMO, preserving original-address `mtval`; no retirement. |
-| Host/backend failure | Unavailable resource/backend, poisoned lock, host failure; not guest denial | `SimulatorFailure`, not guest CSRs/trap/commit; consume started slot, not completed turn or retirement. |
-| Protocol/invariant failure | Wrong response length/category, malformed envelope, violated atomicity, contradictory completion | `SimulatorFailure`; never infer guest denial from error text. |
-| Unknown completion | Effects cannot be established, especially after external/MMIO activity | Terminal simulator failure with uncertainty; no retry, fabricated exit, trap or commit. No reuse until resolution/restoration is safe. |
+| Complete success | Exact read/fetch bytes or complete ordinary write, including defined target effects | Hart applies instruction effects and retires normally when all architectural conditions succeed. |
+| Guest target rejection | Valid migrated request denied by range, width, map, permissions or target bus/device failure; retain address/span/category/width and target context | Hart maps fetch/load/store to cause 1/5/7 with original address in `mtval`; no retirement or partial destination/store. |
+| Host/backend failure | Unavailable backend, host resource or poisoned synchronization | Simulator failure, not fabricated guest CSRs/trap/commit. |
+| Protocol/invariant failure | Short/long response, wrong category, contradictory completion or malformed transfer | Simulator failure, not target denial inferred from generic error strings. |
+| Unknown completion | Effects cannot be established after backend/MMIO activity | Terminal simulator failure with uncertainty; no retry, rollback claim, fabricated exit, trap or commit; no reuse until safely resolved. |
 
-The categories must survive compatibility adapters even if existing public error
-types remain. A legal but unimplemented **Hart instruction** is simulator failure;
-a supported Hart operation rejected by a target for absent **physical capability**
-is an access fault. These are not interchangeable ways of disabling RV64A.
+These categories apply to the migrated boundary, not a retrospective claim that
+all legacy atomic or third-party errors have been normalized. Preserve the
+existing distinction between unsupported legal Hart instructions and guest
+faults; **do not introduce either classification to bypass the rejection of
+option B**. Existing successful atomic operations must remain successful.
 
-### 4.3 Transaction side effects and accounting
+### 4.3 Side effects and accounting
 
-Prevalidate routing, complete span, width, capability, payload and target
-preconditions before mutation. Rejected writes leave all RAM bytes, device
-registers/FIFOs, callbacks/output, exit signals and reservation-invalidation
-notifications unchanged. Rejected reads must not consume RX bytes or clear
-status bits. No failed multi-byte operation may emit a prefix of byte writes.
-Known failures before mutation must have the same no-effect property.
+Migrated targets validate routing, span, width, payload and target preconditions
+before mutation. Rejected ordinary writes leave RAM bytes, MMIO registers/FIFOs,
+callbacks, output and exit signals unchanged. Rejected reads must not dequeue
+RX or clear status. Known pre-completion failures leave no partial effect;
+uncertain/nonrollbackable completion is simulator failure, not a clean target
+fault. No byte-prefix write is allowed for one migrated guest write.
 
-Successful UART reads (RX dequeue/status clear) and writes/output, and successful
-HTIF callbacks are committed target effects. They are **not rollbackable** by
-cloning `CoreState`. Validate all remaining fallible architectural conditions
-before such access; if a later host/protocol failure makes completion uncertain,
-report simulator failure rather than pretending to restore the device. A backend
-unable to promise failed-read-without-effect must reject before invocation or
-report a complete successful read, never a false access fault after consumption.
+Successful UART RX/status reads, output writes and HTIF callbacks are committed
+physical effects and cannot be rolled back by cloning Hart state. Finish fallible
+architectural checks before invoking them. If a later host failure makes state
+uncertain, report failure rather than pretending the target was restored.
+These guarantees cover **ordinary transactions only**, not the indivisibility of
+a legacy AMO pair, legacy SC or a host byte-loop write.
 
-Successful exit-causing stores retire before Runner reports exit; rejected writes
-produce no exit event. Preserve A6 continuation and every trap boundary, `minstret`
-write precedence, zero budget, recursive-trap bounds, last-slot failure (not
-Timeout) and final-slot exit (wins over Timeout). Physical calls are not turns.
-Optional delay metadata must remain transport-neutral; native A7 has no modeled
-delay/time consumption. Adding delay consumers later requires ADR-0004's exactly
-once accounting, not sleeps or changes to public `cycles`.
+Successful exit stores retire before exit reporting; failed ordinary stores
+produce no exit. Preserve every A6 trap boundary, continue-to-handler policy,
+`minstret` explicit-write precedence, zero budget, recursive trap bounds, final
+failed slot as execution error (not timeout), and final successful exit winning
+over timeout. Physical calls are not extra Hart turns. A7 adds no modeled time
+consumer; any future delay annotation/consumer must follow ADR-0004, not sleep
+or change public `cycles` implicitly.
 
-## 5. Atomic scope: mandatory decision before activation
+## 5. Legacy atomic boundary and separability constraints
 
-Inspection reveals more than a missing bus method:
+### 5.1 What is preserved, not certified
 
-* AMO helpers read/write 32 bits even for D encodings. The public dispatcher
-  maps `funct5=00001` to add and several other encodings incorrectly; dispatch
-  presence is not A-extension correctness. Correcting encodings/widths is ISA
-  work, not a transparent physical refactor.
-* LR word/dword dispatch is reversed for the usual width encoding; SC fallback
-  uses dword. `aq`/`rl` are read but not enforced. Global reservation is outside
-  staged `CoreState`, not reset with a core, and ordinary stores do not notify it.
-  Holding the outer data-memory mutex does not establish a domain-wide envelope
-  or per-Hart ownership, especially with exposed RAM handles.
-* `tests/amo_test.rs` primarily calls helpers directly; A6 atomic tests establish
-  misalignment/unmapped cause and non-retirement boundaries, not successful
-  atomic indivisibility or full extension support.
+`execute_amo` currently chooses helpers with encoding/width debt; AMO helpers
+perform word read then word write even for D encodings. LR word/dword selection
+is reversed for the usual width encoding, SC fallback uses dword, and `aq`/`rl`
+are not enforced. `GLOBAL_RESERVATION` lives outside staged `CoreState` and is not
+reset by core reset. SC's write error returns before its normal reservation clear.
+Do not “fix” any of these incidentally during non-atomic migration.
 
-Every viable option requires an operation envelope at the **same port**. Hart
-owns arithmetic/signedness, `aq`/`rl` interpretation, result extension, reservation
-state and architectural SC result. Physical domain serializes an advertised AMO
-or conditional SC indivisibly and supplies committed-write visibility. Neither a
-platform-global reservation nor ordinary `read` + `write` is acceptable.
+Ordinary integer/FP stores and host writes currently **do not invalidate** that
+reservation (`src/isa/rv64i/store.rs`, FP stores, `src/executor.rs::write_mem`;
+`clear_if_matching` has no production caller). A same-address store between LR
+and SC may therefore leave SC successful. Preserve this behavior as an explicitly
+labelled regression target, not as correct RISC-V reservation semantics. Do not
+add notifications only to the new scalar path, a second reservation copy, a new
+reset clear, or address-key changes. Failed ordinary writes likewise must not
+change legacy reservation state. Keeping one known-deficient authority avoids
+new state divergence; it does not establish per-Hart ownership or coherence.
 
-| Option awaiting maintainer selection | Real dependency / compatibility cost | Exit condition |
+### 5.2 Source-supported migration seam, not an implemented proof
+
+`src/core/mod.rs::step_outcome` already knows the decoded opcode and holds the
+data-memory lock across `execute_with_csr_access`. `src/execute/mod.rs` separately
+dispatches `Load`, `Store`, `LoadFp`, `StoreFp` and `Amo`. Thus the proposed seam
+is an access-context/adapter selection at that existing connection, **not** a
+second decoder or copied implementation of `execute_amo`:
+
+```text
+existing Hart / existing Executor
+  fetch, ordinary load/store -> non-atomic raw physical adapter
+  Opcode::Amo                -> explicitly legacy typed-memory adapter
+                                (unchanged AMO/LRSC helpers/reservation)
+             both views -> same RAM/device objects and locking domain
+```
+
+Ordinary ISA helpers can receive a Hart-side typed view of the new raw boundary;
+load extension must no longer be delegated to native physical targets. The
+legacy view retains existing typed widths, error behavior, address conversion
+and device routing. Public stepping still runs the same `step_outcome` and
+Executor. No new public legacy-mode switch is needed. Preserve the outer
+lock across the complete legacy helper call; do not drop it between AMO subcalls
+or reacquire the same mutex through the new adapter and deadlock. That lock is a
+compatibility mechanism, **not** evidence of domain-wide atomicity.
+
+RAM/device objects remain shared references, not copied buffers, write-through
+mirrors or periodically synchronized snapshots. Ordinary stores must be visible
+to the next legacy LR/AMO; legacy writes must be visible to ordinary loads,
+fetch, signature extraction and host inspection immediately. `memory()` and
+image replacement must keep those views bound to the same object. Existing
+separate instruction/data handles in the public core constructor retain their
+configured correspondence; the two standard facades continue to use shared
+backing storage. Do not silently merge distinct caller-supplied memories.
+
+Source structure supplies a plausible bounded seam, not executed parity proof.
+T0/T3 below must characterize and test it before migration exits. If the concrete
+adapter requires copying storage, weakens existing lock coverage, changes
+reservation keys/SC outcomes, or cannot preserve a successful legacy MMIO atomic
+path, stop and present the exact call chain and failing case for a scope decision.
+Do not silently repair ISA behavior, deny atomics, or claim separability without
+those checks.
+
+### 5.3 Eventual exit from legacy debt (not an A7 deliverable)
+
+Full ADR-0002 convergence later requires separately approved atomic encoding/width
+and profile rules, per-Hart reservation ownership and reset/SC fault behavior,
+indivisible AMO/LR/SC envelopes, committed-write visibility from every writer,
+and regression evidence before deleting the legacy bridge. Multi-Hart/DMA scope
+would need its own contract. No future milestone is automatically scheduled.
+A7 can close with this debt explicit; it cannot close claiming all accesses are
+unified, atomics are transaction-safe, or the A extension is certified.
+
+## 6. Conservative compatibility ledger
+
+The defaults below are proposed preservation rules, not approval of incidental
+behavior tightening. Any deviation requires an explicit decision and exact
+old→new tests. Rejecting option B does not approve HTIF, host-write, placement or
+third-party API changes.
+
+| Surface | Conservative default in this candidate | Measurable boundary / escalation |
 | --- | --- | --- |
-| **A — capable native RAM atomic migration** | Requires a separately approved bounded ISA prerequisite for encoding/width defects and per-Hart reservation/profile rules, then atomic RAM serialization/visibility. UART/HTIF reject atomics before effects. Larger than a scalar-port refactor; cannot be called “no ISA work.” | Correct W/D envelopes; no read/write gap; successful/failed SC, same-Hart overlapping stores, reset and two independent simulator instances verified. Unsupported legal Hart operations remain simulator failures. |
-| **B — bounded explicit capability rejection** | Native targets advertise no atomic capability initially. Recognized, correctly represented atomic attempts reach the port and receive target rejection, not ordinary SC failure. Existing successful AMO/LR/SC programs can now trap. Encoding/width characterization must identify attempts that cannot yet be represented correctly; those remain unsupported-Hart simulator failures, not invented capability faults. User approval of this behavior change is required. | Table of exact encodings/widths and old→new outcomes approved; no legacy atomic helper reachable from either public loop; target rejection has no side effects, cause 5 for LR and 7 for SC/AMO; no global reservation touched. Successful native atomic support is not claimed. Exported legacy atomic helpers also delegate/reject; they cannot retain a public split-access escape hatch. |
-| **C — defer activation pending atomic prerequisite** | Preserve current runtime while a separate approved contract fixes Hart atomic semantics/reservations; then re-evaluate A7's size. No date or successor milestone is promised. | Prerequisite evidence reviewed and this proposal revised before activation; not an A7 implementation completion claim. |
+| HTIF span checking | New non-atomic port validates a full span at the existing 8-byte endpoint. Existing public typed `SystemBus` methods and the legacy atomic adapter retain start-address-only behavior. An aligned ordinary guest SD can reach only the base within that endpoint. | Test unshadowed raw port interior-span rejection with no callback, old direct dword calls at base+1 through base+7 with their existing callback/zero-read behavior, and guest misalignment before target access. Legacy SC.W at base+4 can currently reach a dword callback due to width debt: preserve it on the legacy path. No public API tightening is silently authorized; shared target object, explicitly different legacy validation, not claimed universal conformance. |
+| Host `write_mem` | Keep byte-loop semantics outside the migrated guest transaction guarantee; do not add all-or-nothing host writes in A7. It still writes the same RAM seen by both paths. | Characterize an in-range prefix followed by out-of-range failure and retain prefix visibility. Preserve empty writes and offset meaning; characterize overflow/panic behavior in a bounded harness without claiming robustness or requiring a new panic contract. Any hardening is a separate approved change. |
+| Nonaligned image base | Preserve both Hart guest-alignment checks and legacy backend offset-alignment rejection. Do not grant previously faulting accesses merely because a raw backend can transfer unaligned bytes. | For aligned guest address mapping to misaligned offset, preserve access-fault classification, original `mtval`, no destination/target effect; below-base and overflow remain checked. Preserve flat load-time tohost offset alignment validation and prior-image retention on rejected load. Moving subtraction must not change reservation keys. |
+| Third-party `MemoryInterface` implementations / core constructor | Keep existing constructor, trait/helper signatures and supplied handles usable. A conservative typed compatibility shim forwards one existing typed call per ordinary transaction (never synthesized byte loops), marks fetch vs data explicitly, and maps only known typed errors. | Compile a minimal old custom backend; compare call widths/addresses/order and supplied-handle identity. It cannot be advertised as a fully conforming raw backend without side-effect/error guarantees; do not silently reject previously successful calls. Short/malformed new-port responses remain simulator failure; unknown legacy completion cannot become a clean guest fault. If blanket compatibility requires an unsafe guarantee, seek a decision before changing admission/API. |
+| RAM/UART routing | Preserve RAM-first full-span match and existing device fallthrough where one full target accepts, including RAM size 4 versus 8 at HTIF. Preserve UART public 0x100-byte window, byte-only access and reserved-offset zero/ignored writes. | Never stitch RAM/device spans. Test crossing/end/overflow, UART width refusal without RX/status/output changes, and byte success exactly once. Do not shrink UART to TLM's 8-byte map. |
+| Public facades and artifacts | Preserve CLI tohost override > ELF > default, flat manual-offset/load precedence, HTIF-before-RAM versus flat RAM-only observers, decode-before-clear, configuration-specific diagnostics and signature failure policies. | Shared RAM cases must match known results and each other. Explicitly retain CLI-only devices and native artifact suppression versus flat reporting. Absent/empty/readable/unreadable signatures and replacement images remain covered. |
+| MMU/TLM/DMI and other components | Keep unwired; component tests retained, no new public route. | Later adapters must repair error/width/overflow/atomic/visibility gaps and use the final common port. A/D writes remain separate physical effects; no current page-walk or adapter-conformance claim. |
 
-No option is selected by this draft. B is not “fully compatible,” and A cannot
-silently expand this documentation task into ISA implementation. If B is selected,
-retain the envelope and explicit capability contract even without a capable
-production target; test its rejection end to end. If A is selected, additionally
-fix a profile/spec revision, reservation granule, normal/faulting SC consumption
-rules and invalidation rules before implementation. A nonfaulting SC with invalid
-reservation writes nothing and returns conditional failure for Hart interpretation;
-missing physical capability must never masquerade as that conditional result.
-Failed writes must not invalidate reservations; committed overlapping writes must
-be visible to the Hart. No multi-Hart/DMA coherence claim is made.
+The new raw port is the only ordinary Hart physical route in the standard
+facades. The table explicitly retains a **legacy atomic route and compatibility
+API surface**; these are not hidden behind a claim of universal unification.
 
-## 6. Migration and compatibility ledger
+## 7. Tasks, dependencies and executable acceptance criteria
 
-| Surface | Proposed destination and preserved behavior | Approval / negative regression boundary |
+All work below is proposed for activation, not authorized Rust work in this PR.
+New test names are deliverables, not existing tests or observed passes. Run each
+increment's narrow row first; run all rows at the final reviewed implementation
+head. Missing/skipped required tools or tests block acceptance, not count as pass.
+
+| Task / dependency | Deliverable and positive, negative, equivalence checks | Command / exit criterion |
 | --- | --- | --- |
-| Core fetch/data handles and `MemoryAdapter` | One physical semantic port, explicit categories; legacy constructor may wrap separate supplied handles in one category-aware compatibility adapter. Both public facades install one shared address domain. Typed helpers live on Hart side. | No public execution fallback to `read_*_sext` on a backend; no direct optional TLM route. A test spy must observe every fetch and data attempt at the port. Separate-handle compatibility is not a second public platform. |
-| `MemoryInterface` and exported execution helpers | Keep signatures through compatibility delegation; raw native implementation is authoritative. Third-party legacy adapters need documented guarantees and cannot advertise atomics automatically. | Unknown backend semantics/partial writes cannot be normalized as clean guest faults. No default byte-loop implementation of a multi-byte guest write. |
-| Native `SystemBus` | RAM-first **whole-span** match, then whole-span device candidate; preserve existing overlapping RAM/device fallthrough where one complete target accepts, including RAM size 4 at HTIF versus size 8. | Cross-target stitching forbidden. HTIF interior-address dword currently succeeds on start-only checks; rejecting spans beyond its 8-byte endpoint is an observable tightening requiring approval. Add direct API and guest tests; no callback on rejection. |
-| UART / HTIF | Preserve UART public 0x100-byte window, byte-only access and current reserved-offset zero/ignored-write behavior; preserve HTIF base dword zero-read/callback-write. | Do not shrink UART to the TLM 8-byte map. Multi-byte UART rejection cannot dequeue RX, clear status or emit output. Successful callbacks exactly once. |
-| Flat facade | No UART/HTIF device capability is added; guest RAM addresses map to storage offsets, host offset APIs stay offsets. Shared installation replaces RAM/core/metadata together. | Below-base, overflow, nonzero base/entry, image replacement and failed load preserving prior image. Preserve legacy offset alignment rejection until an approved change; moving checks must not accidentally grant accesses. |
-| Host placement/inspection/`memory()` | Same target storage and validation domain, explicitly host-side, no fabricated Hart transactions or retirement. Exposed compatibility handles delegate; future capable atomics require all committed writes to participate in visibility. | `write_mem` currently byte-loops and can leave a prefix on failure. Proposed complete-span prevalidation/all-or-nothing host RAM write is a compatibility tightening to approve and test, not a claim about baseline. Empty reads remain empty; huge/overflow ranges fail without wrap. |
-| Exit, signature, diagnostics, CLI/API | CLI tohost override > ELF metadata > fixed default; flat manual offset and load precedence retained. Decode before clear; native HTIF before RAM observer, flat RAM only. Preserve absent/empty/readable signatures, native suppression versus flat reporting of artifact failure, and existing diagnostic differences. | Same ELF equality only for shared RAM behavior; explicit device-difference and artifact-policy tests must remain. No broad claim of identical configurations. |
-| MMU / TLM / DMI / peripherals beside public path | Retain component APIs/tests unwired in A7. Document future adapters to the same port: physical PTE reads/A-D writes, raw bytes and fault/failure taxonomy; TLM payload/status conversion and atomic envelope. | MMU error collapsing, TLM width/overflow/status handling and DMI visibility must be repaired before later wiring. A/D writes remain separate successful effects, not rollback units of later loads. No certification by type alias. |
+| T0 — approved contract and baseline characterization | Record §6 defaults; new `tests/a7_migration_characterization.rs` captures actual opcode/width behavior, successful legacy AMO/LRSC, SC no-reservation/fault behavior, HTIF interior calls, map overlap, nonaligned base and partial host write. Use baseline and candidate on identical fixtures. Label defect-preservation separately from architectural conformance. | `cargo test --test a7_migration_characterization --test memory_bounds --test public_behavior --test a6_task3_core_trap_test`; exit: baseline expected outcomes captured and no unresolved compatibility change. Existing successful atomics must not be replaced with expected denial. |
+| T1 — non-atomic vocabulary, after T0 | New `tests/a7_physical_contract.rs`: explicit Fetch/Read/Write, widths 1/2/4/8, asymmetric bytes and exact lengths; zero width, mismatched payload/response, wrong category and unknown completion. Target/host/protocol distinctions independently asserted. | `cargo test --test a7_physical_contract`; exit: all raw-byte/taxonomy tests pass without load extension or trap logic in targets; no atomic envelope claimed. |
+| T2 — native adapters, after T1 | New `tests/a7_native_targets.rs`: last valid/one-past/empty/overflow spans, cross-target refusal, preserved overlap priority, unsupported width, RX/status/output/exit side-effect snapshots on rejection and exactly-once effects on success; lock/backend/protocol injection. Keep legacy HTIF entry behavior separately tested. | `cargo test --test a7_native_targets --test memory_bounds --test executor --test peripheral_tests`; exit: complete ordinary transaction guarantees on native targets and unchanged legacy API behavior; no copied storage. |
+| T3 — Hart connection and legacy bridge, after T2 | New `tests/a7_hart_physical.rs` traces fetch and ordinary integer/FP transfers through the port; tests extension, endian order, original address and zero requests for Hart misalignment. Inject causes 1/5/7 versus host/protocol/unknown failures with no fabricated trap/retirement. New `tests/a7_legacy_atomic_compat.rs` mixes ordinary store→AMO/LR and legacy write→load/fetch/signature, LR→overlapping scalar/FP/host write→SC, rejected write→SC, SC write fault, reset/reload and distinct facade instances. Compare actual baseline reservation behavior, including absence of invalidation, not idealized per-Hart semantics. Include successful legacy MMIO/HTIF width cases. | `cargo test --test a7_hart_physical --test a7_legacy_atomic_compat --test amo_test --test a6_task3_core_trap_test --test trap_test --test csr_access_test --test mret_conformance_test`; `cargo test --lib isa::rv64a`; exit: same backing/lock/address-key evidence, unchanged successful atomic outcomes, no new invalidation/reset singleton or capability denial. Serialize reservation-sensitive fixtures or isolate processes; do not conceal global-state debt as concurrency safety. Any demonstrated inseparability is an escalation, not a passing row. |
+| T4 — facade equivalence, after T3 | New `tests/a7_public_equivalence.rs`: identical nonzero-base/entry ELF, ordinary plus legacy atomic memory effects, trap-handler exit, artifacts and replacement; budgets 0, exact exit, recursive trap and final-slot host failure. Keep UART/fixed HTIF, flat offset/tohost, artifact-policy and diagnostic differences. Logging on/off preserves outcomes; no refetch or trap commit. Old custom backend compile/call-order regression. | `cargo test --test a7_public_equivalence --test public_behavior --test a4_integrated_equivalence --test a4_run_control --test executor --test commits_test --test cli_test`; exit: known expected states plus shared-case equality, all public fetch/ordinary memory call sites audited, legacy bridge explicitly identified rather than claimed migrated. |
+| T5 — evidence and bounded closeout, after T0–T4 | Run full gate and both separately scoped suites below; update inventory and residual atomic debt. Keep all A6 regressions and independent component tests. | Exit: final-head evidence complete, no unapproved compatibility delta, no new ISA engine/storage copy, ordinary paths migrated and legacy atomics preserved. No claim of complete ADR-0002, atomicity, per-Hart reservation or full A-extension support. |
 
-Required approval ledger: atomic option; HTIF span tightening; host `write_mem`
-failure atomicity; treatment of nonaligned image-base storage constraints; legacy
-third-party adapter capability/error guarantees. Characterize exact old/new cases
-before accepting the implementation contract. Unanticipated observable changes
-return for approval rather than silently changing “compatibility.”
-
-## 7. Layered tasks and executable acceptance matrix
-
-All tasks below are **proposed**, not work authorized by this draft. New test
-file names are deliverables, not tests claimed to exist or pass today. Each
-implementation increment runs its narrow row first; final acceptance runs all
-rows at one committed reviewed head. No skipped toolchain/external suite is a pass.
-
-| Layer / dependency | Deliverable and precise checks | Command / exit criterion |
-| --- | --- | --- |
-| T0 — approval and characterization | Record §5 option and §6 decisions; add baseline cases for AMO opcode/width dispatch, HTIF interior addresses, map overlap/fallthrough, nonaligned image bases and partial host writes. Distinguish expected changes from regressions. | Existing `cargo test --test memory_bounds --test public_behavior --test a4_integrated_equivalence --test a6_task3_core_trap_test`; new `cargo test --test a7_migration_characterization`. Exit: approved old→new table, no unresolved runtime trade-off. |
-| T1 — vocabulary, after T0 | Request/result validation independent of bus/TLM. New `tests/a7_physical_contract.rs`: widths 1/2/4/8, asymmetric byte patterns, exact read lengths; zero width, short/long payload/response, wrong category, unknown completion; distinct target/host/protocol failures. | `cargo test --test a7_physical_contract`. Exit: all taxonomy/raw-byte negatives fail closed, without trap logic or load extension in targets. |
-| T2 — native targets, after T1 | New `tests/a7_native_targets.rs`: last valid span/one past/`u64::MAX`/empty RAM; cross-target and unsupported widths; approved overlap policy; all rejected read/write states and callback counts unchanged. UART RX/status success occurs once and is not rolled back; HTIF success once, rejection never exits. Inject lock/backend/protocol failures. | `cargo test --test a7_native_targets --test memory_bounds --test executor --test peripheral_tests`. Exit: native adapters pass common T1 contract, no partial guest or approved host RAM writes, legacy API parity except approved deltas. |
-| T3 — Hart connection, after T2 and atomic decision | New `tests/a7_hart_physical.rs`: spy sees one fetch and correct data request, exact address/width/category; LB/LBU/LH/LHU/LW/LWU/LD and FP raw transfers; misaligned fetch/load/store/atomic issue zero target requests. Inject target faults to causes 1/5/7, and host/protocol/unknown results with unchanged trap CSRs/rd/retirement and no fabricated record. Preserve original address under nonzero-base adapter. | `cargo test --test a7_hart_physical --test trap_test --test a6_task3_core_trap_test --test csr_access_test --test mret_conformance_test`; FP load/store unit tests. Exit: no ordinary public fetch/data route bypasses port; no new ISA semantics. |
-| T4 — atomic boundary, after T0/T1; before public convergence exits | New `tests/a7_atomic_boundary.rs`: B tests recognized envelope rejection with zero ordinary reads/writes and no reservation singleton access; malformed envelope is simulator failure; unavailable target capability never SC failure. A additionally requires approved prerequisite tests for W/D, old value, indivisible serialized commit, per-Hart reservation/reset/isolation, conflicting write visibility, SC success/no-reservation/consumption/fault rules and `aq`/`rl` profile. | `cargo test --test a7_atomic_boundary --test amo_test`; `cargo test --lib isa::rv64a`. Exit: selected option proven, no public read+write emulation. Preserve arithmetic coverage separately; under B, legacy successful-helper assertions must be explicitly migrated to approved rejection expectations, not silently deleted or left on a bypass. Old arithmetic tests are not envelope evidence. C blocks activation rather than passing this row. |
-| T5 — both facades, after T3/T4 | New `tests/a7_public_equivalence.rs`: same nonzero-base/entry ELF, data, signatures, replacement image, handler exit and exact budgets through both facades; test known expected states, not equality alone. Retain CLI-only UART/fixed HTIF, flat offsets/manual tohost, artifact policy and diagnostic differences. Log on/off preserves outcomes; fetched opcode logged without refetch, no trap commit. | `cargo test --test a7_public_equivalence --test public_behavior --test a4_integrated_equivalence --test a4_run_control --test executor --test commits_test --test cli_test`. Exit: API examples compile; spy/call-site audit proves both loops and helper stepping use the same physical contract; host maintenance shares target storage without becoming Hart execution. |
-| T6 — closure, after all above | Refresh current inventory, migration ledger and exact-head evidence; retain component tests without enabling them. Run full Rust gate, fresh project guests and frozen external baseline separately. | Commands below. Exit: all required evidence observed for final implementation head, approved changes only, no second public physical route, no overstated component/ISA certification. |
-
-Final implementation gate (not required to pretend-run for this documentation PR):
+Final implementation commands (not claimed run for this documentation change):
 
 ```bash
 cargo fmt --all -- --check
@@ -238,31 +295,76 @@ RISCV_TEST_OUTDIR=target/a7-fresh-riscv-elves ./scripts/compile_riscv_tests.sh
 RISCV_TEST_OUTDIR=target/a7-fresh-riscv-elves ./scripts/run_elf_tests.sh
 ```
 
-Use the repository's fresh-directory guards and recorded toolchain/container
-identity; do not accept preexisting checked-in ELFs as a fresh build. Retain all
-**51 project-authored guests** (including five A6 trap guests) with per-case
-results. This is distinct from the **51 frozen A5 ACT4 nontrapping RV64I cases**.
-For the latter, execute `.github/workflows/a5-feasibility.yml` at the final
-implementation head with its pinned tools/selection, require 51 generated,
-executed and passed, linked audits and fail-closed controls, and retain run/head/
-artifact hashes. Do not change the frozen selection to make a refactor pass.
-The [A6 replay JSON](../verification/a6-act4-replay-35325844246.json) records
-ACT4 `a7c99303516f4e668f7488f172043392e23b9dfd`, exact source head, selection
-and config hashes; replaying that old ZIP is historical comparison, **not** fresh
-execution of A7. Neither suite certifies the full A extension or new trap ACT4
-coverage. Missing dependencies block that acceptance row rather than yielding
-an inferred pass.
+Use fresh-directory guards and record toolchain/container identity, revision,
+commands and per-case results; preexisting ELFs are not a fresh build. Retain
+**51 project-authored guests**, including five A6 trap guests. Independently run
+`.github/workflows/a5-feasibility.yml` at the final implementation head with the
+frozen pinned setup: **51 ACT4 nontrapping RV64I cases** generated/executed/passed,
+linked audits and fail-closed controls. Keep selection unchanged and record
+run/head/artifact hashes. These are two different sets of 51.
 
-## 8. Approval, activation and remaining boundaries
+The [A6 replay JSON](../verification/a6-act4-replay-35325844246.json) retains
+ACT4 `a7c99303516f4e668f7488f172043392e23b9dfd`, source revision, selection and
+configuration hashes. Replaying that ZIP is historical comparison, not fresh A7
+execution. Neither 51-case suite proves atomic correctness; T0/T3/T4 add the
+required preservation coverage without certifying the known defects.
 
-Review may accept this as a useful draft without activating it. A later activation
-PR must obtain explicit approval of the concrete scope/compatibility ledger,
-resolve the atomic choice and dependencies, recheck A6's nine criteria with their
-true evidence identities, and perform the final A6 rolling switch. Until then
-`docs/dev-plan.md` stays byte-for-byte unchanged and A7 implementation is not
-authorized by this draft. Accepted ADR history and historical A5 results are not rewritten.
+## 8. Acceptance and residual debt at A7 closeout
 
-Completion of an eventual A7 means public physical-path convergence under the
-approved option, not completion of all four ADRs, an ISS/VP Machine framework,
-MMU/TLM integration or a new ISA certification. No future route is allowed to
-bypass this port merely because its component existed before A7.
+A7 is accepted only when T0–T5 have recorded final-head evidence and all of these
+are true:
+
+1. Both standard public configurations use the typed raw boundary for fetch and
+   ordinary integer/FP loads/stores, with native negative and side-effect tests.
+2. Hart address/alignment/extension/trap/retirement ownership and A6 budget/exit
+   facts are unchanged; no MMU or new ISA behavior is introduced.
+3. Existing atomic success/failure and reservation behavior is regression-tested
+   across the shared domain, not disabled or reclassified. The legacy seam is
+   enumerated, storage/locking is shared and no second reservation state exists.
+4. Section 6's conservative defaults hold; deviations have explicit approval and
+   new evidence. Known legacy host/API limitations are documented, not silently
+   included in the non-atomic guest-transaction guarantee.
+5. Rust, fresh project ELF and frozen ACT4 evidence is complete at the reviewed
+   implementation head, with no historical result relabeled as a new run.
+6. Closeout states “non-atomic physical-access migration completed” only. Section
+   5.3 remains the unscheduled exit checklist for eventual full convergence.
+
+## 9. Approval and exact activation procedure
+
+The candidate is ready for review as a whole with preservation defaults, not a
+menu that selects atomic rejection. No approval of incidental behavior changes
+is inferred from the scope direction. `docs/dev-plan.md` cannot simultaneously
+be the effective A6 Current contract and an A7 Draft candidate under repository
+policy; keeping it unchanged is the explicit policy-compliant fallback.
+
+After the maintainer **explicitly approves this revised contract/PR for
+activation**, one authorized activation change may do all of the following;
+a separate new implementation effort is not implied by preparing these steps:
+
+1. Recheck the nine A6 criteria against the [assessment](../verification/a6-capability-assessment.md),
+   exact PR #46/merge CI, fresh project evidence and frozen ACT4 identities.
+   Preserve old source heads and limitations; do not claim A6 fixes atomic debt.
+2. Finalize the [A6 closeout record](../archive/milestones/a6-closeout-record.md)
+   with approval date, reviewed activation revision, criterion disposition and
+   remaining boundaries. The [archived contract](../archive/milestones/a6-machine-mode-trap-entry-return.md)
+   already preserves A6's body; verify equality except archive header/link repair
+   and update only the archival disposition, not historical A5 records or ADRs.
+3. Promote **this approved contract's full sections 1–8**, including preservation
+   ledger and legacy debt, into `docs/dev-plan.md` with repaired relative links,
+   A7 Current/Normative header and actual approval date. Convert the Draft-era
+   approval/policy notices in sections 1 and 7 to the recorded activation fact,
+   retaining the technical scope, preservation defaults, evidence revisions and
+   residual debt unchanged; do not copy a stale “A6 remains effective” notice
+   into an activated A7 plan. Replace A6 only in this atomic documentation
+   transition; do not leave two Current contracts. Change
+   this proposal to an informational pointer to the approved contract rather
+   than maintaining a second normative copy; retain drafting provenance in Git.
+4. Update navigation and A6 final disposition together; run link, protected-file
+   and evidence-identity checks at the new exact head, commit/push and obtain
+   independent review. Approval to activate is not permission to merge, tag or
+   release; those authorizations remain separate.
+
+Until that explicit approval, A6 remains effective, this proposal remains Draft,
+and no Rust implementation or plan rotation occurs. Final A6 closeout and A7
+activation can be prepared in the same subsequently approved change, without
+inventing a requirement for another future milestone or preapproving hardening.

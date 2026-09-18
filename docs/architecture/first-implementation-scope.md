@@ -32,9 +32,12 @@ A5 subsequently closed in PR #37. A6 is the sole [active contract](../dev-plan.m
 Its synchronous trap integration and merged PR #46 closeout preparation are
 recorded in the [A6 assessment](../verification/a6-capability-assessment.md);
 final rolling closeout remains pending. The
-[A7 physical-access draft](../proposals/a7-physical-access-contract.md) proposes
-bounded migration with explicit atomic/compatibility decisions, not activation
-or a commitment to the entire old migration candidate.
+[A7 non-atomic physical-access candidate](../proposals/a7-physical-access-contract.md)
+proposes fetch and ordinary load/store migration, preserving legacy atomics on
+shared storage as explicit debt rather than disabling them. Its conservative
+compatibility defaults and complete contract await approval; policy leaves A6
+Current until the documented activation/rotation step. This is not a commitment
+to the entire old migration candidate or full ADR-0002 convergence.
 
 See the [A0 closeout record](../archive/milestones/a0-closeout-record.md) for the
 architecture acceptance evidence and limitations. Accepted ADRs constrain later

@@ -21,7 +21,7 @@ does not complete the rolling milestone switch. The original contract is preserv
 Per `docs/dev-plan.md` §9 and `AGENTS.md`, final rolling closeout is a later
 operation: all nine criteria must be rechecked against the committed reviewed
 head, this record's final disposition must be accepted, and a successor contract must be approved
-before `docs/dev-plan.md` can be replaced. No successor is approved here. This
+before `docs/dev-plan.md` can be replaced. No successor contract is approved here. This
 work therefore leaves the A6 contract text in `docs/dev-plan.md` unchanged; it
 does not restore an A5 forwarding record, enable A7, migrate old backlog items,
 or weaken documentation policy. Archive preparation and the final rolling-plan
@@ -175,8 +175,10 @@ run and is deliberately not overwritten.
   does not retroactively change the guest source identity.
 - Closeout preparation is merged in PR #46 with the PR-head CI identity above.
   Final A6 rolling closeout and successor activation remain pending. The
-  [A7 physical-access proposal](../../proposals/a7-physical-access-contract.md)
+  [A7 non-atomic physical-access candidate](../../proposals/a7-physical-access-contract.md)
   is Draft/non-normative, not an approved successor or implementation authority.
+  Its revised scope preserves legacy atomics as explicit debt, not by capability
+  rejection. The complete contract and conservative defaults still need approval.
   No release or replacement of `docs/dev-plan.md` is claimed.
 
 ## Final rolling-switch prerequisites
@@ -186,4 +188,8 @@ head must be checked against all nine rows, the closeout record must be updated
 with that exact head and resolved findings, and a separately approved successor
 contract must exist. Only then may the completed contract be moved as a final
 historical record and `docs/dev-plan.md` be replaced. Until that decision, the
-current A6 contract remains in place unchanged.
+current A6 contract remains in place unchanged. After explicit approval of the
+revised A7 candidate, one activation change may finalize this A6 record and
+rotate `docs/dev-plan.md` together, following the candidate's self-contained
+activation procedure. Preparing that procedure does not authorize implementation
+or approve unrelated compatibility tightening.
