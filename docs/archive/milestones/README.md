@@ -18,7 +18,7 @@ Milestone A6 — Machine-Mode Synchronous Trap Entry and Return.
 ## Records
 
 - [A6: Machine-mode synchronous trap entry and return — closeout preparation](a6-closeout-record.md)
-  - Draft evidence/archive preparation only; not a formal milestone closeout and not a successor contract
+  - Preparation merged in PR #46 as `024d15d`; final rolling closeout and successor activation remain pending
   - [Capability and closeout-preparation assessment](../../verification/a6-capability-assessment.md)
   - [Original A6 contract snapshot](a6-machine-mode-trap-entry-return.md)
 
@@ -35,7 +35,7 @@ Milestone A6 — Machine-Mode Synchronous Trap Entry and Return.
   - [Preserved approved contract](a5-act4-rv64i-external-compatibility.md)
   - [Complete capability assessment](a5-capability-assessment.md)
   - [Current assessment navigation](../../verification/a5-capability-assessment.md)
-  - Formally closed out in PR #37; no approved successor
+  - Formally closed out in PR #37; subsequently succeeded by the approved A6 contract (historical A5 bodies retain their original status)
 
 - [A4: Shared run control and image installation — closeout proposal](a4-closeout-record.md)
   - Closeout and detailed A5 contract approved in PR #31; original bodies preserve pre-merge status

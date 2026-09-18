@@ -1,6 +1,6 @@
 # A6 Closeout-Preparation Record
 
-**Status:** Draft closeout preparation; not a formal milestone closeout
+**Status:** Merged closeout preparation; final rolling milestone switch pending
 
 **Authority:** Historical informational record. The active normative contract
 remains [`../../dev-plan.md`](../../dev-plan.md) until a separately approved
@@ -10,15 +10,17 @@ successor is available.
 
 ## Boundary and disposition
 
-This record prepares the evidence and archive materials for Milestone A6 —
-Machine-Mode Synchronous Trap Entry and Return. It does **not** claim that this
-closeout-preparation PR is merged or that the rolling milestone switch is
-complete. The original contract is preserved in
+This record preserves the evidence and archive materials for Milestone A6 —
+Machine-Mode Synchronous Trap Entry and Return. Closeout preparation was merged
+in [PR #46](https://github.com/mimiqdev/ruscv-sim/pull/46) on
+2026-09-18 at `024d15d546dc3b711f593cd44bb107612fd8b600` (merge timestamp
+`2026-09-18T10:04:05Z`). This accepts the preparation into the repository; it
+does not complete the rolling milestone switch. The original contract is preserved in
 [`a6-machine-mode-trap-entry-return.md`](a6-machine-mode-trap-entry-return.md).
 
 Per `docs/dev-plan.md` §9 and `AGENTS.md`, final rolling closeout is a later
 operation: all nine criteria must be rechecked against the committed reviewed
-head, this record must be accepted, and a successor contract must be approved
+head, this record's final disposition must be accepted, and a successor contract must be approved
 before `docs/dev-plan.md` can be replaced. No successor is approved here. This
 work therefore leaves the A6 contract text in `docs/dev-plan.md` unchanged; it
 does not restore an A5 forwarding record, enable A7, migrate old backlog items,
@@ -26,7 +28,7 @@ or weaken documentation policy. Archive preparation and the final rolling-plan
 switch are separate decisions.
 
 The detailed criterion-to-source/test/command/limitation matrix is in the
-[draft A6 capability assessment](../../verification/a6-capability-assessment.md).
+[A6 capability assessment](../../verification/a6-capability-assessment.md).
 It records evidence rather than checking criteria merely because their task PRs
 merged.
 
@@ -43,6 +45,29 @@ The Task 4 verification head and the merge head are distinct commits with the
 same tree `ce60a0a9c984fd42e43ecbb156e860176ecd6c47`. The exact tree relation is
 recorded and checked by the offline ACT4 replay; it does not turn the old
 verification command into a command run at a later documentation head.
+
+## Merged preparation CI identity
+
+GitHub PR and Actions metadata checked on 2026-09-18 identify final PR #46
+head `90e7dfe470e93be799f1e8e1047ab438e0285516` and
+[CI run 35331709689](https://github.com/mimiqdev/ruscv-sim/actions/runs/35331709689).
+`Quality and tests` succeeded; Coverage was skipped. Formatting, A5 accounting
+controls, Clippy, Rust tests, documentation and guest-script guards succeeded.
+The release build/smoke and fresh project ELF compile/run steps were **skipped**
+in this PR run. It is not fresh project-guest or ACT4 execution at the merge
+head. The local `b8c0bba...` checks and Task 4 fresh evidence below retain their
+original identities; no old run is relabeled as `024d15d...` evidence.
+
+Separately, exact-merge [main CI 35332790906](https://github.com/mimiqdev/ruscv-sim/actions/runs/35332790906)
+ran at `024d15d546dc3b711f593cd44bb107612fd8b600`. Its `Quality and tests`
+job succeeded, including release build/smoke, fresh project ELF compilation and
+public CLI execution. The log reports **51 total / 51 passed / 0 failed**,
+including the five A6 trap guests. Coverage was skipped. This is new exact-merge
+project evidence, not a relabeling of Task 4 evidence and not a new ACT4 run.
+The nine criterion rows below retain their original preparation references;
+this merge CI additionally verifies their Rust regressions and project guests.
+Remaining acceptance boundaries are the frozen external profile's historical
+revision, the explicit non-goals, and the separately approved rolling switch.
 
 ## Acceptance evidence summary
 
@@ -148,9 +173,11 @@ run and is deliberately not overwritten.
 - Evidence is bound to the exact revisions above. Any implementation change
   after review requires fresh relevant verification; a documentation commit
   does not retroactively change the guest source identity.
-- This record remains pending independent review and merge of the closeout
-  preparation. It does not state that this PR is complete, merged, released, or
-  a replacement for `docs/dev-plan.md`.
+- Closeout preparation is merged in PR #46 with the PR-head CI identity above.
+  Final A6 rolling closeout and successor activation remain pending. The
+  [A7 physical-access proposal](../../proposals/a7-physical-access-contract.md)
+  is Draft/non-normative, not an approved successor or implementation authority.
+  No release or replacement of `docs/dev-plan.md` is claimed.
 
 ## Final rolling-switch prerequisites
 

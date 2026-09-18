@@ -4,7 +4,7 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-09-11
+**Last reviewed:** 2026-09-18
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
@@ -30,6 +30,10 @@ Target architecture is not implementation status. Component presence is not end-
 - [Architecture decision records](architecture/decisions/README.md) — ADR-0001 through ADR-0004 accepted on 2026-09-07
 - [A0 closeout record](archive/milestones/a0-closeout-record.md) — accepted architecture, completion evidence and limitations
 - [Implementation scope navigation](architecture/first-implementation-scope.md) — A1–A4 completed; A5 ACT4 detailed contract approved in PR #31; broader migration remains unapproved
+
+## Proposals (not active contracts)
+
+- [A7 unified physical-access boundary](proposals/a7-physical-access-contract.md) — Draft/non-normative; atomic scope and compatibility choices require approval. A6 remains the active contract; PR #46 merged closeout preparation, not successor activation.
 
 ## Verification
 

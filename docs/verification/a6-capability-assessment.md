@@ -1,6 +1,6 @@
 # A6 Capability and Closeout-Preparation Assessment
 
-**Status:** Draft closeout-preparation evidence record; not a milestone closeout
+**Status:** Current — merged closeout-preparation evidence; final rolling switch pending
 
 **Authority:** Informational evidence record. `docs/dev-plan.md` remains the
 sole active normative contract, and source plus executed tests are authoritative
@@ -10,8 +10,9 @@ for implementation claims.
 
 **Scope:** Milestone A6's nine acceptance criteria, the exact Task 4 verification
 identity, and the retained A5 ACT4 replay boundary. This record does not replace
-`docs/dev-plan.md`, approve a successor, or claim that this closeout-preparation
-PR is merged.
+`docs/dev-plan.md` or approve a successor. Closeout preparation merged in
+[PR #46](https://github.com/mimiqdev/ruscv-sim/pull/46) on 2026-09-18 as
+`024d15d546dc3b711f593cd44bb107612fd8b600`; final rolling closeout is separate.
 
 ## Evidence identity and status boundary
 
@@ -56,13 +57,34 @@ certification. The historical `scripts/a5/replay_accounting.py` remains
 unchanged; its refusal of this newer run because it intentionally hard-codes an
 older run is expected.
 
+## Merged preparation evidence
+
+GitHub metadata checked on 2026-09-18 confirms PR #46's final head
+`90e7dfe470e93be799f1e8e1047ab438e0285516` and successful
+[CI 35331709689](https://github.com/mimiqdev/ruscv-sim/actions/runs/35331709689)
+`Quality and tests` job. Coverage and the release/fresh project ELF compile/run
+steps were skipped. This PR-head result is not a new guest-suite run at
+`024d15d...`. The [closeout record](../archive/milestones/a6-closeout-record.md)
+retains the earlier `b8c0bba...` local checks and the Task 4 fresh source/tree
+identities; those results are not reassigned to the merge or this document's HEAD.
+
+Exact-merge [main CI 35332790906](https://github.com/mimiqdev/ruscv-sim/actions/runs/35332790906)
+separately succeeded at `024d15d546dc3b711f593cd44bb107612fd8b600`.
+The observed job/log includes Rust checks, release build/smoke, fresh project
+ELF compile/run and **51 total / 51 passed / 0 failed**, including all five A6
+trap guests; Coverage was skipped. This supplies new merge-head regression and
+project evidence for the matrix, without changing the older rows' evidence
+identities. It does not rerun ACT4; run 35325844246 remains the frozen external
+baseline at its original revision.
+
 ## Nine-criterion matrix
 
 Each disposition below is based on the cited source and assertion, not on the
 fact that a task PR merged. `Evidenced for closeout preparation` means the
 criterion has repository evidence at the stated identity; formal milestone
-closeout still requires the closeout record's review/merge boundary and must not
-be inferred from this draft.
+closeout still requires the final rolling-switch decision and must not be
+inferred merely from the merged preparation. The nine rows retain their original
+evidence revisions and limitations.
 
 | # | Contract clause → source | Concrete test assertion(s) | Command / exact revision evidence | Disposition and limits |
 | --- | --- | --- | --- | --- |
@@ -101,15 +123,16 @@ and the A5-only scope boundary. The ZIP remains external retained evidence.
 
 ## Closeout and rolling-plan boundary
 
-This assessment is intentionally a closeout-preparation draft. The active
-normative contract remains [`docs/dev-plan.md`](../dev-plan.md), including its
+This assessment records merged closeout preparation, not final rolling closeout.
+The active normative contract remains [`docs/dev-plan.md`](../dev-plan.md), including its
 §9 sequence. No successor milestone has been approved. Therefore this change
 must not replace `docs/dev-plan.md`, create an A5 forwarding record, enable A7,
 move old backlog items, weaken documentation policy, or alter ISA behavior. The
-archive copy and closeout record distinguish preparation from the later final
-rolling switch: after this work is independently reviewed and merged, a
-maintainer may verify the nine criteria again and separately approve a successor
-before replacing the active plan.
+archive copy and closeout record distinguish the now-merged preparation from the
+later final rolling switch: a maintainer must verify the nine criteria again and
+separately approve a successor before replacing the active plan. The
+[A7 proposal](../proposals/a7-physical-access-contract.md) is Draft and
+non-normative; approval to draft it is not approval or activation of its contract.
 
 Known boundaries retained in the eventual closeout record are: flat physical
 RAM/UART/HTIF execution; synchronous Machine-mode traps only; fixed 32-bit

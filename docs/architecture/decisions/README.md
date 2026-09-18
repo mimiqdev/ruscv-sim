@@ -42,8 +42,11 @@ handoff is recorded in the [A0 closeout record](../../archive/milestones/a0-clos
 [the A2 closeout](../../archive/milestones/a2-closeout-record.md) and
 [the A3 closeout](../../archive/milestones/a3-closeout-record.md) record their
 limitations and successor decisions. [A4's closeout](../../archive/milestones/a4-closeout-record.md)
-and the detailed [A5 contract](../../dev-plan.md) were approved by
+and the detailed [historical A5 contract](../../archive/milestones/a5-act4-rv64i-external-compatibility.md) were approved by
 [PR #31](https://github.com/mimiqdev/ruscv-sim/pull/31), merged as
 `a4804341f4ae0a5344beea7ef6c53667e1912c93` on 2026-09-11.
-A6 is the current approved milestone contract. Its closeout-preparation evidence is
-recorded separately and does not claim final rolling completion or establish a successor.
+A6 is the current approved milestone contract. Its closeout-preparation evidence
+merged in PR #46 (`024d15d`), but final rolling completion and successor activation
+remain pending. The [A7 physical-access proposal](../../proposals/a7-physical-access-contract.md)
+is Draft/non-normative. Accepted ADR Context sections preserve historical motivation;
+use the current inventory and A6 evidence for implemented trap/runner behavior.
