@@ -22,6 +22,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 2
+  CARGO_TARGET_DIR: target/ci-cargo
+  RISCV_REQUIRE_RISCV_TOOLCHAIN: "1"
+  RISCV_TEST_OUTDIR: target/ci-riscv-elves
 
 jobs:
   quality:
@@ -66,6 +70,11 @@ jobs:
       - name: Check documentation
         run: cargo doc --all-features --no-deps
 
+      - name: Check guest scripts and protected output-path guards
+        run: |
+          bash -n scripts/riscv_elf_paths.sh scripts/compile_riscv_tests.sh scripts/run_elf_tests.sh scripts/test_riscv_elf_guards.sh
+          bash scripts/test_riscv_elf_guards.sh
+
       # Pull requests already exercise the debug/test build above. Build and run
       # the release binary only after code reaches main.
       - name: Build release binary
@@ -74,14 +83,16 @@ jobs:
 
       - name: Smoke test release binary
         if: github.event_name == 'push'
-        run: ./target/release/ruscv-sim --version
+        run: ./target/ci-cargo/release/ruscv-sim --version
 
-      - name: Compile RISC-V test programs
+      - name: Compile RISC-V test programs in a fresh output directory
         if: github.event_name == 'push'
         run: ./scripts/compile_riscv_tests.sh
 
-      - name: Run RISC-V ELF tests
+      - name: Run RISC-V ELF tests through the public CLI
         if: github.event_name == 'push'
+        env:
+          RISCV_TEST_SKIP_BUILD: "1"
         run: ./scripts/run_elf_tests.sh
 
   # Coverage recompiles the workspace with instrumentation and is intentionally

@@ -8,10 +8,15 @@
 
 use ruscv_sim::core::PrivilegeMode;
 use ruscv_sim::core::{
-    CoreState, ExceptionCause, InterruptCause, Trap, TrapDelegation, TrapHandler,
+    CoreState, ExceptionCause, InterruptCause, RiscvCore, StepOutcome, Trap, TrapDelegation,
+    TrapHandler,
 };
 use ruscv_sim::csr::machine;
 use ruscv_sim::csr::supervisor;
+use ruscv_sim::memory::SimpleMemory;
+use ruscv_sim::{MemoryError, MemoryInterface};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 // ========================================
 // Exception Cause Tests
@@ -635,4 +640,234 @@ fn test_interrupt_trap_with_privilege_change() {
     let mstatus = context.csr.read(machine::MSTATUS).unwrap();
     let mpp = (mstatus >> 11) & 0b11;
     assert_eq!(mpp, 1);
+}
+
+// ========================================
+// Task 4 induced-fault boundary coverage
+// ========================================
+
+struct CountingMemory {
+    inner: SimpleMemory,
+    transactions: AtomicUsize,
+}
+
+impl CountingMemory {
+    fn new(size: usize) -> Self {
+        Self {
+            inner: SimpleMemory::new(size),
+            transactions: AtomicUsize::new(0),
+        }
+    }
+
+    fn count(&self) {
+        self.transactions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn transactions(&self) -> usize {
+        self.transactions.load(Ordering::Relaxed)
+    }
+}
+
+impl MemoryInterface for CountingMemory {
+    fn read_dword(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_dword(address)
+    }
+
+    fn read_word(&self, address: u64) -> Result<u32, MemoryError> {
+        self.count();
+        self.inner.read_word(address)
+    }
+
+    fn read_half(&self, address: u64) -> Result<u16, MemoryError> {
+        self.count();
+        self.inner.read_half(address)
+    }
+
+    fn read_byte(&self, address: u64) -> Result<u8, MemoryError> {
+        self.count();
+        self.inner.read_byte(address)
+    }
+
+    fn read_word_zext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_word_zext(address)
+    }
+
+    fn read_half_zext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_half_zext(address)
+    }
+
+    fn read_byte_zext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_byte_zext(address)
+    }
+
+    fn read_word_sext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_word_sext(address)
+    }
+
+    fn read_half_sext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_half_sext(address)
+    }
+
+    fn read_byte_sext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_byte_sext(address)
+    }
+
+    fn write_dword(&mut self, address: u64, value: u64) -> Result<(), MemoryError> {
+        self.count();
+        self.inner.write_dword(address, value)
+    }
+
+    fn write_word(&mut self, address: u64, value: u32) -> Result<(), MemoryError> {
+        self.count();
+        self.inner.write_word(address, value)
+    }
+
+    fn write_half(&mut self, address: u64, value: u16) -> Result<(), MemoryError> {
+        self.count();
+        self.inner.write_half(address, value)
+    }
+
+    fn write_byte(&mut self, address: u64, value: u8) -> Result<(), MemoryError> {
+        self.count();
+        self.inner.write_byte(address, value)
+    }
+
+    fn size(&self) -> usize {
+        self.inner.size()
+    }
+}
+
+fn i_type(opcode: u32, funct3: u32, rd: u8, rs1: u8, immediate: i32) -> u32 {
+    ((immediate as u32 & 0xfff) << 20)
+        | ((rs1 as u32) << 15)
+        | (funct3 << 12)
+        | ((rd as u32) << 7)
+        | opcode
+}
+
+fn s_type(funct3: u32, rs2: u8, rs1: u8, immediate: i32) -> u32 {
+    let immediate = immediate as u32 & 0xfff;
+    ((immediate >> 5) << 25)
+        | ((rs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | (funct3 << 12)
+        | ((immediate & 0x1f) << 7)
+        | 0x23
+}
+
+fn fault_core(instruction: u32) -> (RiscvCore, Arc<Mutex<CountingMemory>>) {
+    let instruction_memory = Arc::new(Mutex::new(SimpleMemory::new(0x40)));
+    instruction_memory
+        .lock()
+        .unwrap()
+        .write_word(0, instruction)
+        .unwrap();
+    let data_memory = Arc::new(Mutex::new(CountingMemory::new(0x40)));
+    let mut core = RiscvCore::new(instruction_memory, data_memory.clone());
+    core.reset(0, 0);
+    core.state_mut().csr.write(machine::MTVEC, 0x20).unwrap();
+    (core, data_memory)
+}
+
+fn assert_fault(
+    core: &mut RiscvCore,
+    expected_cause: ExceptionCause,
+    expected_pc: u64,
+    expected_tval: u64,
+) {
+    let outcome = core.step_outcome();
+    let StepOutcome::TrapEntered(fact) = outcome else {
+        panic!("expected {:?} trap, got {outcome:?}", expected_cause);
+    };
+    assert_eq!(fact.cause, expected_cause);
+    assert_eq!(fact.faulting_pc, expected_pc);
+    assert_eq!(fact.mtval, expected_tval);
+    assert_eq!(core.state().pc, 0x20);
+    assert_eq!(core.state().csr.read(machine::MEPC).unwrap(), expected_pc);
+    assert_eq!(
+        core.state().csr.read(machine::MTVAL).unwrap(),
+        expected_tval
+    );
+    assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
+}
+
+#[test]
+fn task4_induced_faults_preserve_boundary_state_and_physical_transactions() {
+    // Cause 0: JALR computes an unaligned target before its link register is
+    // written, so no data transaction or destination-register side effect is
+    // possible.
+    let jump_target = i_type(0x67, 0, 5, 1, 0);
+    let (mut jump, jump_data) = fault_core(jump_target);
+    jump.state_mut().regs[1] = 2;
+    jump.state_mut().regs[5] = 0xDEAD_BEEF;
+    assert_fault(
+        &mut jump,
+        ExceptionCause::InstructionAddressMisaligned,
+        0,
+        2,
+    );
+    assert_eq!(jump.state().regs[5], 0xDEAD_BEEF);
+    assert_eq!(jump_data.lock().unwrap().transactions(), 0);
+
+    // Cause 1: a rejected instruction fetch saves the fetch PC and has no
+    // instruction word available for the optional trap fact.
+    let (mut fetch, _) = fault_core(0x0000_0013);
+    fetch.reset(0x40, 0);
+    fetch.state_mut().csr.write(machine::MTVEC, 0x20).unwrap();
+    let fetch_outcome = fetch.step_outcome();
+    let StepOutcome::TrapEntered(fetch_fact) = fetch_outcome else {
+        panic!("unmapped fetch must enter an instruction access fault");
+    };
+    assert_eq!(fetch_fact.cause, ExceptionCause::InstructionAccessFault);
+    assert_eq!(fetch_fact.faulting_pc, 0x40);
+    assert_eq!(fetch_fact.mtval, 0x40);
+    assert_eq!(fetch.state().csr.read(machine::MEPC).unwrap(), 0x40);
+    assert_eq!(fetch.state().csr.read(machine::MINSTRET).unwrap(), 0);
+
+    // Cause 4: alignment is rejected before the data backend is called.
+    let (mut misaligned_load, load_data) = fault_core(i_type(0x03, 1, 5, 0, 1));
+    misaligned_load.state_mut().regs[5] = 0x1111_2222_3333_4444;
+    assert_fault(
+        &mut misaligned_load,
+        ExceptionCause::LoadAddressMisaligned,
+        0,
+        1,
+    );
+    assert_eq!(misaligned_load.state().regs[5], 0x1111_2222_3333_4444);
+    assert_eq!(load_data.lock().unwrap().transactions(), 0);
+
+    // Cause 5: an aligned load reaches the physical backend, which rejects
+    // the unmapped address; rd remains unchanged.
+    let (mut access_load, access_load_data) = fault_core(i_type(0x03, 3, 5, 0, 0x40));
+    access_load.state_mut().regs[5] = 0x5555_6666_7777_8888;
+    assert_fault(&mut access_load, ExceptionCause::LoadAccessFault, 0, 0x40);
+    assert_eq!(access_load.state().regs[5], 0x5555_6666_7777_8888);
+    assert_eq!(access_load_data.lock().unwrap().transactions(), 1);
+
+    // Cause 6: a misaligned store is rejected before any write transaction.
+    let (mut misaligned_store, store_data) = fault_core(s_type(3, 5, 0, 1));
+    misaligned_store.state_mut().regs[5] = 0x9999_AAAA_BBBB_CCCC;
+    assert_fault(
+        &mut misaligned_store,
+        ExceptionCause::StoreAddressMisaligned,
+        0,
+        1,
+    );
+    assert_eq!(store_data.lock().unwrap().transactions(), 0);
+
+    // Cause 7: an aligned store reaches the rejecting backend but cannot leave
+    // a partial RAM write behind.
+    let (mut access_store, access_store_data) = fault_core(s_type(3, 5, 0, 0x40));
+    access_store.state_mut().regs[5] = 0xAAAA_BBBB_CCCC_DDDD;
+    assert_fault(&mut access_store, ExceptionCause::StoreAccessFault, 0, 0x40);
+    let access_store_data = access_store_data.lock().unwrap();
+    assert_eq!(access_store_data.transactions(), 1);
+    assert_eq!(access_store_data.inner.read_dword(0).unwrap(), 0);
 }

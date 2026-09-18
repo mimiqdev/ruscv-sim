@@ -41,6 +41,7 @@ Target architecture is not implementation status. Component presence is not end-
 - [A1 public behavior compatibility matrix](verification/public-behavior-matrix.md)
 - [A1 public behavior defect and gap register](verification/public-behavior-gaps.md)
 - [Project-authored bare-metal tests](verification/bare-metal-tests.md)
+- [A6 Task 4 trap ELF capability and evidence matrix](verification/a6-capability-assessment.md)
 - [External RISC-V test integration contract](verification/external-riscv-tests.md)
 - [Commit tracing and differential testing](verification/commit-tracing.md)
 

@@ -4,7 +4,7 @@
 
 **Authority:** Normative for the repository development container
 
-**Last reviewed:** 2026-08-26
+**Last verified:** 2026-09-18
 
 The root [`Dockerfile`](../Dockerfile) defines the reproducible development and
 verification environment for `ruscv-sim`. It replaces the unversioned external
@@ -94,6 +94,18 @@ Pull the rolling baseline with:
 docker pull ghcr.io/mimiqdev/ruscv-sim-dev:main
 ```
 
+For A6 Task 4 evidence, pin the observed ARM64-capable OCI image instead of
+using the rolling tag:
+
+```text
+ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c
+```
+
+Use a non-login `bash -c` for mounted verification commands so the image's
+`/opt/riscv/bin` PATH entry is retained. On a four-GB Colima VM set
+`CARGO_BUILD_JOBS=2` and use separate `CARGO_TARGET_DIR` and
+`RISCV_TEST_OUTDIR` directories; do not mix host and container Cargo targets.
+
 The published OCI index contains native `linux/amd64` and `linux/arm64` images.
 Docker Desktop on Apple Silicon therefore selects the ARM64 image without x86
 emulation. Local builds likewise use the host architecture by default.
@@ -122,14 +134,19 @@ docker run --rm --init \
     cargo doc --all-features --no-deps'
 ```
 
-Build and run the project-authored guest ELF set with:
+Build and run the project-authored guest ELF set with a fresh isolated
+output directory. `run_elf_tests.sh` performs the compile itself; it is not
+allowed to reuse an old ELF by default:
 
 ```bash
 docker run --rm --init \
   --volume "$PWD:/workspace" \
   --workdir /workspace \
   ruscv-sim-dev \
-  bash -c './scripts/compile_riscv_tests.sh && ./scripts/run_elf_tests.sh'
+  bash -c 'export CARGO_BUILD_JOBS=2 \
+    CARGO_TARGET_DIR=target/container-cargo \
+    RISCV_TEST_OUTDIR=target/container-riscv-elves; \
+    ./scripts/run_elf_tests.sh'
 ```
 
 ## Version policy

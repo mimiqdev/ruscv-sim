@@ -4,8 +4,9 @@
 
 **Authority:** Informational
 
-**Last verified:** 2026-09-03 inventory; A4 evidence updated 2026-09-11;
-A5 selected external evidence reconciled 2026-09-15
+**Last verified:** 2026-09-18 inventory; A4 evidence updated 2026-09-11;
+A5 selected external evidence reconciled 2026-09-15; A6 Task 4 guest/evidence
+verified at `82f2f8011a0acc4b23deb88c6aab58cebf2e2abc`
 
 **Scope:** The public ELF execution path, adjacent library APIs, and the integration status of existing ISS/VP components
 
@@ -39,10 +40,12 @@ validation/restoration and the integrated public Hart boundary: `RiscvCore::step
 returns typed `InstructionRetired`, `TrapEntered`, or `SimulatorFailure` facts;
 synchronous fetch/decode/execute faults enter Machine-mode traps without retirement;
 `minstret` uses explicit-write precedence; and both public runners charge started
-slots separately from completed turns while continuing into guest handlers. Focused
-coverage is in [`tests/a6_task3_core_trap_test.rs`](../../tests/a6_task3_core_trap_test.rs)
-and the existing MRET/trap suites. Task 4 bare-metal trap programs and ACT4 evidence
-remain deferred, so this status does not claim A6 completion.
+slots separately from completed turns while continuing into guest handlers. Task 4
+adds five self-checking trap guests, fresh isolated ELF build/run scripts, public
+CLI/library integration coverage, and induced-fault transaction assertions; the
+bounded evidence record is [`docs/verification/a6-capability-assessment.md`](../verification/a6-capability-assessment.md).
+This is still Task 4 evidence rather than A6 closeout, and existing A5 ACT4
+results are not silently relabeled as a run on the current HEAD.
 
 | Label | Meaning |
 | --- | --- |
@@ -166,7 +169,7 @@ external RV64I compatibility.
 | `RiscVSimulator` wrapper | Flat-memory load/step/run API | **Library path** | Its run loop remains its own, but image installation, placement resolution, result construction and the run-control decision are shared with `load_and_run`; it does not use `SystemBus`, so it has no UART/HTIF device mapping. Its flat addresses remain storage offsets. Both entry points now resolve image-declared `tohost`/`.signature` metadata through one internal placement owner that expresses the two address forms: the bus configuration passes guest addresses through, the flat configuration converts them with checked arithmetic. The conversion is storage adaptation, not guest virtual-to-physical translation, and grants no device ability. It must not become a second architecture engine. |
 | Cached instruction dispatcher | `Dispatcher`, instruction-key lookup, and LRU cache | **Component** | `src/dispatch/mod.rs` defines `Dispatcher`; focused tests cover registration and cache behavior, but `RiscvCore` owns and calls `Executor` directly, so this dispatcher is not in the active execution path. |
 | Code-generation experiments | Encoding templates and procedural-macro experiments | **Component / placeholder** | They are not the active decoder or executor; some macro expansions target APIs absent from the current core. See [Code-Generation Component Status](../reference/code-generation.md). |
-| Trap model | Causes, Machine-mode entry, typed Hart outcomes, delegation component, and MRET semantics | **Public path (Task 3 integration; Task 4 evidence pending)** | `src/core/trap.rs` and `src/isa/rv64i/system.rs` provide cause/vector/CSR entry and MRET restoration. `RiscvCore::step_outcome` stages trap entry and maps fetch, decode, alignment, execution, and physical-access failures to `TrapEntered` or `SimulatorFailure`; successful instructions produce `InstructionRetired` with `minstret` facts. `src/executor.rs` consumes the boundary with continue-to-guest-handler policy and started-slot/completed-turn accounting. Focused Rust coverage exists, while Task 4 bare-metal/ACT4 integration remains deferred. |
+| Trap model | Causes, Machine-mode entry, typed Hart outcomes, delegation component, MRET semantics, and A6 guest/fault verification | **Public path (Task 4 evidence; not milestone closeout)** | `src/core/trap.rs` and `src/isa/rv64i/system.rs` provide cause/vector/CSR entry and MRET restoration. `RiscvCore::step_outcome` stages trap entry and maps fetch, decode, alignment, execution, and physical-access failures to `TrapEntered` or `SimulatorFailure`; successful instructions produce `InstructionRetired` with `minstret` facts. `src/executor.rs` consumes the boundary with continue-to-guest-handler policy and started-slot/completed-turn accounting. `tests/trap_test.rs` adds genuine induced-fault/transaction assertions; `tests/a6_trap_elf_integration.rs` and the fresh scripts exercise public CLI and library facades when the cross-toolchain is available. See the bounded [A6 evidence matrix](../verification/a6-capability-assessment.md); no asynchronous interrupt, MMU, compressed-instruction, or ACT4 extension claim follows. |
 | MMU / Sv39 / TLB | Sv39 page-table translation, TLB, A/D behavior, and physical-memory model; Sv48 is recognized as a mode but rejected as unsupported, while PMP configuration/error placeholders exist without checks | **Component** | Focused tests cover the Sv39 path, but no MMU is owned or called by `RiscvCore`; the public ELF path uses ELF base adaptation instead. `MmuConfig::enable_sv48` and `pmp_entries` are configuration fields, and `MmuError::PmpViolation` exists, but the translator rejects Sv48 and no PMP check is implemented in `Mmu` or `AddressTranslator`. |
 | TLM | Payloads, phases, target/initiator traits, routed bus, simple memory, DMI cache | **Component** | Tested as a Rust TLM-style subsystem. The optional `RiscvCore::tlm_interface` field can be set but is not read by `step`; no SystemC/C++ adapter exists. |
 | CLINT / PLIC | MMIO models, interrupt state, TLM target implementations | **Component** | Unit/integration tests compose them with `TlmBus`, but the public `SystemBus` does not map them and the Hart has no interrupt-line input. |
