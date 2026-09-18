@@ -23,6 +23,8 @@ pub enum ExecuteError {
     InvalidRegister(u8),
     #[error("Invalid operation")]
     InvalidOperation,
+    #[error("Illegal instruction")]
+    IllegalInstruction,
     #[error("ECALL exception")]
     Ecall,
     #[error("EBREAK exception")]
