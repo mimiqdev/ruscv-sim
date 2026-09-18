@@ -6,7 +6,7 @@
 
 **Last verified:** 2026-09-18 inventory; A4 evidence updated 2026-09-11;
 A5 selected external evidence reconciled 2026-09-15; A6 Task 4 guest/evidence
-verified at `7aacc0a929a57387564b0bda667669b076924baa`
+verified at `82f2f8011a0acc4b23deb88c6aab58cebf2e2abc`
 
 **Scope:** The public ELF execution path, adjacent library APIs, and the integration status of existing ISS/VP components
 

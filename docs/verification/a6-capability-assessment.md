@@ -32,8 +32,8 @@ silently refreshed here. A6 Task 4 does not extend ACT4 certification.
 
 ## Recorded final verification
 
-The implementation and guest sources were tested at exact committed HEAD
-`7aacc0a929a57387564b0bda667669b076924baa`. The Colima ARM64 run supplied that
+The implementation and review fixes were tested at exact committed HEAD
+`82f2f8011a0acc4b23deb88c6aab58cebf2e2abc`. The Colima ARM64 run supplied that
 value as `RISCV_SOURCE_HEAD`, and the fresh manifest reported the same value.
 The repository was mounted read/write only for disposable `target/` outputs;
 the worktree remained clean of tracked changes.
@@ -48,6 +48,11 @@ the worktree remained clean of tracked changes.
   `failed_count=0`; every ELF entry matched `_start`.
 - Fresh public CLI run: `Total: 51`, `Passed: 51`, `Failed: 0`.
   The five A6 trap guests and the 46 pre-existing project guests all passed.
+- Review-fix controls: isolated-target integration compilation used Cargo's
+  `CARGO_BIN_EXE_ruscv-sim` path, the corrected
+  `RISCV_REQUIRE_RISCV_TOOLCHAIN=1` switch failed closed with an unavailable
+  prefix, and all protected output-path guard cases passed without touching
+  repository sources.
 - Focused induced-fault coverage: `cargo test --test trap_test` passed 38
   tests, including causes 0/1/4/5/6/7 and physical transaction assertions.
 - Exact-range hygiene: `git diff --check
