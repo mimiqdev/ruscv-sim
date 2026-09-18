@@ -118,6 +118,43 @@ git diff --name-status \
 Thus this comparison demonstrates the expected “tests only” baseline
 observation; it does not prove a future migration is behavior-preserving.
 
+## Verification record
+
+The complete Rust verification below was run at HEAD
+`757898023180ac8b4481edd5e82ccaf3cdc0576b` (before this record-only
+addition), with `CARGO_BUILD_JOBS=2` and isolated target directory
+`target/a7-t0-full`:
+
+```bash
+cargo fmt --all -- --check
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/a7-t0-full cargo check --all-features
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/a7-t0-full \
+  cargo clippy --all-features --all-targets -- -D warnings
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/a7-t0-full cargo test --all-features
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/a7-t0-full \
+  cargo doc --all-features --no-deps
+```
+
+All five commands exited 0. The required focused command also exited 0:
+
+```bash
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/a7-t0-focused-final \
+  cargo test --test a7_migration_characterization \
+  --test memory_bounds --test public_behavior \
+  --test a6_task3_core_trap_test
+```
+
+It passed 85 tests (11 T0, 11 memory-bound, 46 public-behavior, and 17 A6
+trap) with no failures. The required range check exited 0:
+
+```bash
+git diff --check \
+  9ee9c5f24c072779f06ce141b3340f953b614442..757898023180ac8b4481edd5e82ccaf3cdc0576b
+```
+
+No T5 ACT4 or fresh guest-suite command was run for this Rust-only T0 round;
+therefore this record makes no guest-suite or ACT4 pass claim.
+
 ## Focused evidence and next dependency
 
 Before adding this fixture, the existing focused baseline command also passed:
