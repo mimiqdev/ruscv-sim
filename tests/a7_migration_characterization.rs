@@ -456,8 +456,14 @@ fn guest_aligned_access_to_misaligned_flat_offset_is_an_access_fault() {
 
 #[test]
 fn core_below_base_fetch_is_rejected_before_backend_access() {
-    let instruction_memory = memory_with_words(&[(0, 0x0000_0013)], 0x20);
-    let (data_memory, calls) = traced_data(0x20, false);
+    let (instruction_memory, fetch_calls) = traced_data(0x20, false);
+    instruction_memory
+        .lock()
+        .unwrap()
+        .inner
+        .write_word(0, 0x0000_0013)
+        .unwrap();
+    let (data_memory, data_calls) = traced_data(0x20, false);
     let mut core = RiscvCore::new(instruction_memory, data_memory);
     core.reset(0x100, 0x200);
     set_mtvec(&mut core, 0x10);
@@ -468,7 +474,8 @@ fn core_below_base_fetch_is_rejected_before_backend_access() {
     };
     assert_eq!(trap.cause, ExceptionCause::InstructionAccessFault);
     assert_eq!(trap.mtval, 0x100);
-    assert!(calls.lock().unwrap().is_empty());
+    assert!(fetch_calls.lock().unwrap().is_empty());
+    assert!(data_calls.lock().unwrap().is_empty());
 }
 
 fn declared_tohost_exit(code: u32) -> Vec<u32> {
@@ -767,16 +774,31 @@ fn run_reservation_scenario() -> String {
         .unwrap();
     scalar.state_mut().regs[1] = address;
     scalar.state_mut().regs[2] = 2;
-    for _ in 0..3 {
-        assert!(matches!(
-            scalar.step_outcome(),
-            StepOutcome::InstructionRetired(_)
-        ));
-    }
-    assert_eq!(scalar.state().regs[4], 0);
+    assert!(matches!(
+        scalar.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(
+        scalar_memory.lock().unwrap().read_dword(address).unwrap(),
+        1
+    );
+    assert!(matches!(
+        scalar.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
     assert_eq!(
         scalar_memory.lock().unwrap().read_dword(address).unwrap(),
         2
+    );
+    scalar.state_mut().regs[2] = 7;
+    assert!(matches!(
+        scalar.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(scalar.state().regs[4], 0);
+    assert_eq!(
+        scalar_memory.lock().unwrap().read_dword(address).unwrap(),
+        7
     );
     transcript.push("lr->sd->sc=success/no-invalidate".to_string());
 
@@ -802,12 +824,26 @@ fn run_reservation_scenario() -> String {
         .fpr
         .write(2, ruscv_sim::Fpr::from_bits(4u64));
     floating.state_mut().regs[2] = 5;
-    for _ in 0..3 {
-        assert!(matches!(
-            floating.step_outcome(),
-            StepOutcome::InstructionRetired(_)
-        ));
-    }
+    assert!(matches!(
+        floating.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(
+        floating_memory.lock().unwrap().read_dword(address).unwrap(),
+        3
+    );
+    assert!(matches!(
+        floating.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(
+        floating_memory.lock().unwrap().read_dword(address).unwrap(),
+        4
+    );
+    assert!(matches!(
+        floating.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
     assert_eq!(floating.state().regs[4], 0);
     assert_eq!(
         floating_memory.lock().unwrap().read_dword(address).unwrap(),
@@ -828,7 +864,9 @@ fn run_reservation_scenario() -> String {
     simulator.state_mut().regs[1] = address;
     simulator.state_mut().regs[2] = 6;
     simulator.step().unwrap();
+    assert_eq!(simulator.read_mem(address, 8).unwrap(), 5u64.to_le_bytes());
     simulator.write_mem(address, &7u64.to_le_bytes()).unwrap();
+    assert_eq!(simulator.read_mem(address, 8).unwrap(), 7u64.to_le_bytes());
     simulator.step().unwrap();
     assert_eq!(simulator.state().regs[4], 0);
     assert_eq!(simulator.read_mem(address, 8).unwrap(), 6u64.to_le_bytes());
