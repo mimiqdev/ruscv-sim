@@ -4,7 +4,7 @@
 
 **Authority:** Normative for the repository development container
 
-**Last reviewed:** 2026-08-26
+**Last verified:** 2026-09-18
 
 The root [`Dockerfile`](../Dockerfile) defines the reproducible development and
 verification environment for `ruscv-sim`. It replaces the unversioned external

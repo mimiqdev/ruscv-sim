@@ -2,6 +2,8 @@
 
 **Status:** Current Task 4 evidence record; not a milestone closeout
 
+**Last verified:** 2026-09-18
+
 **Authority:** Informational evidence record. `docs/dev-plan.md` remains the
 sole active milestone contract, and source plus executed tests are authoritative
 for implementation claims.
@@ -27,6 +29,35 @@ Build:   CARGO_BUILD_JOBS=2, isolated CARGO_TARGET_DIR and RISCV_TEST_OUTDIR
 
 The A5 ACT4 baseline is existing evidence at its approved exact head and is not
 silently refreshed here. A6 Task 4 does not extend ACT4 certification.
+
+## Recorded final verification
+
+The implementation and guest sources were tested at exact committed HEAD
+`7aacc0a929a57387564b0bda667669b076924baa`. The Colima ARM64 run supplied that
+value as `RISCV_SOURCE_HEAD`, and the fresh manifest reported the same value.
+The repository was mounted read/write only for disposable `target/` outputs;
+the worktree remained clean of tracked changes.
+
+- Image: `ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c`
+- Host: Apple Silicon ARM64 macOS host with Colima ARM64, 4 GB VM; Docker
+  reported `linux aarch64`.
+- Quality gate: `cargo fmt --all -- --check`, `cargo check --all-features`,
+  strict all-target Clippy, `cargo test --all-features`, and
+  `cargo doc --all-features --no-deps` all passed.
+- Fresh guest build: `source_count=51`, `compiled_count=51`,
+  `failed_count=0`; every ELF entry matched `_start`.
+- Fresh public CLI run: `Total: 51`, `Passed: 51`, `Failed: 0`.
+  The five A6 trap guests and the 46 pre-existing project guests all passed.
+- Focused induced-fault coverage: `cargo test --test trap_test` passed 38
+  tests, including causes 0/1/4/5/6/7 and physical transaction assertions.
+- Exact-range hygiene: `git diff --check
+  51c6e6332f07dceecc0cfae8d54fbfd7c7fb2cab..HEAD` passed.
+
+The native host had no RISC-V assembler, so the host-side A6 integration test
+explicitly skipped there; the required-toolchain Colima run above executed the
+fresh five-guest CLI/library integration instead. This record does not extend
+ACT4 or claim MMU, asynchronous interrupt, compressed-instruction, or extension
+end-to-end support.
 
 ## Acceptance/evidence matrix
 

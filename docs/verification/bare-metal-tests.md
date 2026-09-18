@@ -4,7 +4,7 @@
 
 **Authority:** Normative for guest tests under `tests/bare-metal-riscv-test/`
 
-**Last reviewed:** 2026-09-17
+**Last verified:** 2026-09-18
 
 ## Role and evidence boundary
 
