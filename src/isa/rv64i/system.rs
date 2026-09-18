@@ -231,56 +231,81 @@ fn exec_csrrci(
     Ok(access)
 }
 
-/// MRET - Return from Machine mode trap
+/// MRET - Return from Machine mode trap.
 ///
-/// Reads the saved PC from MEPC, restores MIE from MPIE,
-/// and restores the previous privilege mode from MPP.
+/// MRET is a Machine-mode-only instruction.  This helper validates privilege and
+/// returns a typed [`ExecuteError::IllegalInstruction`] for lower-privilege
+/// callers; trap entry is deliberately left to the core/Runner boundary.
 ///
-/// # Returns
-/// The new PC value (MEPC)
+/// On a legal invocation it restores MIE from MPIE, sets MPIE, restores the
+/// privilege encoded by MPP, clears MPP to User mode, applies the MPRV rule, and
+/// returns the WARL-aligned MEPC value.  The caller owns the instruction PC
+/// update and retirement accounting.
 #[inline]
 pub fn exec_mret(
     _instr: &DecodedInstruction,
     state: &mut CoreState,
     _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<u64, ExecuteError> {
-    // Read current mstatus
+    // Privilege validation must precede all CSR reads and state changes.  In
+    // particular, a lower-privilege MRET must not accidentally become a CSR
+    // access failure or apply any return-side effects.
+    if state.privilege != PrivilegeMode::Machine {
+        return Err(ExecuteError::IllegalInstruction);
+    }
+
+    // Read all source state before staging the restoration.  The CSR file is
+    // expected to carry the same current privilege as CoreState; no privilege
+    // transition is committed until the MSTATUS write succeeds.
     let mstatus = state
         .csr
         .read(machine::MSTATUS)
         .map_err(ExecuteError::CsrError)?;
-
-    // Extract MPIE (bit 7) and MPP (bits 12:11)
-    let mpie = (mstatus >> 7) & 1;
-    let mpp = (mstatus >> 11) & 0b11;
-
-    // Read MEPC for the return address
     let mepc = state
         .csr
         .read(machine::MEPC)
         .map_err(ExecuteError::CsrError)?;
 
-    // Restore MIE from MPIE
-    let new_mstatus = (mstatus & !0x8) | (mpie << 3);
+    // Extract MPIE (bit 7) and MPP (bits 12:11).  The supported profile has
+    // User, Supervisor, and Machine modes.
+    let mpie = (mstatus >> 7) & 1;
+    let mpp = (mstatus >> 11) & 0b11;
+    let return_privilege = match mpp {
+        0b00 => PrivilegeMode::User,
+        0b01 => PrivilegeMode::Supervisor,
+        0b11 => PrivilegeMode::Machine,
+        // MPP is WARL state.  Preserve the historical compatibility fallback
+        // for a reserved value rather than inventing a fourth CoreState mode.
+        _ => PrivilegeMode::Machine,
+    };
 
-    // Clear MPP bits
-    let new_mstatus = new_mstatus & !(0b11 << 11);
+    const MIE_BIT: u64 = 1 << 3;
+    const MPIE_BIT: u64 = 1 << 7;
+    const MPP_MASK: u64 = 0b11 << 11;
+    const MPRV_BIT: u64 = 1 << 17;
 
-    // Write back the new mstatus
+    // Stage the complete MSTATUS transition.  MPIE is set to one regardless of
+    // its prior value; MPRV is cleared only for returns below Machine mode.
+    let mut new_mstatus = (mstatus & !MIE_BIT) | (mpie << 3);
+    new_mstatus = (new_mstatus | MPIE_BIT) & !MPP_MASK;
+    if return_privilege != PrivilegeMode::Machine {
+        new_mstatus &= !MPRV_BIT;
+    }
+
+    // CsrFile::write is the only fallible commit in this helper.  Do not update
+    // either privilege view until it has accepted the complete status value.
     state
         .csr
         .write(machine::MSTATUS, new_mstatus)
         .map_err(ExecuteError::CsrError)?;
 
-    // Set privilege mode based on MPP
-    state.privilege = match mpp {
-        0b00 => PrivilegeMode::User,
-        0b01 => PrivilegeMode::Supervisor,
-        0b11 => PrivilegeMode::Machine,
-        _ => PrivilegeMode::Machine,
-    };
+    state.privilege = return_privilege;
+    state.csr.set_privilege(return_privilege);
 
-    Ok(mepc)
+    // MEPC is WARL-masked by CsrFile on every write.  Mask defensively at the
+    // architectural boundary as well so this helper remains aligned if the CSR
+    // backing implementation changes.
+    Ok(mepc & !0b11)
 }
 
 /// SRET - Return from Supervisor mode trap
@@ -493,8 +518,13 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0x1000);
 
+        assert_eq!(state.privilege, PrivilegeMode::User);
+        assert_eq!(state.csr.get_privilege(), PrivilegeMode::User);
+        state.csr.set_privilege(PrivilegeMode::Machine);
         let mstatus = state.csr.read(machine::MSTATUS).unwrap();
         assert_eq!((mstatus >> 3) & 1, 1);
+        assert_eq!((mstatus >> 7) & 1, 1);
+        state.csr.set_privilege(PrivilegeMode::User);
     }
 
     #[test]

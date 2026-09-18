@@ -35,6 +35,15 @@ The approved successor contract is Milestone A6 (Machine-Mode Synchronous Trap E
 and Return, see [dev-plan.md](../dev-plan.md)); simulator implementation work under A6 has
 not yet been integrated into the public path.
 
+A6 Task 2 component evidence (verified 2026-09-18) now covers `exec_mret` privilege
+validation and Machine-mode restoration: MIE/MPIE, MPP, MPRV, WARL-aligned MEPC,
+and synchronized `CoreState`/`CsrFile` privilege views. Lower-privilege MRET returns
+the typed `ExecuteError::IllegalInstruction` without helper-side trap entry; the
+focused `TrapHandler` composition test verifies the corresponding Cause 2 CSR/PC
+effects. `RiscvCore::step`, the public Runner, and CLI trap continuation still do
+not consume this outcome; those are Task 3 integration work, so this evidence is
+component-level and does not claim A6 completion.
+
 | Label | Meaning |
 | --- | --- |
 | **Public path** | Reachable through `ruscv-sim run` and exercised as part of the ELF execution flow. |
@@ -157,7 +166,7 @@ external RV64I compatibility.
 | `RiscVSimulator` wrapper | Flat-memory load/step/run API | **Library path** | Its run loop remains its own, but image installation, placement resolution, result construction and the run-control decision are shared with `load_and_run`; it does not use `SystemBus`, so it has no UART/HTIF device mapping. Its flat addresses remain storage offsets. Both entry points now resolve image-declared `tohost`/`.signature` metadata through one internal placement owner that expresses the two address forms: the bus configuration passes guest addresses through, the flat configuration converts them with checked arithmetic. The conversion is storage adaptation, not guest virtual-to-physical translation, and grants no device ability. It must not become a second architecture engine. |
 | Cached instruction dispatcher | `Dispatcher`, instruction-key lookup, and LRU cache | **Component** | `src/dispatch/mod.rs` defines `Dispatcher`; focused tests cover registration and cache behavior, but `RiscvCore` owns and calls `Executor` directly, so this dispatcher is not in the active execution path. |
 | Code-generation experiments | Encoding templates and procedural-macro experiments | **Component / placeholder** | They are not the active decoder or executor; some macro expansions target APIs absent from the current core. See [Code-Generation Component Status](../reference/code-generation.md). |
-| Trap model | Trap causes, delegation, context, and `TrapHandler` | **Component** | Focused tests exist, but `RiscvCore::step` does not invoke `TrapHandler`; execution errors currently terminate the run instead of forming a unified architectural outcome. |
+| Trap model | Trap causes, delegation, context, `TrapHandler`, and Task 2 MRET semantics | **Component** | `exec_mret` now rejects U/S execution with typed `ExecuteError::IllegalInstruction`, restores MIE/MPIE/MPP/MPRV and synchronized privilege state in M mode, and is covered by [`tests/mret_conformance_test.rs`](../../tests/mret_conformance_test.rs). `RiscvCore::step` still does not invoke `TrapHandler` or map the typed outcome; unified public trap execution remains Task 3 work. |
 | MMU / Sv39 / TLB | Sv39 page-table translation, TLB, A/D behavior, and physical-memory model; Sv48 is recognized as a mode but rejected as unsupported, while PMP configuration/error placeholders exist without checks | **Component** | Focused tests cover the Sv39 path, but no MMU is owned or called by `RiscvCore`; the public ELF path uses ELF base adaptation instead. `MmuConfig::enable_sv48` and `pmp_entries` are configuration fields, and `MmuError::PmpViolation` exists, but the translator rejects Sv48 and no PMP check is implemented in `Mmu` or `AddressTranslator`. |
 | TLM | Payloads, phases, target/initiator traits, routed bus, simple memory, DMI cache | **Component** | Tested as a Rust TLM-style subsystem. The optional `RiscvCore::tlm_interface` field can be set but is not read by `step`; no SystemC/C++ adapter exists. |
 | CLINT / PLIC | MMIO models, interrupt state, TLM target implementations | **Component** | Unit/integration tests compose them with `TlmBus`, but the public `SystemBus` does not map them and the Hart has no interrupt-line input. |
