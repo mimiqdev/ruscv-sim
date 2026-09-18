@@ -179,6 +179,19 @@ fn amo_word(rd: u8, rs1: u8, rs2: u8, funct5: u8) -> u32 {
         | 0x2f
 }
 
+fn lr_word(rd: u8, rs1: u8) -> u32 {
+    amo_word(rd, rs1, 0, 0b00010)
+}
+
+fn op32(rd: u8, rs1: u8, rs2: u8, funct3: u8, funct7: u8) -> u32 {
+    ((funct7 as u32) << 25)
+        | ((rs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | ((funct3 as u32) << 12)
+        | ((rd as u32) << 7)
+        | 0x3b
+}
+
 fn jalr(rd: u8, rs1: u8, immediate: i32) -> u32 {
     (((immediate as u32) & 0xfff) << 20) | ((rs1 as u32) << 15) | ((rd as u32) << 7) | 0x67
 }
@@ -450,6 +463,78 @@ fn unmapped_atomic_access_enters_store_fault_without_retirement_or_partial_state
     let data_memory = data_memory.lock().unwrap();
     assert_eq!(data_memory.transaction_count(), 1);
     assert_eq!(data_memory.snapshot_word(0x20).unwrap(), 0x5a5a_5a5a);
+}
+
+#[test]
+fn load_reserved_faults_use_load_causes_and_preserve_state() {
+    let raw = lr_word(2, 1);
+    let (mut misaligned, misaligned_memory) = core_with_program_and_counting_data(&[(0, raw)]);
+    misaligned.state_mut().regs[1] = 1;
+    misaligned.state_mut().regs[2] = 0xfeed_face;
+
+    let outcome = misaligned.step_outcome();
+    let StepOutcome::TrapEntered(fact) = outcome else {
+        panic!("misaligned LR.W must enter a trap")
+    };
+    assert_eq!(fact.cause, ExceptionCause::LoadAddressMisaligned);
+    assert_eq!(fact.mtval, 1);
+    assert_eq!(misaligned.state().pc, MTVEC);
+    assert_eq!(misaligned.state().regs[2], 0xfeed_face);
+    assert_eq!(misaligned.state().csr.read(machine::MINSTRET).unwrap(), 0);
+    assert_eq!(misaligned_memory.lock().unwrap().transaction_count(), 0);
+
+    let (mut unmapped, unmapped_memory) = core_with_program_and_counting_data(&[(0, raw)]);
+    unmapped.state_mut().regs[1] = MEMORY_SIZE as u64;
+    unmapped.state_mut().regs[2] = 0xfeed_face;
+
+    let outcome = unmapped.step_outcome();
+    let StepOutcome::TrapEntered(fact) = outcome else {
+        panic!("unmapped LR.W must enter a trap")
+    };
+    assert_eq!(fact.cause, ExceptionCause::LoadAccessFault);
+    assert_eq!(fact.mtval, MEMORY_SIZE as u64);
+    assert_eq!(unmapped.state().pc, MTVEC);
+    assert_eq!(unmapped.state().regs[2], 0xfeed_face);
+    assert_eq!(unmapped.state().csr.read(machine::MINSTRET).unwrap(), 0);
+    assert_eq!(unmapped_memory.lock().unwrap().transaction_count(), 1);
+}
+
+#[test]
+fn reserved_op32_sllw_encoding_traps_while_legal_word_controls_retire() {
+    const RESERVED_SLLW: u32 = 0x4000_10bb;
+    let (mut reserved, _) = core_with_program(&[(0, RESERVED_SLLW)]);
+    reserved.state_mut().regs[1] = 0xfeed_face;
+
+    let outcome = reserved.step_outcome();
+    let StepOutcome::TrapEntered(fact) = outcome else {
+        panic!("reserved SLLW encoding must enter a trap")
+    };
+    assert_eq!(fact.cause, ExceptionCause::IllegalInstruction);
+    assert_eq!(fact.mtval, RESERVED_SLLW as u64);
+    assert_eq!(reserved.state().pc, MTVEC);
+    assert_eq!(reserved.state().regs[1], 0xfeed_face);
+    assert_eq!(reserved.state().csr.read(machine::MINSTRET).unwrap(), 0);
+
+    for (instruction, rs1, rs2, expected) in [
+        (op32(5, 1, 2, 1, 0), 1, 1, 2),
+        (op32(5, 1, 2, 0, 0x20), 7, 3, 4),
+        (
+            op32(5, 1, 2, 5, 0x20),
+            0x8000_0000,
+            1,
+            0xffff_ffff_c000_0000,
+        ),
+    ] {
+        let (mut core, _) = core_with_program(&[(0, instruction)]);
+        core.state_mut().regs[1] = rs1;
+        core.state_mut().regs[2] = rs2;
+        assert!(matches!(
+            core.step_outcome(),
+            StepOutcome::InstructionRetired(fact) if fact.minstret == 1
+        ));
+        assert_eq!(core.state().regs[5], expected);
+        assert_eq!(core.state().pc, 4);
+    }
 }
 
 #[test]

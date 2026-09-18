@@ -685,6 +685,12 @@ impl RiscvCore {
         ((imm as i32) << 20 >> 20) as i64 as u64
     }
 
+    fn is_load_reserved(instruction: &DecodedInstruction) -> bool {
+        instruction.opcode == Opcode::Amo
+            && ((instruction.raw >> 27) & 0x1f) == 0b00010
+            && instruction.rs2 == Some(0)
+    }
+
     fn data_access(
         instruction: &DecodedInstruction,
         state: &CoreState,
@@ -730,10 +736,14 @@ impl RiscvCore {
             },
             _ => return None,
         };
-        let is_store = matches!(
-            instruction.opcode,
-            Opcode::Store | Opcode::StoreFp | Opcode::Amo
-        );
+        let is_store = match instruction.opcode {
+            Opcode::Store | Opcode::StoreFp => true,
+            // LR.W/LR.D are load-class accesses even though they share the
+            // AMO major opcode. SC and read-modify-write AMOs are store-class
+            // accesses for architectural cause selection.
+            Opcode::Amo => !Self::is_load_reserved(instruction),
+            _ => false,
+        };
         Some((is_store, address, width))
     }
 
@@ -815,8 +825,12 @@ impl RiscvCore {
                 let Some(funct3) = funct3 else { return true };
                 let Some(funct7) = funct7 else { return true };
                 match (funct3, funct7) {
-                    // RV64I ADDW/SUBW, SLLW, and SRLW/SRAW.
-                    (0 | 1 | 5, 0 | 0x20) => false,
+                    // RV64I ADDW/SUBW: funct7 selects add/sub.
+                    (0, 0 | 0x20) => false,
+                    // RV64I SLLW only permits funct7 = 0.
+                    (1, 0) => false,
+                    // RV64I SRLW/SRAW: funct7 selects logical/arithmetic.
+                    (5, 0 | 0x20) => false,
                     // RV64M MULW/DIVW/DIVUW/REMW/REMUW.  These are legal
                     // encodings even though the active Op32 dispatcher does
                     // not implement them yet.
