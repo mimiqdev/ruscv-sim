@@ -49,10 +49,12 @@ Every non-archived technical document must state both status and authority. A ta
 ## Change and review provenance
 
 - Active work is performed on a dedicated branch or isolated worktree, not directly on `main`.
-- Do not commit, push, or open a pull request without explicit user authorization for the corresponding action. After authorization, verify and commit the intended change; push it and open a pull request only when those actions are authorized.
+- Authorization to implement or delegate a scoped task includes local edits, tests and commits, pushing its dedicated branch to the configured repository remote, creating or updating its pull request, independent review, and same-scope fixes and re-review. These routine delivery steps do not require repeated approval; explicit user restrictions override this default.
+- Questions, investigations, and proposal requests do not authorize implementation. Material scope changes, unresolved architectural or product decisions, and verification blockers that cannot be resolved within the task require user input.
+- Merging or pushing directly to `main`, tags and releases, force-pushing, rewriting shared history, and destructive cleanup require separate explicit authorization. Passing checks or a clean review do not imply permission for these actions.
 - A formal review begins after the intended change is committed, pushed, and represented by a ready pull request.
 - The review target is the PR head commit together with applicable CI or recorded verification evidence; local inspection before that point is pre-review only.
-- Review findings are fixed on the same branch and re-reviewed against the updated PR head.
+- Reviewers use separate Agents or contexts and remain read-only. Freeze the reviewed worktree during review; apply findings on the same branch after the round, then verify and re-review the updated PR head. Evidence and review conclusions are bound to the exact committed HEAD and must be refreshed after changes.
 
 ## Archive policy
 
