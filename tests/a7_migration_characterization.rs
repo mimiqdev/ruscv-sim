@@ -46,7 +46,9 @@ fn lr_encoding(rd: u8, rs1: u8, funct3: u8) -> u32 {
 }
 
 fn sc_encoding(rd: u8, rs1: u8, rs2: u8, funct3: u8) -> u32 {
-    amo_raw(0b00010, funct3, rd, rs1, rs2)
+    // Architectural SC uses funct5=00011.  The current dispatcher has a
+    // fallback arm for that funct5 which still selects the dword helper.
+    amo_raw(0b00011, funct3, rd, rs1, rs2)
 }
 
 fn ld(rd: u8, rs1: u8, immediate: i32) -> u32 {
