@@ -103,7 +103,7 @@ pub use jump::{exec_jal, exec_jalr};
 pub use lui_auipc::{exec_auipc, exec_lui};
 
 // Re-export system functions
-pub use system::{exec_mret, exec_sret, exec_system, exec_uret};
+pub use system::{exec_mret, exec_sret, exec_system, exec_system_with_csr_access, exec_uret};
 
 /// Execute RV64I instruction based on opcode
 ///

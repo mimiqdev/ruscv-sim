@@ -43,6 +43,7 @@ pub use crate::isa::rv64a::{
 pub use crate::isa::rv64i::{
     exec_auipc, exec_branch, exec_fence, exec_jal, exec_jalr, exec_load, exec_lui, exec_op,
     exec_op_32, exec_op_imm, exec_op_imm_32, exec_shift, exec_shift_imm, exec_store, exec_system,
+    exec_system_with_csr_access,
 };
 
 // RV64D re-exports (from isa::rv64d)

@@ -25,7 +25,7 @@ use crate::csr::machine;
 use crate::csr::supervisor;
 use crate::csr::CsrFile;
 
-/// RISC-V trap cause
+/// RISC-V trap cause.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trap {
     /// Exception with cause code
@@ -68,6 +68,28 @@ pub enum ExceptionCause {
 }
 
 impl ExceptionCause {
+    /// Convert an architectural synchronous exception code to its component
+    /// cause enum.
+    pub fn from_code(code: u64) -> Option<Self> {
+        Some(match code {
+            0 => Self::InstructionAddressMisaligned,
+            1 => Self::InstructionAccessFault,
+            2 => Self::IllegalInstruction,
+            3 => Self::Breakpoint,
+            4 => Self::LoadAddressMisaligned,
+            5 => Self::LoadAccessFault,
+            6 => Self::StoreAddressMisaligned,
+            7 => Self::StoreAccessFault,
+            8 => Self::EcallU,
+            9 => Self::EcallS,
+            11 => Self::EcallM,
+            12 => Self::InstructionPageFault,
+            13 => Self::LoadPageFault,
+            15 => Self::StorePageFault,
+            _ => return None,
+        })
+    }
+
     /// Check if this is an access fault (non-page fault)
     pub fn is_access_fault(self) -> bool {
         matches!(
@@ -89,13 +111,36 @@ impl ExceptionCause {
         matches!(self, Self::EcallU | Self::EcallS | Self::EcallM)
     }
 
-    /// Get exception code value for mcause
-    pub fn code(self) -> u64 {
+    /// Get exception code value for mcause.
+    pub const fn code(self) -> u64 {
         self as u64
+    }
+
+    /// Return the architectural `mtval` for this exception.
+    ///
+    /// EBREAK and ECALL do not define a diagnostic value, so their `mtval` is
+    /// zero regardless of any transport-level placeholder supplied by a
+    /// caller. Address and instruction diagnostics are passed through at full
+    /// RV64 width.
+    pub const fn mtval(self, value: u64) -> u64 {
+        match self {
+            Self::Breakpoint | Self::EcallU | Self::EcallS | Self::EcallM => 0,
+            _ => value,
+        }
     }
 }
 
-/// Interrupt cause codes (RISC-V Privileged Spec)
+impl Trap {
+    /// Return the full RV64 `mcause` encoding, including the interrupt bit.
+    pub const fn cause_code(self) -> u64 {
+        match self {
+            Self::Exception(cause) => cause.code(),
+            Self::Interrupt(cause) => cause.code(),
+        }
+    }
+}
+
+/// Interrupt cause codes (RISC-V Privileged Spec).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptCause {
     /// 0 - User software interrupt
@@ -119,9 +164,9 @@ pub enum InterruptCause {
 }
 
 impl InterruptCause {
-    /// Get interrupt code value for mcause (with bit 31 set)
-    pub fn code(self) -> u64 {
-        (1 << 63) | (self as u64)
+    /// Get interrupt code value for mcause (with bit 63 set in RV64).
+    pub const fn code(self) -> u64 {
+        (1u64 << 63) | (self as u64)
     }
 
     /// Check if this is a machine mode interrupt
@@ -189,19 +234,19 @@ impl Default for TrapDelegation {
 /// Trap handling context
 #[derive(Debug)]
 pub struct TrapContext {
-    /// Program counter at time of trap
-    pub epc: u32,
-    /// Trap cause
+    /// Program counter at time of trap (full RV64 width).
+    pub epc: u64,
+    /// Trap cause (full RV64 `mcause` encoding).
     pub cause: u64,
-    /// Trap value (faulting address or instruction)
-    pub tval: u32,
-    /// Privilege mode at time of trap
+    /// Trap value (faulting address or instruction, full RV64 width).
+    pub tval: u64,
+    /// Privilege mode at time of trap.
     pub privilege: PrivilegeMode,
 }
 
 impl TrapContext {
-    /// Create new trap context
-    pub fn new(epc: u32, cause: u64, tval: u32, privilege: PrivilegeMode) -> Self {
+    /// Create a trap context without narrowing architectural addresses.
+    pub fn new(epc: u64, cause: u64, tval: u64, privilege: PrivilegeMode) -> Self {
         Self {
             epc,
             cause,
@@ -257,43 +302,57 @@ impl TrapHandler {
             }
         };
 
-        // Set up trap CSRs based on target mode
-        let cause_value = match trap {
-            Trap::Exception(cause) => cause.code(),
-            Trap::Interrupt(cause) => cause.code(),
+        // Set up trap CSRs based on target mode.  Exception `mtval` is
+        // normalized here because the handler is the component boundary that
+        // commits the architectural trap record; callers still provide the
+        // full-width address or instruction diagnostic for causes that use it.
+        let cause_value = trap.cause_code();
+        let trap_value = match trap {
+            Trap::Exception(cause) => cause.mtval(tval),
+            Trap::Interrupt(_) => tval,
         };
 
         match target_mode {
             PrivilegeMode::Machine => {
-                state.csr.write(machine::MEPC, epc).ok();
-                state.csr.write(machine::MCAUSE, cause_value).ok();
-                state.csr.write(machine::MTVAL, tval).ok();
+                // Trap entry writes Machine CSRs regardless of the source
+                // privilege.  Keep the CSR access-control view synchronized
+                // with the completed architectural mode before performing the
+                // hardware-owned writes.
+                state.csr.set_privilege(PrivilegeMode::Machine);
 
-                // Update mstatus: set MPIE = MIE, set MIE = 0, set MPP = current mode
+                let _ = state.csr.write(machine::MEPC, epc);
+                let _ = state.csr.write(machine::MCAUSE, cause_value);
+                let _ = state.csr.write(machine::MTVAL, trap_value);
+
+                // Update mstatus: MPIE = old MIE, MIE = 0, MPP = source mode.
                 let mstatus = state.csr.read(machine::MSTATUS).unwrap_or(0);
-                let _mpie = (mstatus >> 7) & 1;
                 let mie = (mstatus >> 3) & 1;
                 let mpp = state.privilege as u64;
 
                 let new_mstatus = (mstatus & !0x1888) // Clear MIE, MPIE, MPP
-                    | (mie << 7)      // MPIE = old MIE
-                    | (mpp << 11); // MPP = current mode
+                    | (mie << 7) // MPIE = old MIE
+                    | (mpp << 11); // MPP = source privilege
 
-                state.csr.write(machine::MSTATUS, new_mstatus).ok();
+                let _ = state.csr.write(machine::MSTATUS, new_mstatus);
                 state.privilege = PrivilegeMode::Machine;
+                state.csr.set_privilege(PrivilegeMode::Machine);
 
-                // Vector to trap handler
+                // Synchronous exceptions use BASE in both mtvec modes;
+                // interrupts retain vectored mode semantics.
                 let mtvec = state.csr.read(machine::MTVEC).unwrap_or(0);
-                self.vector_trap(mtvec, cause_value)
+                let target_pc = self.vector_trap(mtvec, cause_value);
+                state.pc = target_pc;
+                target_pc
             }
             PrivilegeMode::Supervisor => {
-                state.csr.write(supervisor::SEPC, epc).ok();
-                state.csr.write(supervisor::SCAUSE, cause_value).ok();
-                state.csr.write(supervisor::STVAL, tval).ok();
+                state.csr.set_privilege(PrivilegeMode::Supervisor);
 
-                // Update sstatus: set SPIE = SIE, set SIE = 0, set SPP = current mode
+                let _ = state.csr.write(supervisor::SEPC, epc);
+                let _ = state.csr.write(supervisor::SCAUSE, cause_value);
+                let _ = state.csr.write(supervisor::STVAL, trap_value);
+
+                // Update sstatus: SPIE = old SIE, SIE = 0, SPP = source mode.
                 let sstatus = state.csr.read(supervisor::SSTATUS).unwrap_or(0);
-                let _spie = (sstatus >> 5) & 1;
                 let sie = (sstatus >> 1) & 1;
                 let spp = if state.privilege == PrivilegeMode::Supervisor {
                     1
@@ -302,42 +361,46 @@ impl TrapHandler {
                 };
 
                 let new_sstatus = (sstatus & !0x222) // Clear SIE, SPIE, SPP
-                    | (sie << 5)    // SPIE = old SIE
-                    | (spp << 8); // SPP = current mode
+                    | (sie << 5) // SPIE = old SIE
+                    | (spp << 8); // SPP = source privilege
 
-                state.csr.write(supervisor::SSTATUS, new_sstatus).ok();
+                let _ = state.csr.write(supervisor::SSTATUS, new_sstatus);
                 state.privilege = PrivilegeMode::Supervisor;
+                state.csr.set_privilege(PrivilegeMode::Supervisor);
 
-                // Vector to trap handler
                 let stvec = state.csr.read(supervisor::STVEC).unwrap_or(0);
-                self.vector_trap(stvec, cause_value)
+                let target_pc = self.vector_trap(stvec, cause_value);
+                state.pc = target_pc;
+                target_pc
             }
             PrivilegeMode::User => {
-                // User mode traps are always delegated to supervisor
-                // This shouldn't normally happen without delegation
+                // This branch is retained for the existing component API; a
+                // configured trap is never targeted at User mode today.
+                state.csr.set_privilege(PrivilegeMode::User);
+                state.pc = epc;
                 epc
             }
         }
     }
 
-    /// Calculate vectored trap address
+    /// Calculate the trap target address.
+    ///
+    /// In vectored mode only asynchronous interrupts use `BASE + 4*cause`.
+    /// Every synchronous exception uses `BASE`, as required by Privileged
+    /// Architecture Specification §3.1.7.  Reserved modes are handled as
+    /// Direct mode.  The interrupt cause is kept at full RV64 width rather
+    /// than being truncated to a seven-bit component value.
     pub fn vector_trap(&self, tvec: u64, cause: u64) -> u64 {
+        const INTERRUPT_BIT: u64 = 1u64 << 63;
         let mode = tvec & 0x3;
         let base = tvec & !0x3;
 
         match mode {
-            0b00 => {
-                // Direct mode: all traps go to base address
-                base
+            0b01 if cause & INTERRUPT_BIT != 0 => {
+                let interrupt_cause = cause & !INTERRUPT_BIT;
+                base.wrapping_add(interrupt_cause.wrapping_mul(4))
             }
-            0b01 => {
-                // Vectored mode: add cause * 4 to base
-                // For exceptions: cause = exception code
-                // For interrupts: cause = interrupt code | 0x8000_0000_0000_0000
-                let offset = (cause & 0x7F) << 2;
-                base.wrapping_add(offset)
-            }
-            _ => base, // Reserved, use direct mode
+            _ => base,
         }
     }
 
@@ -445,10 +508,33 @@ mod tests {
         let handler = TrapHandler::new();
         let tvec = 0x8000_0001; // Vectored mode (bits [1:0] = 01)
 
-        // Cause should be multiplied by 4 and added to base
+        // Synchronous exceptions always use BASE in vectored mode.
         assert_eq!(handler.vector_trap(tvec, 0), 0x8000_0000);
-        assert_eq!(handler.vector_trap(tvec, 1), 0x8000_0004);
-        assert_eq!(handler.vector_trap(tvec, 7), 0x8000_001C);
+        assert_eq!(handler.vector_trap(tvec, 1), 0x8000_0000);
+        assert_eq!(handler.vector_trap(tvec, 7), 0x8000_0000);
+
+        // Asynchronous interrupts retain BASE + 4*cause semantics.
+        assert_eq!(
+            handler.vector_trap(tvec, InterruptCause::MachineSoftware.code()),
+            0x8000_000C
+        );
+        assert_eq!(
+            handler.vector_trap(tvec, InterruptCause::MachineTimer.code()),
+            0x8000_001C
+        );
+    }
+
+    #[test]
+    fn test_reserved_mtvec_modes_use_direct_base() {
+        let handler = TrapHandler::new();
+        for mode in [0b10, 0b11] {
+            let tvec = 0x8000_0100 | mode;
+            assert_eq!(handler.vector_trap(tvec, 11), 0x8000_0100);
+            assert_eq!(
+                handler.vector_trap(tvec, InterruptCause::MachineExternal.code()),
+                0x8000_0100
+            );
+        }
     }
 
     #[test]

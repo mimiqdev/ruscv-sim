@@ -34,6 +34,9 @@ pub mod machine {
     pub const MTVEC: u16 = 0x305;
     pub const MCOUNTEREN: u16 = 0x306;
 
+    // Machine Counters
+    pub const MINSTRET: u16 = 0xB02;
+
     // Machine Trap Handling
     pub const MSCRATCH: u16 = 0x340;
     pub const MEPC: u16 = 0x341;
@@ -92,6 +95,31 @@ impl CsrPermission {
     }
 }
 
+/// Result of one CSR access.
+///
+/// `wrote` records the architectural write classification, not whether the
+/// resulting value differs from the old value.  This distinction lets the
+/// retirement layer give an explicit `minstret` write precedence even when a
+/// CSR operation writes the same value back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CsrAccess {
+    /// CSR address accessed.
+    pub addr: u16,
+    /// Value observed before the operation.
+    pub old_value: u64,
+    /// Value observed after the operation (or `old_value` for a read-only access).
+    pub new_value: u64,
+    /// Whether this access performed an explicit architectural write.
+    pub wrote: bool,
+}
+
+impl CsrAccess {
+    /// Return whether the operation performed an explicit write.
+    pub const fn is_write(self) -> bool {
+        self.wrote
+    }
+}
+
 /// Control and Status Register File
 #[derive(Debug, Clone)]
 pub struct CsrFile {
@@ -112,12 +140,16 @@ impl CsrFile {
         // Initialize Machine Mode CSRs with default values
         csrs.insert(machine::MHARTID, hart_id);
         csrs.insert(machine::MSTATUS, 0x0000_0000);
-        csrs.insert(machine::MISA, 0x8000_0000_0010_0100); // RV64IMAC
+        // RV64IU reset profile: C is fixed at 0, so public fetch remains
+        // 32-bit (IALIGN=32).  M/A/F/D dispatch remains available in the
+        // component executor; this value is only the architectural MISA reset.
+        csrs.insert(machine::MISA, 0x8000_0000_0010_0100);
         csrs.insert(machine::MEDELEG, 0x0000_0000);
         csrs.insert(machine::MIDELEG, 0x0000_0000);
         csrs.insert(machine::MIE, 0x0000_0000);
         csrs.insert(machine::MTVEC, 0x0000_0000);
         csrs.insert(machine::MCOUNTEREN, 0x0000_0000);
+        csrs.insert(machine::MINSTRET, 0x0000_0000);
         csrs.insert(machine::MSCRATCH, 0x0000_0000);
         csrs.insert(machine::MEPC, 0x0000_0000);
         csrs.insert(machine::MCAUSE, 0x0000_0000);
@@ -197,9 +229,17 @@ impl CsrFile {
     pub fn write(&mut self, addr: u16, value: u64) -> Result<(), CsrError> {
         self.check_privilege(addr)?;
 
-        // Check if CSR is read-only
+        // Check if CSR is read-only before looking up its storage.  This keeps
+        // the architectural error for encoded read-only CSRs deterministic.
         if CsrPermission::from_address(addr) == CsrPermission::ReadOnly {
             return Err(CsrError::ReadOnly(addr));
+        }
+
+        // Unknown writable addresses must fail without creating a new storage
+        // entry.  In particular, a failed CSR instruction must not have a
+        // hidden side effect in the backing map.
+        if !self.csrs.contains_key(&addr) {
+            return Err(CsrError::InvalidAddress(addr));
         }
 
         // Special handling for certain CSRs
@@ -207,6 +247,17 @@ impl CsrFile {
             machine::MHARTID => {
                 // MHARTID is read-only
                 return Err(CsrError::ReadOnly(addr));
+            }
+            machine::MISA => {
+                // C is WARL-fixed to zero while the public execution path has
+                // fixed IALIGN=32.  Do not mask any other extension bits here:
+                // the component M/A/F/D dispatch remains available.
+                self.csrs.insert(addr, value & !(1u64 << 2));
+            }
+            machine::MEPC => {
+                // With C disabled, IALIGN is 32 and MEPC[1:0] are hardwired
+                // to zero for every direct or CSR-mediated write.
+                self.csrs.insert(addr, value & !0b11);
             }
             machine::MSTATUS => {
                 // MSTATUS mask for RV64 - RISC-V Privileged Spec Section 3.1.6
@@ -242,29 +293,99 @@ impl CsrFile {
         Ok(())
     }
 
-    /// CSR read and set bits (atomic)
-    pub fn read_set(&mut self, addr: u16, mask: u64) -> Result<u64, CsrError> {
-        let old_value = self.read(addr)?;
-        if mask != 0 {
-            self.write(addr, old_value | mask)?;
-        }
-        Ok(old_value)
-    }
-
-    /// CSR read and clear bits (atomic)
-    pub fn read_clear(&mut self, addr: u16, mask: u64) -> Result<u64, CsrError> {
-        let old_value = self.read(addr)?;
-        if mask != 0 {
-            self.write(addr, old_value & !mask)?;
-        }
-        Ok(old_value)
-    }
-
-    /// CSR read and write (atomic swap)
-    pub fn read_write(&mut self, addr: u16, value: u64) -> Result<u64, CsrError> {
+    /// Write a CSR and return the old/new values plus explicit-write fact.
+    pub fn write_with_access(&mut self, addr: u16, value: u64) -> Result<CsrAccess, CsrError> {
         let old_value = self.read(addr)?;
         self.write(addr, value)?;
-        Ok(old_value)
+        let new_value = self.read(addr)?;
+        Ok(CsrAccess {
+            addr,
+            old_value,
+            new_value,
+            wrote: true,
+        })
+    }
+
+    /// CSR read and set bits with an explicit write classification.
+    ///
+    /// `perform_write` is intentionally separate from `mask != 0`: CSRRS
+    /// determines write intent from the source-register identity, so a
+    /// non-zero `rs1` whose value is zero still performs an explicit write.
+    pub fn read_set_classified(
+        &mut self,
+        addr: u16,
+        mask: u64,
+        perform_write: bool,
+    ) -> Result<CsrAccess, CsrError> {
+        let old_value = self.read(addr)?;
+        if perform_write {
+            self.write(addr, old_value | mask)?;
+        }
+        let new_value = if perform_write {
+            self.read(addr)?
+        } else {
+            old_value
+        };
+        Ok(CsrAccess {
+            addr,
+            old_value,
+            new_value,
+            wrote: perform_write,
+        })
+    }
+
+    /// CSR read and clear bits with an explicit write classification.
+    pub fn read_clear_classified(
+        &mut self,
+        addr: u16,
+        mask: u64,
+        perform_write: bool,
+    ) -> Result<CsrAccess, CsrError> {
+        let old_value = self.read(addr)?;
+        if perform_write {
+            self.write(addr, old_value & !mask)?;
+        }
+        let new_value = if perform_write {
+            self.read(addr)?
+        } else {
+            old_value
+        };
+        Ok(CsrAccess {
+            addr,
+            old_value,
+            new_value,
+            wrote: perform_write,
+        })
+    }
+
+    /// CSR read and set bits (atomic).
+    pub fn read_set(&mut self, addr: u16, mask: u64) -> Result<u64, CsrError> {
+        Ok(self.read_set_classified(addr, mask, mask != 0)?.old_value)
+    }
+
+    /// CSR read and clear bits (atomic).
+    pub fn read_clear(&mut self, addr: u16, mask: u64) -> Result<u64, CsrError> {
+        Ok(self.read_clear_classified(addr, mask, mask != 0)?.old_value)
+    }
+
+    /// CSR read and write (atomic swap).
+    pub fn read_write(&mut self, addr: u16, value: u64) -> Result<u64, CsrError> {
+        Ok(self.write_with_access(addr, value)?.old_value)
+    }
+
+    /// CSR read and set bits, returning the write classification.
+    pub fn read_set_with_access(&mut self, addr: u16, mask: u64) -> Result<CsrAccess, CsrError> {
+        self.read_set_classified(addr, mask, mask != 0)
+    }
+
+    /// CSR read and clear bits, returning the write classification.
+    pub fn read_clear_with_access(&mut self, addr: u16, mask: u64) -> Result<CsrAccess, CsrError> {
+        self.read_clear_classified(addr, mask, mask != 0)
+    }
+
+    /// CSR read and write, returning the write classification.
+    pub fn read_write_with_access(&mut self, addr: u16, value: u64) -> Result<CsrAccess, CsrError> {
+        self.write_with_access(addr, value)
     }
 }
 
@@ -339,7 +460,7 @@ mod tests {
         csr.write(machine::MEPC, 0x1111).unwrap();
 
         let old = csr.read_clear(machine::MEPC, 0x0101).unwrap();
-        assert_eq!(old, 0x1111);
+        assert_eq!(old, 0x1110);
 
         let new = csr.read(machine::MEPC).unwrap();
         assert_eq!(new, 0x1010);
