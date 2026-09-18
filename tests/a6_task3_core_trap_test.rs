@@ -6,11 +6,114 @@ use ruscv_sim::core::{
 use ruscv_sim::csr::machine;
 use ruscv_sim::executor::RiscVSimulator;
 use ruscv_sim::memory::SimpleMemory;
-use ruscv_sim::MemoryInterface;
+use ruscv_sim::{MemoryError, MemoryInterface};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 const MEMORY_SIZE: usize = 0x200;
 const MTVEC: u64 = 0x80;
+
+struct CountingMemory {
+    inner: SimpleMemory,
+    transactions: AtomicUsize,
+}
+
+impl CountingMemory {
+    fn new(size: usize) -> Self {
+        Self {
+            inner: SimpleMemory::new(size),
+            transactions: AtomicUsize::new(0),
+        }
+    }
+
+    fn transaction_count(&self) -> usize {
+        self.transactions.load(Ordering::Relaxed)
+    }
+
+    fn snapshot_word(&self, address: u64) -> Result<u32, MemoryError> {
+        self.inner.read_word(address)
+    }
+
+    fn count(&self) {
+        self.transactions.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl MemoryInterface for CountingMemory {
+    fn read_dword(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_dword(address)
+    }
+
+    fn read_word(&self, address: u64) -> Result<u32, MemoryError> {
+        self.count();
+        self.inner.read_word(address)
+    }
+
+    fn read_half(&self, address: u64) -> Result<u16, MemoryError> {
+        self.count();
+        self.inner.read_half(address)
+    }
+
+    fn read_byte(&self, address: u64) -> Result<u8, MemoryError> {
+        self.count();
+        self.inner.read_byte(address)
+    }
+
+    fn read_word_zext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_word_zext(address)
+    }
+
+    fn read_half_zext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_half_zext(address)
+    }
+
+    fn read_byte_zext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_byte_zext(address)
+    }
+
+    fn read_word_sext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_word_sext(address)
+    }
+
+    fn read_half_sext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_half_sext(address)
+    }
+
+    fn read_byte_sext(&self, address: u64) -> Result<u64, MemoryError> {
+        self.count();
+        self.inner.read_byte_sext(address)
+    }
+
+    fn write_dword(&mut self, address: u64, value: u64) -> Result<(), MemoryError> {
+        self.count();
+        self.inner.write_dword(address, value)
+    }
+
+    fn write_word(&mut self, address: u64, value: u32) -> Result<(), MemoryError> {
+        self.count();
+        self.inner.write_word(address, value)
+    }
+
+    fn write_half(&mut self, address: u64, value: u16) -> Result<(), MemoryError> {
+        self.count();
+        self.inner.write_half(address, value)
+    }
+
+    fn write_byte(&mut self, address: u64, value: u8) -> Result<(), MemoryError> {
+        self.count();
+        self.inner.write_byte(address, value)
+    }
+
+    fn size(&self) -> usize {
+        self.inner.size()
+    }
+}
 
 fn core_with_program(program: &[(usize, u32)]) -> (RiscvCore, Arc<Mutex<SimpleMemory>>) {
     let memory = Arc::new(Mutex::new(SimpleMemory::new(MEMORY_SIZE)));
@@ -25,6 +128,24 @@ fn core_with_program(program: &[(usize, u32)]) -> (RiscvCore, Arc<Mutex<SimpleMe
     core.reset(0, 0);
     core.state_mut().csr.write(machine::MTVEC, MTVEC).unwrap();
     (core, memory)
+}
+
+fn core_with_program_and_counting_data(
+    program: &[(usize, u32)],
+) -> (RiscvCore, Arc<Mutex<CountingMemory>>) {
+    let instruction_memory = Arc::new(Mutex::new(SimpleMemory::new(MEMORY_SIZE)));
+    for &(address, instruction) in program {
+        instruction_memory
+            .lock()
+            .unwrap()
+            .write_word(address as u64, instruction)
+            .unwrap();
+    }
+    let data_memory = Arc::new(Mutex::new(CountingMemory::new(MEMORY_SIZE)));
+    let mut core = RiscvCore::new(instruction_memory, data_memory.clone());
+    core.reset(0, 0);
+    core.state_mut().csr.write(machine::MTVEC, MTVEC).unwrap();
+    (core, data_memory)
 }
 
 fn addi(rd: u8, rs1: u8, immediate: i32) -> u32 {
@@ -47,6 +168,15 @@ fn store_double(rs2: u8, rs1: u8, immediate: i32) -> u32 {
         | (0b011 << 12)
         | ((immediate & 0x1f) << 7)
         | 0x23
+}
+
+fn amo_word(rd: u8, rs1: u8, rs2: u8, funct5: u8) -> u32 {
+    ((funct5 as u32) << 27)
+        | ((rs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | (0b010 << 12)
+        | ((rd as u32) << 7)
+        | 0x2f
 }
 
 fn jalr(rd: u8, rs1: u8, immediate: i32) -> u32 {
@@ -264,6 +394,94 @@ fn fetch_load_store_and_control_alignment_faults_have_no_partial_side_effects() 
         matches!(jump.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::InstructionAddressMisaligned)
     );
     assert_eq!(jump.state().regs[5], 0x1234);
+}
+
+#[test]
+fn atomic_misalignment_enters_store_trap_before_any_data_transaction() {
+    let raw = amo_word(2, 1, 3, 0b00001);
+    let (mut core, data_memory) = core_with_program_and_counting_data(&[(0, raw)]);
+    data_memory
+        .lock()
+        .unwrap()
+        .inner
+        .write_word(0x20, 0xa5a5_a5a5)
+        .unwrap();
+    core.state_mut().regs[1] = 1;
+    core.state_mut().regs[2] = 0xfeed_face;
+    core.state_mut().regs[3] = 7;
+
+    let outcome = core.step_outcome();
+    let StepOutcome::TrapEntered(fact) = outcome else {
+        panic!("misaligned AMO must enter a trap")
+    };
+    assert_eq!(fact.cause, ExceptionCause::StoreAddressMisaligned);
+    assert_eq!(fact.mtval, 1);
+    assert_eq!(core.state().pc, MTVEC);
+    assert_eq!(core.state().regs[2], 0xfeed_face);
+    assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
+    let data_memory = data_memory.lock().unwrap();
+    assert_eq!(data_memory.transaction_count(), 0);
+    assert_eq!(data_memory.snapshot_word(0x20).unwrap(), 0xa5a5_a5a5);
+}
+
+#[test]
+fn unmapped_atomic_access_enters_store_fault_without_retirement_or_partial_state() {
+    let raw = amo_word(2, 1, 3, 0b00001);
+    let (mut core, data_memory) = core_with_program_and_counting_data(&[(0, raw)]);
+    data_memory
+        .lock()
+        .unwrap()
+        .inner
+        .write_word(0x20, 0x5a5a_5a5a)
+        .unwrap();
+    core.state_mut().regs[1] = MEMORY_SIZE as u64;
+    core.state_mut().regs[2] = 0xfeed_face;
+    core.state_mut().regs[3] = 7;
+
+    let outcome = core.step_outcome();
+    let StepOutcome::TrapEntered(fact) = outcome else {
+        panic!("unmapped AMO must enter a trap")
+    };
+    assert_eq!(fact.cause, ExceptionCause::StoreAccessFault);
+    assert_eq!(fact.mtval, MEMORY_SIZE as u64);
+    assert_eq!(core.state().pc, MTVEC);
+    assert_eq!(core.state().regs[2], 0xfeed_face);
+    assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
+    let data_memory = data_memory.lock().unwrap();
+    assert_eq!(data_memory.transaction_count(), 1);
+    assert_eq!(data_memory.snapshot_word(0x20).unwrap(), 0x5a5a_5a5a);
+}
+
+#[test]
+fn reserved_op32_and_misc_mem_encodings_enter_illegal_instruction_traps() {
+    for raw in [0x0000_203b, 0x0000_700f] {
+        let (mut core, _) = core_with_program(&[(0, raw)]);
+        core.state_mut().regs[1] = 0x1234;
+
+        let outcome = core.step_outcome();
+        let StepOutcome::TrapEntered(fact) = outcome else {
+            panic!("reserved encoding {raw:#010x} must enter a trap")
+        };
+        assert_eq!(fact.cause, ExceptionCause::IllegalInstruction);
+        assert_eq!(fact.mtval, raw as u64);
+        assert_eq!(core.state().pc, MTVEC);
+        assert_eq!(core.state().csr.read(machine::MCAUSE).unwrap(), 2);
+        assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
+        assert_eq!(core.state().regs[1], 0x1234);
+    }
+}
+
+#[test]
+fn legal_but_unsupported_fence_i_remains_a_simulator_failure() {
+    let (mut core, _) = core_with_program(&[(0, 0x0000_100f)]);
+    let outcome = core.step_outcome();
+    assert!(matches!(
+        outcome,
+        StepOutcome::SimulatorFailure(failure)
+            if failure.kind == SimulatorFailureKind::UnsupportedLegalInstruction
+    ));
+    assert_eq!(core.state().pc, 0);
+    assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
 }
 
 #[test]

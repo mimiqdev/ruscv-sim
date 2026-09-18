@@ -2,10 +2,11 @@
 //!
 //! This module implements the base-I `FENCE` instruction: MISC-MEM
 //! (`opcode = 0b000_1111`) with `funct3 = 0b000`. `FENCE.I` (Zifencei,
-//! `funct3 = 0b001`) and every other MISC-MEM `funct3` (e.g. `0b010` for
-//! Zicbo cache-block operations) are separate extensions; the decoder
-//! rejects them with `DecodeError::UnimplementedInstruction` before
-//! execution ever reaches this module.
+//! `funct3 = 0b001`) is a legal but unsupported extension instruction; other
+//! MISC-MEM `funct3` values (e.g. `0b010` for Zicbo cache-block operations)
+//! are reserved for the active profile. The decoder rejects FENCE.I with
+//! `DecodeError::UnimplementedInstruction` and reserved values with
+//! `DecodeError::ReservedInstruction` before execution reaches this module.
 //!
 //! ## Memory model and why FENCE is a no-op here
 //!

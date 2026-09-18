@@ -690,8 +690,14 @@ impl RiscvCore {
         state: &CoreState,
     ) -> Option<(bool, u64, u64)> {
         let rs1 = instruction.rs1? as usize;
-        let imm = Self::sign_extend_12(instruction.imm?);
-        let address = state.regs[rs1].wrapping_add(imm);
+        let address = if instruction.opcode == Opcode::Amo {
+            // AMOs use an R-type encoding: rs1 is the complete effective
+            // address and the immediate field is intentionally absent.
+            state.regs[rs1]
+        } else {
+            let imm = Self::sign_extend_12(instruction.imm?);
+            state.regs[rs1].wrapping_add(imm)
+        };
         let width = match instruction.opcode {
             Opcode::Load => match instruction.funct3? as u8 {
                 0 | 4 => 1,
@@ -790,19 +796,31 @@ impl RiscvCore {
                 Some(0) => false,
                 _ => true,
             },
-            Opcode::Op | Opcode::Op32 => {
+            Opcode::Op => {
                 let Some(funct3) = funct3 else { return true };
                 let Some(funct7) = funct7 else { return true };
-                if funct7 == 1 && matches!(instruction.opcode, Opcode::Op | Opcode::Op32) {
-                    // RV64M encodings (including MULW/DIVW-family Op32
-                    // forms) are architecturally legal even where the active
-                    // executor does not implement every operation.
+                if funct7 == 1 {
+                    // RV64M encodings are architecturally legal even where
+                    // the active executor does not implement every operation.
                     return false;
                 }
                 match funct3 {
                     0 => !matches!(funct7, 0 | 0x20),
                     1 | 2 | 3 | 4 | 6 | 7 => funct7 != 0,
                     5 => !matches!(funct7, 0 | 0x20),
+                    _ => true,
+                }
+            }
+            Opcode::Op32 => {
+                let Some(funct3) = funct3 else { return true };
+                let Some(funct7) = funct7 else { return true };
+                match (funct3, funct7) {
+                    // RV64I ADDW/SUBW, SLLW, and SRLW/SRAW.
+                    (0 | 1 | 5, 0 | 0x20) => false,
+                    // RV64M MULW/DIVW/DIVUW/REMW/REMUW.  These are legal
+                    // encodings even though the active Op32 dispatcher does
+                    // not implement them yet.
+                    (0 | 4 | 5 | 6 | 7, 1) => false,
                     _ => true,
                 }
             }
