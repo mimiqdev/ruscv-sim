@@ -15,9 +15,11 @@
 ## Branch and review workflow
 
 - Keep `main` clean. Perform project work on a dedicated branch or isolated worktree.
-- Do not commit, push, or open a pull request without explicit user authorization for the corresponding action. After authorization, verify and commit the intended change; push it and open a pull request only when those actions are authorized.
-- Formal review targets the committed PR head and its applicable CI or recorded verification evidence. Coding and review should use separate Agents or contexts; the reviewer must not modify the coding worktree.
-- Address findings on the same branch and repeat review against the new PR head.
+- Authorization to implement or delegate a scoped task includes the normal delivery loop: edit and test in its dedicated branch/worktree, create local commits, push that task branch to the repository's configured remote, create or update its pull request, obtain independent review, and address same-scope findings with further verified commits and review. Do not request separate approval for each of these routine steps. Explicit user restrictions override this default.
+- Questions, investigations, and requests for proposals are not implementation authorization. Ask for a decision when scope changes, an architectural or product trade-off is unresolved, or a verification blocker cannot be resolved within the authorized task; do not bypass required checks or silently widen scope.
+- Merging into `main`, pushing directly to `main`, creating tags, publishing releases, force-pushing, rewriting shared history, and destructive cleanup require separate explicit authorization. A clean review or passing CI does not authorize these actions.
+- Formal review targets the committed PR head and its applicable CI or recorded verification evidence. Coding and review must use separate Agents or contexts; the reviewer is read-only and must not modify the coding worktree. A local committed-range pre-review may precede PR creation but does not replace PR-head verification.
+- Freeze the reviewed worktree during review. Address findings on the same branch after the review round, then verify and repeat review against the new PR head. Evidence and review conclusions apply only to their exact committed HEAD; do not carry them forward after changes without re-verification.
 - Consider work complete only after the PR is merged and the required repository evidence exists.
 - For a solo-maintainer repository, applicable required checks and resolved review findings are sufficient; do not require an impossible self-approval.
 
@@ -66,7 +68,7 @@ Do not delete or rewrite historical milestone records merely to match the curren
 - Keep `x0`, PC updates, address translation, privilege state, and memory side effects explicit when modifying instruction execution.
 - Do not claim an ISA extension is supported end to end merely because its component tests pass.
 - Update user-facing documentation when commands, configuration, or observable behavior changes.
-- Do not commit, push, create tags, or publish releases unless explicitly requested.
+- Follow the task authorization boundaries above: routine same-scope delivery needs no repeated approval, while merge, release, shared-history changes, and destructive cleanup remain separate decisions.
 
 ## Verification
 
