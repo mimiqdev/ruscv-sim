@@ -88,9 +88,10 @@ relabel the project total as ACT4.
 
 ## Closeout-preparation worktree checks
 
-The closeout-only additions were checked in the assigned worktree on
-2026-09-18. These results apply to that worktree's final checked-out revision,
-not retroactively to the Task 4 source head:
+The closeout-only additions were committed as
+`b8c0bba7e00029bc0d6fd3b6b10c5310ad41dea7`. The checks below were run at that
+exact closeout-preparation revision on 2026-09-18. They apply to this branch's
+closeout work, not retroactively to the Task 4 source head:
 
 ```text
 cargo fmt --all -- --check                         passed
