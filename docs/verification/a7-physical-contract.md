@@ -87,3 +87,29 @@ exact implementation HEAD. No fresh project-ELF or ACT4 suite was required for
 T1, so this record makes no such pass claim. The record-only follow-up changes
 no Rust behavior. The T0 characterization and A6 regressions remain unchanged;
 the new port is still not wired into public execution.
+
+## Review-fix verification
+
+Review finding R1 was fixed at implementation HEAD
+`d4004d0725ada7a19c0e61b2f2ec015b65a5060c` before this record-only addition.
+`PhysicalResponseBytes` now retains both the supplied slice length and the
+backend-reported length; the validated boundary rejects padding/truncation
+claims as `ResponsePayloadLengthMismatch` before exact-width acceptance. The
+new regression covers a one-byte slice reported as four bytes and a five-byte
+slice reported as four bytes. At that implementation HEAD:
+
+```text
+cargo test --test a7_physical_contract                         12 passed
+cargo test --test a7_migration_characterization \
+  --test memory_bounds --test public_behavior \
+  --test a6_task3_core_trap_test                              85 passed
+cargo fmt --all -- --check                                    passed
+cargo check --all-features                                    passed
+cargo clippy --all-features --all-targets -- -D warnings     passed
+cargo test --all-features                                     passed
+cargo doc --all-features --no-deps                            passed
+git diff --check fc68fcfe39055bd8f13255e0199bb47c7d3c9dee..HEAD passed
+```
+
+These rows were recorded with `qing verify --check`; no guest-suite or ACT4
+claim is added.
