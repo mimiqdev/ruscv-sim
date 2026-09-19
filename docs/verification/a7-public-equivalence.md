@@ -149,14 +149,15 @@ checks are recorded against the later exact HEAD by the CodingTask handoff.
 | Resolved | Standard route audit and legacy exceptions | This record's route-audit table plus `src/core/mod.rs::step_outcome`, `src/executor.rs::install_image_with_physical_ports`, `tests/a7_hart_physical.rs::real_fetch_integer_and_fp_accesses_use_raw_ports_and_one_ram`, `tests/a7_legacy_atomic_compat.rs::ordinary_store_then_legacy_amo_and_lr_share_one_migrated_domain`, `legacy_write_is_visible_to_raw_load_fetch_signature_and_host_inspection`, and `legacy_lock_reentry_child`. | Ordinary standard fetch/integer/FP accesses use raw ports; shared RAM handles and lock domains are asserted. AMO/LR/SC, old constructor, host inspection, typed SystemBus methods, and the exact legacy reservation address key remain explicit exceptions. |
 | Approved deferred debt | Legacy atomic width/global-reservation/fault/reset behavior | `docs/verification/a7-migration-characterization.md`, `docs/verification/a7-hart-physical.md`, `tests/a7_legacy_atomic_compat.rs`. | This is preserved T0/T3 compatibility evidence, not a T4 failure or an A7 completion claim. |
 | Evidence insufficient / deferred | Native high-level injectable host-failure and unknown-completion cases | No safe public injection route exists; the narrow core/flat seams are recorded above. | Do not infer full facade failure coverage. Revisit only with an approved API/scope decision. |
-| Deferred to T5 | Fresh project-authored and pinned ACT4 suites | `docs/dev-plan.md` §7 and the commands below; no fresh T5 run is claimed here. | Run both distinct 51-case suites at the final frozen reviewed HEAD with selection/configuration/artifact hashes. |
-| Deferred to T5 | Performance observation | No runtime code changed in T4 and no benchmark comparison was run. | If useful, compare existing benchmarks before/after at T5; no no-overhead claim or new gate is introduced. |
+| Verified by T5 | Fresh project-authored and pinned ACT4 suites | [`a7-capability-assessment.md`](a7-capability-assessment.md) and [`a7-act4-replay-35432032788.json`](a7-act4-replay-35432032788.json); both distinct 51-case sets ran at implementation head `fb6f51c`. | Fresh project ELF compile/run was 51/51; ACT4 workflow 35432032788 was 51/51 with digest-bound offline replay. |
+| Observed by T5 | Performance observation | [`a7-capability-assessment.md`](a7-capability-assessment.md) and [`a7-performance-observation.json`](a7-performance-observation.json). | Existing decode/typed-memory benches provide observations only; no before/after no-overhead claim or new gate is introduced. |
 
-## T5 handoff
+## T5 result
 
-T4 does not claim the two separately scoped 51-case suites or A7 completion. T5
-must rerun the 51 project-authored ELF guests and the separately pinned 51
-nontrapping ACT4 RV64I cases at the final reviewed head, retaining fresh
-selection/configuration and artifact hashes. The historical ACT4 replay remains
-historical evidence; it is not a fresh T4 pass. T5 also owns any optional
-lightweight benchmark comparison and the final residual-debt inventory.
+The final verification and bounded closeout evidence is recorded in
+[`a7-capability-assessment.md`](a7-capability-assessment.md). It binds the
+fresh project-authored 51-case run and the separately pinned 51-case ACT4
+workflow to implementation head `fb6f51c771f32585f1547422c9633379f7ae370b`,
+retains configuration/artifact hashes, records the benchmark limitation, and
+keeps the legacy atomic debt explicit. This evidence record intentionally does
+not formally close A7 or rotate the active milestone contract.

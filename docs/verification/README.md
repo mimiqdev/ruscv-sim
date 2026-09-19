@@ -4,7 +4,7 @@
 
 **Authority:** Normative for test-layer ownership; individual tool integrations require their own verified setup
 
-**Last reviewed:** 2026-09-11
+**Last reviewed:** 2026-09-19
 
 ## Test layers
 
@@ -58,6 +58,9 @@ Test language follows the layer rather than the simulator implementation languag
 - [A7 T2 native target adapters](a7-native-targets.md) — shared native RAM/UART/HTIF component adapters; not Hart/public-facade migration
 - [A7 T3 Hart physical wiring and legacy bridge](a7-hart-physical.md) — ordinary Hart routes, lock order, and retained legacy atomic boundary
 - [A7 T4 public-facade equivalence](a7-public-equivalence.md) — CLI/library workflow matrix, route audit, and bounded compatibility exceptions
+- [A7 T5 final verification and bounded closeout evidence](a7-capability-assessment.md) — §8 matrix, exact-head Rust/ELF/ACT4 evidence, residual debt, and explicit non-closure boundary
+- [A7 ACT4 offline replay](a7-act4-replay-35432032788.json) — compact digest-bound replay of the fresh 51-case artifact
+- [A7 performance observation](a7-performance-observation.json) — bounded current-head Criterion observations; no regression claim
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)
 
