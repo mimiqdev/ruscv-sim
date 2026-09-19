@@ -11,6 +11,13 @@ use crate::core::{
 use crate::elf::{load_elf_file, ElfError, SignatureInfo};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::Uart16550;
+pub use crate::physical::NativeSystemBusBackend;
+use crate::physical::{
+    map_native_memory_error, NativePhysicalTarget, PhysicalAccessKind, PhysicalBackend,
+    PhysicalBackendError, PhysicalBackendResult, PhysicalRequest, PhysicalResponse,
+    PhysicalResponseBytes, PhysicalResponseCompletion, PhysicalTargetRejectionReason,
+    PhysicalWidth,
+};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -161,6 +168,16 @@ pub enum ExecutorError {
     CoreError(#[from] anyhow::Error),
 }
 
+/// Fixed native UART base address.
+pub const SYSTEM_BUS_UART_BASE: u64 = 0x1000_0000;
+/// Native SystemBus UART window.  This intentionally remains wider than the
+/// UART TLM target's eight-byte range.
+pub const SYSTEM_BUS_UART_WINDOW: usize = 0x100;
+/// Fixed native HTIF/tohost endpoint base address.
+pub const SYSTEM_BUS_HTIF_BASE: u64 = 0x4000_8000;
+/// Native HTIF endpoint span.
+pub const SYSTEM_BUS_HTIF_SIZE: usize = 8;
+
 /// System Bus connecting CPU, RAM, and Peripherals
 ///
 /// # Memory Map
@@ -204,8 +221,8 @@ impl SystemBus {
             uart,
             ram_base,
             ram_size,
-            uart_base: 0x10000000,
-            uart_size: 0x100,
+            uart_base: SYSTEM_BUS_UART_BASE,
+            uart_size: SYSTEM_BUS_UART_WINDOW,
             htif_base: HTIF_BASE,
             htif_size: HTIF_SIZE,
             htif_write_callback: None,
@@ -231,6 +248,216 @@ impl SystemBus {
 
     fn is_uart(&self, addr: u64) -> bool {
         contains_range(self.uart_base, self.uart_size, addr, 1)
+    }
+
+    /// Creates a validated raw native backend view over this exact bus.
+    ///
+    /// The caller supplies the shared bus handle used by the legacy typed
+    /// `MemoryInterface` view; this method only wraps that handle and never
+    /// clones RAM, UART state, or the HTIF callback.
+    pub fn physical_backend(bus: Arc<Mutex<Self>>) -> NativeSystemBusBackend {
+        NativeSystemBusBackend::new(bus)
+    }
+
+    /// Alias for [`Self::physical_backend`].
+    pub fn native_backend(bus: Arc<Mutex<Self>>) -> NativeSystemBusBackend {
+        Self::physical_backend(bus)
+    }
+
+    /// Services one complete raw non-atomic request for the native map.
+    ///
+    /// This is deliberately separate from the legacy typed methods below.  The
+    /// typed methods preserve their historical start-address HTIF checks and
+    /// alignment/error behavior; this method applies full-span routing and raw
+    /// byte semantics for the T2 adapter only.
+    fn native_transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        request
+            .validate()
+            .map_err(|error| PhysicalBackendError::protocol(error.to_string()))?;
+
+        let descriptor = request.descriptor();
+        if !request.span().is_non_wrapping() {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::RangeOverflow,
+                format!(
+                    "physical span starting at {:#018x} with width {} wraps the address space",
+                    descriptor.paddr,
+                    descriptor.width.bytes()
+                ),
+            ));
+        }
+
+        // RAM retains first-match priority, but only when it accepts the whole
+        // request span.  A request that crosses RAM's end is not stitched from
+        // RAM and another target.
+        if contains_range(
+            self.ram_base,
+            self.ram_size,
+            descriptor.paddr,
+            descriptor.width.bytes(),
+        ) {
+            let offset = descriptor.paddr.checked_sub(self.ram_base).ok_or_else(|| {
+                PhysicalBackendError::target(
+                    PhysicalTargetRejectionReason::Unmapped,
+                    "RAM address is below its configured base",
+                )
+            })?;
+            let mut ram = self
+                .ram
+                .lock()
+                .map_err(|_| PhysicalBackendError::host("RAM lock poisoned"))?;
+            return match descriptor.category {
+                PhysicalAccessKind::Fetch | PhysicalAccessKind::DataRead => {
+                    let mut bytes = [0; 8];
+                    ram.read_bytes_into(offset, &mut bytes[..descriptor.width.bytes()])
+                        .map_err(map_native_memory_error)?;
+                    Ok(PhysicalResponse::new(
+                        descriptor,
+                        PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(
+                            &bytes[..descriptor.width.bytes()],
+                        )),
+                    ))
+                }
+                PhysicalAccessKind::DataWrite => {
+                    let payload = request.write_payload().ok_or_else(|| {
+                        PhysicalBackendError::protocol(
+                            "validated native RAM write was missing its payload",
+                        )
+                    })?;
+                    ram.write_bytes(offset, payload)
+                        .map_err(map_native_memory_error)?;
+                    Ok(PhysicalResponse::new(
+                        descriptor,
+                        PhysicalResponseCompletion::WriteAcknowledgement,
+                    ))
+                }
+            };
+        }
+
+        // The native UART keeps the historical 0x100-byte SystemBus window,
+        // but the raw target is byte-only and cannot be fetched as code.
+        if contains_range(
+            self.uart_base,
+            self.uart_size,
+            descriptor.paddr,
+            descriptor.width.bytes(),
+        ) {
+            if descriptor.category == PhysicalAccessKind::Fetch {
+                return Err(PhysicalBackendError::target(
+                    PhysicalTargetRejectionReason::UnsupportedCategory,
+                    "UART does not support instruction fetches",
+                ));
+            }
+            if descriptor.width != PhysicalWidth::Byte {
+                return Err(PhysicalBackendError::target(
+                    PhysicalTargetRejectionReason::UnsupportedWidth,
+                    "UART native accesses are byte-only",
+                ));
+            }
+
+            let offset = descriptor.paddr - self.uart_base;
+            let mut uart = self
+                .uart
+                .lock()
+                .map_err(|_| PhysicalBackendError::host("UART lock poisoned"))?;
+            return match descriptor.category {
+                PhysicalAccessKind::DataRead => {
+                    let byte = uart.read_reg(offset);
+                    Ok(PhysicalResponse::new(
+                        descriptor,
+                        PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(&[
+                            byte,
+                        ])),
+                    ))
+                }
+                PhysicalAccessKind::DataWrite => {
+                    let payload = request.write_payload().ok_or_else(|| {
+                        PhysicalBackendError::protocol(
+                            "validated native UART write was missing its payload",
+                        )
+                    })?;
+                    uart.write_reg(offset, payload[0]);
+                    Ok(PhysicalResponse::new(
+                        descriptor,
+                        PhysicalResponseCompletion::WriteAcknowledgement,
+                    ))
+                }
+                PhysicalAccessKind::Fetch => {
+                    unreachable!("native UART fetch category was rejected before device access")
+                }
+            };
+        }
+
+        // HTIF is an exact eight-byte endpoint for the raw port.  Its legacy
+        // typed SystemBus methods intentionally remain start-address-only
+        // below; this stricter check is not applied to that compatibility path.
+        if contains_range(
+            self.htif_base,
+            self.htif_size,
+            descriptor.paddr,
+            descriptor.width.bytes(),
+        ) {
+            if descriptor.category == PhysicalAccessKind::Fetch {
+                return Err(PhysicalBackendError::target(
+                    PhysicalTargetRejectionReason::UnsupportedCategory,
+                    "HTIF does not support instruction fetches",
+                ));
+            }
+            if descriptor.width != PhysicalWidth::Doubleword {
+                return Err(PhysicalBackendError::target(
+                    PhysicalTargetRejectionReason::UnsupportedWidth,
+                    "HTIF native endpoint requires one complete eight-byte transfer",
+                ));
+            }
+            if descriptor.paddr != self.htif_base {
+                return Err(PhysicalBackendError::target(
+                    PhysicalTargetRejectionReason::Unmapped,
+                    "HTIF request does not start at its complete endpoint",
+                ));
+            }
+
+            return match descriptor.category {
+                PhysicalAccessKind::DataRead => Ok(PhysicalResponse::new(
+                    descriptor,
+                    PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(&[0; 8])),
+                )),
+                PhysicalAccessKind::DataWrite => {
+                    let payload = request.write_payload().ok_or_else(|| {
+                        PhysicalBackendError::protocol(
+                            "validated native HTIF write was missing its payload",
+                        )
+                    })?;
+                    let value = match <[u8; 8]>::try_from(payload) {
+                        Ok(bytes) => u64::from_le_bytes(bytes),
+                        Err(_) => {
+                            return Err(PhysicalBackendError::protocol(
+                                "validated HTIF write payload was not eight bytes",
+                            ));
+                        }
+                    };
+                    if let Some(callback) = &self.htif_write_callback {
+                        callback(value);
+                    }
+                    Ok(PhysicalResponse::new(
+                        descriptor,
+                        PhysicalResponseCompletion::WriteAcknowledgement,
+                    ))
+                }
+                PhysicalAccessKind::Fetch => {
+                    unreachable!("native HTIF fetch category was rejected before device access")
+                }
+            };
+        }
+
+        Err(PhysicalBackendError::target(
+            PhysicalTargetRejectionReason::Unmapped,
+            format!(
+                "no native target accepts the complete {:?} span at {:#018x} ({} bytes)",
+                descriptor.category,
+                descriptor.paddr,
+                descriptor.width.bytes()
+            ),
+        ))
     }
 }
 
@@ -401,16 +628,31 @@ impl MemoryInterface for SystemBus {
     }
 }
 
+impl NativePhysicalTarget for SystemBus {
+    fn transact_native(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.native_transact(request)
+    }
+}
+
+// Retain a direct backend implementation for callers that own a bus value.  A
+// shared `NativeSystemBusBackend` is the adapter to use when the legacy typed
+// view must remain attached to the same `Arc<Mutex<SystemBus>>` instance.
+impl PhysicalBackend for SystemBus {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.native_transact(request)
+    }
+}
+
 /// Default maximum cycles before timeout
 const DEFAULT_MAX_CYCLES: u64 = 10_000_000;
 
 /// Default tohost address (matches Spike's HTIF at 0x40008000)
 const DEFAULT_TOHOST: u64 = 0x4000_8000;
 
-/// HTIF MMIO base address (matches Spike's HTIF device)
-const HTIF_BASE: u64 = 0x4000_8000;
-/// HTIF MMIO size (single 8-byte register for tohost)
-const HTIF_SIZE: usize = 8;
+/// HTIF MMIO base address (matches Spike's HTIF device).
+const HTIF_BASE: u64 = SYSTEM_BUS_HTIF_BASE;
+/// HTIF MMIO size (single 8-byte register for tohost).
+const HTIF_SIZE: usize = SYSTEM_BUS_HTIF_SIZE;
 
 // HTIF (Host-Target Interface) constants
 /// HTIF Device ID for syscall
