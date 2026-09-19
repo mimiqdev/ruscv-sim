@@ -964,6 +964,7 @@ pub(crate) fn map_native_memory_error(error: MemoryError) -> PhysicalBackendErro
         },
         MemoryError::Backend(context) => PhysicalBackendError::Host { context },
         MemoryError::Protocol(context) => PhysicalBackendError::Protocol { context },
+        MemoryError::Unknown(context) => PhysicalBackendError::Unknown { context },
     }
 }
 

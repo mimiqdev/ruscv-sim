@@ -22,6 +22,10 @@ pub enum MemoryError {
     /// The physical-access adapter violated its transport/protocol contract.
     #[error("Memory protocol failure: {0}")]
     Protocol(String),
+    /// The physical-access adapter cannot establish whether the target effect
+    /// completed.  This is terminal simulator state, never a guest trap.
+    #[error("Memory completion is unknown: {0}")]
+    Unknown(String),
 }
 
 /// Memory interface trait (supports RV64I with 64-bit addresses)

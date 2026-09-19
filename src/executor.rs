@@ -5,18 +5,18 @@
 //! with tohost exit signal support.
 
 use crate::core::{
-    commits::CommitLogger, CoreState, RiscvCore, SimulatorFailure, StepOutcome,
-    TrapContinuationPolicy,
+    commits::CommitLogger, CoreState, RiscvCore, SharedPhysicalAccess, SimulatorFailure,
+    StepOutcome, TrapContinuationPolicy,
 };
 use crate::elf::{load_elf_file, ElfError, SignatureInfo};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::Uart16550;
 pub use crate::physical::NativeSystemBusBackend;
 use crate::physical::{
-    map_native_memory_error, NativePhysicalTarget, PhysicalAccessKind, PhysicalBackend,
-    PhysicalBackendError, PhysicalBackendResult, PhysicalRequest, PhysicalResponse,
-    PhysicalResponseBytes, PhysicalResponseCompletion, PhysicalTargetRejectionReason,
-    PhysicalWidth,
+    map_native_memory_error, NativePhysicalTarget, NativeRamBackend, PhysicalAccessKind,
+    PhysicalBackend, PhysicalBackendError, PhysicalBackendResult, PhysicalRequest,
+    PhysicalResponse, PhysicalResponseBytes, PhysicalResponseCompletion,
+    PhysicalTargetRejectionReason, PhysicalWidth, ValidatedPhysicalAccess,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -1149,6 +1149,7 @@ impl ImagePlacement {
 /// caller: the native bus composes the RAM with its devices, the flat library
 /// uses the RAM unchanged. Installation shares the sequence, not the
 /// configuration.
+#[cfg(test)]
 fn install_image(
     program: &[u8],
     base_addr: u64,
@@ -1165,6 +1166,45 @@ fn install_image(
 
     let memory = backend(ram);
     let mut core = RiscvCore::new(memory.clone(), memory.clone());
+    core.set_verbose(verbose);
+    core.reset(entry_point, form.core_translation_base());
+    (core, memory)
+}
+
+/// T3 installation seam used by the two standard facades.  The typed memory
+/// handles and the raw fetch/data ports are returned independently so the
+/// constructor does not merge caller-supplied instruction/data domains.  The
+/// standard closures connect both views to one backing RAM/device object.
+fn install_image_with_physical_ports(
+    program: &[u8],
+    base_addr: u64,
+    entry_point: u64,
+    form: AddressForm,
+    verbose: bool,
+    backend: impl FnOnce(
+        Arc<Mutex<SimpleMemory>>,
+    ) -> (
+        Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
+        SharedPhysicalAccess,
+        SharedPhysicalAccess,
+    ),
+) -> (RiscvCore, Arc<Mutex<dyn MemoryInterface + Send + Sync>>) {
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(program.len())));
+    {
+        let guard = ram.lock().unwrap();
+        guard.load_program(program, base_addr);
+    }
+
+    let (memory, instruction_access, data_access) = backend(ram);
+    let mut core = RiscvCore::new_with_physical_access(
+        memory.clone(),
+        memory.clone(),
+        instruction_access,
+        data_access,
+    );
+    if matches!(form, AddressForm::Bus) {
+        core.set_physical_storage_alignment(base_addr, program.len());
+    }
     core.set_verbose(verbose);
     core.reset(entry_point, form.core_translation_base());
     (core, memory)
@@ -1232,7 +1272,7 @@ pub fn load_and_run(
     // image base with the UART and the HTIF endpoint on the system bus; the
     // bus maps guest addresses itself, so the core is reset with the bus
     // form's pass-through translation base.
-    let (mut core, bus_interface) = install_image(
+    let (mut core, bus_interface) = install_image_with_physical_ports(
         &memory,
         base_addr,
         entry_point,
@@ -1263,8 +1303,14 @@ pub fn load_and_run(
                 });
             }
 
+            let instruction_access: SharedPhysicalAccess = Arc::new(Mutex::new(
+                ValidatedPhysicalAccess::new(SystemBus::physical_backend(bus.clone())),
+            ));
+            let data_access: SharedPhysicalAccess = Arc::new(Mutex::new(
+                ValidatedPhysicalAccess::new(SystemBus::physical_backend(bus.clone())),
+            ));
             let bus_interface: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = bus;
-            bus_interface
+            (bus_interface, instruction_access, data_access)
         },
     );
 
@@ -1557,7 +1603,18 @@ impl RiscVSimulator {
     /// Create new simulator with memory
     pub fn new(mem_size: usize) -> Self {
         let memory = Arc::new(Mutex::new(SimpleMemory::new(mem_size)));
-        let core = RiscvCore::new(memory.clone(), memory.clone());
+        let instruction_access: SharedPhysicalAccess = Arc::new(Mutex::new(
+            ValidatedPhysicalAccess::new(NativeRamBackend::new(memory.clone(), 0, mem_size)),
+        ));
+        let data_access: SharedPhysicalAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+            NativeRamBackend::new(memory.clone(), 0, mem_size),
+        )));
+        let core = RiscvCore::new_with_physical_access(
+            memory.clone(),
+            memory.clone(),
+            instruction_access,
+            data_access,
+        );
         Self {
             core,
             memory,
@@ -1639,15 +1696,23 @@ impl RiscVSimulator {
         // devices are composed, so use load_and_run for the native bus. The
         // image is stored relative to its base, so the core is reset with the
         // flat form's subtracting translation base.
-        let (core, flat_memory) = install_image(
+        let (core, flat_memory) = install_image_with_physical_ports(
             &memory,
             base_addr,
             entry_point,
             image.address_form(),
             self.verbose,
             |ram| {
+                let instruction_access: SharedPhysicalAccess =
+                    Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+                        NativeRamBackend::new(ram.clone(), 0, memory.len()),
+                    )));
+                let data_access: SharedPhysicalAccess =
+                    Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+                        NativeRamBackend::new(ram.clone(), 0, memory.len()),
+                    )));
                 let flat: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = ram;
-                flat
+                (flat, instruction_access, data_access)
             },
         );
         self.memory = flat_memory;
