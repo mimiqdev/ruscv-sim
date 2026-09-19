@@ -56,7 +56,7 @@ the sole Current technical contract. A6 was formally accepted and closed on
 and [closeout evidence](archive/milestones/a6-closeout-record.md) are preserved.
 The [approved proposal snapshot](archive/milestones/a7-non-atomic-physical-access-proposal.md)
 retains drafting history, not a second active contract. The [A7 closeout record](archive/milestones/a7-closeout-record.md) records bounded delivery acceptance,
-its exact evidence identities, and the unmerged closeout/unscheduled-successor
+its exact evidence identities, and the merged closeout/unscheduled-successor
 boundary. Approval covers the full scope and preservation ledger below, not
 incidental behavior tightening or the rejected atomic-capability-denial option.
 
