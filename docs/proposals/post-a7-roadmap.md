@@ -361,8 +361,10 @@ interrupts/WFI, full A-extension certification, or broad ISA repair.
 4. Every in-scope committed writer has a tested reservation effect. A writer
    outside the domain is either quiescence-protected and explicitly documented
    or is rejected from the selected capability; it is not silently ignored.
-5. Target rejection, host/protocol failure, and unknown completion preserve
-   side-effect and no-retry rules; a faulting SC follows the approved profile.
+5. Rejected operations prove no partial physical side effects; host/protocol
+   failures and unknown completions never fabricate a retirement or trap. An
+   unknown-after-effect case proves no retry and safe uncertain-state recovery;
+   a faulting SC follows the approved profile.
 6. Public ordinary/atomic mixed fixtures preserve approved CLI/library behavior,
    and the old bridge is not claimed gone until these tests pass.
 7. Rust/component, focused public ELF, negative-side-effect, full gate, and
@@ -774,14 +776,17 @@ into one “102-case full coverage” claim.
 For each physical, lifecycle, and adapter result, test the negative path as well
 as success:
 
-- rejected spans, unsupported width/category, malformed responses, host/protocol
-  failure, and unknown completion;
-- no partial RAM/MMIO mutation, FIFO dequeue, callback, exit, reservation
-  invalidation, retirement, or fabricated trap on a rejected/unknown operation;
+- rejected spans, unsupported width/category, and malformed responses;
+- for a rejected operation, no partial RAM/MMIO mutation, FIFO dequeue,
+  callback, exit, reservation invalidation, retirement, or fabricated trap;
+- host/protocol failures tested against their declared side-effect contract,
+  without fabricated retirement or trap;
+- unknown completion tested both before and after a non-rollbackable external
+  effect; the latter requires explicit uncertain-state handling, no retry, and
+  safe drain/recovery before reset or reuse, not proof that the effect vanished;
 - atomic AMO/SC indivisibility and writer visibility;
 - original architectural address and access-kind cause mapping;
-- observer failure after a committed fact;
-- no retry after unknown completion and no reset/mutation before safe drain; and
+- observer failure after a committed fact; and
 - no DMI/translated-block use after the relevant invalidation.
 
 ### Exact-head evidence and retention
