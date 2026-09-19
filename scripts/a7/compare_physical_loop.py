@@ -37,6 +37,14 @@ FIXTURE_LINKER = ROOT / "scripts/a7/physical_access_loop.ld"
 DEFAULT_SAMPLES = 15
 DEFAULT_REPETITIONS = 3
 DEFAULT_MAX_CYCLES = 200_000
+EXPECTED_RESULT = {
+    "exit_code": 0,
+    "cycles": 20_490,
+    "final_pc": 0x8000_003C,
+    "timed_out": False,
+    "error": "none",
+}
+RESULT_FIELDS = ("exit_code", "cycles", "final_pc", "timed_out", "error")
 
 
 class HarnessError(RuntimeError):
@@ -158,6 +166,9 @@ use std::time::Instant;
 use ruscv_sim::executor::load_and_run;
 
 const FIXTURE: &[u8] = include_bytes!({fixture_literal});
+const EXPECTED_EXIT_CODE: u32 = {EXPECTED_RESULT["exit_code"]};
+const EXPECTED_CYCLES: u64 = {EXPECTED_RESULT["cycles"]};
+const EXPECTED_FINAL_PC: u64 = 0x{EXPECTED_RESULT["final_pc"]:x};
 
 fn argument(name: &str, default: u64) -> u64 {{
     let args: Vec<String> = env::args().collect();
@@ -192,16 +203,24 @@ fn key(result: &ruscv_sim::ExecutionResult) -> String {{
     )
 }}
 
+fn assert_expected(result: &ruscv_sim::ExecutionResult) {{
+    assert_eq!(result.exit_code, EXPECTED_EXIT_CODE, "fixture exit code changed");
+    assert_eq!(result.cycles, EXPECTED_CYCLES, "fixture retirement count changed");
+    assert_eq!(result.final_pc, EXPECTED_FINAL_PC, "fixture final PC changed");
+    assert!(!result.timed_out, "fixture unexpectedly timed out");
+    assert!(result.error.is_none(), "fixture unexpectedly reported an error");
+}}
+
 fn main() {{
     let samples = argument("--samples", {DEFAULT_SAMPLES});
     let max_cycles = argument("--max-cycles", {DEFAULT_MAX_CYCLES});
     assert!(samples > 0, "samples must be nonzero");
 
+    let mut logged_result_key: Option<String> = None;
     if let Some(path) = argument_path("--commit-log") {{
         let (elapsed_ns, result) = run_once(max_cycles, Some(Path::new(&path)));
-        assert_eq!(result.exit_code, 0, "verification run did not exit successfully");
-        assert!(!result.timed_out, "verification run timed out");
-        assert!(result.error.is_none(), "verification run reported an error");
+        assert_expected(&result);
+        logged_result_key = Some(key(&result));
         let records = fs::read_to_string(&path)
             .expect("commit log was not written")
             .lines()
@@ -222,13 +241,14 @@ fn main() {{
     let mut expected: Option<String> = None;
     for sample in 0..samples {{
         let (elapsed_ns, result) = run_once(max_cycles, None);
+        assert_expected(&result);
         let result_key = key(&result);
+        if let Some(logged) = &logged_result_key {{
+            assert_eq!(logged, &result_key, "sample differs from logged verification result");
+        }}
         if let Some(previous) = &expected {{
             assert_eq!(previous, &result_key, "guest result/retirement changed between samples");
         }} else {{
-            assert_eq!(result.exit_code, 0, "first benchmark sample did not pass");
-            assert!(!result.timed_out, "first benchmark sample timed out");
-            assert!(result.error.is_none(), "first benchmark sample reported an error");
             expected = Some(result_key);
         }}
         println!(
@@ -316,6 +336,37 @@ def percentile(values: list[int], fraction: float) -> float:
     upper = min(lower + 1, len(ordered) - 1)
     weight = position - lower
     return ordered[lower] + (ordered[upper] - ordered[lower]) * weight
+
+
+def result_tuple(result: dict[str, Any]) -> tuple[Any, ...]:
+    return tuple(result[field] for field in RESULT_FIELDS)
+
+
+def validate_run_result(parsed: dict[str, Any], label: str, repetition: int) -> dict[str, Any]:
+    verification = parsed["verification"]
+    expected = result_tuple(EXPECTED_RESULT)
+    actual = result_tuple(verification)
+    if actual != expected:
+        actual_fields = {field: verification[field] for field in RESULT_FIELDS}
+        raise HarnessError(
+            f"known fixture result changed for {label} repetition {repetition}: "
+            f"expected={EXPECTED_RESULT}, actual={actual_fields}"
+        )
+    if verification["commit_records"] != verification["cycles"]:
+        raise HarnessError(f"retirement count mismatch for {label}: {verification}")
+    for sample in parsed["samples"]:
+        if result_tuple(sample) != actual:
+            raise HarnessError(
+                f"sample result differs from logged verification for {label} repetition {repetition}: "
+                f"verification={verification}, sample={sample}"
+            )
+    return verification
+
+
+def validate_cross_revision_results(observations: list[dict[str, Any]]) -> None:
+    observed = [result_tuple(observation["verification"]) for observation in observations]
+    if len(set(observed)) != 1:
+        raise HarnessError(f"baseline and implementation result/retirement tuples differ: {observed}")
 
 
 def sample_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
@@ -418,12 +469,8 @@ def build_and_measure(
         ]
         completed = run_command(run_command_line, log_path=output_root / f"{label}-repetition-{repetition + 1}.log")
         parsed = parse_harness_output(completed.stdout)
+        verification = validate_run_result(parsed, label, repetition + 1)
         summary = sample_summary(parsed["samples"])
-        verification = parsed["verification"]
-        if verification["commit_records"] != verification["cycles"]:
-            raise HarnessError(f"retirement count mismatch for {label}: {verification}")
-        if any(sample["cycles"] != verification["cycles"] for sample in parsed["samples"]):
-            raise HarnessError(f"guest retirement count changed for {label}: {verification} {parsed['samples']}")
         run_records.append(
             {
                 "repetition": repetition + 1,
@@ -440,10 +487,9 @@ def build_and_measure(
     combined_values = [sample["elapsed_ns"] for sample in all_samples]
     combined = sample_summary([{"elapsed_ns": value} for value in combined_values])
     first_verification = run_records[0]["verification"]
-    if any(record["verification"]["cycles"] != first_verification["cycles"] for record in run_records):
-        raise HarnessError(f"repetition retirement counts differ for {label}: {run_records}")
-    if any(record["verification"]["exit_code"] != 0 for record in run_records):
-        raise HarnessError(f"repetition exit code differs for {label}: {run_records}")
+    first_result = result_tuple(first_verification)
+    if any(result_tuple(record["verification"]) != first_result for record in run_records):
+        raise HarnessError(f"repetition result/retirement tuples differ for {label}: {run_records}")
     return {
         "revision": revision,
         "public_facade": "ruscv_sim::executor::load_and_run",
@@ -522,6 +568,7 @@ def main() -> int:
                     )
                 )
 
+        validate_cross_revision_results(observations)
         baseline = observations[0]["combined_statistics"]["median_ns"]
         implementation = observations[1]["combined_statistics"]["median_ns"]
         report = {
@@ -567,6 +614,7 @@ def main() -> int:
                 "samples_per_revision": args.samples * args.repetitions,
                 "repetitions": args.repetitions,
                 "max_cycles": args.max_cycles,
+                "expected_guest_result": EXPECTED_RESULT,
                 "revisions": observations,
                 "median_ratio_implementation_over_baseline": implementation / baseline if baseline else None,
                 "no_performance_threshold": True,
@@ -582,8 +630,9 @@ def main() -> int:
                 "claim": "No allocation, lock-overhead, or no-regression claim; elapsed samples include all public load_and_run work and every retained slow sample.",
             },
             "result_and_retirement": {
-                "verification": "Each repetition performs one commit-logged verification run; commit-record count equals ExecutionResult.cycles.",
-                "sample_assertion": "Every unlogged sample has the same exit_code, cycles, final_pc, timed_out, and error as its repetition verification run.",
+                "verification": "Each repetition performs one commit-logged verification run; commit-record count equals ExecutionResult.cycles and the full known fixture tuple is asserted.",
+                "sample_assertion": "Every unlogged sample has the same exit_code, cycles, final_pc, timed_out, and error tuple as its repetition verification run.",
+                "cross_revision_assertion": "Baseline and implementation must produce the same full result/retirement tuple before timing statistics are accepted.",
                 "no_threshold": "The harness fails only on setup, public-facade result, or retirement consistency errors, not on speed.",
             },
         }

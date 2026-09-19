@@ -89,6 +89,9 @@ def verify_artifact(metadata: dict[str, Any], artifact: Path, replay: dict[str, 
     if not isinstance(digest, str) or not digest.startswith("sha256:"):
         fail("artifact metadata has no sha256 digest")
     expected_sha = digest.removeprefix("sha256:")
+    metadata_id = metadata.get("id")
+    if not isinstance(metadata_id, int):
+        fail("artifact metadata has no integer artifact ID")
     expected_size = metadata.get("size_in_bytes")
     if not isinstance(expected_size, int):
         fail("artifact metadata has no integer size")
@@ -97,12 +100,18 @@ def verify_artifact(metadata: dict[str, Any], artifact: Path, replay: dict[str, 
     if actual_sha != expected_sha or actual_size != expected_size:
         fail(f"artifact differs from GitHub metadata: size={actual_size}/{expected_size}, sha={actual_sha}/{expected_sha}")
     artifact_report = replay.get("artifact", {})
+    replay_id = artifact_report.get("id")
+    if not isinstance(replay_id, int):
+        fail("committed replay has no integer artifact ID")
+    if replay_id != metadata_id:
+        fail(f"artifact ID differs from GitHub metadata: replay={replay_id}, metadata={metadata_id}")
     if artifact_report.get("sha256") != expected_sha or artifact_report.get("bytes") != expected_size:
         fail("committed replay artifact identity differs from GitHub metadata")
     if replay.get("run", {}).get("source_head") != IMPLEMENTATION_HEAD:
         fail("replay report source head differs from implementation evidence head")
     return {
-        "metadata_id": metadata.get("id"),
+        "metadata_id": metadata_id,
+        "replay_id": replay_id,
         "metadata_digest": digest,
         "metadata_size": expected_size,
         "actual_digest": actual_sha,

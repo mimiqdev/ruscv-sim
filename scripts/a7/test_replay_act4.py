@@ -14,6 +14,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import replay_act4  # noqa: E402
+import verify_evidence_tree  # noqa: E402
 
 
 class ReplayNegativePathTests(unittest.TestCase):
@@ -60,6 +61,37 @@ class ReplayNegativePathTests(unittest.TestCase):
         self.assertTrue(replay_act4.result_errors(plan, plan["variants"][:1]))
         self.assertTrue(replay_act4.result_errors(plan, plan["variants"] + [{"elf": "one.elf"}]))
         self.assertTrue(replay_act4.result_errors(plan, plan["variants"] + [{"elf": "extra.elf"}]))
+
+    def test_artifact_metadata_id_must_match_replay_id(self) -> None:
+        payload = b"artifact"
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "artifact.zip"
+            artifact.write_bytes(payload)
+            for metadata_id, replay_id in ((None, 10), (10, None), (10, 11)):
+                with self.subTest(metadata_id=metadata_id, replay_id=replay_id):
+                    metadata = {"id": metadata_id, "digest": f"sha256:{digest}", "size_in_bytes": len(payload)}
+                    replay = {
+                        "artifact": {"id": replay_id, "sha256": digest, "bytes": len(payload)},
+                        "run": {"source_head": verify_evidence_tree.IMPLEMENTATION_HEAD},
+                    }
+                    with self.assertRaisesRegex(ValueError, "artifact ID"):
+                        verify_evidence_tree.verify_artifact(metadata, artifact, replay)
+
+    def test_artifact_metadata_id_match_is_retained(self) -> None:
+        payload = b"artifact"
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "artifact.zip"
+            artifact.write_bytes(payload)
+            metadata = {"id": 10, "digest": f"sha256:{digest}", "size_in_bytes": len(payload)}
+            replay = {
+                "artifact": {"id": 10, "sha256": digest, "bytes": len(payload)},
+                "run": {"source_head": verify_evidence_tree.IMPLEMENTATION_HEAD},
+            }
+            result = verify_evidence_tree.verify_artifact(metadata, artifact, replay)
+            self.assertEqual(result["metadata_id"], 10)
+            self.assertEqual(result["replay_id"], 10)
 
 
 if __name__ == "__main__":

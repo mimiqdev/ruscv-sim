@@ -156,10 +156,13 @@ python3 -m unittest discover -s scripts/a7 -p 'test_*.py' -v
 ```
 
 They reject digest mismatch, path traversal, duplicate ZIP members, mutated
-summary accounting, and missing/duplicate/extra result identities. After a
-real replay, `scripts/a7/verify_evidence_tree.py` bridges the generated report
-to the committed JSON, GitHub artifact ID/size/digest, exact implementation
-head, and an empty protected runtime/tests/CI tree change set.
+summary accounting, missing/duplicate/extra result identities, and missing or
+mismatched artifact IDs. The comparison assertions also have negative tests for
+each exit/cycles/final-PC/timeout/error tuple component at logged-sample and
+cross-revision boundaries. After a real replay,
+`scripts/a7/verify_evidence_tree.py` bridges the generated report to the
+committed JSON, GitHub artifact ID/size/digest, exact implementation head, and
+an empty protected runtime/tests/CI tree change set.
 
 The large ZIP and generated ELFs are retained externally/under ignored local
 `target/` evidence, not committed. The replay report is the compact committed
@@ -208,10 +211,10 @@ commit-logged verification run per repetition recorded exit code **0**,
 
 | Revision | Median | Min--max | P95 | Relative range |
 | --- | ---: | ---: | ---: | ---: |
-| `9ee9c5f` typed public route | 2,776,624 ns | 2,755,398--2,871,528 ns | 2,822,491 ns | 4.18% |
-| `fb6f51c` raw-port public route | 3,765,507 ns | 3,563,680--3,880,571 ns | 3,857,693 ns | 8.42% |
+| `9ee9c5f` typed public route | 2,786,047 ns | 2,764,117--2,963,635 ns | 2,888,324 ns | 7.16% |
+| `fb6f51c` raw-port public route | 3,770,094 ns | 3,608,328--4,070,626 ns | 3,993,584 ns | 12.26% |
 
-The raw-port median divided by the old typed median was **1.3015** for this
+The raw-port median divided by the old typed median was **1.3532** for this
 sample and environment. This is deliberately not a regression verdict or a
 performance threshold: the result is reported as observed, including the
 slower current samples, and no optimization or filtering was added. The run
