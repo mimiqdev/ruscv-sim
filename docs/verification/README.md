@@ -54,6 +54,7 @@ Test language follows the layer rather than the simulator implementation languag
 - [Project-authored bare-metal tests](bare-metal-tests.md)
 - [A6 capability and acceptance assessment](a6-capability-assessment.md)
 - [A6 retained A5 ACT4 replay summary](a6-act4-replay-35325844246.json)
+- [A7 T1 non-atomic physical contract](a7-physical-contract.md) — vocabulary and focused validation boundary; not native/Hart integration
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)
 
