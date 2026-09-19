@@ -25,7 +25,7 @@ use ruscv_sim::physical::{
 use ruscv_sim::PrivilegeMode;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use tempfile::TempDir;
 
@@ -38,6 +38,22 @@ const TOHOST_OFFSET: usize = 0x1000;
 const MRET: u32 = 0x3020_0073;
 const ECALL: u32 = 0x0000_0073;
 const ILLEGAL: u32 = 0xffff_ffff;
+const FP_SINGLE_BITS: u32 = 0x3fc0_0000; // 1.5f32
+const FP_DOUBLE_BITS: u64 = 0x400c_0000_0000_0000; // 3.5f64
+const FP_WORD_SENTINEL: u32 = 0x8877_6655;
+const FP_DWORD_SENTINEL: u64 = 0x1122_3344_5566_7788;
+
+// The legacy reservation is intentionally process-global.  All workflow tests
+// in this integration binary hold this lock across their complete run so test
+// scheduling cannot interleave LR/SC pairs from independent simulators.
+static WORKFLOW_RESERVATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn workflow_reservation_guard() -> std::sync::MutexGuard<'static, ()> {
+    WORKFLOW_RESERVATION_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[derive(Debug)]
 struct WorkflowFixture {
@@ -111,6 +127,46 @@ fn amo_raw(funct5: u8, funct3: u8, rd: u8, rs1: u8, rs2: u8) -> u32 {
         | 0x2f
 }
 
+fn load_word_unsigned(rd: u8, rs1: u8, immediate: i32) -> u32 {
+    assert!((-2048..=2047).contains(&immediate));
+    ((immediate as u32 & 0xfff) << 20)
+        | ((rs1 as u32) << 15)
+        | (0b110 << 12)
+        | ((rd as u32) << 7)
+        | 0x03
+}
+
+fn bne(rs1: u8, rs2: u8, offset: i32) -> u32 {
+    assert!((-4096..=4094).contains(&offset));
+    assert!(offset % 2 == 0, "branch offsets are 2-byte aligned");
+    let imm = offset as u32;
+    let imm12 = (imm >> 12) & 1;
+    let imm11 = (imm >> 11) & 1;
+    let imm10_5 = (imm >> 5) & 0x3f;
+    let imm4_1 = (imm >> 1) & 0xf;
+    (imm12 << 31)
+        | (imm10_5 << 25)
+        | ((rs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | (0b001 << 12)
+        | (imm4_1 << 8)
+        | (imm11 << 7)
+        | 0x63
+}
+
+fn push_check_branch(
+    code: &mut Vec<u32>,
+    pc: &mut usize,
+    branches: &mut Vec<(usize, usize, u8, u8)>,
+    rs1: u8,
+    rs2: u8,
+) {
+    let index = code.len();
+    let branch_pc = *pc;
+    push(code, pc, bne(rs1, rs2, 0));
+    branches.push((index, branch_pc, rs1, rs2));
+}
+
 fn workflow_fixture(
     exit_code: u32,
     initial_integer: i32,
@@ -120,6 +176,7 @@ fn workflow_fixture(
     let entry = fixture::BASE + ENTRY_OFFSET as u64;
     let mut code = Vec::new();
     let mut pc = ENTRY_OFFSET;
+    let mut failure_branches = Vec::new();
 
     // Install a real machine trap handler, then take an ECALL before ordinary
     // integer/FP accesses and the retained legacy atomic path.
@@ -129,9 +186,17 @@ fn workflow_fixture(
     push(&mut code, &mut pc, ECALL);
 
     append_address(&mut code, &mut pc, 1, INTEGER_OFFSET);
+    push(&mut code, &mut pc, fixture::addi(16, 0, initial_integer));
+    push(
+        &mut code,
+        &mut pc,
+        fixture::addi(17, 0, initial_integer * 2),
+    );
+    push(&mut code, &mut pc, fixture::addi(18, 0, conditional_value));
     push(&mut code, &mut pc, fixture::addi(2, 0, initial_integer));
     push(&mut code, &mut pc, fixture::sd(2, 1, 0));
     push(&mut code, &mut pc, fixture::ld(3, 1, 0));
+    push_check_branch(&mut code, &mut pc, &mut failure_branches, 3, 16);
 
     // AMOADD.W, LR.W, and SC.W use the characterized legacy typed helper
     // choices.  In this implementation the LR/SC funct3=010 path invokes the
@@ -142,6 +207,7 @@ fn workflow_fixture(
         &mut pc,
         amo_raw(0b00001, 0b010, 6, 1, 2), // AMOADD.W x6, x2, (x1)
     );
+    push_check_branch(&mut code, &mut pc, &mut failure_branches, 6, 16);
     push(
         &mut code,
         &mut pc,
@@ -153,33 +219,88 @@ fn workflow_fixture(
         &mut pc,
         amo_raw(0b00011, 0b010, 8, 1, 2), // characterized SC path
     );
+    push_check_branch(&mut code, &mut pc, &mut failure_branches, 7, 17);
+    push_check_branch(&mut code, &mut pc, &mut failure_branches, 8, 0);
     push(&mut code, &mut pc, fixture::ld(9, 1, 0));
+    push_check_branch(&mut code, &mut pc, &mut failure_branches, 9, 18);
 
     // Exercise both FP widths through the same ordinary raw data route.  The
-    // fixture's asymmetric FILE_BYTE at FP_OFFSET makes endian/width mistakes
-    // visible in the post-run flat inspection.
+    // ELF patch below seeds a nonzero single and a distinct nonzero double,
+    // while both destinations begin with sentinels.  Integer loads after the
+    // stores make the FP effects part of the native/CLI exit oracle too.
     append_address(&mut code, &mut pc, 4, FP_OFFSET);
     push(&mut code, &mut pc, load_fp(1, 4, 0b010, 0)); // FLW
     push(&mut code, &mut pc, store_fp(1, 4, 0b010, 4)); // FSW
+    push(&mut code, &mut pc, load_word_unsigned(19, 4, 4));
+    push(&mut code, &mut pc, fixture::lui(20, FP_SINGLE_BITS >> 12));
+    push_check_branch(&mut code, &mut pc, &mut failure_branches, 19, 20);
     push(&mut code, &mut pc, load_fp(2, 4, 0b011, 8)); // FLD
     push(&mut code, &mut pc, store_fp(2, 4, 0b011, 16)); // FSD
-
-    append_address(&mut code, &mut pc, 13, SIGNATURE_OFFSET);
+    push(&mut code, &mut pc, load_word_unsigned(22, 4, 20));
     push(
         &mut code,
         &mut pc,
-        fixture::addi(2, 0, i32::from(signature_byte)),
+        fixture::lui(23, (FP_DOUBLE_BITS >> 32 >> 12) as u32),
     );
-    push(&mut code, &mut pc, fixture::sb(2, 13, 0));
-    push(&mut code, &mut pc, fixture::standard_exit(exit_code));
+    push_check_branch(&mut code, &mut pc, &mut failure_branches, 22, 23);
+
+    // Choose the success/failure result only after every integer, atomic, and
+    // FP check has executed.  A defect therefore changes both the native/CLI
+    // exit and the flat signature oracle rather than being hidden by a
+    // constant result.
+    let success_prefix_len = code.len();
+    let success_payload = exit_code
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(1))
+        .expect("fixture exit code must fit in an ADDI immediate");
+    let failure_code = exit_code + 20;
+    let failure_payload = failure_code
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(1))
+        .expect("fixture failure code must fit in an ADDI immediate");
+    push(
+        &mut code,
+        &mut pc,
+        fixture::addi(5, 0, success_payload as i32),
+    );
+    push(
+        &mut code,
+        &mut pc,
+        fixture::addi(24, 0, i32::from(signature_byte)),
+    );
+    let success_jump_index = code.len();
+    let success_jump_pc = pc;
+    push(&mut code, &mut pc, fixture::beq(0, 0, 0));
+
+    let failure_offset = pc;
+    push(
+        &mut code,
+        &mut pc,
+        fixture::addi(5, 0, failure_payload as i32),
+    );
+    push(
+        &mut code,
+        &mut pc,
+        fixture::addi(24, 0, i32::from(signature_byte ^ 0xff)),
+    );
+    let exit_offset = pc;
+    code[success_jump_index] = fixture::beq(0, 0, (exit_offset as i32) - (success_jump_pc as i32));
+    for (index, branch_pc, rs1, rs2) in failure_branches {
+        code[index] = bne(rs1, rs2, (failure_offset as i32) - (branch_pc as i32));
+    }
+
+    append_address(&mut code, &mut pc, 13, SIGNATURE_OFFSET);
+    push(&mut code, &mut pc, fixture::sb(24, 13, 0));
     append_address(&mut code, &mut pc, 14, TOHOST_OFFSET);
     let final_store_index = code.len();
     push(&mut code, &mut pc, fixture::sd(5, 14, 0));
-    let main_len = code.len();
+    let main_code_len = code.len();
+    let exit_block_len = main_code_len - (exit_offset - ENTRY_OFFSET) / 4;
+    let executed_main_len = success_prefix_len + 3 + exit_block_len;
 
     let handler_index = (HANDLER_OFFSET - ENTRY_OFFSET) / 4;
     assert!(
-        main_len < handler_index,
+        main_code_len < handler_index,
         "workflow code must not overlap handler"
     );
     code.resize(handler_index, fixture::nop());
@@ -194,11 +315,11 @@ fn workflow_fixture(
     ];
     code.extend(handler_code);
 
-    let cycles = main_len as u64 + handler_code.len() as u64;
+    let cycles = executed_main_len as u64 + handler_code.len() as u64;
     // ECALL enters a trap and therefore consumes a completed runner turn but
     // does not retire.  Every other dynamically reached instruction retires.
     let minstret = cycles - 1;
-    let elf = fixture::elf_with_signature(
+    let mut elf = fixture::elf_with_signature(
         &code,
         ENTRY_OFFSET,
         fixture::BASE,
@@ -206,6 +327,11 @@ fn workflow_fixture(
         Some((fixture::SIGNATURE, fixture::SIGNATURE_BYTES.len() as u64)),
         0x4000,
     );
+    let fp_file_offset = fixture::LOAD_OFFSET + FP_OFFSET;
+    elf[fp_file_offset..fp_file_offset + 4].copy_from_slice(&FP_SINGLE_BITS.to_le_bytes());
+    elf[fp_file_offset + 4..fp_file_offset + 8].copy_from_slice(&FP_WORD_SENTINEL.to_le_bytes());
+    elf[fp_file_offset + 8..fp_file_offset + 16].copy_from_slice(&FP_DOUBLE_BITS.to_le_bytes());
+    elf[fp_file_offset + 16..fp_file_offset + 24].copy_from_slice(&FP_DWORD_SENTINEL.to_le_bytes());
     let mut signature = fixture::SIGNATURE_BYTES.to_vec();
     signature[0] = signature_byte;
 
@@ -213,7 +339,7 @@ fn workflow_fixture(
         elf,
         code,
         entry,
-        final_pc: entry + (main_len as u64 * 4),
+        final_pc: entry + ((final_store_index + 1) as u64 * 4),
         cycles,
         minstret,
         initial_integer: initial_integer as u64,
@@ -319,6 +445,11 @@ fn assert_flat_intermediate_state(
     );
     assert_eq!(state.regs[8], 0, "legacy SC succeeds with the retained key");
     assert_eq!(state.regs[9], conditional_value);
+    assert_eq!(state.regs[19], u64::from(FP_SINGLE_BITS));
+    assert_eq!(state.regs[20], u64::from(FP_SINGLE_BITS));
+    assert_eq!(state.regs[22], FP_DOUBLE_BITS >> 32);
+    assert_eq!(state.regs[23], FP_DOUBLE_BITS >> 32);
+    assert_eq!(state.regs[24], u64::from(fixture.signature[0]));
     assert_eq!(state.regs[11], fixture::BASE + 0x110);
     assert_eq!(state.regs[12], 0x55, "handler state survives MRET");
     assert_eq!(
@@ -327,20 +458,28 @@ fn assert_flat_intermediate_state(
         "handler advanced MEPC over ECALL"
     );
     assert_eq!(state.csr.read(machine::MINSTRET).unwrap(), fixture.minstret);
-    assert_eq!(state.fpr.read(1).lower(), 0xa5);
-    assert_eq!(state.fpr.read(2).bits(), 0);
+    assert_eq!(state.fpr.read(1).lower(), FP_SINGLE_BITS);
+    assert_eq!(state.fpr.read(2).bits(), FP_DOUBLE_BITS);
 
     assert_eq!(
         simulator.read_mem(fixture.integer_offset, 8).unwrap(),
         conditional_value.to_le_bytes()
     );
     assert_eq!(
+        simulator.read_mem(fixture.fp_offset, 8).unwrap(),
+        [FP_SINGLE_BITS.to_le_bytes(), FP_SINGLE_BITS.to_le_bytes()].concat()
+    );
+    assert_eq!(
         simulator.read_mem(fixture.fp_offset + 4, 4).unwrap(),
-        vec![0xa5, 0, 0, 0]
+        FP_SINGLE_BITS.to_le_bytes()
+    );
+    assert_eq!(
+        simulator.read_mem(fixture.fp_offset + 8, 8).unwrap(),
+        FP_DOUBLE_BITS.to_le_bytes()
     );
     assert_eq!(
         simulator.read_mem(fixture.fp_offset + 16, 8).unwrap(),
-        vec![0; 8]
+        FP_DOUBLE_BITS.to_le_bytes()
     );
     assert_eq!(
         simulator.read_mem(fixture.signature_offset, 8).unwrap(),
@@ -355,6 +494,7 @@ fn assert_flat_intermediate_state(
 
 #[test]
 fn public_workflow_equivalence_covers_entry_trap_integer_fp_legacy_and_exit() {
+    let _reservation_guard = workflow_reservation_guard();
     let workflow = workflow_fixture(7, 5, 12, 0x5a);
     let temp = TempDir::new().unwrap();
 
@@ -394,6 +534,14 @@ fn public_workflow_equivalence_covers_entry_trap_integer_fp_legacy_and_exit() {
     let mut flat = RiscVSimulator::new(0x1_0000);
     assert_eq!(flat.load_elf(&workflow.elf).unwrap(), workflow.entry);
     assert_eq!(flat.state().pc, workflow.entry);
+    assert_eq!(
+        flat.read_mem(workflow.fp_offset + 4, 4).unwrap(),
+        FP_WORD_SENTINEL.to_le_bytes()
+    );
+    assert_eq!(
+        flat.read_mem(workflow.fp_offset + 16, 8).unwrap(),
+        FP_DWORD_SENTINEL.to_le_bytes()
+    );
     let flat_result = flat.run(Some(workflow.cycles)).unwrap();
     assert_workflow_result(&flat_result, &workflow, 7);
     assert_flat_intermediate_state(&flat, &workflow, 12);
@@ -426,6 +574,7 @@ fn public_workflow_equivalence_covers_entry_trap_integer_fp_legacy_and_exit() {
 
 #[test]
 fn public_budget_zero_exact_exit_and_final_slot_are_distinct() {
+    let _reservation_guard = workflow_reservation_guard();
     let workflow = workflow_fixture(3, 5, 12, 0x5a);
     let temp = TempDir::new().unwrap();
 
@@ -973,6 +1122,7 @@ fn fixed_offset_writer(exit_code: u32, guest_offset: i64) -> Vec<u32> {
 
 #[test]
 fn reload_and_configuration_boundaries_keep_their_explicit_differences() {
+    let _reservation_guard = workflow_reservation_guard();
     let first = workflow_fixture(3, 5, 12, 0x5a);
     let second = workflow_fixture(9, 7, 13, 0x6b);
     let mut simulator = RiscVSimulator::new(0x1_0000);
@@ -1030,6 +1180,14 @@ fn reload_and_configuration_boundaries_keep_their_explicit_differences() {
     assert_eq!(
         simulator.read_mem(second.signature_offset, 8).unwrap(),
         fixture::SIGNATURE_BYTES
+    );
+    assert_eq!(
+        simulator.read_mem(second.fp_offset + 4, 4).unwrap(),
+        FP_WORD_SENTINEL.to_le_bytes()
+    );
+    assert_eq!(
+        simulator.read_mem(second.fp_offset + 16, 8).unwrap(),
+        FP_DWORD_SENTINEL.to_le_bytes()
     );
     let second_result = simulator.run(Some(second.cycles)).unwrap();
     assert_workflow_result(&second_result, &second, 9);

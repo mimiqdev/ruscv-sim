@@ -20,8 +20,8 @@ stale `target/debug` binary.
 | --- | --- | --- |
 | Shared placement and result facts | The workflow has a nonzero base and entry. Exact exit code, completed-turn count, final PC, signature address/bytes, and non-timeout result are asserted. The flat facade additionally checks PC, privilege, GPRs, CSR state, FPR state, and RAM bytes. | CLI process, `load_and_run`, `RiscVSimulator` |
 | Ordinary integer memory | `SD` followed by `LD` at the nonzero guest address; the loaded value and final little-endian bytes are asserted. | All three workflow surfaces; raw non-atomic data port in the two standard facades |
-| Ordinary FP memory | `FLW`/`FSW` and `FLD`/`FSD` use distinct widths. The asymmetric source byte and destination bytes expose width or endian mistakes. | All three workflow surfaces; flat state and storage inspection |
-| Retained legacy atomics | `AMOADD.W`, the characterized LR path, and SC use the same aligned address after ordinary integer accesses. Old-result registers, SC status, final value, and reservation-sensitive success are asserted. The old typed backend is separately called with exact `read/write` widths, addresses, and order. | All three workflow surfaces; public `RiscvCore::new` with a third-party `MemoryInterface` |
+| Ordinary FP memory | `FLW`/`FSW` and `FLD`/`FSD` use distinct widths. The ELF seeds nonzero `1.5f32` and `3.5f64` values, including the double's upper half, and nonzero destination sentinels. Guest integer checks make the FP results part of the native/CLI exit oracle; flat state and bytes assert the exact values. | All three workflow surfaces; flat state and storage inspection |
+| Retained legacy atomics | `AMOADD.W`, the characterized LR path, and SC use the same aligned address after ordinary integer accesses. Guest branches validate old-result registers, SC status, and final value before selecting success; the old typed backend is separately called with exact `read/write` widths, addresses, and order. | All three workflow surfaces; public `RiscvCore::new` with a third-party `MemoryInterface` |
 | Trap, handler, and MRET | The workflow takes ECALL, advances MEPC in a real handler, records handler state, and returns with MRET. A separate image repeatedly traps on an illegal handler instruction. `cycles` counts completed trap turns while `minstret` excludes them. | CLI, `load_and_run`, `RiscVSimulator`; typed public core boundary |
 | Budget and exit boundary | Zero budget starts no turn. One slot before the final exit store times out. The exact budget exits successfully, including when the exit store is in the final permitted slot. | CLI, `load_and_run`, `RiscVSimulator` |
 | Host failure boundary | A reachable public flat memory handle is poisoned in a child thread. The one started slot reports a host failure with zero completed turns and no timeout; `minstret` and PC remain unchanged. | `RiscVSimulator` only; no unsafe backend injection was added |
@@ -84,8 +84,10 @@ implements the new raw interface.
   claimed from T4.
 * The workflow intentionally uses the characterized LR/SC encodings and
   aligned addresses. T4 preserves, but does not upgrade, the T0/T3 legacy
-  atomic semantics. See [`a7-migration-characterization.md`](a7-migration-characterization.md)
-and [`a7-hart-physical.md`](a7-hart-physical.md).
+  atomic semantics. The in-process workflow cases hold one test-only mutex
+  across their complete runs because the retained reservation is process-global.
+  See [`a7-migration-characterization.md`](a7-migration-characterization.md)
+  and [`a7-hart-physical.md`](a7-hart-physical.md).
 * Equality is asserted only for shared architectural/result facts. UART,
   fixed HTIF, flat offsets, artifact diagnostics, and native-vs-flat failure
   policy remain explicit configuration differences.
