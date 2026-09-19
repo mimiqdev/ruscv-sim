@@ -13,12 +13,19 @@ Milestone A7 — Non-Atomic Physical-Access Boundary Migration.
 2. Once all acceptance criteria are verified, move that plan here as completed.
 3. If planning is deliberately reset, archive the replaced plan as superseded without claiming completion.
 4. Add completion evidence or the supersession reason and known limitations to the archived record.
-5. Promote the next milestone into `docs/dev-plan.md`.
+5. Promote the next milestone into `docs/dev-plan.md` only after it is separately
+   approved. A completed A7 closeout record does not invent a successor; until
+   that decision, `docs/dev-plan.md` remains the sole Current technical contract.
 
 ## Records
 
+- [A7: Non-atomic physical-access migration — bounded closeout record](a7-closeout-record.md)
+  - Bounded non-atomic acceptance recorded 2026-09-19; PR #53 merge `c206756`; closeout PR #54 is unmerged and rolling successor selection remains pending
+  - [Complete archived A7 contract](a7-non-atomic-physical-access-migration.md)
+  - [Capability and T5 evidence](../../verification/a7-capability-assessment.md)
+
 - [A7: Non-atomic physical-access migration — approved proposal snapshot](a7-non-atomic-physical-access-proposal.md)
-  - Full candidate `2de6e96` approved 2026-09-18; superseded by the active A7 contract, not a second Current plan
+  - Full candidate `2de6e96` approved 2026-09-18; superseded by the activated A7 contract, not a second Current plan
 
 - [A6: Machine-mode synchronous trap entry and return — formal closeout](a6-closeout-record.md)
   - Formally completed/accepted 2026-09-18; preparation merged in PR #46 as `024d15d`, activation delivery PR #47 not claimed merged

@@ -58,7 +58,8 @@ Test language follows the layer rather than the simulator implementation languag
 - [A7 T2 native target adapters](a7-native-targets.md) — shared native RAM/UART/HTIF component adapters; not Hart/public-facade migration
 - [A7 T3 Hart physical wiring and legacy bridge](a7-hart-physical.md) — ordinary Hart routes, lock order, and retained legacy atomic boundary
 - [A7 T4 public-facade equivalence](a7-public-equivalence.md) — CLI/library workflow matrix, route audit, and bounded compatibility exceptions
-- [A7 T5 final verification and bounded closeout evidence](a7-capability-assessment.md) — §8 matrix, exact-head Rust/ELF/ACT4 evidence, residual debt, and explicit non-closure boundary
+- [A7 T5 final verification and bounded closeout evidence](a7-capability-assessment.md) — §8 matrix, exact-head Rust/ELF/ACT4 evidence, cumulative independent review outcome, residual debt, and explicit rolling-transition boundary
+- [A7 bounded closeout record](../archive/milestones/a7-closeout-record.md) — six-item acceptance, PR/source identities, two independent 51-case scopes, replay/tool limits, and next-roadmap boundary
 - [A7 ACT4 offline replay](a7-act4-replay-35432032788.json) — compact digest-bound replay of the fresh 51-case artifact
 - [A7 performance observation](a7-performance-observation.json) — bounded current-head Criterion observations; no regression claim
 - [A7 public-facade physical-loop observation](a7-physical-loop-observation.json) — pre-migration/current public `load_and_run` measurements with guest-result and retirement checks
@@ -68,7 +69,9 @@ Test language follows the layer rather than the simulator implementation languag
 
 The A1 matrix and gap register are current as-of evidence records, not an A1
 closeout and not a claim that component tests or old CI/reference logs prove
-public-path support. The matrix records the exact revision, the initial host
+public-path support. The A7 closeout record is bounded to the non-atomic
+migration; it does not replace the sole current `docs/dev-plan.md` contract or
+select a successor milestone. The matrix records the exact revision, the initial host
 limitation, and the successful Docker-based guest evidence for its batch.
 The [A1 closeout](../archive/milestones/a1-closeout-record.md) additionally records
 exact-merge main CI with guest compilation and 46/46 execution; historical

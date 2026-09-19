@@ -4,7 +4,7 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-09-18
+**Last reviewed:** 2026-09-19
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
@@ -31,9 +31,9 @@ Target architecture is not implementation status. Component presence is not end-
 - [A0 closeout record](archive/milestones/a0-closeout-record.md) — accepted architecture, completion evidence and limitations
 - [Implementation scope navigation](architecture/first-implementation-scope.md) — A1–A4 completed; A5 ACT4 detailed contract approved in PR #31; broader migration remains unapproved
 
-## Proposals (not active contracts)
+## Current contract and proposal history
 
-- [Active A7 non-atomic physical-access contract](dev-plan.md) — approved and activated 2026-09-18, following formal A6 acceptance. Fetch and ordinary integer/FP loads/stores are in scope; legacy atomics retain behavior on shared storage/locking as explicit debt, not disabled or certified. Conservative compatibility defaults are approved. Activation is documentation-only; PR #47 is not claimed merged. [Proposal history](archive/milestones/a7-non-atomic-physical-access-proposal.md).
+- [Current A7 non-atomic physical-access contract](dev-plan.md) — approved and activated 2026-09-18, following formal A6 acceptance. Fetch and ordinary integer/FP loads/stores are in scope; legacy atomics retain behavior on shared storage/locking as explicit debt, not disabled or certified. Conservative compatibility defaults are approved. Activation merged in PR #47 as `9ee9c5f24c072779f06ce141b3340f953b614442`; the contract remains the sole current technical specification until a successor is approved. [Proposal history](archive/milestones/a7-non-atomic-physical-access-proposal.md).
 
 ## Verification
 
@@ -47,6 +47,7 @@ Target architecture is not implementation status. Component presence is not end-
 - [Project-authored bare-metal tests](verification/bare-metal-tests.md)
 - [A6 capability and acceptance assessment](verification/a6-capability-assessment.md)
 - [A6 retained A5 ACT4 replay summary](verification/a6-act4-replay-35325844246.json)
+- [A7 bounded closeout record](archive/milestones/a7-closeout-record.md) — six-item acceptance, exact PR/source identities, independent cumulative review outcome, two 51-case boundaries, and residual debt
 - [External RISC-V test integration contract](verification/external-riscv-tests.md)
 - [Commit tracing and differential testing](verification/commit-tracing.md)
 

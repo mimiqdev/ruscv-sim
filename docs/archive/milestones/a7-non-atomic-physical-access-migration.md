@@ -1,22 +1,20 @@
-# Development Plan
+# A7 — Non-Atomic Physical-Access Boundary Migration
 
-**Current milestone:** A7 — Non-Atomic Physical-Access Boundary Migration
+**Status:** Historical — complete approved contract archived 2026-09-19
 
-**Status:** Current
-
-**Authority:** Normative milestone contract. The maintainer approved the complete
-revised scope and conservative compatibility defaults on 2026-09-18, at candidate
-`2de6e96e45764e2d21731b2a5e619cc23f8338ca`, and explicitly authorized A6 closeout
-and A7 activation. This contract does not itself claim implementation completeness;
-the bounded implementation acceptance is recorded separately in the
-[A7 closeout record](archive/milestones/a7-closeout-record.md). It remains the
-sole current technical specification until a successor is separately approved;
-no A8/A9 schedule is implied.
+**Authority:** Informational historical contract record. The sole current technical
+contract remains [`docs/dev-plan.md`](../../dev-plan.md) until an approved successor
+and the required rolling transition are recorded. This archive preserves the full
+A7 contract as activated; it is not a new plan or implementation claim.
 
 **Activated:** 2026-09-18
 
+**Archived:** 2026-09-19, with bounded implementation acceptance and evidence recorded
+in [the A7 closeout record](a7-closeout-record.md). The closeout delivery change was
+not merged when this historical copy was prepared.
+
 **Evidence baseline:** `024d15d546dc3b711f593cd44bb107612fd8b600`, source inspected
-2026-09-18. This change is documentation-only.
+2026-09-18. The original activation change was documentation-only.
 
 ## 1. Objective, decision and authority
 
@@ -37,42 +35,42 @@ forbidden. The previous A/B/C choice is no longer an activation gate.
 
 The final architecture remains unchanged:
 
-* [ADR-0001](architecture/decisions/0001-hart-execution-outcome-and-observation.md)
+* [ADR-0001](../../architecture/decisions/0001-hart-execution-outcome-and-observation.md)
   owns Hart outcomes, architectural effects and observations.
-* [ADR-0002](architecture/decisions/0002-physical-access-transaction-and-fault.md)
+* [ADR-0002](../../architecture/decisions/0002-physical-access-transaction-and-fault.md)
   requires one physical port, complete raw-byte transfers, fault separation,
   indivisible atomic envelopes and Hart-owned reservation semantics. A7 implements
   only the non-atomic portion. Retained legacy atomics are known nonconformance,
   not an exception added to the ADR or proof of transaction atomicity.
-* [ADR-0003](architecture/decisions/0003-runner-machine-and-platform-ownership.md)
+* [ADR-0003](../../architecture/decisions/0003-runner-machine-and-platform-ownership.md)
   owns placement/composition/Runner responsibilities; offset conversion is not MMU
   translation.
-* [ADR-0004](architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md)
+* [ADR-0004](../../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md)
   owns budget/time/control boundaries; A6's existing accounting is preserved.
 
-Under [documentation policy](documentation-policy.md) and `AGENTS.md`, this is
-the sole Current technical contract. A6 was formally accepted and closed on
-2026-09-18; its [full contract](archive/milestones/a6-machine-mode-trap-entry-return.md)
-and [closeout evidence](archive/milestones/a6-closeout-record.md) are preserved.
-The [approved proposal snapshot](archive/milestones/a7-non-atomic-physical-access-proposal.md)
-retains drafting history, not a second active contract. The [A7 closeout record](archive/milestones/a7-closeout-record.md) records bounded delivery acceptance,
-its exact evidence identities, and the unmerged closeout/unscheduled-successor
-boundary. Approval covers the full scope and preservation ledger below, not
-incidental behavior tightening or the rejected atomic-capability-denial option.
+Under [documentation policy](../../documentation-policy.md) and `AGENTS.md`, this
+was the sole Current milestone contract at activation. A6 was formally accepted
+and closed on 2026-09-18; its [full contract](a6-machine-mode-trap-entry-return.md)
+and [closeout evidence](a6-closeout-record.md) are preserved. The [approved proposal
+snapshot](a7-non-atomic-physical-access-proposal.md) retains drafting history, not a
+second active contract. Approval covered the full scope and preservation ledger
+below, not incidental behavior tightening or the rejected atomic-capability-denial
+option. The current closeout record preserves the distinction between this
+historical contract, its bounded delivery evidence, and the still-pending rolling
+selection of a successor.
 
 ## 2. Starting point and evidence identities
 
-The [A6 assessment](verification/a6-capability-assessment.md) and
-[closeout record](archive/milestones/a6-closeout-record.md) record PR #46's
+The [A6 assessment](../../verification/a6-capability-assessment.md) and
+[closeout record](a6-closeout-record.md) record PR #46's
 merge at the baseline above. PR-head CI `35331709689` and exact-merge main CI
 `35332790906` are distinct: the latter freshly compiled and passed 51 project
 ELFs, including five trap guests. Frozen ACT4 run `35325844246` remains evidence
 at source `845c63325db5ac87ab2ff0ed260453dc3b396ae9`, not at this documentation
 HEAD. A6 formal acceptance and this successor's activation were authorized on
-2026-09-18. The activation delivery merged as PR #47 at
-`9ee9c5f24c072779f06ce141b3340f953b614442`; later A7 implementation and bounded
-closeout evidence are recorded separately and do not replace this technical
-contract until a successor is approved.
+2026-09-18. At activation, the documentation delivery PR still required
+independent review and merge; that historical workflow state was distinct from
+the maintainer's acceptance decision.
 
 | Source / focused regression | Existing behavior to preserve or debt not to overclaim |
 | --- | --- |
@@ -319,7 +317,7 @@ frozen pinned setup: **51 ACT4 nontrapping RV64I cases** generated/executed/pass
 linked audits and fail-closed controls. Keep selection unchanged and record
 run/head/artifact hashes. These are two different sets of 51.
 
-The [A6 replay JSON](verification/a6-act4-replay-35325844246.json) retains
+The [A6 replay JSON](../../verification/a6-act4-replay-35325844246.json) retains
 ACT4 `a7c99303516f4e668f7488f172043392e23b9dfd`, source revision, selection and
 configuration hashes. Replaying that ZIP is historical comparison, not fresh A7
 execution. Neither 51-case suite proves atomic correctness; T0/T3/T4 add the
