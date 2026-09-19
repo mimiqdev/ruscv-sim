@@ -20,9 +20,10 @@ pub mod physical;
 pub mod tlm;
 
 pub use core::{
-    CoreState, CoreStepOutcome, HartStepOutcome, InstructionRetired, MemoryAdapter, PrivilegeMode,
-    RiscvCore, SimulatorFailure, SimulatorFailureKind, StepOutcome, TrapContinuationPolicy,
-    TrapEntered, TrapEntryError,
+    CoreState, CoreStepOutcome, HartStepOutcome, InstructionRetired, LegacyTypedMemoryAdapter,
+    MemoryAdapter, PhysicalMemoryAdapter, PrivilegeMode, RiscvCore, SharedPhysicalAccess,
+    SimulatorFailure, SimulatorFailureKind, StepOutcome, TrapContinuationPolicy, TrapEntered,
+    TrapEntryError,
 };
 pub use csr::{CsrAccess, CsrError, CsrFile};
 pub use debug::{
