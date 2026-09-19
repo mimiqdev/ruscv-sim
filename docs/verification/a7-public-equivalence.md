@@ -20,7 +20,7 @@ stale `target/debug` binary.
 | --- | --- | --- |
 | Shared placement and result facts | The workflow has a nonzero base and entry. Exact exit code, completed-turn count, final PC, signature address/bytes, and non-timeout result are asserted. The flat facade additionally checks PC, privilege, GPRs, CSR state, FPR state, and RAM bytes. | CLI process, `load_and_run`, `RiscVSimulator` |
 | Ordinary integer memory | `SD` followed by `LD` at the nonzero guest address; the loaded value and final little-endian bytes are asserted. | All three workflow surfaces; raw non-atomic data port in the two standard facades |
-| Ordinary FP memory | `FLW`/`FSW` and `FLD`/`FSD` use distinct widths. The ELF seeds nonzero `1.5f32` and `3.5f64` values, including the double's upper half, and nonzero destination sentinels. Guest integer checks make the FP results part of the native/CLI exit oracle; flat state and bytes assert the exact values. | All three workflow surfaces; flat state and storage inspection |
+| Ordinary FP memory | `FLW`/`FSW` and `FLD`/`FSD` use distinct widths. The ELF seeds asymmetric nonzero normal bit patterns `0x3fc01234` and `0x400c000000000001`, including both double halves, plus nonzero destination sentinels. Guest integer checks make the complete FP results part of the native/CLI exit oracle; flat state and bytes assert the exact values. A one-low-bit ELF mutation reaches the distinct failure exit/signature. | All three workflow surfaces; flat state and storage inspection |
 | Retained legacy atomics | `AMOADD.W`, the characterized LR path, and SC use the same aligned address after ordinary integer accesses. Guest branches validate old-result registers, SC status, and final value before selecting success; the old typed backend is separately called with exact `read/write` widths, addresses, and order. | All three workflow surfaces; public `RiscvCore::new` with a third-party `MemoryInterface` |
 | Trap, handler, and MRET | The workflow takes ECALL, advances MEPC in a real handler, records handler state, and returns with MRET. A separate image repeatedly traps on an illegal handler instruction. `cycles` counts completed trap turns while `minstret` excludes them. | CLI, `load_and_run`, `RiscVSimulator`; typed public core boundary |
 | Budget and exit boundary | Zero budget starts no turn. One slot before the final exit store times out. The exact budget exits successfully, including when the exit store is in the final permitted slot. | CLI, `load_and_run`, `RiscVSimulator` |
@@ -134,10 +134,29 @@ validation status are supplied by the CodingTask handoff system; prose or a
 command copied from this document is not a substitute for that captured
 validation contract.
 
+## T4/T5 handoff checklist
+
+The completed T4 audit rows below are bound to the code/test evidence revision
+`88b2c7f80236ead76c6b2b47b0af3a56f7404b86`; the final documentation and quality
+checks are recorded against the later exact HEAD by the CodingTask handoff.
+
+| Status | Audit item | Evidence and path | Boundary or next action |
+| --- | --- | --- | --- |
+| Resolved | Reservation-sensitive workflow scheduling | `tests/a7_public_equivalence.rs::workflow_reservation_guard`; the three workflow tests hold one mutex across all simulator/CLI runs. | Test-only serialization preserves the approved process-global legacy key; production semantics unchanged. |
+| Resolved | Shared integer/atomic/FP result oracle | `workflow_fixture`, `double_low_half_mutation_reaches_the_shared_failure_oracle`, and the public workflow test. Native/library/CLI exit and signature results depend on checks; flat state/bytes provide intermediate oracles. | The mutation changes only fixture bytes and must select failure code/signature; no production fault injection is used. |
+| Resolved | Final-slot/retirement/logging/signature/reload evidence | `final_slot_host_failure...`, `public_fetch_trace...`, workflow commit-log assertions, `signature_artifacts...`, and `reload_and_configuration...`; complementary A4/A6/public-behavior tests are linked above. | Native/flat observer differences remain explicit; retired stores are logged before exit observation. |
+| Resolved with bounded seam | Unknown completion and host failure | Public `RiscvCore::new_with_physical_ports` proves terminal unknown/no-retry and explicit clear; flat `RiscVSimulator::memory()` poisoning proves final-slot host failure. | Higher-level native host-failure/unknown injection has no safe public API and is not claimed; adding a dangerous injector is out of scope. |
+| Resolved | Standard route audit and legacy exceptions | This record's route-audit table plus `src/core/mod.rs::step_outcome`, `src/executor.rs::install_image_with_physical_ports`, `tests/a7_hart_physical.rs::real_fetch_integer_and_fp_accesses_use_raw_ports_and_one_ram`, `tests/a7_legacy_atomic_compat.rs::ordinary_store_then_legacy_amo_and_lr_share_one_migrated_domain`, `legacy_write_is_visible_to_raw_load_fetch_signature_and_host_inspection`, and `legacy_lock_reentry_child`. | Ordinary standard fetch/integer/FP accesses use raw ports; shared RAM handles and lock domains are asserted. AMO/LR/SC, old constructor, host inspection, typed SystemBus methods, and the exact legacy reservation address key remain explicit exceptions. |
+| Approved deferred debt | Legacy atomic width/global-reservation/fault/reset behavior | `docs/verification/a7-migration-characterization.md`, `docs/verification/a7-hart-physical.md`, `tests/a7_legacy_atomic_compat.rs`. | This is preserved T0/T3 compatibility evidence, not a T4 failure or an A7 completion claim. |
+| Evidence insufficient / deferred | Native high-level injectable host-failure and unknown-completion cases | No safe public injection route exists; the narrow core/flat seams are recorded above. | Do not infer full facade failure coverage. Revisit only with an approved API/scope decision. |
+| Deferred to T5 | Fresh project-authored and pinned ACT4 suites | `docs/dev-plan.md` §7 and the commands below; no fresh T5 run is claimed here. | Run both distinct 51-case suites at the final frozen reviewed HEAD with selection/configuration/artifact hashes. |
+| Deferred to T5 | Performance observation | No runtime code changed in T4 and no benchmark comparison was run. | If useful, compare existing benchmarks before/after at T5; no no-overhead claim or new gate is introduced. |
+
 ## T5 handoff
 
-T4 does not claim the two separately scoped 51-case suites. T5 must rerun the
-51 project-authored ELF guests and the separately pinned 51 nontrapping ACT4
-RV64I cases at the final reviewed head, retaining fresh selection/configuration
-and artifact hashes. The historical ACT4 replay remains historical evidence;
-it is not a fresh T4 pass.
+T4 does not claim the two separately scoped 51-case suites or A7 completion. T5
+must rerun the 51 project-authored ELF guests and the separately pinned 51
+nontrapping ACT4 RV64I cases at the final reviewed head, retaining fresh
+selection/configuration and artifact hashes. The historical ACT4 replay remains
+historical evidence; it is not a fresh T4 pass. T5 also owns any optional
+lightweight benchmark comparison and the final residual-debt inventory.
