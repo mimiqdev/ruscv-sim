@@ -34,6 +34,7 @@ pub use decode::{DecodeError, DecodedInstruction, InstructionDecoder, Instructio
 pub use execute::{ExecuteError, Executor};
 pub use executor::{
     load_and_run, load_and_run_file, ExecutionResult, ExecutorError, RiscVSimulator,
+    SYSTEM_BUS_HTIF_BASE, SYSTEM_BUS_HTIF_SIZE, SYSTEM_BUS_UART_BASE, SYSTEM_BUS_UART_WINDOW,
 };
 pub use fpu::{Fcsr, Fpr, FpuRegisterFile};
 pub use memory::{MemoryError, MemoryInterface, SimpleMemory};
@@ -41,13 +42,15 @@ pub use mmu::{
     AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TlbEntry, TlbStats, TranslationMode,
 };
 pub use physical::{
-    AccessCategory, AccessWidth, PhysicalAccess, PhysicalAccessError, PhysicalAccessKind,
-    PhysicalAccessPort, PhysicalAccessResult, PhysicalBackend, PhysicalBackendError,
-    PhysicalBackendFailure, PhysicalBackendResult, PhysicalCompletion, PhysicalCompletionKind,
-    PhysicalProtocolError, PhysicalRequest, PhysicalRequestDescriptor, PhysicalRequestKind,
-    PhysicalResponse, PhysicalResponseBytes, PhysicalResponseCompletion, PhysicalSpan,
-    PhysicalTargetRejection, PhysicalTargetRejectionReason, PhysicalUnknownCompletion,
-    PhysicalWidth, RawPhysicalBytes, ValidatedPhysicalAccess, MAX_PHYSICAL_ACCESS_BYTES,
+    AccessCategory, AccessWidth, NativePhysicalTarget, NativeRamBackend, NativeSystemBusBackend,
+    PhysicalAccess, PhysicalAccessError, PhysicalAccessKind, PhysicalAccessPort,
+    PhysicalAccessResult, PhysicalBackend, PhysicalBackendError, PhysicalBackendFailure,
+    PhysicalBackendResult, PhysicalCompletion, PhysicalCompletionKind, PhysicalProtocolError,
+    PhysicalRequest, PhysicalRequestDescriptor, PhysicalRequestKind, PhysicalResponse,
+    PhysicalResponseBytes, PhysicalResponseCompletion, PhysicalSpan, PhysicalTargetRejection,
+    PhysicalTargetRejectionReason, PhysicalUnknownCompletion, PhysicalWidth, RawPhysicalBytes,
+    SharedNativeBackend, SystemBusPhysicalBackend, ValidatedPhysicalAccess,
+    MAX_PHYSICAL_ACCESS_BYTES,
 };
 pub use ruscv_macros::*;
 

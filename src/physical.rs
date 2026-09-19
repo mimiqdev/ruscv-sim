@@ -14,7 +14,9 @@
 //! so the boundary itself does not add a heap allocation to an ordinary step.
 //! Error context is owned only on failure paths.
 
+use crate::memory::{MemoryError, SimpleMemory};
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
 
@@ -744,6 +746,225 @@ pub type PhysicalBackendResult = Result<PhysicalResponse, PhysicalBackendError>;
 pub trait PhysicalBackend {
     /// Services one complete request without retaining the borrowed request.
     fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult;
+}
+
+/// A native target implementation used by a shared-lock adapter.
+///
+/// The target owns routing and raw-byte effects; the shared adapter below owns
+/// the outer synchronization boundary.  A target implementation is still only
+/// a backend and must be placed behind [`ValidatedPhysicalAccess`] before it is
+/// advertised as a validated physical port.
+pub trait NativePhysicalTarget {
+    /// Services one complete native request without retaining the borrow.
+    fn transact_native(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult;
+}
+
+/// A native backend view over one shared target instance.
+///
+/// This wrapper stores an `Arc<Mutex<T>>`, not a snapshot.  A legacy typed view
+/// and a raw native view can therefore be constructed from the same target and
+/// observe each other's committed bytes/device effects immediately.  Poisoned
+/// synchronization is a host/backend failure and never a target rejection.
+#[derive(Debug)]
+pub struct SharedNativeBackend<T> {
+    target: Arc<Mutex<T>>,
+}
+
+impl<T> SharedNativeBackend<T> {
+    /// Creates a native backend view over an existing target instance.
+    pub const fn new(target: Arc<Mutex<T>>) -> Self {
+        Self { target }
+    }
+
+    /// Borrows the exact shared target handle.
+    pub const fn target(&self) -> &Arc<Mutex<T>> {
+        &self.target
+    }
+
+    /// Consumes the view and returns the shared target handle.
+    pub fn into_target(self) -> Arc<Mutex<T>> {
+        self.target
+    }
+}
+
+impl<T: NativePhysicalTarget> PhysicalBackend for SharedNativeBackend<T> {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        let mut target = self
+            .target
+            .lock()
+            .map_err(|_| PhysicalBackendError::host("native target lock poisoned"))?;
+        target.transact_native(request)
+    }
+}
+
+/// Shared-lock raw backend for the native [`crate::executor::SystemBus`].
+///
+/// The alias is intentionally a view over the caller-supplied bus.  It does
+/// not copy RAM, UART state, or the HTIF callback.
+pub type NativeSystemBusBackend = SharedNativeBackend<crate::executor::SystemBus>;
+
+/// Descriptive compatibility alias for [`NativeSystemBusBackend`].
+pub type SystemBusPhysicalBackend = NativeSystemBusBackend;
+
+/// Native raw backend for one shared [`SimpleMemory`] RAM object.
+///
+/// Unlike the legacy typed `MemoryInterface`, this target transfers one
+/// contiguous raw span and does not apply architectural alignment or integer
+/// extension.  The physical port remains responsible for request validation;
+/// this backend repeats the request/span checks so a direct backend call cannot
+/// wrap or partially write.
+pub struct NativeRamBackend {
+    memory: Arc<Mutex<SimpleMemory>>,
+    ram_base: u64,
+    ram_size: usize,
+}
+
+impl fmt::Debug for NativeRamBackend {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeRamBackend")
+            .field("ram_base", &self.ram_base)
+            .field("ram_size", &self.ram_size)
+            .finish_non_exhaustive()
+    }
+}
+
+impl NativeRamBackend {
+    /// Creates a raw RAM backend over an existing RAM/locking domain.
+    pub const fn new(memory: Arc<Mutex<SimpleMemory>>, ram_base: u64, ram_size: usize) -> Self {
+        Self {
+            memory,
+            ram_base,
+            ram_size,
+        }
+    }
+
+    /// Borrows the exact shared RAM handle.
+    pub const fn memory(&self) -> &Arc<Mutex<SimpleMemory>> {
+        &self.memory
+    }
+
+    /// Returns the physical RAM base used by this adapter.
+    pub const fn ram_base(&self) -> u64 {
+        self.ram_base
+    }
+
+    /// Returns the configured physical RAM span.
+    pub const fn ram_size(&self) -> usize {
+        self.ram_size
+    }
+
+    /// Consumes the adapter and returns the exact shared RAM handle.
+    pub fn into_memory(self) -> Arc<Mutex<SimpleMemory>> {
+        self.memory
+    }
+}
+
+impl NativePhysicalTarget for NativeRamBackend {
+    fn transact_native(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        request
+            .validate()
+            .map_err(|error| PhysicalBackendError::protocol(error.to_string()))?;
+
+        let descriptor = request.descriptor();
+        if !request.span().is_non_wrapping() {
+            return Err(PhysicalBackendError::Target {
+                reason: PhysicalTargetRejectionReason::RangeOverflow,
+                context: format!(
+                    "physical span starting at {:#018x} with width {} wraps the address space",
+                    descriptor.paddr,
+                    descriptor.width.bytes()
+                ),
+            });
+        }
+        if !crate::memory::contains_range(
+            self.ram_base,
+            self.ram_size,
+            descriptor.paddr,
+            descriptor.width.bytes(),
+        ) {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::Unmapped,
+                format!(
+                    "RAM does not contain the complete span at {:#018x} ({} bytes)",
+                    descriptor.paddr,
+                    descriptor.width.bytes()
+                ),
+            ));
+        }
+
+        let offset = descriptor.paddr.checked_sub(self.ram_base).ok_or_else(|| {
+            PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::Unmapped,
+                "RAM address is below its configured base",
+            )
+        })?;
+        let mut memory = self
+            .memory
+            .lock()
+            .map_err(|_| PhysicalBackendError::host("RAM lock poisoned"))?;
+
+        match descriptor.category {
+            PhysicalAccessKind::Fetch | PhysicalAccessKind::DataRead => {
+                let mut bytes = [0; MAX_PHYSICAL_ACCESS_BYTES];
+                memory
+                    .read_bytes_into(offset, &mut bytes[..descriptor.width.bytes()])
+                    .map_err(map_native_memory_error)?;
+                Ok(PhysicalResponse::new(
+                    descriptor,
+                    PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(
+                        &bytes[..descriptor.width.bytes()],
+                    )),
+                ))
+            }
+            PhysicalAccessKind::DataWrite => {
+                let payload = request.write_payload().ok_or_else(|| {
+                    PhysicalBackendError::protocol(
+                        "validated native RAM write was missing its payload",
+                    )
+                })?;
+                memory
+                    .write_bytes(offset, payload)
+                    .map_err(map_native_memory_error)?;
+                Ok(PhysicalResponse::new(
+                    descriptor,
+                    PhysicalResponseCompletion::WriteAcknowledgement,
+                ))
+            }
+        }
+    }
+}
+
+impl PhysicalBackend for NativeRamBackend {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.transact_native(request)
+    }
+}
+
+/// Maps a concrete native-memory error by its typed variant.
+///
+/// This helper deliberately does not inspect diagnostic strings.  Range and
+/// target-local failures are target rejections; injected host/protocol failures
+/// retain their simulator-side categories.
+pub(crate) fn map_native_memory_error(error: MemoryError) -> PhysicalBackendError {
+    match error {
+        MemoryError::InvalidAddress(address) => PhysicalBackendError::Target {
+            reason: PhysicalTargetRejectionReason::Unmapped,
+            context: format!("native target rejected address {address:#018x}"),
+        },
+        MemoryError::OutOfBounds => PhysicalBackendError::Target {
+            reason: PhysicalTargetRejectionReason::Unmapped,
+            context: "native target rejected an out-of-bounds span".into(),
+        },
+        MemoryError::Misaligned(address, width) => PhysicalBackendError::Target {
+            reason: PhysicalTargetRejectionReason::TargetError,
+            context: format!(
+                "native target rejected address {address:#018x} for {width}-byte access"
+            ),
+        },
+        MemoryError::Backend(context) => PhysicalBackendError::Host { context },
+        MemoryError::Protocol(context) => PhysicalBackendError::Protocol { context },
+    }
 }
 
 /// The validated transport-neutral physical-access interface.

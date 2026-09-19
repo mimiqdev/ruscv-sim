@@ -133,6 +133,67 @@ impl SimpleMemory {
             }
         }
     }
+
+    /// Read one contiguous raw byte span without applying typed-access
+    /// alignment rules.
+    ///
+    /// This is used by the A7 native physical adapter.  The legacy
+    /// [`MemoryInterface`] methods above deliberately retain their existing
+    /// width/alignment behavior; this helper only supplies the raw-byte target
+    /// operation needed by the new boundary.
+    pub fn read_bytes(&self, addr: u64, width: usize) -> Result<Vec<u8>, MemoryError> {
+        if !contains_range(0, self.size, addr, width) {
+            return Err(MemoryError::InvalidAddress(addr));
+        }
+        let mut bytes = vec![0; width];
+        self.read_bytes_into(addr, &mut bytes)?;
+        Ok(bytes)
+    }
+
+    /// Reads one contiguous raw span into caller-owned storage without applying
+    /// typed-access alignment rules.
+    pub fn read_bytes_into(&self, addr: u64, output: &mut [u8]) -> Result<(), MemoryError> {
+        if !contains_range(0, self.size, addr, output.len()) {
+            return Err(MemoryError::InvalidAddress(addr));
+        }
+        let index = usize::try_from(addr).map_err(|_| MemoryError::InvalidAddress(addr))?;
+        let end = index
+            .checked_add(output.len())
+            .ok_or(MemoryError::InvalidAddress(addr))?;
+        let data = self.data.read().unwrap();
+        output.copy_from_slice(&data[index..end]);
+        Ok(())
+    }
+
+    /// Write one contiguous raw byte span without applying typed-access
+    /// alignment rules.
+    ///
+    /// Bounds are validated before the single slice copy, so a rejected native
+    /// transaction cannot expose a byte-prefix write.  Empty host inspection
+    /// semantics remain owned by the existing executor helpers and are not
+    /// changed by this target operation.
+    pub fn write_bytes(&mut self, addr: u64, bytes: &[u8]) -> Result<(), MemoryError> {
+        if !contains_range(0, self.size, addr, bytes.len()) {
+            return Err(MemoryError::InvalidAddress(addr));
+        }
+        let index = usize::try_from(addr).map_err(|_| MemoryError::InvalidAddress(addr))?;
+        let end = index
+            .checked_add(bytes.len())
+            .ok_or(MemoryError::InvalidAddress(addr))?;
+        let mut data = self.data.write().unwrap();
+        data[index..end].copy_from_slice(bytes);
+        Ok(())
+    }
+
+    /// Alias for [`Self::read_bytes`] for native raw-target callers.
+    pub fn read_raw(&self, addr: u64, width: usize) -> Result<Vec<u8>, MemoryError> {
+        self.read_bytes(addr, width)
+    }
+
+    /// Alias for [`Self::write_bytes`] for native raw-target callers.
+    pub fn write_raw(&mut self, addr: u64, bytes: &[u8]) -> Result<(), MemoryError> {
+        self.write_bytes(addr, bytes)
+    }
 }
 
 impl MemoryInterface for SimpleMemory {
