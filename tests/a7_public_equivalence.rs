@@ -38,8 +38,8 @@ const TOHOST_OFFSET: usize = 0x1000;
 const MRET: u32 = 0x3020_0073;
 const ECALL: u32 = 0x0000_0073;
 const ILLEGAL: u32 = 0xffff_ffff;
-const FP_SINGLE_BITS: u32 = 0x3fc0_0000; // 1.5f32
-const FP_DOUBLE_BITS: u64 = 0x400c_0000_0000_0000; // 3.5f64
+const FP_SINGLE_BITS: u32 = 0x3fc0_1234; // non-symmetric normal f32 bits
+const FP_DOUBLE_BITS: u64 = 0x400c_0000_0000_0001; // non-symmetric normal f64 bits
 const FP_WORD_SENTINEL: u32 = 0x8877_6655;
 const FP_DWORD_SENTINEL: u64 = 0x1122_3344_5566_7788;
 
@@ -233,9 +233,21 @@ fn workflow_fixture(
     push(&mut code, &mut pc, store_fp(1, 4, 0b010, 4)); // FSW
     push(&mut code, &mut pc, load_word_unsigned(19, 4, 4));
     push(&mut code, &mut pc, fixture::lui(20, FP_SINGLE_BITS >> 12));
+    push(
+        &mut code,
+        &mut pc,
+        fixture::ori(20, 20, (FP_SINGLE_BITS & 0xfff) as i32),
+    );
     push_check_branch(&mut code, &mut pc, &mut failure_branches, 19, 20);
     push(&mut code, &mut pc, load_fp(2, 4, 0b011, 8)); // FLD
     push(&mut code, &mut pc, store_fp(2, 4, 0b011, 16)); // FSD
+    push(&mut code, &mut pc, load_word_unsigned(21, 4, 16));
+    push(
+        &mut code,
+        &mut pc,
+        fixture::addi(23, 0, (FP_DOUBLE_BITS & 0xffff_ffff) as i32),
+    );
+    push_check_branch(&mut code, &mut pc, &mut failure_branches, 21, 23);
     push(&mut code, &mut pc, load_word_unsigned(22, 4, 20));
     push(
         &mut code,
@@ -353,6 +365,19 @@ fn workflow_fixture(
     }
 }
 
+fn mutate_workflow_double_low_word(elf: &[u8]) -> Vec<u8> {
+    let mut mutated = elf.to_vec();
+    let low_offset = fixture::LOAD_OFFSET + FP_OFFSET + 8;
+    let mut low = [0; 4];
+    low.copy_from_slice(&mutated[low_offset..low_offset + 4]);
+    let original = u32::from_le_bytes(low);
+    assert_eq!(original, FP_DOUBLE_BITS as u32);
+    low[0] ^= 0x03;
+    assert_ne!(u32::from_le_bytes(low), original);
+    mutated[low_offset..low_offset + 4].copy_from_slice(&low);
+    mutated
+}
+
 fn assert_same_result(left: &ExecutionResult, right: &ExecutionResult) {
     assert_eq!(left.exit_code, right.exit_code);
     assert_eq!(left.cycles, right.cycles);
@@ -447,6 +472,7 @@ fn assert_flat_intermediate_state(
     assert_eq!(state.regs[9], conditional_value);
     assert_eq!(state.regs[19], u64::from(FP_SINGLE_BITS));
     assert_eq!(state.regs[20], u64::from(FP_SINGLE_BITS));
+    assert_eq!(state.regs[21], FP_DOUBLE_BITS & 0xffff_ffff);
     assert_eq!(state.regs[22], FP_DOUBLE_BITS >> 32);
     assert_eq!(state.regs[23], FP_DOUBLE_BITS >> 32);
     assert_eq!(state.regs[24], u64::from(fixture.signature[0]));
@@ -570,6 +596,41 @@ fn public_workflow_equivalence_covers_entry_trap_integer_fp_legacy_and_exit() {
     assert_eq!(cli.stdout, cli_logged.stdout);
     let cli_log = std::fs::read_to_string(cli_log_path).unwrap();
     assert_eq!(cli_log.lines().count() as u64, workflow.minstret);
+}
+
+#[test]
+fn double_low_half_mutation_reaches_the_shared_failure_oracle() {
+    let _reservation_guard = workflow_reservation_guard();
+    let workflow = workflow_fixture(7, 5, 12, 0x5a);
+    let mutated = mutate_workflow_double_low_word(&workflow.elf);
+
+    let native = load_and_run(&mutated, Some(workflow.cycles), None, None, false).unwrap();
+    assert_eq!(native.exit_code, 27);
+    assert!(!native.timed_out);
+    let mut expected_signature = fixture::SIGNATURE_BYTES.to_vec();
+    expected_signature[0] = 0xa5;
+    assert_eq!(native.signature_data, Some(expected_signature.clone()));
+
+    let mut flat = RiscVSimulator::new(0x1_0000);
+    flat.load_elf(&mutated).unwrap();
+    let flat_result = flat.run(Some(workflow.cycles)).unwrap();
+    assert_eq!(flat_result.exit_code, 27);
+    assert!(!flat_result.timed_out);
+    assert_eq!(flat_result.signature_data, Some(expected_signature));
+
+    let temp = TempDir::new().unwrap();
+    let cli = run_cli(
+        &temp,
+        "workflow-double-low-mutation",
+        &mutated,
+        workflow.cycles,
+        None,
+        false,
+    );
+    let stdout = String::from_utf8_lossy(&cli.stdout);
+    assert_eq!(cli.status.code(), Some(27));
+    assert!(stdout.contains("Exit Code:  27"));
+    assert!(!stdout.contains("Status:     TIMEOUT"));
 }
 
 #[test]
