@@ -155,9 +155,11 @@ checks are recorded against the later exact HEAD by the CodingTask handoff.
 ## T5 result
 
 The final verification and bounded closeout evidence is recorded in
-[`a7-capability-assessment.md`](a7-capability-assessment.md). It binds the
+[`a7-capability-assessment.md`](a7-capability-assessment.md) and the
+[A7 closeout record](../archive/milestones/a7-closeout-record.md). It binds the
 fresh project-authored 51-case run and the separately pinned 51-case ACT4
 workflow to implementation head `fb6f51c771f32585f1547422c9633379f7ae370b`,
 retains configuration/artifact hashes, records the benchmark limitation, and
-keeps the legacy atomic debt explicit. This evidence record intentionally does
-not formally close A7 or rotate the active milestone contract.
+keeps the legacy atomic debt explicit. The bounded A7 acceptance is recorded;
+the later rolling switch to an approved successor contract remains pending and
+is not invented by this T4 record.

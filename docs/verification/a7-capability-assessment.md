@@ -1,32 +1,40 @@
 # A7 T5 final verification and bounded closeout evidence
 
-**Status:** Current — coding-side T5 evidence is supplemented at the bounded
-scope below; cumulative independent source review remains pending; A7 is **not
-formally closed** by this record.
+**Status:** Current — coding-side T5 evidence and the cumulative independent
+T0--T4 source review are complete at the bounded scope below. The A7 closeout
+record preserves the exact acceptance/provenance boundary; this record does not
+itself perform the later rolling transition.
 
 **Authority:** Informational evidence record. `docs/dev-plan.md` remains the
-sole active milestone contract; accepted ADRs and source/tests remain
-authoritative. This record does not move the plan to `docs/archive/`, change
-`.qing/config.toml`, or declare a milestone transition.
+sole current technical contract; accepted ADRs and source/tests remain
+authoritative. This record does not change `.qing/config.toml`, invent a
+successor schedule, or claim complete ADR-0002 atomic convergence.
 
 **Implementation evidence head:**
 `fb6f51c771f32585f1547422c9633379f7ae370b`
 
 **Verified:** 2026-09-19
 
-## Scope and coding-side audit (not independent review)
+## Scope and coding-side audit
 
 This coding round audited the T0--T4 records against the source and focused
 tests at the implementation evidence head, then ran the full Rust gate, the
 focused migration/regression set, a fresh project-authored ELF archive, the
 required A6 ELF integration, a fresh pinned ACT4 workflow, and a separate
-pre-/post-migration public-facade observation. These are coding-side evidence
-and do not constitute an independent reviewer audit. In particular, the
-runtime baseline and the cumulative source range have not yet been re-reviewed
-by an independent reviewer; PR review must verify the checklist in
-[`a7-t5-cumulative-review-checklist.md`](a7-t5-cumulative-review-checklist.md)
-at the final PR head. Component presence and historical A5/A6 results are not
-counted as new A7 evidence.
+pre-/post-migration public-facade observation. These are coding-side evidence;
+they are distinguished below from the completed cumulative independent source
+review. Component presence and historical A5/A6 results are not counted as new
+A7 evidence.
+
+The independent cumulative review inspected the T0--T4 source/test
+dependencies named in [`a7-t5-cumulative-review-checklist.md`](a7-t5-cumulative-review-checklist.md).
+The review round recorded at `d8a0bd927ccda2b52b0460773a285a28696ab01f` found no
+additional runtime defect; its only finding was the R4 documentation wording
+that assigned execution responsibility to the reviewer. Commit
+`84875711e9d0cc789da17e0557272c4e6c8ea852` changed only that checklist wording,
+and the fresh five-item verification/review pass after the correction passed.
+The result is repository-provenance evidence, not a claim that the reviewer
+reran the coding owner's commands.
 
 The implementation range is the five A7 delivery commits `fc68fcf` through
 `fb6f51c` (T0 characterization, T1 contract, T2 adapters, T3 Hart wiring, and
@@ -45,15 +53,17 @@ or atomic-capability denial was found by this coding-side audit.
 The focused run also included the A4/A6, atomic, CLI, commit, CSR, executor,
 memory-bound, MRET, public-behavior, and trap regressions: **354 tests passed,
 0 failed**, plus all ELF output-path guard cases. The complete Rust gate reported
-**1,667 tests passed, 0 failed** across 45 Rust/doc test result groups. This is
-coding-side verification; the cumulative independent review status is tracked
-separately in the checklist linked above.
+**1,667 tests passed, 0 failed** across 45 Rust/doc test result groups. The
+cumulative independent review checked the source/test dependencies and evidence
+identity at the bounded scope above; its review conclusion is recorded without
+turning component presence into an architecture-completeness claim.
 
 ## §8 six-item acceptance matrix
 
-This matrix records evidence disposition, not formal milestone closure. “Verified”
-means the bounded A7 contract is supported at the cited head; it does not mean
-ADR-0002's atomic portion is complete.
+This matrix records the bounded A7 acceptance disposition and its evidence
+identity. “Verified” means the bounded A7 contract is supported at the cited
+head; it does not mean ADR-0002's atomic portion is complete or that a successor
+milestone has been selected.
 
 | # | Acceptance item | Evidence disposition | Exact evidence and limits |
 | --- | --- | --- | --- |
@@ -61,8 +71,8 @@ ADR-0002's atomic portion is complete.
 | 2 | Hart address/alignment/extension/trap/retirement ownership and A6 budget/exit facts are unchanged; no MMU or new ISA behavior is introduced. | **Verified** | T3 Hart traces, T4 public workflow assertions, A6 trap/CSR/MRET regressions, fresh project ELFs (including five trap guests), and the full gate passed. The evidence does not claim MMU/PMP or asynchronous interrupt integration. |
 | 3 | Existing atomic success/failure and reservation behavior is regression-tested across the shared domain; the legacy seam is enumerated, storage/locking is shared, and no second reservation state exists. | **Verified as preservation, not conformance** | T0/T3 matrices and `a7_legacy_atomic_compat` cover ordinary↔legacy visibility, reservation-sensitive behavior, faults, reset/reload, HTIF width debt, and lock re-entry. The known global reservation and atomic-width defects remain deferred. |
 | 4 | §6 conservative defaults hold; deviations have approval and known host/API limits are documented outside the ordinary guest-transaction guarantee. | **Verified** | T0/T3/T4 records and focused tests cover HTIF spans, host-write prefix semantics, nonaligned image offsets, third-party typed backends, RAM/UART routing, artifacts, and facade differences. High-level native failure/unknown injection remains unavailable through a safe public API. |
-| 5 | Rust, fresh project ELF, and frozen ACT4 evidence is complete at the reviewed implementation head; no historical result is relabeled. | **Verified** | Full/focused local evidence and fresh source archive are bound to `fb6f51c`. The new ACT4 workflow [35432032788](https://github.com/mimiqdev/ruscv-sim/actions/runs/35432032788) ran at that head and produced 51/51 frozen cases; its artifact and offline replay are recorded below. |
-| 6 | The bounded closeout statement is “non-atomic physical-access migration completed”; §5.3 remains the unscheduled atomic convergence checklist. | **Prepared, not formally enacted** | This record supports that bounded statement, but intentionally does not archive/replace `docs/dev-plan.md`, mark A7 formally closed, or claim complete ADR-0002/atomic convergence. |
+| 5 | Rust, fresh project ELF, and frozen ACT4 evidence is complete at the reviewed implementation head; no historical result is relabeled. | **Verified** | Full/focused local evidence and fresh source archive are bound to `fb6f51c`. The recorded ACT4 workflow [35432032788](https://github.com/mimiqdev/ruscv-sim/actions/runs/35432032788) ran at that head and produced 51/51 frozen cases; its artifact and offline replay are recorded below. |
+| 6 | The bounded closeout statement is “non-atomic physical-access migration completed”; §5.3 remains the unscheduled atomic convergence checklist. | **Accepted for bounded A7 closeout** | The closeout record uses that statement and preserves the full contract in the archive. The delivery change does not select a successor or replace `docs/dev-plan.md`; complete ADR-0002/atomic convergence is not claimed. |
 
 ## Exact-head verification evidence
 
@@ -255,9 +265,10 @@ public API. T4's reachable typed-core and flat-host seams are not enlarged into
 a facade-wide failure-injection claim.
 
 The coding-side executable observations above were available and passed, and no
-unavailable tool was silently counted as a pass. This record is nevertheless
-**not an independent-review-complete record**: the cumulative source/runtime
-review and final PR-head acceptance review remain pending and must use the
-checklist linked above. The only CI annotation was the platform's Node.js 20
+unavailable tool was silently counted as a pass. The cumulative T0--T4
+independent source review and its documentation-only correction/re-review are
+complete as recorded above. A later closeout PR review remains a separate
+exact-head review obligation; it must not be confused with the completed
+cumulative review. The only CI annotation was the platform's Node.js 20
 deprecation warning for pinned third-party actions; the workflow job and
 artifact checks succeeded.

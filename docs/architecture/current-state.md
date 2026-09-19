@@ -8,9 +8,11 @@
 A4 evidence updated 2026-09-11;
 A5 selected external evidence reconciled 2026-09-15; A6 Task 4 guest/evidence
 verified at source `845c63325db5ac87ab2ff0ed260453dc3b396ae9` (tree equal to
-implementation merge `f12b1f80907e92b1c82b33ac669b961cc17f59c9`). See the
-[A7 T5 verification record](../verification/a7-capability-assessment.md) for
-fresh exact-head Rust, project-ELF, and ACT4 evidence.
+implementation merge `f12b1f80907e92b1c82b33ac669b961cc17f59c9`). The bounded
+A7 acceptance and cumulative source-review outcome are recorded in the
+[A7 closeout record](../archive/milestones/a7-closeout-record.md); the
+[A7 T5 verification record](../verification/a7-capability-assessment.md)
+retains the exact-head Rust, project-ELF, and historical ACT4 evidence.
 
 **Scope:** The public ELF execution path, adjacent library APIs, and the integration status of existing ISS/VP components
 
@@ -60,8 +62,11 @@ facades; the T0--T4 records and T5 evidence are bound to implementation head
 preserved over shared storage/locking as explicit debt. The T5 record verifies
 that bounded non-atomic statement, fresh project ELFs, the fresh pinned ACT4
 run, and the pre-/post-migration public-facade memory-loop observation. The
-coding-side record is not an independent cumulative review and does not
-formally close A7 or alter `.qing/config.toml`. Existing A5 ACT4 results remain
+cumulative T0--T4 source review found no additional runtime defect; its only
+finding was corrected checklist responsibility wording in the documentation,
+with a fresh five-item verification/review pass afterward. The A7 closeout
+record keeps the unmerged closeout-delivery and no-successor boundaries explicit
+and does not alter `.qing/config.toml`. Existing A5 ACT4 results remain
 separately scoped nontrapping evidence.
 
 | Label | Meaning |
@@ -255,4 +260,4 @@ This inventory does not claim that:
 - the Rust TLM-style API is a SystemC-compatible adapter.
 - the current fixed 32-bit fetch policy is the intended final ISA boundary.
 - component tests constitute a bootable full-system machine or Virtual Platform.
-- A7 is formally closed; the T5 record is bounded evidence and the active milestone contract remains in place.
+- A7's bounded implementation acceptance and cumulative review are recorded; the closeout delivery PR is not merged here, and no successor contract has been approved.
