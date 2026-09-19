@@ -65,8 +65,8 @@ run, and the pre-/post-migration public-facade memory-loop observation. The
 cumulative T0--T4 source review found no additional runtime defect; its only
 finding was corrected checklist responsibility wording in the documentation,
 with a fresh five-item verification/review pass afterward. The A7 closeout
-record keeps the unmerged closeout-delivery and no-successor boundaries explicit
-and does not alter `.qing/config.toml`. Existing A5 ACT4 results remain
+record keeps unmerged closeout PR #54 and no-successor boundaries explicit and
+does not alter `.qing/config.toml`. Existing A5 ACT4 results remain
 separately scoped nontrapping evidence.
 
 | Label | Meaning |
@@ -260,4 +260,4 @@ This inventory does not claim that:
 - the Rust TLM-style API is a SystemC-compatible adapter.
 - the current fixed 32-bit fetch policy is the intended final ISA boundary.
 - component tests constitute a bootable full-system machine or Virtual Platform.
-- A7's bounded implementation acceptance and cumulative review are recorded; the closeout delivery PR is not merged here, and no successor contract has been approved.
+- A7's bounded implementation acceptance and cumulative review are recorded; closeout PR #54 is not merged here, and no successor contract has been approved.

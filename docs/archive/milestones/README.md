@@ -20,7 +20,7 @@ Milestone A7 — Non-Atomic Physical-Access Boundary Migration.
 ## Records
 
 - [A7: Non-atomic physical-access migration — bounded closeout record](a7-closeout-record.md)
-  - Bounded non-atomic acceptance recorded 2026-09-19; PR #53 merge `c206756`; closeout delivery and rolling successor selection remain pending
+  - Bounded non-atomic acceptance recorded 2026-09-19; PR #53 merge `c206756`; closeout PR #54 is unmerged and rolling successor selection remains pending
   - [Complete archived A7 contract](a7-non-atomic-physical-access-migration.md)
   - [Capability and T5 evidence](../../verification/a7-capability-assessment.md)
 

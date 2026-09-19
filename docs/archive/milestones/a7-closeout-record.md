@@ -1,7 +1,8 @@
 # A7 — Non-Atomic Physical-Access Boundary Migration Closeout
 
 **Status:** Closeout record prepared; bounded A7 acceptance is evidenced. The
-closeout delivery change was not merged when this record was written.
+closeout delivery is [PR #54](https://github.com/mimiqdev/ruscv-sim/pull/54),
+which was open and unmerged when this record was written.
 
 **Authority:** Informational historical acceptance and provenance record. The
 sole current technical contract remains [`docs/dev-plan.md`](../../dev-plan.md)
@@ -14,8 +15,8 @@ contract with a forwarding record.
 **Authorization:** The maintainer/user authorized the A7 repository closeout
 record on 2026-09-19. PR #53 had already merged at
 `c20675615097c48a0cd93f70036b4b10b0a6d165`, which is the fixed base for this
-closeout work. This record is prepared on a dedicated branch/worktree; its own
-delivery PR and merge are still pending.
+closeout work. This record is prepared on a dedicated branch/worktree; PR #54 is its delivery
+PR and remains unmerged at this record head.
 
 **Scope:** Record the completed bounded non-atomic physical-access migration and
 its evidence. No runtime, ISA, `.qing/config.toml`, or protected source change is
@@ -61,7 +62,7 @@ and closeout evidence at later heads do not relabel that runtime identity.
 | 3 | Existing atomic success/failure and reservation behavior is regression-tested across the shared domain; the legacy seam is enumerated, storage/locking is shared, and no second reservation state exists. | **Accepted as preservation, not conformance.** `src/core/mod.rs` retains the typed legacy bridge and its complete outer lock coverage. `tests/a7_migration_characterization.rs`, `tests/a7_legacy_atomic_compat.rs`, `tests/amo_test.rs`, and the T3 Hart record cover ordinary↔legacy visibility, successful legacy operations, HTIF width debt, reservation-sensitive writes/faults, reset/reload behavior, and lock re-entry. The tests assert shared handles/domain identity and no second reservation state. | Legacy behavior is intentionally not repaired: AMO width defects, global exact-address reservation, absent scalar/FP/host invalidation, `aq`/`rl` absence, faulting-SC behavior, and the lack of an atomic operation envelope remain debt. |
 | 4 | §6 conservative defaults hold; deviations have approval and known host/API limits are documented outside the ordinary guest-transaction guarantee. | **Accepted with recorded limits.** T0--T4 source/test records cover HTIF full-span versus legacy start-address behavior, host-write prefix semantics, nonaligned image offsets, old `MemoryInterface` compatibility, RAM/UART routing, side-effect rejection, artifacts, replacement, and facade differences. | The old typed constructor/API surface and host `write_mem` byte-loop remain usable. High-level native failure/unknown-completion injection has no safe public API; the reachable core/flat seams are not enlarged into a facade-wide claim. |
 | 5 | Rust, fresh project ELF, and frozen ACT4 evidence is complete at the reviewed implementation head, with no historical result relabeled as a new run. | **Accepted with exact identity separation.** At `fb6f51c`, the recorded full gate reported 1,667 tests passed across 45 Rust/doc result groups, the focused T0--T4/A6 regression run reported 354 passed, and ELF guards passed. A fresh project-authored archive compiled and ran 51/51 guests, including five A6 trap guests. Separately, ACT4 workflow [35432032788](https://github.com/mimiqdev/ruscv-sim/actions/runs/35432032788) ran at `fb6f51c` with its frozen 51-case selection; the compact report and artifact identity are retained in [`a7-act4-replay-35432032788.json`](../../verification/a7-act4-replay-35432032788.json). The latest exact-merge main CI [35450169073](https://github.com/mimiqdev/ruscv-sim/actions/runs/35450169073) ran at `c206756` and succeeded, including fresh project-ELF compilation/execution. | The project-authored 51 and ACT4 51 are independent sets. ACT4 is frozen nontrapping RV64I evidence, not whole-ISA, privilege, atomic, or OS certification. This closeout did not rerun or regenerate ACT4. |
-| 6 | Closeout states only “non-atomic physical-access migration completed”; §5.3 remains the unscheduled atomic convergence checklist. | **Accepted for bounded A7 delivery.** This record uses exactly that statement and carries §5.3 debt forward only as an explicit unscheduled checklist. The archive copy preserves the full contract. | The closeout PR represented by this record was not merged at this record head, and no successor contract or rolling `docs/dev-plan.md` replacement has been approved. |
+| 6 | Closeout states only “non-atomic physical-access migration completed”; §5.3 remains the unscheduled atomic convergence checklist. | **Accepted for bounded A7 delivery.** This record uses exactly that statement and carries §5.3 debt forward only as an explicit unscheduled checklist. The archive copy preserves the full contract. | Closeout PR #54 was not merged at this record head, and no successor contract or rolling `docs/dev-plan.md` replacement has been approved. |
 
 ## Acceptance-to-command map
 
@@ -126,6 +127,7 @@ binding evidence.
 | T3 / [PR #51](https://github.com/mimiqdev/ruscv-sim/pull/51) | Hart ordinary fetch/data connection and explicit typed legacy bridge | `a75f8b290a3c359793f1f834476b44c2a485f952` |
 | T4 / [PR #52](https://github.com/mimiqdev/ruscv-sim/pull/52) | Public-facade equivalence, failure boundaries, artifacts, reload, and route audit | `fb6f51c771f32585f1547422c9633379f7ae370b` |
 | T5 / [PR #53](https://github.com/mimiqdev/ruscv-sim/pull/53) | Documentation-side final evidence, replay tools, comparison observation, and cumulative-review checklist | `c20675615097c48a0cd93f70036b4b10b0a6d165` |
+| Closeout / [PR #54](https://github.com/mimiqdev/ruscv-sim/pull/54) | Bounded A7 acceptance record and complete archived contract; no runtime/ISA change | `f05903d736eee7c3b744487032cbf13eed107aea` (unmerged) |
 
 The T4 implementation commit `fb6f51c` is the **implementation evidence head**.
 PR #53's merge commit `c206756` is later documentation/evidence provenance, not
@@ -154,7 +156,7 @@ and [assessment](../../verification/a7-capability-assessment.md) are the durable
 repository inputs.
 
 This review conclusion is distinct from the coding-side T5 audit and from the
-later closeout PR review. Any finding against this new closeout HEAD must be
+PR #54 closeout review. Any finding against this new closeout HEAD must be
 addressed and reviewed against that exact new commit; the prior review does not
 silently approve future documentation changes.
 
@@ -327,6 +329,6 @@ approved contract remains pending; this closeout does not bypass the
 * The full external artifact was not locally available for a new replay/bridge
   in this bounded closeout environment. The committed compact replay and the
   ten local negative-path tests remain separately labelled evidence.
-* A closeout PR review must target the exact commit produced by this branch.
-  The earlier cumulative T0--T4 review conclusion does not pre-approve this
-  new documentation head.
+* PR #54's review must target the exact commit produced by this branch. The
+  earlier cumulative T0--T4 review conclusion does not pre-approve this new
+  documentation head.
