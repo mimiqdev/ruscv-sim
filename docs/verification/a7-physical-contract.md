@@ -65,9 +65,9 @@ completion handling.
 
 ## Exact-head verification
 
-At committed HEAD
-`15ad21f759a53f6cac060fde746c40928293f129`, the following recorded checks
-passed:
+At implementation HEAD
+`15ad21f759a53f6cac060fde746c40928293f129` (before this record-only
+follow-up), the following recorded checks passed:
 
 ```text
 cargo test --test a7_physical_contract                         11 passed
@@ -83,6 +83,7 @@ git diff --check fc68fcfe39055bd8f13255e0199bb47c7d3c9dee..HEAD passed
 ```
 
 The focused and full rows were executed through `qing verify --check` at this
-exact HEAD. No fresh project-ELF or ACT4 suite was required for T1, so this
-record makes no such pass claim. The T0 characterization and A6 regressions
-remain unchanged; the new port is still not wired into public execution.
+exact implementation HEAD. No fresh project-ELF or ACT4 suite was required for
+T1, so this record makes no such pass claim. The record-only follow-up changes
+no Rust behavior. The T0 characterization and A6 regressions remain unchanged;
+the new port is still not wired into public execution.
