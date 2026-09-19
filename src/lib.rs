@@ -16,6 +16,7 @@ pub mod isa;
 pub mod memory;
 pub mod mmu;
 pub mod peripherals;
+pub mod physical;
 pub mod tlm;
 
 pub use core::{
@@ -38,6 +39,15 @@ pub use fpu::{Fcsr, Fpr, FpuRegisterFile};
 pub use memory::{MemoryError, MemoryInterface, SimpleMemory};
 pub use mmu::{
     AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TlbEntry, TlbStats, TranslationMode,
+};
+pub use physical::{
+    AccessCategory, AccessWidth, PhysicalAccess, PhysicalAccessError, PhysicalAccessKind,
+    PhysicalAccessPort, PhysicalAccessResult, PhysicalBackend, PhysicalBackendError,
+    PhysicalBackendFailure, PhysicalBackendResult, PhysicalCompletion, PhysicalCompletionKind,
+    PhysicalProtocolError, PhysicalRequest, PhysicalRequestDescriptor, PhysicalRequestKind,
+    PhysicalResponse, PhysicalResponseBytes, PhysicalResponseCompletion, PhysicalSpan,
+    PhysicalTargetRejection, PhysicalTargetRejectionReason, PhysicalUnknownCompletion,
+    PhysicalWidth, RawPhysicalBytes, ValidatedPhysicalAccess, MAX_PHYSICAL_ACCESS_BYTES,
 };
 pub use ruscv_macros::*;
 
