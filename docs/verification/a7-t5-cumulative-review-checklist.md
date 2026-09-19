@@ -14,19 +14,36 @@ relabelled historical diff range and not only the new documentation files.
 ## Review protocol
 
 The coding-side audit below records where each T5 conclusion comes from. It is
-not a certification of those rows. The independent reviewer should:
+not a certification of those rows. Verification and review have separate
+owners:
+
+- The coding/verification owner runs the full gate, focused tests, comparison,
+  replay, and protected-tree bridge at the frozen exact HEAD using authenticated
+  `qing verify --check` observations, and records their status and outputs.
+- The independent reviewer is read-only. The reviewer must not execute commands,
+  modify the worktree, regenerate artifacts, or create substitute evidence.
+  The reviewer consumes and statically checks the authenticated observations and
+  the source/assertion map below.
+
+The independent reviewer should:
 
 1. freeze the exact PR head and inspect the complete T0--T5 range against
    `docs/dev-plan.md` and ADR-0001--0004;
 2. re-open the implementation symbols named below and the exact test assertions,
    including the pre-migration public-facade route at
    `9ee9c5f24c072779f06ce141b3340f953b614442`;
-3. run the applicable full gate, focused tests, replay negative tests, the
-   public-facade comparison, and the protected-tree bridge at that exact head;
+3. inspect the coding/verification owner's exact-HEAD check records for the
+   full gate, focused tests, public-facade comparison, replay negative tests,
+   and protected-tree bridge; do not run those checks as part of review;
 4. distinguish component tests, public-facade integration, fresh project ELF
    execution, and frozen ACT4 replay; and
 5. record any finding against the final PR head. Historical A6/T3/T4 review
    conclusions do not automatically approve this cumulative head.
+
+If an observation is missing, stale, unavailable, or inconclusive, the reviewer
+must report it as a verification blocker/request for the coding/verification
+owner; it must not be silently treated as passed or replaced by reviewer-run
+commands.
 
 No independent reviewer has completed this checklist in this coding round.
 The assessment therefore uses “coding-side audit” and “pending independent
@@ -46,22 +63,26 @@ review,” not “independently reviewed,” for the rows below.
 | **T5 — real migration comparison** | `scripts/a7/compare_physical_loop.py`; fixture `physical_access_loop.S`/`.ld`; archived source revisions; current `load_and_run` installation and `ValidatedPhysicalAccess`; committed `a7-physical-loop-observation.json`. | Harness builds both archived revisions through `ruscv_sim::executor::load_and_run`, uses the same ELF bytes and compile flags, retains 45 samples per revision, checks exit/result/final PC/cycles, and compares commit-record count to `ExecutionResult.cycles`. Static route checks distinguish old typed facade from current physical-port facade. | Coding-side observation complete: both public facades compiled and all samples returned exit 0 with 20,490 retirements; no speed gate. | **Pending.** Re-run or inspect the exact harness/report, including the slower current distribution, environment, no-filter policy, and static allocation/lock observation. |
 | **T5 — replay and evidence identity** | `scripts/a7/replay_act4.py`; committed replay JSON; actual ZIP and GitHub artifact metadata; `scripts/a7/verify_evidence_tree.py`. | `scripts/a7/test_replay_act4.py` negative paths cover digest mismatch, path traversal, duplicate members, summary mutation, accounting mutations, and missing/mismatched artifact IDs. `scripts/a7/test_compare_physical_loop.py` covers each result-tuple field at logged-sample and cross-revision boundaries. The tree bridge compares regenerated replay JSON to the committed JSON, checks ZIP digest/size/ID/source head, and rejects protected runtime/tests/CI changes. | Coding-side tool checks complete when the final exact-head commands are recorded; historical ACT4 success remains bound to `fb6f51c`. | **Pending.** Verify the real ZIP replay and the protected-tree bridge; do not use a prior review as tool-test evidence. |
 
-## Required final review evidence
+## Required final verification and review evidence
 
-At the frozen final PR head, the independent review record should cite:
+At the frozen final PR head, the coding/verification owner must have already
+run and recorded the following exact-HEAD observations:
 
-- the full Rust gate and focused/guard suite at that exact head;
+- the full Rust gate and focused/guard suite;
 - the archived public-facade comparison and its complete retained sample
   distributions, with the old typed route and current raw-port route identified;
 - `python3 -m unittest discover -s scripts/a7 -p 'test_*.py' -v`;
 - a real ZIP replay and `verify_evidence_tree.py` result, including artifact
-  size/digest, committed/generated JSON equality, and an empty protected-tree
-  change list;
+  size/digest/ID, committed/generated JSON equality, and an empty protected-tree
+  change list; and
 - the exact T0 identity `fc68fcf`, the runtime baseline full identity, and the
-  implementation evidence full identity; and
-- any unresolved finding or explicit limitation. No “evidence complete” or
-  “cumulative audit complete” conclusion should be recorded until those review
-  steps are independently performed.
+  implementation evidence full identity.
+
+The independent reviewer then statically inspects those authenticated records,
+the source/assertion map, and any unresolved limitation. The reviewer does not
+run the listed commands. No “evidence complete” or “cumulative audit complete”
+conclusion should be recorded when a required owner observation is missing,
+stale, unavailable, or inconclusive; request verification instead.
 
 ## Explicitly unreviewed or unclaimed
 
