@@ -84,6 +84,13 @@ The focused target set was the T0--T4 rows above plus
 also passed all guard cases. The full and focused status lines are retained in
 `full-gate.log` and `focused-and-guards.log`.
 
+The documentation-only evidence commit `57e5dd3c42ac471fc4e81ff48844e30716998b91`
+then repeated the full gate and focused target set at its own HEAD: the final
+logs report the same 0-failure results and the same ELF guards. This follow-up
+changed only the evidence documents and replay tool; it does not relabel the
+fresh guest/ACT4 evidence below, which remains bound to implementation head
+`fb6f51c771f32585f1547422c9633379f7ae370b`.
+
 ### Fresh project-authored ELF and A6 integration
 
 A fresh `git archive` was created from `fb6f51c`; it contained 51 project-authored
