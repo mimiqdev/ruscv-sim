@@ -208,8 +208,8 @@ commit-logged verification run per repetition recorded exit code **0**,
 
 | Revision | Median | Min--max | P95 | Relative range |
 | --- | ---: | ---: | ---: | ---: |
-| `9ee9c5f` typed public route | 2,771,741 ns | 2,758,545--2,858,639 ns | 2,826,145 ns | 3.61% |
-| `fb6f51c` raw-port public route | 3,607,494 ns | 3,549,428--3,690,254 ns | 3,646,037 ns | 3.90% |
+| `9ee9c5f` typed public route | 2,776,624 ns | 2,755,398--2,871,528 ns | 2,822,491 ns | 4.18% |
+| `fb6f51c` raw-port public route | 3,765,507 ns | 3,563,680--3,880,571 ns | 3,857,693 ns | 8.42% |
 
 The raw-port median divided by the old typed median was **1.3015** for this
 sample and environment. This is deliberately not a regression verdict or a
