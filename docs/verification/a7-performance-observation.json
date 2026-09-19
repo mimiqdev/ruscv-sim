@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "status": "observation-only",
+  "head": "fb6f51c771f32585f1547422c9633379f7ae370b",
+  "toolchain": "1.97.1",
+  "commands": [
+    "RUSTUP_TOOLCHAIN=1.97.1 CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/a7-final-verification-bench cargo bench --all-features --bench decode_bench -- --noplot",
+    "RUSTUP_TOOLCHAIN=1.97.1 CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/a7-final-verification-bench cargo bench --all-features --bench memory_bench -- --noplot"
+  ],
+  "observations": {
+    "decode_single_R_type_ADD": "4.2264 ns median estimate",
+    "decode_batch_mixed": "19.651 ns median estimate",
+    "decode_throughput_100": "320.24 ns median estimate",
+    "memory_read_word": "12.446 ns median estimate",
+    "memory_write_word": "63.335 ns median estimate",
+    "memory_throughput_read_4KB": "11.650 us; 335.29 MiB/s median estimate"
+  },
+  "baseline": null,
+  "claim": "No before/after no-regression claim",
+  "coverage_limit": "Existing benches do not isolate the new raw physical adapter/lock path"
+}

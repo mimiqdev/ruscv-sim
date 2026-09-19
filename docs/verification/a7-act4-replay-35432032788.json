@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "status": "verified-offline-replay",
+  "authority": "Retained-evidence verification only; not a milestone contract",
+  "run": {
+    "id": 35432032788,
+    "url": "https://github.com/mimiqdev/ruscv-sim/actions/runs/35432032788",
+    "source_head": "fb6f51c771f32585f1547422c9633379f7ae370b"
+  },
+  "artifact": {
+    "id": 10580339624,
+    "bytes": 21675677,
+    "sha256": "a8d587f8310cb54e923c9a48c5b83f931ecf6b2054fd698a4b4d356802d95877"
+  },
+  "selection": {
+    "status": "approved-frozen",
+    "act4_commit": "a7c99303516f4e668f7488f172043392e23b9dfd",
+    "profile": "a5-rv64i-nontrapping-proposal-v1",
+    "plan_sha256": "85c88859f7ab0cb76ea8d62f2dcf69ce6d0fc63177345a496b90cca2515ec24b",
+    "inventory_sha256": "78132f2f0bb001ba4a075f75ca95213189e7da98a2bac0e8d9b6409e0a8e659e",
+    "profile_sha256": "d08675968630ce4d75ed106de844b5690116036bd1a3e87a2fafe67116a0a1d8",
+    "tool_pins_sha256": "1fe4c4882e338b79ffd75f6fa216c4589cf90a5e649d4d3157eff38b2f7fe9f1",
+    "required_sources": 51,
+    "required_variants": 51
+  },
+  "public_cli": {
+    "cases": 51,
+    "classification_counts": {"guest-pass": 51},
+    "linked_audits": 51,
+    "linked_instruction_words": 246902,
+    "mapped_inline_data_words": 72666,
+    "mnemonics": [
+      "add", "addi", "addiw", "addw", "and", "andi", "auipc", "beq", "bge", "bgeu",
+      "blt", "bltu", "bne", "fence", "fence.tso", "jal", "jalr", "lb", "lbu", "ld",
+      "lh", "lhu", "lui", "lw", "lwu", "or", "ori", "sb", "sd", "sh", "sll", "slli",
+      "slliw", "sllw", "slt", "slti", "sltiu", "sltu", "sra", "srai", "sraiw", "sraw",
+      "srl", "srli", "srliw", "srlw", "sub", "subw", "sw", "xor", "xori"
+    ]
+  },
+  "guest_controls": {
+    "cases": 6,
+    "classification_counts": {
+      "guest-fail": 1,
+      "guest-pass": 1,
+      "simulator-or-runner-failure": 4
+    }
+  },
+  "accounting_controls": {
+    "cases": 12,
+    "all_rejected": true,
+    "names": [
+      "duplicate-result", "empty-results", "extra-result", "extra.elf", "extra.results", "extra.sig",
+      "generation-command-failed", "missing-elf", "missing-expected_results", "missing-result",
+      "missing-signature", "missing-signature_elf"
+    ]
+  },
+  "scope": "No new generation, guest execution, or GitHub call; frozen nontrapping RV64I evidence only."
+}

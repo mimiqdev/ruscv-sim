@@ -4,11 +4,13 @@
 
 **Authority:** Informational
 
-**Last verified:** 2026-09-18 source inventory at `024d15d546dc3b711f593cd44bb107612fd8b600`;
+**Last verified:** 2026-09-19 at A7 implementation evidence head `fb6f51c771f32585f1547422c9633379f7ae370b`;
 A4 evidence updated 2026-09-11;
 A5 selected external evidence reconciled 2026-09-15; A6 Task 4 guest/evidence
 verified at source `845c63325db5ac87ab2ff0ed260453dc3b396ae9` (tree equal to
-implementation merge `f12b1f80907e92b1c82b33ac669b961cc17f59c9`)
+implementation merge `f12b1f80907e92b1c82b33ac669b961cc17f59c9`). See the
+[A7 T5 verification record](../verification/a7-capability-assessment.md) for
+fresh exact-head Rust, project-ELF, and ACT4 evidence.
 
 **Scope:** The public ELF execution path, adjacent library APIs, and the integration status of existing ISS/VP components
 
@@ -35,7 +37,8 @@ misalignment, FENCE.I, or the full target Runner/Machine/Platform design. Compon
 labels below remain component labels. A5 was formally closed out in PR #37 (merged
 `d1834cc6566b342824bca30772cc829953a5c5ef`). Its successor A6 is also formally
 accepted; [A7 non-atomic physical-access migration](../dev-plan.md) is now the
-sole active contract. Activation does not claim the migration is implemented.
+sole active contract. Its activation record did not claim implementation; the
+T5 record below is the current bounded implementation evidence.
 
 A6 Task 2 and Task 3 implementation evidence now covers `exec_mret` privilege
 validation/restoration and the integrated public Hart boundary: `RiscvCore::step_outcome`
@@ -50,15 +53,16 @@ and the formal closeout record is [`docs/archive/milestones/a6-closeout-record.m
 PR #46 merged the preparation as `024d15d546dc3b711f593cd44bb107612fd8b600`;
 its final PR-head and exact-merge CI are recorded separately from the Task 4 runs.
 The maintainer accepted A6 and approved the full [A7 contract](../dev-plan.md)
-on 2026-09-18. A7 migrates fetch and ordinary integer/FP loads/stores only;
-legacy AMO/LRSC behavior must be preserved over shared storage/locking as explicit
-debt. Its conservative compatibility defaults are approved, not incidental
-hardening or atomic capability rejection. This is a documentation activation,
-not new implementation or a claim that PR #47 has merged.
-Task 4's fresh verification is bound to source `845c63325db5ac87ab2ff0ed260453dc3b396ae9`,
-whose tree equals implementation merge `f12b1f80907e92b1c82b33ac669b961cc17f59c9`;
-these are not relabeled as evidence for a later documentation HEAD. Existing A5
-ACT4 results remain separately scoped nontrapping evidence.
+on 2026-09-18. A7 implementation now migrates fetch and ordinary integer/FP
+loads/stores through the validated raw physical boundary in both standard
+facades; the T0--T4 records and T5 evidence are bound to implementation head
+`fb6f51c771f32585f1547422c9633379f7ae370b`. Legacy AMO/LRSC behavior remains
+preserved over shared storage/locking as explicit debt. The T5 record verifies
+that bounded non-atomic statement, fresh project ELFs, the fresh pinned ACT4
+run, and the pre-/post-migration public-facade memory-loop observation. The
+coding-side record is not an independent cumulative review and does not
+formally close A7 or alter `.qing/config.toml`. Existing A5 ACT4 results remain
+separately scoped nontrapping evidence.
 
 | Label | Meaning |
 | --- | --- |
@@ -84,12 +88,15 @@ flowchart TB
     UART --> BUS
 
     ORCH --> CORE["RiscvCore"]
-    CORE --> FETCH["Fetch one aligned u32"]
-    FETCH --> BUS
+    CORE --> FETCH["Fetch one aligned u32<br/>validated raw Fetch"]
+    FETCH --> RAW["PhysicalMemoryAdapter<br/>validated raw port"]
+    RAW --> BUS
     FETCH --> DEC["InstructionDecoder"]
     DEC --> EXEC["Executor<br/>RV64 instruction dispatch"]
-    EXEC --> ADAPTER["MemoryAdapter<br/>identity mapping (base 0)"]
-    ADAPTER --> BUS
+    EXEC --> ORDINARY["Ordinary integer/FP<br/>validated raw DataRead/DataWrite"]
+    ORDINARY --> RAW
+    EXEC --> LEGACY["Typed compatibility bridge<br/>AMO/LR/SC and non-migrated calls"]
+    LEGACY --> BUS
 
     BUS --> HTIF["HTIF/tohost<br/>fixed MMIO register + callback"]
     ORCH --> LOOP["Per-instruction run loop<br/>cycle limit / tohost polling / commit log"]
@@ -104,8 +111,17 @@ The flow is real and usable: the CLI loads an RV64 ELF, constructs RAM, UART, an
 The current composition has several important properties:
 
 - `load_and_run` simultaneously acts as loader, machine builder, runner, stop-policy owner, result builder, and observer coordinator.
+- In the two standard facades, fetch and ordinary integer/FP guest accesses
+  use separate validated raw ports over shared storage/device locks. The typed
+  view remains an intentional compatibility bridge for AMO/LR/SC and host
+  inspection; the bridge is not a second ISA engine or a second storage copy.
 - `SystemBus` is a concrete platform type in the public `executor` module and is instantiated directly by `load_and_run`; it is not the standalone TLM bus and is not re-exported at the crate root.
-- ELF memory is stored relative to its lowest load address. In `load_and_run`, `RiscvCore::reset` uses base `0`, so `MemoryAdapter` passes addresses unchanged and `SystemBus` converts RAM addresses to offsets; the alternate flat-memory library path resets with the ELF base and uses `MemoryAdapter` subtraction.
+- ELF memory is stored relative to its lowest load address. In `load_and_run`,
+  `RiscvCore::reset` uses base `0`, so the migrated raw physical adapter
+  submits guest addresses unchanged and `SystemBus` converts RAM addresses to
+  offsets; the retained typed compatibility/host view is still identity-mapped.
+  The alternate flat-memory library path resets with the ELF base and its raw
+  adapter performs the one checked base subtraction before reaching flat RAM.
 - The core fetches a 32-bit word and advances the PC by four unless execution marks a branch as taken. RV64C decoding exists separately but is not in this fetch path.
 - `step_outcome` returns typed `InstructionRetired`, `TrapEntered`, or `SimulatorFailure`; `step` retains `Result<()>` compatibility. Synchronous traps are integrated. Guest exits and limits remain outer `RunControl` decisions; full Machine facts/debug integration is not implemented.
 - Native commit logging uses the fetched instruction from the retired fact, not a re-fetch. It still compares Runner-side GPR snapshots and omits memory effects; this is not the full ADR-0001 observation contract (`src/executor.rs`, `tests/public_behavior.rs`).
@@ -172,13 +188,13 @@ external RV64I compatibility.
 | ELF loader | ELF64 little-endian RISC-V parsing, load segments, entry point, signature, and `tohost` discovery | **Public path** | Used directly by `load_and_run`; image is flattened relative to `base_addr`. |
 | Runner/orchestration | Per-turn loop, started-slot budget, completed-turn count, HTIF polling, signature dump, result construction | **Public path** | Implemented inside `load_and_run`, not as a stable Runner abstraction. Image placement, result construction, run-control decisions and image installation are shared with the library wrapper. `RunControl` reserves a slot before each Hart attempt, counts `InstructionRetired` and `TrapEntered` as completed turns, leaves `SimulatorFailure` out of `ExecutionResult.cycles`, and lets a boundary exit win over final-slot timeout. The owner traverses the configuration's ordered lazy observers (CLI HTIF then RAM; flat RAM only), with the shared RAM decode-before-clear rule. See [A4 T1 evidence](../verification/public-behavior-matrix.md#a4-t1-shared-run-control-evidence) and [`src/executor.rs`](../../src/executor.rs). |
 | Hart state and execution | PC, GPRs, privilege, CSR/FPU state, decoder, executor, instruction/data memory handles | **Public path** | `RiscvCore::step_outcome` is the semantic engine and returns one typed `InstructionRetired`, `TrapEntered`, or `SimulatorFailure` boundary; `step` remains a compatibility wrapper. The current profile has synchronous trap continuation but does not sample asynchronous platform interrupt lines. |
-| Instruction fetch | One aligned 32-bit memory read per step | **Public path** | PC fall-through is fixed at `+4`; the separate RV64C implementation is not selected. |
-| RV64 instruction semantics | RV64I dispatch plus M/A/F/D paths in the active executor | **Public path, coverage varies** | Presence in the dispatcher is not a claim of full extension compliance; the frozen A5 nontrapping RV64I selection is externally verified, not all dispatched extensions. Base-I FENCE (`MiscMem` with `funct3 = 0b000`) now decodes and executes as a no-op through `exec_fence`: on this synchronous single-Hart `MemoryInterface` with no cache, store buffer or reordering, every prior memory effect is already globally visible before the next instruction issues, so `FENCE` (every `pred`/`succ`/`fm` shape, including `FENCE.TSO` and HINTs) only needs to let the PC advance. `rs1`/`rd` are ignored per the base-I reserved-field rule. `FENCE.I` (Zifencei, `funct3 = 0b001`) remains `DecodeError::UnimplementedInstruction` and a simulator failure; other nonzero `MiscMem` `funct3` values are reserved in the active profile and now enter an illegal-instruction trap (`src/decode/mod.rs`, `tests/a6_task3_core_trap_test.rs`); see [gap G-14](../verification/public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected). |
+| Instruction fetch | One aligned 32-bit memory read per step through the validated raw Fetch port in the two standard facades; typed compatibility fetch remains for old core constructors | **Public path** | PC fall-through is fixed at `+4`; the separate RV64C implementation is not selected. Hart alignment, address conversion, decode, and trap mapping remain Hart-owned. |
+| RV64 instruction semantics | RV64I dispatch plus M/A/F/D paths in the active executor; ordinary integer/FP loads and stores use the raw DataRead/DataWrite route, while AMO/LR/SC use the explicit typed legacy bridge | **Public path, coverage varies** | Presence in the dispatcher is not a claim of full extension compliance; the bounded frozen ACT4 nontrapping RV64I selection is externally verified, not all dispatched extensions. Base-I FENCE (`MiscMem` with `funct3 = 0b000`) now decodes and executes as a no-op through `exec_fence`: on this synchronous single-Hart `MemoryInterface` with no cache, store buffer or reordering, every prior memory effect is already globally visible before the next instruction issues, so `FENCE` (every `pred`/`succ`/`fm` shape, including `FENCE.TSO` and HINTs) only needs to let the PC advance. `rs1`/`rd` are ignored per the base-I reserved-field rule. `FENCE.I` (Zifencei, `funct3 = 0b001`) remains `DecodeError::UnimplementedInstruction` and a simulator failure; other nonzero `MiscMem` `funct3` values are reserved in the active profile and now enter an illegal-instruction trap (`src/decode/mod.rs`, `tests/a6_task3_core_trap_test.rs`); see [gap G-14](../verification/public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected). |
 | AMO / LR/SC | Active dispatcher calls ordinary read/write helpers; LR/SC reservation is process-global | **Public dispatch, incomplete contract** | `src/execute/mod.rs::execute_amo` has encoding/width debt; `src/isa/rv64a/amo.rs` uses word read then word write, and `lr_sc.rs` uses `GLOBAL_RESERVATION` without ordinary-store invalidation. Helper arithmetic tests and A6 atomic-fault tests do not prove ADR-0002 atomicity or A-extension compliance. The approved A7 contract excludes atomic repair/envelopes and preserves existing atomic behavior over shared storage as explicit legacy debt. Ordinary stores currently do not invalidate the global reservation; A7 must not introduce partial invalidation or duplicate state. This is not ADR-0002 atomic conformance. |
 | Flat memory | Thread-safe byte vector with typed aligned accesses | **Public path** | Also used directly by the alternate library simulator path. |
-| Native bus | Concrete typed RAM/UART/HTIF routing plus a T2 raw backend view in `executor.rs`/`physical.rs` | **Public typed path; raw adapter component** | `SystemBus` is public through `ruscv_sim::executor`, with fixed devices and limited typed access widths. `NativeSystemBusBackend` wraps the caller's shared `Arc<Mutex<SystemBus>>` and applies full-span raw routing without copying targets. Its UART route spans `0x1000_0000..0x1000_00ff` (`uart_size = 0x100`), while the exported `UART_SIZE` is 8 bytes; no public Hart caller uses the raw view yet. |
-| UART16550 | Register model and output callback with a T2 raw native target view | **Public typed path; raw adapter component** | The public bus and T2 raw adapter expose byte accesses at `0x1000_0000` through a 0x100-byte window, while the UART model declares `UART_SIZE = 8` and a TLM range ending at `0x1000_0007`; offsets `0x08..0xff` retain reserved zero/ignored behavior. The raw adapter rejects Fetch and non-byte spans before touching FIFO/status/output state. The richer TLM target behavior is tested separately; no Hart migration is claimed. |
-| HTIF / `tohost` | Fixed typed write endpoint, callback, selected-address polling, exit decoding, RAM clearing, and T2 raw exact-endpoint view | **Public typed path; raw adapter component** | The fixed `0x4000_8000` typed endpoint remains dword-only and start-address-only for compatibility: `read_dword` returns `0`, `write_dword` invokes the callback, including interior starts, and byte/halfword/word methods reject it. The T2 raw view instead validates the complete eight-byte endpoint, rejects interior/Fetch requests without a callback, and invokes one callback on a successful raw write. Separately, `load_and_run` polls the selected ELF/CLI `tohost` address with `read_dword` and invokes `clear_tohost` after a decoded signal; these remain distinct mechanisms embedded in executor orchestration. |
+| Native bus | Concrete typed RAM/UART/HTIF routing plus raw backend views in `executor.rs`/`physical.rs` | **Public raw path for standard facades; typed compatibility path retained** | `SystemBus` is public through `ruscv_sim::executor`, with fixed devices and limited typed access widths. `NativeSystemBusBackend` wraps the caller's shared `Arc<Mutex<SystemBus>>` and applies full-span raw routing without copying targets. Its UART route spans `0x1000_0000..0x1000_00ff` (`uart_size = 0x100`), while the exported `UART_SIZE` is 8 bytes. `load_and_run` now installs separate validated raw fetch/data views over this shared domain; old typed methods remain for host inspection and legacy atomics. |
+| UART16550 | Register model and raw native target view with output callback | **Public path for ordinary Hart accesses; typed host/legacy path retained** | The public bus and raw adapter expose byte accesses at `0x1000_0000` through a 0x100-byte window, while the UART model declares `UART_SIZE = 8` and a TLM range ending at `0x1000_0007`; offsets `0x08..0xff` retain reserved zero/ignored behavior. The raw adapter rejects Fetch and non-byte spans before touching FIFO/status/output state. The richer TLM target behavior is tested separately. |
+| HTIF / `tohost` | Fixed typed write endpoint, callback, selected-address polling, exit decoding, RAM clearing, and raw exact-endpoint view | **Public raw guest path plus typed host/legacy path** | The fixed `0x4000_8000` typed endpoint remains dword-only and start-address-only for compatibility: `read_dword` returns `0`, `write_dword` invokes the callback, including interior starts, and byte/halfword/word methods reject it. The raw view validates the complete eight-byte endpoint, rejects interior/Fetch requests without a callback, and invokes one callback on a successful raw write. Separately, runner polling, clearing, and artifact extraction remain typed host observations; legacy SC width behavior remains on the typed bridge. |
 | Commit trace | Optional per-retired-instruction record | **Public path** | The native runner logs only `InstructionRetired` facts supplied by the Hart, including the fetched instruction and privilege; trap and failure boundaries produce no commit. `mem_access` remains `None` in the existing logger format. |
 | `RiscVSimulator` wrapper | Flat-memory load/step/run API | **Library path** | Its run loop remains its own, but image installation, placement resolution, result construction and the run-control decision are shared with `load_and_run`; it does not use `SystemBus`, so it has no UART/HTIF device mapping. Its flat addresses remain storage offsets. Both entry points now resolve image-declared `tohost`/`.signature` metadata through one internal placement owner that expresses the two address forms: the bus configuration passes guest addresses through, the flat configuration converts them with checked arithmetic. The conversion is storage adaptation, not guest virtual-to-physical translation, and grants no device ability. It must not become a second architecture engine. |
 | Cached instruction dispatcher | `Dispatcher`, instruction-key lookup, and LRU cache | **Component** | `src/dispatch/mod.rs` defines `Dispatcher`; focused tests cover registration and cache behavior, but `RiscvCore` owns and calls `Executor` directly, so this dispatcher is not in the active execution path. |
@@ -200,7 +216,7 @@ external RV64I compatibility.
 | Machine | No explicit type composes Hart and Platform | Define the composition/lifecycle boundary while preserving one `RiscvCore` semantics implementation. |
 | Hart | `RiscvCore` owns active state/decode/execute but also ELF-base address adaptation and concrete memory traits | Move storage-offset adaptation below the physical boundary and depend on approved architectural ports; preserve the existing typed synchronous step outcomes. |
 | Retirement/observation | `load_and_run` logs only retired Hart facts, with Hart-fetched opcode/privilege; Runner GPR snapshots and absent memory effects remain | Preserve current no-refetch behavior; full Hart-owned effect records and subscriber-gated observation remain future work, not a missing synchronous trap outcome. |
-| Physical access | `MemoryInterface` remains the active typed storage API; `src/physical.rs` provides the T1 vocabulary plus T2 shared native RAM/SystemBus adapters behind the validated boundary, but no public execution caller uses them | T3 must connect Hart ordinary accesses and provide the explicit legacy atomic bridge. Keep ISA load interpretation, alignment, translation, and privilege checks in Hart semantics; preserve the disclosed legacy atomic route. T2 adapter tests are component evidence only, not public Hart/facade migration or all-access convergence; T3 must avoid re-entering the outer data-memory lock. |
+| Physical access | `src/physical.rs` is the validated non-atomic vocabulary; both standard facades install separate raw Fetch/DataRead/DataWrite views over shared RAM/device storage, while AMO/LR/SC retain the typed legacy bridge | The ordinary migration is verified, but universal ADR-0002 convergence is not: atomic envelopes, Hart-owned reservation semantics, multi-writer coherence, and broader Machine/Platform composition remain future scope. The legacy bridge must retain its explicit lock/address-key boundary without re-entering the outer data-memory lock. |
 | Platform/address map | `SystemBus` is a fixed RAM/UART/HTIF switch inside `executor.rs`; `TlmBus` is separate | Choose one platform address-space abstraction with native and future TLM backends, without routing ISA semantics through two buses. |
 | MMU | Standalone `mmu` subsystem is not called by the core | Decide how Hart-owned instruction/data translation uses the same physical-access port as normal accesses and page-table walks. |
 | Traps and interrupts | A6 synchronous Machine traps are integrated through `step_outcome`; asynchronous line sampling remains absent | Define Platform source/input admission and Machine grants at Hart/profile-provided architectural boundaries; keep eligibility, masking, delegation, architectural priority, trap/debug/WFI transitions, and ISA-visible counter deltas in the Hart/profile. |
@@ -216,7 +232,7 @@ ADR-0001–0004 already define these semantic boundaries. Remaining implementati
 debt is not a new architecture-decision backlog or an approved sequence:
 
 1. Complete Hart-owned observation effects beyond the existing typed A6 outcomes.
-2. Converge public physical access under ADR-0002, including explicit atomic capability and reservation boundaries.
+2. Complete public physical-access convergence under ADR-0002, including atomic envelopes, explicit capability/reservation boundaries, and multi-writer semantics; A7's ordinary route is complete but its legacy atomic bridge remains.
 3. Separate broader Machine/Platform/Runner composition beyond shared installation and run control.
 4. Implement interrupt/time/debug boundaries only under separately approved scope.
 5. Adapt MMU/TLM/peripheral/debug components before wiring them; component tests alone do not establish adapter conformance.
@@ -234,8 +250,9 @@ debt is not a new architecture-decision backlog or an approved sequence:
 
 This inventory does not claim that:
 
-- Full RV64I/M/A/F/D/C, privilege, or trap behavior is externally certified. The frozen 51-case nontrapping RV64I baseline is the bounded exception, not whole-extension certification.
+- Full RV64I/M/A/F/D/C, privilege, or trap behavior is externally certified. The frozen 51-case nontrapping RV64I baseline and A7 ordinary physical-access evidence are bounded exceptions, not whole-extension or atomic certification.
 - MMU, CLINT, PLIC, GDB, or TLM is integrated into public ELF execution.
 - the Rust TLM-style API is a SystemC-compatible adapter.
 - the current fixed 32-bit fetch policy is the intended final ISA boundary.
 - component tests constitute a bootable full-system machine or Virtual Platform.
+- A7 is formally closed; the T5 record is bounded evidence and the active milestone contract remains in place.
