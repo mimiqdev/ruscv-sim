@@ -16,11 +16,12 @@ Milestone A7 — Non-Atomic Physical-Access Boundary Migration.
 5. Promote the next milestone into `docs/dev-plan.md` only after it is separately
    approved. A completed A7 closeout record does not invent a successor; until
    that decision, `docs/dev-plan.md` remains the sole Current technical contract.
+   The [post-A7 roadmap proposal](../../proposals/post-a7-roadmap.md) is Draft planning input, not a successor.
 
 ## Records
 
 - [A7: Non-atomic physical-access migration — bounded closeout record](a7-closeout-record.md)
-  - Bounded non-atomic acceptance recorded 2026-09-19; PR #53 merge `c206756`; closeout PR #54 is unmerged and rolling successor selection remains pending
+  - Bounded non-atomic acceptance recorded 2026-09-19; closeout delivery merged at `c059500a6af20f93569099c4b05ced3364a7703b`; rolling successor selection remains pending
   - [Complete archived A7 contract](a7-non-atomic-physical-access-migration.md)
   - [Capability and T5 evidence](../../verification/a7-capability-assessment.md)
 
