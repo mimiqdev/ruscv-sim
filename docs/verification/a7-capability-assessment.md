@@ -1,7 +1,8 @@
 # A7 T5 final verification and bounded closeout evidence
 
-**Status:** Current — T5 evidence complete; A7 is **not formally closed** by this
-record.
+**Status:** Current — coding-side T5 evidence is supplemented at the bounded
+scope below; cumulative independent source review remains pending; A7 is **not
+formally closed** by this record.
 
 **Authority:** Informational evidence record. `docs/dev-plan.md` remains the
 sole active milestone contract; accepted ADRs and source/tests remain
@@ -13,21 +14,27 @@ authoritative. This record does not move the plan to `docs/archive/`, change
 
 **Verified:** 2026-09-19
 
-## Scope and independent audit
+## Scope and coding-side audit (not independent review)
 
-This T5 round independently reviewed the T0--T4 records against the source and
-focused tests at the implementation evidence head, then ran the full Rust gate,
-the focused migration/regression set, a fresh project-authored ELF archive, the
-required A6 ELF integration, and a fresh pinned ACT4 workflow. The audit did
-not treat component presence or historical A5/A6 results as new A7 evidence.
+This coding round audited the T0--T4 records against the source and focused
+tests at the implementation evidence head, then ran the full Rust gate, the
+focused migration/regression set, a fresh project-authored ELF archive, the
+required A6 ELF integration, a fresh pinned ACT4 workflow, and a separate
+pre-/post-migration public-facade observation. These are coding-side evidence
+and do not constitute an independent reviewer audit. In particular, the
+runtime baseline and the cumulative source range have not yet been re-reviewed
+by an independent reviewer; PR review must verify the checklist in
+[`a7-t5-cumulative-review-checklist.md`](a7-t5-cumulative-review-checklist.md)
+at the final PR head. Component presence and historical A5/A6 results are not
+counted as new A7 evidence.
 
-The implementation range is the five A7 delivery commits `fc68fc5` through
+The implementation range is the five A7 delivery commits `fc68fcf` through
 `fb6f51c` (T0 characterization, T1 contract, T2 adapters, T3 Hart wiring, and
 T4 facade equivalence). The final source tree was clean before this record was
 written. No unapproved compatibility change, second ISA engine, storage copy,
-or atomic-capability denial was found.
+or atomic-capability denial was found by this coding-side audit.
 
-| Task | Independent source/test audit | Focused result at the implementation evidence head |
+| Task | Coding-side source/test audit | Focused result at the implementation evidence head |
 | --- | --- | --- |
 | T0 | `tests/a7_migration_characterization.rs` and the baseline/candidate record were checked for preservation-vs-debt labeling, including successful legacy AMO/LR/SC, HTIF overlap, nonaligned placement, and host-write prefix behavior. | 11 passed |
 | T1 | `src/physical.rs` and `tests/a7_physical_contract.rs` were checked for raw bytes, Fetch/Read/Write categories, exact widths, fault taxonomy, and terminal unknown completion. | 12 passed |
@@ -38,7 +45,9 @@ or atomic-capability denial was found.
 The focused run also included the A4/A6, atomic, CLI, commit, CSR, executor,
 memory-bound, MRET, public-behavior, and trap regressions: **354 tests passed,
 0 failed**, plus all ELF output-path guard cases. The complete Rust gate reported
-**1,667 tests passed, 0 failed** across 45 Rust/doc test result groups.
+**1,667 tests passed, 0 failed** across 45 Rust/doc test result groups. This is
+coding-side verification; the cumulative independent review status is tracked
+separately in the checklist linked above.
 
 ## §8 six-item acceptance matrix
 
@@ -139,14 +148,28 @@ python3 scripts/a7/replay_act4.py \
   --write docs/verification/a7-act4-replay-35432032788.json
 ```
 
+The replay tool's focused negative tests are independently runnable without the
+large artifact:
+
+```bash
+python3 -m unittest discover -s scripts/a7 -p 'test_*.py' -v
+```
+
+They reject digest mismatch, path traversal, duplicate ZIP members, mutated
+summary accounting, and missing/duplicate/extra result identities. After a
+real replay, `scripts/a7/verify_evidence_tree.py` bridges the generated report
+to the committed JSON, GitHub artifact ID/size/digest, exact implementation
+head, and an empty protected runtime/tests/CI tree change set.
+
 The large ZIP and generated ELFs are retained externally/under ignored local
 `target/` evidence, not committed. The replay report is the compact committed
 record.
 
 ## Performance observation
 
-A bounded observation was run at the same implementation head with the existing
-Criterion benches (no performance gate was added):
+### Existing component observations (not a migration substitute)
+
+The existing Criterion benches were retained as current-head observations only:
 
 ```bash
 RUSTUP_TOOLCHAIN=1.97.1 CARGO_BUILD_JOBS=2 \
@@ -159,11 +182,51 @@ RUSTUP_TOOLCHAIN=1.97.1 CARGO_BUILD_JOBS=2 \
 
 Representative current observations were decode ADD **4.2264 ns**, mixed decode
 **19.651 ns**, typed word read **12.446 ns**, typed word write **63.335 ns**, and
-4 KiB read throughput **335.29 MiB/s**. There is no pre-A7 same-host baseline,
-and these existing benches do not isolate the new raw physical adapter/lock
-path; therefore this is an observation only, not a no-regression claim. The
-compact local summary is `performance-summary.json` under the ignored evidence
-directory.
+4 KiB read throughput **335.29 MiB/s**. These benches do not execute the real
+standard facade against the pre-migration revision and are not used as the
+comparison below.
+
+### Real public-facade comparison
+
+[`a7-physical-loop-observation.json`](a7-physical-loop-observation.json) is a
+reusable, no-runtime-change comparison harness. It uses `git archive` for the
+exact pre-migration runtime `9ee9c5f24c072779f06ce141b3340f953b614442` and A7
+implementation head `fb6f51c771f32585f1547422c9633379f7ae370b`, assembles one
+fixture once with `-march=rv64ima_zicsr -mabi=lp64`, and builds the same
+temporary `a7_physical_loop` binary inside each archive with Rust 1.97.1,
+`--release --all-features --locked`, and two isolated target directories. Both
+revisions compile and run through the same public
+`ruscv_sim::executor::load_and_run` facade; the harness never constructs the
+old typed `RiscvCore` directly.
+
+The fixture is 4,096 iterations of `SD`/`LD`/`ADDI`/`ADDI`/`BNEZ` against one
+RAM word, followed by the same ELF-declared `.tohost` store. Each revision had
+three repetitions of 15 timed samples, with every sample retained. A separate
+commit-logged verification run per repetition recorded exit code **0**,
+**20,490** completed turns, **20,490** commit records, final PC
+`0x8000003c`, and no timeout/error. The combined distributions were:
+
+| Revision | Median | Min--max | P95 | Relative range |
+| --- | ---: | ---: | ---: | ---: |
+| `9ee9c5f` typed public route | 2,771,741 ns | 2,758,545--2,858,639 ns | 2,826,145 ns | 3.61% |
+| `fb6f51c` raw-port public route | 3,607,494 ns | 3,549,428--3,690,254 ns | 3,646,037 ns | 3.90% |
+
+The raw-port median divided by the old typed median was **1.3015** for this
+sample and environment. This is deliberately not a regression verdict or a
+performance threshold: the result is reported as observed, including the
+slower current samples, and no optimization or filtering was added. The run
+was on the pinned development image
+`ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c`,
+Rust 1.97.1, GNU binutils 2.40, and the recorded ARM64 Linux hardware
+environment in the JSON report.
+
+The static route bridge in the report confirms the old facade's typed
+`RiscVCore::new` path and the implementation facade's
+`install_image_with_physical_ports` → `new_with_physical_access` → validated
+`SystemBus::physical_backend` path. Source inspection records one image
+allocation, two shared raw-port handles, fixed-size ordinary request storage,
+and the raw port → bus → child target lock order; no allocator/lock profiler was
+added, so no allocation or lock-overhead claim is made.
 
 ## Deferred debt and explicit non-claims
 
@@ -188,6 +251,10 @@ privilege, misalignment-success, or operating-system certification.
 public API. T4's reachable typed-core and flat-host seams are not enlarged into
 a facade-wide failure-injection claim.
 
-No required evidence was unavailable or inconclusive. The only CI annotation
-was the platform's Node.js 20 deprecation warning for pinned third-party
-actions; the workflow job and artifact checks succeeded.
+The coding-side executable observations above were available and passed, and no
+unavailable tool was silently counted as a pass. This record is nevertheless
+**not an independent-review-complete record**: the cumulative source/runtime
+review and final PR-head acceptance review remain pending and must use the
+checklist linked above. The only CI annotation was the platform's Node.js 20
+deprecation warning for pinned third-party actions; the workflow job and
+artifact checks succeeded.

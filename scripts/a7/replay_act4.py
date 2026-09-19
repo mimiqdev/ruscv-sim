@@ -164,6 +164,23 @@ def result_errors(plan: dict, results: list[dict]) -> list[str]:
     return errors
 
 
+def expected_selection_summary() -> dict[str, object]:
+    return {
+        "status": STATUS,
+        "success": True,
+        "errors": [],
+        "required_sources": 51,
+        "required_variants": 51,
+        "generated_selfcheck_elfs": 51,
+        "executed_elfs": 51,
+        "passed_elfs": 51,
+    }
+
+
+def validate_selection_summary(selection: dict) -> None:
+    check(selection.get("summary") == expected_selection_summary(), "retained summary differs")
+
+
 def replay(archive: Path) -> dict:
     check(archive.is_file(), f"artifact is not a file: {archive}")
     check(archive.stat().st_size == ARTIFACT_BYTES, "artifact byte count differs from GitHub metadata")
@@ -275,17 +292,7 @@ def replay(archive: Path) -> dict:
             )
         check(len(negative) == 12 and all(negative.values()), "fail-closed accounting control accepted")
 
-        expected_summary = {
-            "status": STATUS,
-            "success": True,
-            "errors": [],
-            "required_sources": 51,
-            "required_variants": 51,
-            "generated_selfcheck_elfs": 51,
-            "executed_elfs": 51,
-            "passed_elfs": 51,
-        }
-        check(selection.get("summary") == expected_summary, "retained summary differs")
+        validate_selection_summary(selection)
         report = {
             "schema_version": 1,
             "status": "verified-offline-replay",

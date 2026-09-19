@@ -1,0 +1,504 @@
+{
+  "schema_version": 1,
+  "status": "observation-only",
+  "runner_head": "038bc01afb8025e9098b74f0d56d769fa3262b57",
+  "revisions": {
+    "baseline": "9ee9c5f24c072779f06ce141b3340f953b614442",
+    "implementation": "fb6f51c771f32585f1547422c9633379f7ae370b",
+    "baseline_label": "pre-migration public facade",
+    "implementation_label": "A7 implementation evidence head"
+  },
+  "fixture": {
+    "assembly": "scripts/a7/physical_access_loop.S",
+    "linker": "scripts/a7/physical_access_loop.ld",
+    "assembly_sha256": "7ddb7bffcda372acd1c108c574853095bb05f885053fa6c34741c8d95939a0c1",
+    "linker_sha256": "97d853e50c72538b22918d543f803059a96fdbd2887463555d491cab78ef654c",
+    "elf_sha256": "6e7460373f2e8eff83d9ccdcfb6ddc2bdd23d94a08bef2da227dd308456b0a8d",
+    "elf_bytes": 5232,
+    "isa": "rv64ima_zicsr",
+    "abi": "lp64",
+    "iterations": 4096,
+    "workload": "4096 iterations of SD/LD/addi/addi/BNEZ, then one SD to ELF .tohost; exit code 0"
+  },
+  "environment": {
+    "platform": "Linux-6.8.0-117-generic-aarch64-with-glibc2.36",
+    "machine": "aarch64",
+    "processor": "",
+    "python": "3.11.2 (main, May 12 2026, 05:17:27) [GCC 12.2.0]",
+    "cpu_count": 4,
+    "uname": "Linux 687c7660f406 6.8.0-117-generic #117-Ubuntu SMP PREEMPT_DYNAMIC Thu May  7 17:26:37 UTC 2026 aarch64 GNU/Linux",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "assembler": "GNU assembler (2.40-2+4+b1) 2.40",
+    "linker": "GNU ld (2.40-2+4+b1) 2.40",
+    "rustup_toolchain": "1.97.1",
+    "cargo_build_jobs": "2",
+    "cargo_features": "--all-features",
+    "cargo_profile": "--release",
+    "cargo_locked": true,
+    "container_image": "ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c"
+  },
+  "configuration": {
+    "cargo_build": "cargo build --release --all-features --locked",
+    "cargo_build_jobs": "2",
+    "rustup_toolchain": "1.97.1",
+    "separate_target_directories": true,
+    "same_fixture_and_cross_compile_flags": true,
+    "same_public_facade": true
+  },
+  "commands": {
+    "archive": "git archive --format=tar <revision>",
+    "assemble": "riscv64-unknown-elf-as -march=rv64ima_zicsr -mabi=lp64 physical_access_loop.S",
+    "link": "riscv64-unknown-elf-ld -T physical_access_loop.ld physical_access_loop.o",
+    "build": "cargo build --release --all-features --locked --manifest-path <archived-source>/Cargo.toml --bin a7_physical_loop --target-dir <isolated-target>",
+    "measure": "<harness> --samples 15 --max-cycles 200000 --commit-log <path>"
+  },
+  "static_route_observations": [
+    {
+      "revision": "9ee9c5f24c072779f06ce141b3340f953b614442",
+      "route": "load_and_run -> RiscvCore::new -> typed MemoryInterface SystemBus view",
+      "checks": {
+        "public_load_and_run": true,
+        "typed_core_constructor": true,
+        "no_physical_install_helper": true,
+        "no_physical_core_constructor": true
+      }
+    },
+    {
+      "revision": "fb6f51c771f32585f1547422c9633379f7ae370b",
+      "route": "load_and_run -> install_image_with_physical_ports -> RiscvCore::new_with_physical_access -> ValidatedPhysicalAccess(SystemBus::physical_backend)",
+      "checks": {
+        "public_load_and_run": true,
+        "shared_physical_install": true,
+        "raw_core_constructor": true,
+        "validated_native_bus_ports": true,
+        "ordinary_route_selector": true,
+        "fixed_request_storage_contract": true
+      }
+    }
+  ],
+  "measurement": {
+    "samples_per_revision": 45,
+    "repetitions": 3,
+    "max_cycles": 200000,
+    "revisions": [
+      {
+        "revision": "9ee9c5f24c072779f06ce141b3340f953b614442",
+        "public_facade": "ruscv_sim::executor::load_and_run",
+        "samples_per_repetition": 15,
+        "repetitions": 3,
+        "max_cycles": 200000,
+        "verification": {
+          "elapsed_ns": 40650431215,
+          "exit_code": 0,
+          "cycles": 20490,
+          "final_pc": 2147483708,
+          "timed_out": false,
+          "error": "none",
+          "commit_records": 20490
+        },
+        "repetitions_detail": [
+          {
+            "repetition": 1,
+            "verification": {
+              "elapsed_ns": 40650431215,
+              "exit_code": 0,
+              "cycles": 20490,
+              "final_pc": 2147483708,
+              "timed_out": false,
+              "error": "none",
+              "commit_records": 20490
+            },
+            "statistics": {
+              "count": 15,
+              "samples_ns": [
+                2957021,
+                3000199,
+                2925430,
+                2922972,
+                2908968,
+                2910385,
+                2918345,
+                2914178,
+                3005700,
+                2986320,
+                3056713,
+                2994530,
+                2935558,
+                2907259,
+                2956897
+              ],
+              "min_ns": 2907259,
+              "max_ns": 3056713,
+              "mean_ns": 2953365.0,
+              "median_ns": 2935558,
+              "stdev_ns": 45628.125749679566,
+              "p95_ns": 3021003.9,
+              "mad_ns": 25173,
+              "range_ns": 149454,
+              "relative_range": 0.05091161544074414
+            }
+          },
+          {
+            "repetition": 2,
+            "verification": {
+              "elapsed_ns": 40342098760,
+              "exit_code": 0,
+              "cycles": 20490,
+              "final_pc": 2147483708,
+              "timed_out": false,
+              "error": "none",
+              "commit_records": 20490
+            },
+            "statistics": {
+              "count": 15,
+              "samples_ns": [
+                2855315,
+                2781088,
+                2773044,
+                2771502,
+                2774336,
+                2771460,
+                2768251,
+                2765209,
+                2850314,
+                2782755,
+                2767042,
+                2759999,
+                2759832,
+                2770419,
+                2765500
+              ],
+              "min_ns": 2759832,
+              "max_ns": 2855315,
+              "mean_ns": 2781071.066666667,
+              "median_ns": 2771460,
+              "stdev_ns": 29841.419562333795,
+              "p95_ns": 2851814.3,
+              "mad_ns": 5960,
+              "range_ns": 95483,
+              "relative_range": 0.034452238170494975
+            }
+          },
+          {
+            "repetition": 3,
+            "verification": {
+              "elapsed_ns": 40064081243,
+              "exit_code": 0,
+              "cycles": 20490,
+              "final_pc": 2147483708,
+              "timed_out": false,
+              "error": "none",
+              "commit_records": 20490
+            },
+            "statistics": {
+              "count": 15,
+              "samples_ns": [
+                2882212,
+                2841432,
+                2799395,
+                2839546,
+                2789378,
+                2780912,
+                2779864,
+                2786906,
+                2778984,
+                2866537,
+                2820476,
+                2794533,
+                2792395,
+                2802622,
+                2793276
+              ],
+              "min_ns": 2778984,
+              "max_ns": 2882212,
+              "mean_ns": 2809897.8666666667,
+              "median_ns": 2794533,
+              "stdev_ns": 32789.557980436104,
+              "p95_ns": 2871239.5,
+              "mad_ns": 13621,
+              "range_ns": 103228,
+              "relative_range": 0.03693926677552206
+            }
+          }
+        ],
+        "combined_statistics": {
+          "count": 45,
+          "samples_ns": [
+            2957021,
+            3000199,
+            2925430,
+            2922972,
+            2908968,
+            2910385,
+            2918345,
+            2914178,
+            3005700,
+            2986320,
+            3056713,
+            2994530,
+            2935558,
+            2907259,
+            2956897,
+            2855315,
+            2781088,
+            2773044,
+            2771502,
+            2774336,
+            2771460,
+            2768251,
+            2765209,
+            2850314,
+            2782755,
+            2767042,
+            2759999,
+            2759832,
+            2770419,
+            2765500,
+            2882212,
+            2841432,
+            2799395,
+            2839546,
+            2789378,
+            2780912,
+            2779864,
+            2786906,
+            2778984,
+            2866537,
+            2820476,
+            2794533,
+            2792395,
+            2802622,
+            2793276
+          ],
+          "min_ns": 2759832,
+          "max_ns": 3056713,
+          "mean_ns": 2848111.311111111,
+          "median_ns": 2802622,
+          "stdev_ns": 84229.29866410182,
+          "p95_ns": 2999065.2,
+          "mad_ns": 37413,
+          "range_ns": 296881,
+          "relative_range": 0.105929732942937
+        }
+      },
+      {
+        "revision": "fb6f51c771f32585f1547422c9633379f7ae370b",
+        "public_facade": "ruscv_sim::executor::load_and_run",
+        "samples_per_repetition": 15,
+        "repetitions": 3,
+        "max_cycles": 200000,
+        "verification": {
+          "elapsed_ns": 39384934895,
+          "exit_code": 0,
+          "cycles": 20490,
+          "final_pc": 2147483708,
+          "timed_out": false,
+          "error": "none",
+          "commit_records": 20490
+        },
+        "repetitions_detail": [
+          {
+            "repetition": 1,
+            "verification": {
+              "elapsed_ns": 39384934895,
+              "exit_code": 0,
+              "cycles": 20490,
+              "final_pc": 2147483708,
+              "timed_out": false,
+              "error": "none",
+              "commit_records": 20490
+            },
+            "statistics": {
+              "count": 15,
+              "samples_ns": [
+                3671831,
+                3633949,
+                3591415,
+                3557312,
+                3569898,
+                3601466,
+                3689693,
+                3568984,
+                3583440,
+                3577126,
+                3570313,
+                3553948,
+                3562878,
+                3582110,
+                3584271
+              ],
+              "min_ns": 3553948,
+              "max_ns": 3689693,
+              "mean_ns": 3593242.2666666666,
+              "median_ns": 3582110,
+              "stdev_ns": 40693.410288691826,
+              "p95_ns": 3677189.6,
+              "mad_ns": 13126,
+              "range_ns": 135745,
+              "relative_range": 0.037895262847874575
+            }
+          },
+          {
+            "repetition": 2,
+            "verification": {
+              "elapsed_ns": 40134410169,
+              "exit_code": 0,
+              "cycles": 20490,
+              "final_pc": 2147483708,
+              "timed_out": false,
+              "error": "none",
+              "commit_records": 20490
+            },
+            "statistics": {
+              "count": 15,
+              "samples_ns": [
+                3621312,
+                3647970,
+                3627403,
+                3643715,
+                3598076,
+                3643047,
+                3646635,
+                3631032,
+                3616139,
+                3671998,
+                3594947,
+                3595698,
+                3657356,
+                3587104,
+                3580805
+              ],
+              "min_ns": 3580805,
+              "max_ns": 3671998,
+              "mean_ns": 3624215.8,
+              "median_ns": 3627403,
+              "stdev_ns": 27939.235701786834,
+              "p95_ns": 3661748.6,
+              "mad_ns": 20567,
+              "range_ns": 91193,
+              "relative_range": 0.02514002441967435
+            }
+          },
+          {
+            "repetition": 3,
+            "verification": {
+              "elapsed_ns": 40060068071,
+              "exit_code": 0,
+              "cycles": 20490,
+              "final_pc": 2147483708,
+              "timed_out": false,
+              "error": "none",
+              "commit_records": 20490
+            },
+            "statistics": {
+              "count": 15,
+              "samples_ns": [
+                3742183,
+                3605506,
+                3644884,
+                3612798,
+                3625091,
+                3605672,
+                3620215,
+                3597130,
+                3572461,
+                3577544,
+                3588546,
+                3603255,
+                3646176,
+                3588129,
+                3570002
+              ],
+              "min_ns": 3570002,
+              "max_ns": 3742183,
+              "mean_ns": 3613306.1333333333,
+              "median_ns": 3605506,
+              "stdev_ns": 42615.3730056364,
+              "p95_ns": 3674978.1,
+              "mad_ns": 17377,
+              "range_ns": 172181,
+              "relative_range": 0.047755016910247826
+            }
+          }
+        ],
+        "combined_statistics": {
+          "count": 45,
+          "samples_ns": [
+            3671831,
+            3633949,
+            3591415,
+            3557312,
+            3569898,
+            3601466,
+            3689693,
+            3568984,
+            3583440,
+            3577126,
+            3570313,
+            3553948,
+            3562878,
+            3582110,
+            3584271,
+            3621312,
+            3647970,
+            3627403,
+            3643715,
+            3598076,
+            3643047,
+            3646635,
+            3631032,
+            3616139,
+            3671998,
+            3594947,
+            3595698,
+            3657356,
+            3587104,
+            3580805,
+            3742183,
+            3605506,
+            3644884,
+            3612798,
+            3625091,
+            3605672,
+            3620215,
+            3597130,
+            3572461,
+            3577544,
+            3588546,
+            3603255,
+            3646176,
+            3588129,
+            3570002
+          ],
+          "min_ns": 3553948,
+          "max_ns": 3742183,
+          "mean_ns": 3610254.7333333334,
+          "median_ns": 3601466,
+          "stdev_ns": 39005.081365590864,
+          "p95_ns": 3671964.6,
+          "mad_ns": 24340,
+          "range_ns": 188235,
+          "relative_range": 0.052266216035358935
+        }
+      }
+    ],
+    "median_ratio_implementation_over_baseline": 1.285034514108574,
+    "no_performance_threshold": true,
+    "all_samples_retained": true
+  },
+  "allocation_lock_observation": {
+    "method": "static source inspection plus elapsed end-to-end samples; no allocator or lock profiler was added",
+    "current_static_facts": [
+      "install_image_with_physical_ports allocates one image RAM and the standard native closure creates two shared raw-port handles over one SystemBus",
+      "ValidatedPhysicalAccess documents fixed-size request/response storage for ordinary widths; error context is only owned on failure paths",
+      "the raw native order is physical-port lock -> SystemBus lock -> child RAM/UART lock; legacy AMO/LR/SC remains a separate typed bridge"
+    ],
+    "claim": "No allocation, lock-overhead, or no-regression claim; elapsed samples include all public load_and_run work and every retained slow sample."
+  },
+  "result_and_retirement": {
+    "verification": "Each repetition performs one commit-logged verification run; commit-record count equals ExecutionResult.cycles.",
+    "sample_assertion": "Every unlogged sample has the same exit_code, cycles, final_pc, timed_out, and error as its repetition verification run.",
+    "no_threshold": "The harness fails only on setup, public-facade result, or retirement consistency errors, not on speed."
+  }
+}

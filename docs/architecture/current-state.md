@@ -58,9 +58,11 @@ loads/stores through the validated raw physical boundary in both standard
 facades; the T0--T4 records and T5 evidence are bound to implementation head
 `fb6f51c771f32585f1547422c9633379f7ae370b`. Legacy AMO/LRSC behavior remains
 preserved over shared storage/locking as explicit debt. The T5 record verifies
-that bounded non-atomic statement, fresh project ELFs, and the fresh pinned
-ACT4 run, but does not formally close A7 or alter `.qing/config.toml`. Existing
-A5 ACT4 results remain separately scoped nontrapping evidence.
+that bounded non-atomic statement, fresh project ELFs, the fresh pinned ACT4
+run, and the pre-/post-migration public-facade memory-loop observation. The
+coding-side record is not an independent cumulative review and does not
+formally close A7 or alter `.qing/config.toml`. Existing A5 ACT4 results remain
+separately scoped nontrapping evidence.
 
 | Label | Meaning |
 | --- | --- |
@@ -86,12 +88,15 @@ flowchart TB
     UART --> BUS
 
     ORCH --> CORE["RiscvCore"]
-    CORE --> FETCH["Fetch one aligned u32"]
-    FETCH --> BUS
+    CORE --> FETCH["Fetch one aligned u32<br/>validated raw Fetch"]
+    FETCH --> RAW["PhysicalMemoryAdapter<br/>validated raw port"]
+    RAW --> BUS
     FETCH --> DEC["InstructionDecoder"]
     DEC --> EXEC["Executor<br/>RV64 instruction dispatch"]
-    EXEC --> ADAPTER["MemoryAdapter<br/>identity mapping (base 0)"]
-    ADAPTER --> BUS
+    EXEC --> ORDINARY["Ordinary integer/FP<br/>validated raw DataRead/DataWrite"]
+    ORDINARY --> RAW
+    EXEC --> LEGACY["Typed compatibility bridge<br/>AMO/LR/SC and non-migrated calls"]
+    LEGACY --> BUS
 
     BUS --> HTIF["HTIF/tohost<br/>fixed MMIO register + callback"]
     ORCH --> LOOP["Per-instruction run loop<br/>cycle limit / tohost polling / commit log"]
@@ -106,8 +111,17 @@ The flow is real and usable: the CLI loads an RV64 ELF, constructs RAM, UART, an
 The current composition has several important properties:
 
 - `load_and_run` simultaneously acts as loader, machine builder, runner, stop-policy owner, result builder, and observer coordinator.
+- In the two standard facades, fetch and ordinary integer/FP guest accesses
+  use separate validated raw ports over shared storage/device locks. The typed
+  view remains an intentional compatibility bridge for AMO/LR/SC and host
+  inspection; the bridge is not a second ISA engine or a second storage copy.
 - `SystemBus` is a concrete platform type in the public `executor` module and is instantiated directly by `load_and_run`; it is not the standalone TLM bus and is not re-exported at the crate root.
-- ELF memory is stored relative to its lowest load address. In `load_and_run`, `RiscvCore::reset` uses base `0`, so `MemoryAdapter` passes addresses unchanged and `SystemBus` converts RAM addresses to offsets; the alternate flat-memory library path resets with the ELF base and uses `MemoryAdapter` subtraction.
+- ELF memory is stored relative to its lowest load address. In `load_and_run`,
+  `RiscvCore::reset` uses base `0`, so the migrated raw physical adapter
+  submits guest addresses unchanged and `SystemBus` converts RAM addresses to
+  offsets; the retained typed compatibility/host view is still identity-mapped.
+  The alternate flat-memory library path resets with the ELF base and its raw
+  adapter performs the one checked base subtraction before reaching flat RAM.
 - The core fetches a 32-bit word and advances the PC by four unless execution marks a branch as taken. RV64C decoding exists separately but is not in this fetch path.
 - `step_outcome` returns typed `InstructionRetired`, `TrapEntered`, or `SimulatorFailure`; `step` retains `Result<()>` compatibility. Synchronous traps are integrated. Guest exits and limits remain outer `RunControl` decisions; full Machine facts/debug integration is not implemented.
 - Native commit logging uses the fetched instruction from the retired fact, not a re-fetch. It still compares Runner-side GPR snapshots and omits memory effects; this is not the full ADR-0001 observation contract (`src/executor.rs`, `tests/public_behavior.rs`).
