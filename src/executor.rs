@@ -1202,6 +1202,9 @@ fn install_image_with_physical_ports(
         instruction_access,
         data_access,
     );
+    if matches!(form, AddressForm::Bus) {
+        core.set_physical_storage_alignment(base_addr, program.len());
+    }
     core.set_verbose(verbose);
     core.reset(entry_point, form.core_translation_base());
     (core, memory)

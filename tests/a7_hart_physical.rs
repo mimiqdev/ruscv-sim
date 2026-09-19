@@ -8,11 +8,13 @@ use ruscv_sim::core::{
     ExceptionCause, PrivilegeMode, RiscvCore, SimulatorFailureKind, StepOutcome,
 };
 use ruscv_sim::csr::machine;
+use ruscv_sim::executor::{SystemBus, SYSTEM_BUS_UART_BASE};
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
+use ruscv_sim::peripherals::Uart16550;
 use ruscv_sim::physical::{
-    AccessCategory, AccessWidth, NativeRamBackend, PhysicalBackend, PhysicalBackendError,
-    PhysicalBackendResult, PhysicalRequest, PhysicalResponse, PhysicalTargetRejectionReason,
-    ValidatedPhysicalAccess,
+    AccessCategory, AccessWidth, NativeRamBackend, NativeSystemBusBackend, PhysicalBackend,
+    PhysicalBackendError, PhysicalBackendResult, PhysicalRequest, PhysicalResponse,
+    PhysicalTargetRejectionReason, ValidatedPhysicalAccess,
 };
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -79,6 +81,40 @@ impl PhysicalBackend for PlannedBackend {
             Planned::Read(bytes) => Ok(PhysicalResponse::read_for(request, &bytes)),
             Planned::Error(error) => Err(error),
         }
+    }
+}
+
+#[derive(Debug)]
+struct RepeatingFetchBackend {
+    instruction: u32,
+    calls: Arc<Mutex<usize>>,
+}
+
+impl PhysicalBackend for RepeatingFetchBackend {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        assert_eq!(request.category(), AccessCategory::Fetch);
+        *self.calls.lock().unwrap() += 1;
+        Ok(PhysicalResponse::read_for(
+            request,
+            &self.instruction.to_le_bytes(),
+        ))
+    }
+}
+
+#[derive(Debug)]
+struct UnknownAfterEffectBackend {
+    calls: Arc<Mutex<usize>>,
+    effects: Arc<Mutex<usize>>,
+}
+
+impl PhysicalBackend for UnknownAfterEffectBackend {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        assert_eq!(request.category(), AccessCategory::DataWrite);
+        *self.calls.lock().unwrap() += 1;
+        *self.effects.lock().unwrap() += 1;
+        Err(PhysicalBackendError::unknown(
+            "injected side effect may have committed",
+        ))
     }
 }
 
@@ -151,6 +187,30 @@ fn traced_core(
 
 fn mtvec(core: &mut RiscvCore) {
     core.state_mut().csr.write(machine::MTVEC, 0x40).unwrap();
+}
+
+fn native_bus_core(ram_base: u64, ram_size: usize) -> (RiscvCore, Arc<Mutex<SimpleMemory>>) {
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(ram_size)));
+    let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
+    let bus = Arc::new(Mutex::new(SystemBus::new(
+        ram.clone(),
+        uart,
+        ram_base,
+        ram_size,
+    )));
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeSystemBusBackend::new(bus.clone()),
+    )));
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeSystemBusBackend::new(bus.clone()),
+    )));
+    let core = RiscvCore::new_with_physical_ports(
+        typed_handle(bus.clone()),
+        typed_handle(bus),
+        instruction_port,
+        data_port,
+    );
+    (core, ram)
 }
 
 fn assert_access_trap(outcome: StepOutcome, cause: ExceptionCause, mtval: u64, core: &RiscvCore) {
@@ -312,6 +372,140 @@ fn hart_alignment_and_misaligned_storage_offset_issue_no_data_request() {
     let outcome = core.step_outcome();
     assert_access_trap(outcome, ExceptionCause::LoadAccessFault, base + 4, &core);
     assert_eq!(calls.lock().unwrap().len(), 1, "fetch only");
+}
+
+#[test]
+fn native_non_aligned_storage_offsets_retain_fetch_load_and_store_faults() {
+    // The guest PC is aligned at base+2, but the native RAM storage offset is
+    // two.  The old typed SystemBus route rejected this fetch before reading
+    // the instruction.
+    let fetch_base = 0x8000_0002;
+    let (mut fetch_core, fetch_ram) = native_bus_core(fetch_base, 0x40);
+    fetch_ram
+        .lock()
+        .unwrap()
+        .write_bytes(2, &addi(5, 0, 7).to_le_bytes())
+        .unwrap();
+    fetch_core.set_physical_storage_alignment(fetch_base, 0x40);
+    fetch_core.reset(fetch_base + 2, 0);
+    mtvec(&mut fetch_core);
+    assert_access_trap(
+        fetch_core.step_outcome(),
+        ExceptionCause::InstructionAccessFault,
+        fetch_base + 2,
+        &fetch_core,
+    );
+    assert_eq!(fetch_core.state().regs[5], 0);
+
+    // With a base four-bytes aligned but not eight-bytes aligned, guest LD/SD
+    // addresses remain architecturally aligned while their RAM offsets do not.
+    // The adapter rejects those offsets before the native bus can read/write.
+    let ram_base = 0x8000_0004;
+    let (mut load_core, load_ram) = native_bus_core(ram_base, 0x40);
+    load_ram
+        .lock()
+        .unwrap()
+        .write_bytes(0, &load(5, 1, 3, 0).to_le_bytes())
+        .unwrap();
+    let load_bytes = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+    load_ram
+        .lock()
+        .unwrap()
+        .write_bytes(4, &load_bytes)
+        .unwrap();
+    load_core.set_physical_storage_alignment(ram_base, 0x40);
+    load_core.reset(ram_base, 0);
+    mtvec(&mut load_core);
+    load_core.state_mut().regs[1] = ram_base + 4;
+    load_core.state_mut().regs[5] = 0xfeed_face_cafe_babe;
+    assert_access_trap(
+        load_core.step_outcome(),
+        ExceptionCause::LoadAccessFault,
+        ram_base + 4,
+        &load_core,
+    );
+    assert_eq!(load_core.state().regs[5], 0xfeed_face_cafe_babe);
+    assert_eq!(
+        load_ram.lock().unwrap().read_bytes(4, 8).unwrap(),
+        load_bytes
+    );
+
+    let (mut store_core, store_ram) = native_bus_core(ram_base, 0x40);
+    store_ram
+        .lock()
+        .unwrap()
+        .write_bytes(0, &store(2, 1, 3, 0).to_le_bytes())
+        .unwrap();
+    store_ram
+        .lock()
+        .unwrap()
+        .write_bytes(4, &load_bytes)
+        .unwrap();
+    let before = store_ram.lock().unwrap().read_bytes(4, 8).unwrap();
+    store_core.set_physical_storage_alignment(ram_base, 0x40);
+    store_core.reset(ram_base, 0);
+    mtvec(&mut store_core);
+    store_core.state_mut().regs[1] = ram_base + 4;
+    store_core.state_mut().regs[2] = 0x0123_4567_89ab_cdef;
+    assert_access_trap(
+        store_core.step_outcome(),
+        ExceptionCause::StoreAccessFault,
+        ram_base + 4,
+        &store_core,
+    );
+    assert_eq!(store_ram.lock().unwrap().read_bytes(4, 8).unwrap(), before);
+}
+
+#[test]
+fn unknown_completion_is_terminal_and_does_not_retry_the_physical_domain() {
+    let memory = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
+    let fetch_calls = Arc::new(Mutex::new(0));
+    let data_calls = Arc::new(Mutex::new(0));
+    let effects = Arc::new(Mutex::new(0));
+    let mut core = RiscvCore::new_with_physical_ports(
+        typed_handle(memory.clone()),
+        typed_handle(memory),
+        Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+            RepeatingFetchBackend {
+                instruction: store(2, 1, 0, 0),
+                calls: fetch_calls.clone(),
+            },
+        ))),
+        Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+            UnknownAfterEffectBackend {
+                calls: data_calls.clone(),
+                effects: effects.clone(),
+            },
+        ))),
+    );
+    core.reset(0, 0);
+    core.state_mut().regs[1] = 0x80;
+    core.state_mut().regs[2] = 0xaa;
+
+    let first = core.step_outcome();
+    assert!(matches!(
+        &first,
+        StepOutcome::SimulatorFailure(failure)
+            if failure.kind == SimulatorFailureKind::HostBackend
+                && failure.message.contains("unresolved physical completion")
+    ));
+    assert!(core.unresolved_physical_access().is_some());
+    assert_eq!(core.state().pc, 0);
+    assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
+    assert_eq!(*fetch_calls.lock().unwrap(), 1);
+    assert_eq!(*data_calls.lock().unwrap(), 1);
+    assert_eq!(*effects.lock().unwrap(), 1);
+
+    let second = core.step_outcome();
+    assert_eq!(
+        second, first,
+        "terminal unknown state is replayed, not retried"
+    );
+    assert_eq!(*fetch_calls.lock().unwrap(), 1);
+    assert_eq!(*data_calls.lock().unwrap(), 1);
+    assert_eq!(*effects.lock().unwrap(), 1);
+    assert_eq!(core.state().pc, 0);
+    assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
 }
 
 #[test]

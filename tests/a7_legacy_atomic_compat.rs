@@ -4,9 +4,14 @@
 //! memory lock.  These fixtures deliberately assert the characterized global
 //! reservation behavior rather than architectural per-Hart semantics.
 
+#[allow(dead_code)]
+mod common;
+
+use common::public_elf as fixture;
 use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome};
 use ruscv_sim::csr::machine;
-use ruscv_sim::executor::{RiscVSimulator, SystemBus, SYSTEM_BUS_HTIF_BASE};
+use ruscv_sim::elf::SignatureInfo;
+use ruscv_sim::executor::{dump_signature, RiscVSimulator, SystemBus, SYSTEM_BUS_HTIF_BASE};
 use ruscv_sim::memory::{MemoryError, MemoryInterface, SimpleMemory};
 use ruscv_sim::peripherals::Uart16550;
 use ruscv_sim::physical::{
@@ -46,6 +51,10 @@ fn lr(rd: u8, rs1: u8) -> u32 {
 fn sc(rd: u8, rs1: u8, rs2: u8) -> u32 {
     // The existing dispatcher intentionally retains its SC width fallback.
     amo_raw(0b00011, 0b010, rd, rs1, rs2)
+}
+
+fn amoadd_d(rd: u8, rs1: u8, rs2: u8) -> u32 {
+    amo_raw(0b00001, 0b011, rd, rs1, rs2)
 }
 
 fn load(rd: u8, rs1: u8, funct3: u8, immediate: i32) -> u32 {
@@ -362,6 +371,57 @@ fn ordinary_store_and_fp_store_interleave_with_unchanged_legacy_lr_sc() {
 }
 
 #[test]
+fn ordinary_store_then_legacy_amo_and_lr_share_one_migrated_domain() {
+    let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
+    clear_reservation();
+    let backing = Arc::new(Mutex::new(SimpleMemory::new(0x200)));
+    backing.lock().unwrap().write_dword(0x80, 1).unwrap();
+    let legacy_calls = Arc::new(Mutex::new(Vec::new()));
+    let raw_calls = Arc::new(Mutex::new(Vec::new()));
+    let (mut core, _legacy, backing) = legacy_core(
+        backing,
+        &[store(2, 1, 3, 0), amoadd_d(3, 1, 4), lr(5, 1)],
+        legacy_calls.clone(),
+        false,
+        raw_calls.clone(),
+    );
+    core.reset(0, 0);
+    core.state_mut().regs[1] = 0x80;
+    core.state_mut().regs[2] = 7;
+    core.state_mut().regs[4] = 3;
+
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(core.state().regs[3], 7);
+    assert_eq!(backing.lock().unwrap().read_dword(0x80).unwrap(), 10);
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(core.state().regs[5], 10);
+    assert_eq!(
+        legacy_calls.lock().unwrap().as_slice(),
+        ["read_word@0x80", "write_word@0x80", "read_dword@0x80"]
+    );
+    assert_eq!(
+        raw_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| call.0 == AccessCategory::DataWrite)
+            .count(),
+        1,
+        "only the ordinary store uses the raw data port"
+    );
+}
+
+#[test]
 fn rejected_ordinary_write_and_faulting_sc_preserve_characterized_reservation() {
     let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
     clear_reservation();
@@ -460,17 +520,30 @@ fn rejected_ordinary_write_and_faulting_sc_preserve_characterized_reservation() 
 }
 
 #[test]
-fn distinct_core_instances_share_the_legacy_global_key_but_not_ram() {
+fn legacy_lr_survives_reset_and_replacement_storage_with_global_key_behavior() {
     let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
     clear_reservation();
     let first_ram = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
     first_ram.lock().unwrap().write_dword(0x80, 1).unwrap();
     let first_calls = Arc::new(Mutex::new(Vec::new()));
     let first_raw = Arc::new(Mutex::new(Vec::new()));
-    let (mut first, _legacy, _ram) =
+    let (mut first, _legacy, first_ram) =
         legacy_core(first_ram, &[lr(3, 1)], first_calls, false, first_raw);
     first.reset(0, 0);
     first.state_mut().regs[1] = 0x80;
+    assert!(matches!(
+        first.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+
+    // Reset does not clear the characterized singleton reservation.  A
+    // replacement image/core can still observe the exact address key.
+    first.reset(0, 0);
+    first_ram
+        .lock()
+        .unwrap()
+        .write_word(0, 0x0000_0013)
+        .unwrap();
     assert!(matches!(
         first.step_outcome(),
         StepOutcome::InstructionRetired(_)
@@ -494,11 +567,42 @@ fn distinct_core_instances_share_the_legacy_global_key_but_not_ram() {
         0,
         "reservation key remains global/address-only"
     );
+    assert_eq!(first_ram.lock().unwrap().read_dword(0x80).unwrap(), 1);
     assert_eq!(second_ram.lock().unwrap().read_dword(0x80).unwrap(), 22);
 }
 
 #[test]
-fn legacy_write_is_visible_to_raw_load_and_fetch_and_host_inspection() {
+fn public_flat_reload_replaces_storage_but_retains_legacy_lr_key() {
+    let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
+    clear_reservation();
+    let first = fixture::elf_with_code(&[lr(3, 1)], 0, false, false, 0x3000);
+    let second = fixture::elf_with_code(&[sc(4, 1, 2)], 0, false, false, 0x3000);
+    let mut simulator = RiscVSimulator::new(0x100);
+    simulator.load_elf(&first).unwrap();
+    let old_memory = simulator.memory().clone();
+    {
+        let mut memory = simulator.memory().lock().unwrap();
+        memory.write_dword(0x80, 1).unwrap();
+    }
+    simulator.state_mut().regs[1] = fixture::BASE + 0x80;
+    simulator.state_mut().regs[2] = 22;
+    simulator.step().unwrap();
+
+    simulator.load_elf(&second).unwrap();
+    assert!(!Arc::ptr_eq(&old_memory, simulator.memory()));
+    simulator.state_mut().regs[1] = fixture::BASE + 0x80;
+    simulator.state_mut().regs[2] = 22;
+    simulator.step().unwrap();
+    assert_eq!(simulator.state().regs[4], 0);
+    assert_eq!(old_memory.lock().unwrap().read_dword(0x80).unwrap(), 1);
+    assert_eq!(
+        simulator.memory().lock().unwrap().read_dword(0x80).unwrap(),
+        22
+    );
+}
+
+#[test]
+fn legacy_write_is_visible_to_raw_load_fetch_signature_and_host_inspection() {
     let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
     clear_reservation();
     let backing = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
@@ -541,6 +645,31 @@ fn legacy_write_is_visible_to_raw_load_and_fetch_and_host_inspection() {
         core.state().regs[5],
         0x1234,
         "legacy RAM write reaches raw load"
+    );
+
+    let signature_value = 0x8877_6655_4433_2211u64;
+    instruction_legacy
+        .lock()
+        .unwrap()
+        .write_dword(0x40, signature_value)
+        .unwrap();
+    core.state_mut().regs[1] = 0x40;
+    core.state_mut().pc = 0;
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(core.state().regs[5], signature_value);
+    let signature_memory: SharedMemory = typed_handle(instruction_legacy.clone());
+    let signature = SignatureInfo {
+        vaddr: 0x40,
+        size: 8,
+        file_offset: 0,
+    };
+    assert_eq!(
+        dump_signature(&signature_memory, Some(&signature)).unwrap(),
+        Some(signature_value.to_le_bytes().to_vec()),
+        "signature inspection sees the same legacy write as the raw load"
     );
 
     let simulator = RiscVSimulator::new(0x100);

@@ -25,7 +25,9 @@ The two standard facades install separate validated raw fetch/data ports over
 their existing domain:
 
 * `load_and_run` uses two `NativeSystemBusBackend` views over the same
-  `Arc<Mutex<SystemBus>>` (RAM, UART, HTIF and callback).
+  `Arc<Mutex<SystemBus>>` (RAM, UART, HTIF and callback). Its Hart adapter is
+  also given the native RAM range so a guest-aligned transfer at a
+  non-aligned storage offset retains the old typed access fault.
 * `RiscVSimulator::new` and flat `load_elf` use two `NativeRamBackend` views over
   the same `Arc<Mutex<SimpleMemory>>`, with the flat base subtraction performed
   once in the Hart adapter.
@@ -67,15 +69,23 @@ Raw HTIF is stricter: one complete eight-byte endpoint, no Fetch, and full-span
 validation. UART remains the public byte-only 0x100-byte window. Flat host
 `write_mem` remains the byte-loop API, including visible successful prefixes
 on failure. The checked flat storage-offset alignment rejection remains after
-the single base conversion.
+the single base conversion. The native facade applies the same rule only
+inside its configured RAM range, without changing the generic raw backend's
+ability to transfer unaligned physical spans or changing guest physical
+addresses.
 
 A target rejection is converted at the Hart boundary to the original
 fetch/load/store access cause (1/5/7) and original architectural address.
-Malformed, host, and unknown completions become `SimulatorFailure`; they do not
-fabricate trap state, retirement, or a guest exit. Misaligned guest accesses
-are checked before the raw port, so the spy sees zero physical requests for
-those attempts. Successful MMIO effects are not rolled back after the target
-has completed.
+Malformed and host failures become `SimulatorFailure`; unknown completions
+also become `SimulatorFailure` but are retained as an explicit terminal Hart
+state. A later `step_outcome` replays that unresolved diagnostic without
+fetching or issuing another physical request. Only explicit host resolution
+(`clear_unresolved_physical_access`) or reconstruction with a new core/domain
+may make execution reusable; uncertainty is never silently retried. These
+failures do not fabricate trap state, retirement, or a guest exit. Misaligned
+guest accesses are checked before the raw port, so the spy sees zero physical
+requests for those attempts. Successful MMIO effects are not rolled back after
+the target has completed.
 
 The legacy route deliberately retains the T0 defects: global exact-address
 reservation state, no scalar/FP/host-write invalidation, reset retention,
@@ -94,11 +104,14 @@ cargo test --test a7_hart_physical --test a7_legacy_atomic_compat \
 ```
 
 They cover raw fetch/ordinary integer/FP traces, endian/extension/FP results,
-pre-port alignment, physical target causes, host/protocol/unknown failures,
-shared storage, legacy typed call order, scalar/FP/rejected/host writes around
-LR/SC, faulting SC, reset/global-key behavior, legacy HTIF, and a timeout-
-bounded lock-reentry child. T0/T1/T2 component tests remain separate evidence;
-T4 public equivalence and T5 fresh guest/ACT4 evidence remain future rows.
+pre-port alignment, native non-aligned-base fetch/load/store faults, physical
+target causes, host/protocol/unknown failures including the no-retry terminal
+state, shared storage, ordinary-store→legacy AMO/LR call order,
+legacy-write→raw-load/fetch/signature visibility, scalar/FP/rejected/host
+writes around LR/SC, faulting SC, LR→reset→replacement-storage SC with the
+baseline global address key, legacy HTIF, and a timeout-bounded lock-reentry
+child. T0/T1/T2 component tests remain separate evidence; T4 public
+equivalence and T5 fresh guest/ACT4 evidence remain future rows.
 
 No performance acceptance gate is added. Allocation/lock-cost observation for
 this adapter was not benchmarked in T3 and is not reported as a no-regression

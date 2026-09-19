@@ -178,6 +178,14 @@ pub struct RiscvCore {
     /// Optional raw physical data port for ordinary integer/FP accesses.
     /// AMO/LR/SC deliberately do not use this port.
     data_access: Option<SharedPhysicalAccess>,
+    /// Optional native RAM range whose storage-offset alignment must retain
+    /// the legacy typed-memory rejection.  This is set by the native facade;
+    /// generic raw targets remain free to accept unaligned physical spans.
+    physical_storage_alignment: Option<(u64, usize)>,
+    /// A completion whose effect cannot be established is terminal for this
+    /// Hart until the host explicitly resolves/reconstructs the physical
+    /// domain.  Keeping the fact here prevents an accidental retry.
+    unresolved_physical_access: Option<SimulatorFailure>,
     /// Machine-mode synchronous trap handler.
     trap_handler: TrapHandler,
     /// TLM interface（可选）
@@ -301,6 +309,10 @@ pub struct PhysicalMemoryAdapter<'a> {
     // so no second mutex is acquired here.
     port: RefCell<&'a mut dyn PhysicalAccess>,
     base_addr: u64,
+    /// Optional target range whose physical address is a legacy storage
+    /// offset.  Outside this range, the generic physical address alignment
+    /// rule remains in force without imposing RAM semantics on devices.
+    storage_alignment: Option<(u64, usize)>,
 }
 
 impl<'a> PhysicalMemoryAdapter<'a> {
@@ -309,6 +321,23 @@ impl<'a> PhysicalMemoryAdapter<'a> {
         Self {
             port: RefCell::new(port),
             base_addr,
+            storage_alignment: None,
+        }
+    }
+
+    /// Creates a Hart view that also preserves typed alignment for one
+    /// target/storage range.  The range is an opt-in compatibility policy;
+    /// direct raw backends remain allowed to transfer unaligned spans.
+    pub fn new_with_storage_alignment(
+        port: &'a mut dyn PhysicalAccess,
+        base_addr: u64,
+        storage_base: u64,
+        storage_size: usize,
+    ) -> Self {
+        Self {
+            port: RefCell::new(port),
+            base_addr,
+            storage_alignment: Some((storage_base, storage_size)),
         }
     }
 
@@ -325,8 +354,15 @@ impl<'a> PhysicalMemoryAdapter<'a> {
     /// the guest address before this adapter is entered.
     fn checked_paddr(&self, va: u64, width: PhysicalWidth) -> Result<u64, MemoryError> {
         let paddr = self.va_to_pa(va)?;
-        if !paddr.is_multiple_of(width.bytes() as u64) {
-            return Err(MemoryError::InvalidAddress(paddr));
+        let alignment_address = self
+            .storage_alignment
+            .filter(|(base, size)| {
+                crate::memory::contains_range(*base, *size, paddr, width.bytes())
+            })
+            .and_then(|(base, _)| paddr.checked_sub(base))
+            .unwrap_or(paddr);
+        if !alignment_address.is_multiple_of(width.bytes() as u64) {
+            return Err(MemoryError::InvalidAddress(alignment_address));
         }
         Ok(paddr)
     }
@@ -490,6 +526,8 @@ impl RiscvCore {
             executor: Executor::new(),
             instruction_access: None,
             data_access: None,
+            physical_storage_alignment: None,
+            unresolved_physical_access: None,
             trap_handler: TrapHandler::new(),
             tlm_interface: None,
             base_addr: 0,
@@ -548,6 +586,27 @@ impl RiscvCore {
         self.data_access = Some(data_access);
     }
 
+    /// Preserve the legacy typed alignment rule for one native RAM mapping.
+    ///
+    /// The guest continues to submit its physical address unchanged; only
+    /// requests wholly inside this configured RAM range are checked against
+    /// their storage offset.  This is intentionally separate from the raw
+    /// backend contract, which remains free to accept unaligned transfers.
+    pub fn set_physical_storage_alignment(&mut self, storage_base: u64, storage_size: usize) {
+        self.physical_storage_alignment = Some((storage_base, storage_size));
+    }
+
+    /// Returns the unresolved physical completion, if this Hart is terminal.
+    pub fn unresolved_physical_access(&self) -> Option<&SimulatorFailure> {
+        self.unresolved_physical_access.as_ref()
+    }
+
+    /// Clears a previously retained unresolved completion after the host has
+    /// resolved or reconstructed the affected physical domain.
+    pub fn clear_unresolved_physical_access(&mut self) {
+        self.unresolved_physical_access = None;
+    }
+
     /// Set verbosity
     pub fn set_verbose(&mut self, verbose: bool) {
         self.verbose = verbose;
@@ -575,6 +634,10 @@ impl RiscvCore {
     /// use [`StepOutcome::SimulatorFailure`]; no error-string inspection is
     /// involved in that classification.
     pub fn step_outcome(&mut self) -> StepOutcome {
+        if let Some(failure) = &self.unresolved_physical_access {
+            return StepOutcome::SimulatorFailure(failure.clone());
+        }
+
         // CoreState is the architectural mode authority at this boundary.
         // Keep CSR access checks synchronized even when a debugger/test edits
         // the public state through `state_mut`.
@@ -609,7 +672,7 @@ impl RiscvCore {
                     )
                 }
             };
-            let adapter = PhysicalMemoryAdapter::new(&mut *port, self.base_addr);
+            let adapter = self.physical_adapter(&mut *port);
             adapter.fetch_word(pc_before)
         } else {
             let instruction_addr = match pc_before.checked_sub(self.base_addr) {
@@ -647,13 +710,11 @@ impl RiscvCore {
                         pc_before,
                         None,
                     ),
-                    MemoryError::Backend(message)
-                    | MemoryError::Protocol(message)
-                    | MemoryError::Unknown(message) => self.simulator_failure(
-                        pc_before,
-                        SimulatorFailureKind::HostBackend,
-                        message,
-                    ),
+                    MemoryError::Backend(message) | MemoryError::Protocol(message) => self
+                        .simulator_failure(pc_before, SimulatorFailureKind::HostBackend, message),
+                    MemoryError::Unknown(message) => {
+                        self.unresolved_physical_failure(pc_before, message)
+                    }
                 }
             }
         };
@@ -746,7 +807,7 @@ impl RiscvCore {
                         )
                     }
                 };
-                let mut physical_view = PhysicalMemoryAdapter::new(&mut *port, self.base_addr);
+                let mut physical_view = self.physical_adapter(&mut *port);
                 self.executor
                     .execute_with_csr_access(&decoded, &mut staged, &mut physical_view)
             }
@@ -844,6 +905,16 @@ impl RiscvCore {
         })
     }
 
+    fn unresolved_physical_failure(&mut self, pc: u64, message: impl Into<String>) -> StepOutcome {
+        let failure = SimulatorFailure {
+            pc,
+            kind: SimulatorFailureKind::HostBackend,
+            message: format!("unresolved physical completion: {}", message.into()),
+        };
+        self.unresolved_physical_access = Some(failure.clone());
+        StepOutcome::SimulatorFailure(failure)
+    }
+
     fn enter_trap(
         &mut self,
         cause: ExceptionCause,
@@ -925,11 +996,10 @@ impl RiscvCore {
             }
             ExecuteError::MemoryError(error) => {
                 match error {
-                    MemoryError::Backend(message)
-                    | MemoryError::Protocol(message)
-                    | MemoryError::Unknown(message) => {
+                    MemoryError::Backend(message) | MemoryError::Protocol(message) => {
                         self.simulator_failure(pc, SimulatorFailureKind::HostBackend, message)
                     }
+                    MemoryError::Unknown(message) => self.unresolved_physical_failure(pc, message),
                     MemoryError::InvalidAddress(_)
                     | MemoryError::OutOfBounds
                     | MemoryError::Misaligned(_, _) => {
@@ -991,6 +1061,15 @@ impl RiscvCore {
         instruction.opcode == Opcode::Amo
             && ((instruction.raw >> 27) & 0x1f) == 0b00010
             && instruction.rs2 == Some(0)
+    }
+
+    fn physical_adapter<'a>(&self, port: &'a mut dyn PhysicalAccess) -> PhysicalMemoryAdapter<'a> {
+        match self.physical_storage_alignment {
+            Some((base, size)) => {
+                PhysicalMemoryAdapter::new_with_storage_alignment(port, self.base_addr, base, size)
+            }
+            None => PhysicalMemoryAdapter::new(port, self.base_addr),
+        }
     }
 
     /// Only ordinary integer/FP memory operations use the raw physical port.
