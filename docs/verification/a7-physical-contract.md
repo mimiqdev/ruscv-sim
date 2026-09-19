@@ -62,3 +62,27 @@ pre-dispatch request rejection, non-wrapping span overflow, target metadata,
 host failure, short/long responses, wrong category and request binding,
 contradictory completion, backend protocol failure, and single-call unknown
 completion handling.
+
+## Exact-head verification
+
+At committed HEAD
+`15ad21f759a53f6cac060fde746c40928293f129`, the following recorded checks
+passed:
+
+```text
+cargo test --test a7_physical_contract                         11 passed
+cargo test --test a7_migration_characterization \
+  --test memory_bounds --test public_behavior \
+  --test a6_task3_core_trap_test                              85 passed
+cargo fmt --all -- --check                                    passed
+cargo check --all-features                                    passed
+cargo clippy --all-features --all-targets -- -D warnings     passed
+cargo test --all-features                                     passed
+cargo doc --all-features --no-deps                            passed
+git diff --check fc68fcfe39055bd8f13255e0199bb47c7d3c9dee..HEAD passed
+```
+
+The focused and full rows were executed through `qing verify --check` at this
+exact HEAD. No fresh project-ELF or ACT4 suite was required for T1, so this
+record makes no such pass claim. The T0 characterization and A6 regressions
+remain unchanged; the new port is still not wired into public execution.
