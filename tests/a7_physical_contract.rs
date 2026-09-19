@@ -361,6 +361,43 @@ fn short_and_long_read_responses_are_protocol_failures_not_success() {
 }
 
 #[test]
+fn reported_length_cannot_pad_or_truncate_supplied_response_bytes() {
+    let padded_request = PhysicalRequest::data_read(0x7010, AccessWidth::Word).unwrap();
+    let truncated_request = PhysicalRequest::fetch(0x7014, AccessWidth::Word).unwrap();
+    let mut backend = SpyBackend::default();
+    backend.push(Ok(PhysicalResponse::new(
+        padded_request.descriptor(),
+        PhysicalCompletion::Read(PhysicalResponseBytes::with_reported_len(&[0xaa], 4)),
+    )));
+    backend.push(Ok(PhysicalResponse::new(
+        truncated_request.descriptor(),
+        PhysicalCompletion::Read(PhysicalResponseBytes::with_reported_len(
+            &[0xaa, 0xbb, 0xcc, 0xdd, 0xee],
+            4,
+        )),
+    )));
+    let mut port = ValidatedPhysicalAccess::new(backend);
+
+    let padded = port.access(padded_request).unwrap_err();
+    assert!(matches!(
+        padded,
+        PhysicalAccessError::Protocol(PhysicalProtocolError::ResponsePayloadLengthMismatch {
+            reported: 4,
+            supplied: 1
+        })
+    ));
+    let truncated = port.access(truncated_request).unwrap_err();
+    assert!(matches!(
+        truncated,
+        PhysicalAccessError::Protocol(PhysicalProtocolError::ResponsePayloadLengthMismatch {
+            reported: 4,
+            supplied: 5
+        })
+    ));
+    assert_eq!(port.backend().calls.len(), 2);
+}
+
+#[test]
 fn wrong_category_and_mismatched_request_binding_are_protocol_failures() {
     let request = PhysicalRequest::data_read(0x8000, AccessWidth::Word).unwrap();
     let wrong_category =

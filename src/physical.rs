@@ -190,6 +190,14 @@ pub enum PhysicalProtocolError {
         /// Identity returned by the backend.
         actual: PhysicalRequestDescriptor,
     },
+    /// The backend's supplied response bytes do not match its reported length.
+    #[error("physical response supplied {supplied} bytes but reported {reported} bytes")]
+    ResponsePayloadLengthMismatch {
+        /// Length reported by the backend response metadata.
+        reported: usize,
+        /// Length actually supplied to the response constructor.
+        supplied: usize,
+    },
     /// A read/fetch response did not contain exactly the requested bytes.
     #[error("physical response has {actual} bytes, expected {expected}")]
     ResponseLengthMismatch {
@@ -380,6 +388,10 @@ impl<'a> PhysicalRequest<'a> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PhysicalResponseBytes {
     bytes: [u8; MAX_PHYSICAL_ACCESS_BYTES],
+    /// Number of bytes supplied to the constructor, retained separately from
+    /// the untrusted backend-reported length.
+    supplied_len: usize,
+    /// Length claimed by the backend response metadata.
     reported_len: usize,
 }
 
@@ -391,7 +403,9 @@ impl PhysicalResponseBytes {
 
     /// Creates response bytes with an explicitly reported length.
     ///
-    /// Only the first eight bytes are stored.  `reported_len` may be greater
+    /// Only the first eight bytes are stored.  Both the supplied slice length
+    /// and `reported_len` are retained; the validated port rejects a response
+    /// that claims a padded or truncated length.  `reported_len` may be greater
     /// than eight solely to model a malformed long response; such a response
     /// can never be accepted by [`ValidatedPhysicalAccess`].
     pub fn with_reported_len(bytes: &[u8], reported_len: usize) -> Self {
@@ -400,8 +414,14 @@ impl PhysicalResponseBytes {
         stored[..copy_len].copy_from_slice(&bytes[..copy_len]);
         Self {
             bytes: stored,
+            supplied_len: bytes.len(),
             reported_len,
         }
+    }
+
+    /// Returns the number of bytes supplied to the constructor.
+    pub const fn supplied_len(self) -> usize {
+        self.supplied_len
     }
 
     /// Returns the backend-reported byte length.
@@ -409,12 +429,14 @@ impl PhysicalResponseBytes {
         self.reported_len
     }
 
-    /// Returns the exact bytes when the reported length fits inline storage.
+    /// Returns the exact bytes when supplied and reported lengths agree and
+    /// fit inline storage.
     ///
     /// The validated success path always has a `Some` result.  `None` marks a
-    /// deliberately malformed long response.
+    /// deliberately malformed or over-sized response.
     pub fn as_slice(&self) -> Option<&[u8]> {
-        (self.reported_len <= MAX_PHYSICAL_ACCESS_BYTES).then(|| &self.bytes[..self.reported_len])
+        (self.supplied_len == self.reported_len && self.reported_len <= MAX_PHYSICAL_ACCESS_BYTES)
+            .then(|| &self.bytes[..self.reported_len])
     }
 
     /// Returns the stored prefix for diagnostics of a malformed response.
@@ -428,6 +450,7 @@ impl fmt::Debug for PhysicalResponseBytes {
         formatter
             .debug_struct("PhysicalResponseBytes")
             .field("bytes", &self.stored_prefix())
+            .field("supplied_len", &self.supplied_len)
             .field("reported_len", &self.reported_len)
             .finish()
     }
@@ -856,6 +879,15 @@ fn validate_response(
     }
 
     if let PhysicalResponseCompletion::Read(bytes) = completion {
+        if bytes.supplied_len() != bytes.reported_len() {
+            return Err(PhysicalAccessError::Protocol(
+                PhysicalProtocolError::ResponsePayloadLengthMismatch {
+                    reported: bytes.reported_len(),
+                    supplied: bytes.supplied_len(),
+                },
+            ));
+        }
+
         let expected_len = request.width().bytes();
         if bytes.reported_len() != expected_len {
             return Err(PhysicalAccessError::Protocol(
