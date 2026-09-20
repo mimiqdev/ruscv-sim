@@ -13,8 +13,8 @@ This directory preserves superseded plans, completed milestones, historical repo
 - Sprint documents in this directory — historical planning records predating the rolling-plan workflow.
 
 Consult [`../dev-plan.md`](../dev-plan.md) for the sole current milestone contract
-(Milestone A6: Machine-Mode Synchronous Trap Entry and Return) and
+(Milestone A7: Non-Atomic Physical-Access Boundary Migration) and
 [`../architecture/README.md`](../architecture/README.md) for the current target
-architecture. [A5's closeout record](milestones/a5-closeout-record.md) and
-[A5's forwarding record](milestones/a5-forwarding-record.md) record completed
-implementation and post-closeout forwarding.
+architecture. The [post-A7 short-term technical development roadmap proposal](../proposals/post-a7-roadmap.md) is
+Draft technical planning input only; it is not an overall product roadmap and
+does not activate a successor.

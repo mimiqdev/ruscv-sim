@@ -19,13 +19,16 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 
 公开 CLI 目前只有 `run`。GDB 服务器和交互式调试器作为 library API 存在，没有单独的调试 binary。ELF 核心循环按 32 位指令取指；压缩指令、页表翻译和 TLM 外设总线还没有全部接到这条路径。
 
-外部验证已有 [A5 固定选择集证据](docs/verification/a5-capability-assessment.md)：
-ACT4 4.0.0 / Sail 生成的 51 个 RV64I 非陷阱自检 ELF 全部通过公开 CLI。
-该范围采用已批准的 MXLEN 测试适配和自然对齐 EEI，明确排除 8 个成功非对齐访问测试；
-不代表完整 ISA 认证、陷阱/MMU 集成或成功非对齐访问支持。A5 已正式收尾（PR #37
-已合并）。当前合同是已批准的 A6；五个同步陷阱 guest 和诱导故障证据见
-[A6 验收准备记录](docs/verification/a6-capability-assessment.md)，但本次 closeout PR
-仍待独立 review/merge，未启用后继里程碑。
+外部验证已有 [A7 有界能力证据](docs/verification/a7-capability-assessment.md)：
+项目自建 ELF 和 ACT4 选择集各自保持 51 个用例边界；ACT4 仍只是 RV64I
+非陷阱证据，不代表完整 ISA、原子、特权/MMU、中断或 OS 支持。A7 的普通取指和
+整数/浮点 load/store 已接入验证过的 raw physical boundary；AMO/LR/SC 仍是共享
+存储上的兼容性债务，未被认证为完整原子事务。
+
+当前合同是已批准的 A7；其 closeout 交付已合并于
+`c059500a6af20f93569099c4b05ced3364a7703b`，但尚未批准后继合同。后续方向见
+[post-A7 short-term technical development roadmap proposal](docs/proposals/post-a7-roadmap.md)，该文档只是 Draft
+阶段性技术实施规划，不是整体产品路线图，也不替换 `docs/dev-plan.md`。
 
 ## 快速开始
 

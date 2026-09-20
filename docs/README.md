@@ -33,7 +33,9 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Current A7 non-atomic physical-access contract](dev-plan.md) — approved and activated 2026-09-18, following formal A6 acceptance. Fetch and ordinary integer/FP loads/stores are in scope; legacy atomics retain behavior on shared storage/locking as explicit debt, not disabled or certified. Conservative compatibility defaults are approved. Activation merged in PR #47 as `9ee9c5f24c072779f06ce141b3340f953b614442`; the contract remains the sole current technical specification until a successor is approved. [Proposal history](archive/milestones/a7-non-atomic-physical-access-proposal.md).
+- [Current A7 non-atomic physical-access contract](dev-plan.md) — approved and activated 2026-09-18, following formal A6 acceptance. Fetch and ordinary integer/FP loads/stores are in scope; legacy atomics retain behavior on shared storage/locking as explicit debt, not disabled or certified. Conservative compatibility defaults are approved. Activation merged in PR #47 as `9ee9c5f24c072779f06ce141b3340f953b614442`; the A7 closeout delivery is merged at `c059500a6af20f93569099c4b05ced3364a7703b`; the contract remains the sole current technical specification until a successor is approved. [Proposal history](archive/milestones/a7-non-atomic-physical-access-proposal.md).
+
+- [Post-A7 short-term technical development roadmap proposal](proposals/post-a7-roadmap.md) — Draft A7-after technical implementation planning; not an overall product roadmap and does not activate a successor contract.
 
 ## Verification
 
