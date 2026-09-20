@@ -27,8 +27,8 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 
 当前合同是已批准的 A7；其 closeout 交付已合并于
 `c059500a6af20f93569099c4b05ced3364a7703b`，但尚未批准后继合同。后续方向见
-[post-A7 roadmap proposal](docs/proposals/post-a7-roadmap.md)，该文档只是 Draft
-规划输入，不替换 `docs/dev-plan.md`。
+[post-A7 short-term technical development roadmap proposal](docs/proposals/post-a7-roadmap.md)，该文档只是 Draft
+阶段性技术实施规划，不是整体产品路线图，也不替换 `docs/dev-plan.md`。
 
 ## 快速开始
 

@@ -1,4 +1,4 @@
-# Post-A7 Roadmap Proposal
+# Post-A7 Short-Term Technical Development Roadmap Proposal
 
 **Status:** Draft
 
@@ -11,9 +11,17 @@ bound to the recorded A7 implementation head
 `fb6f51c771f32585f1547422c9633379f7ae370b`; the closeout and later documentation
 commits must not be mistaken for a new runtime or ACT4 execution.
 
-**Scope:** post-A7 priority and dependency proposal for the existing ISS toward a
-composable Virtual Platform (VP). No implementation, successor activation, ADR
-change, release, or product commitment is made by this document.
+**Scope:** short-term post-A7 technical development and architecture-implementation
+route for the existing ISS toward a composable Virtual Platform (VP), extending
+through conditional technical follow-ons. This is a staged engineering plan, not
+an overall product roadmap: it does not define the project's final vision, target
+users, complete product phases, commercial goals, or ecosystem strategy. The
+ISS→VP direction is inherited from accepted architecture, not an approval of an
+overall product strategy. “Short-term” describes this planning horizon, not a
+date promise; Stages 7 and 8 remain conditional technical outlook and are not
+compressed into a promised short calendar. No implementation, successor
+activation, ADR change, release, or product commitment is made by this document;
+each future stage still requires its own contract and approval.
 
 ## 1. Decision requested
 
@@ -47,20 +55,21 @@ those labels. A future approved successor must select one bounded objective and
 rewrite `docs/dev-plan.md` through the repository rolling process. Until then,
 A7 remains the sole Current technical contract.
 
-### Product goal and explicit non-goals
+### Technical direction and explicit non-goals
 
-The product goal is an **executable, verifiable single-Hart ISS that can become
-one configuration of a composable VP**: the same Hart semantics should operate
-behind a native platform today and, conditionally, behind richer platform,
-time, debug, and external-kernel adapters later. N=1 is the present ISS baseline;
-it is not a promise of multi-Hart support.
+The technical direction is an **executable, verifiable single-Hart ISS that can
+become one configuration of a composable VP**: the same Hart semantics should
+operate behind a native platform today and, conditionally, behind richer
+platform, time, debug, and external-kernel adapters later. N=1 is the present
+ISS baseline; it is not a promise of multi-Hart support or an overall product
+strategy.
 
 This roadmap does **not** promise Linux boot, an OS, full RV64I/M/A/F/D/C or
 whole-ISA certification, successful misaligned execution, a particular privilege
 profile, multi-Hart, DMA, cache coherence, SystemC support, or a performance
-number. Any of those would require an explicit product decision, compatible
-architecture work, and a separately approved contract. The Linux research note
-is context only, not a target ([`docs/research/linux-boot-requirements.md`](../research/linux-boot-requirements.md)).
+number. Any of those would require an explicit technical/product decision,
+compatible architecture work, and a separately approved contract. The Linux
+research note is context only, not a target ([`docs/research/linux-boot-requirements.md`](../research/linux-boot-requirements.md)).
 
 ### Authority boundary
 
@@ -78,6 +87,11 @@ remain authoritative:
 - [`dev-plan.md`](../dev-plan.md) remains the only Current milestone contract.
 - Archived plans and closeout bodies are historical evidence. They are not a
   backlog to reactivate.
+
+These authorities constrain technical architecture and current scope; they do not
+make this proposal an approved overall product strategy. The Draft remains a
+planning input only: it does not directly activate A8 or any other successor,
+and each selected stage must become a separately approved current contract.
 
 ## 2. Current state: implementation, public integration, and evidence
 
@@ -159,8 +173,8 @@ reset/quiesce/drain behavior while retaining A7's explicit legacy atomic bridge.
 
 **Advantages:** addresses ADR-0001/0003 debt, enables public debug and later
 interrupt/time work, and provides a clean place for unknown-completion recovery.
-It is a credible alternative if the immediate product value is lifecycle and
-observability rather than atomic correctness.
+It is a credible alternative if the immediate engineering value is lifecycle
+and observability rather than atomic correctness.
 
 **Risk/cost:** high structural churn while the physical contract is still
 non-conforming for atomics. If the new Machine owns an incomplete bridge, later
@@ -224,8 +238,9 @@ should not be admitted as the recommended next work before the facility exits.
 Select Candidate 1 as the next successor **only after the user approves its
 profile and compatibility choices**, then Candidate 2, then the independent
 performance-test infrastructure stage. Do not activate any of them from this
-proposal. If product value requires lifecycle first, Candidate 2 is the viable
-alternative; it must carry an explicit atomic debt gate and must not be described
+proposal. If the immediate engineering choice prioritizes lifecycle first,
+Candidate 2 is the viable alternative; it must carry an explicit atomic debt gate
+and must not be described
 as full ADR-0002 convergence. Later feature candidates may be prepared in
 parallel, but their recommended implementation entry waits for the performance
 stage and their own technical prerequisites.
@@ -335,7 +350,7 @@ Stage 1/2 correctness work or their design/test preparation.
 ### Stage 1 — single-Hart physical/atomic convergence (recommended next candidate)
 
 **Target:** converge the selected atomic operations with the accepted physical
-contract while preserving the existing ISS product where compatibility is
+contract while preserving existing ISS behavior where compatibility is
 approved.
 
 **Boundary:** one Hart and one native physical domain; explicit Fetch/Data and
@@ -382,7 +397,8 @@ interrupts/WFI, full A-extension certification, or broad ISA repair.
    exact-head evidence are retained. ACT4 remains separately scoped and does
    not certify A-extension behavior.
 
-**Cost/risk:** high. The compatibility matrix is the principal product risk.
+**Cost/risk:** high. The compatibility matrix is the principal compatibility
+risk.
 
 ### Stage 2 — Hart facts and safe N=1 Machine lifecycle
 
@@ -432,7 +448,7 @@ checkpoint format, Debug Mode, and a new CLI result taxonomy without approval.
 
 **Target:** deliver a repository-owned, repeatable performance test facility that
 later implementation PRs can run unchanged against the public execution paths.
-This is a test/evidence product, not a runtime optimization project.
+This is a test/evidence deliverable, not a runtime optimization project.
 
 **Scheduling role:** Stage 3 is an explicit user-selected implementation-entry
 gate after Stage 1 and Stage 2. It is not a hard technical dependency asserted

@@ -16,7 +16,7 @@ Milestone A7 — Non-Atomic Physical-Access Boundary Migration.
 5. Promote the next milestone into `docs/dev-plan.md` only after it is separately
    approved. A completed A7 closeout record does not invent a successor; until
    that decision, `docs/dev-plan.md` remains the sole Current technical contract.
-   The [post-A7 roadmap proposal](../../proposals/post-a7-roadmap.md) is Draft planning input, not a successor.
+   The [post-A7 short-term technical development roadmap proposal](../../proposals/post-a7-roadmap.md) is Draft technical planning input, not an overall product roadmap or successor.
 
 ## Records
 

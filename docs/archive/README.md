@@ -15,5 +15,6 @@ This directory preserves superseded plans, completed milestones, historical repo
 Consult [`../dev-plan.md`](../dev-plan.md) for the sole current milestone contract
 (Milestone A7: Non-Atomic Physical-Access Boundary Migration) and
 [`../architecture/README.md`](../architecture/README.md) for the current target
-architecture. The [post-A7 roadmap proposal](../proposals/post-a7-roadmap.md) is
-Draft planning input only; it does not activate a successor.
+architecture. The [post-A7 short-term technical development roadmap proposal](../proposals/post-a7-roadmap.md) is
+Draft technical planning input only; it is not an overall product roadmap and
+does not activate a successor.
