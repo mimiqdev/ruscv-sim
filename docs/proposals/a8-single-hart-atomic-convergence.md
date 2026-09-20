@@ -92,12 +92,15 @@ operative `funct5` table (identical across the cited editions):
 | 01000 | AMOOR | AMOOR.W | AMOOR.D |
 | 01100 | AMOAND | AMOAND.W | AMOAND.D |
 | 10000 | AMOMIN | AMOMIN.W | AMOMIN.D |
-| 10001 | AMOMINU | AMOMINU.W | AMOMINU.D |
 | 10100 | AMOMAX | AMOMAX.W | AMOMAX.D |
-| 10101 | AMOMAXU | AMOMAXU.W | AMOMAXU.D |
+| 11000 | AMOMINU | AMOMINU.W | AMOMINU.D |
+| 11100 | AMOMAXU | AMOMAXU.W | AMOMAXU.D |
 
-All other `funct5` values in the AMO major opcode are reserved encodings.
-`aq` is bit 26 and `rl` is bit 25. **Spec-mandated:** the decode identity
+All other `funct5` values in the AMO major opcode are reserved encodings
+(this includes `10001` and `10101`, which an earlier revision of this Draft
+mis-listed as AMOMINU/AMOMAXU; they are reserved, and the review that caught
+this is why T3 requires an exhaustive decode matrix over all 32 `funct5`
+values). `aq` is bit 26 and `rl` is bit 25. **Spec-mandated:** the decode identity
 above; W/D width semantics; AMO/LR `rd` receives the old value sign-extended
 for W and full-width for D; SC `rd` receives 0 on success and a nonzero value
 on failure; AMO arithmetic for W uses the low 32 bits of `rs2` and writes a
@@ -133,8 +136,8 @@ the roadmap.
   `01010 → exec_amomax`, `01011 → exec_amomaxu`, `00100 → exec_amoxor`
   (correct), `00010` → LR-or-SC selected by `rs2 == 0`, `00011 → exec_sc`
   (dword fallback). Every other `funct5` — including the spec encodings
-  AMOADD (`00000`), AMOAND (`01100`), AMOMIN (`10000`),
-  AMOMINU (`10001`), AMOMAX (`10100`), AMOMAXU (`10101`) — returns
+  AMOADD (`00000`), AMOAND (`01100`), AMOMIN (`10000`), AMOMAX (`10100`),
+  AMOMINU (`11000`), AMOMAXU (`11100`) — returns
   `ExecuteError::InvalidOperation`, which
   `src/core/mod.rs::classify_execute_error` maps for `Opcode::Amo` to
   `SimulatorFailure` with `UnsupportedLegalInstruction` ("legal extension
@@ -146,10 +149,15 @@ the roadmap.
 * LR width is reversed: within `funct5 = 00010`, `rs2 == 0`, the W encoding
   (`funct3 = 010`, matched as `Funct3::Slt`) selects `exec_lr` (64-bit
   `read_dword`, no sign extension), and the D encoding (`funct3 = 011`)
-  selects `exec_lr_w` (32-bit `read_word`, sign-extended). SC is likewise
-  reversed: W selects `exec_sc` (64-bit `write_dword`) and D selects
-  `exec_sc_w` (32-bit `write_word`). The `00011` fallback is always the
-  64-bit `exec_sc`, so a real SC.W performs a 64-bit write.
+  selects `exec_lr_w` (32-bit `read_word`, sign-extended). SC dispatch has
+  two distinct paths that must not be conflated: (a) the real SC encodings
+  `funct5 = 00011` are unconditionally dispatched to `exec_sc`, which writes
+  a 64-bit dword — so real SC.D (`funct3 = 011`) already writes the correct
+  width while real SC.W (`funct3 = 010`) wrongly writes 8 bytes; and (b) a
+  malformed LR encoding (`funct5 = 00010`, `rs2 != 0`) is dispatched as SC
+  with reversed widths — `funct3 = 010` selects `exec_sc` (64-bit write)
+  and `funct3 = 011` selects `exec_sc_w` (32-bit write). Only path (b)'s
+  `funct3 = 011` case ever performs a 32-bit SC write.
 * Consequences verified in source/tests: a real AMOSWAP encoding executes
   AMOADD arithmetic (`amo.rs` has no swap helper at all); the D encoding of
   every AMO performs a 32-bit RMW and a sign-extended 32-bit `rd`
@@ -262,21 +270,28 @@ The Hart owns: decode/legality (reserved `funct5`, LR `rs2 != 0` → illegal
 instruction; `funct3` outside {2,3} already illegal via
 `is_illegal_encoding`); effective/original address, privilege, alignment
 precheck (W→4, D→8; misaligned → load/store-address-misaligned trap with no
-physical request, exactly the current precheck); AMO arithmetic selection and
-`rd` results (sign-extended W, full D, `x0` suppression); `aq`/`rl`
+physical request, exactly the current precheck); **the AMO arithmetic
+implementation** — one Hart-owned module for the read-modify-write
+arithmetic, signed/unsigned comparison, and result extension (sign-extended
+W, full D, `x0` suppression) — applied inside the indivisible envelope
+(§5.2); `aq`/`rl`
 acceptance and their profile strength; per-Hart reservation state and the
 architectural SC result; trap mapping (target rejection → load access fault
 cause 5 for LR, store/AMO access fault cause 7 for SC/AMO, original guest
 address in `mtval`); retirement and accounting (an atomic instruction is one
 Hart turn; no new time consumer).
 
-The physical domain owns: the indivisible envelope (AMO read-modify-write as
-one event; LR as one atomic-category read; SC success as one atomic-category
-write); complete-span/width/payload validation before mutation; exactly-once
-target effects; rejection with **no partial effect** — no RAM byte change, no
+The physical domain owns: the indivisible envelope (the one critical-section
+read-transform-write event for an AMO; LR as one atomic-category read; SC
+success as one atomic-category write); complete-span/width/payload
+validation before mutation; exactly-once target effects; rejection with
+**no partial effect** — no RAM byte change, no
 UART register/FIFO change, no HTIF callback, no exit signal; and visibility of
 committed competing writes within the domain so the Hart can invalidate
-reservations. The reservation authority is **not** moved to the Platform:
+reservations. The domain executes the atomic critical section and the
+physical effects; it does **not** implement ISA arithmetic or comparison
+(ADR-0002 §6 keeps those in the Hart — see §5.2 M1). The reservation
+authority is **not** moved to the Platform:
 there is exactly one reservation store, per-Hart, in `CoreState`.
 
 ### 5.2 Envelope interface mechanism (candidates, recommendation flagged)
@@ -286,23 +301,36 @@ All candidates extend the existing validated port
 second RAM, or a second lock domain, and none represents an AMO/SC as two
 ordinary visible accesses.
 
-* **M1 (recommended) — semantic-operation envelope, Hart-owned condition.**
-  One `PhysicalRequest` with an `Atomic` category carries `{paddr, width
-  (4|8), operation: Swap|Add|And|Or|Xor|Min|MinU|Max|MaxU|LoadReserved|
-  StoreConditional, operand bytes (AMO/SC), aq/rl bits (informational)}`.
-  Responses: AMO/LR return the exact old bytes; SC returns a conditional
-  status (success performed / conditional failure, no write) and no read
-  value. The **Hart** decides SC validity from its own reservation state and
-  issues the SC envelope only when its reservation covers the span; a
-  conditional failure produces no physical request at all. AMO and SC-success
-  indivisibility is the single envelope call under the port lock;
-  LR is one atomic-category read. Rationale: keeps reservation authority
-  entirely Hart-side (no duplicate conditional state in the domain, unlike a
-  domain-side reservation token), matches ADR-0002 §6's "reservation token …
-  implementation mechanism" deferral, and is the smallest change to the A7
-  seam: `step_outcome` already holds the data-port lock across the executor
-  call. "Two ordinary accesses wrapped as atomic" is structurally impossible:
-  AMO is one request, SC is one write request, LR is one read request.
+* **M1 (recommended) — indivisible critical-section envelope with a
+  Hart-owned transform.** An atomic-category `PhysicalRequest` carries
+  `{paddr, width (4|8), kind: RMW | LoadReserved | StoreConditional,
+  aq/rl bits (informational)}`; an RMW additionally carries the operand
+  bytes and **the Hart-supplied pure transform** — one function, produced by
+  the single Hart-owned AMO arithmetic module (swap/add/and/or/xor/min/
+  minu/max/maxu with W/D extension rules), mapping old bytes to new bytes.
+  The backend executes exactly one locked critical section: read the span,
+  apply the Hart-supplied transform, write the result, then release; the
+  response returns the exact old bytes (RMW/LR) or a conditional status
+  (SC). The transform's concrete representation (closure, descriptor
+  interpreted by Hart-owned code, or equivalent) is a T1 mechanism choice —
+  the contract requires only that the arithmetic implementation exists
+  once, in the Hart layer, and is the same for every backend, so targets
+  never implement or duplicate ISA arithmetic (ADR-0002 §6). The **Hart**
+  decides SC validity from its own reservation state and issues the SC
+  envelope only when its reservation covers the span; a conditional failure
+  produces no physical request at all. Indivisibility is the backend's own
+  critical section spanning read→transform→write: no competing initiator
+  can enter it, and the intermediate read is never exposed as an ordinary
+  observable access. Rationale: keeps both reservation authority and
+  arithmetic authority entirely Hart-side (no duplicate conditional state
+  and no per-backend ISA semantics, unlike a domain-side reservation token
+  or a target-side operation interpreter), matches ADR-0002's general
+  implementation-mechanism deferral (envelope encoding, reservation token,
+  backend primitive), and is the
+  smallest change to the A7 seam: `step_outcome` already holds the
+  data-port lock across the executor call. "Two ordinary accesses wrapped
+  as atomic" is structurally impossible: AMO is one critical-section
+  transaction, SC-success is one write request, LR is one read request.
 * **M2 — conditional-context envelope.** The SC request carries an opaque
   Hart reservation token; the target validates it against a domain-side
   per-initiator epoch before writing. Rejected: for a single-Hart domain this
@@ -310,6 +338,13 @@ ordinary visible accesses.
   fact), adds state the domain must reset, and still needs Hart-side profile
   rules for granule/fault cases. It becomes attractive only with future
   multi-Hart/DMA scope, where the domain must arbitrate anyway.
+* **M2b — target-side operation interpreter.** The envelope carries an ISA
+  operation enum and each backend implements the RMW arithmetic itself.
+  Rejected: it places ADR-0002 §6's Hart-owned arithmetic and
+  signed/unsigned comparison into every target, inviting per-backend
+  divergence (exactly the mis-coded-table class of defect) and requiring N
+  arithmetic parity proofs instead of one. M1 keeps one Hart-owned
+  implementation by construction.
 * **M3 — typed-pair emulation under one lock.** Keep two typed calls but hold
   the domain lock across both. Rejected as the *contract*: it is exactly the
   ADR-0002-rejected read-then-write exposure; lock coverage is a
@@ -433,14 +468,14 @@ disabled wholesale.
 | C1 | `funct5=00000` AMOADD | `SimulatorFailure` (unsupported legal instruction) | Retires with correct AMOADD.W/D | Real-toolchain guests currently fail; unlocked. New tests. |
 | C2 | `funct5=00001` AMOSWAP | Executes **AMOADD** arithmetic and retires | Executes AMOSWAP.W/D (rd=old, memory=rs2) | Repo-encoded fixtures (`amo_test.rs` direct helper calls unaffected); characterization row `amoadd.w=…` flips semantics. **Result change.** |
 | C3 | `funct5=00100` AMOXOR | Correct word RMW | Correct W/D RMW | D result changes from word/sign-extended to full 64-bit. |
-| C4 | `funct5=01100/10000/10001/10100/10101` (spec AMOAND/MIN/MINU/MAX/MAXU) | `SimulatorFailure` (unsupported legal instruction) | Retire with correct W/D operations | Real-toolchain guests currently fail; unlocked. New tests. |
+| C4 | `funct5=01100/10000/10100/11000/11100` (spec AMOAND/MIN/MAX/MINU/MAXU) | `SimulatorFailure` (unsupported legal instruction) | Retire with correct W/D operations | Real-toolchain guests currently fail; unlocked. New tests. |
 | C5 | `funct5=01000` (spec AMOOR) | Executes **AMOMIN** arithmetic (wrong operation) and retires | Correct AMOOR.W/D | **Result change.** |
 | C6 | `funct5=00110/00111/01001/01010/01011` (unassigned values) | Wrong-op successes (`00110→AMOOR`, `00111→AMOAND`, `01001→AMOMINU`, `01010→AMOMAX`, `01011→AMOMAXU`) | Illegal-instruction trap (reserved encodings) | Only programs using the repo's own mis-numbered encodings; enumerated fixtures flip. **Result change.** |
 | C7 | LR.W (`00010`,`rs2=0`,`funct3=010`) | 64-bit read, no reservation-width record; LR.W at addr≡4 (mod 8) access-faults | 4-byte read, `rd` sign-extended, reserves 4-byte span | Fixtures flip; the 4-mod-8 access-fault artifact disappears. **Result change.** |
 | C8 | LR.D (`00010`,`011`) | 32-bit read sign-extended | 8-byte read, full `rd` | **Result change.** |
-| C9 | SC.W (`00011`,`010` and the `00010`+`rs2!=0` arm) | 64-bit write (fallback dword) | 4-byte conditional write, `rd=1` on failure | Includes the HTIF base+4 dword callback row. **Result change.** |
-| C10 | SC.D (`00011`,`011`; also `00010`+`rs2!=0`+`011`) | 32-bit write (reversed arm) | 8-byte conditional write | **Result change.** |
-| C11 | LR with `rs2!=0` (`00010`) | Executes SC | Illegal instruction (reserved) | Repo-encoded fixtures only. |
+| C9 | Real SC.W (`00011`,`funct3=010`) | 64-bit dword write (unconditional `exec_sc` fallback) | 4-byte conditional write, `rd=1` on failure | Includes the HTIF base+4 dword callback row. **Result change (width).** |
+| C10 | Real SC.D (`00011`,`funct3=011`) | 64-bit dword write — the width is already correct via the same fallback | 8-byte conditional write (same width; only the reservation/condition rules of C13–C16 change) | Width unchanged; condition semantics change. |
+| C11 | Malformed LR encodings (`00010` with `rs2!=0`: `funct3=010`→64-bit write, `funct3=011`→32-bit write) | Execute SC (reversed-width helpers) | Illegal-instruction trap (reserved encoding) | Repo-encoded fixtures only; no A7 fixture exercises these encodings — new T3 tests cover the transition. |
 | C12 | `aq`/`rl` | Parsed, ignored | All four combos legal; documented no-op strength | No observable change for in-scope single-Hart programs. |
 | C13 | SC no-reservation / span not covered | Retires, `rd=1`, no write | Same (`rd=1`, no physical request) | Unchanged. |
 | C14 | SC success | `rd=0`, write, reservation cleared | Same; reservation keyed per-Hart on port paddr | Unchanged for well-formed single-core guests. |
@@ -511,9 +546,9 @@ Missing/skipped required tools block acceptance.
 | Task / dependency | Deliverable and checks | Command / exit criterion |
 | --- | --- | --- |
 | T0 — fixture reclassification ledger and baseline (no behavior change) | Commit `docs/verification/a8-fixture-reclassification.md` mapping every A7 atomic fixture row to **keep / flip / retire / relabel** with the new expected value and the approving §6 row; add `tests/a8_atomic_baseline.rs` asserting the verified old behavior at the unchanged code (dispatch table, LR/SC width reversal, global reservation rows) so each later flip is a diff against an executable baseline. | `cargo test --test a8_atomic_baseline --test a7_migration_characterization --test a7_legacy_atomic_compat --test amo_test`; exit: ledger complete, baseline green, no unresolved classification. |
-| T1 — atomic envelope vocabulary, after T0 | Extend `src/physical.rs` with the atomic category, operation descriptors, operand/result bytes, conditional status, validation and response binding; update the module doc that today denies an atomic category. `tests/a8_atomic_contract.rs`: widths 4/8 only, payload rules, all operations, binding/completion validation, single-backend-call, unknown completion terminal with no retry, malformed envelope rejection — all at the vocabulary level without targets. | `cargo test --test a8_atomic_contract --test a7_physical_contract`; exit: envelope taxonomy complete; no ordinary read/write pair can represent an AMO/SC; A7 non-atomic contract tests unchanged. |
-| T2 — native targets, after T1 | RAM atomic envelope: one `transact` per operation, old bytes exact, exactly-once effect, complete-span/width validation, no partial write; UART/HTIF reject the atomic category pre-mutation. `tests/a8_atomic_targets.rs`: success/negative spans, overflow, unsupported width/category, rejection leaves RAM/registers/FIFO/callback/exit unchanged and fires no callback; a recording spy target proves **one target-visible event** per AMO/SC and that a competing reader view never observes an intermediate value; lock-poison → host failure. | `cargo test --test a8_atomic_targets --test a7_native_targets --test memory_bounds --test executor --test peripheral_tests`; exit: native envelope + rejection semantics proven; ordinary native behavior unchanged. |
-| T3 — Hart dispatch, reservation, writers, after T2 | Rewrite `execute_amo` per §5.3 (spec table, AMOSWAP, W/D, reserved → illegal); per-Hart reservation in `CoreState` with §5.4 profile (key/span/consume/fault-retain/reset/reload); envelope issue via the data port for port-configured cores; invalidation from W1–W3 committed overlapping writes; typed compatibility route on the old constructor sharing the reservation state; remove `GLOBAL_RESERVATION`/`clear_reservation`. `tests/a8_hart_atomic.rs`: decode matrix incl. every reserved `funct5` and LR-`rs2!=0`; W/D results and sign extension; `rd=x0`; alignment precheck with zero physical requests; aq/rl combos retire; SC success/no-reservation/span-not-covered/consume-on-both; faulting SC retains; reset/reload clear; two-Core reservation isolation (test-object evidence, labelled not multi-Hart support); writer table W1–W3 negative/positive; typed-adapter route labeled non-conforming; no re-entrancy. | `cargo test --test a8_hart_atomic --test a8_atomic_baseline --test amo_test --test a7_migration_characterization --test a7_legacy_atomic_compat --test a6_task3_core_trap_test --test trap_test --test csr_access_test --test mret_conformance_test`; `cargo test --lib isa::rv64a`; exit: flipped fixtures assert new expectations per ledger; unchanged rows stay green; single reservation authority evidenced. |
+| T1 — atomic envelope vocabulary, after T0 | Extend `src/physical.rs` with the atomic category: RMW/LoadReserved/StoreConditional request kinds, the Hart-supplied pure-transform representation (§5.2 M1), operand/result bytes, conditional status, validation and response binding; update the module doc that today denies an atomic category. `tests/a8_atomic_contract.rs`: widths 4/8 only, payload rules, transform application for every AMO operation through the one Hart-owned arithmetic module, binding/completion validation, single-backend-call, unknown completion terminal with no retry, malformed envelope rejection — all at the vocabulary level without targets. | `cargo test --test a8_atomic_contract --test a7_physical_contract`; exit: envelope taxonomy complete; no ordinary read/write pair can represent an AMO/SC; A7 non-atomic contract tests unchanged. |
+| T2 — native targets, after T1 | RAM executes the critical-section primitive — one locked read → Hart-supplied transform → write transaction with exact old bytes, exactly-once effect, complete-span/width validation, no partial write — and implements no ISA arithmetic; UART/HTIF reject the atomic category pre-mutation. `tests/a8_atomic_targets.rs`: success/negative spans, overflow, unsupported width/category, rejection leaves RAM/registers/FIFO/callback/exit unchanged and fires no callback; a recording spy target proves **one locked target-visible transaction** per AMO/SC whose internal read and write are not separately observable by a competing reader view; an arithmetic-parity test drives two different conforming backends through the same Hart transform and asserts byte-identical results for every operation/operand pattern; a recorded source/route audit shows no backend or target module references ISA operation semantics; lock-poison → host failure. | `cargo test --test a8_atomic_targets --test a7_native_targets --test memory_bounds --test executor --test peripheral_tests`; exit: native critical-section + rejection semantics proven, arithmetic ownership stays Hart-side, ordinary native behavior unchanged. |
+| T3 — Hart dispatch, reservation, writers, after T2 | Rewrite `execute_amo` per §5.3 (spec table, AMOSWAP, W/D, reserved → illegal); per-Hart reservation in `CoreState` with §5.4 profile (key/span/consume/fault-retain/reset/reload); envelope issue via the data port for port-configured cores; invalidation from W1–W3 committed overlapping writes; typed compatibility route on the old constructor sharing the reservation state; remove `GLOBAL_RESERVATION`/`clear_reservation`. `tests/a8_hart_atomic.rs`: **an exhaustive decode matrix enumerating all 32 `funct5` values × W/D** — every assigned encoding (incl. AMOMINU `11000`, AMOMAXU `11100`) retires its named operation and every reserved value (incl. the previously mis-listed `10001`/`10101`) raises illegal instruction — plus LR-`rs2!=0` malformed encodings; W/D results and sign extension; `rd=x0`; alignment precheck with zero physical requests; aq/rl combos retire; SC success/no-reservation/span-not-covered/consume-on-both; faulting SC retains; reset/reload clear; two-Core reservation isolation (test-object evidence, labelled not multi-Hart support); writer table W1–W3 negative/positive; typed-adapter route labeled non-conforming; no re-entrancy. | `cargo test --test a8_hart_atomic --test a8_atomic_baseline --test amo_test --test a7_migration_characterization --test a7_legacy_atomic_compat --test a6_task3_core_trap_test --test trap_test --test csr_access_test --test mret_conformance_test`; `cargo test --lib isa::rv64a`; exit: flipped fixtures assert new expectations per ledger; unchanged rows stay green; single reservation and arithmetic authority evidenced. |
 | T4 — facade bridge exit and public equivalence, after T3 | Standard facades issue envelopes only; mixed ordinary+atomic guests identical across CLI/`load_and_run`/flat within documented configuration differences; host control writers (W4–W7) documented and observable behavior asserted; A6 budget/exit/observation regressions. `tests/a8_public_atomic_equivalence.rs`: mixed ELF fixtures, exit-after-atomic ordering (retire before platform exit), zero/exact/final-slot budgets, rejected atomic produces no exit, artifacts/reload differences retained, commit log no-refetch unchanged. New project-authored bare-metal atomic guests (LR/SC loop, AMOSWAP/ADD/MIN/MAX W/D, aq/rl set, SC-after-store failure, atomic near RAM end, atomic+tohost exit) added to the fresh-build guest suite. | `cargo test --test a8_public_atomic_equivalence --test a7_public_equivalence --test public_behavior --test a4_integrated_equivalence --test a4_run_control --test executor --test commits_test --test cli_test`; exit: no typed atomic call from standard facades (route audit recorded), equivalence within documented differences, new guests fresh-compiled and passing. |
 | T5 — evidence and bounded closeout, after T0–T4 | Full gate below; fresh project ELF suite = the retained 51 guests **plus** the new atomic guests with a recorded new total (the historical 51 stays recorded as its own identity); frozen ACT4 51-case selection **unchanged and separately recorded** — no A-extension claim, no merged counts; residual-debt ledger updated (MMU/TLM/performance/Stage 2 items). | See commands below; exit: exact-head evidence complete, no unapproved compatibility delta beyond §6's approved rows, §7.3 statement only. |
 
@@ -561,10 +596,18 @@ values):
   write no-invalidation), `sc.write-fault=…` (retain-on-fault, relabeled),
   `lr->host-write_mem->sc=…` under P1 (relabel: documented control writer),
   `ordinary_store_then_legacy_amo_and_lr_share_one_migrated_domain`
-  (same-domain visibility both directions), `rejected_ordinary_write_and_faulting_sc_preserve_characterized_reservation`
-  (retain half), `legacy_write_is_visible_to_raw_load_fetch_signature_and_host_inspection`,
+  (same-domain visibility both directions),
+  `rejected_ordinary_write_and_faulting_sc_preserve_characterized_reservation`
+  (retain half),
+  `legacy_write_is_visible_to_raw_load_fetch_signature_and_host_inspection`,
   `legacy_lock_reentry_child` (non-reentrancy, adapted to the envelope path),
   `amo_test.rs` helper-level tests (typed compatibility route).
+* **New coverage with no A7 fixture (verified):** no A7 fixture exercises a
+  real SC.D (`00011`,`funct3=011`), a malformed LR encoding
+  (`00010`,`rs2!=0`), AMOMINU (`11000`) or AMOMAXU (`11100`). Their old→new
+  transitions (C10, C11, C4) are therefore covered only by the new T3
+  exhaustive decode-matrix and width tests, and the T0 ledger records that
+  no existing expectation changes for them beyond those rows.
 * **Historical evidence untouched:** the recorded A7 transcripts, closeout,
   and verification records stay as-is; reclassification happens in new/edited
   test files at the A8 implementation head with the ledger citing them.
