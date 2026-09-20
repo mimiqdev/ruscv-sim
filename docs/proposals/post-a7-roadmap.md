@@ -26,14 +26,22 @@ choice, not a mechanical continuation of an old backlog. This proposal recommend
 2. build the **Hart fact/observation and safe N=1 Machine lifecycle** boundary
    immediately after, with limited design/test preparation able to proceed in
    parallel;
-3. only then integrate Hart virtual-memory/privilege protection and
-   Platform-input interrupt/time behavior as separately bounded candidates that
-   may run in parallel once their shared prerequisites are met;
-4. wire public debug through the same lifecycle and fact boundary; and
-5. defer native-to-TLM/SystemC, DMI, and especially multi-Hart/DMA/coherence until
-   the preceding single-Hart contracts have evidence.
+3. deliver an **independent performance-test infrastructure stage** after that
+   boundary, with runnable public workloads, correctness oracles, layered
+   measurements, reproducible metadata, retained baselines, and CI/PR comparison;
+4. admit subsequent MMU/privilege, interrupt/time, debug, and external-transport
+   implementation candidates only after that performance stage exits; and
+5. defer especially multi-Hart/DMA/coherence until the preceding single-Hart
+   contracts have evidence.
 
-This is a recommended order, not an approved schedule. It deliberately does not
+The performance stage is a user-selected sequencing and acceptance gate, not an
+ADR technical dependency. It does not block Stage 1/2 correctness work or their
+fixture/design preparation; it does block entry into the recommended later
+integrated-feature stages until later PRs have a facility they can run. Existing
+benches and the A7 observations remain useful evidence and preparation, but they
+cannot substitute for this independent stage.
+
+This is a recommended order, not an activated schedule. It deliberately does not
 name the next work A8/A9 or assume that composition must precede interrupts under
 those labels. A future approved successor must select one bounded objective and
 rewrite `docs/dev-plan.md` through the repository rolling process. Until then,
@@ -193,16 +201,34 @@ access-kind fault mapping, and avoid treating ELF base subtraction as
 translation. Without Candidate 1/2's physical and outcome boundaries, the
 integration would likely create another special path.
 
+### Required follow-on gate — independent performance-test infrastructure
+
+This is not an alternative to Candidate 1 or Candidate 2. It is the required
+follow-on stage in the recommended route after the selected atomic and N=1
+lifecycle foundations. It is deliberately a separate deliverable rather than a
+horizontal observation task: a later implementation PR must be able to invoke
+one stable command, validate work correctness, and compare a structured result
+to a retained baseline without inventing a new benchmark for each feature.
+
+Its entry requires the Stage 1 selected atomic route and Stage 2 public lifecycle/
+fact boundary, plus at least one representative workload already runnable on
+the public path. Its exit is a **recommended implementation-entry condition** for
+later integrated MMU, interrupt/time, debug, TLM/SystemC/DMI, and other feature
+stages. That condition is scheduling policy requested here, not a hard dependency
+asserted by ADR-0001 through ADR-0004: component design, fixture selection, and
+isolated test preparation may proceed earlier, but later integrated candidates
+should not be admitted as the recommended next work before the facility exits.
+
 ### Recommendation
 
 Select Candidate 1 as the next successor **only after the user approves its
-profile and compatibility choices**. Allow design/test preparation for Candidate
-2 in parallel, but do not activate either from this proposal. If product value
-requires lifecycle first, Candidate 2 is the viable alternative; it must carry
-an explicit atomic debt gate and must not be described as full ADR-0002
-convergence. Candidates 3 and 4 are later, independently bounded choices, with
-Candidate 4 and Candidate 3 potentially parallel after the shared Machine and
-Hart-fact foundations.
+profile and compatibility choices**, then Candidate 2, then the independent
+performance-test infrastructure stage. Do not activate any of them from this
+proposal. If product value requires lifecycle first, Candidate 2 is the viable
+alternative; it must carry an explicit atomic debt gate and must not be described
+as full ADR-0002 convergence. Later feature candidates may be prepared in
+parallel, but their recommended implementation entry waits for the performance
+stage and their own technical prerequisites.
 
 ## 4. Recommended dependency graph
 
@@ -212,46 +238,41 @@ contract.
 ```text
 Recorded A7 ordinary raw path + A7 negative/equivalence evidence
         │
-        ├───────────────┐
-        ▼               ▼
-Performance/evidence  Atomic profile decision
-baseline gate         (widths, aq/rl, reservation, host-writer policy)
-        │               │
-        │               ▼
-        │       Atomic operation envelope
-        │               │
-        │               ▼
-        │       Per-Hart reservation + writer visibility
-        │               │
-        │               ▼
-        │       Legacy atomic bridge exit
-        │               │
-        └───────┬───────┘
-                ▼
-       Hart fact/observation plane
-                │
-                ▼
-       N=1 Machine/Platform composition
-       + install/reset/quiesce/drain/
-         unknown-completion recovery
-          │              │
-          │              ├───────────────┐
-          ▼              ▼               ▼
-  MMU/privilege/PMP   Interrupt/time/   Public debug
-  + page walks/A-D    WFI/counters      adapter
-          │              │               │
-          └──────┬───────┴───────┬───────┘
-                 ▼               │
-       Native ↔ Rust TLM parity  │
-       ↔ blocking SystemC/FFI    │
-                 │               │
-                 ▼               ▼
-              DMI with invalidation and
-              lifecycle/observation hooks
-                         │
-                         ▼
-          Conditional multi-Hart/DMA/inbound-master
-          ordering, coherence, reservation and replay contract
+        ▼
+Atomic profile decision
+(widths, aq/rl, reservation, host-writer policy)
+        │
+        ▼
+Atomic operation envelope
+        │
+        ▼
+Per-Hart reservation + writer visibility
+        │
+        ▼
+Legacy atomic bridge exit
+        │
+        ▼
+Hart fact/observation plane
+        │
+        ▼
+N=1 Machine/Platform composition
++ install/reset/quiesce/drain/
+  unknown-completion recovery
+        │
+        ▼
+Stage 3: independent performance-test infrastructure
+[user scheduling gate; not an ADR technical dependency]
+        │
+        ├───────────────┬────────────────┬─────────────────┐
+        ▼               ▼                ▼                 ▼
+Stage 4 MMU/      Stage 5 interrupt/ Stage 6 public    Stage 7 native ↔
+privilege/PMP     time/WFI/counters debug wiring       Rust TLM ↔ SystemC/DMI
++ page walks/A-D
+        │               │                │                 │
+        └───────────────┴────────────────┴─────────────────┘
+                                ▼
+                Stage 8 conditional multi-Hart/DMA/
+                inbound-master ordering/coherence/replay
 ```
 
 ### Hard prerequisites and parallel opportunities
@@ -264,23 +285,35 @@ baseline gate         (widths, aq/rl, reservation, host-writer policy)
   physical result/unknown semantics; image installation ownership; observation
   delivery boundary; and a drain proof that can distinguish `DrainComplete`
   from `NoProgress`.
-- **Hard before MMU integration:** one physical route for instruction/data/PTE/A-D
-  effects, selected privilege/profile rules, original-VA fault mapping, and TLB
-  invalidation rules. PMP is not satisfied by the existing configuration field.
-- **Hard before interrupt/time integration:** Machine exchange, Platform input
-  admission, Hart/profile sampling point, `mcycle`/`minstret` ownership, and a
-  WFI waiting state that the Machine does not invent.
-- **Hard before public debug:** a quiescent Machine control path and stable Hart
-  inspection/stop facts. Breakpoint/watchpoint managers can be unit-tested in
-  parallel, but public mutation cannot bypass Platform routing or in-flight work.
-- **Hard before TLM/SystemC/DMI:** stable raw/atomic transaction and fault
-  semantics, delay ownership, lifecycle drain, and observation/invalidation
+- **Hard before Stage 3 performance infrastructure:** the selected public raw
+  and atomic routes from Stage 1, the public lifecycle/fact boundary from Stage 2,
+  and at least one representative workload that already runs on those paths.
+  This is a delivery prerequisite for the test facility itself, not an ADR claim
+  that performance infrastructure is technically required by MMU or interrupts.
+- **Recommended entry gate for later integrated candidates:** Stage 3 must exit
+  before Stage 4--8 implementation candidates are admitted in the recommended
+  route. This is the user's scheduling decision; it does not block Stage 1/2
+  correctness, component work, or fixture/design preparation.
+- **Technical hard before MMU integration:** one physical route for
+  instruction/data/PTE/A-D effects, selected privilege/profile rules, original-VA
+  fault mapping, and TLB invalidation rules. PMP is not satisfied by the existing
+  configuration field.
+- **Technical hard before interrupt/time integration:** Machine exchange, Platform
+  input admission, Hart/profile sampling point, `mcycle`/`minstret` ownership, and
+  a WFI waiting state that the Machine does not invent.
+- **Technical hard before public debug:** a quiescent Machine control path and
+  stable Hart inspection/stop facts. Breakpoint/watchpoint managers can be
+  unit-tested in parallel, but public mutation cannot bypass Platform routing or
+  in-flight work.
+- **Technical hard before TLM/SystemC/DMI:** stable raw/atomic transaction and
+  fault semantics, delay ownership, lifecycle drain, and observation/invalidation
   boundaries. Blocking transport is the first viable adapter; non-blocking
   transport is not a prerequisite.
-- **Parallel work:** performance baseline design and fixture preparation can
-  begin before any implementation candidate; component-level MMU, peripheral,
-  TLM, and debug tests can be maintained independently; Candidate 3 and 4
-  integration work may be parallel after Candidate 2's shared prerequisites.
+- **Parallel work:** workload inventory, fixture selection, schema/command design,
+  and existing-bench retention can begin during Stages 1/2; component-level MMU,
+  peripheral, TLM, and debug tests can be maintained independently. Later feature
+  design and isolated tests may proceed in parallel, but their integrated
+  implementation entry remains gated by Stage 3.
 - **Not a prerequisite claim:** Linux, an external OS, multi-Hart, and DMA are
   not hidden reasons to pull later stages forward.
 
@@ -289,37 +322,15 @@ baseline gate         (widths, aq/rl, reservation, host-writer policy)
 These stages describe bounded future candidates. They are not approved milestone
 contracts; each needs its own scope, acceptance, and exact-head evidence.
 
-### Stage 0 — evidence and performance gate (cross-cutting, not a successor)
+### Preparation before Stage 1 — fixture and measurement design (not a stage)
 
-**Target:** make later comparisons reproducible without claiming a performance
-threshold.
-
-**Boundary:** measurement harnesses and evidence retention only; no runtime
-optimization in this roadmap task.
-
-**Non-goals:** changing `Runtime`, adding a fast path, or treating the A7 ratio
-as a regression gate.
-
-**Deliverables:**
-
-- one fixed guest fixture and toolchain/container identity for public
-  `load_and_run` measurements;
-- separated load/ELF-install, preloaded execute, and full public-run timings;
-- typed legacy, A7 raw ordinary, and (when available) atomic route cases;
-- observation disabled versus enabled/logged comparisons with the same result
-  oracle;
-- retained samples, distributions, revision identities, environment, fixture
-  hashes, and commit/retirement counts;
-- a policy for long-term weekly trend storage and threshold calibration.
-
-**Exit evidence:** a clean baseline can be reproduced at an exact commit, the
-same guest result/retirement tuple is checked before timing is compared, and no
-threshold is declared until variance and runner stability are measured. This
-gate is required before evidence-driven optimization, not before ordinary
-correctness work.
-
-**Cost/risk:** medium measurement effort; high risk of misleading conclusions
-if load cost, execution cost, observer cost, and host noise are not separated.
+During Stages 1 and 2, the team may inventory the existing seven benchmark
+families, select already-runnable public guest workloads, design the future
+command/schema, and retain the current Criterion benches as component
+observations. This preparation does not claim the independent performance
+facility exists, does not create a performance gate, and cannot replace Stage 3
+with horizontal measurement or a one-off observation. It also does not block
+Stage 1/2 correctness work or their design/test preparation.
 
 ### Stage 1 — single-Hart physical/atomic convergence (recommended next candidate)
 
@@ -417,7 +428,111 @@ checkpoint format, Debug Mode, and a new CLI result taxonomy without approval.
 
 **Cost/risk:** high structural change, but it reduces later integration churn.
 
-### Stage 3 — selected Hart virtual-memory and protection profile
+### Stage 3 — independent performance-test infrastructure (mandatory follow-on gate)
+
+**Target:** deliver a repository-owned, repeatable performance test facility that
+later implementation PRs can run unchanged against the public execution paths.
+This is a test/evidence product, not a runtime optimization project.
+
+**Scheduling role:** Stage 3 is an explicit user-selected implementation-entry
+gate after Stage 1 and Stage 2. It is not a hard technical dependency asserted
+by ADR-0001 through ADR-0004, and it does not block Stage 1/2 correctness,
+component work, or design/fixture preparation. It does block entry into the
+recommended integrated implementation stages until its facility and evidence
+rules are available.
+
+**Boundary:** representative public guest workloads, correctness/retirement
+oracles, a single command and structured output schema, route/observer matrix,
+load/execute/run phase separation, reproducible environment metadata, retained
+baselines, scheduled reporting, and PR comparison. Existing component benches
+remain useful but are not this facility by themselves.
+
+**Non-goals:** changing `Runtime`, adding a fast path, optimizing a measured
+hotspot, setting a universal performance percentage, or requiring a future MMU,
+interrupt, debug, TLM, or multi-Hart guest that cannot yet run. Performance
+infrastructure and hotspot optimization are separate deliverables; optimization
+may be considered later only after this facility has produced trustworthy
+comparisons.
+
+**Initial workload rule:** the initial suite is selected from public paths that
+already run at Stage 3 entry: the ordinary A7 raw path, the selected Stage 1
+atomic path, the Stage 2 public lifecycle/fact path, and representative CLI and
+library facades. A future feature does not make this stage impossible merely
+because its feature-specific guest does not yet exist. When MMU, interrupt,
+debug, or external transport behavior is implemented, its new workload and
+oracle are added to the same suite as an extension; absence of that future
+workload is reported as out of scope, not as a passing result.
+
+**Deliverables:**
+
+- fixed, versioned representative guest workloads covering meaningful integer,
+  control-flow, memory/device, mixed ordinary/atomic, and public-facade work;
+  each fixture has a stable identity, source/linker/toolchain provenance, and a
+  declared expected result;
+- a result/retirement correctness oracle for every workload, including guest
+  exit/status, final PC or signature, completed work/retirement count, relevant
+  architectural/device effects, and observation/log output where enabled;
+- one repository-owned command that runs the same suite at an exact revision
+  and emits both human-readable summary and structured samples;
+- three explicitly separated measurements: load/ELF parse-install only,
+  preloaded pure execution only, and complete public CLI/library execution;
+- an observation matrix with logging/commit facts off and on, plus serialization
+  where applicable, requiring equivalent correctness oracles before timing is
+  compared;
+- public raw ordinary and selected atomic route coverage through the real
+  facades, with typed microbenchmarks retained only as controls rather than the
+  primary evidence;
+- fixed toolchain/container and declared host/environment identity, warm-up and
+  repetition policy, sample count, clock/unit, compiler flags, fixture identity,
+  and implementation revision in every structured record;
+- retained baseline manifests and artifacts with version-to-version comparison,
+  including a PR comparison procedure against a comparable base revision;
+- scheduled CI reporting with retained summaries and a PR-runnable comparison
+  path that uses the same command, fixtures, oracles, and schema;
+- calibrated noise/stability summaries and a written investigation rule for
+  reruns, host changes, sample insufficiency, semantic mismatches, and suspected
+  regressions. Hard thresholds remain pending calibration; no performance
+  percentage is an acceptance gate in this roadmap.
+
+**Verifiable exit standard:**
+
+1. A clean checkout at the exact Stage 3 HEAD can run one command and produce
+   the same fixture identities, phase-separated measurements, correctness
+   oracles, and structured metadata that a later implementation PR will use.
+2. The command proves work correctness before accepting a timing comparison:
+   wrong guest result, final PC/signature, retirement/work count, device effect,
+   or observation result is a failed semantic run, never a performance pass.
+3. Load-only, preloaded-execute-only, and full public-run samples are present;
+   observation/logging off and on are comparable; and public raw and atomic
+   routes are exercised rather than only typed `SimpleMemory` microbenchmarks.
+4. A retained baseline can be compared by revision and by PR through the same
+   command, with fixture/toolchain/environment identities visible in the
+   report; scheduled CI publishes the same structured evidence.
+5. Noise and stability calibration defines the minimum usable sample/evidence
+   conditions and the rerun/investigation classification. If environments are
+   incomparable, samples are insufficient, or the correctness oracle is absent,
+   the result is **inconclusive**, not pass.
+6. No runtime hotspot optimization or semantic weakening is required for this
+   exit. The artifact demonstrates that subsequent Stage 4--8 implementation
+   PRs can run the same tests and compare a baseline without creating a new
+   benchmark facility first.
+
+**Downstream entry:** after this exit, Stage 4--8 may be selected as integrated
+implementation candidates, subject to their own technical prerequisites and
+approval. Before this exit, their component design, fixture planning, and
+isolated tests may proceed, but the recommended integrated implementation
+sequence remains stopped at the performance gate.
+
+**Cost/risk:** medium-to-high harness and calibration cost. The principal risk
+is false confidence from a semantically wrong guest, incomparable environment,
+or under-sampled noisy host; the explicit inconclusive state is part of the
+facility, not a failure to be hidden.
+
+### Stage 4 — selected Hart virtual-memory and protection profile
+
+**Recommended entry:** Stage 3 performance-test infrastructure has exited, in
+addition to this stage's technical prerequisites. The Stage 3 requirement is a
+user scheduling gate, not an MMU architectural dependency.
 
 **Target:** connect a deliberately selected privilege/address-translation
 profile to the common physical port.
@@ -448,10 +563,15 @@ port; no page-table access bypasses the target fault/unknown distinction; fresh
 ELF and exact-head evidence is recorded.
 
 **Cost/risk:** high; page-walk and architectural fault boundaries are easy to
-misclassify. This stage may proceed in parallel with Stage 4 only after Stage 2,
-with separate acceptance evidence.
+misclassify. Component and design preparation may proceed in parallel with Stage
+5 after Stage 2, but integrated entry remains gated by Stage 3, with separate
+acceptance evidence.
 
-### Stage 4 — Platform interrupts, WFI, modeled time, and counters
+### Stage 5 — Platform interrupts, WFI, modeled time, and counters
+
+**Recommended entry:** Stage 3 performance-test infrastructure has exited, in
+addition to this stage's Machine/input/profile prerequisites. The Stage 3
+requirement is a user scheduling gate, not an interrupt architectural dependency.
 
 **Target:** implement the selected minimal ISS event/time profile at the accepted
 Machine boundary.
@@ -487,7 +607,11 @@ alone is insufficient. The selected profile and any compatibility change to
 **Cost/risk:** high semantic and test cost; time units and profile behavior are
 product decisions, not implementation defaults.
 
-### Stage 5 — public debug wiring
+### Stage 6 — public debug wiring
+
+**Recommended entry:** Stage 3 performance-test infrastructure has exited, in
+addition to this stage's lifecycle and inspection prerequisites. The Stage 3
+requirement is a user scheduling gate, not a debugger architectural dependency.
 
 **Target:** connect the existing debug protocol to the Machine/Runner boundary.
 
@@ -515,9 +639,14 @@ observation preserves the same Hart state and result oracle. This stage can be
 prepared in parallel with Stages 3/4 after Stage 2.
 
 **Cost/risk:** medium-to-high; compatibility risk is concentrated in control
-and inspection API shape.
+and inspection API shape. Component/design preparation may proceed in parallel
+with Stages 4/5, but integrated debug entry remains gated by Stage 3.
 
-### Stage 6 — native ↔ Rust TLM ↔ SystemC and DMI (conditional integration)
+### Stage 7 — native ↔ Rust TLM ↔ SystemC and DMI (conditional integration)
+
+**Recommended entry:** Stage 3 performance-test infrastructure has exited, in
+addition to this stage's transport/lifecycle prerequisites. The Stage 3
+requirement is a user scheduling gate, not a TLM/SystemC architectural dependency.
 
 **Target:** replaceable platform transport without a second Hart execution path.
 
@@ -549,7 +678,12 @@ cannot leave a late callback mutating a reset image.
 safe first cut; non-blocking transport requires a separately approved timing
 contract.
 
-### Stage 7 — conditional multi-Hart/DMA/coherence direction
+### Stage 8 — conditional multi-Hart/DMA/coherence direction
+
+**Recommended entry:** Stage 3 performance-test infrastructure has exited and
+Stages 1/2 plus the selected event/transport prerequisites are evidenced. The
+Stage 3 requirement is a user scheduling gate, not a claim that performance is
+an architectural coherence dependency.
 
 **Target:** only if a concrete VP use case requires multiple Harts or inbound
 masters, define the shared physical-world contract first.
@@ -563,9 +697,9 @@ single-Hart global reservation, or adding multi-Hart merely because the Machine
 cardinality in ADR-0003 permits it.
 
 **Entry conditions:** Stage 1 per-Hart reservations and writer policy, Stage 2
-lifecycle/facts, Stage 4 event/time ordering, and Stage 6 adapter/invalidation
-parity are verified; a user-approved product use case and separate contract
-exist.
+lifecycle/facts, Stage 5 event/time ordering, and Stage 7 adapter/invalidation
+parity are verified; the Stage 3 entry gate has exited; and a user-approved
+product use case and separate contract exist.
 
 **Exit standard:** repeated runs under different host/container ordering produce
 the declared canonical facts and shared effects, or unsupported conflicts are
@@ -615,7 +749,7 @@ This ordering is why a generic Machine-first or interrupt-first route is not the
 recommended immediate priority. It avoids repeating a roadmap that schedules
 composition while leaving the most important physical contract incomplete.
 
-## 7. Performance position and evidence plan
+## 7. Performance test infrastructure and evidence plan
 
 ### What the repository actually measures today
 
@@ -637,8 +771,8 @@ weekly cron (`0 2 * * 0`), despite the workflow's “Daily” label, and retains
 artifact for seven days. It does not pin a benchmark host, compare against an
 exact prior revision, establish a checked threshold, or separate build/load/run
 cost. The benchmark README's old manual `benchmark.yml` name is not the actual
-workflow. These are useful component observations, not a public-path regression
-monitor.
+workflow. These are useful component observations and preparation inputs, not
+Stage 3's public-path regression facility or its exit evidence.
 
 ### A7 observations are deliberately narrow
 
@@ -656,10 +790,17 @@ monitor.
   one-workload, one-environment load/run observation, not a universal regression
   claim, a release threshold, or an optimization mandate.
 
-### Required baseline progression
+### Preparation versus the independent Stage 3 facility
 
-Before a future optimization or any stage that changes the execution hot path,
-use a repeatable harness with:
+Fixture inventory, workload selection, command/schema design, and retention-policy
+design may proceed during Stages 1 and 2. The existing seven Criterion groups
+remain available for component observations. None of that horizontal preparation,
+and neither A7's one historical `load_and_run` observation nor a single rerun,
+counts as the independent Stage 3 facility or permits later feature integration
+to skip it.
+
+Stage 3 must leave a facility that a later implementation PR can run without
+writing a benchmark-specific harness. Its baseline progression is:
 
 1. **Load-only:** ELF parse, allocation, placement, metadata resolution, and
    installation measured separately.
@@ -668,49 +809,63 @@ use a repeatable harness with:
 3. **Public end-to-end:** the real CLI/library facade, with exit, cycle/turn,
    final-PC, signature, and commit-count or Hart-fact oracle checked for every
    sample.
-4. **Route comparison:** typed compatibility, A7 ordinary raw, selected atomic,
-   and later native/TLM/DMI paths on identical fixtures.
-5. **Observation comparison:** observation disabled, commit/trap observation
-   enabled, and log serialization where applicable; results must match before
-   overhead is interpreted.
-6. **Environment/evidence:** exact revision, toolchain/container, CPU/OS,
-   compiler flags, fixture/linker hashes, warm-up/repetition policy, all samples,
-   distributions, and artifact retention.
+4. **Route comparison:** public A7 ordinary raw and selected atomic routes on
+   identical fixtures; typed compatibility microbenches are controls, not the
+   primary evidence. Future native/TLM/DMI routes extend the same matrix.
+5. **Observation comparison:** observation/logging disabled and enabled, with
+   commit/trap facts or serialized logs where applicable; correctness must match
+   before overhead is interpreted.
+6. **Environment/evidence:** one repository-owned command, exact revision,
+   fixed toolchain/container and declared host profile, compiler flags,
+   fixture/linker identities, warm-up/repetition policy, all raw samples,
+   distributions, and structured metadata.
+7. **Baseline comparison:** retain a versioned baseline manifest/artifact and run
+   the same command for a comparable base and PR revision; scheduled CI reports
+   periodically and the PR path reuses the same fixtures and oracle.
 
-The first baselines should be observations, not gates. Thresholds require a
-calibration period across stable runners and representative workloads. Stage 1
-needs atomic-envelope and writer-visibility measurements only to catch accidental
-cost or lock changes; Stage 2 needs observer-on/off overhead and public
-load/execute separation; Stage 6 needs native/TLM/DMI parity and delay accounting.
-No stage may optimize by weakening side-effect, observation, deadline, or
-invalidation semantics.
+### Calibration and result classification
 
-Longer term, a weekly exact-revision trend artifact can become a regression
-monitor after its host/toolchain and retention policy are repaired. Block
-execution, translation, direct RAM, DMI, and temporal decoupling are conditional
-strategies after the semantic/lifecycle contracts and invalidation tests exist.
-This task ran no new performance experiment and proposes no runtime optimization.
+Stage 3 calibrates noise and stability using repeated samples, warm-ups, host and
+toolchain identity, and a documented minimum usable sample/evidence condition.
+Its investigation rule distinguishes a semantic mismatch, insufficient samples,
+changed/incomparable environment, ordinary noise, and a suspected regression.
+An incomparable environment, missing baseline, insufficient samples, or failed
+correctness/retirement oracle is **inconclusive**, never pass. Hard performance
+thresholds remain pending this calibration; the roadmap sets no percentage gate.
 
+### Infrastructure versus optimization
+
+The Stage 3 exit delivers workload/oracle/measurement/baseline/CI machinery. It
+does not optimize `Runtime`, add a fast path, or require a hotspot fix. Later
+optimization work is a separate candidate that may use the facility only after
+semantic contracts, observation effects, deadlines, and invalidation rules are
+stable. A weekly exact-revision trend artifact and PR comparison can become a
+regression monitor through this facility; block execution, translation, direct
+RAM, DMI, and temporal decoupling remain conditional optimization strategies.
+
+This documentation task ran no new performance experiment and proposes no
+runtime optimization.
 ## 8. Debt ledger and re-evaluation triggers
 
 | Debt | Handling recommendation | Why deferred or selected | Re-evaluate when |
 | --- | --- | --- | --- |
-| AMO/LR/SC width and encoding defects | Stage 1, after an explicit profile table and baseline characterization. | A7 was forbidden to repair them incidentally; repeating the old route without this decision would make the atomic envelope ambiguous. | A selected user workload requires atomics, or an encoding/width mismatch blocks Stage 1 exit. |
+| AMO/LR/SC width and encoding defects | Stage 1, after an explicit profile table and atomic semantic characterization. | A7 was forbidden to repair them incidentally; repeating the old route without this decision would make the atomic envelope ambiguous. | A selected user workload requires atomics, or an encoding/width mismatch blocks Stage 1 exit. |
 | Global reservation, reset retention, faulting-SC behavior | Stage 1 per-Hart migration with profile-defined fault semantics. | Current tests preserve the singleton and its defects; this is not architectural evidence. | Any claim of atomic conformance, a second Hart, or a public writer that can run concurrently. |
 | Visibility from all writers | Stage 1 writer inventory and notification/quiescence policy. | A7 intentionally retained no invalidation for scalar/FP/host writes; future DMA is a separate inbound-master contract. | Host mutation or an additional platform master is needed while a Hart is active. |
 | Complete atomic envelope / legacy bridge | Stage 1; do not exit bridge until one-operation and failure evidence exists. | ADR-0002 makes this a physical contract, not a scheduler or TLM naming exercise. | A new backend or transport advertises atomics, or a test can observe an intermediate read/write. |
 | Hart memory/atomic/log effects | Stage 2. | Current typed outcomes are useful, but Runner snapshots and `mem_access = None` are not full ADR-0001 observations. | A public trace/differential consumer or block/DMI strategy needs authoritative effects. |
 | Machine/Platform composition and lifecycle | Stage 2. | Current `executor.rs` has partial shared decisions but no safe composition root or drain proof. | A second platform backend, debug mutation, external host, or reset-after-failure use case is approved. |
 | Unknown-completion recovery | Stage 2 and every later adapter. | A7 has terminal no-retry state at a narrow seam, not lifecycle-wide quiesce/drain evidence. | Any backend can complete asynchronously, callback late, or report uncertainty after side effects. |
-| Sv39/MMU page walks and A/D | Stage 3, selected profile only. | Components are tested but the core uses no MMU and page walks use a separate interface. | A mapped public guest or protection-sensitive workload is approved. |
-| PMP and privilege profile | Stage 3 scope decision. | Configuration fields and CSR tests are not enforcement. | A user chooses a supervisor/user or protected platform target. |
-| Interrupts, WFI, time, counters | Stage 4, after Machine/input boundaries. | Components exist but no public line, wait, or time exchange exists; do not assume an A8/A9 split. | A concrete timer/device/event workload is approved and the Hart profile is selected. |
-| Public debug wiring | Stage 5 after lifecycle/inspection. | Mock `DebugTarget` support cannot safely mutate the active core. | A debugger-driven workflow is a product requirement. |
-| Native/TLM/SystemC/DMI | Stage 6 conditional. | Existing TLM/DMI vocabulary has no Hart adapter, FFI, atomic proof, or invalidation contract. | An external platform/integration consumer and pinned toolchain are available. |
-| Multi-Hart/DMA/coherence | Stage 7 conditional, separate contract. | No product decision, inbound-master contract, ordering, or coherence model is approved. | A concrete multi-agent VP use case plus resource/verification approval exists. |
+| Sv39/MMU page walks and A/D | Stage 4, selected profile only, after the Stage 3 entry gate. | Components are tested but the core uses no MMU and page walks use a separate interface. | A mapped public guest or protection-sensitive workload is approved. |
+| PMP and privilege profile | Stage 4 scope decision, after the Stage 3 entry gate. | Configuration fields and CSR tests are not enforcement. | A user chooses a supervisor/user or protected platform target. |
+| Interrupts, WFI, time, counters | Stage 5, after Machine/input boundaries and the Stage 3 entry gate. | Components exist but no public line, wait, or time exchange exists; do not assume an A8/A9 split. | A concrete timer/device/event workload is approved and the Hart profile is selected. |
+| Public debug wiring | Stage 6 after lifecycle/inspection and the Stage 3 entry gate. | Mock `DebugTarget` support cannot safely mutate the active core. | A debugger-driven workflow is a product requirement. |
+| Native/TLM/SystemC/DMI | Stage 7 conditional, after the Stage 3 entry gate. | Existing TLM/DMI vocabulary has no Hart adapter, FFI, atomic proof, or invalidation contract. | An external platform/integration consumer and pinned toolchain are available. |
+| Multi-Hart/DMA/coherence | Stage 8 conditional, separate contract, after the Stage 3 entry gate. | No product decision, inbound-master contract, ordering, or coherence model is approved. | A concrete multi-agent VP use case plus resource/verification approval exists. |
 | Full extension/ACT4 scope | Keep bounded; do not auto-enlarge. | The two 51-case suites are not full-ISA or atomic certification. | A profile, external suite, toolchain, and acceptance budget are separately approved. |
 | Linux/OS boot | Keep out of this roadmap. | It would add SBI, device tree, devices, privilege/MMU, interrupts, and product commitments beyond the goal. | User explicitly chooses an OS/firmware product target and approves a prerequisite roadmap. |
-| Performance regression/optimization | Stage 0 baselines, then evidence-driven optimization only. | Current seven groups are mostly component/synthetic; 1.2858 is one historical sample. | Repeated public baseline has calibrated variance and a real hotspot tied to a stable contract. |
+| Performance test infrastructure | Stage 3 independent facility after Stages 1/2; required entry gate for later integrated candidates. | Current seven groups are mostly component/synthetic; 1.2858 is one historical sample and cannot substitute for runnable public-path infrastructure. | Stage 3 can report comparable baseline evidence, or an explicit inconclusive result, on a later implementation PR. |
+| Performance regression/optimization | Separate later candidate using the Stage 3 facility; no runtime optimization in this roadmap. | Optimization must not be used to define the facility or weaken semantic/observation/invalidation rules. | A calibrated public baseline identifies a real hotspot and a separate optimization scope is approved. |
 
 ## 9. Compatibility changes requiring explicit approval
 
@@ -760,6 +915,24 @@ completed turns, final PC, architectural state, memory/device side effects,
 artifacts, and observer output. Do not reuse pre-existing ELF output as a fresh
 build claim.
 
+Stage 3's initial performance workload set is deliberately drawn only from these
+already-runnable public paths and the Stage 1/2 facades. A missing future MMU,
+interrupt, debug, or external-transport guest cannot make the infrastructure
+stage fail or pass by assumption: it is recorded as not yet applicable, and the
+new fixture/oracle is added when that capability becomes runnable. Every timing
+sample still requires the same semantic result and retirement/work oracle.
+
+### Performance infrastructure evidence
+
+The Stage 3 command and structured artifact are themselves verification outputs.
+The evidence must show the load-only, preloaded-execute-only, and complete public
+runs; public raw and selected atomic routes; observation/logging off and on; the
+fixture/toolchain/environment identities; and the retained base/PR revision
+comparison. A later implementation PR should invoke that same command rather
+than add an ad hoc benchmark. A correctness mismatch, missing comparable
+baseline, incomparable environment, or insufficient samples is reported as
+inconclusive and is not converted into a pass or a performance percentage claim.
+
 ### Differential and ACT4 selection
 
 Use a differential/reference suite only when the chosen profile and feature set
@@ -793,11 +966,13 @@ as success:
 
 Each candidate closeout must record the exact committed HEAD, source/test/CI
 identities, toolchain/container, commands, per-case results, unavailable tools,
-artifact hashes, and known limitations. Run the repository quality gate
-proportional to the change and use the immutable task validation contract; static
-links, copied check IDs, or prose are not proof of a passing run. The reviewed
-worktree is frozen during independent review; findings apply only to their exact
-PR head and require same-scope fix/reverification.
+artifact hashes, and known limitations. Performance artifacts must retain the raw
+samples, correctness/retirement oracle, fixture identity, environment comparison,
+and any inconclusive classification alongside the exact head. Run the repository
+quality gate proportional to the change and use the immutable task validation
+contract; static links, copied check IDs, or prose are not proof of a passing run.
+The reviewed worktree is frozen during independent review; findings apply only to
+their exact PR head and require same-scope fix/reverification.
 
 The roadmap task itself is documentation-only. It must not alter ADRs,
 `.qing/config.toml`, runtime code, tests, historical evidence, or the current
@@ -813,7 +988,8 @@ The following bounded choices should be answered before activating any successor
    - A — atomic/physical convergence first (recommended);
    - B — observation plus N=1 Machine/lifecycle first, retaining an explicit
      atomic debt gate; or
-   - defer implementation and perform only the Stage 0 evidence work.
+   - defer implementation while preparing Stage 1/2 fixtures and design only.
+     This preparation is not Stage 3 and does not waive the later entry gate.
 2. **Atomic profile:** which RV64A widths/encodings, `aq`/`rl`, reservation
    granule, SC-fault behavior, and compatibility corrections are in scope?
 3. **Host-writer policy:** are direct host writes forbidden during a run and
@@ -826,9 +1002,11 @@ The following bounded choices should be answered before activating any successor
    counter behaviors are the first supported profile, without implying Linux or
    full-ISA support?
 6. **External integration:** is there a concrete SystemC/TLM consumer and pinned
-   toolchain to justify Stage 6, or should it remain conditional research?
+   toolchain to justify Stage 7, or should it remain conditional research?
 7. **Performance policy:** which workloads and stable runners are acceptable for
-   baseline calibration, and when may a threshold become a required gate?
+   Stage 3 calibration, baseline retention, CI/PR comparison, and inconclusive
+   classification? Any hard threshold remains pending that evidence; the Stage 3
+   facility is nevertheless the required entry gate for later integrated work.
 
 These choices are proposal inputs, not decisions silently made here.
 
@@ -839,7 +1017,11 @@ sources of truth until a successor is separately approved. The archived A7
 closeout keeps its original historical wording and evidence identity; the merged
 closeout status is corrected only in current navigation where necessary. This
 proposal is the reviewed planning input for a later decision, not a replacement
-for `docs/dev-plan.md`.
+for `docs/dev-plan.md`. Its recommended route is Stage 1 atomic/physical
+convergence → Stage 2 Hart facts and safe N=1 lifecycle → independent Stage 3
+performance-test infrastructure → later Stage 4--8 feature candidates. Stage 3
+is a user scheduling gate for those later candidates, not an ADR hard dependency;
+Stage 1/2 correctness and design preparation remain unblocked.
 
 Related records:
 
