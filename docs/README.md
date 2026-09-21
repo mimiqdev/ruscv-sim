@@ -37,6 +37,8 @@ Target architecture is not implementation status. Component presence is not end-
 
 - [Post-A7 short-term technical development roadmap proposal](proposals/post-a7-roadmap.md) — Draft A7-after technical implementation planning; not an overall product roadmap and does not activate a successor contract.
 
+- [A8 single-Hart atomic/physical convergence candidate contract](proposals/a8-single-hart-atomic-convergence.md) — profile approved at the recommended §11 defaults, **awaiting activation**; `dev-plan.md` (A7) remains the sole Current contract until a successor is separately activated. No implementation is authorized.
+
 ## Verification
 
 - [Verification architecture](verification/README.md)

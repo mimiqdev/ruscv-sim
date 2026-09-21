@@ -1041,6 +1041,7 @@ Stage 1/2 correctness and design preparation remain unblocked.
 
 Related records:
 
+- [A8 single-Hart atomic/physical convergence candidate contract](a8-single-hart-atomic-convergence.md)
 - [A7 closeout record](../archive/milestones/a7-closeout-record.md)
 - [A7 capability/T5 evidence](../verification/a7-capability-assessment.md)
 - [A7 physical contract](../verification/a7-physical-contract.md)
