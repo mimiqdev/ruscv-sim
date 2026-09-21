@@ -38,9 +38,11 @@ hardened in PR #36. This does not integrate MMU/PMP, privilege/interrupt schedul
 misalignment, FENCE.I, or the full target Runner/Machine/Platform design. Component
 labels below remain component labels. A5 was formally closed out in PR #37 (merged
 `d1834cc6566b342824bca30772cc829953a5c5ef`). Its successor A6 is also formally
-accepted; [A7 non-atomic physical-access migration](../dev-plan.md) is now the
-sole active contract. Its activation record did not claim implementation; the
-T5 record below is the current bounded implementation evidence.
+accepted, and A7 was subsequently completed and closed (see the [A7 closeout
+record](../archive/milestones/a7-closeout-record.md)); the [A8 single-Hart
+atomic/physical convergence contract](../dev-plan.md) is now the sole active
+contract. The A7 activation record did not claim implementation; the T5
+record below is the current bounded implementation evidence.
 
 A6 Task 2 and Task 3 implementation evidence now covers `exec_mret` privilege
 validation/restoration and the integrated public Hart boundary: `RiscvCore::step_outcome`
@@ -54,8 +56,9 @@ full nine-criterion evidence matrix is [`docs/verification/a6-capability-assessm
 and the formal closeout record is [`docs/archive/milestones/a6-closeout-record.md`](../archive/milestones/a6-closeout-record.md).
 PR #46 merged the preparation as `024d15d546dc3b711f593cd44bb107612fd8b600`;
 its final PR-head and exact-merge CI are recorded separately from the Task 4 runs.
-The maintainer accepted A6 and approved the full [A7 contract](../dev-plan.md)
-on 2026-09-18. A7 implementation now migrates fetch and ordinary integer/FP
+The maintainer accepted A6 and approved the full [A7
+contract](../archive/milestones/a7-non-atomic-physical-access-migration.md) on
+2026-09-18. A7 implementation now migrates fetch and ordinary integer/FP
 loads/stores through the validated raw physical boundary in both standard
 facades; the T0--T4 records and T5 evidence are bound to implementation head
 `fb6f51c771f32585f1547422c9633379f7ae370b`. Legacy AMO/LRSC behavior remains
@@ -195,7 +198,7 @@ external RV64I compatibility.
 | Hart state and execution | PC, GPRs, privilege, CSR/FPU state, decoder, executor, instruction/data memory handles | **Public path** | `RiscvCore::step_outcome` is the semantic engine and returns one typed `InstructionRetired`, `TrapEntered`, or `SimulatorFailure` boundary; `step` remains a compatibility wrapper. The current profile has synchronous trap continuation but does not sample asynchronous platform interrupt lines. |
 | Instruction fetch | One aligned 32-bit memory read per step through the validated raw Fetch port in the two standard facades; typed compatibility fetch remains for old core constructors | **Public path** | PC fall-through is fixed at `+4`; the separate RV64C implementation is not selected. Hart alignment, address conversion, decode, and trap mapping remain Hart-owned. |
 | RV64 instruction semantics | RV64I dispatch plus M/A/F/D paths in the active executor; ordinary integer/FP loads and stores use the raw DataRead/DataWrite route, while AMO/LR/SC use the explicit typed legacy bridge | **Public path, coverage varies** | Presence in the dispatcher is not a claim of full extension compliance; the bounded frozen ACT4 nontrapping RV64I selection is externally verified, not all dispatched extensions. Base-I FENCE (`MiscMem` with `funct3 = 0b000`) now decodes and executes as a no-op through `exec_fence`: on this synchronous single-Hart `MemoryInterface` with no cache, store buffer or reordering, every prior memory effect is already globally visible before the next instruction issues, so `FENCE` (every `pred`/`succ`/`fm` shape, including `FENCE.TSO` and HINTs) only needs to let the PC advance. `rs1`/`rd` are ignored per the base-I reserved-field rule. `FENCE.I` (Zifencei, `funct3 = 0b001`) remains `DecodeError::UnimplementedInstruction` and a simulator failure; other nonzero `MiscMem` `funct3` values are reserved in the active profile and now enter an illegal-instruction trap (`src/decode/mod.rs`, `tests/a6_task3_core_trap_test.rs`); see [gap G-14](../verification/public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected). |
-| AMO / LR/SC | Active dispatcher calls ordinary read/write helpers; LR/SC reservation is process-global | **Public dispatch, incomplete contract** | `src/execute/mod.rs::execute_amo` has encoding/width debt; `src/isa/rv64a/amo.rs` uses word read then word write, and `lr_sc.rs` uses `GLOBAL_RESERVATION` without ordinary-store invalidation. Helper arithmetic tests and A6 atomic-fault tests do not prove ADR-0002 atomicity or A-extension compliance. The approved A7 contract excludes atomic repair/envelopes and preserves existing atomic behavior over shared storage as explicit legacy debt. Ordinary stores currently do not invalidate the global reservation; A7 must not introduce partial invalidation or duplicate state. This is not ADR-0002 atomic conformance. |
+| AMO / LR/SC | Active dispatcher calls ordinary read/write helpers; LR/SC reservation is process-global | **Public dispatch, incomplete contract** | `src/execute/mod.rs::execute_amo` has encoding/width debt; `src/isa/rv64a/amo.rs` uses word read then word write, and `lr_sc.rs` uses `GLOBAL_RESERVATION` without ordinary-store invalidation. Helper arithmetic tests and A6 atomic-fault tests do not prove ADR-0002 atomicity or A-extension compliance. The A7 contract excluded atomic repair/envelopes and preserved existing atomic behavior over shared storage as explicit legacy debt. Ordinary stores currently do not invalidate the global reservation. The approved [A8 contract](../dev-plan.md) now owns atomic convergence (indivisible envelopes, per-Hart reservation state, writer visibility) as current scope; until that implementation lands, the characterized legacy behavior remains and must not be silently altered. This is not ADR-0002 atomic conformance. |
 | Flat memory | Thread-safe byte vector with typed aligned accesses | **Public path** | Also used directly by the alternate library simulator path. |
 | Native bus | Concrete typed RAM/UART/HTIF routing plus raw backend views in `executor.rs`/`physical.rs` | **Public raw path for standard facades; typed compatibility path retained** | `SystemBus` is public through `ruscv_sim::executor`, with fixed devices and limited typed access widths. `NativeSystemBusBackend` wraps the caller's shared `Arc<Mutex<SystemBus>>` and applies full-span raw routing without copying targets. Its UART route spans `0x1000_0000..0x1000_00ff` (`uart_size = 0x100`), while the exported `UART_SIZE` is 8 bytes. `load_and_run` now installs separate validated raw fetch/data views over this shared domain; old typed methods remain for host inspection and legacy atomics. |
 | UART16550 | Register model and raw native target view with output callback | **Public path for ordinary Hart accesses; typed host/legacy path retained** | The public bus and raw adapter expose byte accesses at `0x1000_0000` through a 0x100-byte window, while the UART model declares `UART_SIZE = 8` and a TLM range ending at `0x1000_0007`; offsets `0x08..0xff` retain reserved zero/ignored behavior. The raw adapter rejects Fetch and non-byte spans before touching FIFO/status/output state. The richer TLM target behavior is tested separately. |
@@ -260,4 +263,4 @@ This inventory does not claim that:
 - the Rust TLM-style API is a SystemC-compatible adapter.
 - the current fixed 32-bit fetch policy is the intended final ISA boundary.
 - component tests constitute a bootable full-system machine or Virtual Platform.
-- A7's bounded implementation acceptance and cumulative review are recorded at the merged closeout head; no successor contract has been approved.
+- A7's bounded implementation acceptance and cumulative review are recorded at the merged closeout head; the successor A8 contract was approved and activated on 2026-09-21 as the sole Current contract, and its implementation has not started.

@@ -4,7 +4,7 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-09-19
+**Last reviewed:** 2026-09-21
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
@@ -33,11 +33,13 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Current A7 non-atomic physical-access contract](dev-plan.md) — approved and activated 2026-09-18, following formal A6 acceptance. Fetch and ordinary integer/FP loads/stores are in scope; legacy atomics retain behavior on shared storage/locking as explicit debt, not disabled or certified. Conservative compatibility defaults are approved. Activation merged in PR #47 as `9ee9c5f24c072779f06ce141b3340f953b614442`; the A7 closeout delivery is merged at `c059500a6af20f93569099c4b05ced3364a7703b`; the contract remains the sole current technical specification until a successor is approved. [Proposal history](archive/milestones/a7-non-atomic-physical-access-proposal.md).
+- [Current A8 single-Hart atomic/physical convergence contract](dev-plan.md) — profile approved and activated 2026-09-21 at candidate head `41ece090737bd9b899ee2d8c9fd79bae70946f3f` (PR #56), following the completed A7 closeout. Indivisible atomic envelopes, spec-correct AMO/LR/SC decode/width repair, per-Hart reservation state, explicit writer visibility, HTIF D-c device policy, and legacy typed-bridge exit from the standard facades are in scope; the old typed constructor remains a labeled compatibility adapter. Activation is documentation-only; implementation has not started. [Archived proposal snapshot](proposals/a8-single-hart-atomic-convergence.md).
+
+- [Archived A7 non-atomic physical-access contract](archive/milestones/a7-non-atomic-physical-access-migration.md) — approved and activated 2026-09-18, following formal A6 acceptance; fetch and ordinary integer/FP loads/stores migrated to the raw physical boundary while legacy atomics retained behavior on shared storage/locking as explicit debt. Activation merged in PR #47 as `9ee9c5f24c072779f06ce141b3340f953b614442`; the A7 closeout delivery is merged at `c059500a6af20f93569099c4b05ced3364a7703b`; [closeout record](archive/milestones/a7-closeout-record.md) and [proposal history](archive/milestones/a7-non-atomic-physical-access-proposal.md) remain archived.
 
 - [Post-A7 short-term technical development roadmap proposal](proposals/post-a7-roadmap.md) — Draft A7-after technical implementation planning; not an overall product roadmap and does not activate a successor contract.
 
-- [A8 single-Hart atomic/physical convergence candidate contract](proposals/a8-single-hart-atomic-convergence.md) — profile approved at the recommended §11 defaults, **awaiting activation**; `dev-plan.md` (A7) remains the sole Current contract until a successor is separately activated. No implementation is authorized.
+- [A8 single-Hart atomic/physical convergence proposal snapshot](proposals/a8-single-hart-atomic-convergence.md) — profile approved at the recommended §11 defaults and activated on 2026-09-21 as the [Current contract](dev-plan.md); this file is the unchanged archived snapshot (drafting history), not a second active contract. No implementation is started by the activation.
 
 ## Verification
 
