@@ -1,17 +1,22 @@
 # A8 Candidate Contract — Single-Hart Atomic/Physical Convergence
 
-**Status:** Draft — candidate milestone contract awaiting maintainer/user approval;
-not activated, not implemented
+**Status:** Approved — awaiting activation; not implemented
 
-**Authority:** Informational, non-normative candidate milestone contract. This
-document does not claim implementation completeness. Approval of this Draft is
-approval to activate a successor contract through the repository rolling process;
-it is not permission to implement before activation, and
+**Authority:** Informational approved candidate milestone contract. This
+document does not claim implementation completeness. The seven §11 profile
+choices were approved at the recommended defaults. That approval is **not**
+activation and is **not** implementation authorization:
 [`docs/dev-plan.md`](../dev-plan.md) (A7) remains the sole Current technical
-contract until a separately approved replacement lands. A8 is a candidate
-number, not a commitment to an A8/A9 schedule.
+contract until a separately authorized rolling replacement lands. A8 is a
+candidate number, not a commitment to an A8/A9 schedule.
 
 **Drafted:** 2026-09-20
+
+**Profile approved:** 2026-09-21 — all seven §11 items at the recommended
+defaults (encoding repair; faulting-SC retain; P2a-precise writer visibility;
+HTIF D-c; `GLOBAL_RESERVATION`/`clear_reservation` removal; typed adapter
+retained; atomic guests added). Still awaiting a separate activation of
+`docs/dev-plan.md`.
 
 **Evidence baseline:** `c90e455bdfe2a0fa87b5210a8e1d3ef9e0697e22` (merged
 post-A7 roadmap PR #55 head), source inspected 2026-09-20 for this Draft.
@@ -57,16 +62,15 @@ The architecture is unchanged. No ADR is rewritten or amended by this Draft:
 A7's rejected option B stays rejected: existing successful atomic programs are
 not disabled, rejected, or reclassified as unsupported-instruction failures as
 a shortcut. Where the approved profile changes an old result, the change is
-enumerated in §6 with exact old→new expectations, affected fixtures, and user
-approval items (§11); there is no blanket disable.
+enumerated in §6 with exact old→new expectations and affected fixtures;
+§11 records the approved profile values. There is no blanket disable.
 
-Out of authority for this Draft: `docs/dev-plan.md` is not modified here. Upon
-approval, the rolling sequence in AGENTS.md applies (A7's contract is already
-archived at
-[`a7-non-atomic-physical-access-migration.md`](../archive/milestones/a7-non-atomic-physical-access-migration.md);
-the approved A8 contract replaces `dev-plan.md` as the sole Current contract
-in the activation change, and this Draft is then preserved as the archived
-proposal snapshot). No activation is performed by this document.
+Out of authority for this document: `docs/dev-plan.md` is not modified here.
+The seven §11 choices are approved, but **activation is a separate rolling
+step**: until that step is authorized, A7 remains the sole Current contract
+(A7's full contract is already archived at
+[`a7-non-atomic-physical-access-migration.md`](../archive/milestones/a7-non-atomic-physical-access-migration.md)).
+No implementation is authorized by this document.
 
 ## 2. Normative source decision for the atomic profile
 
@@ -118,23 +122,22 @@ limitation):** the maintainer supplied a reference investigation against
 (`sc_*`, `lr_*`, Zaamo notes) refer to that manual tree; its operative text
 is authoritative for what this contract calls spec-mandated. Spike is cited
 **only as an implementation reference**, never as specification. The one
-residual limitation: a *trapping* SC's reservation effect is not explicitly
-fixed by `sc_reservation_invalidate` (it covers "executing an SC"), so
-§5.4 still treats retain/clear as a profile choice — now supported by the
-anchor text plus Spike's observable behavior rather than by nothing.
+residual specification gap: a *trapping* SC's reservation effect is not
+explicitly fixed by `sc_reservation_invalidate` (it covers "executing an
+SC"). §11 item 2 **approves retain**, citing that gap plus Spike's
+observable retain-on-trap behavior (§5.4).
 
-**Profile freedom selected by this contract:** SC failure code value (1);
-reservation-set granularity and key (exact reserved byte span, keyed by the
-port-issued physical address); number of outstanding reservations per Hart
-(one; a successful LR replaces any prior reservation); deterministic SC success
-conditions (stronger than the manual's "may fail for any reason" latitude;
-precise-versus-coarse visibility bookkeeping is a sub-choice in §11 item 3);
-faulting-SC reservation effect (retain — §5.4, profile choice under the
-stated evidence limitation); `aq`/`rl` implementation
-strength (no additional ordering effect, §5.3); device targets may reject the
-atomic capability (ADR-0002 §6 capability rejection); misaligned accesses
-raise the misaligned-address exception (not access fault), preserving the
-current Hart precheck classification.
+**Profile freedom selected by this contract (approved, §11):** SC failure
+code value (1); reservation-set granularity and key (exact reserved byte
+span, keyed by the port-issued physical address); number of outstanding
+reservations per Hart (one; a successful LR replaces any prior reservation);
+deterministic SC success conditions (stronger than the manual's "may fail
+for any reason" latitude) with **P2a-precise** bookkeeping (only overlapping
+committed writes fail SC); faulting-SC reservation effect **retain** (§5.4);
+`aq`/`rl` implementation strength (no additional ordering effect, §5.3);
+HTIF **D-c** (LR/SC rejected; AMO allowed as one indivisible envelope);
+misaligned accesses raise the misaligned-address exception (not access
+fault), preserving the current Hart precheck classification.
 
 Extension certification is not claimed: passing A8 does not certify RV64A,
 Zalrsc, Zamo, or any external conformance suite (§10).
@@ -454,31 +457,30 @@ domain owns the critical section, the version bookkeeping, and the committed
 write. Invalidation is therefore *computed* at SC time from the snapshot —
 no cross-step writer-notification channel into `CoreState` exists or is
 needed; W1–W5 writers simply bump the storage bookkeeping when they commit.
-Deterministic success rule (profile guarantee): an SC succeeds **iff** the
-reservation is present, covers the SC span, and no committed write has
-overlapped the reserved span since the LR (under coarse bookkeeping, §11
-item 3, any committed write anywhere also fails the SC — legal under the
-manual's "may fail for any reason" latitude). Executed SC consumes the
-reservation on success and on conditional failure. Rejected writes never
+Deterministic success rule (profile guarantee, **approved P2a-precise**):
+an SC succeeds **iff** the reservation is present, covers the SC span, and
+no committed write has overlapped the reserved span since the LR. A
+non-overlapping committed write does not fail the SC. Executed SC consumes
+the reservation on success and on conditional failure. Rejected writes never
 bump bookkeeping (ADR-0002 §5.2: no invalidation from a write that did not
 commit). SC failure writes `rd = 1` (profile value; current behavior).
 
-**Faulting SC — profile choice, now with cited reference support.** The
-Zalrsc anchor `sc_reservation_invalidate` ("executing an SC invalidates")
-covers a *completed* SC, conditional success or failure; it does not
-explicitly fix the effect of an SC that raises an exception before any
-write. Spike's `store_conditional` performs the load-reservation check and
-the store such that both can raise before `yield_load_reservation` is
-reached, and `yield_load_reservation` appears only at MMU construction, the
+**Faulting SC — approved retain.** The Zalrsc anchor
+`sc_reservation_invalidate` ("executing an SC invalidates") covers a
+*completed* SC, conditional success or failure; it does not explicitly fix
+the effect of an SC that raises an exception before any write. Spike's
+`store_conditional` performs the load-reservation check and the store such
+that both can raise before `yield_load_reservation` is reached, and
+`yield_load_reservation` appears only at MMU construction, the
 hart-interleave switch (`riscv/sim.cc:375`), and after a completed SC — so
 an exception SC **retains** the reservation in the reference implementation.
-The current code's observable retain remains an early-return accident
-(`exec_sc` returns before its clear on write error — verified §3.2), not a
-specification. Both options remain profile choices: **retain** (recommended:
-a faulting SC performed no architectural completion, so it consumed nothing;
-also the reference implementation's behavior) or **clear** (any attempted SC
-consumes). The T0 ledger records the approved choice with the anchor and
-Spike citations; the acceptance test asserts whichever choice is approved.
+§11 item 2 **approves retain**: a faulting SC performed no architectural
+completion, so it consumed nothing; this also matches Spike. The current
+code's observable retain remains an early-return accident (`exec_sc`
+returns before its clear on write error — verified §3.2) and is now the
+approved profile rule, not an accident to preserve as debt. T3 asserts
+retain: a later SC after a trapping SC can still succeed if the reservation
+is otherwise valid.
 
 The reservation key is the **physical address issued at the port** (after the
 single configured base conversion): in the native bus form that equals the
@@ -509,7 +511,7 @@ this contract's store-class classification of SC (and `sc_failed_side_effects`
 leaves translation side effects UNSPECIFIED, so the profile's retain choice
 is not constrained by it).
 
-### 5.5 Writer visibility policy (candidates, recommendation flagged)
+### 5.5 Writer visibility policy (approved: P2a-precise)
 
 Writer inventory at the baseline — every public entry point that can write
 bytes the Hart can observe, while a run is live or between runs. Verified
@@ -534,7 +536,7 @@ byte fails (§6 C20; asserted by
 | W1 | Hart ordinary integer store | raw `DataWrite` port | In-domain: committed write bumps storage bookkeeping; invalidation computed at SC (§5.4). Same-Hart overlapping store ⇒ SC fails. |
 | W2 | Hart FP store | raw `DataWrite` port | Same as W1. |
 | W3 | Hart AMO / successful SC | atomic envelope | Same as W1; the envelope's own committed write bumps. |
-| W4 | Host writes on the flat facade: `write_mem` (byte loop, `&self`), the exposed `memory()` handle (same-thread **between runs** and cross-thread **during** a run), and the committed prefix of a failed `write_mem` | typed write methods of the shared storage object | **P2a (recommended): participate** — every write method of the storage object bumps committed-write bookkeeping after its commit point; a failed write's committed prefix bumps only the bytes that committed; rejected writes bump nothing. Host-write overlap ⇒ SC fails; non-overlap succeeds under precise bookkeeping (coarse variant: any committed host write ⇒ SC fails, legal "may fail for any reason"; §11 item 3). P2c alternative: an explicit host mutation API that clears the reservation (breaking `&self`→`&mut self` or a new call). |
+| W4 | Host writes on the flat facade: `write_mem` (byte loop, `&self`), the exposed `memory()` handle (same-thread **between runs** and cross-thread **during** a run), and the committed prefix of a failed `write_mem` | typed write methods of the shared storage object | **Approved P2a-precise:** every write method of the storage object bumps committed-write bookkeeping after its commit point; a failed write's committed prefix bumps only the bytes that committed; rejected writes bump nothing. Host-write overlap ⇒ SC fails; **non-overlap succeeds**. |
 | W5 | `clear_tohost` exit-signal clear | typed 8-byte loop at exit observation | **Participates like W4.** A run returning is *not* a Hart-lifecycle boundary (verified above), so a resumed run's SC must see the cleared bytes: overlap ⇒ SC fails; run→budget→resume with no host write ⇒ SC still succeeds. At the HTIF endpoint the clear writes are ignored (no bytes committed) ⇒ no effect. |
 | W6 | Image (re)installation (`load_program`, `load_elf`) | between runs | Facade reload replaces the core ⇒ reservation cleared; `load_program`'s direct `Vec` writes must bump bookkeeping for non-facade callers of the storage object. |
 | W7 | Raw access to storage internals outside the object's write methods | none reachable through the public API | Documented unsupported: outside the granted-writer set; any future such path enters only via a contract change. |
@@ -548,15 +550,12 @@ the *same storage objects* the Hart reserves; absence of concurrency does
 not remove the cross-instruction effect (LR → host write → SC silently
 loses the host's committed bytes), and `write_mem(&self)`'s difficulty
 reaching per-Hart state is an implementation detail, not an ADR exception.
-P2a makes host writes visible without moving reservation authority: the
-bookkeeping lives in the storage object (version counter, per-block/striped
-counters, or a bounded write journal — a single-Hart mechanism; no
-multi-Hart semantics are claimed or required), while the Hart still owns
-the reservation record and the SC result. This Draft does not amend the
-ADR. A literal "not through the `PhysicalAccess` port ⇒ outside the domain"
-reading of §6 remains available as an explicit user decision (§11 item 3),
-but it leaves a permanent silent-overwrite hole and is not recommended.
-Because every granted writer serializes on the domain's one outer mutex
+Approved **P2a-precise** makes host writes visible without moving reservation
+authority: the bookkeeping lives in the storage object (per-block/striped
+counters or a bounded write journal — a single-Hart mechanism; no multi-Hart
+semantics are claimed or required), while the Hart still owns the reservation
+record and the SC result. This document does not amend the ADR. Because every
+granted writer serializes on the domain's one outer mutex
 (verified above), a conditional SC envelope holding that mutex across
 check→write cannot have its snapshot staled by any granted writer,
 same-thread or cross-thread.
@@ -579,7 +578,7 @@ strength, not a spec requirement.
 Verification for W1–W6 is by falsifiable reservation tests (§8 T3/T4);
 nothing outside the table is silently admitted.
 
-### 5.6 Device atomic capability (three analyzed policies; decision in §11)
+### 5.6 Device atomic capability (approved: D-c)
 
 **UART:** atomic widths are 4 or 8 bytes and the public UART window is
 byte-only, so the UART rejects atomic requests on width regardless of
@@ -638,19 +637,20 @@ load followed by a store, and the Zaamo NOTE in the pinned manual states
 that using AMOs to update MMIO registers is an intended use. This is the
 basis of the new policy D-c.
 
-**Policy D-c — Spike reference surface: LR/SC rejected, AMO allowed.** LR
-and SC at the HTIF endpoint are target rejections → load/store-AMO access
-faults (as D-b); AMO at the endpoint is allowed as an indivisible envelope:
-old value = the endpoint's zero-read, write side = the callback invoked
-exactly once inside the critical section, bookkeeping bumped. **Adaptation
-to our ADR:** ADR-0002 §5.5 forbids exposing an AMO as a visible
-load-then-store pair, so D-c adopts Spike's *policy surface* (which
-operations may touch the device) but not its two-step mechanism — the AMO
-is our single critical-section envelope. Measured against the §3.4
+**Policy D-c — approved (Spike reference surface: LR/SC rejected, AMO
+allowed).** LR and SC at the HTIF endpoint are target rejections →
+load/store-AMO access faults (as D-b); AMO at the endpoint is allowed as an
+indivisible envelope: old value = the endpoint's zero-read, write side = the
+callback invoked **exactly once** inside the critical section, bookkeeping
+bumped. **Adaptation to our ADR:** ADR-0002 §5.5 forbids exposing an AMO as
+a visible load-then-store pair, so D-c adopts Spike's *policy surface*
+(which operations may touch the device) but not its two-step mechanism — the
+AMO is our single critical-section envelope. Measured against the §3.4
 baseline: D-c **enables** AMO at the endpoint (dispatched helpers trap
 cause 7 today; unsupported encodings fail before access today and become
 dispatched under the §5.3 decode repair), and **changes** the bug-induced
 `LR.W`/`SC.W`/`SC.D` endpoint successes into faults exactly as D-b does.
+§11 item 4 **approves D-c**.
 
 **Policy comparison (compatibility effects).** D-a = endpoint dword
 capability for LR/SC/AMO (enables `LR.D`/AMO, preserves `SC.D`-at-base,
@@ -659,17 +659,16 @@ enables); D-c = reject LR/SC (faults, as D-b) + allow AMO (enables, as
 D-a's AMO half). All three make the encoded-misalignment traps and
 reservation preconditions policy-independent Hart behavior.
 
-**Common to all three policies:** a no-reservation or span-not-covered SC issues
-**no physical request at all** (Hart-side precondition, C13) — it neither
-reaches the device nor traps there, independent of HTIF policy; a
-valid-reservation SC at a rejected target (D-b) or a wrong width/span
-(all policies) faults as store/AMO access fault with no partial effect,
-no callback, no exit. There is **no blanket disable of atomics anywhere**:
-RAM remains the atomic-capable native target under every policy, and any
-device-level rejection (either policy, or a third-party backend's own
-capability decision) is a user-approval item (§11 item 4), not a silent
-capability removal. Third-party raw backends decide capability themselves
-and must reject before mutation if they cannot provide the envelope.
+**Common Hart/device rules (independent of D-c):** a no-reservation or
+span-not-covered SC issues **no physical request at all** (Hart-side
+precondition, C13) — it neither reaches the device nor traps there; a
+valid-reservation SC at the rejected HTIF LR/SC target, or a wrong
+width/span, faults as store/AMO access fault with no partial effect, no
+callback, no exit. There is **no blanket disable of atomics**: RAM remains
+the atomic-capable native target, UART rejects on width, and HTIF under the
+approved D-c policy rejects LR/SC while allowing AMO. Third-party raw
+backends decide capability themselves and must reject before mutation if
+they cannot provide the envelope.
 
 ### 5.7 Fault, side-effect, and unknown taxonomy for atomics
 
@@ -714,22 +713,22 @@ disabled wholesale.
 | C12 | `aq`/`rl` | Parsed, ignored | All four combos legal; documented no-op strength | No observable change for in-scope single-Hart programs. |
 | C13 | SC with **no reservation at all** | Retires, `rd=1`, no write | Same (`rd=1`, no physical request; `sc_failure_code` allows any nonzero value) | Unchanged. The span-not-covered cases move to C30: today's key is exact-address-only with no recorded width, so they are **not** unchanged. |
 | C14 | SC success | `rd=0`, write, reservation cleared | Same; reservation keyed per-Hart on port paddr with recorded width | Unchanged **only for same-width, same-address pairs** (LR.W→SC.W@p, LR.D→SC.D@p); cross-width/address pairs change in both directions per C30. |
-| C15 | SC write fault | Store access fault; reservation **retained** (early return), later SC can succeed | Store access fault; reservation effect **per the approved §11 item 2 choice** — retain keeps the observable (`sc_reservation_invalidate` covers executing SCs only; Spike also retains on trapping SCs); clear flips a later SC to `rd=1` | Same behavior only under retain; §11 item 2 decides. |
+| C15 | SC write fault | Store access fault; reservation **retained** (early return), later SC can succeed | Store access fault; reservation **retained** (approved §11 item 2): `sc_reservation_invalidate` covers executing SCs only; Spike also retains on trapping SCs | Same observable, relabeled accident→approved profile. |
 | C16 | Reservation ownership | Process-global exact-guest-address singleton; survives reset/reload; shared across Core instances | Per-Hart `CoreState`, port-paddr byte-span key; reset/reload clear; new LR replaces | Rows `lr->other-core-sc`, `lr->reset->sc`, `…retains_legacy_lr_key` flip to `rd=1`. **Result change.** |
-| C17 | Ordinary/FP store between LR and SC | No invalidation; SC succeeds and overwrites | Overlapping committed write ⇒ SC fails `rd=1`; non-overlapping write: SC **succeeds under precise bookkeeping, fails under coarse** (§11 item 3) | Same-Hart invalidation is a **deliberate divergence** from the spec minimum and from Spike (§5.5), not a spec requirement. Rows `lr->sd->sc`, `lr->fsd->sc` flip for the overlapping case under every option; the non-overlap outcome follows §11 item 3. **Result change.** |
+| C17 | Ordinary/FP store between LR and SC | No invalidation; SC succeeds and overwrites | Overlapping committed write ⇒ SC fails `rd=1`; non-overlapping write: SC **succeeds** (approved P2a-precise) | Same-Hart invalidation is a **deliberate divergence** from the spec minimum and from Spike (§5.5), not a spec requirement. Rows `lr->sd->sc`, `lr->fsd->sc` flip for the overlapping case. **Result change.** |
 | C18 | AMO write between LR and SC | No invalidation | Overlapping committed AMO write invalidates | New rule; consistent with C17. |
 | C19 | Failed/rejected ordinary write between LR and SC | Reservation retained | Retained (no commit → no invalidation) | Unchanged. |
-| C20 | Host writes between steps/runs (`write_mem`; `memory()` handle same-thread between runs or cross-thread during a run; committed prefix of a failed `write_mem`) | No invalidation (row `lr->host-write_mem->sc`) | **P2a:** committed overlapping write ⇒ SC fails `rd=1`; non-overlap succeeds under precise bookkeeping, fails under coarse (§11 item 3); a failed write's committed prefix invalidates iff its committed bytes overlap | Row `lr->host-write_mem->sc` flips under P2a. **Result change; user approval (§11 item 3).** |
-| C21 | LR/SC/AMO on HTIF endpoint (per-encoding Hart baseline in §3.4) | `LR.W` at 4-aligned endpoint addresses succeeds via its dword-read bug and sets the reservation; aligned+reserved SC encodings succeed via the dword callback (SC.W at `base`/`base+4`, SC.D at `base`); SC.D@`base+4` and LR.D@interior trap encoded misalignment before any access; real LR.D@`base` faults load-access-fault; dispatched AMO helpers trap store/AMO access fault (cause 7); unsupported `funct5` AMOs are simulator failures before any access | **D-a:** enables `LR.D`/`AMO.D` at the exact dword endpoint; preserves `SC.D`-at-base conditional success; `LR.W`/`SC.W` and wrong spans → access fault. **D-b:** all endpoint atomics → access fault. **D-c (Spike reference surface):** LR/SC rejected as in D-b; AMO allowed as one indivisible envelope (zero-read old value, callback exactly once). All: encoded-misalignment traps stay policy-independent Hart prechecks; no partial effect, no callback on rejection; no-reservation/uncovered SC issues no request at all (C13) | `SC.W`@`base+4` and `LR.W`-at-endpoint flip under **every** policy; real `LR.D` flips only under D-a; `SC.D`-at-base stays successful under D-a, flips under D-b/D-c; AMO at the endpoint is enabled by D-a and D-c, stays faulting under D-b; misalignment traps unchanged under all. Fixtures retire into policy-specific tests. **Result change; user approval (§11 item 4).** |
+| C20 | Host writes between steps/runs (`write_mem`; `memory()` handle same-thread between runs or cross-thread during a run; committed prefix of a failed `write_mem`) | No invalidation (row `lr->host-write_mem->sc`) | **Approved P2a-precise:** committed overlapping write ⇒ SC fails `rd=1`; non-overlap succeeds; a failed write's committed prefix invalidates iff its committed bytes overlap | Row `lr->host-write_mem->sc` flips. **Result change.** |
+| C21 | LR/SC/AMO on HTIF endpoint (per-encoding Hart baseline in §3.4) | `LR.W` at 4-aligned endpoint addresses succeeds via its dword-read bug and sets the reservation; aligned+reserved SC encodings succeed via the dword callback (SC.W at `base`/`base+4`, SC.D at `base`); SC.D@`base+4` and LR.D@interior trap encoded misalignment before any access; real LR.D@`base` faults load-access-fault; dispatched AMO helpers trap store/AMO access fault (cause 7); unsupported `funct5` AMOs are simulator failures before any access | **Approved D-c:** LR/SC at the endpoint → load/store-AMO access fault (no callback); AMO at the endpoint → one indivisible envelope (zero-read old value, callback exactly once). Encoded-misalignment traps stay Hart prechecks; no-reservation/uncovered SC issues no request (C13) | `SC.W`@`base+4`, `LR.W`-at-endpoint, and `SC.D`-at-base flip to access faults; real `LR.D` stays a load access fault; AMO at the endpoint is **enabled**. Fixtures retire into D-c tests. **Result change.** |
 | C22 | LR/SC/AMO on UART | Byte-only typed path: wide ops already fail | Same observable (atomic rejected) with access-fault mapping | Unchanged in effect. |
-| C23 | `GLOBAL_RESERVATION`, `ruscv_sim::execute::clear_reservation`, `ReservationSet` public surface | Public process-global reservation API | Removed/relocated: reservation state becomes per-Hart (`CoreState`); free function removed (breaking, 0.x); `ReservationSet` either becomes the per-Hart record type or is replaced | Test helpers updated; API removal is an approval item. |
+| C23 | `GLOBAL_RESERVATION`, `ruscv_sim::execute::clear_reservation`, `ReservationSet` public surface | Public process-global reservation API | **Approved:** remove `GLOBAL_RESERVATION` and `clear_reservation`; reservation state becomes per-Hart (`CoreState`); `ReservationSet` is kept as the per-Hart record type | Test helpers migrate; 0.x breaking change. |
 | C24 | Old typed `RiscvCore::new` route for AMO/LR/SC | Typed read/write pair with global reservation | Typed pair **retained as labeled non-conforming compatibility adapter**, using the same per-Hart reservation state (one reservation authority); standard facades never use it | `amo_test.rs`/typed helper tests keep passing; doc labels the route. |
 | C25 | Standard facades' atomic route | Legacy typed bridge | Atomic envelope through the raw data port; bridge removed from facades | Mixed ordinary/atomic equivalence tests. |
 | C26 | Misaligned AMO/LR/SC | Hart precheck → load/store-address-misaligned trap, no physical request | Same (`zaamo` uses the same alignment rule as `lr_sc_alignment`; Spike raises load-address-misaligned for LR and converts AMO load-side traps to store class via `convert_load_traps_to_store_traps`, matching the draft's cause-7 AMO mapping) | Unchanged. |
 | C27 | `rd=x0` | No `rd` write, memory op occurs | Same | Unchanged. |
 | C28 | Budget/exit/observation (A6) | Started-slot budget, retire-before-exit, commit log no-refetch, `mem_access=None` | Unchanged | A6 regressions must stay green. |
 | C29 | Run-boundary resume (`run`→exit→`clear_tohost`→`run`; `run`→budget→`run`) | Reservation persists across runs; `clear_tohost`'s 8 committed bytes and any between-run host write do not invalidate; post-resume SC succeeds regardless | Runs are not lifecycle boundaries (verified §3.3/§5.5); `clear_tohost` bytes and between-run writes participate like C20: overlap ⇒ post-resume SC fails, budget-resume with no host write ⇒ SC succeeds | New falsifiable tests (T3/T4); the earlier Draft wrongly assumed no step follows a clear. **Result change (clear-overlap case).** |
-| C30 | Cross-width/address SC validity (aligned RAM) | Key is exact starting address, no width recorded (`reserved_addr: Option<u64>`): `LR.W@p→SC.D@p` (p 8-aligned) **succeeds** today; `LR.D@p→SC.W@(p+4)` **fails** today | Span-containment: `LR.W@p→SC.D@p` **fails** `rd=1` (8-byte SC span ⊄ 4-byte reservation); `LR.D@p→SC.W@(p+4)` **succeeds** (4-byte span ⊆ 8-byte reservation, no competing write) | Both directions are approval-dependent behavior changes (part of the recorded Spike divergence, §5.4: Spike's width-less key makes the first sequence succeed). New T0 baseline rows + T3 acceptance cases. **Result change; user approval (§11 item 2).** |
+| C30 | Cross-width/address SC validity (aligned RAM) | Key is exact starting address, no width recorded (`reserved_addr: Option<u64>`): `LR.W@p→SC.D@p` (p 8-aligned) **succeeds** today; `LR.D@p→SC.W@(p+4)` **fails** today | **Approved span-containment:** `LR.W@p→SC.D@p` **fails** `rd=1` (8-byte SC span ⊄ 4-byte reservation); `LR.D@p→SC.W@(p+4)` **succeeds** (4-byte span ⊆ 8-byte reservation, no competing write) | Both directions are behavior changes (recorded Spike divergence, §5.4). T0 baseline + T3 acceptance. **Result change.** |
 
 ## 7. Bridge exit, adapters, and what "ADR-0002 atomic portion attained" means
 
@@ -768,9 +767,9 @@ It may **not** state: full ADR-0002 conformance for every access (MMU
 page-table walks and A/D writes are not on the port; the MMU remains unwired;
 TLM/DMI remain adapters with no atomic envelope); multi-Hart/DMA ordering or
 coherence; RV64A/Zalrsc/Zamo certification; RVWMO proof; atomic support on
-device targets beyond the approved policy of §11 item 4. "Explicit writer
-visibility" means precisely: every writer listed in §5.5's inventory has a
-tested reservation effect under the approved §11 item 3 mechanism, and the
+device targets beyond the approved D-c HTIF policy (§11 item 4). "Explicit
+writer visibility" means precisely: every writer listed in §5.5's inventory
+has a tested reservation effect under approved P2a-precise, and the
 old typed constructor route remains explicit non-conformance (its
 `MemoryInterface` backends carry no committed-write bookkeeping, so no
 visibility guarantee is claimed for them). ADR-0002's atomic portion is
@@ -789,9 +788,9 @@ Missing/skipped required tools block acceptance.
 | --- | --- | --- |
 | T0 — fixture reclassification ledger and baseline (no behavior change) | Commit `docs/verification/a8-fixture-reclassification.md` mapping every A7 atomic fixture row to **keep / flip / retire / relabel** with the new expected value and the approving §6 row; add `tests/a8_atomic_baseline.rs` asserting the verified old behavior at the unchanged code (dispatch table, LR/SC width reversal, global reservation rows, and the §3.4 HTIF per-encoding **Hart-outcome** baseline — LR.W at 4-aligned endpoint addresses succeeds via its dword-read bug and sets the reservation; real LR.D at `base` faults load-access-fault and at interior offsets traps load-address-misaligned before any access; SC-family callback success requires encoded alignment plus a live reservation (SC.W at `base`/`base+4` and SC.D at `base` succeed; SC.D at `base+4` traps store-address-misaligned); dispatched AMO helpers trap store/AMO access fault (cause 7); unsupported `funct5` values are simulator failures before any access — since no A7 fixture covers the LR.D/SC.D/AMO or cross-width SC rows — including `LR.W@p→SC.D@p` succeeding and `LR.D@p→SC.W@(p+4)` failing today under the width-less exact-address key, C30) so each later flip is a diff against an executable baseline. The ledger also records **Spike reference-evidence rows** (pinned `riscv-isa-sim` @ `02b1dc1`, documentation rows, not tests of our code): trapping SC retains the reservation; no same-Hart write invalidation; single exact-paddr reservation key without width (`LR.W`→`SC.D` same address succeeds); `reservable()` is RAM-only with LR/SC-to-MMIO faulting; AMO reaches MMIO as load+store. | `cargo test --test a8_atomic_baseline --test a7_migration_characterization --test a7_legacy_atomic_compat --test amo_test`; exit: ledger complete, baseline green, no unresolved classification. |
 | T1 — atomic envelope vocabulary, after T0 | Extend `src/physical.rs` with the atomic category: RMW/LoadReserved/StoreConditional request kinds, the Hart-supplied pure-transform representation (§5.2 M1), operand/result bytes, conditional status, validation and response binding; update the module doc that today denies an atomic category. `tests/a8_atomic_contract.rs`: widths 4/8 only, payload rules, transform application for every AMO operation through the one Hart-owned arithmetic module, binding/completion validation, single-backend-call, unknown completion terminal with no retry, malformed envelope rejection — all at the vocabulary level without targets. | `cargo test --test a8_atomic_contract --test a7_physical_contract`; exit: envelope taxonomy complete; no ordinary read/write pair can represent an AMO/SC; A7 non-atomic contract tests unchanged. |
-| T2 — native targets, after T1 | RAM executes the critical-section primitive — one locked read → Hart-supplied transform → write transaction with exact old bytes, exactly-once effect, complete-span/width validation, no partial write — and implements no ISA arithmetic; the UART rejects atomic requests on width (policy-independent, byte-only window); the HTIF endpoint implements **the selected §11 item 4 policy**: D-a — atomic dword at the exact endpoint (LR.D zero-read + snapshot, conditional SC.D callback-write, AMO.D old-zeros RMW, wrong width/span rejected without callback); D-b — all endpoint atomics rejected pre-mutation; or D-c — LR/SC rejected as in D-b plus AMO allowed as one indivisible envelope with callback-exactly-once. `tests/a8_atomic_targets.rs`: success/negative spans, overflow, unsupported width/category, rejection leaves RAM/registers/FIFO/callback/exit unchanged and fires no callback; **D-a additionally proves callback-exactly-once inside the critical section and conditional-failure-without-callback; D-b additionally proves no atomics reach the callback; D-c additionally proves AMO envelope callback-exactly-once while LR/SC fault without callback**; a recording spy target proves **one locked target-visible transaction** per AMO/SC whose internal read and write are not separately observable by a competing reader view; an arithmetic-parity test drives two different conforming backends through the same Hart transform and asserts byte-identical results for every operation/operand pattern; a recorded source/route audit shows no backend or target module references ISA operation semantics; lock-poison → host failure. Bookkeeping tests: every write path (typed write methods, raw `write_bytes`, `load_program`) bumps after commit; rejected writes and failed-write suffixes bump nothing; a failed host write's committed prefix bumps exactly the committed bytes. | `cargo test --test a8_atomic_targets --test a7_native_targets --test memory_bounds --test executor --test peripheral_tests`; exit: native critical-section + bookkeeping + the selected HTIF policy proven, arithmetic ownership stays Hart-side, ordinary native behavior unchanged. |
-| T3 — Hart dispatch, reservation, writers, after T2 | Rewrite `execute_amo` per §5.3 (spec table, AMOSWAP, W/D, reserved → illegal); per-Hart reservation in `CoreState` with §5.4 profile (key/span/consume/**approved faulting-SC effect**/reset/reload); envelope issue via the data port for port-configured cores; invalidation from W1–W3 committed overlapping writes; typed compatibility route on the old constructor sharing the reservation state; remove `GLOBAL_RESERVATION`/`clear_reservation`. `tests/a8_hart_atomic.rs`: **an exhaustive decode matrix enumerating all 32 `funct5` values × W/D** — every assigned encoding (incl. AMOMINU `11000`, AMOMAXU `11100`) retires its named operation and every reserved value (incl. the previously mis-listed `10001`/`10101`) raises illegal instruction — plus LR-`rs2!=0` malformed encodings; W/D results and sign extension; `rd=x0`; alignment precheck with zero physical requests; aq/rl combos retire; SC success/no-reservation/span-not-covered/consume-on-both; the C30 cross-width transitions (`LR.W@p→SC.D@p` fails `rd=1`; `LR.D@p→SC.W@(p+4)` succeeds); reset/reload clear; two-Core reservation isolation (test-object evidence, labelled not multi-Hart support); writer table W1–W3 negative/positive; typed-adapter route labeled non-conforming; no re-entrancy; **writer/visibility suite**: LR-time snapshot and consume timing (faulting LR leaves no reservation); same-Hart overlapping vs non-overlapping store; host `write_mem` overlap/non-overlap **per the selected §11 item 3 bookkeeping (precise vs coarse)**; `memory()`-handle write between runs; committed prefix of a failed host write; cross-thread handle writer excluded by the domain mutex during a conditional SC; run→exit→`clear_tohost`→resume overlap fails and budget-resume succeeds; faulting SC per approved retain/clear choice. | `cargo test --test a8_hart_atomic --test a8_atomic_baseline --test amo_test --test a7_migration_characterization --test a7_legacy_atomic_compat --test a6_task3_core_trap_test --test trap_test --test csr_access_test --test mret_conformance_test`; `cargo test --lib isa::rv64a`; exit: flipped fixtures assert new expectations per ledger; unchanged rows stay green; single reservation and arithmetic authority evidenced. |
-| T4 — facade bridge exit and public equivalence, after T3 | Standard facades issue envelopes only; mixed ordinary+atomic guests identical across CLI/`load_and_run`/flat within documented configuration differences; the approved writer policy (§11 item 3) and device policy (§11 item 4) asserted at the facade level, incl. between-run host-write invalidation and resume-after-exit/budget; A6 budget/exit/observation regressions. `tests/a8_public_atomic_equivalence.rs`: mixed ELF fixtures, exit-after-atomic ordering (retire before platform exit), zero/exact/final-slot budgets, rejected atomic produces no exit, artifacts/reload differences retained, commit log no-refetch unchanged, HTIF policy-specific endpoint cases per §11 item 4. New project-authored bare-metal atomic guests (LR/SC loop, AMOSWAP/ADD/MIN/MAX W/D, aq/rl set, SC-after-store failure, atomic near RAM end, atomic+tohost exit) added to the fresh-build guest suite. | `cargo test --test a8_public_atomic_equivalence --test a7_public_equivalence --test public_behavior --test a4_integrated_equivalence --test a4_run_control --test executor --test commits_test --test cli_test`; exit: no typed atomic call from standard facades (route audit recorded), equivalence within documented differences, new guests fresh-compiled and passing. |
+| T2 — native targets, after T1 | RAM executes the critical-section primitive — one locked read → Hart-supplied transform → write transaction with exact old bytes, exactly-once effect, complete-span/width validation, no partial write — and implements no ISA arithmetic; the UART rejects atomic requests on width (policy-independent, byte-only window); the HTIF endpoint implements **approved D-c**: LR/SC rejected pre-mutation (load/store-AMO access fault, no callback); AMO allowed as one indivisible envelope with callback-exactly-once. `tests/a8_atomic_targets.rs`: success/negative spans, overflow, unsupported width/category, rejection leaves RAM/registers/FIFO/callback/exit unchanged and fires no callback; **D-c proves AMO envelope callback-exactly-once while LR/SC fault without callback**; a recording spy target proves **one locked target-visible transaction** per AMO/SC whose internal read and write are not separately observable by a competing reader view; an arithmetic-parity test drives two different conforming backends through the same Hart transform and asserts byte-identical results for every operation/operand pattern; a recorded source/route audit shows no backend or target module references ISA operation semantics; lock-poison → host failure. Bookkeeping tests: every write path (typed write methods, raw `write_bytes`, `load_program`) bumps after commit; rejected writes and failed-write suffixes bump nothing; a failed host write's committed prefix bumps exactly the committed bytes. | `cargo test --test a8_atomic_targets --test a7_native_targets --test memory_bounds --test executor --test peripheral_tests`; exit: native critical-section + bookkeeping + D-c HTIF policy proven, arithmetic ownership stays Hart-side, ordinary native behavior unchanged. |
+| T3 — Hart dispatch, reservation, writers, after T2 | Rewrite `execute_amo` per §5.3 (spec table, AMOSWAP, W/D, reserved → illegal); per-Hart reservation in `CoreState` with §5.4 profile (key/span/consume/**faulting-SC retain**/reset/reload); envelope issue via the data port for port-configured cores; invalidation from W1–W3 committed overlapping writes; typed compatibility route on the old constructor sharing the reservation state; remove `GLOBAL_RESERVATION`/`clear_reservation`. `tests/a8_hart_atomic.rs`: **an exhaustive decode matrix enumerating all 32 `funct5` values × W/D** — every assigned encoding (incl. AMOMINU `11000`, AMOMAXU `11100`) retires its named operation and every reserved value (incl. the previously mis-listed `10001`/`10101`) raises illegal instruction — plus LR-`rs2!=0` malformed encodings; W/D results and sign extension; `rd=x0`; alignment precheck with zero physical requests; aq/rl combos retire; SC success/no-reservation/span-not-covered/consume-on-both; the C30 cross-width transitions (`LR.W@p→SC.D@p` fails `rd=1`; `LR.D@p→SC.W@(p+4)` succeeds); reset/reload clear; two-Core reservation isolation (test-object evidence, labelled not multi-Hart support); writer table W1–W3 negative/positive; typed-adapter route labeled non-conforming; no re-entrancy; **writer/visibility suite**: LR-time snapshot and consume timing (faulting LR leaves no reservation); same-Hart overlapping vs non-overlapping store; host `write_mem` overlap fails and non-overlap succeeds (**approved P2a-precise**); `memory()`-handle write between runs; committed prefix of a failed host write; cross-thread handle writer excluded by the domain mutex during a conditional SC; run→exit→`clear_tohost`→resume overlap fails and budget-resume succeeds; faulting SC **retains** (later SC can still succeed). | `cargo test --test a8_hart_atomic --test a8_atomic_baseline --test amo_test --test a7_migration_characterization --test a7_legacy_atomic_compat --test a6_task3_core_trap_test --test trap_test --test csr_access_test --test mret_conformance_test`; `cargo test --lib isa::rv64a`; exit: flipped fixtures assert new expectations per ledger; unchanged rows stay green; single reservation and arithmetic authority evidenced. |
+| T4 — facade bridge exit and public equivalence, after T3 | Standard facades issue envelopes only; mixed ordinary+atomic guests identical across CLI/`load_and_run`/flat within documented configuration differences; approved P2a-precise writer visibility and D-c HTIF policy asserted at the facade level, incl. between-run host-write invalidation and resume-after-exit/budget; A6 budget/exit/observation regressions. `tests/a8_public_atomic_equivalence.rs`: mixed ELF fixtures, exit-after-atomic ordering (retire before platform exit), zero/exact/final-slot budgets, rejected atomic produces no exit, artifacts/reload differences retained, commit log no-refetch unchanged, HTIF D-c cases (LR/SC access-fault with no callback; AMO envelope callback-exactly-once). New project-authored bare-metal atomic guests (LR/SC loop, AMOSWAP/ADD/MIN/MAX W/D, aq/rl set, SC-after-store failure, atomic near RAM end, atomic+tohost exit) added to the fresh-build guest suite. | `cargo test --test a8_public_atomic_equivalence --test a7_public_equivalence --test public_behavior --test a4_integrated_equivalence --test a4_run_control --test executor --test commits_test --test cli_test`; exit: no typed atomic call from standard facades (route audit recorded), equivalence within documented differences, new guests fresh-compiled and passing. |
 | T5 — evidence and bounded closeout, after T0–T4 | Full gate below; fresh project ELF suite = the retained 51 guests **plus** the new atomic guests with a recorded new total (the historical 51 stays recorded as its own identity); frozen ACT4 51-case selection **unchanged and separately recorded** — no A-extension claim, no merged counts; residual-debt ledger updated (MMU/TLM/performance/Stage 2 items). | See commands below; exit: exact-head evidence complete, no unapproved compatibility delta beyond §6's approved rows, §7.3 statement only. |
 
 Final implementation commands (not claimed run by this Draft):
@@ -825,24 +824,20 @@ values):
   `00001/W` becomes AMOSWAP semantics; `00001/D` becomes full-width swap),
   transcript rows `amoadd.w=…`, `lr->other-core-sc=…`, `lr->reset->sc=…`,
   `lr->sd->sc=…`, `lr->fsd->sc=…`, `lr->reset->…`/`…retains_legacy_lr_key`
-  (reset/reload rows), `lr->host-write_mem->sc=…` (flips under the P2a
-  writer-visibility mechanism, §11 item 3 — the earlier Draft wrongly kept
-  it; under a different §11 item 3 choice it returns to keep per that
-  decision), `ordinary_store_and_fp_store_interleave_with_unchanged_legacy_lr_sc`,
+  (reset/reload rows), `lr->host-write_mem->sc=…` (flips under approved
+  P2a-precise), `ordinary_store_and_fp_store_interleave_with_unchanged_legacy_lr_sc`,
   `legacy_lr_survives_reset_and_replacement_storage_with_global_key_behavior`.
 * **Retire (tests removed debt machinery; replaced by new-equivalent
   assertions):** `sc.w@htif+4=retired/dword-callback` transcript row and
   `successful_legacy_sc_width_debt_mmio_callback_is_retained` (replaced by
-  policy-specific HTIF endpoint tests per §11 item 4 — D-a endpoint
-  capability, D-b rejection, or D-c LR/SC-reject+AMO-envelope), the
-  global-singleton mechanics of the
+  D-c HTIF tests: LR/SC access-fault with no callback, AMO envelope
+  callback-exactly-once), the global-singleton mechanics of the
   isolated child transcript (replaced by per-Hart state tests; process
   isolation harness retained only if still needed).
 * **Keep (expectation unchanged, relabel debt→profile where noted):**
   `sc.no-reservation=…`, `lr@b0->sc@b8=…`, `lr->failed-sd->sc=…` (rejected
-  write no-invalidation), `sc.write-fault=…` (per the approved faulting-SC
-  choice, §11 item 2 — retain keeps the observable, relabeled from accident
-  to profile; clear flips it),
+  write no-invalidation), `sc.write-fault=…` (approved retain: same
+  observable, relabeled accident→profile),
   `ordinary_store_then_legacy_amo_and_lr_share_one_migrated_domain`
   (same-domain visibility both directions),
   `rejected_ordinary_write_and_faulting_sc_preserve_characterized_reservation`
@@ -881,7 +876,8 @@ an intermediate value; the full writer table including between-run and
 resume cases (host-write overlap/non-overlap, committed prefix of a failed
 host write, `memory()`-handle writes, run→exit→clear→resume,
 run→budget→resume, cross-thread writer exclusion by the domain mutex); HTIF
-endpoint cases per the approved §11 item 4 policy; facade equivalence for
+endpoint cases under approved D-c (LR/SC access-fault, AMO callback-once);
+facade equivalence for
 mixed guests; A6 budget/exit/observation regressions. Non-claims: no multi-Hart
 execution, DMA, coherence, or RVWMO proof; no MMU/page-walk/TLM unification;
 no interrupt/time/debug/Machine-lifecycle work; no performance measurement or
@@ -889,85 +885,53 @@ optimization; no extension certification; the two 51-case historical sets
 stay separately recorded and the new guests are a separately counted
 addition.
 
-## 11. Decisions requested from the user (nothing below is chosen silently)
+## 11. Approved profile choices (not activation)
 
-Recommended defaults are marked; each still requires explicit approval, and
-alternatives are listed:
+The maintainer approved all seven items at the recommended defaults. These
+values are now the contract; they are **not** authorization to replace
+`docs/dev-plan.md` or to implement.
 
-1. **Profile adoption (§2/§5.3):** spec table + W/D repair + AMOSWAP +
-   reserved-encoding illegal traps + aq/rl all-legal-no-op. *(Recommended.)*
-   Alternative: keep any single legacy mis-numbering alive (rejected: leaves
-   the envelope semantically ambiguous).
-2. **Reservation profile (§5.4):** per-Hart `CoreState`, port-paddr byte-span
-   key with LR-time snapshot, one reservation replaced by new LR,
-   span-containment SC validity, deterministic success rule,
-   consume-on-executed-SC. **Faulting-SC effect:** retain *(recommended)* or
-   clear — still a profile choice, now with cited support: the
-   `sc_reservation_invalidate` anchor covers executing SCs only, and Spike
-   observably retains on trapping SCs (§5.4). The T0 ledger cites the
-   anchor and the pinned Spike commit for whichever is approved.
-   Alternatives: clear-on-any-attempted-SC; fixed granule larger than the
-   accessed bytes. Note: span-containment is a deliberate stricter deviation
-   from Spike's width-less exact-paddr key (§5.4), legal under
+1. **Encoding repair (§2/§5.3) — approved.** Spec table + W/D repair +
+   AMOSWAP + reserved-encoding illegal traps + aq/rl all-legal-no-op.
+2. **Reservation profile (§5.4) — approved.** Per-Hart `CoreState`,
+   port-paddr byte-span key with LR-time snapshot, one reservation replaced
+   by a new LR, span-containment SC validity, deterministic success rule,
+   consume-on-executed-SC. **Faulting-SC = retain**, citing
+   `sc_reservation_invalidate` (covers executing SCs only) and Spike's
+   retain-on-trap. Span-containment remains a deliberate stricter deviation
+   from Spike's width-less exact-paddr key, legal under
    `lr_reservation_set_size`.
-3. **Writer visibility (§5.5/C20/C29):** P1 is withdrawn as ADR-conflicting
-   (and unanchored: host writes are the `sc_other_device_write_fail` case,
-   external agents writing the LR-accessed bytes). Same-Hart invalidation is
-   a deliberate divergence from the spec minimum and Spike (§5.5).
-   Choose the mechanism:
-   **P2a-precise** *(recommended)* — storage-level committed-write bookkeeping
-   (per-block/striped counters or bounded journal); only overlapping
-   committed writes fail SC; **P2a-coarse** — single version counter, any
-   committed write fails SC (simpler, legal "may fail for any reason",
-   more spurious failures); **P2c** — explicit host mutation API that clears
-   the reservation (breaking signature change or new call); or the literal
-   out-of-domain reading of ADR-0002 §6 (host APIs exempt) — available but
-   leaves a permanent silent-overwrite hole and is not recommended.
-4. **Device atomic capability (§5.6/C21, per-encoding baseline §3.4) —
-   three-way choice:** **D-a** — HTIF advertises atomic dword capability at
-   the exact endpoint: enables real `LR.D`/`AMO.D` (both fault today),
-   preserves `SC.D`-at-base conditional success, and turns the bug-induced
-   `LR.W`/`SC.W` endpoint successes into access faults. **D-b** — HTIF
-   rejects all atomics: every endpoint LR/SC/AMO becomes an access fault,
-   and the already-faulting `LR.D`/AMO stay faults. **D-c** *(recommended on
-   the reference evidence)* — the Spike reference surface: LR/SC rejected at
-   MMIO (`reservable()` is RAM-only in the pinned Spike) while AMO is
-   allowed, because the Zaamo NOTE states AMO-updates-MMIO is an intended
-   use; our adaptation keeps one indivisible AMO envelope (zero-read old
-   value, callback exactly once) instead of Spike's load+store pair,
-   satisfying ADR-0002 §5.5. D-c behaves as D-b for LR/SC and as D-a's AMO
-   half for AMO. No policy preserves the legacy buggy-`LR.W`→dword-`SC`
-   pairing. UART rejects on width under all three. No blanket disable of
-   atomics; capability or rejection is an explicit approval.
-5. **Public API breakage (C23) and typed-caller migration:** remove
-   `GLOBAL_RESERVATION` and `ruscv_sim::execute::clear_reservation` —
-   necessary because a surviving process-global store next to per-Hart state
-   would be a second reservation authority. Migration is bounded and stated:
-   `exec_lr/exec_lr_w/exec_sc/exec_sc_w` and the AMO helpers keep their
-   signatures (they already take `&mut CoreState`) and simply read/write the
-   per-Hart record; `ReservationSet` is kept as the per-Hart record type so
-   type references still compile; in-repo callers of the free function are
-   tests only and migrate to constructing a fresh core or a per-core
-   replacement helper (e.g. `state_mut()`-scoped). *(Recommended.)*
-   Alternative: deprecated no-op shim (rejected: implies a global authority
-   still exists).
-6. **Old typed route (C24/C25):** typed pair stays on the old constructor as
-   labeled non-conforming adapter; standard facades exit the bridge.
-   *(Recommended.)* Alternative: remove typed AMO/LR/SC entirely now
-   (breaking `amo_test.rs`-style callers; larger blast radius).
-7. **Guest-suite growth (T4/T5):** add project-authored atomic ELF guests and
-   record the new total; keep ACT4 selection frozen and separately recorded;
-   new differential/oracle selection as its own future proposal.
-   *(Recommended.)*
+3. **Writer visibility (§5.5/C20/C29) — approved P2a-precise.** Storage-level
+   committed-write bookkeeping (per-block/striped counters or bounded
+   journal); only overlapping committed writes fail SC. Same-Hart overlapping
+   invalidation is a deliberate divergence from the spec minimum and Spike.
+   P1 remains withdrawn as ADR-conflicting.
+4. **Device atomic capability (§5.6/C21) — approved D-c.** HTIF LR/SC
+   rejected (load/store-AMO access fault, no callback); AMO allowed as one
+   indivisible envelope (zero-read old value, callback exactly once), not
+   Spike's load+store pair. UART rejects on width. RAM remains atomic-capable.
+5. **Public API (C23) — approved.** Remove
+   `GLOBAL_RESERVATION` and `ruscv_sim::execute::clear_reservation`.
+   Helpers keep their signatures; `ReservationSet` is the per-Hart record
+   type; in-repo callers of the free function (tests) migrate to a fresh core
+   or a per-core helper.
+6. **Old typed route (C24/C25) — approved.** Typed pair stays on the old
+   constructor as a labeled non-conforming adapter; standard facades exit the
+   bridge.
+7. **Guest-suite growth (T4/T5) — approved.** Add project-authored atomic ELF
+   guests and record the new total; keep ACT4 selection frozen and separately
+   recorded; new differential/oracle selection remains its own future proposal.
 
 ## 12. Activation sequence and navigation
 
-This Draft activates nothing. Upon user approval: (1) the approved contract
-replaces `docs/dev-plan.md` via the AGENTS.md rolling process (A7's contract
-is already archived; the A7 closeout record stays historical); (2) this file
-is preserved as the archived A8 proposal snapshot; (3) implementation tasks
-run under the repository branch/review workflow. Until then A7 remains the
-sole Current contract and no A8 work is authorized by this document.
+The profile in §11 is **approved**. This document still **activates nothing
+and authorizes no implementation**. Until a separately authorized rolling
+step replaces `docs/dev-plan.md`, A7 remains the sole Current contract (A7's
+full contract is already archived; the A7 closeout record stays historical).
+When activation is authorized: (1) this approved contract replaces
+`docs/dev-plan.md`; (2) this file is preserved as the archived A8 proposal
+snapshot; (3) implementation tasks T0–T5 run under the repository
+branch/review workflow.
 
 Related records:
 
