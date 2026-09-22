@@ -12,6 +12,7 @@ pub mod elf;
 pub mod execute;
 pub mod executor;
 pub mod fpu;
+pub mod hart_amods;
 pub mod isa;
 pub mod memory;
 pub mod mmu;
@@ -38,20 +39,26 @@ pub use executor::{
     SYSTEM_BUS_HTIF_BASE, SYSTEM_BUS_HTIF_SIZE, SYSTEM_BUS_UART_BASE, SYSTEM_BUS_UART_WINDOW,
 };
 pub use fpu::{Fcsr, Fpr, FpuRegisterFile};
+pub use hart_amods::{AmoArithmeticError, AmoOperation};
 pub use memory::{MemoryError, MemoryInterface, SimpleMemory};
 pub use mmu::{
     AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TlbEntry, TlbStats, TranslationMode,
 };
 pub use physical::{
-    AccessCategory, AccessWidth, NativePhysicalTarget, NativeRamBackend, NativeSystemBusBackend,
-    PhysicalAccess, PhysicalAccessError, PhysicalAccessKind, PhysicalAccessPort,
-    PhysicalAccessResult, PhysicalBackend, PhysicalBackendError, PhysicalBackendFailure,
-    PhysicalBackendResult, PhysicalCompletion, PhysicalCompletionKind, PhysicalProtocolError,
-    PhysicalRequest, PhysicalRequestDescriptor, PhysicalRequestKind, PhysicalResponse,
-    PhysicalResponseBytes, PhysicalResponseCompletion, PhysicalSpan, PhysicalTargetRejection,
-    PhysicalTargetRejectionReason, PhysicalUnknownCompletion, PhysicalWidth, RawPhysicalBytes,
-    SharedNativeBackend, SystemBusPhysicalBackend, ValidatedPhysicalAccess,
-    MAX_PHYSICAL_ACCESS_BYTES,
+    AccessCategory, AccessWidth, AmoTransform, AmoWidth, AtomicAccess, AtomicAccessError,
+    AtomicAccessKind, AtomicAccessResult, AtomicBackend, AtomicBackendFailure, AtomicBackendResult,
+    AtomicOrdering, AtomicProtocolError, AtomicRequest, AtomicRequestDescriptor,
+    AtomicReservationContext, AtomicResponse, AtomicResponseCompletion, AtomicTargetRejection,
+    AtomicUnknownCompletion, CommittedWriteSnapshot, ConditionalStatus, NativePhysicalTarget,
+    NativeRamBackend, NativeSystemBusBackend, PhysicalAccess, PhysicalAccessError,
+    PhysicalAccessKind, PhysicalAccessPort, PhysicalAccessResult, PhysicalBackend,
+    PhysicalBackendError, PhysicalBackendFailure, PhysicalBackendResult, PhysicalCompletion,
+    PhysicalCompletionKind, PhysicalProtocolError, PhysicalRequest, PhysicalRequestDescriptor,
+    PhysicalRequestKind, PhysicalResponse, PhysicalResponseBytes, PhysicalResponseCompletion,
+    PhysicalSpan, PhysicalTargetRejection, PhysicalTargetRejectionReason,
+    PhysicalUnknownCompletion, PhysicalWidth, PureAmoTransform, RawPhysicalBytes,
+    SharedNativeBackend, SystemBusPhysicalBackend, ValidatedAtomicAccess, ValidatedPhysicalAccess,
+    MAX_COMMITTED_WRITE_SNAPSHOT_BYTES, MAX_PHYSICAL_ACCESS_BYTES,
 };
 pub use ruscv_macros::*;
 
