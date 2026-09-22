@@ -35,10 +35,12 @@ pub enum ExecuteError {
     CsrError(#[from] CsrError),
 }
 
-// RV64A re-exports (from isa::rv64a)
+// RV64A re-exports (from isa::rv64a).  The process-global reservation
+// singleton and `clear_reservation` were removed under A8 (dev-plan C23);
+// the per-Hart reservation record lives in `CoreState`.
 pub use crate::isa::rv64a::{
-    clear_reservation, exec_amoadd, exec_amoand, exec_amomax, exec_amomaxu, exec_amomin,
-    exec_amominu, exec_amoor, exec_amoxor, exec_lr, exec_lr_w, exec_sc, exec_sc_w,
+    exec_amoadd, exec_amoand, exec_amomax, exec_amomaxu, exec_amomin, exec_amominu, exec_amoor,
+    exec_amoswap, exec_amoxor, exec_lr, exec_lr_w, exec_sc, exec_sc_w,
 };
 
 // RV64I re-exports (from isa::rv64i)
@@ -318,50 +320,23 @@ impl Executor {
         }
     }
 
-    /// Execute AMO (Atomic Memory Operation) instructions
+    /// Execute AMO/LR/SC instructions on the typed compatibility route
+    /// (dev-plan §5.3, C24).
+    ///
+    /// The dispatcher follows the approved §2 table through
+    /// [`crate::isa::rv64a`]'s single Hart-owned decode: `funct5` selects
+    /// the operation (AMOSWAP included), `funct3` selects W or D, reserved
+    /// `funct5` values and LR with `rs2 != 0` are illegal instructions, and
+    /// `aq`/`rl` are legal in all four combinations with no added ordering
+    /// effect.  Port-configured cores never reach this method: the Hart
+    /// issues one atomic envelope per instruction instead.
     fn execute_amo(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
         mem: &mut dyn MemoryInterface,
     ) -> Result<(), ExecuteError> {
-        let funct5 = (instr.raw >> 27) as u8;
-
-        match funct5 {
-            // LR/SC (Load-Reserved / Store-Conditional)
-            0b00010 => {
-                // LR or LR.W
-                let _aq = ((instr.raw >> 26) & 1) as u8;
-                let _rl = ((instr.raw >> 25) & 1) as u8;
-                if instr.rs2 == Some(0) {
-                    // LR or LR.W (rs2 = 0)
-                    if instr.funct3 == Some(Funct3::Slt) {
-                        exec_lr(instr, state, mem)
-                    } else {
-                        exec_lr_w(instr, state, mem)
-                    }
-                } else {
-                    // SC or SC.W (rs2 != 0)
-                    if instr.funct3 == Some(Funct3::Slt) {
-                        exec_sc(instr, state, mem)
-                    } else {
-                        exec_sc_w(instr, state, mem)
-                    }
-                }
-            }
-            0b00011 => exec_sc(instr, state, mem), // SC (fallback)
-
-            // AMO operations
-            0b00001 => exec_amoadd(instr, state, mem), // AMOADD
-            0b00111 => exec_amoand(instr, state, mem), // AMOAND
-            0b00100 => exec_amoxor(instr, state, mem), // AMOXOR
-            0b00110 => exec_amoor(instr, state, mem),  // AMOOR
-            0b01000 => exec_amomin(instr, state, mem), // AMOMIN
-            0b01001 => exec_amominu(instr, state, mem), // AMOMINU
-            0b01010 => exec_amomax(instr, state, mem), // AMOMAX
-            0b01011 => exec_amomaxu(instr, state, mem), // AMOMAXU
-            _ => Err(ExecuteError::InvalidOperation),
-        }
+        crate::isa::rv64a::execute_amo_typed(instr, state, mem)
     }
 }
 

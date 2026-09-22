@@ -763,6 +763,12 @@ pub trait PhysicalBackend {
     fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult;
 }
 
+impl<B: PhysicalBackend + ?Sized> PhysicalBackend for &mut B {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        (**self).transact(request)
+    }
+}
+
 /// A native target implementation used by a shared-lock adapter.
 ///
 /// The target owns routing and raw-byte effects; the shared adapter below owns
@@ -1199,6 +1205,20 @@ impl<B: PhysicalBackend> ValidatedPhysicalAccess<B> {
     /// Submits one request through the validated boundary.
     pub fn transact(&mut self, request: PhysicalRequest<'_>) -> PhysicalAccessResult {
         self.access(request)
+    }
+}
+
+/// Atomic envelopes reuse the one validated port object.
+///
+/// When the wrapped backend is also an [`AtomicBackend`], the port validates
+/// and submits atomic envelopes through the same validation boundary the
+/// standalone [`ValidatedAtomicAccess`] applies — borrowed here so both
+/// categories share one port instance (dev-plan §7.2).  A backend without
+/// atomic capability simply never satisfies this impl and cannot be connected
+/// as a Hart data port.
+impl<B: AtomicBackend> AtomicAccess for ValidatedPhysicalAccess<B> {
+    fn access_atomic(&mut self, request: AtomicRequest<'_>) -> AtomicAccessResult {
+        ValidatedAtomicAccess::new(&mut self.backend).access_atomic(request)
     }
 }
 
@@ -2163,6 +2183,28 @@ pub trait AtomicBackend {
 pub trait AtomicAccess {
     /// Validates and submits one complete atomic envelope.
     fn access_atomic(&mut self, request: AtomicRequest<'_>) -> AtomicAccessResult;
+}
+
+/// The validated Hart data port: ordinary accesses and atomic envelopes over
+/// one shared port object (dev-plan §7.2).
+///
+/// The Hart's single data port serves ordinary fetches' data sibling — loads
+/// and stores — through [`PhysicalAccess`] and AMO/LR/SC through
+/// [`AtomicAccess`].  Both categories travel one port handle, so the
+/// raw/atomic path locks exactly one port for the complete operation; there
+/// is no second port, RAM, or lock domain for atomics.
+///
+/// This trait is implemented automatically for every port that implements
+/// both supertraits, including [`ValidatedPhysicalAccess`] over an
+/// [`AtomicBackend`].
+pub trait PhysicalDataAccess: PhysicalAccess + AtomicAccess {}
+
+impl<T: PhysicalAccess + AtomicAccess> PhysicalDataAccess for T {}
+
+impl<B: AtomicBackend + ?Sized> AtomicBackend for &mut B {
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        (**self).transact_atomic(request)
+    }
 }
 
 /// Validation boundary around an untrusted atomic backend.

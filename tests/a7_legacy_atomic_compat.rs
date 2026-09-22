@@ -1,8 +1,14 @@
-//! A7 T3 compatibility bridge tests.
+//! A7 T3 compatibility bridge tests, rewritten for the A8 T3 atomic profile.
 //!
-//! AMO/LR/SC remains on the original Executor/helpers and the outer typed
-//! memory lock.  These fixtures deliberately assert the characterized global
-//! reservation behavior rather than architectural per-Hart semantics.
+//! Port-configured cores now route AMO/LR/SC through the validated data port
+//! as one atomic envelope per instruction (dev-plan §7.1/§7.2); the old
+//! `MemoryInterface` helper route and the process-global reservation
+//! singleton are gone.  These fixtures assert the characterized *new*
+//! behavior of the formerly legacy rows: exactly-one-envelope dispatch,
+//! committed-write-aware SC outcomes, per-Hart reservation clearing on
+//! reset/reload, and the approved HTIF atomic (D-c) policy.  The ledger
+//! `docs/verification/a8-fixture-reclassification.md` lists which rows
+//! flipped and which harnesses retired.
 
 #[allow(dead_code)]
 mod common;
@@ -15,25 +21,19 @@ use ruscv_sim::executor::{dump_signature, RiscVSimulator, SystemBus, SYSTEM_BUS_
 use ruscv_sim::memory::{MemoryError, MemoryInterface, SimpleMemory};
 use ruscv_sim::peripherals::Uart16550;
 use ruscv_sim::physical::{
-    AccessCategory, AccessWidth, NativeRamBackend, NativeSystemBusBackend, PhysicalBackend,
-    PhysicalBackendResult, PhysicalRequest, ValidatedPhysicalAccess,
+    AccessCategory, AccessWidth, AtomicAccessKind, AtomicBackend, AtomicBackendResult,
+    AtomicRequest, AtomicRequestDescriptor, NativeRamBackend, NativeSystemBusBackend,
+    PhysicalBackend, PhysicalBackendError, PhysicalBackendResult, PhysicalRequest,
+    PhysicalTargetRejectionReason, ValidatedPhysicalAccess,
 };
-use std::io::Read;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
-
-const CHILD_ENV: &str = "RUSCV_A7_LEGACY_LOCK_CHILD";
-const CHILD_TEST: &str = "legacy_lock_reentry_child";
-const CHILD_TIMEOUT: Duration = Duration::from_secs(5);
-
-static RESERVATION_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 
 type SharedRam = Arc<Mutex<SimpleMemory>>;
 type SharedMemory = Arc<Mutex<dyn MemoryInterface + Send + Sync>>;
 type RawCall = (AccessCategory, AccessWidth, u64, Option<Vec<u8>>);
 type RawCalls = Arc<Mutex<Vec<RawCall>>>;
+type AtomicCalls = Arc<Mutex<Vec<AtomicRequestDescriptor>>>;
 
 fn amo_raw(funct5: u8, funct3: u8, rd: u8, rs1: u8, rs2: u8) -> u32 {
     ((funct5 as u32) << 27)
@@ -49,11 +49,11 @@ fn lr(rd: u8, rs1: u8) -> u32 {
 }
 
 fn sc(rd: u8, rs1: u8, rs2: u8) -> u32 {
-    // The existing dispatcher intentionally retains its SC width fallback.
+    // funct5 = 00011 is SC; `funct3` selects the span width.
     amo_raw(0b00011, 0b010, rd, rs1, rs2)
 }
 
-fn amoadd_d(rd: u8, rs1: u8, rs2: u8) -> u32 {
+fn amoswap_d(rd: u8, rs1: u8, rs2: u8) -> u32 {
     amo_raw(0b00001, 0b011, rd, rs1, rs2)
 }
 
@@ -80,7 +80,8 @@ fn typed_handle<M: MemoryInterface + Send + Sync + 'static>(memory: Arc<Mutex<M>
 }
 
 /// A typed legacy view over the same backing RAM.  It records the helper call
-/// order while the core owns this wrapper's outer mutex.
+/// order while the core owns this wrapper's outer mutex.  Port-configured
+/// atomics no longer reach it, but ordinary legacy handles still can.
 struct LegacyMemory {
     backing: SharedRam,
     calls: Arc<Mutex<Vec<String>>>,
@@ -101,10 +102,6 @@ impl LegacyMemory {
             .lock()
             .unwrap()
             .push(format!("{operation}@{address:#x}"));
-    }
-
-    fn set_fail_writes(&mut self, fail_writes: bool) {
-        self.fail_writes = fail_writes;
     }
 }
 
@@ -196,9 +193,16 @@ impl MemoryInterface for LegacyMemory {
     }
 }
 
+/// A physical backend double that records ordinary raw calls and atomic
+/// envelope descriptors, then forwards to the RAM target.  `fail_atomic`
+/// injects one target rejection for the next atomic envelope without
+/// touching storage, modeling an SC write-side failure for fault-retention
+/// coverage.
 struct RawTrace {
     inner: NativeRamBackend,
     calls: RawCalls,
+    atomic_calls: AtomicCalls,
+    fail_atomic: Arc<AtomicBool>,
 }
 
 impl PhysicalBackend for RawTrace {
@@ -213,19 +217,39 @@ impl PhysicalBackend for RawTrace {
     }
 }
 
-fn legacy_core(
-    backing: SharedRam,
-    program: &[u32],
+impl AtomicBackend for RawTrace {
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        self.atomic_calls.lock().unwrap().push(request.descriptor());
+        if self.fail_atomic.swap(false, Ordering::SeqCst) {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::Unmapped,
+                "injected atomic target rejection",
+            ));
+        }
+        self.inner.transact_atomic(request)
+    }
+}
+
+struct LegacyFixture {
+    core: RiscvCore,
     legacy_calls: Arc<Mutex<Vec<String>>>,
-    fail_writes: bool,
     raw_calls: RawCalls,
-) -> (RiscvCore, Arc<Mutex<LegacyMemory>>, SharedRam) {
+    atomic_calls: AtomicCalls,
+    fail_atomic: Arc<AtomicBool>,
+    backing: SharedRam,
+}
+
+fn legacy_core(backing: SharedRam, program: &[u32]) -> LegacyFixture {
     {
         let mut ram = backing.lock().unwrap();
         for (index, instruction) in program.iter().copied().enumerate() {
             ram.write_word(index as u64 * 4, instruction).unwrap();
         }
     }
+    let legacy_calls = Arc::new(Mutex::new(Vec::new()));
+    let raw_calls: RawCalls = Arc::new(Mutex::new(Vec::new()));
+    let atomic_calls: AtomicCalls = Arc::new(Mutex::new(Vec::new()));
+    let fail_atomic = Arc::new(AtomicBool::new(false));
     let instruction_legacy = Arc::new(Mutex::new(LegacyMemory::new(
         backing.clone(),
         Arc::new(Mutex::new(Vec::new())),
@@ -233,71 +257,70 @@ fn legacy_core(
     )));
     let data_legacy = Arc::new(Mutex::new(LegacyMemory::new(
         backing.clone(),
-        legacy_calls,
-        fail_writes,
+        legacy_calls.clone(),
+        false,
     )));
     let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(RawTrace {
         inner: NativeRamBackend::new(backing.clone(), 0, backing.lock().unwrap().size()),
         calls: raw_calls.clone(),
+        atomic_calls: Arc::new(Mutex::new(Vec::new())),
+        fail_atomic: Arc::new(AtomicBool::new(false)),
     })));
     let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(RawTrace {
         inner: NativeRamBackend::new(backing.clone(), 0, backing.lock().unwrap().size()),
-        calls: raw_calls,
+        calls: raw_calls.clone(),
+        atomic_calls: atomic_calls.clone(),
+        fail_atomic: fail_atomic.clone(),
     })));
     let core = RiscvCore::new_with_physical_ports(
         typed_handle(instruction_legacy),
-        typed_handle(data_legacy.clone()),
+        typed_handle(data_legacy),
         instruction_port,
         data_port,
     );
-    (core, data_legacy, backing)
+    LegacyFixture {
+        core,
+        legacy_calls,
+        raw_calls,
+        atomic_calls,
+        fail_atomic,
+        backing,
+    }
 }
 
-fn clear_reservation() {
-    ruscv_sim::execute::clear_reservation();
+fn retired(core: &mut RiscvCore) {
+    assert!(
+        matches!(core.step_outcome(), StepOutcome::InstructionRetired(_)),
+        "expected a retired instruction"
+    );
 }
 
 #[test]
-fn ordinary_store_and_fp_store_interleave_with_unchanged_legacy_lr_sc() {
-    let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
-    clear_reservation();
+fn ordinary_store_and_fp_store_interleave_with_port_route_lr_sc() {
     let backing = Arc::new(Mutex::new(SimpleMemory::new(0x200)));
     backing.lock().unwrap().write_dword(0x80, 1).unwrap();
-    let legacy_calls = Arc::new(Mutex::new(Vec::new()));
-    let raw_calls = Arc::new(Mutex::new(Vec::new()));
-    let (mut core, _legacy, backing) = legacy_core(
-        backing,
-        &[lr(3, 1), store(2, 1, 3, 0), sc(4, 1, 2)],
-        legacy_calls.clone(),
-        false,
-        raw_calls.clone(),
-    );
-    core.reset(0, 0);
-    core.state_mut().regs[1] = 0x80;
-    core.state_mut().regs[2] = 7;
+    let mut fixture = legacy_core(backing, &[lr(3, 1), store(2, 1, 3, 0), sc(4, 1, 2)]);
+    fixture.core.reset(0, 0);
+    fixture.core.state_mut().regs[1] = 0x80;
+    fixture.core.state_mut().regs[2] = 7;
 
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(legacy_calls.lock().unwrap().as_slice(), ["read_dword@0x80"]);
-    assert!(raw_calls
+    retired(&mut fixture.core);
+    // The LR issued exactly one atomic envelope on the data port and never
+    // touched the legacy typed handle.
+    assert!(fixture.legacy_calls.lock().unwrap().is_empty());
+    assert_eq!(fixture.atomic_calls.lock().unwrap().len(), 1);
+    assert!(fixture
+        .raw_calls
         .lock()
         .unwrap()
         .iter()
-        .all(|call| { call.0 == AccessCategory::Fetch }));
+        .all(|call| call.0 == AccessCategory::Fetch));
 
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    retired(&mut fixture.core);
+    assert_eq!(fixture.backing.lock().unwrap().read_dword(0x80).unwrap(), 7);
     assert_eq!(
-        backing.lock().unwrap().read_dword(0x80).unwrap(),
-        7,
-        "raw ordinary store is visible to the legacy domain"
-    );
-    assert_eq!(
-        raw_calls
+        fixture
+            .raw_calls
             .lock()
             .unwrap()
             .iter()
@@ -306,29 +329,26 @@ fn ordinary_store_and_fp_store_interleave_with_unchanged_legacy_lr_sc() {
         1
     );
 
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    retired(&mut fixture.core);
+    // The interleaving committed store bumped the snapshot, so the SC
+    // envelope returns conditional failure: rd = 1 and no write.
     assert_eq!(
-        core.state().regs[4],
-        0,
-        "baseline reservation survives scalar store"
+        fixture.core.state().regs[4],
+        1,
+        "a committed overlapping ordinary store fails the conditional SC"
     );
+    assert_eq!(fixture.backing.lock().unwrap().read_dword(0x80).unwrap(), 7);
     assert_eq!(
-        legacy_calls.lock().unwrap().as_slice(),
-        ["read_dword@0x80", "write_dword@0x80"]
+        fixture.atomic_calls.lock().unwrap().len(),
+        2,
+        "LR and the executed SC each issue exactly one envelope"
     );
-    assert_eq!(backing.lock().unwrap().read_dword(0x80).unwrap(), 7);
 
-    // A separate FP store follows the same ordinary raw route and still does
-    // not add an invalidation mechanism to the retained legacy singleton.
-    clear_reservation();
-    let legacy_calls = Arc::new(Mutex::new(Vec::new()));
-    let raw_calls = Arc::new(Mutex::new(Vec::new()));
+    // An FP store follows the same ordinary raw route and also commits, so
+    // it likewise breaks a reservation taken across it.
     let backing = Arc::new(Mutex::new(SimpleMemory::new(0x200)));
     backing.lock().unwrap().write_dword(0x80, 3).unwrap();
-    let (mut core, _legacy, backing) = legacy_core(
+    let mut fixture = legacy_core(
         backing,
         &[
             lr(3, 1),
@@ -336,245 +356,230 @@ fn ordinary_store_and_fp_store_interleave_with_unchanged_legacy_lr_sc() {
             (2u32 << 20) | (1u32 << 15) | (0b011 << 12) | 0x27,
             sc(4, 1, 2),
         ],
-        legacy_calls,
-        false,
-        raw_calls.clone(),
     );
-    core.reset(0, 0);
-    core.state_mut().regs[1] = 0x80;
-    core.state_mut().fpr.write(2, ruscv_sim::Fpr::from_bits(5));
-    core.state_mut().regs[2] = 5;
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(backing.lock().unwrap().read_dword(0x80).unwrap(), 5);
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(core.state().regs[4], 0);
+    fixture.core.reset(0, 0);
+    fixture.core.state_mut().regs[1] = 0x80;
+    fixture
+        .core
+        .state_mut()
+        .fpr
+        .write(2, ruscv_sim::Fpr::from_bits(5));
+    fixture.core.state_mut().regs[2] = 5;
+    retired(&mut fixture.core);
+    retired(&mut fixture.core);
+    assert_eq!(fixture.backing.lock().unwrap().read_dword(0x80).unwrap(), 5);
+    retired(&mut fixture.core);
     assert_eq!(
-        raw_calls
+        fixture.core.state().regs[4],
+        1,
+        "a committed overlapping FP store fails the conditional SC"
+    );
+    assert_eq!(
+        fixture
+            .raw_calls
             .lock()
             .unwrap()
             .iter()
             .filter(|call| call.0 == AccessCategory::DataWrite)
             .count(),
         1,
-        "FSD is ordinary raw DataWrite, not a legacy helper call"
+        "FSD is ordinary raw DataWrite, not an atomic envelope"
     );
 }
 
 #[test]
-fn ordinary_store_then_legacy_amo_and_lr_share_one_migrated_domain() {
-    let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
-    clear_reservation();
+fn ordinary_store_then_port_route_amo_and_lr_share_one_domain() {
     let backing = Arc::new(Mutex::new(SimpleMemory::new(0x200)));
     backing.lock().unwrap().write_dword(0x80, 1).unwrap();
-    let legacy_calls = Arc::new(Mutex::new(Vec::new()));
-    let raw_calls = Arc::new(Mutex::new(Vec::new()));
-    let (mut core, _legacy, backing) = legacy_core(
-        backing,
-        &[store(2, 1, 3, 0), amoadd_d(3, 1, 4), lr(5, 1)],
-        legacy_calls.clone(),
-        false,
-        raw_calls.clone(),
-    );
-    core.reset(0, 0);
-    core.state_mut().regs[1] = 0x80;
-    core.state_mut().regs[2] = 7;
-    core.state_mut().regs[4] = 3;
+    let mut fixture = legacy_core(backing, &[store(2, 1, 3, 0), amoswap_d(3, 1, 4), lr(5, 1)]);
+    fixture.core.reset(0, 0);
+    fixture.core.state_mut().regs[1] = 0x80;
+    fixture.core.state_mut().regs[2] = 7;
+    fixture.core.state_mut().regs[4] = 3;
 
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(core.state().regs[3], 7);
-    assert_eq!(backing.lock().unwrap().read_dword(0x80).unwrap(), 10);
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(core.state().regs[5], 10);
+    retired(&mut fixture.core);
+    retired(&mut fixture.core);
+
+    // AMOSWAP.D returned the committed store value and swapped in rs2.
+    assert_eq!(fixture.core.state().regs[3], 7);
+    assert_eq!(fixture.backing.lock().unwrap().read_dword(0x80).unwrap(), 3);
+    retired(&mut fixture.core);
+    assert_eq!(fixture.core.state().regs[5], 3);
+    assert!(
+        fixture.legacy_calls.lock().unwrap().is_empty(),
+        "atomics stay on the port; the legacy typed handle is untouched"
+    );
+    let kinds: Vec<AtomicAccessKind> = fixture
+        .atomic_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|call| call.kind)
+        .collect();
     assert_eq!(
-        legacy_calls.lock().unwrap().as_slice(),
-        ["read_word@0x80", "write_word@0x80", "read_dword@0x80"]
+        kinds,
+        [AtomicAccessKind::Rmw, AtomicAccessKind::LoadReserved]
     );
     assert_eq!(
-        raw_calls
+        fixture
+            .raw_calls
             .lock()
             .unwrap()
             .iter()
             .filter(|call| call.0 == AccessCategory::DataWrite)
             .count(),
         1,
-        "only the ordinary store uses the raw data port"
+        "only the ordinary store uses a raw data-write request"
     );
 }
 
 #[test]
-fn rejected_ordinary_write_and_faulting_sc_preserve_characterized_reservation() {
-    let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
-    clear_reservation();
+fn rejected_write_keeps_reservation_and_faulting_sc_retains_it() {
     let backing = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
     backing.lock().unwrap().write_dword(0x80, 9).unwrap();
-    let legacy_calls = Arc::new(Mutex::new(Vec::new()));
-    let raw_calls = Arc::new(Mutex::new(Vec::new()));
-    let (mut core, _legacy, backing) = legacy_core(
+    let mut fixture = legacy_core(
         backing,
         &[
             lr(3, 1),
             store(2, 4, 3, 0), // x4 is the rejected 0x1000 address
             sc(5, 1, 2),
         ],
-        legacy_calls,
-        false,
-        raw_calls,
     );
-    core.reset(0, 0);
-    core.state_mut().regs[1] = 0x80;
-    core.state_mut().regs[2] = 10;
-    core.state_mut().regs[4] = 0x1000;
-    core.state_mut().csr.write(machine::MTVEC, 0x40).unwrap();
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x1000
-    ));
-    assert_eq!(backing.lock().unwrap().read_dword(0x80).unwrap(), 9);
-    core.state_mut().pc = 8;
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(core.state().regs[5], 0);
-    assert_eq!(backing.lock().unwrap().read_dword(0x80).unwrap(), 10);
-
-    // A write-faulting legacy SC returns before its historical clear, and the
-    // next independent facade instance can still consume that global key.
-    clear_reservation();
-    let backing = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
-    backing.lock().unwrap().write_dword(0x80, 11).unwrap();
-    let legacy_calls = Arc::new(Mutex::new(Vec::new()));
-    let raw_calls = Arc::new(Mutex::new(Vec::new()));
-    let (mut faulting, legacy, _backing) = legacy_core(
-        backing,
-        &[lr(3, 1), sc(4, 1, 2)],
-        legacy_calls,
-        false,
-        raw_calls,
-    );
-    faulting.reset(0, 0);
-    faulting.state_mut().regs[1] = 0x80;
-    faulting.state_mut().regs[2] = 12;
-    faulting
+    fixture.core.reset(0, 0);
+    fixture.core.state_mut().regs[1] = 0x80;
+    fixture.core.state_mut().regs[2] = 10;
+    fixture.core.state_mut().regs[4] = 0x1000;
+    fixture
+        .core
         .state_mut()
         .csr
         .write(machine::MTVEC, 0x40)
         .unwrap();
+    retired(&mut fixture.core);
     assert!(matches!(
-        faulting.step_outcome(),
-        StepOutcome::InstructionRetired(_)
+        fixture.core.step_outcome(),
+        StepOutcome::TrapEntered(trap)
+            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x1000
     ));
-    legacy.lock().unwrap().set_fail_writes(true);
+    assert_eq!(
+        fixture.backing.lock().unwrap().read_dword(0x80).unwrap(),
+        9,
+        "a target-rejected ordinary write commits nothing"
+    );
+    fixture.core.state_mut().pc = 8;
+    retired(&mut fixture.core);
+    assert_eq!(
+        fixture.core.state().regs[5],
+        0,
+        "a rejected write does not bump the snapshot, so SC still succeeds"
+    );
+    assert_eq!(
+        fixture.backing.lock().unwrap().read_dword(0x80).unwrap(),
+        10
+    );
+
+    // A write-faulting SC keeps the Hart's reservation (approved
+    // faulting-SC retain): the trap discards the staged consumption, so the
+    // next SC on the same Hart still succeeds.
+    let backing = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
+    backing.lock().unwrap().write_dword(0x80, 11).unwrap();
+    let mut fixture = legacy_core(backing, &[lr(3, 1), sc(4, 1, 2)]);
+    fixture.core.reset(0, 0);
+    fixture.core.state_mut().regs[1] = 0x80;
+    fixture.core.state_mut().regs[2] = 12;
+    fixture
+        .core
+        .state_mut()
+        .csr
+        .write(machine::MTVEC, 0x40)
+        .unwrap();
+    retired(&mut fixture.core);
+    fixture.fail_atomic.store(true, Ordering::SeqCst);
     assert!(matches!(
-        faulting.step_outcome(),
+        fixture.core.step_outcome(),
         StepOutcome::TrapEntered(trap)
             if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x80
     ));
-    assert_eq!(faulting.state().regs[4], 0);
+    assert_eq!(fixture.core.state().regs[4], 0);
+    fixture.core.state_mut().pc = 4;
+    retired(&mut fixture.core);
+    assert_eq!(
+        fixture.core.state().regs[4],
+        0,
+        "the retained reservation lets the retried SC commit"
+    );
+    assert_eq!(
+        fixture.backing.lock().unwrap().read_dword(0x80).unwrap(),
+        12
+    );
 
+    // A different Hart holds no reservation: a fresh facade's SC fails
+    // conditionally even at the same address.
     let other_backing = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
     other_backing.lock().unwrap().write_dword(0x80, 11).unwrap();
-    let other_legacy_calls = Arc::new(Mutex::new(Vec::new()));
-    let other_raw_calls = Arc::new(Mutex::new(Vec::new()));
-    let (mut after_fault, _other_legacy, other_backing) = legacy_core(
-        other_backing,
-        &[sc(5, 1, 2)],
-        other_legacy_calls,
-        false,
-        other_raw_calls,
+    let mut after_fault = legacy_core(other_backing, &[sc(5, 1, 2)]);
+    after_fault.core.reset(0, 0);
+    after_fault.core.state_mut().regs[1] = 0x80;
+    after_fault.core.state_mut().regs[2] = 13;
+    retired(&mut after_fault.core);
+    assert_eq!(
+        after_fault.core.state().regs[5],
+        1,
+        "reservations are per-Hart; another core's SC fails"
     );
-    after_fault.reset(0, 0);
-    after_fault.state_mut().regs[1] = 0x80;
-    after_fault.state_mut().regs[2] = 13;
-    assert!(matches!(
-        after_fault.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(after_fault.state().regs[5], 0);
-    assert_eq!(other_backing.lock().unwrap().read_dword(0x80).unwrap(), 13);
+    assert_eq!(
+        after_fault
+            .backing
+            .lock()
+            .unwrap()
+            .read_dword(0x80)
+            .unwrap(),
+        11
+    );
 }
 
 #[test]
-fn legacy_lr_survives_reset_and_replacement_storage_with_global_key_behavior() {
-    let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
-    clear_reservation();
+fn per_hart_reservation_clears_on_reset_and_does_not_cross_facades() {
     let first_ram = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
     first_ram.lock().unwrap().write_dword(0x80, 1).unwrap();
-    let first_calls = Arc::new(Mutex::new(Vec::new()));
-    let first_raw = Arc::new(Mutex::new(Vec::new()));
-    let (mut first, _legacy, first_ram) =
-        legacy_core(first_ram, &[lr(3, 1)], first_calls, false, first_raw);
-    first.reset(0, 0);
-    first.state_mut().regs[1] = 0x80;
-    assert!(matches!(
-        first.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    let mut first = legacy_core(first_ram, &[lr(3, 1), sc(4, 1, 2)]);
+    first.core.reset(0, 0);
+    first.core.state_mut().regs[1] = 0x80;
+    first.core.state_mut().regs[2] = 22;
+    retired(&mut first.core);
 
-    // Reset does not clear the characterized singleton reservation.  A
-    // replacement image/core can still observe the exact address key.
-    first.reset(0, 0);
-    first_ram
-        .lock()
-        .unwrap()
-        .write_word(0, 0x0000_0013)
-        .unwrap();
-    assert!(matches!(
-        first.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    // Reset installs a fresh CoreState, clearing the reservation.
+    first.core.reset(0, 0);
+    first.core.state_mut().regs[1] = 0x80;
+    first.core.state_mut().regs[2] = 22;
+    first.core.state_mut().pc = 4;
+    retired(&mut first.core);
+    assert_eq!(
+        first.core.state().regs[4],
+        1,
+        "reset clears the per-Hart reservation; SC fails with rd = 1"
+    );
+    assert_eq!(first.backing.lock().unwrap().read_dword(0x80).unwrap(), 1);
 
+    // A replacement core on different storage holds no reservation either:
+    // the record lives in this Hart's CoreState, not in a global singleton.
     let second_ram = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
     second_ram.lock().unwrap().write_dword(0x80, 2).unwrap();
-    let second_calls = Arc::new(Mutex::new(Vec::new()));
-    let second_raw = Arc::new(Mutex::new(Vec::new()));
-    let (mut second, _legacy, second_ram) =
-        legacy_core(second_ram, &[sc(4, 1, 2)], second_calls, false, second_raw);
-    second.reset(0, 0);
-    second.state_mut().regs[1] = 0x80;
-    second.state_mut().regs[2] = 22;
-    assert!(matches!(
-        second.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    let mut second = legacy_core(second_ram, &[sc(4, 1, 2)]);
+    second.core.reset(0, 0);
+    second.core.state_mut().regs[1] = 0x80;
+    second.core.state_mut().regs[2] = 22;
+    retired(&mut second.core);
     assert_eq!(
-        second.state().regs[4],
-        0,
-        "reservation key remains global/address-only"
+        second.core.state().regs[4],
+        1,
+        "the reservation record is Hart-owned, not address-keyed global"
     );
-    assert_eq!(first_ram.lock().unwrap().read_dword(0x80).unwrap(), 1);
-    assert_eq!(second_ram.lock().unwrap().read_dword(0x80).unwrap(), 22);
+    assert_eq!(second.backing.lock().unwrap().read_dword(0x80).unwrap(), 2);
 }
 
 #[test]
-fn public_flat_reload_replaces_storage_but_retains_legacy_lr_key() {
-    let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
-    clear_reservation();
+fn public_flat_reload_replaces_storage_and_clears_the_reservation() {
     let first = fixture::elf_with_code(&[lr(3, 1)], 0, false, false, 0x3000);
     let second = fixture::elf_with_code(&[sc(4, 1, 2)], 0, false, false, 0x3000);
     let mut simulator = RiscVSimulator::new(0x100);
@@ -593,58 +598,51 @@ fn public_flat_reload_replaces_storage_but_retains_legacy_lr_key() {
     simulator.state_mut().regs[1] = fixture::BASE + 0x80;
     simulator.state_mut().regs[2] = 22;
     simulator.step().unwrap();
-    assert_eq!(simulator.state().regs[4], 0);
-    assert_eq!(old_memory.lock().unwrap().read_dword(0x80).unwrap(), 1);
     assert_eq!(
-        simulator.memory().lock().unwrap().read_dword(0x80).unwrap(),
-        22
+        simulator.state().regs[4],
+        1,
+        "image reload installs a fresh core, clearing the reservation"
     );
+    assert_eq!(old_memory.lock().unwrap().read_dword(0x80).unwrap(), 1);
 }
 
 #[test]
 fn legacy_write_is_visible_to_raw_load_fetch_signature_and_host_inspection() {
-    let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
-    clear_reservation();
     let backing = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
-    let legacy_calls = Arc::new(Mutex::new(Vec::new()));
-    let raw_calls = Arc::new(Mutex::new(Vec::new()));
-    let (mut core, instruction_legacy, backing) = legacy_core(
-        backing,
-        &[load(5, 1, 3, 0), 0x0000_0013],
-        legacy_calls,
-        false,
-        raw_calls,
-    );
-    core.reset(0, 0);
-    core.state_mut().regs[1] = 0x80;
+    let program = [load(5, 1, 3, 0), 0x0000_0013];
+    let mut fixture = legacy_core(backing, &program);
+    fixture.core.reset(0, 0);
+    fixture.core.state_mut().regs[1] = 0x80;
+    let instruction_legacy = {
+        // Recover the typed instruction handle by wrapping the same RAM.
+        fixture.backing.clone()
+    };
     {
-        let mut instruction = instruction_legacy.lock().unwrap();
-        instruction.write_word(0, 0x0070_0293).unwrap(); // ADDI x5, x0, 7
+        let mut ram = instruction_legacy.lock().unwrap();
+        ram.write_word(0, 0x0070_0293).unwrap(); // ADDI x5, x0, 7
     }
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    retired(&mut fixture.core);
     assert_eq!(
-        core.state().regs[5],
+        fixture.core.state().regs[5],
         7,
-        "legacy instruction write reaches raw fetch"
+        "backing-RAM instruction write reaches raw fetch"
     );
 
     {
-        let mut instruction = instruction_legacy.lock().unwrap();
-        instruction.write_word(0, load(5, 1, 3, 0)).unwrap();
+        let mut ram = instruction_legacy.lock().unwrap();
+        ram.write_word(0, load(5, 1, 3, 0)).unwrap();
     }
-    backing.lock().unwrap().write_dword(0x80, 0x1234).unwrap();
-    core.state_mut().pc = 0;
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    instruction_legacy
+        .lock()
+        .unwrap()
+        .write_dword(0x80, 0x1234)
+        .unwrap();
+    fixture.core.state_mut().pc = 0;
+    retired(&mut fixture.core);
     assert_eq!(
-        core.state().regs[5],
+        fixture.core.state().regs[5],
         0x1234,
-        "legacy RAM write reaches raw load"
+        "backing-RAM write reaches raw load"
     );
 
     let signature_value = 0x8877_6655_4433_2211u64;
@@ -653,13 +651,10 @@ fn legacy_write_is_visible_to_raw_load_fetch_signature_and_host_inspection() {
         .unwrap()
         .write_dword(0x40, signature_value)
         .unwrap();
-    core.state_mut().regs[1] = 0x40;
-    core.state_mut().pc = 0;
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(core.state().regs[5], signature_value);
+    fixture.core.state_mut().regs[1] = 0x40;
+    fixture.core.state_mut().pc = 0;
+    retired(&mut fixture.core);
+    assert_eq!(fixture.core.state().regs[5], signature_value);
     let signature_memory: SharedMemory = typed_handle(instruction_legacy.clone());
     let signature = SignatureInfo {
         vaddr: 0x40,
@@ -669,7 +664,7 @@ fn legacy_write_is_visible_to_raw_load_fetch_signature_and_host_inspection() {
     assert_eq!(
         dump_signature(&signature_memory, Some(&signature)).unwrap(),
         Some(signature_value.to_le_bytes().to_vec()),
-        "signature inspection sees the same legacy write as the raw load"
+        "signature inspection sees the same write as the raw load"
     );
 
     let simulator = RiscVSimulator::new(0x100);
@@ -682,15 +677,11 @@ fn legacy_write_is_visible_to_raw_load_fetch_signature_and_host_inspection() {
     );
 }
 
-fn legacy_mmio_scenario() {
-    clear_reservation();
-    let instruction = Arc::new(Mutex::new(SimpleMemory::new(0x20)));
-    instruction.lock().unwrap().write_word(0, lr(3, 1)).unwrap();
-    instruction
-        .lock()
-        .unwrap()
-        .write_word(4, sc(4, 1, 2))
-        .unwrap();
+#[test]
+fn htif_atomic_policy_rejects_lr_sc_and_commits_one_rmw_callback() {
+    // Approved D-c on the native bus: LR and SC at the HTIF endpoint are
+    // target rejections before any callback or mutation, while one RMW
+    // envelope fires the callback exactly once inside the critical section.
     let uart = Arc::new(Mutex::new(Uart16550::new(0x1000_0000)));
     let observed = Arc::new(Mutex::new(Vec::new()));
     let copy = observed.clone();
@@ -703,6 +694,13 @@ fn legacy_mmio_scenario() {
     bus.lock()
         .unwrap()
         .set_htif_write_callback(move |value| copy.lock().unwrap().push(value));
+    let instruction = Arc::new(Mutex::new(SimpleMemory::new(0x20)));
+    {
+        let mut ram = instruction.lock().unwrap();
+        ram.write_word(0, lr(3, 1)).unwrap();
+        ram.write_word(4, sc(4, 1, 2)).unwrap();
+        ram.write_word(8, amoswap_d(5, 1, 2)).unwrap();
+    }
     let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
         NativeRamBackend::new(instruction.clone(), 0, 0x20),
     )));
@@ -710,141 +708,41 @@ fn legacy_mmio_scenario() {
         NativeSystemBusBackend::new(bus.clone()),
     )));
     let mut core = RiscvCore::new_with_physical_ports(
-        typed_handle(instruction.clone()),
-        typed_handle(bus.clone()),
+        typed_handle(instruction),
+        typed_handle(bus),
         instruction_port,
         data_port,
     );
     core.reset(0, 0);
-    core.state_mut().regs[1] = SYSTEM_BUS_HTIF_BASE + 4;
+    core.state_mut().csr.write(machine::MTVEC, 0x40).unwrap();
+
+    // LR at the HTIF endpoint: the backend rejects the load-reserved kind
+    // before any mutation; the Hart enters a load access fault.
+    core.state_mut().regs[1] = SYSTEM_BUS_HTIF_BASE;
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::TrapEntered(trap)
+            if trap.cause == ExceptionCause::LoadAccessFault
+                && trap.mtval == SYSTEM_BUS_HTIF_BASE
+    ));
+    assert!(observed.lock().unwrap().is_empty());
+
+    // SC with no reservation fails Hart-side (rd = 1) and never issues an
+    // envelope; the callback stays silent either way.
+    core.state_mut().pc = 4;
     core.state_mut().regs[2] = 0x1234_5678_9abc_def0;
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert!(matches!(
-        core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(*observed.lock().unwrap(), vec![0x1234_5678_9abc_def0]);
-}
+    retired(&mut core);
+    assert_eq!(core.state().regs[4], 1);
+    assert!(observed.lock().unwrap().is_empty());
 
-#[test]
-fn successful_legacy_sc_width_debt_mmio_callback_is_retained() {
-    let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
-    legacy_mmio_scenario();
-}
-
-struct ChildResult {
-    status: ExitStatus,
-    stdout: String,
-    stderr: String,
-}
-
-fn read_child_output(child: &mut Child) -> (String, String) {
-    let mut stdout = Vec::new();
-    child
-        .stdout
-        .as_mut()
-        .unwrap()
-        .read_to_end(&mut stdout)
-        .unwrap();
-    let mut stderr = Vec::new();
-    child
-        .stderr
-        .as_mut()
-        .unwrap()
-        .read_to_end(&mut stderr)
-        .unwrap();
-    (
-        String::from_utf8_lossy(&stdout).into_owned(),
-        String::from_utf8_lossy(&stderr).into_owned(),
-    )
-}
-
-fn run_child() -> ChildResult {
-    let executable = std::env::current_exe().unwrap();
-    let mut child = Command::new(executable)
-        .arg("--exact")
-        .arg(CHILD_TEST)
-        .arg("--nocapture")
-        .arg("--test-threads=1")
-        .env(CHILD_ENV, "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let deadline = Instant::now() + CHILD_TIMEOUT;
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            let (stdout, stderr) = read_child_output(&mut child);
-            return ChildResult {
-                status,
-                stdout,
-                stderr,
-            };
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let status = child.wait().unwrap();
-            let (stdout, stderr) = read_child_output(&mut child);
-            panic!("legacy lock child exceeded {CHILD_TIMEOUT:?}: {status}\n{stdout}\n{stderr}");
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-#[test]
-fn legacy_lock_reentry_child() {
-    if std::env::var_os(CHILD_ENV).is_some() {
-        let _serial = RESERVATION_FIXTURE_LOCK.lock().unwrap();
-        let backing = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
-        backing.lock().unwrap().write_dword(0x80, 1).unwrap();
-        let instruction = Arc::new(Mutex::new(SimpleMemory::new(0x20)));
-        instruction
-            .lock()
-            .unwrap()
-            .write_word(0, store(2, 1, 3, 0))
-            .unwrap();
-        instruction.lock().unwrap().write_word(4, lr(3, 1)).unwrap();
-        instruction
-            .lock()
-            .unwrap()
-            .write_word(8, sc(4, 1, 2))
-            .unwrap();
-        let uart = Arc::new(Mutex::new(Uart16550::new(0x1000_0000)));
-        let bus = Arc::new(Mutex::new(SystemBus::new(backing.clone(), uart, 0, 0x100)));
-        let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-            NativeRamBackend::new(instruction.clone(), 0, 0x20),
-        )));
-        let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-            NativeSystemBusBackend::new(bus.clone()),
-        )));
-        let mut core = RiscvCore::new_with_physical_ports(
-            typed_handle(instruction),
-            typed_handle(bus),
-            instruction_port,
-            data_port,
-        );
-        core.reset(0, 0);
-        core.state_mut().regs[1] = 0x80;
-        core.state_mut().regs[2] = 2;
-        for _ in 0..3 {
-            assert!(matches!(
-                core.step_outcome(),
-                StepOutcome::InstructionRetired(_)
-            ));
-        }
-        assert_eq!(core.state().regs[4], 0);
-        assert_eq!(backing.lock().unwrap().read_dword(0x80).unwrap(), 2);
-        return;
-    }
-
-    let result = run_child();
-    assert!(
-        result.status.success(),
-        "lock-domain child failed: {}\n{}",
-        result.stdout,
-        result.stderr
+    // AMOSWAP.D at the endpoint: one indivisible envelope whose old value is
+    // the endpoint's zero read and whose write fires the callback once.
+    core.state_mut().pc = 8;
+    retired(&mut core);
+    assert_eq!(core.state().regs[5], 0, "the HTIF endpoint reads zero");
+    assert_eq!(
+        *observed.lock().unwrap(),
+        vec![0x1234_5678_9abc_def0],
+        "one RMW envelope fires exactly one callback with the transformed value"
     );
 }

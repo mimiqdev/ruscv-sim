@@ -22,9 +22,9 @@ pub mod tlm;
 
 pub use core::{
     CoreState, CoreStepOutcome, HartStepOutcome, InstructionRetired, LegacyTypedMemoryAdapter,
-    MemoryAdapter, PhysicalMemoryAdapter, PrivilegeMode, RiscvCore, SharedPhysicalAccess,
-    SimulatorFailure, SimulatorFailureKind, StepOutcome, TrapContinuationPolicy, TrapEntered,
-    TrapEntryError,
+    MemoryAdapter, PhysicalAtomicAdapter, PhysicalMemoryAdapter, PrivilegeMode, RiscvCore,
+    SharedDataAccess, SharedPhysicalAccess, SimulatorFailure, SimulatorFailureKind, StepOutcome,
+    TrapContinuationPolicy, TrapEntered, TrapEntryError,
 };
 pub use csr::{CsrAccess, CsrError, CsrFile};
 pub use debug::{
@@ -53,9 +53,9 @@ pub use physical::{
     NativePhysicalTarget, NativeRamBackend, NativeSystemBusBackend, PhysicalAccess,
     PhysicalAccessError, PhysicalAccessKind, PhysicalAccessPort, PhysicalAccessResult,
     PhysicalBackend, PhysicalBackendError, PhysicalBackendFailure, PhysicalBackendResult,
-    PhysicalCompletion, PhysicalCompletionKind, PhysicalProtocolError, PhysicalRequest,
-    PhysicalRequestDescriptor, PhysicalRequestKind, PhysicalResponse, PhysicalResponseBytes,
-    PhysicalResponseCompletion, PhysicalSpan, PhysicalTargetRejection,
+    PhysicalCompletion, PhysicalCompletionKind, PhysicalDataAccess, PhysicalProtocolError,
+    PhysicalRequest, PhysicalRequestDescriptor, PhysicalRequestKind, PhysicalResponse,
+    PhysicalResponseBytes, PhysicalResponseCompletion, PhysicalSpan, PhysicalTargetRejection,
     PhysicalTargetRejectionReason, PhysicalUnknownCompletion, PhysicalWidth, PureAmoTransform,
     RawPhysicalBytes, SharedNativeBackend, SystemBusPhysicalBackend, ValidatedAtomicAccess,
     ValidatedPhysicalAccess, MAX_COMMITTED_WRITE_SNAPSHOT_BYTES, MAX_PHYSICAL_ACCESS_BYTES,

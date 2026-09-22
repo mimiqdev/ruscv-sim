@@ -8,9 +8,11 @@ use crate::csr::{machine, CsrFile};
 use crate::decode::{DecodeError, DecodedInstruction, InstructionDecoder, Opcode};
 use crate::execute::{ExecuteError, Executor};
 use crate::fpu::{Fcsr, FpuRegisterFile};
+use crate::isa::rv64a::ReservationSet;
 use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
 use crate::physical::{
-    PhysicalAccess, PhysicalAccessError, PhysicalAccessKind, PhysicalRequest, PhysicalWidth,
+    AtomicAccessError, AtomicRequest, AtomicResponse, PhysicalAccess, PhysicalAccessError,
+    PhysicalAccessKind, PhysicalDataAccess, PhysicalRequest, PhysicalWidth,
 };
 use crate::tlm::TlmInterface;
 use anyhow::Result;
@@ -140,6 +142,13 @@ pub struct CoreState {
     pub mtval: u64,
     /// Track if last instruction was a taken branch (used to skip pc += 4)
     pub branch_taken: bool,
+    /// The Hart's single atomic reservation record (dev-plan §5.4, C16/C23).
+    ///
+    /// A successful LR replaces it, an executed SC consumes it, and reset or
+    /// image reload clears it because both install a fresh `CoreState`.  The
+    /// record keys the exact reserved byte span by the address issued at the
+    /// Hart's access route plus the LR-time committed-write snapshot.
+    pub reservation: Option<ReservationSet>,
 }
 
 impl Default for CoreState {
@@ -156,6 +165,7 @@ impl Default for CoreState {
             mcause: 0,
             mtval: 0,
             branch_taken: false,
+            reservation: None,
         }
     }
 }
@@ -175,9 +185,11 @@ pub struct RiscvCore {
     /// Optional raw physical fetch port.  It is separate from the legacy
     /// instruction-memory handle so old callers retain their supplied object.
     instruction_access: Option<SharedPhysicalAccess>,
-    /// Optional raw physical data port for ordinary integer/FP accesses.
-    /// AMO/LR/SC deliberately do not use this port.
-    data_access: Option<SharedPhysicalAccess>,
+    /// Optional validated data port for ordinary integer/FP accesses and for
+    /// AMO/LR/SC atomic envelopes.  One port object serves both categories
+    /// (dev-plan §7.2); cores without it keep the labeled non-conforming
+    /// typed adapter route.
+    data_access: Option<SharedDataAccess>,
     /// Optional native RAM range whose storage-offset alignment must retain
     /// the legacy typed-memory rejection.  This is set by the native facade;
     /// generic raw targets remain free to accept unaligned physical spans.
@@ -296,6 +308,14 @@ pub type LegacyTypedMemoryAdapter<'a> = MemoryAdapter<'a>;
 /// continue to use their independent `MemoryInterface` mutex.
 pub type SharedPhysicalAccess = Arc<Mutex<dyn PhysicalAccess + Send>>;
 
+/// Shared ownership form for the Hart's one validated data port.
+///
+/// The data port serves ordinary loads/stores and AMO/LR/SC atomic envelopes
+/// through a single port object, so the raw/atomic path locks exactly one
+/// port handle for the complete operation (dev-plan §7.2): there is no
+/// second port, RAM, or lock domain for atomics.
+pub type SharedDataAccess = Arc<Mutex<dyn PhysicalDataAccess + Send>>;
+
 /// Hart-side typed interpretation of the raw non-atomic physical port.
 ///
 /// This view owns only address conversion, little-endian integer decoding,
@@ -341,30 +361,13 @@ impl<'a> PhysicalMemoryAdapter<'a> {
         }
     }
 
-    /// Converts one Hart address to a physical address exactly once.
-    #[inline]
-    fn va_to_pa(&self, va: u64) -> Result<u64, MemoryError> {
-        va.checked_sub(self.base_addr)
-            .ok_or(MemoryError::InvalidAddress(va))
-    }
-
     /// Preserve the flat backend's historical typed-offset alignment rule
     /// after the one guest-to-storage conversion.  This is a target/storage
     /// rejection, not a new Hart alignment check; the Hart has already checked
-    /// the guest address before this adapter is entered.
+    /// the guest address before this adapter is entered.  The conversion is
+    /// shared with the atomic view through [`hart_issued_paddr`].
     fn checked_paddr(&self, va: u64, width: PhysicalWidth) -> Result<u64, MemoryError> {
-        let paddr = self.va_to_pa(va)?;
-        let alignment_address = self
-            .storage_alignment
-            .filter(|(base, size)| {
-                crate::memory::contains_range(*base, *size, paddr, width.bytes())
-            })
-            .and_then(|(base, _)| paddr.checked_sub(base))
-            .unwrap_or(paddr);
-        if !alignment_address.is_multiple_of(width.bytes() as u64) {
-            return Err(MemoryError::InvalidAddress(alignment_address));
-        }
-        Ok(paddr)
+        hart_issued_paddr(va, self.base_addr, self.storage_alignment, width)
     }
 
     fn map_error(error: PhysicalAccessError) -> MemoryError {
@@ -437,6 +440,102 @@ impl<'a> PhysicalMemoryAdapter<'a> {
         Ok(u32::from_le_bytes(
             raw[..4].try_into().expect("word width is four bytes"),
         ))
+    }
+}
+
+/// Converts one guest effective address to the physical address issued at
+/// the port, preserving the configured storage-offset alignment rule.
+///
+/// This is the single conversion both Hart views share: the typed
+/// [`PhysicalMemoryAdapter`] subtracts the configured base once, and the
+/// optional storage range keeps the legacy typed-offset alignment rejection
+/// for requests wholly inside it.  The error carries the rejected
+/// (storage-aligned) address for diagnostics; callers map it to the guest
+/// address when raising `mtval`.
+fn hart_issued_paddr(
+    ea: u64,
+    base_addr: u64,
+    storage_alignment: Option<(u64, usize)>,
+    width: PhysicalWidth,
+) -> Result<u64, MemoryError> {
+    let paddr = ea
+        .checked_sub(base_addr)
+        .ok_or(MemoryError::InvalidAddress(ea))?;
+    let alignment_address = storage_alignment
+        .filter(|(base, size)| crate::memory::contains_range(*base, *size, paddr, width.bytes()))
+        .and_then(|(base, _)| paddr.checked_sub(base))
+        .unwrap_or(paddr);
+    if !alignment_address.is_multiple_of(width.bytes() as u64) {
+        return Err(MemoryError::InvalidAddress(alignment_address));
+    }
+    Ok(paddr)
+}
+
+/// Hart-side typed interpretation of the atomic envelope data port.
+///
+/// This view owns only the guest-to-issued address conversion and error
+/// mapping; the envelope vocabulary ([`AtomicRequest`]/[`AtomicResponse`])
+/// and the Hart reservation record carry the atomic semantics.  The caller
+/// holds the data port's mutex for the complete adapter lifetime, so the
+/// conditional store-conditional check and its write remain inside the
+/// backend's single critical section.  Like [`PhysicalMemoryAdapter`], this
+/// view performs no ISA interpretation of its own.
+pub struct PhysicalAtomicAdapter<'a> {
+    port: &'a mut (dyn PhysicalDataAccess + Send),
+    base_addr: u64,
+    /// The same optional storage-offset alignment range the ordinary raw
+    /// view preserves, so an atomic envelope hits the identical target
+    /// rejection an ordinary wide access would at a misaligned flat offset.
+    storage_alignment: Option<(u64, usize)>,
+}
+
+impl<'a> PhysicalAtomicAdapter<'a> {
+    /// Creates a Hart atomic view over the already-selected data port.
+    pub fn new(
+        port: &'a mut (dyn PhysicalDataAccess + Send),
+        base_addr: u64,
+        storage_alignment: Option<(u64, usize)>,
+    ) -> Self {
+        Self {
+            port,
+            base_addr,
+            storage_alignment,
+        }
+    }
+
+    /// Converts one guest effective address into the port-issued physical
+    /// address, applying the configured storage-offset rejection.
+    ///
+    /// A failure is a [`MemoryError::InvalidAddress`] target rejection; the
+    /// Hart maps it to the access-class fault with the original guest
+    /// address, and the store-conditional dispatcher treats it as an
+    /// uncovered span (conditional failure, no request).
+    pub fn issued_addr(&self, ea: u64, width: PhysicalWidth) -> Result<u64, MemoryError> {
+        hart_issued_paddr(ea, self.base_addr, self.storage_alignment, width)
+    }
+
+    /// Submits one atomic envelope and maps the typed error taxonomy onto
+    /// the memory-error surface the Hart already classifies.
+    ///
+    /// Target rejections become [`MemoryError::InvalidAddress`] (guest-visible
+    /// access faults); host/backend and protocol failures and unknown
+    /// completions keep their simulator-side categories.
+    pub fn access_atomic(
+        &mut self,
+        request: AtomicRequest<'_>,
+    ) -> Result<AtomicResponse, MemoryError> {
+        self.port.access_atomic(request).map_err(Self::map_error)
+    }
+
+    fn map_error(error: AtomicAccessError) -> MemoryError {
+        match error {
+            AtomicAccessError::TargetRejected(rejection) => {
+                MemoryError::InvalidAddress(rejection.request.paddr)
+            }
+            AtomicAccessError::BackendFailure(failure) => MemoryError::Backend(failure.context),
+            AtomicAccessError::Protocol(error) => MemoryError::Protocol(error.to_string()),
+            AtomicAccessError::UnknownCompletion(unknown) => MemoryError::Unknown(unknown.context),
+        }
     }
 }
 
@@ -544,13 +643,15 @@ impl RiscvCore {
     /// Creates a core with separate validated raw fetch and data ports.
     ///
     /// The legacy instruction/data handles remain independently supplied and
-    /// are used for compatibility operations (including AMO/LR/SC).  The two
-    /// raw ports are not merged; callers may connect them to distinct targets.
+    /// serve operations outside the port set (System, MiscMem); AMO/LR/SC
+    /// issue one atomic envelope per instruction through the same data port
+    /// the ordinary loads and stores use (dev-plan §7.2).  The two raw ports
+    /// are not merged; callers may connect them to distinct targets.
     pub fn new_with_physical_access(
         instruction_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
         data_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
         instruction_access: SharedPhysicalAccess,
-        data_access: SharedPhysicalAccess,
+        data_access: SharedDataAccess,
     ) -> Self {
         let mut core = Self::new(instruction_mem, data_mem);
         core.instruction_access = Some(instruction_access);
@@ -559,6 +660,9 @@ impl RiscvCore {
     }
 
     /// Generic convenience constructor for concrete validated-port handles.
+    ///
+    /// The data port must satisfy [`PhysicalDataAccess`] — ordinary accesses
+    /// and atomic envelopes through one port object.
     pub fn new_with_physical_ports<I, D>(
         instruction_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
         data_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
@@ -567,20 +671,21 @@ impl RiscvCore {
     ) -> Self
     where
         I: PhysicalAccess + Send + 'static,
-        D: PhysicalAccess + Send + 'static,
+        D: PhysicalDataAccess + Send + 'static,
     {
         let instruction_access: SharedPhysicalAccess = instruction_access;
-        let data_access: SharedPhysicalAccess = data_access;
+        let data_access: SharedDataAccess = data_access;
         Self::new_with_physical_access(instruction_mem, data_mem, instruction_access, data_access)
     }
 
     /// Installs separate raw fetch/data ports without changing the supplied
     /// legacy typed handles.  This is the minimal migration seam used by the
-    /// standard native and flat facades.
+    /// standard native and flat facades; the data port must also carry the
+    /// atomic envelope surface ([`PhysicalDataAccess`]).
     pub fn set_physical_access(
         &mut self,
         instruction_access: SharedPhysicalAccess,
-        data_access: SharedPhysicalAccess,
+        data_access: SharedDataAccess,
     ) {
         self.instruction_access = Some(instruction_access);
         self.data_access = Some(data_access);
@@ -795,40 +900,64 @@ impl RiscvCore {
         // rollback-able.
         let mut staged = self.state.clone();
         let physical_access = self.data_access.clone();
-        let execution_result = match (Self::uses_non_atomic_access(&decoded), physical_access) {
-            (true, Some(access)) => {
-                let mut port = match access.lock() {
-                    Ok(port) => port,
-                    Err(_) => {
-                        return self.simulator_failure(
-                            pc_before,
-                            SimulatorFailureKind::HostBackend,
-                            "failed to lock physical data access",
-                        )
-                    }
-                };
-                let mut physical_view = self.physical_adapter(&mut *port);
-                self.executor
-                    .execute_with_csr_access(&decoded, &mut staged, &mut physical_view)
-            }
-            _ => {
-                // Legacy typed view: hold the outer data-memory lock for the
-                // complete Executor/helper call.  In particular, AMO/LR/SC
-                // must not drop this guard between their read and write or
-                // reacquire the same mutex through a raw adapter.
-                let mut mem = match self.data_mem.lock() {
-                    Ok(mem) => mem,
-                    Err(_) => {
-                        return self.simulator_failure(
-                            pc_before,
-                            SimulatorFailureKind::HostBackend,
-                            "failed to lock data memory",
-                        )
-                    }
-                };
-                let mut legacy_view = LegacyTypedMemoryAdapter::new(&mut *mem, self.base_addr);
-                self.executor
-                    .execute_with_csr_access(&decoded, &mut staged, &mut legacy_view)
+        let execution_result = if let (Opcode::Amo, Some(access)) =
+            (decoded.opcode, &physical_access)
+        {
+            // The standard A8 route (dev-plan §7.1/§7.2): one admitted AMO/
+            // LR/SC issues exactly one atomic envelope through the same
+            // validated data port the ordinary accesses use.  The port mutex
+            // is the outer lock for the complete Hart step, so the backend's
+            // conditional section is covered by exactly one lock domain and
+            // no Hart state is touched inside it.
+            let mut port = match access.lock() {
+                Ok(port) => port,
+                Err(_) => {
+                    return self.simulator_failure(
+                        pc_before,
+                        SimulatorFailureKind::HostBackend,
+                        "failed to lock physical data access",
+                    )
+                }
+            };
+            let mut atomic_view = self.physical_atomic_adapter(&mut *port);
+            crate::isa::rv64a::execute_amo_port(&decoded, &mut staged, &mut atomic_view)
+                .map(|()| None)
+        } else {
+            match (Self::uses_non_atomic_access(&decoded), physical_access) {
+                (true, Some(access)) => {
+                    let mut port = match access.lock() {
+                        Ok(port) => port,
+                        Err(_) => {
+                            return self.simulator_failure(
+                                pc_before,
+                                SimulatorFailureKind::HostBackend,
+                                "failed to lock physical data access",
+                            )
+                        }
+                    };
+                    let mut physical_view = self.physical_adapter(&mut *port);
+                    self.executor
+                        .execute_with_csr_access(&decoded, &mut staged, &mut physical_view)
+                }
+                _ => {
+                    // Legacy typed view: hold the outer data-memory lock for the
+                    // complete Executor/helper call.  In particular, AMO/LR/SC
+                    // must not drop this guard between their read and write or
+                    // reacquire the same mutex through a raw adapter.
+                    let mut mem = match self.data_mem.lock() {
+                        Ok(mem) => mem,
+                        Err(_) => {
+                            return self.simulator_failure(
+                                pc_before,
+                                SimulatorFailureKind::HostBackend,
+                                "failed to lock data memory",
+                            )
+                        }
+                    };
+                    let mut legacy_view = LegacyTypedMemoryAdapter::new(&mut *mem, self.base_addr);
+                    self.executor
+                        .execute_with_csr_access(&decoded, &mut staged, &mut legacy_view)
+                }
             }
         };
         let csr_access = match execution_result {
@@ -1072,6 +1201,19 @@ impl RiscvCore {
         }
     }
 
+    /// Builds the Hart atomic view over the already-locked data port.
+    ///
+    /// The view shares the same base conversion and storage-offset rejection
+    /// as [`Self::physical_adapter`]; it exists only inside the data port's
+    /// mutex lifetime, so the complete AMO/LR/SC operation runs inside the
+    /// backend's single critical section.
+    fn physical_atomic_adapter<'a>(
+        &self,
+        port: &'a mut (dyn PhysicalDataAccess + Send),
+    ) -> PhysicalAtomicAdapter<'a> {
+        PhysicalAtomicAdapter::new(port, self.base_addr, self.physical_storage_alignment)
+    }
+
     /// Only ordinary integer/FP memory operations use the raw physical port.
     /// AMO/LR/SC and all non-memory instructions stay on the explicit legacy
     /// typed view so their existing helper and reservation behavior is exact.
@@ -1242,7 +1384,12 @@ impl RiscvCore {
                 _ => true,
             },
             Opcode::LoadFp | Opcode::StoreFp => !matches!(funct3, Some(2 | 3)),
-            Opcode::Amo => !matches!(funct3, Some(2 | 3)),
+            // AMO/LR/SC legality is the approved §2 table: `funct5` selects
+            // the operation (AMOSWAP included), `funct3` selects W or D, and
+            // every reserved `funct5` value plus LR with `rs2 != 0` is an
+            // illegal-instruction trap — checked here, before any alignment
+            // or access precheck issues a request (dev-plan §5.3, C6).
+            Opcode::Amo => !crate::isa::rv64a::amo_encoding_is_legal(instruction),
             _ => false,
         }
     }
