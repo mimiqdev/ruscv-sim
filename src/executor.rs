@@ -13,10 +13,12 @@ use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::Uart16550;
 pub use crate::physical::NativeSystemBusBackend;
 use crate::physical::{
-    map_native_memory_error, NativePhysicalTarget, NativeRamBackend, PhysicalAccessKind,
-    PhysicalBackend, PhysicalBackendError, PhysicalBackendResult, PhysicalRequest,
-    PhysicalResponse, PhysicalResponseBytes, PhysicalResponseCompletion,
-    PhysicalTargetRejectionReason, PhysicalWidth, ValidatedPhysicalAccess,
+    map_native_memory_error, native_ram_atomic_transact, AtomicAccessKind, AtomicBackend,
+    AtomicBackendResult, AtomicRequest, AtomicResponse, NativeAtomicTarget, NativePhysicalTarget,
+    NativeRamBackend, PhysicalAccessKind, PhysicalBackend, PhysicalBackendError,
+    PhysicalBackendResult, PhysicalRequest, PhysicalResponse, PhysicalResponseBytes,
+    PhysicalResponseCompletion, PhysicalTargetRejectionReason, PhysicalWidth,
+    ValidatedPhysicalAccess,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -207,6 +209,16 @@ pub struct SystemBus {
     htif_size: usize,
     /// Callback for HTIF write events (exit signal detection)
     htif_write_callback: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    /// Committed-write bookkeeping for the HTIF endpoint (dev-plan §5.6 D-c).
+    ///
+    /// The endpoint is one eight-byte block, so its exact committed-write
+    /// bookkeeping is a single per-block version: every write that commits
+    /// through it (typed dword, raw native write, or the write side of one
+    /// AMO envelope) bumps it.  Rejected writes bump nothing.  No LR/SC can
+    /// ever consult it — the D-c policy rejects both kinds before any check —
+    /// so the counter exists to keep the endpoint's commit bookkeeping exact
+    /// and uniform with the RAM domain rather than to feed a live snapshot.
+    htif_committed_writes: u64,
 }
 
 impl SystemBus {
@@ -226,6 +238,7 @@ impl SystemBus {
             htif_base: HTIF_BASE,
             htif_size: HTIF_SIZE,
             htif_write_callback: None,
+            htif_committed_writes: 0,
         }
     }
 
@@ -235,6 +248,17 @@ impl SystemBus {
         F: Fn(u64) + Send + Sync + 'static,
     {
         self.htif_write_callback = Some(Arc::new(callback));
+    }
+
+    /// Returns the HTIF endpoint's committed-write version.
+    ///
+    /// The counter bumps once per write committed through the endpoint
+    /// (typed dword, raw native write, or the write side of one AMO
+    /// envelope) and never on a rejected request.  Under the D-c policy no
+    /// LR/SC reaches the endpoint, so the value is bookkeeping evidence
+    /// only; it is not consulted by any conditional check.
+    pub fn htif_committed_write_version(&self) -> u64 {
+        self.htif_committed_writes
     }
 
     /// Check if address is HTIF MMIO
@@ -438,6 +462,7 @@ impl SystemBus {
                     if let Some(callback) = &self.htif_write_callback {
                         callback(value);
                     }
+                    self.htif_committed_writes += 1;
                     Ok(PhysicalResponse::new(
                         descriptor,
                         PhysicalResponseCompletion::WriteAcknowledgement,
@@ -454,6 +479,127 @@ impl SystemBus {
             format!(
                 "no native target accepts the complete {:?} span at {:#018x} ({} bytes)",
                 descriptor.category,
+                descriptor.paddr,
+                descriptor.width.bytes()
+            ),
+        ))
+    }
+
+    /// Services one atomic operation envelope for the native map (dev-plan
+    /// §5.2 M1, §5.6 D-c).
+    ///
+    /// Routing mirrors the ordinary raw path: RAM executes the shared
+    /// critical-section primitive, the byte-only UART window rejects every
+    /// atomic request on width before mutation, and the HTIF endpoint
+    /// applies the approved D-c policy — LR and SC are target rejections
+    /// before any callback or mutation, while one RMW envelope is a single
+    /// indivisible transaction whose old value is the endpoint's zero read
+    /// and whose write side invokes the callback exactly once inside this
+    /// critical section.  A backend that cannot provide the envelope
+    /// rejects before mutation; lock poison is a host failure, never a
+    /// fabricated target response.
+    fn native_transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        request
+            .validate()
+            .map_err(|error| PhysicalBackendError::protocol(error.to_string()))?;
+
+        let descriptor = request.descriptor();
+        if !request.span().is_non_wrapping() {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::RangeOverflow,
+                format!(
+                    "atomic span starting at {:#018x} with width {} wraps the address space",
+                    descriptor.paddr,
+                    descriptor.width.bytes()
+                ),
+            ));
+        }
+
+        // RAM retains first-match priority for complete spans, exactly as the
+        // ordinary raw path, and executes the shared critical section.
+        if contains_range(
+            self.ram_base,
+            self.ram_size,
+            descriptor.paddr,
+            descriptor.width.bytes(),
+        ) {
+            return native_ram_atomic_transact(&self.ram, self.ram_base, self.ram_size, request);
+        }
+
+        // The UART window is byte-only: every atomic width (4 or 8 bytes) is
+        // a target rejection before any register, FIFO, or callback effect.
+        if contains_range(
+            self.uart_base,
+            self.uart_size,
+            descriptor.paddr,
+            descriptor.width.bytes(),
+        ) {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::UnsupportedWidth,
+                "UART native accesses are byte-only; no atomic width is supported",
+            ));
+        }
+
+        // The HTIF endpoint implements approved D-c: LR/SC reject before any
+        // callback or mutation; one dword RMW at the exact endpoint is a
+        // single indivisible envelope whose old value is the zero read and
+        // whose write side fires the callback exactly once.
+        if contains_range(
+            self.htif_base,
+            self.htif_size,
+            descriptor.paddr,
+            descriptor.width.bytes(),
+        ) {
+            if descriptor.width != PhysicalWidth::Doubleword {
+                return Err(PhysicalBackendError::target(
+                    PhysicalTargetRejectionReason::UnsupportedWidth,
+                    "HTIF native endpoint requires one complete eight-byte transfer",
+                ));
+            }
+            if descriptor.paddr != self.htif_base {
+                return Err(PhysicalBackendError::target(
+                    PhysicalTargetRejectionReason::Unmapped,
+                    "HTIF request does not start at its complete endpoint",
+                ));
+            }
+            return match descriptor.kind {
+                AtomicAccessKind::LoadReserved | AtomicAccessKind::StoreConditional => {
+                    Err(PhysicalBackendError::target(
+                        PhysicalTargetRejectionReason::UnsupportedCategory,
+                        "HTIF endpoint does not support load-reserved or store-conditional",
+                    ))
+                }
+                AtomicAccessKind::Rmw => {
+                    let transform = request.transform().ok_or_else(|| {
+                        PhysicalBackendError::protocol(
+                            "validated RMW envelope was missing its Hart transform",
+                        )
+                    })?;
+                    let operand = request.operand_bytes().ok_or_else(|| {
+                        PhysicalBackendError::protocol(
+                            "validated RMW envelope was missing its operand",
+                        )
+                    })?;
+                    // One critical section under the bus lock: the old value
+                    // is the endpoint's zero read, the transformed write
+                    // fires the callback exactly once, and the commit bumps
+                    // the endpoint bookkeeping.
+                    let old = [0u8; 8];
+                    let new = transform.apply(&old, operand);
+                    if let Some(callback) = &self.htif_write_callback {
+                        callback(u64::from_le_bytes(new));
+                    }
+                    self.htif_committed_writes += 1;
+                    Ok(AtomicResponse::rmw_for(request, &old))
+                }
+            };
+        }
+
+        Err(PhysicalBackendError::target(
+            PhysicalTargetRejectionReason::Unmapped,
+            format!(
+                "no native target accepts the complete {:?} atomic span at {:#018x} ({} bytes)",
+                descriptor.kind,
                 descriptor.paddr,
                 descriptor.width.bytes()
             ),
@@ -571,6 +717,7 @@ impl MemoryInterface for SystemBus {
             if let Some(ref callback) = self.htif_write_callback {
                 callback(value);
             }
+            self.htif_committed_writes += 1;
             return Ok(());
         }
         Err(MemoryError::InvalidAddress(addr))
@@ -634,12 +781,24 @@ impl NativePhysicalTarget for SystemBus {
     }
 }
 
+impl NativeAtomicTarget for SystemBus {
+    fn transact_native_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        self.native_transact_atomic(request)
+    }
+}
+
 // Retain a direct backend implementation for callers that own a bus value.  A
 // shared `NativeSystemBusBackend` is the adapter to use when the legacy typed
 // view must remain attached to the same `Arc<Mutex<SystemBus>>` instance.
 impl PhysicalBackend for SystemBus {
     fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
         self.native_transact(request)
+    }
+}
+
+impl AtomicBackend for SystemBus {
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        self.native_transact_atomic(request)
     }
 }
 

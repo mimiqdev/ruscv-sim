@@ -18,10 +18,12 @@
 //! the single Hart-owned AMO arithmetic module ([`crate::hart_amods`]); the
 //! physical domain applies it opaquely and implements no ISA semantics.
 //!
-//! [`ValidatedPhysicalAccess`] is the small validation boundary intended for a
-//! future native target adapter.  A backend reports typed target, host, protocol,
-//! or unknown-completion results; the boundary validates the request before the
-//! backend is called and validates every response before returning success.
+//! [`ValidatedPhysicalAccess`] is the small validation boundary the native
+//! target adapters sit behind, and [`ValidatedAtomicAccess`] is its atomic
+//! envelope counterpart used since A8 T2.  A backend reports typed target,
+//! host, protocol, or unknown-completion results; the boundary validates the
+//! request before the backend is called and validates every response before
+//! returning success.
 //! Valid requests and responses use fixed-size storage (at most eight bytes),
 //! so the boundary itself does not add a heap allocation to an ordinary step.
 //! Error context is owned only on failure paths.
@@ -772,6 +774,21 @@ pub trait NativePhysicalTarget {
     fn transact_native(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult;
 }
 
+/// A native target that can execute one atomic operation envelope
+/// (dev-plan §5.2 M1).
+///
+/// The target owns routing and the single locked critical section per
+/// envelope; the shared adapter owns the outer synchronization boundary
+/// exactly as for [`NativePhysicalTarget`].  A target that cannot provide
+/// the envelope rejects it before any mutation, and poisoned
+/// synchronization is a host/backend failure, never a target rejection.
+/// Targets implement no ISA semantics: an RMW applies the request's
+/// Hart-supplied [`AmoTransform`] opaquely.
+pub trait NativeAtomicTarget {
+    /// Services one complete atomic envelope without retaining the borrow.
+    fn transact_native_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult;
+}
+
 /// A native backend view over one shared target instance.
 ///
 /// This wrapper stores an `Arc<Mutex<T>>`, not a snapshot.  A legacy typed view
@@ -807,6 +824,16 @@ impl<T: NativePhysicalTarget> PhysicalBackend for SharedNativeBackend<T> {
             .lock()
             .map_err(|_| PhysicalBackendError::host("native target lock poisoned"))?;
         target.transact_native(request)
+    }
+}
+
+impl<T: NativeAtomicTarget> AtomicBackend for SharedNativeBackend<T> {
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        let mut target = self
+            .target
+            .lock()
+            .map_err(|_| PhysicalBackendError::host("native target lock poisoned"))?;
+        target.transact_native_atomic(request)
     }
 }
 
@@ -951,6 +978,149 @@ impl NativePhysicalTarget for NativeRamBackend {
 impl PhysicalBackend for NativeRamBackend {
     fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
         self.transact_native(request)
+    }
+}
+
+/// Executes one atomic envelope against shared RAM (dev-plan §5.2 M1).
+///
+/// This is the single native-RAM atomic critical section: the complete span
+/// and width are validated before any mutation, one lock hold covers the
+/// whole section, and the Hart-supplied transform (RMW) or echoed reservation
+/// context (SC) is applied opaquely by the storage object.  RAM implements
+/// no ISA semantics of its own.
+///
+/// `memory` is the shared RAM handle both the flat and bus configurations
+/// wrap; `ram_base`/`ram_size` are the physical window this target claims.
+/// Called by [`NativeRamBackend`] and by the [`crate::executor::SystemBus`]
+/// native atomic path so both facades execute the identical section.
+pub(crate) fn native_ram_atomic_transact(
+    memory: &Arc<Mutex<SimpleMemory>>,
+    ram_base: u64,
+    ram_size: usize,
+    request: &AtomicRequest<'_>,
+) -> AtomicBackendResult {
+    request
+        .validate()
+        .map_err(|error| PhysicalBackendError::protocol(error.to_string()))?;
+
+    let descriptor = request.descriptor();
+    if !request.span().is_non_wrapping() {
+        return Err(PhysicalBackendError::target(
+            PhysicalTargetRejectionReason::RangeOverflow,
+            format!(
+                "atomic span starting at {:#018x} with width {} wraps the address space",
+                descriptor.paddr,
+                descriptor.width.bytes()
+            ),
+        ));
+    }
+    if !crate::memory::contains_range(
+        ram_base,
+        ram_size,
+        descriptor.paddr,
+        descriptor.width.bytes(),
+    ) {
+        return Err(PhysicalBackendError::target(
+            PhysicalTargetRejectionReason::Unmapped,
+            format!(
+                "RAM does not contain the complete atomic span at {:#018x} ({} bytes)",
+                descriptor.paddr,
+                descriptor.width.bytes()
+            ),
+        ));
+    }
+
+    // One lock hold for the whole critical section: no competing reader can
+    // observe the internal read and write as separate events, and the
+    // conditional check cannot be staled by any granted writer.
+    let mut ram = memory
+        .lock()
+        .map_err(|_| PhysicalBackendError::host("RAM lock poisoned"))?;
+    let offset = descriptor.paddr - ram_base;
+    let width = descriptor.width.bytes();
+    match descriptor.kind {
+        AtomicAccessKind::Rmw => {
+            let transform = request.transform().ok_or_else(|| {
+                PhysicalBackendError::protocol(
+                    "validated RMW envelope was missing its Hart transform",
+                )
+            })?;
+            let operand = request.operand_bytes().ok_or_else(|| {
+                PhysicalBackendError::protocol("validated RMW envelope was missing its operand")
+            })?;
+            let old = ram
+                .atomic_rmw(offset, width, operand, |old, operand| {
+                    transform.apply(old, operand)
+                })
+                .map_err(map_native_memory_error)?;
+            Ok(AtomicResponse::rmw_for(request, &old[..width]))
+        }
+        AtomicAccessKind::LoadReserved => {
+            let outcome = ram
+                .atomic_load_reserved(offset, width)
+                .map_err(map_native_memory_error)?;
+            let snapshot =
+                CommittedWriteSnapshot::from_bytes(&outcome.snapshot).map_err(|error| {
+                    PhysicalBackendError::protocol(format!(
+                        "RAM committed-write snapshot does not fit the envelope: {error}"
+                    ))
+                })?;
+            Ok(AtomicResponse::load_reserved_for(
+                request,
+                &outcome.old_bytes[..width],
+                snapshot,
+            ))
+        }
+        AtomicAccessKind::StoreConditional => {
+            let payload = request.store_payload().ok_or_else(|| {
+                PhysicalBackendError::protocol(
+                    "validated store-conditional envelope was missing its payload",
+                )
+            })?;
+            let context = request.reservation().ok_or_else(|| {
+                PhysicalBackendError::protocol(
+                    "validated store-conditional envelope was missing its reservation context",
+                )
+            })?;
+            // The reserved span must describe this RAM's bookkeeping domain;
+            // a context the Hart could not have obtained here is a protocol
+            // failure, never a silent conditional outcome.
+            if !crate::memory::contains_range(
+                ram_base,
+                ram_size,
+                context.reserved.paddr,
+                context.reserved.width.bytes(),
+            ) {
+                return Err(PhysicalBackendError::protocol(format!(
+                    "reservation context span {:?} is outside this RAM's bookkeeping domain",
+                    context.reserved
+                )));
+            }
+            let committed = ram
+                .atomic_store_conditional(
+                    offset,
+                    width,
+                    payload,
+                    context.reserved.paddr - ram_base,
+                    context.reserved.width.bytes(),
+                    context.snapshot.as_bytes(),
+                )
+                .map_err(map_native_memory_error)?;
+            Ok(AtomicResponse::store_conditional_for(
+                request,
+                if committed {
+                    ConditionalStatus::Success
+                } else {
+                    ConditionalStatus::Failure
+                },
+            ))
+        }
+    }
+}
+
+impl AtomicBackend for NativeRamBackend {
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        native_ram_atomic_transact(&self.memory, self.ram_base, self.ram_size, request)
     }
 }
 
