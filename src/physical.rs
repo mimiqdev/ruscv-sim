@@ -1,10 +1,22 @@
-//! Transport-neutral non-atomic physical-access vocabulary.
+//! Transport-neutral physical-access vocabulary: the A7 non-atomic seam and
+//! the A8 atomic operation envelope.
 //!
-//! This module is the A7 T1 seam only.  It describes one complete fetch, data
-//! read, or data write using a physical address, an explicit byte width, and
-//! raw bytes.  It deliberately does not provide a native address map, adapt
-//! [`crate::memory::MemoryInterface`], interpret integer or floating-point
-//! values, map faults to Hart traps, or model an AMO/LR/SC operation envelope.
+//! This module describes one complete fetch, data read, or data write using a
+//! physical address, an explicit byte width, and raw bytes.  Since A8 T1 it
+//! also carries the atomic operation envelope vocabulary of dev-plan §5.2 M1:
+//! one indivisible target-visible event per AMO (RMW), load-reserved, or
+//! store-conditional, consistent with ADR-0002 §§4–6.  It still does not
+//! provide a native address map, adapt [`crate::memory::MemoryInterface`],
+//! interpret integer or floating-point values, or map faults to Hart traps.
+//!
+//! The atomic envelope is a separate request/response family, structurally
+//! distinct from [`PhysicalRequest`]/[`PhysicalResponse`]: a fetch, read, or
+//! write pair can never represent an AMO or store-conditional, because the
+//! Hart-supplied pure transform, the operand bytes, the reservation context,
+//! the old-value result, and the conditional status exist only on
+//! [`AtomicRequest`]/[`AtomicResponse`].  The transform is produced only by
+//! the single Hart-owned AMO arithmetic module ([`crate::hart_amods`]); the
+//! physical domain applies it opaquely and implements no ISA semantics.
 //!
 //! [`ValidatedPhysicalAccess`] is the small validation boundary intended for a
 //! future native target adapter.  A backend reports typed target, host, protocol,
@@ -78,9 +90,10 @@ impl TryFrom<u8> for PhysicalWidth {
 
 /// Access categories carried by a non-atomic physical request.
 ///
-/// There is intentionally no atomic category here.  AMO/LR/SC operation
-/// envelopes remain outside T1 and must not be represented as an ordinary
-/// read/write pair by this interface.
+/// AMO/LR/SC operation envelopes are never represented by these ordinary
+/// categories: the atomic category lives on the separate
+/// [`AtomicRequest`] family, and an ordinary read/write pair must not be
+/// used to emulate an atomic operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PhysicalAccessKind {
     /// Instruction bytes requested by the Hart.
@@ -1148,3 +1161,1014 @@ pub type RawPhysicalBytes = PhysicalResponseBytes;
 pub type PhysicalCompletion = PhysicalResponseCompletion;
 /// Short alias for [`ValidatedPhysicalAccess`].
 pub type PhysicalAccessPort<B> = ValidatedPhysicalAccess<B>;
+
+// -------------------------------------------------------------------------
+// A8 T1: the atomic operation envelope vocabulary (dev-plan §5.2 M1).
+//
+// One indivisible target-visible event per AMO/LR/SC, extending this port
+// with the atomic category required by ADR-0002 §§4–6.  The vocabulary is
+// target-free: it defines the request kinds, the Hart-supplied pure
+// transform representation, operand/result bytes, conditional status,
+// validation, and response binding.  Backends execute the critical section
+// and apply the Hart transform opaquely; they implement no ISA semantics.
+// -------------------------------------------------------------------------
+
+/// Maximum inline bytes of a committed-write bookkeeping snapshot.
+///
+/// A snapshot describes the covered blocks of at most an eight-byte span, so
+/// a bounded inline representation keeps the envelope allocation-free.  The
+/// bytes are opaque outside the backend that produced them; every bookkeeping
+/// form must preserve exact reserved-span overlap semantics (dev-plan §5.2
+/// M1), so a standalone coarse counter is not a valid snapshot.
+pub const MAX_COMMITTED_WRITE_SNAPSHOT_BYTES: usize = 64;
+
+/// Envelope result widths accepted by the atomic vocabulary.
+///
+/// Atomic widths are 4 or 8 bytes only (dev-plan §5.2 M1).  Byte and halfword
+/// envelopes are malformed request input rejected before any backend call,
+/// never target refusals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum AmoWidth {
+    /// Four-byte (W) envelope.
+    Word = 4,
+    /// Eight-byte (D) envelope.
+    Doubleword = 8,
+}
+
+impl AmoWidth {
+    /// Returns the number of bytes in this width.
+    pub const fn bytes(self) -> usize {
+        self as usize
+    }
+
+    /// Returns the equivalent physical transfer width.
+    pub const fn physical_width(self) -> PhysicalWidth {
+        match self {
+            Self::Word => PhysicalWidth::Word,
+            Self::Doubleword => PhysicalWidth::Doubleword,
+        }
+    }
+
+    /// Returns the envelope width for a physical width, or `None` when the
+    /// physical width is not an atomic width (1, 2, or anything but 4/8).
+    pub const fn from_physical_width(width: PhysicalWidth) -> Option<Self> {
+        match width {
+            PhysicalWidth::Word => Some(Self::Word),
+            PhysicalWidth::Doubleword => Some(Self::Doubleword),
+            PhysicalWidth::Byte | PhysicalWidth::Halfword => None,
+        }
+    }
+}
+
+/// The Hart-supplied pure RMW transform carried by an envelope (dev-plan
+/// §5.2 M1).
+///
+/// A plain function pointer over raw span bytes: the arguments are the old
+/// span bytes and the operand bytes, both exactly the envelope width and in
+/// physical/guest memory byte order; the returned buffer's first
+/// `width.bytes()` bytes are the new span content, and the trailing bytes are
+/// zero and ignored for narrower spans.  The produced functions are total and
+/// never panic, so a backend can call one inside its critical section.
+pub type PureAmoTransform =
+    fn(old_bytes: &[u8], operand_bytes: &[u8]) -> [u8; MAX_PHYSICAL_ACCESS_BYTES];
+
+/// One pure RMW transform produced by the Hart-owned AMO arithmetic module.
+///
+/// Instances are constructed only inside this crate by
+/// [`crate::hart_amods::transform`]; callers elsewhere obtain transforms from
+/// that module and apply them opaquely.  This keeps the AMO arithmetic in
+/// exactly one Hart-owned implementation, identically for every backend.
+#[derive(Debug, Clone, Copy)]
+pub struct AmoTransform {
+    width: AmoWidth,
+    apply: PureAmoTransform,
+}
+
+impl AmoTransform {
+    /// In-crate constructor: only the Hart-owned arithmetic module produces
+    /// transforms.
+    pub(crate) const fn new(width: AmoWidth, apply: PureAmoTransform) -> Self {
+        Self { width, apply }
+    }
+
+    /// Returns the encoded W/D result width of this transform.
+    pub const fn width(self) -> AmoWidth {
+        self.width
+    }
+
+    /// Applies the pure transform to old and operand span bytes.
+    pub fn apply(self, old_bytes: &[u8], operand_bytes: &[u8]) -> [u8; MAX_PHYSICAL_ACCESS_BYTES] {
+        (self.apply)(old_bytes, operand_bytes)
+    }
+}
+
+/// A backend-owned committed-write bookkeeping snapshot (dev-plan §5.2 M1,
+/// §5.4).
+///
+/// A load-reserved envelope returns the domain's committed-write version
+/// snapshot of the covered blocks; a store-conditional envelope echoes it so
+/// the backend can re-check exact reserved-span overlap inside its one
+/// critical section.  The bytes are opaque to the Hart and to the vocabulary:
+/// the producing backend defines their interpretation.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CommittedWriteSnapshot {
+    bytes: [u8; MAX_COMMITTED_WRITE_SNAPSHOT_BYTES],
+    len: usize,
+}
+
+impl CommittedWriteSnapshot {
+    /// Copies snapshot bytes into the inline snapshot representation.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, AtomicProtocolError> {
+        if bytes.len() > MAX_COMMITTED_WRITE_SNAPSHOT_BYTES {
+            return Err(AtomicProtocolError::SnapshotTooLong {
+                requested: bytes.len(),
+                max: MAX_COMMITTED_WRITE_SNAPSHOT_BYTES,
+            });
+        }
+        let mut stored = [0; MAX_COMMITTED_WRITE_SNAPSHOT_BYTES];
+        stored[..bytes.len()].copy_from_slice(bytes);
+        Ok(Self {
+            bytes: stored,
+            len: bytes.len(),
+        })
+    }
+
+    /// Returns the number of snapshot bytes.
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns whether the snapshot carries no bytes.
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns the opaque snapshot bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+impl fmt::Debug for CommittedWriteSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CommittedWriteSnapshot")
+            .field("bytes", &self.as_bytes())
+            .finish()
+    }
+}
+
+/// Atomic request kinds carried by an atomic operation envelope.
+///
+/// Each kind is one indivisible target-visible event; none of them can be
+/// composed from the ordinary [`PhysicalAccessKind`] categories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AtomicAccessKind {
+    /// One read-transform-write (AMO) critical-section event returning the
+    /// exact old bytes.
+    Rmw,
+    /// One load-reserved read that also returns the committed-write snapshot
+    /// of the covered blocks.
+    LoadReserved,
+    /// One conditional store whose single write happens only on conditional
+    /// success inside the backend's critical section.
+    StoreConditional,
+}
+
+/// Informational `aq`/`rl` ordering bits carried by an atomic envelope.
+///
+/// All four combinations are legal encodings (dev-plan §5.3); in this
+/// single-Hart in-order profile they impose no additional ordering effect and
+/// are excluded from the response-binding identity.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct AtomicOrdering {
+    /// Acquire bit.
+    pub aq: bool,
+    /// Release bit.
+    pub rl: bool,
+}
+
+/// A valid atomic request identity used to bind an atomic response to its
+/// request.
+///
+/// Like [`PhysicalRequestDescriptor`], the binding identity excludes
+/// payloads, the transform, the reservation context, and the informational
+/// ordering bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AtomicRequestDescriptor {
+    /// 64-bit physical start address.
+    pub paddr: u64,
+    /// Explicit transfer width (4 or 8 bytes only).
+    pub width: PhysicalWidth,
+    /// RMW/load-reserved/store-conditional kind.
+    pub kind: AtomicAccessKind,
+}
+
+impl AtomicRequestDescriptor {
+    /// Creates an atomic request descriptor from already-typed fields.
+    pub const fn new(paddr: u64, width: PhysicalWidth, kind: AtomicAccessKind) -> Self {
+        Self { paddr, width, kind }
+    }
+
+    /// Returns the contiguous physical span represented by this descriptor.
+    pub const fn span(self) -> PhysicalSpan {
+        PhysicalSpan {
+            paddr: self.paddr,
+            width: self.width,
+        }
+    }
+}
+
+/// Conditional outcome of a store-conditional envelope (dev-plan §5.2 M1).
+///
+/// [`ConditionalStatus::Success`] means the backend performed the single
+/// write inside its critical section; [`ConditionalStatus::Failure`] means no
+/// write occurred.  Both are complete, successful envelope transactions: a
+/// conditional failure is never a target rejection or an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConditionalStatus {
+    /// The single conditional write committed.
+    Success,
+    /// No write occurred; the Hart writes its own `rd = 1` failure value.
+    Failure,
+}
+
+/// The Hart reservation context carried by a store-conditional envelope
+/// (dev-plan §5.2 M1, §5.4).
+///
+/// Span-coverage preconditions are Hart-side: a conforming Hart issues no
+/// physical request for a no-reservation or uncovered SC, so every envelope
+/// that reaches a backend carries a context whose reserved span covers the
+/// requested span.  The snapshot re-check is the backend's, inside its one
+/// critical section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AtomicReservationContext {
+    /// Exact reserved byte span (port-issued paddr + width) recorded at the
+    /// load-reserved.
+    pub reserved: PhysicalSpan,
+    /// The LR-time committed-write snapshot, echoed verbatim.
+    pub snapshot: CommittedWriteSnapshot,
+}
+
+/// Typed protocol/invariant failures at the atomic request or response
+/// boundary.
+///
+/// These errors are never inferred from an error string.  A malformed atomic
+/// envelope is rejected before a backend call; a malformed atomic response is
+/// rejected before an `Ok` result can escape the validated boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum AtomicProtocolError {
+    /// An atomic envelope width other than 4 or 8 bytes was supplied.
+    #[error("atomic envelope width must be 4 or 8 bytes, got {requested}")]
+    UnsupportedAtomicWidth {
+        /// The malformed requested width in bytes.
+        requested: usize,
+    },
+    /// An RMW operand or store-conditional payload had the wrong length.
+    #[error("{kind:?} envelope payload has length {actual}, expected {expected} bytes")]
+    PayloadLength {
+        /// The envelope kind carrying the malformed payload.
+        kind: AtomicAccessKind,
+        /// Required payload length.
+        expected: usize,
+        /// Supplied payload length.
+        actual: usize,
+    },
+    /// An RMW envelope was missing its Hart-supplied transform.
+    #[error("RMW envelope is missing its Hart-supplied transform")]
+    MissingTransform,
+    /// The transform's encoded width did not match the envelope width.
+    #[error("Hart transform width is {actual} bytes but the envelope width is {expected} bytes")]
+    TransformWidthMismatch {
+        /// Required transform width in bytes.
+        expected: usize,
+        /// Supplied transform width in bytes.
+        actual: usize,
+    },
+    /// A store-conditional envelope was missing its reservation context.
+    #[error("store-conditional envelope is missing its Hart reservation context")]
+    MissingReservation,
+    /// A reservation context or LR response carried an empty snapshot.
+    #[error("committed-write snapshot is empty; it cannot describe any covered block")]
+    EmptySnapshot,
+    /// The reserved byte span of a reservation context wraps the address space.
+    #[error("reserved span {reserved:?} wraps the address space")]
+    ReservationSpanOverflow {
+        /// The wrapping reserved span.
+        reserved: PhysicalSpan,
+    },
+    /// The store-conditional span is not contained in the reserved span.
+    #[error("envelope span {requested:?} is not contained in the reserved span {reserved:?}")]
+    ReservationSpanMismatch {
+        /// The reserved span carried by the context.
+        reserved: PhysicalSpan,
+        /// The requested envelope span.
+        requested: PhysicalSpan,
+    },
+    /// Snapshot bytes exceeded the inline representation.
+    #[error("committed-write snapshot needs {requested} bytes, at most {max} are carried inline")]
+    SnapshotTooLong {
+        /// Requested snapshot length.
+        requested: usize,
+        /// Inline capacity.
+        max: usize,
+    },
+    /// A backend response was bound to a different address, width, or kind.
+    #[error("atomic response binding does not match its request")]
+    ResponseBindingMismatch {
+        /// Identity requested by the caller.
+        expected: AtomicRequestDescriptor,
+        /// Identity returned by the backend.
+        actual: AtomicRequestDescriptor,
+    },
+    /// The response completion kind contradicts the request kind.
+    #[error("atomic response completion {actual:?} contradicts {expected:?} request")]
+    ResponseCompletionMismatch {
+        /// Completion kind required by the request.
+        expected: AtomicAccessKind,
+        /// Completion kind returned by the backend.
+        actual: AtomicAccessKind,
+    },
+    /// The backend's supplied response bytes do not match its reported length.
+    #[error("atomic response supplied {supplied} bytes but reported {reported} bytes")]
+    ResponsePayloadLengthMismatch {
+        /// Length reported by the backend response metadata.
+        reported: usize,
+        /// Length actually supplied to the response constructor.
+        supplied: usize,
+    },
+    /// An RMW/LR response did not contain exactly the requested bytes.
+    #[error("atomic response has {actual} bytes, expected {expected}")]
+    ResponseLengthMismatch {
+        /// Requested width.
+        expected: usize,
+        /// Reported response length.
+        actual: usize,
+    },
+    /// The backend explicitly reported a protocol violation.
+    #[error("backend reported an atomic protocol failure: {context}")]
+    BackendProtocol {
+        /// Typed backend diagnostic context.
+        context: String,
+    },
+    /// A validated-boundary invariant failed while accepting a response.
+    #[error("atomic envelope invariant failure: {context}")]
+    Invariant {
+        /// Diagnostic context for the invariant failure.
+        context: String,
+    },
+}
+
+/// A valid, borrowed atomic operation envelope request (dev-plan §5.2 M1).
+///
+/// The constructors enforce the kind/payload rules and retain borrowed bytes
+/// by reference, so constructing an envelope does not allocate.  A conforming
+/// request is one indivisible event: an RMW carries the operand and the
+/// Hart-supplied transform; a load-reserved carries nothing extra; a
+/// store-conditional carries the write payload and the Hart reservation
+/// context.  No field or constructor can express an AMO/SC through the
+/// ordinary [`PhysicalRequest`] categories.
+#[derive(Debug, Clone, Copy)]
+pub struct AtomicRequest<'a> {
+    descriptor: AtomicRequestDescriptor,
+    ordering: AtomicOrdering,
+    operand: Option<&'a [u8]>,
+    transform: Option<AmoTransform>,
+    store_payload: Option<&'a [u8]>,
+    reservation: Option<AtomicReservationContext>,
+}
+
+impl<'a> AtomicRequest<'a> {
+    /// Creates an RMW envelope carrying the operand bytes and the
+    /// Hart-supplied pure transform.
+    pub fn rmw(
+        paddr: u64,
+        width: PhysicalWidth,
+        ordering: AtomicOrdering,
+        operand: &'a [u8],
+        transform: AmoTransform,
+    ) -> Result<Self, AtomicProtocolError> {
+        let request = Self {
+            descriptor: AtomicRequestDescriptor::new(paddr, width, AtomicAccessKind::Rmw),
+            ordering,
+            operand: Some(operand),
+            transform: Some(transform),
+            store_payload: None,
+            reservation: None,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Creates a load-reserved envelope: one atomic-category read that
+    /// returns the old bytes and the committed-write snapshot.
+    pub fn load_reserved(
+        paddr: u64,
+        width: PhysicalWidth,
+        ordering: AtomicOrdering,
+    ) -> Result<Self, AtomicProtocolError> {
+        let request = Self {
+            descriptor: AtomicRequestDescriptor::new(paddr, width, AtomicAccessKind::LoadReserved),
+            ordering,
+            operand: None,
+            transform: None,
+            store_payload: None,
+            reservation: None,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Creates a store-conditional envelope carrying the write payload and
+    /// the Hart reservation context.
+    pub fn store_conditional(
+        paddr: u64,
+        width: PhysicalWidth,
+        ordering: AtomicOrdering,
+        payload: &'a [u8],
+        reservation: AtomicReservationContext,
+    ) -> Result<Self, AtomicProtocolError> {
+        let request = Self {
+            descriptor: AtomicRequestDescriptor::new(
+                paddr,
+                width,
+                AtomicAccessKind::StoreConditional,
+            ),
+            ordering,
+            operand: None,
+            transform: None,
+            store_payload: Some(payload),
+            reservation: Some(reservation),
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Returns the physical start address.
+    pub const fn paddr(&self) -> u64 {
+        self.descriptor.paddr
+    }
+
+    /// Returns the explicit transfer width (4 or 8 bytes only).
+    pub const fn width(&self) -> PhysicalWidth {
+        self.descriptor.width
+    }
+
+    /// Returns the envelope kind.
+    pub const fn kind(&self) -> AtomicAccessKind {
+        self.descriptor.kind
+    }
+
+    /// Returns the informational `aq`/`rl` ordering bits.
+    pub const fn ordering(&self) -> AtomicOrdering {
+        self.ordering
+    }
+
+    /// Returns the address/width/kind identity used for response binding.
+    pub const fn descriptor(&self) -> AtomicRequestDescriptor {
+        self.descriptor
+    }
+
+    /// Returns the request's contiguous physical span.
+    pub const fn span(&self) -> PhysicalSpan {
+        self.descriptor.span()
+    }
+
+    /// Returns the exact RMW operand bytes, or `None` for other kinds.
+    pub const fn operand_bytes(&self) -> Option<&'a [u8]> {
+        self.operand
+    }
+
+    /// Returns the Hart-supplied pure transform, or `None` for other kinds.
+    pub const fn transform(&self) -> Option<AmoTransform> {
+        self.transform
+    }
+
+    /// Returns the exact store-conditional write payload, or `None` for other
+    /// kinds.
+    pub const fn store_payload(&self) -> Option<&'a [u8]> {
+        self.store_payload
+    }
+
+    /// Returns the Hart reservation context, or `None` for other kinds.
+    pub const fn reservation(&self) -> Option<AtomicReservationContext> {
+        self.reservation
+    }
+
+    /// Rechecks envelope invariants without checking target address routing.
+    ///
+    /// A non-wrapping envelope span is deliberately not part of this method:
+    /// range overflow of the requested span is a target rejection and is
+    /// checked by the validated boundary immediately before backend dispatch.
+    pub fn validate(&self) -> Result<(), AtomicProtocolError> {
+        let width_bytes = self.descriptor.width.bytes();
+        let expected_width = AmoWidth::from_physical_width(self.descriptor.width).ok_or(
+            AtomicProtocolError::UnsupportedAtomicWidth {
+                requested: width_bytes,
+            },
+        )?;
+        match self.descriptor.kind {
+            AtomicAccessKind::Rmw => {
+                let operand = self.operand.ok_or(AtomicProtocolError::PayloadLength {
+                    kind: self.descriptor.kind,
+                    expected: width_bytes,
+                    actual: 0,
+                })?;
+                if operand.len() != width_bytes {
+                    return Err(AtomicProtocolError::PayloadLength {
+                        kind: self.descriptor.kind,
+                        expected: width_bytes,
+                        actual: operand.len(),
+                    });
+                }
+                let transform = self
+                    .transform
+                    .ok_or(AtomicProtocolError::MissingTransform)?;
+                if transform.width() != expected_width {
+                    return Err(AtomicProtocolError::TransformWidthMismatch {
+                        expected: width_bytes,
+                        actual: transform.width().bytes(),
+                    });
+                }
+            }
+            AtomicAccessKind::LoadReserved => {}
+            AtomicAccessKind::StoreConditional => {
+                let payload = self
+                    .store_payload
+                    .ok_or(AtomicProtocolError::PayloadLength {
+                        kind: self.descriptor.kind,
+                        expected: width_bytes,
+                        actual: 0,
+                    })?;
+                if payload.len() != width_bytes {
+                    return Err(AtomicProtocolError::PayloadLength {
+                        kind: self.descriptor.kind,
+                        expected: width_bytes,
+                        actual: payload.len(),
+                    });
+                }
+                let reservation = self
+                    .reservation
+                    .ok_or(AtomicProtocolError::MissingReservation)?;
+                if reservation.snapshot.is_empty() {
+                    return Err(AtomicProtocolError::EmptySnapshot);
+                }
+                if AmoWidth::from_physical_width(reservation.reserved.width).is_none() {
+                    return Err(AtomicProtocolError::UnsupportedAtomicWidth {
+                        requested: reservation.reserved.width.bytes(),
+                    });
+                }
+                if reservation.reserved.checked_end_inclusive().is_none() {
+                    return Err(AtomicProtocolError::ReservationSpanOverflow {
+                        reserved: reservation.reserved,
+                    });
+                }
+                if let (Some(reserved_end), Some(requested_end)) = (
+                    reservation.reserved.checked_end_inclusive(),
+                    self.descriptor.span().checked_end_inclusive(),
+                ) {
+                    if self.descriptor.paddr < reservation.reserved.paddr
+                        || requested_end > reserved_end
+                    {
+                        return Err(AtomicProtocolError::ReservationSpanMismatch {
+                            reserved: reservation.reserved,
+                            requested: self.descriptor.span(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Untrusted backend completion body for an atomic envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AtomicResponseCompletion {
+    /// RMW completion: the exact pre-transform span bytes; the transformed
+    /// bytes were written in the same critical section.
+    Rmw(PhysicalResponseBytes),
+    /// Load-reserved completion: the old span bytes plus the committed-write
+    /// snapshot of the covered blocks.
+    LoadReserved {
+        /// The exact old span bytes.
+        old_bytes: PhysicalResponseBytes,
+        /// The committed-write snapshot at LR time.
+        snapshot: CommittedWriteSnapshot,
+    },
+    /// Conditional store-conditional completion.
+    StoreConditional(ConditionalStatus),
+}
+
+impl AtomicResponseCompletion {
+    /// Returns the completion kind without interpreting any raw bytes.
+    pub const fn kind(self) -> AtomicAccessKind {
+        match self {
+            Self::Rmw(_) => AtomicAccessKind::Rmw,
+            Self::LoadReserved { .. } => AtomicAccessKind::LoadReserved,
+            Self::StoreConditional(_) => AtomicAccessKind::StoreConditional,
+        }
+    }
+}
+
+/// A backend response carrying an explicit atomic request binding.
+///
+/// Backends may construct this with [`Self::new`], but the value is untrusted
+/// until [`ValidatedAtomicAccess`] checks its binding, completion kind, exact
+/// old-byte length, and snapshot presence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AtomicResponse {
+    binding: AtomicRequestDescriptor,
+    completion: AtomicResponseCompletion,
+}
+
+impl AtomicResponse {
+    /// Creates an untrusted response for an atomic descriptor and completion
+    /// body.
+    pub const fn new(
+        binding: AtomicRequestDescriptor,
+        completion: AtomicResponseCompletion,
+    ) -> Self {
+        Self {
+            binding,
+            completion,
+        }
+    }
+
+    /// Creates an RMW response bound to a request, carrying the exact old
+    /// span bytes.
+    pub fn rmw_for(request: &AtomicRequest<'_>, old_bytes: &[u8]) -> Self {
+        Self::new(
+            request.descriptor(),
+            AtomicResponseCompletion::Rmw(PhysicalResponseBytes::from_slice(old_bytes)),
+        )
+    }
+
+    /// Creates a load-reserved response bound to a request.
+    pub fn load_reserved_for(
+        request: &AtomicRequest<'_>,
+        old_bytes: &[u8],
+        snapshot: CommittedWriteSnapshot,
+    ) -> Self {
+        Self::new(
+            request.descriptor(),
+            AtomicResponseCompletion::LoadReserved {
+                old_bytes: PhysicalResponseBytes::from_slice(old_bytes),
+                snapshot,
+            },
+        )
+    }
+
+    /// Creates a conditional store-conditional response bound to a request.
+    pub const fn store_conditional_for(
+        request: &AtomicRequest<'_>,
+        status: ConditionalStatus,
+    ) -> Self {
+        Self::new(
+            request.descriptor(),
+            AtomicResponseCompletion::StoreConditional(status),
+        )
+    }
+
+    /// Returns the response's request binding.
+    pub const fn binding(&self) -> AtomicRequestDescriptor {
+        self.binding
+    }
+
+    /// Returns the untrusted completion body.
+    pub const fn completion(&self) -> AtomicResponseCompletion {
+        self.completion
+    }
+
+    /// Returns validated old span bytes for RMW and load-reserved
+    /// completions, or `None` for a conditional completion.
+    pub fn old_bytes(&self) -> Option<&[u8]> {
+        match &self.completion {
+            AtomicResponseCompletion::Rmw(bytes) => bytes.as_slice(),
+            AtomicResponseCompletion::LoadReserved { old_bytes, .. } => old_bytes.as_slice(),
+            AtomicResponseCompletion::StoreConditional(_) => None,
+        }
+    }
+
+    /// Returns the committed-write snapshot of a load-reserved completion.
+    pub const fn snapshot(&self) -> Option<CommittedWriteSnapshot> {
+        match self.completion {
+            AtomicResponseCompletion::LoadReserved { snapshot, .. } => Some(snapshot),
+            _ => None,
+        }
+    }
+
+    /// Returns the conditional status of a store-conditional completion.
+    pub const fn conditional_status(&self) -> Option<ConditionalStatus> {
+        match self.completion {
+            AtomicResponseCompletion::StoreConditional(status) => Some(status),
+            _ => None,
+        }
+    }
+}
+
+/// A guest-visible physical target rejection of an atomic envelope with
+/// preserved request context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicTargetRejection {
+    /// Address/width/kind identity of the rejected envelope.
+    pub request: AtomicRequestDescriptor,
+    /// Complete span, retained even when its end overflows.
+    pub span: PhysicalSpan,
+    /// Typed target rejection reason.
+    pub reason: PhysicalTargetRejectionReason,
+    /// Target-specific diagnostic context.
+    pub context: String,
+}
+
+impl AtomicTargetRejection {
+    /// Creates an atomic target rejection while retaining the request
+    /// identity and span.
+    pub fn new(
+        request: AtomicRequestDescriptor,
+        reason: PhysicalTargetRejectionReason,
+        context: impl Into<String>,
+    ) -> Self {
+        Self {
+            span: request.span(),
+            request,
+            reason,
+            context: context.into(),
+        }
+    }
+}
+
+impl fmt::Display for AtomicTargetRejection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "target rejected atomic {:?} at {:#018x} ({} bytes): {}",
+            self.request.kind,
+            self.request.paddr,
+            self.request.width.bytes(),
+            self.context
+        )
+    }
+}
+
+impl std::error::Error for AtomicTargetRejection {}
+
+/// A host/backend failure while servicing a valid atomic envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicBackendFailure {
+    /// Envelope being serviced when the host/backend failed.
+    pub request: AtomicRequestDescriptor,
+    /// Typed diagnostic context.
+    pub context: String,
+}
+
+impl fmt::Display for AtomicBackendFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "atomic backend failure: {}", self.context)
+    }
+}
+
+impl std::error::Error for AtomicBackendFailure {}
+
+/// An unresolved atomic envelope completion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicUnknownCompletion {
+    /// Envelope whose effects cannot be established.
+    pub request: AtomicRequestDescriptor,
+    /// Typed diagnostic context.
+    pub context: String,
+}
+
+impl fmt::Display for AtomicUnknownCompletion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "unknown atomic completion: {}", self.context)
+    }
+}
+
+impl std::error::Error for AtomicUnknownCompletion {}
+
+/// Final error taxonomy returned by a validated atomic envelope access.
+///
+/// The categories deliberately reuse the A7 physical taxonomy (dev-plan §5.7)
+/// without weakening it: only [`AtomicAccessError::TargetRejected`] is
+/// guest-visible; host, protocol, and unknown completions remain
+/// simulator-side failures and are never reclassified from diagnostic text.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum AtomicAccessError {
+    /// A valid envelope was rejected by its physical target.
+    #[error("{0}")]
+    TargetRejected(AtomicTargetRejection),
+    /// The host/backend could not complete a valid envelope.
+    #[error("{0}")]
+    BackendFailure(AtomicBackendFailure),
+    /// Envelope or response protocol/invariant validation failed.
+    #[error("{0}")]
+    Protocol(AtomicProtocolError),
+    /// Completion effects cannot be established; no retry is implied.
+    #[error("{0}")]
+    UnknownCompletion(AtomicUnknownCompletion),
+}
+
+/// Result returned by a validated atomic envelope boundary.
+pub type AtomicAccessResult = Result<AtomicResponse, AtomicAccessError>;
+
+/// Result an atomic backend supplies to the validated boundary.
+pub type AtomicBackendResult = Result<AtomicResponse, PhysicalBackendError>;
+
+/// The untrusted transport/backend seam for an atomic envelope.
+///
+/// Implementations execute the single critical section and report raw old
+/// bytes, snapshots, conditional status, and typed failure categories only.
+/// They do not implement ISA arithmetic, interpret the transform, enter
+/// traps, or retry.  A backend is not certified merely by implementing this
+/// trait; callers must place it behind [`ValidatedAtomicAccess`] to obtain
+/// envelope/response validation.
+pub trait AtomicBackend {
+    /// Services one complete envelope without retaining the borrowed request.
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult;
+}
+
+/// The validated transport-neutral atomic envelope interface.
+pub trait AtomicAccess {
+    /// Validates and submits one complete atomic envelope.
+    fn access_atomic(&mut self, request: AtomicRequest<'_>) -> AtomicAccessResult;
+}
+
+/// Validation boundary around an untrusted atomic backend.
+///
+/// The wrapper checks envelope widths (4/8 only), kind/payload rules, and the
+/// complete non-wrapping span before invoking the backend exactly once.  It
+/// then checks response identity, completion kind, exact old-byte length, and
+/// snapshot presence.  It has no retry path, including for unknown
+/// completion: an unknown atomic completion is terminal.
+#[derive(Debug)]
+pub struct ValidatedAtomicAccess<B> {
+    backend: B,
+}
+
+impl<B> ValidatedAtomicAccess<B> {
+    /// Wraps an atomic backend in the T1 validation boundary.
+    pub const fn new(backend: B) -> Self {
+        Self { backend }
+    }
+
+    /// Borrows the wrapped backend for inspection or adapter-specific setup.
+    pub const fn backend(&self) -> &B {
+        &self.backend
+    }
+
+    /// Mutably borrows the wrapped backend.
+    pub const fn backend_mut(&mut self) -> &mut B {
+        &mut self.backend
+    }
+
+    /// Unwraps the backend.
+    pub fn into_backend(self) -> B {
+        self.backend
+    }
+}
+
+impl<B: AtomicBackend> ValidatedAtomicAccess<B> {
+    /// Convenience method equivalent to the [`AtomicAccess`] trait method.
+    pub fn access_atomic(&mut self, request: AtomicRequest<'_>) -> AtomicAccessResult {
+        <Self as AtomicAccess>::access_atomic(self, request)
+    }
+
+    /// Submits one envelope through the validated boundary.
+    pub fn transact_atomic(&mut self, request: AtomicRequest<'_>) -> AtomicAccessResult {
+        self.access_atomic(request)
+    }
+}
+
+impl<B: AtomicBackend> AtomicAccess for ValidatedAtomicAccess<B> {
+    fn access_atomic(&mut self, request: AtomicRequest<'_>) -> AtomicAccessResult {
+        request.validate().map_err(AtomicAccessError::Protocol)?;
+
+        let descriptor = request.descriptor();
+        if !request.span().is_non_wrapping() {
+            return Err(AtomicAccessError::TargetRejected(
+                AtomicTargetRejection::new(
+                    descriptor,
+                    PhysicalTargetRejectionReason::RangeOverflow,
+                    format!(
+                        "atomic span starting at {:#018x} with width {} wraps the address space",
+                        descriptor.paddr,
+                        descriptor.width.bytes()
+                    ),
+                ),
+            ));
+        }
+
+        let response = match self.backend.transact_atomic(&request) {
+            Ok(response) => response,
+            Err(PhysicalBackendError::Target { reason, context }) => {
+                return Err(AtomicAccessError::TargetRejected(
+                    AtomicTargetRejection::new(descriptor, reason, context),
+                ));
+            }
+            Err(PhysicalBackendError::Host { context }) => {
+                return Err(AtomicAccessError::BackendFailure(AtomicBackendFailure {
+                    request: descriptor,
+                    context,
+                }));
+            }
+            Err(PhysicalBackendError::Protocol { context }) => {
+                return Err(AtomicAccessError::Protocol(
+                    AtomicProtocolError::BackendProtocol { context },
+                ));
+            }
+            Err(PhysicalBackendError::Unknown { context }) => {
+                return Err(AtomicAccessError::UnknownCompletion(
+                    AtomicUnknownCompletion {
+                        request: descriptor,
+                        context,
+                    },
+                ));
+            }
+        };
+
+        validate_atomic_response(&request, response)
+    }
+}
+
+fn validate_atomic_response(
+    request: &AtomicRequest<'_>,
+    response: AtomicResponse,
+) -> AtomicAccessResult {
+    let expected_binding = request.descriptor();
+    if response.binding() != expected_binding {
+        return Err(AtomicAccessError::Protocol(
+            AtomicProtocolError::ResponseBindingMismatch {
+                expected: expected_binding,
+                actual: response.binding(),
+            },
+        ));
+    }
+
+    let completion = response.completion();
+    let expected_kind = request.kind();
+    if completion.kind() != expected_kind {
+        return Err(AtomicAccessError::Protocol(
+            AtomicProtocolError::ResponseCompletionMismatch {
+                expected: expected_kind,
+                actual: completion.kind(),
+            },
+        ));
+    }
+
+    match completion {
+        AtomicResponseCompletion::Rmw(bytes)
+        | AtomicResponseCompletion::LoadReserved {
+            old_bytes: bytes, ..
+        } => {
+            validate_atomic_old_bytes(request, bytes)?;
+        }
+        AtomicResponseCompletion::StoreConditional(_) => {}
+    }
+
+    if let AtomicResponseCompletion::LoadReserved { snapshot, .. } = completion {
+        if snapshot.is_empty() {
+            return Err(AtomicAccessError::Protocol(
+                AtomicProtocolError::EmptySnapshot,
+            ));
+        }
+    }
+
+    Ok(response)
+}
+
+fn validate_atomic_old_bytes(
+    request: &AtomicRequest<'_>,
+    bytes: PhysicalResponseBytes,
+) -> Result<(), AtomicAccessError> {
+    if bytes.supplied_len() != bytes.reported_len() {
+        return Err(AtomicAccessError::Protocol(
+            AtomicProtocolError::ResponsePayloadLengthMismatch {
+                reported: bytes.reported_len(),
+                supplied: bytes.supplied_len(),
+            },
+        ));
+    }
+
+    let expected_len = request.width().bytes();
+    if bytes.reported_len() != expected_len {
+        return Err(AtomicAccessError::Protocol(
+            AtomicProtocolError::ResponseLengthMismatch {
+                expected: expected_len,
+                actual: bytes.reported_len(),
+            },
+        ));
+    }
+    // Widths are limited to eight bytes, so an exact length always has an
+    // inline slice.  Retain an explicit invariant check rather than allowing
+    // a malformed future representation to become success.
+    if bytes.as_slice().is_none() {
+        return Err(AtomicAccessError::Protocol(
+            AtomicProtocolError::Invariant {
+                context: "exact atomic response length has no inline byte representation".into(),
+            },
+        ));
+    }
+    Ok(())
+}
