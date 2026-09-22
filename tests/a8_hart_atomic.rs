@@ -33,6 +33,7 @@ use ruscv_sim::physical::{
 };
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Encoders.
@@ -89,6 +90,11 @@ fn fsd(rs2: u8, rs1: u8, immediate: i32) -> u32 {
         | (0b011 << 12)
         | ((immediate & 0x1f) << 7)
         | 0x27
+}
+
+fn addi(rd: u8, rs1: u8, immediate: i32) -> u32 {
+    assert!((-2048..=2047).contains(&immediate));
+    ((immediate as u32 & 0xfff) << 20) | ((rs1 as u32) << 15) | ((rd as u32) << 7) | 0x13
 }
 
 fn nop() -> u32 {
@@ -305,6 +311,75 @@ fn gated_core(
     );
     core.reset(0, 0);
     (core, memory, domain)
+}
+
+/// A backend that holds the shared domain mutex across each envelope's
+/// complete critical section and, inside the store-conditional envelope,
+/// rendezvous-points with the competing writer: it signals `entered` while
+/// holding `domain` (the writer is then provably excluded by that mutex),
+/// waits on `release`, and only then executes the conditional
+/// check-and-write against RAM.
+struct InEnvelopeBackend {
+    inner: NativeRamBackend,
+    domain: Arc<Mutex<()>>,
+    entered: Arc<Barrier>,
+    release: Arc<Barrier>,
+}
+
+impl PhysicalBackend for InEnvelopeBackend {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        let _domain = self.domain.lock().unwrap();
+        self.inner.transact(request)
+    }
+}
+
+impl AtomicBackend for InEnvelopeBackend {
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        let _domain = self.domain.lock().unwrap();
+        if request.descriptor().kind == AtomicAccessKind::StoreConditional {
+            // Signal while still holding the domain mutex: the writer's
+            // domain try_lock below must fail while this guard is alive.
+            self.entered.wait();
+            self.release.wait();
+        }
+        self.inner.transact_atomic(request)
+    }
+}
+
+/// The rendezvous handles shared by an [`InEnvelopeBackend`] and the
+/// competing writer thread.
+type InEnvelopeHarness = (
+    RiscvCore,
+    Arc<Mutex<SimpleMemory>>,
+    Arc<Mutex<()>>,
+    Arc<Barrier>,
+    Arc<Barrier>,
+);
+
+fn in_envelope_core(words: &[(u64, u32)], size: usize) -> InEnvelopeHarness {
+    let memory = memory_with_words(words, size);
+    let domain = Arc::new(Mutex::new(()));
+    let entered = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(memory.clone(), 0, size),
+    )));
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        InEnvelopeBackend {
+            inner: NativeRamBackend::new(memory.clone(), 0, size),
+            domain: domain.clone(),
+            entered: entered.clone(),
+            release: release.clone(),
+        },
+    )));
+    let mut core = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port,
+        data_port,
+    );
+    core.reset(0, 0);
+    (core, memory, domain, entered, release)
 }
 
 fn set_mtvec(core: &mut RiscvCore, address: u64) {
@@ -934,18 +1009,50 @@ fn run_boundary_writes_and_resume_visibility() {
         "a committed write between run segments fails the resumed SC"
     );
     assert_eq!(simulator.read_mem(P, 8).unwrap(), 0xabu64.to_le_bytes());
+
+    // Variant C: run → exit → clear_tohost → resume.  The flat facade's exit
+    // detection runs `clear_tohost`, a W5 host writer committing eight zero
+    // bytes at the polled tohost offset — here overlapping the reservation
+    // the LR took inside the same run.  The resumed SC must fail rd = 1 and
+    // the memory holds zeros: the observed value is exactly what
+    // clear_tohost wrote, proving those bytes committed.
+    let mut simulator = RiscVSimulator::new(0x200);
+    simulator.set_tohost(P); // the exit signal lands inside the reservation
+    {
+        let mut memory = simulator.memory().lock().unwrap();
+        memory.write_word(0, lr_d(3, 1)).unwrap();
+        memory.write_word(4, addi(5, 0, 15)).unwrap(); // exit code 7 → 15
+        memory.write_word(8, addi(4, 0, P as i32)).unwrap(); // x4 = tohost offset
+        memory.write_word(12, sd(5, 4, 0)).unwrap(); // exit: write tohost
+        memory.write_word(16, sc_d(4, 1, 2)).unwrap();
+        // The reservation memory starts at zero so the tohost poll sees "no
+        // signal" until the guest's own sd commits the exit value.
+    }
+    simulator.state_mut().regs[1] = P;
+    simulator.state_mut().regs[2] = 9;
+    let exited = simulator.run(Some(8)).unwrap();
+    assert!(!exited.timed_out && exited.exit_code == 7);
+    assert_eq!(
+        simulator.read_mem(P, 8).unwrap(),
+        0u64.to_le_bytes(),
+        "clear_tohost committed its eight zero bytes over the reservation"
+    );
+    let resumed = simulator.run(Some(1)).unwrap();
+    assert!(resumed.timed_out);
+    assert_eq!(
+        simulator.state().regs[4],
+        1,
+        "the committed clear_tohost overlap fails the resumed SC"
+    );
+    assert_eq!(simulator.read_mem(P, 8).unwrap(), 0u64.to_le_bytes());
 }
 
-/// A competing writer thread shares the domain mutex with the backend: it
-/// can commit between the LR and SC envelopes (SC fails), but when it
-/// arrives only after the SC envelope completes, the SC commits (rd = 0)
-/// and the writer's later value is the final state.  Exclusion is bounded
-/// to each envelope's critical section — there is no cross-step window.
+/// Between-step invalidation: a competing writer that shares the backend's
+/// domain mutex commits freely between the LR and SC envelopes, and the SC
+/// observes the committed write as conditional failure.
 #[test]
-fn cross_thread_writer_is_excluded_only_inside_the_envelope() {
+fn cross_thread_writer_between_envelopes_fails_the_sc() {
     const P: u64 = 0x80;
-
-    // Variant A: the writer commits between LR and SC → SC fails.
     let (mut core, memory, domain) = gated_core(&[(0, lr_d(3, 1)), (4, sc_d(4, 1, 2))], 0x100);
     memory.lock().unwrap().write_dword(P, 1).unwrap();
     core.state_mut().regs[1] = P;
@@ -969,37 +1076,241 @@ fn cross_thread_writer_is_excluded_only_inside_the_envelope() {
     retired(&mut core); // SC: the committed write invalidates
     assert_eq!(core.state().regs[4], 1);
     assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 0x5a);
+}
 
-    // Variant B: the writer is gated until after the SC envelope → the SC
-    // commits, and the writer's later value is the final memory.
-    let (mut core, memory, domain) = gated_core(&[(0, lr_d(3, 1)), (4, sc_d(4, 1, 2))], 0x100);
+/// In-envelope exclusion (W3): while the SC envelope holds the domain mutex
+/// across its snapshot re-check and conditional store, a competing writer
+/// blocked on that same mutex cannot commit.  The backend signals `entered`
+/// inside the SC critical section and waits on `release`; the writer proves
+/// it is parked on `domain` before release.  The SC must commit (rd = 0): a
+/// write landing between the check and the store would have failed it.  The
+/// writer's value then becomes the final state, proving the write landed
+/// strictly after the envelope completed.
+#[test]
+fn cross_thread_writer_cannot_interpose_inside_the_sc_envelope() {
+    const P: u64 = 0x80;
+    let (mut core, memory, domain, entered, release) =
+        in_envelope_core(&[(0, lr_d(3, 1)), (4, sc_d(4, 1, 2))], 0x100);
     memory.lock().unwrap().write_dword(P, 1).unwrap();
     core.state_mut().regs[1] = P;
     core.state_mut().regs[2] = 7;
-    retired(&mut core);
+    retired(&mut core); // LR committed its envelope
 
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
     let writer_memory = memory.clone();
     let writer_domain = domain.clone();
-    let barrier = Arc::new(Barrier::new(2));
-    let writer_barrier = barrier.clone();
+    let writer_entered = entered.clone();
+    let writer_release = release.clone();
     let writer = thread::spawn(move || {
-        writer_barrier.wait();
+        // Wait until the SC envelope is inside its critical section, then
+        // prove the shared domain mutex excludes this writer: try_lock must
+        // fail while the envelope holds it across check and write.
+        writer_entered.wait();
+        let excluded = writer_domain.try_lock().is_err();
+        // Release the backend so its conditional section completes, then
+        // commit through the domain mutex and report what we observed.
+        writer_release.wait();
         let _domain = writer_domain.lock().unwrap();
         writer_memory.lock().unwrap().write_dword(P, 0x6b).unwrap();
+        done_tx.send(excluded).unwrap();
     });
-    retired(&mut core); // SC commits first (deterministically)
-    barrier.wait();
+
+    retired(&mut core); // SC executes the rendezvous envelope
+    let excluded = done_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the writer must complete once the envelope released the domain mutex");
     writer.join().unwrap();
+    assert!(
+        excluded,
+        "the domain mutex rejected the writer's lock while the envelope held it"
+    );
     assert_eq!(
         core.state().regs[4],
         0,
-        "the SC committed before the writer"
+        "the writer was excluded for the whole conditional section; SC committed"
     );
     assert_eq!(
         memory.lock().unwrap().read_dword(P).unwrap(),
         0x6b,
-        "the later writer's value is the final state"
+        "the writer's commit landed strictly after the envelope"
     );
+}
+
+/// A port-route SC whose issued address fails conversion — a guest address
+/// below the flat image base, or a guest-aligned address whose storage
+/// offset is not width-aligned — is a store/AMO access fault (cause 7) with
+/// the original guest `mtval`, never a conditional `rd = 1` retirement.
+/// The trap discards the staged consumption, so the reservation survives
+/// and a later covered SC on the same Hart still commits (C15 regression).
+#[test]
+fn sc_conversion_rejection_faults_and_retains_the_reservation() {
+    const P: u64 = 0x80; // flat storage offset of the reserved span
+    const BASE: u64 = 0x8000_0000;
+
+    let memory = memory_with_words(
+        &[(0, lr_d(3, 1)), (4, sc_d(4, 1, 2)), (8, sc_d(5, 1, 2))],
+        0x100,
+    );
+    memory.lock().unwrap().write_dword(P, 1).unwrap();
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(memory.clone(), 0, 0x100),
+    )));
+    let (backend, spy) = SpyBackend::new(memory.clone(), 0x100);
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(backend)));
+    let mut core = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port,
+        data_port,
+    );
+    core.set_physical_storage_alignment(0, 0x100);
+    core.reset(BASE, BASE);
+    set_mtvec(&mut core, BASE + 0x40);
+
+    // LR.D at the aligned guest BASE+0x80 establishes the reservation.
+    core.state_mut().regs[1] = BASE + P;
+    core.state_mut().regs[2] = 0x33;
+    retired(&mut core);
+    assert!(core.state().reservation.is_some());
+
+    // SC.D at BASE-8: the guest address is dword-aligned, but converting it
+    // to a storage offset fails (below the image base).  This is a target
+    // rejection → cause 7 with the original guest address, not rd = 1.
+    // BASE is dword-aligned so BASE-8 is a clean below-base address.
+    core.state_mut().regs[1] = BASE - 8;
+    let outcome = core.step_outcome();
+    assert!(
+        matches!(
+            outcome,
+            StepOutcome::TrapEntered(trap)
+                if trap.cause == ExceptionCause::StoreAccessFault
+                    && trap.mtval == BASE - 8
+        ),
+        "conversion rejection must trap cause 7 with the guest address: {outcome:?}"
+    );
+    assert_eq!(
+        spy.atomic_count(),
+        1,
+        "the rejected SC issued no envelope (only the LR did)"
+    );
+
+    // The reservation survived the faulting SC: retry a covered SC on the
+    // same Hart and it commits.
+    core.state_mut().regs[1] = BASE + P;
+    core.state_mut().pc = BASE + 8;
+    retired(&mut core);
+    assert_eq!(
+        core.state().regs[5],
+        0,
+        "the retained reservation lets the covered SC commit"
+    );
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 0x33);
+
+    // Same rule for the storage-offset rejection: with a guest base of
+    // BASE+4, every guest-dword-aligned address maps to a flat offset that
+    // is dword-misaligned under the configured storage range.  An LR.W can
+    // still establish a reservation (word widths stay aligned); the SC.D
+    // then faults cause 7 on the offset check — before any coverage or
+    // conditional-failure logic — and the reservation survives for a
+    // covered SC.W to commit.
+    const ODD_BASE: u64 = 0x8000_0004;
+    let memory = memory_with_words(
+        &[(0, lr_w(3, 1)), (4, sc_d(4, 1, 2)), (8, sc_w(5, 1, 2))],
+        0x100,
+    );
+    memory.lock().unwrap().write_word(0x84, 1).unwrap();
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(memory.clone(), 0, 0x100),
+    )));
+    let (backend, spy) = SpyBackend::new(memory.clone(), 0x100);
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(backend)));
+    let mut core = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port,
+        data_port,
+    );
+    core.set_physical_storage_alignment(0, 0x100);
+    core.reset(ODD_BASE, ODD_BASE);
+    set_mtvec(&mut core, ODD_BASE + 0x40);
+    core.state_mut().regs[1] = ODD_BASE + 0x84; // flat offset 0x84, 4-aligned
+    core.state_mut().regs[2] = 0x44;
+    retired(&mut core); // LR.W reserves [0x84, 0x88)
+    assert!(core.state().reservation.is_some());
+
+    // SC.D at ODD_BASE+0x7C: the guest address is dword-aligned, yet its
+    // flat storage offset 0x7C is not — a target rejection → cause 7 with
+    // the original guest address, not rd = 1.
+    core.state_mut().regs[1] = ODD_BASE + 0x7c;
+    let outcome = core.step_outcome();
+    assert!(matches!(
+        outcome,
+        StepOutcome::TrapEntered(trap)
+            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == ODD_BASE + 0x7c
+    ));
+    assert_eq!(spy.atomic_count(), 1);
+
+    // Retained reservation: a covered SC.W commits.
+    core.state_mut().regs[1] = ODD_BASE + 0x84;
+    core.state_mut().pc = ODD_BASE + 8;
+    retired(&mut core);
+    assert_eq!(core.state().regs[5], 0);
+    assert_eq!(memory.lock().unwrap().read_word(0x84).unwrap(), 0x44);
+}
+
+/// Non-reentrancy on the envelope path (§7.2/§8 T3): a port-configured
+/// store+LR+SC through a bus-backed data port completes inside a deadline
+/// without acquiring the same domain mutex twice.  A deadlock in the Hart's
+/// lock sequence would hang the stepping thread, so the parent bounds it
+/// with a channel timeout and fails instead of hanging the suite.
+#[test]
+fn envelope_route_completes_without_lock_reentry() {
+    use ruscv_sim::executor::SystemBus;
+    use ruscv_sim::peripherals::Uart16550;
+    use ruscv_sim::physical::NativeSystemBusBackend;
+
+    const P: u64 = 0x80;
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let ram = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
+        ram.lock().unwrap().write_dword(P, 1).unwrap();
+        let instruction = memory_with_words(
+            &[(0, sd(2, 1, 0)), (4, lr_d(3, 1)), (8, sc_d(4, 1, 2))],
+            0x20,
+        );
+        let uart = Arc::new(Mutex::new(Uart16550::new(0x1000_0000)));
+        let bus = Arc::new(Mutex::new(SystemBus::new(ram.clone(), uart, 0, 0x100)));
+        let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+            NativeRamBackend::new(instruction.clone(), 0, 0x20),
+        )));
+        let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+            NativeSystemBusBackend::new(bus.clone()),
+        )));
+        let data_typed: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = bus;
+        let mut core = RiscvCore::new_with_physical_ports(
+            instruction,
+            data_typed,
+            instruction_port,
+            data_port,
+        );
+        core.reset(0, 0);
+        core.state_mut().regs[1] = P;
+        core.state_mut().regs[2] = 0x55;
+        for _ in 0..3 {
+            core.step_outcome();
+        }
+        let outcome = (
+            core.state().regs[4],
+            ram.lock().unwrap().read_dword(P).unwrap(),
+        );
+        let _ = result_tx.send(outcome);
+    });
+
+    let (rd, stored) = result_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("store+LR+SC on one port/domain must complete inside the deadline");
+    assert_eq!(rd, 0, "the SC committed");
+    assert_eq!(stored, 0x55);
 }
 
 // ---------------------------------------------------------------------------
