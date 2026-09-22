@@ -45,16 +45,17 @@ pub enum AmoOperation {
     Maxu,
 }
 
-/// Every AMO operation in `funct5` table order, for exhaustive callers.
+/// Every AMO operation in ascending `funct5` order (dev-plan §2): AMOADD,
+/// AMOSWAP, AMOXOR, AMOOR, AMOAND, AMOMIN, AMOMAX, AMOMINU, AMOMAXU.
 pub const ALL_OPERATIONS: [AmoOperation; 9] = [
-    AmoOperation::Swap,
     AmoOperation::Add,
+    AmoOperation::Swap,
     AmoOperation::BitXor,
-    AmoOperation::BitAnd,
     AmoOperation::BitOr,
+    AmoOperation::BitAnd,
     AmoOperation::Min,
-    AmoOperation::Minu,
     AmoOperation::Max,
+    AmoOperation::Minu,
     AmoOperation::Maxu,
 ];
 
