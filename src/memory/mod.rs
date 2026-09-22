@@ -130,24 +130,31 @@ impl CommittedWriteBookkeeping {
         self.next_version += 1;
         let version = self.next_version;
 
-        // Split the interval containing the span start so nothing crosses it.
+        // Split the interval containing the span start: keep only the prefix
+        // before the offset.  When that same interval extends past the span's
+        // exclusive end, record its suffix there; disjoint intervals mean no
+        // other key can occupy `end` yet, so this never overwrites a later
+        // interval.
         if let Some((&start, &(existing_end, existing_version))) =
             self.versions.range(..=offset).next_back()
         {
             if start < offset && offset < existing_end {
-                self.versions.insert(end, (existing_end, existing_version));
-                self.versions.insert(offset, (end, version));
                 self.versions.insert(start, (offset, existing_version));
+                if existing_end > end {
+                    self.versions.insert(end, (existing_end, existing_version));
+                }
             }
         }
         // Split the interval containing the exclusive span end so nothing
-        // crosses it.
+        // crosses it.  An interval keyed exactly at `end` never contains the
+        // end byte and needs no split; `insert` here only fills the key this
+        // split itself creates, so it cannot clobber a live record.
         if let Some((&start, &(existing_end, existing_version))) =
             self.versions.range(..=end).next_back()
         {
             if start < end && end < existing_end {
-                self.versions.insert(end, (existing_end, existing_version));
                 self.versions.insert(start, (end, existing_version));
+                self.versions.insert(end, (existing_end, existing_version));
             }
         }
         // Drop every interval fully covered by the new span, then insert the

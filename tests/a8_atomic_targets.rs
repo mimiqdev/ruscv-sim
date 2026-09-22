@@ -1193,6 +1193,68 @@ fn rejected_writes_and_failed_write_suffixes_bump_nothing() {
 }
 
 #[test]
+fn adjacent_commit_boundaries_preserve_exact_interval_versions() {
+    // Regression for the interval-split defect found in review: a commit
+    // ending exactly where a later interval starts must not erase that
+    // interval's version (a non-overlapping SC must still succeed), and a
+    // commit covering two intervals must not leave the later bytes stale
+    // (an overlapping SC must still fail).
+    let (memory, mut port) = ram_atomic_port(0x8000, 0x100);
+
+    // Two adjacent dword commits create two adjacent intervals.
+    {
+        let mut ram = memory.lock().unwrap();
+        ram.write_dword(0x00, 0x1111).unwrap();
+        ram.write_dword(0x08, 0x2222).unwrap();
+    }
+
+    // A word write ending exactly at the second span's start is
+    // non-overlapping: the SC must succeed.
+    let (_, context) = lr(&mut port, 0x8008, AccessWidth::Doubleword);
+    memory.lock().unwrap().write_word(0x04, 0xaabb).unwrap(); // commits [4,8)
+    assert_eq!(
+        sc(&mut port, 0x8008, AccessWidth::Doubleword, &[1; 8], context),
+        ConditionalStatus::Success,
+        "a write ending at the reserved span's start must not fail its SC"
+    );
+
+    // Same for a byte write ending at the span start.
+    let (_, context) = lr(&mut port, 0x8008, AccessWidth::Doubleword);
+    memory.lock().unwrap().write_byte(0x07, 0xcc).unwrap(); // commits [7,8)
+    assert_eq!(
+        sc(&mut port, 0x8008, AccessWidth::Doubleword, &[2; 8], context),
+        ConditionalStatus::Success
+    );
+
+    // A raw write_bytes overlapping both intervals fails the later span's
+    // SC: bytes 8..12 were committed over, so the snapshot must not replay.
+    {
+        let mut ram = memory.lock().unwrap();
+        ram.write_dword(0x10, 0x3333).unwrap();
+        ram.write_dword(0x18, 0x4444).unwrap();
+    }
+    let (_, context) = lr(&mut port, 0x8018, AccessWidth::Doubleword);
+    memory
+        .lock()
+        .unwrap()
+        .write_bytes(0x14, &[0xdd; 8])
+        .unwrap(); // commits [0x14,0x1c)
+    assert_eq!(
+        sc(&mut port, 0x8018, AccessWidth::Doubleword, &[3; 8], context),
+        ConditionalStatus::Failure,
+        "a write overlapping both intervals must fail SC on the later span"
+    );
+    // The unwritten tail of the second interval kept its version: a fresh
+    // LR on only that tail followed by an unrelated write still succeeds.
+    let (_, context) = lr(&mut port, 0x801c, AccessWidth::Word);
+    memory.lock().unwrap().write_byte(0x60, 0xee).unwrap();
+    assert_eq!(
+        sc(&mut port, 0x801c, AccessWidth::Word, &[4; 4], context),
+        ConditionalStatus::Success
+    );
+}
+
+#[test]
 fn failed_host_write_commits_and_bumps_only_its_prefix() {
     // The facade's write_mem shape: a write_byte loop over the shared handle
     // where a late byte fails (§5.5 W4).  Committed prefix bytes bump; the
