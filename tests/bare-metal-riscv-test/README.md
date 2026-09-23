@@ -9,6 +9,7 @@ tests/bare-metal-riscv-test/
 ├── Makefile            # 编译脚本
 ├── linker.ld           # 链接器脚本
 ├── README.md           # 本文件
+├── rv64a/              # RV64A 原子指令回归 guest
 ├── rv64i/              # RV64I 基础整数指令测试
 └── rv64m/              # RV64M 整数乘除法测试
 ```

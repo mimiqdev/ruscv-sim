@@ -65,7 +65,12 @@ if ! mkdir -p -- "${OUTDIR}"; then
     exit 2
 fi
 
-mapfile -t SOURCES < <(find "${TESTS_DIR}/rv64i" "${TESTS_DIR}/rv64m" -type f -name '*.S' -print | sort)
+# Keep the historical RV64I/RV64M guest order intact; append the A8 RV64A
+# atomic guests as a distinct addition rather than renumbering the original set.
+mapfile -t SOURCES < <(
+    find "${TESTS_DIR}/rv64i" "${TESTS_DIR}/rv64m" -type f -name '*.S' -print | sort
+    find "${TESTS_DIR}/rv64a" -type f -name '*.S' -print | sort
+)
 if [ "${#SOURCES[@]}" -eq 0 ]; then
     echo -e "${RED}Error: no RISC-V assembly sources found${NC}" >&2
     exit 2

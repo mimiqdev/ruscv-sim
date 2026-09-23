@@ -112,7 +112,12 @@ echo -e "${GREEN}[OK]${NC} Simulator: ${RUSCV_BIN}"
 echo -e "${GREEN}[OK]${NC} Guest manifest: ${manifest}"
 grep -E '^(source_head|source_count|compiled_count)=' "${manifest}" || true
 
-mapfile -t ELF_FILES < <(find "${OUTDIR}" -type f -name '*.elf' -print | sort)
+# Preserve the historical RV64I/RV64M case order and append the RV64A A8
+# guests; existing case identities and numbers stay stable.
+mapfile -t ELF_FILES < <(
+    find "${OUTDIR}/rv64i" "${OUTDIR}/rv64m" -type f -name '*.elf' -print | sort
+    find "${OUTDIR}/rv64a" -type f -name '*.elf' -print | sort
+)
 if [ "${#ELF_FILES[@]}" -eq 0 ]; then
     echo -e "${RED}Error: no ELF files found in ${OUTDIR}${NC}" >&2
     exit 2
@@ -122,6 +127,13 @@ fi
 for required in trap_ecall trap_illegal trap_ebreak trap_vectored trap_mret_priv; do
     if [ ! -f "${OUTDIR}/rv64i/${required}.elf" ]; then
         echo -e "${RED}Error: required A6 guest missing: ${required}.elf${NC}" >&2
+        exit 2
+    fi
+done
+
+for required in lrsc_loop amo_w amo_d aq_rl_set sc_after_store_failure atomic_near_ram_end atomic_tohost_exit; do
+    if [ ! -f "${OUTDIR}/rv64a/${required}.elf" ]; then
+        echo -e "${RED}Error: required A8 atomic guest missing: ${required}.elf${NC}" >&2
         exit 2
     fi
 done

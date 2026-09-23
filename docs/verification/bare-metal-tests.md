@@ -32,7 +32,8 @@ a guest pass.
 The scripts build into a disposable target directory directly below the
 canonical repository `target/` directory, remove it before each normal compile,
 record the source Git HEAD in `manifest.txt`, verify ELF entry `== _start`, and
-run every discovered RV64I/RV64M ELF through the public CLI. The path guard
+run the original RV64I/RV64M guests followed by the A8 RV64A atomic additions
+through the public CLI. The five A6 trap guests remain required members. The path guard
 rejects source directories, parent aliases, and symlinked roots; its regression
 cases run with `bash scripts/test_riscv_elf_guards.sh`.
 When a bind-mounted worktree cannot resolve its host-side `.git` file, pass the
