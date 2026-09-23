@@ -79,12 +79,15 @@ append the project-authored RV64A guests under `tests/bare-metal-riscv-test/rv64
 The existing five A6 trap guests remain required. The new guests cover an
 LR/SC retry loop; AMOSWAP/ADD/MIN/MAX at W and D widths; aq/rl encodings;
 SC-after-overlapping-store failure; an atomic access at the final aligned RAM
-dword; and an AMO that writes the tohost exit signal. Historical guest-set
-identities are not merged or redefined here, and this T4 record does not state
-a new suite total.
+dword; and an AMO that writes the tohost exit signal. `atomic_near_ram_end.S`
+uses LR.D/SC.D at the last aligned dword of the 64-KiB image RAM and signals
+success separately through `.tohost`; the address derivation and observed
+public-runner result are recorded below. Historical guest-set identities are
+not merged or redefined here, and this T4 record does not state a new suite
+total.
 
 **Observed fresh build/run:** source revision
-`de56ffbb9c73c43577c16b611205442cb9ce90fd` was mounted from this task
+`7f1780de0f87048b81455b4da3176bf8e3599b71` was mounted from this task
 worktree into the local development image
 `ghcr.io/mimiqdev/ruscv-sim-dev:main`
 (`sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c`).
@@ -92,7 +95,13 @@ The image reported GNU assembler and linker 2.40. Cargo used
 `target/container-cargo`; fresh guest artifacts used
 `target/container-riscv-elves`; `RISCV_SOURCE_HEAD` was passed from the host
 because the mounted worktree's `.git` indirection is not container-resolvable.
-The invocation was:
+The rebuilt `atomic_near_ram_end.elf` has a PT_LOAD segment at
+`0x80000000` with `p_memsz=0x48` (confirmed by the image's
+`riscv64-unknown-elf-readelf -l`). `load_elf_file` therefore allocates
+`max(next_power_of_two(0x48), 0x10000) = 0x10000` bytes, covering
+`[0x80000000, 0x80010000)`; `0x8000fff8` is its actual final aligned dword.
+The guest's successful CLI exit demonstrates LR.D/SC.D success at that address
+and its subsequent success signal through `.tohost`. The invocation was:
 
 ```bash
 head=$(git rev-parse HEAD)
@@ -110,7 +119,7 @@ public CLI execution successfully, including all seven added A8 atomic guests:
 | `rv64a/amo_d.S` | 28 | exit 0 |
 | `rv64a/amo_w.S` | 29 | exit 0 |
 | `rv64a/aq_rl_set.S` | 23 | exit 0 |
-| `rv64a/atomic_near_ram_end.S` | 8 | exit 0 |
+| `rv64a/atomic_near_ram_end.S` | 12 | exit 0 |
 | `rv64a/atomic_tohost_exit.S` | 4 | exit 0 |
 | `rv64a/lrsc_loop.S` | 16 | exit 0 |
 | `rv64a/sc_after_store_failure.S` | 20 | exit 0 |
