@@ -59,7 +59,7 @@ cargo test --test a8_atomic_baseline --test a7_migration_characterization \
 | Transcript row | Old verified expectation | Class | New expected value (post-A8) | Approving row | T0 baseline |
 | --- | --- | --- | --- | --- | --- |
 | `amoadd.w=retired/read_word+write_word` | `00001`/`010` retires AMOADD arithmetic through word helpers | **Flip** | AMOSWAP.W semantics (memory = `rs2` low word) | C2 | `amoswap_encoding_executes_amoadd_arithmetic`, dispatch-matrix row `00001` |
-| `sc.no-reservation=retired/rd=1/no-write` | SC with no reservation retires `rd=1`, no write | **Keep** | Same observable (`rd=1`, no physical request; failure code 1 is the profile value) | C13, §11 item 2 | dispatch-matrix rows `00010`/`00011`, `htif_sc_family_dword_callback_needs_alignment_and_live_reservation` (no-reservation row) |
+| `sc.no-reservation=retired/rd=1/no-write` | SC with no reservation retires `rd=1`, no write | **Relabel (typed compatibility only)** | Same only on the explicitly non-conforming `RiscvCore::new` typed route; it has no physical target permission/capability check. The standard physical route follows the SC correction addendum below: valid RAM conditionally fails after target validation; invalid/unsupported targets fault. | C13, §11 item 8 | dispatch-matrix rows `00010`/`00011` exercise the typed adapter; `a8_hart_atomic` and public-facade regressions exercise the standard route |
 | `lr->other-core-sc=success/global` | LR in one `RiscvCore`, SC in another at the same address succeeds | **Flip** | Each Hart owns its reservation: the second core's SC fails `rd=1` | C16, §11 item 2 | `global_reservation_is_shared_across_cores_and_survives_reset` (old column) |
 | `lr->reset->sc=success/reservation-retained` | `RiscvCore::reset` does not clear the reservation | **Flip** | Reset installs a fresh `CoreState`, so the post-reset SC fails `rd=1` | C16 | `global_reservation_is_shared_across_cores_and_survives_reset` (old column) |
 | `lr@b0->sc@b8=retired/rd=1` | SC at a different exact address fails | **Keep** | Same observable: the SC span is not contained in the reservation span | C30, §9 | `global_reservation_is_shared_across_cores_and_survives_reset` (exact-key row), `cross_width_sc_rows_pin_the_width_less_exact_address_key` |
@@ -173,6 +173,38 @@ rather than left pending.
 * Ledger complete: no pending classification (§6.1).
 * Baseline executable and green on unchanged code; existing A7 fixtures and
   `amo_test.rs` show zero regression (exit command above).
-* No `src/` change: the baseline asserts current behavior only; all flips are
-  deferred to their contract tasks (T3/T4) with the approving §6/§11 rows
-  recorded here.
+* No `src/` change at T0: the baseline asserts the then-current behavior;
+  later approved changes and their exact-head evidence are separate records.
+
+## 7. Spec-first SC correction follow-up
+
+This addendum supersedes the earlier C13 expectation for the standard
+physical-port route only; it does not rewrite the pinned A7/T0 historical
+observations above, and the typed `RiscvCore::new` route remains explicitly
+non-conforming (no target permission/capability checks).
+
+The maintainer-authorized correction follows the normative/implementation
+separation in the current [`docs/dev-plan.md`](../dev-plan.md) §§2, 5, 6, 7,
+8, and 11. Normative Zalrsc anchors require SC permission checks before
+retirement, failure outside the reservation set, permit failed SC to be
+checked as a store, leave translation side effects unspecified, and require
+nonzero failure/no write. The chosen A8 order is an implementation decision:
+Hart legality/alignment → guest-to-port conversion → one existing SC envelope
+with optional reservation context → target store-span and atomic-capability
+validation → conditional failure if valid RAM but context is absent/uncovered.
+Spike @ `02b1dc1` and Sail @ `8890da7` are implementation references, not
+specification. A8's public MMU/PMP remains unwired.
+
+| Case | Previous standard-route result | Corrected standard-route result |
+| --- | --- | --- |
+| Valid mapped RAM, no reservation or live disjoint/uncovered reservation (W/D) | No-reservation SC skipped conversion and the target; uncovered SC converted then skipped target; both retired `rd=1` without a physical envelope. | One SC envelope validates the complete RAM span/capability, then returns Failure; `rd=1`, no guest-byte read/write or bookkeeping bump, and a live reservation is consumed. |
+| Flat guest address below base or odd storage offset, no reservation | Skipped address conversion and retired `rd=1`. | Store/AMO access fault (cause 7), original guest address in `mtval`, zero target envelopes, no retirement/`rd` write. |
+| Same flat conversion failure with a live reservation | Conversion failed before Hart coverage check; cause-7 fault, staged state retained reservation. | Same fault, original guest `mtval`, zero envelope, no retirement/`rd` write; reservation retained. |
+| HTIF D-c, UART, or unmapped span, no reservation or live-uncovered SC | Hart returned conditional Failure before target request (`rd=1` retirement), so unsupported/map-invalid targets were not checked. | One envelope reaches target validation; target rejects with store/AMO access fault (cause 7), no retirement/`rd` write, callback, device mutation, or exit. A live reservation is retained on fault. |
+| Covered SC target fault | Store access fault, no retirement/`rd` write; live reservation retained. | Same approved faulting-SC retain; the rule now also applies when the submitted context is uncovered and the target rejects before conditional status. |
+
+Focused updated coverage is in `tests/a8_atomic_contract.rs`,
+`tests/a8_atomic_targets.rs`, `tests/a8_hart_atomic.rs`,
+`tests/a8_atomic_baseline.rs`, and `tests/a8_public_atomic_equivalence.rs`.
+These follow-up assertions do not claim RV64A certification or public
+MMU/PMP integration.

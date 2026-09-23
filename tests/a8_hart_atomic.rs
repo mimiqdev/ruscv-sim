@@ -8,7 +8,8 @@
 //! * the complete §2/§5.3 operation matrix at both widths with Hart-owned
 //!   arithmetic (`hart_amods`) and exactly-one-envelope issue;
 //! * Hart-side preconditions that issue zero physical requests (reserved
-//!   `funct5`, LR `rs2 != 0`, bad `funct3`, uncovered SC span);
+//!   `funct5`, LR `rs2 != 0`, bad `funct3`, and rejected address conversion);
+//!   no-reservation and uncovered SCs still issue one envelope for target checks;
 //! * the per-Hart reservation lifecycle (recorded span + snapshot in
 //!   `CoreState`, consume/replace/retain rules, reset/reload clearing);
 //! * the writer-visibility contract W1–W3: a committed overlapping write —
@@ -175,6 +176,15 @@ impl Spy {
             .iter()
             .map(|descriptor| descriptor.paddr)
             .collect()
+    }
+
+    fn data_read_count(&self) -> usize {
+        self.raws
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(category, _)| *category == AccessCategory::DataRead)
+            .count()
     }
 
     fn data_write_count(&self) -> usize {
@@ -512,9 +522,9 @@ fn lr_sc_issue_one_envelope_each_and_aq_rl_are_informational() {
     }
 }
 
-/// Every Hart-side rejection issues zero physical requests: reserved
-/// funct5 values, LR with rs2 != 0, bad funct3, and an SC span the
-/// reservation does not cover.
+/// Hart legality rejections issue zero requests. SC reservation absence or
+/// uncovered span is not a pre-target rejection: one envelope validates the
+/// target and then returns conditional failure without writing.
 #[test]
 fn hart_side_rejections_issue_zero_requests() {
     const P: u64 = 0x80;
@@ -563,7 +573,8 @@ fn hart_side_rejections_issue_zero_requests() {
     ));
     assert_eq!(spy.atomic_count(), 0);
 
-    // SC with no reservation → rd = 1, no envelope, no write.
+    // SC with no reservation → one envelope reaches valid RAM, which returns
+    // rd = 1 without reading or writing guest bytes.
     let (mut core, memory, spy) = spy_core(&[(0, sc_w(4, 1, 2))], 0x100);
     memory.lock().unwrap().write_dword(P, 5).unwrap();
     core.state_mut().regs[1] = P;
@@ -571,10 +582,20 @@ fn hart_side_rejections_issue_zero_requests() {
     retired(&mut core);
     assert_eq!(core.state().regs[4], 1);
     assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 5);
-    assert_eq!(spy.atomic_count(), 0);
+    assert_eq!(spy.atomic_kinds(), [AtomicAccessKind::StoreConditional]);
+    assert_eq!(
+        spy.data_read_count(),
+        0,
+        "failure is not a separate data read"
+    );
+    assert_eq!(
+        spy.data_write_count(),
+        0,
+        "failure is not a separate data write"
+    );
 
-    // LR.W reserves four bytes; SC.D's wider span is uncovered → rd = 1,
-    // and the SC issued no envelope (only the LR's one).
+    // LR.W reserves four bytes; SC.D's wider span is uncovered → one SC
+    // envelope reaches RAM and fails without modifying the adjacent bytes.
     let (mut core, memory, spy) = spy_core(&[(0, lr_w(3, 1)), (4, sc_d(4, 1, 2))], 0x100);
     memory.lock().unwrap().write_dword(P, 5).unwrap();
     core.state_mut().regs[1] = P;
@@ -583,7 +604,71 @@ fn hart_side_rejections_issue_zero_requests() {
     retired(&mut core);
     assert_eq!(core.state().regs[4], 1);
     assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 5);
-    assert_eq!(spy.atomic_kinds(), [AtomicAccessKind::LoadReserved]);
+    assert_eq!(spy.data_read_count(), 0, "SC is not an ordinary data read");
+    assert_eq!(
+        spy.data_write_count(),
+        0,
+        "SC is not an ordinary data write"
+    );
+    assert_eq!(
+        spy.atomic_kinds(),
+        [
+            AtomicAccessKind::LoadReserved,
+            AtomicAccessKind::StoreConditional
+        ]
+    );
+}
+
+#[test]
+fn live_disjoint_sc_fails_after_valid_ram_target_check_at_word_and_doubleword() {
+    const P: u64 = 0x80;
+    const Q: u64 = 0x90;
+
+    for width in [PhysicalWidth::Word, PhysicalWidth::Doubleword] {
+        let (lr, sc) = match width {
+            PhysicalWidth::Word => (lr_w(3, 1), sc_w(4, 1, 2)),
+            PhysicalWidth::Doubleword => (lr_d(3, 1), sc_d(4, 1, 2)),
+            _ => unreachable!(),
+        };
+        let (mut core, memory, spy) = spy_core(&[(0, lr), (4, sc)], 0x100);
+        memory
+            .lock()
+            .unwrap()
+            .write_dword(P, 0x1122_3344_5566_7788)
+            .unwrap();
+        memory
+            .lock()
+            .unwrap()
+            .write_dword(Q, 0x8877_6655_4433_2211)
+            .unwrap();
+        core.state_mut().regs[1] = P;
+        core.state_mut().regs[2] = 0xaabb_ccdd_eeff_0011;
+        retired(&mut core);
+        assert!(core.state().reservation.is_some());
+
+        // The live reservation is deliberately disjoint from the valid RAM
+        // target; its context reaches RAM and yields conditional Failure.
+        core.state_mut().regs[1] = Q;
+        retired(&mut core);
+        assert_eq!(core.state().regs[4], 1, "{width:?} disjoint SC fails");
+        assert!(
+            core.state().reservation.is_none(),
+            "completed failure consumes"
+        );
+        assert_eq!(
+            memory.lock().unwrap().read_dword(Q).unwrap(),
+            0x8877_6655_4433_2211,
+            "{width:?} disjoint failure writes no bytes"
+        );
+        assert_eq!(
+            spy.atomic_kinds(),
+            [
+                AtomicAccessKind::LoadReserved,
+                AtomicAccessKind::StoreConditional
+            ],
+            "{width:?} LR and SC each issue one envelope"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -731,11 +816,12 @@ fn two_cores_on_one_domain_hold_independent_reservations() {
         spy.atomic_kinds(),
         [
             AtomicAccessKind::LoadReserved,
+            AtomicAccessKind::StoreConditional,
             AtomicAccessKind::LoadReserved,
             AtomicAccessKind::StoreConditional,
             AtomicAccessKind::StoreConditional,
         ],
-        "the unreserved SC issues no envelope; both LR/SC pairs share one port"
+        "each unreserved and reserved SC uses one StoreConditional envelope"
     );
 }
 
@@ -1184,11 +1270,11 @@ fn cross_thread_writer_cannot_interpose_inside_the_sc_envelope() {
     );
 }
 
-/// A no-reservation SC below the flat image base still fails architecturally
-/// without converting its address or touching the physical data port (C13).
-/// Both a normal destination and rd=x0 preserve the SC no-op semantics.
+/// An aligned SC below the flat image base reaches address conversion even
+/// without a reservation; conversion failure is a cause-7 fault, not a
+/// reservation-based conditional failure (spec-first SC check order).
 #[test]
-fn unreserved_sc_below_flat_base_retires_without_data_access() {
+fn unreserved_sc_below_flat_base_faults_during_address_conversion() {
     const BASE: u64 = 0x8000_0000;
     const P: u64 = 0x80;
 
@@ -1210,33 +1296,89 @@ fn unreserved_sc_below_flat_base_retires_without_data_access() {
         core.reset(BASE, BASE);
         core.state_mut().regs[1] = BASE - 8; // aligned guest address below image
         core.state_mut().regs[2] = 0xfeed;
+        core.state_mut().regs[rd as usize] = if rd == 0 { 0 } else { 0xbeef };
 
+        core.state_mut()
+            .csr
+            .write(machine::MTVEC, BASE + 0x40)
+            .unwrap();
         let outcome = core.step_outcome();
         assert!(
-            matches!(outcome, StepOutcome::InstructionRetired(_)),
-            "an unreserved SC.D below the image base must retire, got {outcome:?}"
+            matches!(
+                outcome,
+                StepOutcome::TrapEntered(trap)
+                    if trap.cause == ExceptionCause::StoreAccessFault
+                        && trap.mtval == BASE - 8
+            ),
+            "an unreserved SC.D below the image base must fault at the original guest address, got {outcome:?}"
         );
-        assert_eq!(core.state().regs[rd as usize], if rd == 0 { 0 } else { 1 });
+        assert_eq!(
+            core.state().regs[rd as usize],
+            if rd == 0 { 0 } else { 0xbeef },
+            "faulting SC does not write rd"
+        );
         assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 0x1234);
         assert_eq!(
             spy.data_request_count(),
             0,
-            "the no-reservation SC issued data I/O"
+            "the rejected guest-to-port conversion issued data I/O"
         );
         assert_eq!(
             spy.atomic_count(),
             0,
-            "the no-reservation SC issued an envelope"
+            "the rejected guest-to-port conversion issued an envelope"
         );
         assert_eq!(
             spy.data_write_count(),
             0,
-            "the no-reservation SC wrote data"
+            "the rejected guest-to-port conversion wrote data"
         );
     }
 }
 
-/// A port-route SC whose issued address fails conversion — a guest address
+#[test]
+fn unreserved_sc_odd_flat_offset_faults_before_backend_dispatch() {
+    const ODD_BASE: u64 = 0x8000_0004;
+    let memory = memory_with_words(&[(0, sc_d(4, 1, 2))], 0x100);
+    memory.lock().unwrap().write_dword(0x78, 0x1234).unwrap();
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(memory.clone(), 0, 0x100),
+    )));
+    let (backend, spy) = SpyBackend::new(memory.clone(), 0x100);
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(backend)));
+    let mut core = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port,
+        data_port,
+    );
+    core.set_physical_storage_alignment(0, 0x100);
+    core.reset(ODD_BASE, ODD_BASE);
+    core.state_mut().regs[1] = ODD_BASE + 0x7c; // guest aligned, flat paddr 0x7c
+    core.state_mut().regs[2] = 0xfeed;
+    core.state_mut().regs[4] = 0xdead;
+    set_mtvec(&mut core, ODD_BASE + 0x40);
+
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::TrapEntered(trap)
+            if trap.cause == ExceptionCause::StoreAccessFault
+                && trap.mtval == ODD_BASE + 0x7c
+    ));
+    assert_eq!(
+        core.state().regs[4],
+        0xdead,
+        "faulting SC does not write rd"
+    );
+    assert_eq!(memory.lock().unwrap().read_dword(0x78).unwrap(), 0x1234);
+    assert_eq!(
+        spy.atomic_count(),
+        0,
+        "conversion fails before target dispatch"
+    );
+}
+
+/// A legal SC whose issued address fails conversion — a guest address
 /// below the flat image base, or a guest-aligned address whose storage
 /// offset is not width-aligned — is a store/AMO access fault (cause 7) with
 /// the original guest `mtval`, never a conditional `rd = 1` retirement.
@@ -1442,6 +1584,24 @@ fn target_rejections_map_to_access_faults_with_guest_mtval() {
         StepOutcome::TrapEntered(trap)
             if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x400
     ));
+
+    // Even without a reservation, a legal SC to an unmapped target must
+    // reach store-access validation and fault instead of retiring rd = 1.
+    let (mut unreserved, _memory, unreserved_spy) = spy_core(&[(0, sc_d(4, 1, 2))], 0x100);
+    unreserved.state_mut().regs[1] = 0x400;
+    unreserved.state_mut().regs[4] = 0xdead;
+    set_mtvec(&mut unreserved, 0x40);
+    assert!(matches!(
+        unreserved.step_outcome(),
+        StepOutcome::TrapEntered(trap)
+            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x400
+    ));
+    assert_eq!(unreserved_spy.atomic_count(), 1);
+    assert_eq!(
+        unreserved.state().regs[4],
+        0xdead,
+        "faulting SC does not write rd"
+    );
 
     // A covered SC envelope rejected by the target → store access fault,
     // and the approved faulting-SC retain keeps the reservation: retrying

@@ -13,9 +13,10 @@
 //! whose store-conditional cannot observe committed competing writes (no
 //! bookkeeping reaches it).  [`execute_amo_port`] is the standard route:
 //! each admitted instruction issues exactly one atomic envelope through the
-//! validated data port, and Hart-side legality, misalignment (checked
-//! earlier), and store-conditional preconditions issue zero physical
-//! requests.
+//! validated data port. Hart-side legality, misalignment (checked earlier),
+//! and guest-to-port address conversion precede target access; reservation
+//! absence/coverage is reported only after the target validates the SC span
+//! and atomic capability.
 //!
 //! Both routes share the one per-Hart reservation record in
 //! [`CoreState::reservation`] (dev-plan §5.4): a successful LR replaces it,
@@ -185,17 +186,19 @@ fn old_value(width: AmoWidth, old: &[u8]) -> u64 {
 
 /// The envelope-route AMO/LR/SC dispatcher for port-configured cores.
 ///
-/// Every admitted instruction issues exactly one atomic envelope through the
-/// validated data port (dev-plan §5.2 M1, §7.1): an RMW carries the operand
-/// bytes and the Hart-supplied transform from [`hart_amods`], an LR returns
-/// the old bytes plus the committed-write snapshot, and an SC carries the
-/// Hart's reservation context for the backend's critical-section re-check.
+/// Every legal, aligned operation whose guest address converts to a port
+/// address issues exactly one atomic envelope through the validated data port
+/// (dev-plan §5.2 M1, §7.1): an RMW carries the operand bytes and the
+/// Hart-supplied transform from [`hart_amods`], an LR returns the old bytes
+/// plus the committed-write snapshot, and the existing SC kind carries its
+/// payload and optional Hart reservation context.
 ///
-/// Hart-side rejections issue **no** physical request: reserved encodings
-/// trap via [`decode_amo`], and a store-conditional whose span the recorded
-/// reservation does not cover retires `rd = 1` without touching the port
-/// (dev-plan C13).  Target rejections surface as memory errors the Hart maps
-/// to load/store-AMO access faults (causes 5/7) with the original guest
+/// Reserved encodings trap via [`decode_amo`] before access; misalignment is
+/// checked by the Hart before this function, and address-conversion failures
+/// likewise issue no envelope. A legal converted SC always reaches the target
+/// for store-access and atomic-capability validation before absent or
+/// uncovered reservation state becomes conditional failure. Target rejections
+/// map to load/store-AMO access faults (causes 5/7) with the original guest
 /// address.
 pub(crate) fn execute_amo_port(
     instr: &DecodedInstruction,
@@ -239,48 +242,39 @@ pub(crate) fn execute_amo_port(
             Ok(())
         }
         AmoKind::StoreConditional => {
-            // C13's no-reservation case is resolved entirely in the Hart:
-            // retire rd = 1 without address conversion or any physical
-            // request.  If a reservation exists, preserve the established
-            // conversion-before-coverage behavior: a guest address below the
-            // flat image base or a rejected storage offset faults as cause 7
-            // with the original guest mtval, and the staged discard retains
-            // the live reservation (approved faulting-SC retain, C15).
-            if state.reservation.is_none() {
-                if decoded.rd != 0 {
-                    state.regs[decoded.rd] = 1;
-                }
-                return Ok(());
-            }
+            // The SC is a store-class access even when reservation status
+            // guarantees a nonzero result. Convert the guest address first,
+            // then submit the existing StoreConditional envelope with an
+            // optional context so the target validates permissions/capability
+            // before returning conditional failure (spec sc_retire_permission;
+            // selected target-check order is documented in §5.4).
             let paddr = adapter
                 .issued_addr(ea, span_width)
                 .map_err(ExecuteError::MemoryError)?;
-            let reservation = state.reservation.take().ok_or_else(|| {
-                ExecuteError::MemoryError(MemoryError::Protocol(
-                    "a store-conditional lost its reservation before address validation".into(),
-                ))
-            })?;
-            if !reservation.covers(paddr, span_width) {
-                if decoded.rd != 0 {
-                    state.regs[decoded.rd] = 1;
-                }
-                return Ok(());
-            }
-            let snapshot = reservation.snapshot.ok_or_else(|| {
-                ExecuteError::MemoryError(MemoryError::Protocol(
-                    "the per-Hart reservation has no committed-write snapshot".into(),
-                ))
-            })?;
+            let context = state
+                .reservation
+                .take()
+                .map(
+                    |reservation| -> Result<AtomicReservationContext, ExecuteError> {
+                        let snapshot = reservation.snapshot.ok_or_else(|| {
+                            ExecuteError::MemoryError(MemoryError::Protocol(
+                                "the per-Hart reservation has no committed-write snapshot".into(),
+                            ))
+                        })?;
+                        Ok(AtomicReservationContext {
+                            reserved: reservation.reserved,
+                            snapshot,
+                        })
+                    },
+                )
+                .transpose()?;
             let payload = state.regs[decoded.rs2].to_le_bytes();
             let request = AtomicRequest::store_conditional(
                 paddr,
                 span_width,
                 decoded.ordering,
                 &payload[..span_width.bytes()],
-                AtomicReservationContext {
-                    reserved: reservation.reserved,
-                    snapshot,
-                },
+                context,
             )
             .map_err(|error| ExecuteError::MemoryError(MemoryError::Protocol(error.to_string())))?;
             let response = adapter

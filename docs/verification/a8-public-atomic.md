@@ -23,9 +23,12 @@ installed-data-port branch locks the validated data port once, creates
 `PhysicalAtomicAdapter`, and calls `execute_amo_port`. That branch has no
 `MemoryInterface` read/write call. `src/isa/rv64a/dispatch.rs::execute_amo_port`
 has one `access_atomic` call in each mutually exclusive RMW, LR, and SC arm;
-Hart-side illegal-encoding, alignment, and SC-reservation/span prechecks occur
-before an envelope is admitted. The precheck zero-request matrix is also
-executable in `tests/a8_hart_atomic.rs::hart_side_rejections_issue_zero_requests`.
+Hart-side illegal-encoding, alignment, and guest-to-port conversion failures
+occur before envelope dispatch. No-reservation and live-uncovered SC are not
+Hart-side short circuits: each sends one StoreConditional envelope so the
+target can validate the store span and capability before conditional failure.
+`tests/a8_hart_atomic.rs::hart_side_rejections_issue_zero_requests` covers
+only the Hart-side zero-request cases and the SC target checks.
 The independent `a8_atomic_targets` spy verifies one target-visible backend
 transaction for each admitted envelope. The T4 route guard in
 `tests/a8_public_atomic_equivalence.rs` binds these source routes to the two
@@ -47,8 +50,10 @@ already-retired instruction/PC sequence; logging consumes the retired fact and
 does not refetch the opcode.
 
 The suite also checks zero, short, exact, and final-permitted-slot budgets;
-Hart-rejected SC and a rejected LR produce no platform exit; P2a-precise
-between-run host-write invalidation and disjoint-writer success; budget resume
+valid-RAM no-reservation SC conditionally fails without a platform exit, while
+an unsupported-target SC faults without callback or exit; a rejected LR also
+produces no platform exit. It checks P2a-precise between-run host-write
+invalidation and disjoint-writer success; budget resume
 without a writer; resume after exit and tohost clear; readable/unreadable
 artifact differences; and image reload replacing storage and clearing the
 Hart reservation. Native UART/HTIF availability, flat address offsets, and the
@@ -67,10 +72,17 @@ provides the independent target policy and exactly-once callback proof. This
 boundary must remain visible rather than being papered over by a new production
 injection API.
 
-The public facade's no-reservation SC is a Hart-side rejection, not a test of
-D-c target rejection: it retires with `rd=1` and issues no envelope, as
-specified by §5.6. A valid-reservation SC target fault is checked separately
-as described above.
+**Follow-up SC correction:** the previous T4 observation that no-reservation
+SC was a Hart-side rejection is superseded by the maintainer-authorized
+spec-first correction. A legal aligned SC now converts its guest address and
+issues exactly one StoreConditional envelope even without reservation
+context. Valid RAM validates the target then returns conditional failure
+(`rd=1`, no guest-byte read/write or bookkeeping bump); HTIF D-c, UART, and
+unmapped targets reject with store/AMO access fault before any conditional
+failure. A live uncovered context follows the same target-check order, and a
+faulting SC retains that reservation. Focused contract, target, Hart, and
+facade regressions assert the new results; they are a separate follow-up and
+do not retroactively change the behavior observed at this T4 evidence head.
 
 ## Fresh-built guest suite
 

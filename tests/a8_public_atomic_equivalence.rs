@@ -647,6 +647,33 @@ fn artifacts_and_reload_keep_the_flat_facade_configuration_boundaries() {
 }
 
 #[test]
+fn flat_facade_unreserved_sc_fails_only_after_valid_ram_target_check() {
+    let mut code = Vec::new();
+    append_address(&mut code, 1, TARGET_OFFSET);
+    code.push(fixture::addi(2, 0, 0x55));
+    code.push(sc_d(3, 1, 2, false, false));
+    let elf = fixture::elf_with_code(&code, ENTRY_OFFSET, false, false, 0);
+    let mut simulator = RiscVSimulator::new(0x20_000);
+    simulator.load_elf(&elf).unwrap();
+    simulator
+        .write_mem(TARGET_OFFSET as u64, &ORIGINAL_TARGET.to_le_bytes())
+        .unwrap();
+
+    let result = simulator.run(Some(code.len() as u64)).unwrap();
+    assert!(
+        result.timed_out,
+        "the flat run has no exit device in this guest"
+    );
+    assert_eq!(simulator.state().regs[3], 1, "valid RAM SC fails rd = 1");
+    assert!(simulator.state().reservation.is_none());
+    assert_eq!(
+        simulator.read_mem(TARGET_OFFSET as u64, 8).unwrap(),
+        ORIGINAL_TARGET.to_le_bytes(),
+        "reservation failure does not write guest bytes"
+    );
+}
+
+#[test]
 fn native_htif_lr_sc_rejections_do_not_exit_and_amo_exit_is_retired_first() {
     // A guest LR at HTIF is a target rejection (cause 5). The facade continues
     // the completed trap turn and times out; no callback-generated exit occurs.
@@ -669,8 +696,8 @@ fn native_htif_lr_sc_rejections_do_not_exit_and_amo_exit_is_retired_first() {
         "a rejected LR must not produce a platform exit"
     );
 
-    // No-reservation SC is rejected Hart-side before physical access. Its
-    // retirement advances past the instruction without raising a device exit.
+    // No-reservation SC still reaches HTIF target validation. D-c rejects it
+    // as a store/AMO access fault before any callback or platform exit.
     let sc_guest = fixture::elf_with_code(
         &[
             fixture::lui(1, 0x40008),
@@ -686,9 +713,8 @@ fn native_htif_lr_sc_rejections_do_not_exit_and_amo_exit_is_retired_first() {
     assert_eq!(sc_result.exit_code, 1);
     assert_eq!(sc_result.cycles, 3);
     assert_eq!(
-        sc_result.final_pc,
-        fixture::BASE + ENTRY_OFFSET as u64 + 12,
-        "uncovered SC retires without a target request"
+        sc_result.final_pc, 0,
+        "the access fault enters the default mtvec"
     );
     assert!(sc_result.timed_out);
 
@@ -722,11 +748,21 @@ fn native_htif_lr_sc_rejections_do_not_exit_and_amo_exit_is_retired_first() {
 }
 
 fn native_core_at_htif(instruction: u32) -> (RiscvCore, Arc<Mutex<SystemBus>>, Arc<AtomicUsize>) {
+    native_core_with_program(&[instruction])
+}
+
+fn native_core_with_program(
+    program: &[u32],
+) -> (RiscvCore, Arc<Mutex<SystemBus>>, Arc<AtomicUsize>) {
     let ram = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
-    ram.lock()
-        .unwrap()
-        .write_word(0, instruction)
-        .expect("install one guest instruction");
+    {
+        let mut guard = ram.lock().unwrap();
+        for (index, instruction) in program.iter().copied().enumerate() {
+            guard
+                .write_word(index as u64 * 4, instruction)
+                .expect("install guest instruction");
+        }
+    }
     let uart = Arc::new(Mutex::new(Uart16550::new(0x1000_0000)));
     let bus = Arc::new(Mutex::new(SystemBus::new(ram.clone(), uart, 0, 0x100)));
     let callback_calls = Arc::new(AtomicUsize::new(0));
@@ -769,6 +805,27 @@ fn native_htif_valid_sc_faults_without_callback_and_amo_calls_callback_once() {
     ));
     assert_eq!(lr_callbacks.load(Ordering::SeqCst), 0);
 
+    let (mut no_reservation_sc, _bus, no_reservation_callbacks) =
+        native_core_at_htif(sc_d(3, 1, 2, false, false));
+    no_reservation_sc.state_mut().regs[3] = 0xbeef;
+    no_reservation_sc
+        .state_mut()
+        .csr
+        .write(machine::MTVEC, 0x40)
+        .unwrap();
+    assert!(matches!(
+        no_reservation_sc.step_outcome(),
+        StepOutcome::TrapEntered(trap)
+            if trap.cause == ruscv_sim::core::ExceptionCause::StoreAccessFault
+                && trap.mtval == HTIF_TOHOST
+    ));
+    assert_eq!(
+        no_reservation_sc.state().regs[3],
+        0xbeef,
+        "faulting SC does not write rd"
+    );
+    assert_eq!(no_reservation_callbacks.load(Ordering::SeqCst), 0);
+
     let (mut sc_core, _bus, sc_callbacks) = native_core_at_htif(sc_d(3, 1, 2, false, false));
     let snapshot = ruscv_sim::CommittedWriteSnapshot::from_bytes(&[0]).unwrap();
     sc_core.state_mut().reservation = Some(ReservationSet::new(
@@ -788,6 +845,34 @@ fn native_htif_valid_sc_faults_without_callback_and_amo_calls_callback_once() {
         "D-c HTIF SC outcome: {sc_outcome:?}"
     );
     assert_eq!(sc_callbacks.load(Ordering::SeqCst), 0);
+
+    // A real LR on mapped RAM creates a live, valid reservation; SC to the
+    // unsupported HTIF endpoint is uncovered but still reaches D-c target
+    // validation and faults, retaining that reservation.
+    let (mut uncovered_core, bus, uncovered_callbacks) =
+        native_core_with_program(&[lr_d(3, 1, false, false), sc_d(4, 1, 2, false, false)]);
+    uncovered_core.state_mut().regs[1] = 0x80;
+    assert!(matches!(
+        uncovered_core.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert!(uncovered_core.state().reservation.is_some());
+    uncovered_core.state_mut().regs[1] = HTIF_TOHOST;
+    uncovered_core.state_mut().pc = 4;
+    uncovered_core
+        .state_mut()
+        .csr
+        .write(machine::MTVEC, 0x40)
+        .unwrap();
+    assert!(matches!(
+        uncovered_core.step_outcome(),
+        StepOutcome::TrapEntered(trap)
+            if trap.cause == ruscv_sim::core::ExceptionCause::StoreAccessFault
+                && trap.mtval == HTIF_TOHOST
+    ));
+    assert!(uncovered_core.state().reservation.is_some());
+    assert_eq!(uncovered_callbacks.load(Ordering::SeqCst), 0);
+    assert_eq!(bus.lock().unwrap().htif_committed_write_version(), 0);
 
     let (mut amo_core, _bus, amo_callbacks) =
         native_core_at_htif(amo(0b00000, false, false, 0b011, 3, 1, 2));
