@@ -1,9 +1,11 @@
 # A8 T5 — exact-head evidence and bounded acceptance audit
 
-**Status:** T5 exact-head evidence recorded; PR review and repository delivery
-remain separate. This is not a milestone transition. `docs/dev-plan.md` remains
-the sole current contract. No successor is approved or implied, and the A8
-result is bounded to the evidence below.
+**Status:** T5 exact-head evidence is recorded for reviewed commit
+`45a170ff67aef850acc835f5f8084cef186fa3b8`. This provenance correction is a
+later documentation-only follow-up; it does not assert fresh verification or
+§7.3 attainment at its new HEAD. PR review and repository delivery remain
+separate. `docs/dev-plan.md` remains the sole current contract; no successor is
+approved or implied.
 
 **Authority:** `docs/dev-plan.md` §§7.3, 8 T0–T5, 9–11; accepted ADR-0001
 through ADR-0004; the A8 T0 and T4 records; current source and tests. This
@@ -17,13 +19,21 @@ here is T4 commit `f386b34ede9f184ed6fe3deff9ca19b2b0b758e3`; earlier task
 increments are T0 `c8bf500b7dc77f89b50df20711ad3d19bb3caba7`, T1
 `3ae2aa8a46042f8962fcb805cad01a5cb6026d4b`, T2
 `fc2bf2c1d1db90e8058a962674f22f9e4ead636a`, and T3
-`a78bf1d85e45a501aee9952e15160198a674a31d`. T0–T4 implementation/test
-claims below are independently checked at exact T5 evidence HEADs. The first
-clean committed verification pass was at
-`1b4bd2acaa970b4ac297cfacaac982150dfd4eac`; the commands were repeated after
-this record was finalized, and the final `qing verify` observations bind to the
-commit containing this record. That commit is the durable exact evidence
-revision; no earlier source-head result is relabeled as final-head evidence.
+`a78bf1d85e45a501aee9952e15160198a674a31d`.
+
+**Exact reviewed/verified T5 HEAD:**
+`45a170ff67aef850acc835f5f8084cef186fa3b8`, commit subject
+`docs(a8): record T5 exact-head evidence`, parent
+`1b4bd2acaa970b4ac297cfacaac982150dfd4eac`. The checks, commands, toolchain
+identity, fresh ELF manifest source identity, and all 58 per-case results below
+are scoped to this full commit SHA. This repository record is the durable
+verification provenance; qing check IDs are intentionally not used as evidence
+because they are execution-system references.
+
+The follow-up that adds this explicit identity changes only this evidence
+record. The results below remain exact evidence for `45a170...` and are marked
+**stale for the later follow-up HEAD**. No §7.3 attainment claim is made for
+that new HEAD unless its required checks are freshly recorded there.
 
 ## Acceptance audit — T0 through T4
 
@@ -32,7 +42,7 @@ end-to-end proof. A source module existing is not counted as integration.
 
 | Contract row | Audited source and executable assertions | Evidence boundary / disposition |
 | --- | --- | --- |
-| **T0 — A7 atomic fixture reclassification and executable old baseline** | `docs/verification/a8-fixture-reclassification.md` maps every A7 atomic fixture/transcript row to keep/flip/retire/relabel and cites its approving §6 row. `tests/a8_atomic_baseline.rs` retains the old-column baseline in history; at T3 the file was deliberately converted to the approved new behavior. The current tests, `tests/a7_migration_characterization.rs`, `tests/a7_legacy_atomic_compat.rs`, and `tests/amo_test.rs` cover the reclassified outcomes. | Ledger is the durable classification; the implementation no longer claims the old expected outcomes. The focused T0 command passed at the exact evidence HEAD (check ref `a8-t0-focussed`). |
+| **T0 — A7 atomic fixture reclassification and executable old baseline** | `docs/verification/a8-fixture-reclassification.md` maps every A7 atomic fixture/transcript row to keep/flip/retire/relabel and cites its approving §6 row. `tests/a8_atomic_baseline.rs` retains the old-column baseline in history; at T3 the file was deliberately converted to the approved new behavior. The current tests, `tests/a7_migration_characterization.rs`, `tests/a7_legacy_atomic_compat.rs`, and `tests/amo_test.rs` cover the reclassified outcomes. | Ledger is the durable classification; the implementation no longer claims the old expected outcomes. The focused T0 command passed at exact HEAD `45a170ff67aef850acc835f5f8084cef186fa3b8`. |
 | **T1 — envelope vocabulary and Hart-owned arithmetic** | `src/physical.rs` separates `AtomicRequest`/`AtomicResponse` and `ValidatedAtomicAccess` from ordinary request pairs. `src/hart_amods.rs` is the sole operation arithmetic/transform implementation. `tests/a8_atomic_contract.rs` covers only 4/8-byte widths, payload/transform/request/response binding, snapshots, all AMO operations at W/D, aq/rl information, taxonomy, wrapping spans, and terminal unknown completion. Its `ordinary_read_write_pairs_cannot_represent_amo_or_sc` and `atomic_unknown_completion_is_terminal_and_never_retried` assertions exercise the envelope boundary. | Component/vocabulary and arithmetic proof, not target wiring or public behavior. Exact-head focused result recorded below. |
 | **T2 — native target transactions, D-c devices, and write versions** | `src/physical.rs::{native_ram_atomic_transact, NativeRamBackend, NativeSystemBusBackend}` and `src/memory/mod.rs` implement atomic critical sections and committed-write bookkeeping in the shared storage. `tests/a8_atomic_targets.rs` covers RAM validation/effects, rejected spans and no-partial-effect, UART width rejection, HTIF D-c, callback-once, one externally visible transaction, competing readers, backend arithmetic parity, poisoned locks, unknown completion after possible effect, and each storage write/prefix bookkeeping rule. | Native target/component evidence. It is not by itself Hart decode or public-facade evidence. Exact-head focused result recorded below. |
 | **T3 — ISA decode, Hart reservation, faults, and writers W1–W8** | `src/isa/rv64a/dispatch.rs`, `src/isa/rv64a/lr_sc.rs`, `src/hart_amods.rs`, and `src/core/mod.rs::step_outcome` implement the Hart semantics. `tests/a8_hart_atomic.rs` and `tests/a8_atomic_baseline.rs` exercise the exhaustive 32-`funct5` × W/D matrix, malformed LR, result widths/sign extension, `rd=x0`, aq/rl, alignment/zero-request cases, span containment, reset/reload, per-Core isolation, faulting-LR preservation, faulting-SC retain, and Hart-side rejection. Writer tests cover overlapping and disjoint stores/AMOs/host changes, the `memory()` handle, failed-prefix writes, cross-thread exclusion, exit/`clear_tohost` resume, and budget resume. `GLOBAL_RESERVATION` and the exported `clear_reservation` production API are absent. | Hart/test-object evidence is not multi-Hart product support. The typed `RiscvCore::new` compatibility adapter shares Hart reservation state but cannot observe storage write-version snapshots; it remains expressly non-conforming. Exact-head focused result recorded below. |
@@ -40,41 +50,51 @@ end-to-end proof. A source module existing is not counted as integration.
 
 ## T5 exact-head observations
 
-`qing verify` records each result against the exact clean committed HEAD; its
-`passed`/`failed`/`not_observed` status is authoritative. The full gate and
-focused T0–T4 commands first passed at
-`1b4bd2acaa970b4ac297cfacaac982150dfd4eac`, and were repeated after this report
-was committed. The final qing observations are bound to the commit containing
-this record. No skipped check or earlier-head-only result is counted.
+The commands and outcomes below were observed on clean committed HEAD
+`45a170ff67aef850acc835f5f8084cef186fa3b8`. This table is the durable
+provenance and does not rely on private qing check identifiers. All results
+are stale for the later documentation-only provenance follow-up HEAD; this
+record explicitly makes no fresh exact-head claim for that follow-up.
 
-| Check | Exact command | Final exact-head result / qing check ref |
+| Check | Exact command | Observed result at `45a170ff67aef850acc835f5f8084cef186fa3b8` |
 | --- | --- | --- |
-| Rust formatting | `cargo fmt --all -- --check` | Passed as part of the full gate; `a8-rust-quality-gate` |
-| Rust check | `cargo check --all-features` | Passed as part of the full gate; `a8-rust-quality-gate` |
-| Strict Clippy | `cargo clippy --all-features --all-targets -- -D warnings` | Passed as part of the full gate; `a8-rust-quality-gate` |
-| All-feature Rust tests | `cargo test --all-features` | Passed as part of the full gate; `a8-rust-quality-gate` |
-| Rust docs | `cargo doc --all-features --no-deps` | Passed as part of the full gate; `a8-rust-quality-gate` |
-| ELF script guards | `bash scripts/test_riscv_elf_guards.sh` | Passed; `a8-elf-script-guards` |
-| Required A6 guest integration | `RISCV_REQUIRE_RISCV_TOOLCHAIN=1 cargo test --test a6_trap_elf_integration` | Passed in the pinned container (1 integration test); `a8-fresh-guests-and-a6` |
-| Focused T0 | `cargo test --test a8_atomic_baseline --test a7_migration_characterization --test a7_legacy_atomic_compat --test amo_test` | Passed; `a8-t0-focussed` |
-| Focused T1 | `cargo test --test a8_atomic_contract --test a7_physical_contract` | Passed; `a8-t1-atomic-contract` |
-| Focused T2 | `cargo test --test a8_atomic_targets --test a7_native_targets --test memory_bounds --test executor --test peripheral_tests` | Passed; `a8-t2-native-targets` |
-| Focused T3 | `cargo test --test a8_hart_atomic --test a8_atomic_baseline --test amo_test --test a7_migration_characterization --test a7_legacy_atomic_compat --test a6_task3_core_trap_test --test trap_test --test csr_access_test --test mret_conformance_test` | Passed; `a8-t3-hart-reservations` |
-| T3 in-crate ISA regressions | `cargo test --lib isa::rv64a` | Passed (34 tests); `a8-t3-lib-isa` |
-| Focused T4 | `cargo test --test a8_public_atomic_equivalence --test a7_public_equivalence --test public_behavior --test a4_integrated_equivalence --test a4_run_control --test executor --test commits_test --test cli_test` | Passed; `a8-t4-public-equivalence` |
-| Pinned-base whitespace/error check | `git diff --check f386b34ede9f184ed6fe3deff9ca19b2b0b758e3..HEAD` | Passed; `a8-base-diff-check` |
-| Fresh project guest build and public CLI run | Container command below; `run_elf_tests.sh` recompiles itself after the explicit fresh compile | Passed: 58/58 compiled and 58/58 public CLI cases; `a8-fresh-guests-and-a6` |
+| Rust formatting | `cargo fmt --all -- --check` | PASS |
+| Rust check | `cargo check --all-features` | PASS |
+| Strict Clippy | `cargo clippy --all-features --all-targets -- -D warnings` | PASS |
+| All-feature Rust tests | `cargo test --all-features` | PASS |
+| Rust docs | `cargo doc --all-features --no-deps` | PASS |
+| ELF script guards | `bash scripts/test_riscv_elf_guards.sh` | PASS |
+| Required A6 guest integration | `RISCV_REQUIRE_RISCV_TOOLCHAIN=1 cargo test --test a6_trap_elf_integration` | PASS in pinned container; 1 integration test |
+| Focused T0 | `cargo test --test a8_atomic_baseline --test a7_migration_characterization --test a7_legacy_atomic_compat --test amo_test` | PASS |
+| Focused T1 | `cargo test --test a8_atomic_contract --test a7_physical_contract` | PASS |
+| Focused T2 | `cargo test --test a8_atomic_targets --test a7_native_targets --test memory_bounds --test executor --test peripheral_tests` | PASS |
+| Focused T3 | `cargo test --test a8_hart_atomic --test a8_atomic_baseline --test amo_test --test a7_migration_characterization --test a7_legacy_atomic_compat --test a6_task3_core_trap_test --test trap_test --test csr_access_test --test mret_conformance_test` | PASS |
+| T3 in-crate ISA regressions | `cargo test --lib isa::rv64a` | PASS; 34 tests |
+| Focused T4 | `cargo test --test a8_public_atomic_equivalence --test a7_public_equivalence --test public_behavior --test a4_integrated_equivalence --test a4_run_control --test executor --test commits_test --test cli_test` | PASS |
+| Pinned-base whitespace/error check | `git diff --check f386b34ede9f184ed6fe3deff9ca19b2b0b758e3..45a170ff67aef850acc835f5f8084cef186fa3b8` | PASS |
+| Fresh project guest build and public CLI run | Exact container invocation below; `run_elf_tests.sh` recompiles after the explicit compile | PASS; 58/58 compiled and 58/58 public CLI cases |
 
-The full Rust gate ran in the local ARM64 development image. The host lacked
-`riscv64-unknown-elf` assembler/linker tools, so no host skip was taken: the
-A6 integration and fresh guest build/run used the already-local development
-image, mounted this exact task worktree at `/workspace`. The actual invocation
-included the required A6 test and captured full guest logs under ignored
-`target/` paths:
+The full Rust gate ran in the local ARM64 development image. Its exact
+invocation at HEAD `45a170ff67aef850acc835f5f8084cef186fa3b8` was:
 
 ```bash
-head=$(git rev-parse HEAD)
-docker run --rm --init --env RISCV_SOURCE_HEAD="$head" \
+docker run --rm --init \
+  --volume /Users/shinymimiq/Developer/personal/ruscv-sim-a8-t5-bounded-evidence:/workspace \
+  --workdir /workspace ghcr.io/mimiqdev/ruscv-sim-dev:main bash -c \
+  'set -euo pipefail; export CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/a8-t5-container-cargo; \
+    cargo fmt --all -- --check && cargo check --all-features && \
+    cargo clippy --all-features --all-targets -- -D warnings && \
+    cargo test --all-features && cargo doc --all-features --no-deps'
+```
+
+The host lacked `riscv64-unknown-elf` assembler/linker tools, so no host skip
+was taken: the A6 integration and fresh guest build/run used the already-local
+development image, mounted this exact task worktree at `/workspace`. The
+actual invocation included the required A6 test and captured full guest logs
+under ignored `target/` paths:
+
+```bash
+docker run --rm --init --env RISCV_SOURCE_HEAD=45a170ff67aef850acc835f5f8084cef186fa3b8 \
   --volume /Users/shinymimiq/Developer/personal/ruscv-sim-a8-t5-bounded-evidence:/workspace \
   --workdir /workspace ghcr.io/mimiqdev/ruscv-sim-dev:main bash -c \
   'set -euo pipefail; export CARGO_BUILD_JOBS=2 \
@@ -87,12 +107,12 @@ docker run --rm --init --env RISCV_SOURCE_HEAD="$head" \
     ./scripts/run_elf_tests.sh 2>&1 | tee target/a8-t5-run.log'
 ```
 
-`RISCV_SOURCE_HEAD=$(git rev-parse HEAD)` was passed by the host to Docker; it
-was the exact committed HEAD being verified. The container used non-login
-`bash -c` so `/opt/riscv/bin` remained on `PATH`. The full gate used the same
-isolated container Cargo target directory and ran the five listed cargo
-commands in order. The focused test commands ran through `qing verify` on the
-host Rust toolchain. The source versions actually observed were:
+The host passed `RISCV_SOURCE_HEAD=45a170ff67aef850acc835f5f8084cef186fa3b8`
+to Docker because the mounted worktree's `.git` indirection is not container-
+resolvable. The container used non-login `bash -c` so `/opt/riscv/bin` remained
+on `PATH`. The full gate used the isolated container Cargo target directory
+and ran the five listed cargo commands in order. Focused test commands ran on
+the host Rust toolchain. The source versions actually observed were:
 
 | Environment | Identity |
 | --- | --- |
@@ -102,8 +122,8 @@ host Rust toolchain. The source versions actually observed were:
 | Container settings | `CARGO_BUILD_JOBS=2`; `CARGO_TARGET_DIR=target/a8-t5-container-cargo`; `RISCV_TEST_OUTDIR=target/a8-fresh-riscv-elves`; `RISCV_REQUIRE_RISCV_TOOLCHAIN=1` |
 
 The compile and run scripts each freshly assembled/linked 58 guests (the run
-script removed/rebuilt its output itself). `manifest.txt` recorded the exact
-source HEAD, `source_count=58`, `compiled_count=58`, and `failed_count=0`.
+script removed/rebuilt its output itself). `manifest.txt` recorded `source_head=45a170ff67aef850acc835f5f8084cef186fa3b8`,
+`source_count=58`, `compiled_count=58`, and `failed_count=0`.
 `run_elf_tests.sh` reported `Total: 58`, `Passed: 58`, `Failed: 0`; all
 entries were checked against `_start`. GNU ld emitted non-fatal RWX PT_LOAD
 warnings for 12 small ELF fixtures; none failed to link or execute. No check
@@ -217,9 +237,11 @@ rerun or atomic extension certification.
 
 ## Bounded A8 conclusion
 
-The required T0–T5 source/test criteria have exact-head evidence above and the
-fresh project suite is 58/58. The bounded attainment statement supported by
-this coding-side evidence is exactly the approved §7.3 text:
+At exact reviewed/verified HEAD
+`45a170ff67aef850acc835f5f8084cef186fa3b8`, the required T0–T5 source/test
+criteria have the recorded exact-head evidence above and the fresh project
+suite is 58/58. The bounded attainment statement supported **for that exact
+HEAD only** is exactly the approved §7.3 text:
 
 > **Single-Hart atomic/physical convergence completed for the standard
 > facades' native domain: AMO/LR/SC execute as indivisible envelope
@@ -228,6 +250,10 @@ this coding-side evidence is exactly the approved §7.3 text:
 
 This is not full ADR-0002 conformance, multi-Hart/DMA or RVWMO support, RV64A
 certification, a new ACT4 result, a performance result, or successor approval.
-The record does not archive/replace `docs/dev-plan.md` or declare the overall
-workflow finished; the T5 PR's independent review, merge, and any rolling
-milestone transition remain outside this coding handoff.
+This provenance-only follow-up changes the record after HEAD `45a170...`; the
+results above are explicitly **stale for the follow-up HEAD**. They are not a
+closeout claim at that new revision. The PR requires fresh exact-head evidence
+before any attainment statement is carried forward. The record does not
+archive/replace `docs/dev-plan.md` or declare the overall workflow finished;
+independent review, merge, and any rolling milestone transition remain outside
+this coding handoff.
