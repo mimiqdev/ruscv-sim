@@ -29,8 +29,9 @@ use ruscv_sim::executor::RiscVSimulator;
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 use ruscv_sim::physical::{
     AccessCategory, AtomicAccessKind, AtomicBackend, AtomicBackendResult, AtomicRequest,
-    AtomicRequestDescriptor, NativeRamBackend, PhysicalBackend, PhysicalBackendResult,
-    PhysicalRequest, PhysicalTargetRejectionReason, PhysicalWidth, ValidatedPhysicalAccess,
+    AtomicRequestDescriptor, NativeRamBackend, PhysicalBackend, PhysicalBackendError,
+    PhysicalBackendResult, PhysicalRequest, PhysicalTargetRejectionReason, PhysicalWidth,
+    ValidatedPhysicalAccess,
 };
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
@@ -241,6 +242,39 @@ fn spy_core(words: &[(u64, u32)], size: usize) -> (RiscvCore, Arc<Mutex<SimpleMe
 /// driven into a store-AMO access fault (cause 7).
 struct ScRejectBackend {
     inner: NativeRamBackend,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum InjectedScFailure {
+    Host,
+    Unknown,
+}
+
+struct ScFailureBackend {
+    inner: NativeRamBackend,
+    requests: Arc<Mutex<Vec<AtomicRequestDescriptor>>>,
+    failure: InjectedScFailure,
+}
+
+impl PhysicalBackend for ScFailureBackend {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.inner.transact(request)
+    }
+}
+
+impl AtomicBackend for ScFailureBackend {
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        self.requests.lock().unwrap().push(request.descriptor());
+        if request.descriptor().kind == AtomicAccessKind::StoreConditional {
+            return Err(match self.failure {
+                InjectedScFailure::Host => PhysicalBackendError::host("injected SC host failure"),
+                InjectedScFailure::Unknown => {
+                    PhysicalBackendError::unknown("injected SC unknown completion")
+                }
+            });
+        }
+        self.inner.transact_atomic(request)
+    }
 }
 
 impl PhysicalBackend for ScRejectBackend {
@@ -668,6 +702,121 @@ fn live_disjoint_sc_fails_after_valid_ram_target_check_at_word_and_doubleword() 
             ],
             "{width:?} LR and SC each issue one envelope"
         );
+    }
+}
+
+#[test]
+fn unreserved_and_uncovered_sc_preserve_host_and_unknown_failure_taxonomy() {
+    const P: u64 = 0x80;
+    const Q: u64 = 0x90;
+
+    for width in [PhysicalWidth::Word, PhysicalWidth::Doubleword] {
+        for live_uncovered in [false, true] {
+            for injected_failure in [InjectedScFailure::Host, InjectedScFailure::Unknown] {
+                let (lr, sc) = match width {
+                    PhysicalWidth::Word => (lr_w(3, 1), sc_w(4, 1, 2)),
+                    PhysicalWidth::Doubleword => (lr_d(3, 1), sc_d(4, 1, 2)),
+                    _ => unreachable!(),
+                };
+                let program = if live_uncovered {
+                    vec![(0, lr), (4, sc)]
+                } else {
+                    vec![(0, sc)]
+                };
+                let memory = memory_with_words(&program, 0x100);
+                memory.lock().unwrap().write_dword(P, 0x1122).unwrap();
+                memory.lock().unwrap().write_dword(Q, 0x3344).unwrap();
+                let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+                    NativeRamBackend::new(memory.clone(), 0, 0x100),
+                )));
+                let requests = Arc::new(Mutex::new(Vec::new()));
+                let data_port =
+                    Arc::new(Mutex::new(ValidatedPhysicalAccess::new(ScFailureBackend {
+                        inner: NativeRamBackend::new(memory.clone(), 0, 0x100),
+                        requests: requests.clone(),
+                        failure: injected_failure,
+                    })));
+                let mut core = RiscvCore::new_with_physical_ports(
+                    memory.clone(),
+                    memory.clone(),
+                    instruction_port,
+                    data_port,
+                );
+                core.reset(0, 0);
+                core.state_mut().regs[1] = if live_uncovered { P } else { Q };
+                core.state_mut().regs[2] = 0xaabb_ccdd;
+                core.state_mut().regs[4] = 0xbeef;
+
+                if live_uncovered {
+                    retired(&mut core);
+                    assert!(core.state().reservation.is_some());
+                    core.state_mut().regs[1] = Q;
+                }
+
+                let sc_pc = core.state().pc;
+                let minstret = core.state().csr.read(machine::MINSTRET).unwrap();
+                let reservation = core.state().reservation.clone();
+                let outcome = core.step_outcome();
+                let StepOutcome::SimulatorFailure(failure) = outcome else {
+                    panic!(
+                        "{width:?} live_uncovered={live_uncovered} must preserve the injected simulator failure, got {outcome:?}"
+                    );
+                };
+                assert_eq!(
+                    failure.kind,
+                    ruscv_sim::core::SimulatorFailureKind::HostBackend
+                );
+                assert_eq!(core.state().pc, sc_pc, "SC failure does not retire");
+                assert_eq!(
+                    core.state().csr.read(machine::MINSTRET).unwrap(),
+                    minstret,
+                    "SC failure does not increment minstret"
+                );
+                assert_eq!(core.state().regs[4], 0xbeef, "SC failure does not write rd");
+                assert_eq!(
+                    core.state().reservation,
+                    reservation,
+                    "failure retains Hart state"
+                );
+                assert_eq!(memory.lock().unwrap().read_dword(Q).unwrap(), 0x3344);
+                assert_eq!(
+                    requests
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|r| r.kind)
+                        .collect::<Vec<_>>(),
+                    if live_uncovered {
+                        vec![
+                            AtomicAccessKind::LoadReserved,
+                            AtomicAccessKind::StoreConditional,
+                        ]
+                    } else {
+                        vec![AtomicAccessKind::StoreConditional]
+                    },
+                    "the SC is exactly one envelope after any LR"
+                );
+
+                match injected_failure {
+                    InjectedScFailure::Host => {
+                        assert!(core.unresolved_physical_access().is_none());
+                    }
+                    InjectedScFailure::Unknown => {
+                        assert!(core.unresolved_physical_access().is_some());
+                        let retry = core.step_outcome();
+                        assert!(matches!(retry, StepOutcome::SimulatorFailure(_)));
+                        assert_eq!(core.state().pc, sc_pc);
+                        assert_eq!(core.state().regs[4], 0xbeef);
+                        assert_eq!(core.state().reservation, reservation);
+                        assert_eq!(
+                            requests.lock().unwrap().len(),
+                            if live_uncovered { 2 } else { 1 },
+                            "unknown completion is terminal and is never retried"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 

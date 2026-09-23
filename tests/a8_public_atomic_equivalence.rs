@@ -31,6 +31,10 @@ const TARGET_OFFSET: usize = 0x600;
 const TOHOST_OFFSET: usize = 0x1000;
 const SIGNATURE_OFFSET: usize = 0x2000;
 const HTIF_TOHOST: u64 = 0x4000_8000;
+const NATIVE_UART: u64 = 0x1000_0000;
+const NATIVE_UNMAPPED: u64 = 0x5000_0000;
+const SC_TRAP_HANDLER_OFFSET: usize = 0x500;
+const DISJOINT_TARGET_OFFSET: usize = TARGET_OFFSET + 0x20;
 const ORIGINAL_TARGET: u64 = 0x1122_3344_5566_7788;
 const MIXED_EXIT_CODE: u32 = 0;
 
@@ -78,6 +82,149 @@ fn bne(rs1: u8, rs2: u8, offset: i32) -> u32 {
 fn beq(rs1: u8, rs2: u8, offset: i32) -> u32 {
     let encoded = bne(rs1, rs2, offset);
     encoded & !(0b111 << 12)
+}
+
+fn csrrw(rd: u8, csr: u16, rs1: u8) -> u32 {
+    ((csr as u32) << 20) | ((rs1 as u32) << 15) | (0b001 << 12) | ((rd as u32) << 7) | 0x73
+}
+
+fn csrrs(rd: u8, csr: u16, rs1: u8) -> u32 {
+    ((csr as u32) << 20) | ((rs1 as u32) << 15) | (0b010 << 12) | ((rd as u32) << 7) | 0x73
+}
+
+fn lbu(rd: u8, rs1: u8, immediate: i32) -> u32 {
+    assert!((-2048..=2047).contains(&immediate));
+    ((immediate as u32 & 0xfff) << 20)
+        | ((rs1 as u32) << 15)
+        | (0b100 << 12)
+        | ((rd as u32) << 7)
+        | 0x03
+}
+
+fn or_register(rd: u8, rs1: u8, rs2: u8) -> u32 {
+    ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | (0b110 << 12) | ((rd as u32) << 7) | 0x33
+}
+
+fn lr_width(width: AccessWidth, rd: u8, rs1: u8) -> u32 {
+    match width {
+        AccessWidth::Word => lr_w(rd, rs1),
+        AccessWidth::Doubleword => lr_d(rd, rs1, false, false),
+        _ => panic!("public SC regression needs W or D"),
+    }
+}
+
+fn sc_width(width: AccessWidth, rd: u8, rs1: u8, rs2: u8) -> u32 {
+    match width {
+        AccessWidth::Word => sc_w(rd, rs1, rs2),
+        AccessWidth::Doubleword => sc_d(rd, rs1, rs2, false, false),
+        _ => panic!("public SC regression needs W or D"),
+    }
+}
+
+fn append_sc_payload(code: &mut Vec<u32>) {
+    code.push(fixture::lui(2, 0x11223));
+    code.push(fixture::addi(2, 2, 0x344));
+    code.push(fixture::slli(2, 2, 32));
+    code.push(fixture::lui(17, 0x55667));
+    code.push(fixture::addi(17, 17, 0x788));
+    code.push(or_register(2, 2, 17));
+}
+
+fn append_htif_exit(code: &mut Vec<u32>, exit_code: u8) {
+    let payload = u32::from(exit_code) * 2 + 1;
+    code.push(fixture::addi(5, 0, payload as i32));
+    code.push(fixture::lui(14, (HTIF_TOHOST >> 12) as u32));
+    code.push(fixture::sd(5, 14, 0));
+}
+
+/// A public `load_and_run` guest that distinguishes target rejection from
+/// conditional failure. Its M-mode handler checks cause, original `mtval`,
+/// and an unchanged `rd`; it also checks UART MCR and, for a live uncovered
+/// reservation, retries SC on the original RAM span to prove faulting-SC retain.
+fn public_sc_target_fault_guest(width: AccessWidth, target: u64, live_uncovered: bool) -> Vec<u8> {
+    const RESERVED_OFFSET: usize = TARGET_OFFSET;
+
+    let mut code = Vec::new();
+    append_address(&mut code, 8, RESERVED_OFFSET);
+    append_address(&mut code, 10, SC_TRAP_HANDLER_OFFSET);
+    code.push(csrrw(0, machine::MTVEC, 10));
+    code.push(fixture::addi(12, 0, 7)); // expected store/AMO access fault
+    code.push(fixture::addi(9, 0, 0x5a));
+    code.push(fixture::addi(3, 0, 0x5a)); // SC rd sentinel
+    code.push(fixture::lui(13, (target >> 12) as u32));
+    if target & 0xfff != 0 {
+        code.push(fixture::addi(13, 13, (target & 0xfff) as i32));
+    }
+    append_sc_payload(&mut code);
+
+    if live_uncovered {
+        code.push(fixture::addi(1, 8, 0));
+        code.push(lr_width(width, 6, 1));
+    }
+    code.push(fixture::lui(1, (target >> 12) as u32));
+    if target & 0xfff != 0 {
+        code.push(fixture::addi(1, 1, (target & 0xfff) as i32));
+    }
+    code.push(sc_width(width, 3, 1, 2));
+
+    // If SC incorrectly returns conditional Failure instead of trapping,
+    // signal exit 1. The trap handler redirects a validated case to exit 0.
+    let failure_offset = ENTRY_OFFSET + code.len() * 4;
+    append_htif_exit(&mut code, 1);
+    let success_offset = ENTRY_OFFSET + code.len() * 4;
+    append_htif_exit(&mut code, 0);
+
+    let handler_index = (SC_TRAP_HANDLER_OFFSET - ENTRY_OFFSET) / 4;
+    assert!(
+        code.len() < handler_index,
+        "SC fixture code overlaps its handler"
+    );
+    code.resize(handler_index, fixture::nop());
+    let mut failure_branches = Vec::new();
+    let handler_pc = |index: usize| ENTRY_OFFSET + index * 4;
+    let mut emit_check = |rs1: u8, rs2: u8, code: &mut Vec<u32>| {
+        let branch_pc = handler_pc(code.len());
+        failure_branches.push((code.len(), branch_pc, rs1, rs2));
+        code.push(bne(rs1, rs2, 0));
+    };
+
+    code.push(csrrs(11, machine::MCAUSE, 0));
+    emit_check(11, 12, &mut code);
+    code.push(csrrs(11, machine::MTVAL, 0));
+    emit_check(11, 13, &mut code);
+    emit_check(3, 9, &mut code);
+
+    if (NATIVE_UART..NATIVE_UART + 0x100).contains(&target) {
+        let mcr_offset = if width == AccessWidth::Word { 0 } else { 4 };
+        code.push(lbu(11, 1, mcr_offset));
+        emit_check(11, 0, &mut code);
+    }
+    code.push(fixture::ld(11, 8, 0));
+    emit_check(11, 0, &mut code); // the rejected SC leaves the reserved RAM span untouched
+
+    if live_uncovered {
+        code.push(fixture::addi(1, 8, 0));
+        code.push(sc_width(width, 4, 1, 2));
+        emit_check(4, 0, &mut code); // a trapping SC retained the reservation
+    }
+
+    append_address(&mut code, 7, success_offset);
+    code.push(csrrw(0, machine::MEPC, 7));
+    code.push(0x3020_0073); // MRET to the success exit stub
+
+    for (index, branch_pc, rs1, rs2) in failure_branches {
+        let offset = failure_offset as i32 - branch_pc as i32;
+        code[index] = bne(rs1, rs2, offset);
+    }
+
+    fixture::elf_with_signature(
+        &code,
+        ENTRY_OFFSET,
+        fixture::BASE,
+        Some(fixture::TOHOST),
+        Some((fixture::BASE + RESERVED_OFFSET as u64, 8)),
+        0x4000,
+    )
 }
 
 fn append_address(code: &mut Vec<u32>, rd: u8, target_offset: usize) {
@@ -671,6 +818,86 @@ fn flat_facade_unreserved_sc_fails_only_after_valid_ram_target_check() {
         ORIGINAL_TARGET.to_le_bytes(),
         "reservation failure does not write guest bytes"
     );
+}
+
+#[test]
+fn flat_public_facade_disjoint_sc_failure_is_wd_and_consumes_reservation() {
+    const P: u64 = TARGET_OFFSET as u64;
+    const Q: u64 = DISJOINT_TARGET_OFFSET as u64;
+    const P_VALUE: u64 = 0x1122_3344_5566_7788;
+    const Q_VALUE: u64 = 0x8877_6655_4433_2211;
+
+    for width in [AccessWidth::Word, AccessWidth::Doubleword] {
+        let mut code = Vec::new();
+        append_address(&mut code, 1, TARGET_OFFSET);
+        code.push(lr_width(width, 3, 1));
+        append_address(&mut code, 1, DISJOINT_TARGET_OFFSET);
+        code.push(fixture::addi(2, 0, 0x55));
+        code.push(sc_width(width, 4, 1, 2));
+        let elf = fixture::elf_with_code(&code, ENTRY_OFFSET, false, false, 0);
+        let mut simulator = RiscVSimulator::new(0x20_000);
+        simulator.load_elf(&elf).unwrap();
+        simulator.write_mem(P, &P_VALUE.to_le_bytes()).unwrap();
+        simulator.write_mem(Q, &Q_VALUE.to_le_bytes()).unwrap();
+
+        for _ in 0..code.len() {
+            simulator.step().unwrap();
+        }
+        assert_eq!(simulator.state().regs[4], 1, "{width:?} disjoint SC fails");
+        assert!(
+            simulator.state().reservation.is_none(),
+            "failure consumes reservation"
+        );
+        assert_eq!(simulator.read_mem(P, 8).unwrap(), P_VALUE.to_le_bytes());
+        assert_eq!(simulator.read_mem(Q, 8).unwrap(), Q_VALUE.to_le_bytes());
+    }
+}
+
+#[test]
+fn native_public_facade_sc_fault_matrix_checks_mtval_rd_ram_uart_and_exit() {
+    let cases = [
+        (AccessWidth::Word, NATIVE_UART + 4),
+        (AccessWidth::Doubleword, NATIVE_UART),
+        (AccessWidth::Word, NATIVE_UNMAPPED),
+        (AccessWidth::Doubleword, NATIVE_UNMAPPED),
+    ];
+
+    for (width, target) in cases {
+        for live_uncovered in [false, true] {
+            let elf = public_sc_target_fault_guest(width, target, live_uncovered);
+            let result = load_and_run(&elf, Some(100), Some(HTIF_TOHOST), None, false).unwrap();
+            assert_eq!(
+                result.exit_code, 0,
+                "{width:?} target={target:#x} live_uncovered={live_uncovered}: {result:?}"
+            );
+            assert!(
+                !result.timed_out,
+                "trap handler did not complete: {result:?}"
+            );
+            assert!(
+                result.error.is_none(),
+                "unexpected simulator error: {result:?}"
+            );
+            assert_eq!(
+                result.signature_addr,
+                Some(fixture::BASE + TARGET_OFFSET as u64)
+            );
+            let expected_ram: u64 = if live_uncovered {
+                match width {
+                    AccessWidth::Word => 0x5566_7788,
+                    AccessWidth::Doubleword => 0x1122_3344_5566_7788,
+                    _ => unreachable!(),
+                }
+            } else {
+                0
+            };
+            assert_eq!(
+                result.signature_data,
+                Some(expected_ram.to_le_bytes().to_vec()),
+                "rejected SC left RAM unchanged; retained reservation retry is the only write"
+            );
+        }
+    }
 }
 
 #[test]
