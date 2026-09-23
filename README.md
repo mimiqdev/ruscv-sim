@@ -22,8 +22,10 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 外部验证已有 [A7 有界能力证据](docs/verification/a7-capability-assessment.md)：
 项目自建 ELF 和 ACT4 选择集各自保持 51 个用例边界；ACT4 仍只是 RV64I
 非陷阱证据，不代表完整 ISA、原子、特权/MMU、中断或 OS 支持。A7 的普通取指和
-整数/浮点 load/store 已接入验证过的 raw physical boundary；AMO/LR/SC 仍是共享
-存储上的兼容性债务，未被认证为完整原子事务。
+整数/浮点 load/store 已接入验证过的 raw physical boundary；A8 之后 AMO/LR/SC
+在标准路径上通过同一验证数据端口发送原子 envelope（每指令恰好一个），旧
+`RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
+评估约束。
 
 当前合同是已批准的 A7；其 closeout 交付已合并于
 `c059500a6af20f93569099c4b05ced3364a7703b`，但尚未批准后继合同。后续方向见

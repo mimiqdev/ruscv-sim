@@ -15,6 +15,11 @@ use ruscv_sim::csr::machine;
 use ruscv_sim::executor::{RiscVSimulator, SystemBus};
 use ruscv_sim::memory::{MemoryError, MemoryInterface, SimpleMemory};
 use ruscv_sim::peripherals::{uart16550::reg_offset, Uart16550};
+use ruscv_sim::physical::{
+    AtomicBackend, AtomicBackendResult, AtomicRequest, NativeRamBackend, NativeSystemBusBackend,
+    PhysicalBackend, PhysicalBackendError, PhysicalBackendResult, PhysicalRequest,
+    PhysicalTargetRejectionReason, ValidatedPhysicalAccess,
+};
 use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -24,8 +29,6 @@ use std::time::{Duration, Instant};
 
 const HTIF_BASE: u64 = 0x4000_8000;
 const UART_BASE: u64 = 0x1000_0000;
-const RESERVATION_CHILD_ENV: &str = "RUSCV_A7_RESERVATION_CHILD";
-const RESERVATION_TEST_NAME: &str = "global_reservation_characterization_isolated";
 const HOST_WRITE_CHILD_ENV: &str = "RUSCV_A7_HOST_WRITE_CHILD";
 const HOST_WRITE_TEST_NAME: &str = "host_write_mem_overflow_probe_is_bounded";
 const CHILD_TIMEOUT: Duration = Duration::from_secs(5);
@@ -95,16 +98,6 @@ fn memory_with_words(words: &[(u64, u32)], size: usize) -> Arc<Mutex<SimpleMemor
         }
     }
     memory
-}
-
-fn core_with_shared_program(
-    words: &[(u64, u32)],
-    size: usize,
-) -> (RiscvCore, Arc<Mutex<SimpleMemory>>) {
-    let memory = memory_with_words(words, size);
-    let mut core = RiscvCore::new(memory.clone(), memory.clone());
-    core.reset(0, 0);
-    (core, memory)
 }
 
 fn set_mtvec(core: &mut RiscvCore, address: u64) {
@@ -244,14 +237,16 @@ fn traced_data(
 }
 
 #[test]
-fn opcode_funct5_dispatch_preserves_current_amo_width_debt() {
+fn opcode_funct5_dispatch_now_selects_amoswap_at_full_width() {
+    // funct5 = 00001 / funct3 = 010 is real AMOSWAP.W: it swaps in the low
+    // word of rs2 through the typed adapter's word calls (dev-plan C2/C24).
     let instruction_memory = memory_with_words(&[(0, amo_raw(0b00001, 0b010, 3, 1, 2))], 0x100);
     let (data_memory, calls) = traced_data(0x100, false);
     {
         let mut data = data_memory.lock().unwrap();
         data.inner.write_word(0x80, 10).unwrap();
     }
-    let mut core = RiscvCore::new(instruction_memory, data_memory);
+    let mut core = RiscvCore::new(instruction_memory, data_memory.clone());
     core.reset(0, 0);
     core.state_mut().regs[1] = 0x80;
     core.state_mut().regs[2] = 5;
@@ -260,13 +255,23 @@ fn opcode_funct5_dispatch_preserves_current_amo_width_debt() {
         core.step_outcome(),
         StepOutcome::InstructionRetired(fact) if fact.instruction == amo_raw(0b00001, 0b010, 3, 1, 2)
     ));
-    assert_eq!(core.state().regs[3], 10);
+    assert_eq!(core.state().regs[3], 10, "rd receives the old word");
+    {
+        let data = data_memory.lock().unwrap();
+        assert_eq!(
+            data.inner.read_word(0x80).unwrap(),
+            5,
+            "AMOSWAP.W writes the low word of rs2, not old + rs2"
+        );
+    }
     assert_eq!(
         *calls.lock().unwrap(),
         vec!["read_word@0x80", "write_word@0x80"],
-        "AMOADD.W encoding (funct5=00001, funct3=010) uses typed word calls"
+        "AMOSWAP.W uses the typed word pair on the adapter route"
     );
 
+    // funct3 = 011 is real AMOSWAP.D: the full-width swap returns the
+    // complete old dword and writes all eight bytes of rs2 (C2, C3).
     let instruction_memory = memory_with_words(&[(0, amo_raw(0b00001, 0b011, 3, 1, 2))], 0x100);
     let (data_memory, calls) = traced_data(0x100, false);
     {
@@ -283,17 +288,20 @@ fn opcode_funct5_dispatch_preserves_current_amo_width_debt() {
         StepOutcome::InstructionRetired(fact) if fact.instruction == amo_raw(0b00001, 0b011, 3, 1, 2)
     ));
     let data = data_memory.lock().unwrap();
-    assert_eq!(data.inner.read_word(0x88).unwrap(), 0x8000_0003);
-    assert_eq!(data.inner.read_word(0x8c).unwrap(), 1);
+    assert_eq!(
+        data.inner.read_dword(0x88).unwrap(),
+        1,
+        "AMOSWAP.D swaps the complete dword"
+    );
     assert_eq!(
         core.state().regs[3],
-        0xffff_ffff_8000_0002,
-        "the D encoding still returns a sign-extended word"
+        0x0000_0001_8000_0002,
+        "D width returns the full old value without sign extension"
     );
     assert_eq!(
         *calls.lock().unwrap(),
-        vec!["read_word@0x88", "write_word@0x88"],
-        "AMOADD.D encoding (funct5=00001, funct3=011) remains on the word helper"
+        vec!["read_dword@0x88", "write_dword@0x88"],
+        "AMOSWAP.D uses the typed dword pair on the adapter route"
     );
 }
 
@@ -623,62 +631,158 @@ fn assert_child_success(result: &ChildResult, test_name: &str) {
     );
 }
 
-fn core_for_words(words: &[(u64, u32)], size: usize) -> (RiscvCore, Arc<Mutex<SimpleMemory>>) {
-    core_with_shared_program(words, size)
+/// A core whose instruction and data accesses travel validated RAM ports, so
+/// AMO/LR/SC issue the atomic envelope (the standard route the flipped rows
+/// assert).  The typed handles still point at the same RAM for the labeled
+/// compatibility surface.
+fn port_core_for_words(words: &[(u64, u32)], size: usize) -> (RiscvCore, Arc<Mutex<SimpleMemory>>) {
+    let memory = memory_with_words(words, size);
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(memory.clone(), 0, size),
+    )));
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(memory.clone(), 0, size),
+    )));
+    let mut core = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port,
+        data_port,
+    );
+    core.reset(0, 0);
+    (core, memory)
 }
 
-fn run_reservation_scenario() -> String {
-    // This entire fixture runs in a fresh process.  It deliberately does not
-    // use a test-file mutex: the production reservation is process-global and
-    // must be observed across real Core instances and reset boundaries.
-    ruscv_sim::execute::clear_reservation();
-    let mut transcript = Vec::new();
+/// A data backend that forwards every ordinary and atomic request to RAM but
+/// target-rejects the *second* atomic envelope once.  The first envelope is
+/// the row's LR; the rejection lands on the SC's write side so the
+/// faulting-SC retention row is observable on the envelope route.
+struct FailOnceAtomicBackend {
+    inner: NativeRamBackend,
+    atomics_seen: usize,
+}
 
-    // A successful AMOADD.W follows the current AMO dispatcher and retires.
-    let amo_word = amo_raw(0b00001, 0b010, 3, 1, 2);
-    let (mut amo_core, amo_memory) = core_for_words(&[(0, amo_word)], 0x200);
-    amo_memory.lock().unwrap().write_word(0x40, 10).unwrap();
-    amo_core.state_mut().regs[1] = 0x40;
-    amo_core.state_mut().regs[2] = 5;
-    assert!(matches!(
-        amo_core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(amo_core.state().regs[3], 10);
-    assert_eq!(amo_memory.lock().unwrap().read_word(0x40).unwrap(), 15);
-    transcript.push("amoadd.w=retired/read_word+write_word".to_string());
+impl FailOnceAtomicBackend {
+    fn new(memory: Arc<Mutex<SimpleMemory>>, size: usize) -> Self {
+        Self {
+            inner: NativeRamBackend::new(memory, 0, size),
+            atomics_seen: 0,
+        }
+    }
+}
 
-    // SC without a reservation retires with a nonzero result and does not
-    // touch memory.
-    let sc = sc_encoding(3, 1, 2, 0b010);
-    let (mut no_reservation, memory) = core_for_words(&[(0, sc)], 0x200);
+impl PhysicalBackend for FailOnceAtomicBackend {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.inner.transact(request)
+    }
+}
+
+impl AtomicBackend for FailOnceAtomicBackend {
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        self.atomics_seen += 1;
+        if self.atomics_seen == 2 {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::Unmapped,
+                "injected atomic rejection for the faulting-SC row",
+            ));
+        }
+        self.inner.transact_atomic(request)
+    }
+}
+
+fn faulting_sc_core(words: &[(u64, u32)], size: usize) -> (RiscvCore, Arc<Mutex<SimpleMemory>>) {
+    let memory = memory_with_words(words, size);
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(memory.clone(), 0, size),
+    )));
+    // The data backend target-rejects the first atomic envelope (the SC's
+    // write side after the LR has armed it for exactly one failure).
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        FailOnceAtomicBackend::new(memory.clone(), size),
+    )));
+    let mut core = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port,
+        data_port,
+    );
+    core.reset(0, 0);
+    (core, memory)
+}
+
+/// A port-configured core whose data port is the HTIF system-bus backend.
+fn htif_core(program: &[(u64, u32)]) -> (RiscvCore, Arc<Mutex<Vec<u64>>>) {
+    let instruction_memory = memory_with_words(program, 0x20);
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(0)));
+    let uart = Arc::new(Mutex::new(Uart16550::new(UART_BASE)));
+    let callbacks = Arc::new(Mutex::new(Vec::new()));
+    let copy = callbacks.clone();
+    let bus = Arc::new(Mutex::new(SystemBus::new(ram, uart, 0, 0)));
+    bus.lock()
+        .unwrap()
+        .set_htif_write_callback(move |value| copy.lock().unwrap().push(value));
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(instruction_memory.clone(), 0, 0x20),
+    )));
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeSystemBusBackend::new(bus.clone()),
+    )));
+    let mut core =
+        RiscvCore::new_with_physical_ports(instruction_memory, bus, instruction_port, data_port);
+    core.reset(0, 0);
+    set_mtvec(&mut core, 0x40);
+    (core, callbacks)
+}
+
+fn retired(core: &mut RiscvCore) {
+    assert!(
+        matches!(core.step_outcome(), StepOutcome::InstructionRetired(_)),
+        "expected a retired instruction"
+    );
+}
+
+/// The A8 replacement for the retired `run_reservation_scenario` child
+/// harness (fixture-ledger §1.1): every transcript row is now asserted
+/// in-process against the per-Hart, single-envelope, committed-write-aware
+/// profile.  Rows that changed value are marked in the transcript itself.
+#[test]
+fn per_hart_reservation_transcript_in_process() {
+    let mut transcript: Vec<String> = Vec::new();
+
+    // funct5 = 00001 / funct3 = 010 is AMOSWAP.W on every route: rd = old,
+    // memory = low word of rs2 (was AMOADD arithmetic at the baseline).
+    let (mut core, memory) = port_core_for_words(&[(0, amo_raw(0b00001, 0b010, 3, 1, 2))], 0x200);
+    memory.lock().unwrap().write_word(0x40, 10).unwrap();
+    core.state_mut().regs[1] = 0x40;
+    core.state_mut().regs[2] = 5;
+    retired(&mut core);
+    assert_eq!(core.state().regs[3], 10);
+    assert_eq!(memory.lock().unwrap().read_word(0x40).unwrap(), 5);
+    transcript.push("amoswap.w=retired/one-envelope/swap".to_string());
+
+    // SC without a reservation retires rd = 1 and issues no envelope.
+    let (mut core, memory) = port_core_for_words(&[(0, sc_encoding(3, 1, 2, 0b010))], 0x200);
     memory.lock().unwrap().write_dword(0x80, 0x55).unwrap();
-    no_reservation.state_mut().regs[1] = 0x80;
-    no_reservation.state_mut().regs[2] = 0xaa;
-    assert!(matches!(
-        no_reservation.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(no_reservation.state().regs[3], 1);
+    core.state_mut().regs[1] = 0x80;
+    core.state_mut().regs[2] = 0xaa;
+    retired(&mut core);
+    assert_eq!(core.state().regs[3], 1);
     assert_eq!(memory.lock().unwrap().read_dword(0x80).unwrap(), 0x55);
     transcript.push("sc.no-reservation=retired/rd=1/no-write".to_string());
 
-    // LR and SC through different Core instances share the process-global
-    // address-keyed reservation.
-    ruscv_sim::execute::clear_reservation();
+    // Reservations are per-Hart: an SC in a different core at the same
+    // address fails conditionally (flipped from the global singleton).
     let address = 0x90;
-    let (mut first, first_memory) = core_for_words(&[(0, lr_encoding(3, 1, 0b010))], 0x200);
+    let (mut first, first_memory) = port_core_for_words(&[(0, lr_encoding(3, 1, 0b010))], 0x200);
     first_memory
         .lock()
         .unwrap()
         .write_dword(address, 7)
         .unwrap();
     first.state_mut().regs[1] = address;
-    assert!(matches!(
-        first.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    let (mut second, second_memory) = core_for_words(&[(0, sc_encoding(4, 1, 2, 0b010))], 0x200);
+    retired(&mut first);
+    let (mut second, second_memory) =
+        port_core_for_words(&[(0, sc_encoding(4, 1, 2, 0b010))], 0x200);
     second_memory
         .lock()
         .unwrap()
@@ -686,80 +790,66 @@ fn run_reservation_scenario() -> String {
         .unwrap();
     second.state_mut().regs[1] = address;
     second.state_mut().regs[2] = 8;
-    assert!(matches!(
-        second.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(second.state().regs[4], 0);
+    retired(&mut second);
+    assert_eq!(second.state().regs[4], 1);
     assert_eq!(
         second_memory.lock().unwrap().read_dword(address).unwrap(),
-        8
+        7
     );
-    transcript.push("lr->other-core-sc=success/global".to_string());
+    transcript.push("lr->other-core-sc=rd=1/per-hart".to_string());
 
-    // Reset does not clear the singleton reservation.
-    ruscv_sim::execute::clear_reservation();
+    // Reset installs a fresh CoreState and clears the reservation.
     let reset_address = 0xa0;
-    let (mut reset_core, reset_memory) = core_for_words(&[(0, lr_encoding(3, 1, 0b010))], 0x200);
-    reset_memory
+    let (mut core, memory) = port_core_for_words(&[(0, lr_encoding(3, 1, 0b010))], 0x200);
+    memory
         .lock()
         .unwrap()
         .write_dword(reset_address, 11)
         .unwrap();
-    reset_core.state_mut().regs[1] = reset_address;
-    assert!(matches!(
-        reset_core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    reset_memory
+    core.state_mut().regs[1] = reset_address;
+    retired(&mut core);
+    memory
         .lock()
         .unwrap()
         .write_word(0, sc_encoding(4, 1, 2, 0b010))
         .unwrap();
-    reset_core.reset(0, 0);
-    reset_core.state_mut().regs[1] = reset_address;
-    reset_core.state_mut().regs[2] = 12;
-    assert!(matches!(
-        reset_core.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(reset_core.state().regs[4], 0);
+    core.reset(0, 0);
+    core.state_mut().regs[1] = reset_address;
+    core.state_mut().regs[2] = 12;
+    retired(&mut core);
+    assert_eq!(core.state().regs[4], 1);
     assert_eq!(
-        reset_memory
-            .lock()
-            .unwrap()
-            .read_dword(reset_address)
-            .unwrap(),
-        12
+        memory.lock().unwrap().read_dword(reset_address).unwrap(),
+        11
     );
-    transcript.push("lr->reset->sc=success/reservation-retained".to_string());
+    transcript.push("lr->reset->sc=rd=1/reservation-cleared".to_string());
 
-    // The key is the exact address, not an aligned reservation granule.
-    ruscv_sim::execute::clear_reservation();
-    let (mut key_lr, key_memory) = core_for_words(&[(0, lr_encoding(3, 1, 0b010))], 0x200);
-    key_memory.lock().unwrap().write_dword(0xb0, 21).unwrap();
-    key_lr.state_mut().regs[1] = 0xb0;
-    assert!(matches!(
-        key_lr.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    let (mut key_sc, other_memory) = core_for_words(&[(0, sc_encoding(4, 1, 2, 0b010))], 0x200);
+    // The key is the exact issued span: an SC whose span is not contained
+    // in the reservation fails with rd = 1 and issues no envelope
+    // (unchanged observable, now under span containment).
+    let (mut key_sc, other_memory) = port_core_for_words(
+        &[
+            (0, lr_encoding(3, 1, 0b010)),
+            (4, sc_encoding(4, 1, 2, 0b010)),
+        ],
+        0x200,
+    );
+    other_memory.lock().unwrap().write_dword(0xb0, 21).unwrap();
     other_memory.lock().unwrap().write_dword(0xb8, 31).unwrap();
+    key_sc.state_mut().regs[1] = 0xb0;
+    retired(&mut key_sc);
     key_sc.state_mut().regs[1] = 0xb8;
     key_sc.state_mut().regs[2] = 32;
-    assert!(matches!(
-        key_sc.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    retired(&mut key_sc);
     assert_eq!(key_sc.state().regs[4], 1);
     assert_eq!(other_memory.lock().unwrap().read_dword(0xb8).unwrap(), 31);
-    transcript.push("lr@b0->sc@b8=retired/rd=1".to_string());
+    transcript.push("lr@b0->sc@b8=retired/rd=1/span".to_string());
 
-    // A normal scalar store between LR and SC does not invalidate the global
-    // reservation.  The final SC therefore overwrites the scalar store.
-    ruscv_sim::execute::clear_reservation();
+    // A committed overlapping scalar store invalidates the reservation on
+    // the envelope route: the SC fails with rd = 1 and performs no write
+    // (flipped from no-invalidate).
     let address = 0xc0;
-    let (mut scalar, scalar_memory) = core_for_words(
+    let (mut scalar, scalar_memory) = port_core_for_words(
         &[
             (0, lr_encoding(3, 1, 0b010)),
             (4, sd(2, 1, 0)),
@@ -774,38 +864,24 @@ fn run_reservation_scenario() -> String {
         .unwrap();
     scalar.state_mut().regs[1] = address;
     scalar.state_mut().regs[2] = 2;
-    assert!(matches!(
-        scalar.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(
-        scalar_memory.lock().unwrap().read_dword(address).unwrap(),
-        1
-    );
-    assert!(matches!(
-        scalar.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    retired(&mut scalar);
+    retired(&mut scalar);
     assert_eq!(
         scalar_memory.lock().unwrap().read_dword(address).unwrap(),
         2
     );
     scalar.state_mut().regs[2] = 7;
-    assert!(matches!(
-        scalar.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(scalar.state().regs[4], 0);
+    retired(&mut scalar);
+    assert_eq!(scalar.state().regs[4], 1);
     assert_eq!(
         scalar_memory.lock().unwrap().read_dword(address).unwrap(),
-        7
+        2
     );
-    transcript.push("lr->sd->sc=success/no-invalidate".to_string());
+    transcript.push("lr->sd->sc=rd=1/committed-write".to_string());
 
-    // FP store has the same retained reservation behavior.
-    ruscv_sim::execute::clear_reservation();
+    // A committed overlapping FP store invalidates identically.
     let address = 0xd0;
-    let (mut floating, floating_memory) = core_for_words(
+    let (mut floating, floating_memory) = port_core_for_words(
         &[
             (0, lr_encoding(3, 1, 0b010)),
             (4, fsd(2, 1, 0)),
@@ -824,35 +900,22 @@ fn run_reservation_scenario() -> String {
         .fpr
         .write(2, ruscv_sim::Fpr::from_bits(4u64));
     floating.state_mut().regs[2] = 5;
-    assert!(matches!(
-        floating.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(
-        floating_memory.lock().unwrap().read_dword(address).unwrap(),
-        3
-    );
-    assert!(matches!(
-        floating.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    retired(&mut floating);
+    retired(&mut floating);
     assert_eq!(
         floating_memory.lock().unwrap().read_dword(address).unwrap(),
         4
     );
-    assert!(matches!(
-        floating.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(floating.state().regs[4], 0);
+    retired(&mut floating);
+    assert_eq!(floating.state().regs[4], 1);
     assert_eq!(
         floating_memory.lock().unwrap().read_dword(address).unwrap(),
-        5
+        4
     );
-    transcript.push("lr->fsd->sc=success/no-invalidate".to_string());
+    transcript.push("lr->fsd->sc=rd=1/committed-write".to_string());
 
-    // Host write_mem is also not an invalidation source.
-    ruscv_sim::execute::clear_reservation();
+    // A committed overlapping host write_mem invalidates (P2a-precise:
+    // committed bytes, not helper shape).
     let address = 0xe0;
     let mut simulator = RiscVSimulator::new(0x200);
     {
@@ -864,19 +927,17 @@ fn run_reservation_scenario() -> String {
     simulator.state_mut().regs[1] = address;
     simulator.state_mut().regs[2] = 6;
     simulator.step().unwrap();
-    assert_eq!(simulator.read_mem(address, 8).unwrap(), 5u64.to_le_bytes());
     simulator.write_mem(address, &7u64.to_le_bytes()).unwrap();
     assert_eq!(simulator.read_mem(address, 8).unwrap(), 7u64.to_le_bytes());
     simulator.step().unwrap();
-    assert_eq!(simulator.state().regs[4], 0);
-    assert_eq!(simulator.read_mem(address, 8).unwrap(), 6u64.to_le_bytes());
-    transcript.push("lr->host-write_mem->sc=success/no-invalidate".to_string());
+    assert_eq!(simulator.state().regs[4], 1);
+    assert_eq!(simulator.read_mem(address, 8).unwrap(), 7u64.to_le_bytes());
+    transcript.push("lr->host-write_mem->sc=rd=1/committed-write".to_string());
 
-    // A failed ordinary store leaves the reservation intact.  The failed
-    // instruction itself enters a store access fault and performs no write.
-    ruscv_sim::execute::clear_reservation();
+    // A target-rejected ordinary write commits nothing, so the reservation
+    // survives and the SC still succeeds (unchanged observable).
     let address = 0xf0;
-    let (mut failed_store, failed_memory) = core_for_words(
+    let (mut failed_store, failed_memory) = port_core_for_words(
         &[
             (0, lr_encoding(3, 1, 0b010)),
             (4, sd(2, 4, 0)),
@@ -893,10 +954,7 @@ fn run_reservation_scenario() -> String {
     failed_store.state_mut().regs[2] = 10;
     failed_store.state_mut().regs[4] = 0x1000;
     set_mtvec(&mut failed_store, 0x40);
-    assert!(matches!(
-        failed_store.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    retired(&mut failed_store);
     let failed = failed_store.step_outcome();
     assert!(matches!(
         failed,
@@ -904,162 +962,144 @@ fn run_reservation_scenario() -> String {
             if fact.cause == ExceptionCause::StoreAccessFault && fact.mtval == 0x1000
     ));
     failed_store.state_mut().pc = 8;
-    assert!(matches!(
-        failed_store.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    retired(&mut failed_store);
     assert_eq!(failed_store.state().regs[5], 0);
     assert_eq!(
         failed_memory.lock().unwrap().read_dword(address).unwrap(),
         10
     );
-    transcript.push("lr->failed-sd->sc=success/reservation-retained".to_string());
+    transcript.push("lr->failed-sd->sc=success/no-commit".to_string());
 
-    // A write-faulting SC enters a store access fault after the current
-    // dispatcher has checked the reservation.  The current helper returns
-    // before its reservation-clear statement, so a following SC in the same
-    // process can still succeed: this is explicitly retained debt.
-    ruscv_sim::execute::clear_reservation();
-    let instruction_memory = memory_with_words(
+    // A write-faulting SC enters a store access fault and the Hart retains
+    // the reservation (approved profile rule, C15): a retried SC on the same
+    // Hart succeeds; a different Hart's SC fails rd = 1.
+    let address = 0xf0;
+    let (mut faulting, fault_memory) = faulting_sc_core(
         &[
             (0, lr_encoding(3, 1, 0b010)),
             (4, sc_encoding(4, 1, 2, 0b010)),
         ],
         0x100,
     );
-    let (fault_memory, fault_calls) = traced_data(0x100, true);
     fault_memory
         .lock()
         .unwrap()
-        .inner
         .write_dword(address, 13)
         .unwrap();
-    let mut faulting = RiscvCore::new(instruction_memory, fault_memory);
-    faulting.reset(0, 0);
-    set_mtvec(&mut faulting, 0x40);
     faulting.state_mut().regs[1] = address;
     faulting.state_mut().regs[2] = 14;
-    assert!(matches!(
-        faulting.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
+    set_mtvec(&mut faulting, 0x40);
+    retired(&mut faulting);
     let fault = faulting.step_outcome();
     assert!(matches!(
         fault,
         StepOutcome::TrapEntered(fact)
             if fact.cause == ExceptionCause::StoreAccessFault && fact.mtval == address
     ));
-    assert_eq!(faulting.state().regs[4], 0);
+    faulting.state_mut().pc = 4;
+    retired(&mut faulting);
     assert_eq!(
-        *fault_calls.lock().unwrap(),
-        vec![
-            format!("read_dword@{address:#x}"),
-            format!("write_dword@{address:#x}")
-        ]
+        faulting.state().regs[4],
+        0,
+        "the retained reservation lets the retried SC commit"
     );
-
-    let (mut after_fault, after_fault_memory) =
-        core_for_words(&[(0, sc_encoding(5, 1, 2, 0b010))], 0x100);
-    after_fault_memory
+    assert_eq!(
+        fault_memory.lock().unwrap().read_dword(address).unwrap(),
+        14
+    );
+    let (mut other, other_memory) = port_core_for_words(&[(0, sc_encoding(5, 1, 2, 0b010))], 0x100);
+    other_memory
         .lock()
         .unwrap()
         .write_dword(address, 13)
         .unwrap();
-    after_fault.state_mut().regs[1] = address;
-    after_fault.state_mut().regs[2] = 15;
-    assert!(matches!(
-        after_fault.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(after_fault.state().regs[5], 0);
+    other.state_mut().regs[1] = address;
+    other.state_mut().regs[2] = 15;
+    retired(&mut other);
     assert_eq!(
-        after_fault_memory
-            .lock()
-            .unwrap()
-            .read_dword(address)
-            .unwrap(),
-        15
+        other.state().regs[5],
+        1,
+        "a different Hart has no reservation"
     );
-    transcript.push("sc.write-fault=trap/store-fault/clear-deferred".to_string());
+    transcript.push("sc.write-fault=trap/store-fault/retained-per-hart".to_string());
 
-    // The current LR/SC width dispatch has a deliberate compatibility seam:
-    // funct3=010 (the SC.W encoding) selects exec_sc and therefore a dword
-    // callback.  SystemBus checks only the starting HTIF address, so base+4
-    // succeeds and reaches the callback.
-    ruscv_sim::execute::clear_reservation();
+    // The typed adapter keeps its labeled non-conforming HTIF seam (C24): a
+    // dword SC at the endpoint still reaches the start-address-only
+    // callback, while the port route applies the approved D-c rejections.
     let instruction_memory = memory_with_words(
         &[
-            (0, lr_encoding(3, 1, 0b010)),
-            (4, sc_encoding(4, 1, 2, 0b010)),
+            (0, lr_encoding(3, 1, 0b011)),
+            (4, sc_encoding(4, 1, 2, 0b011)),
         ],
         0x20,
     );
-    let ram = Arc::new(Mutex::new(SimpleMemory::new(4)));
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(0)));
     let uart = Arc::new(Mutex::new(Uart16550::new(UART_BASE)));
     let callback_values = Arc::new(Mutex::new(Vec::new()));
     let callback_copy = callback_values.clone();
-    let bus = Arc::new(Mutex::new(SystemBus::new(ram, uart, 0, 4)));
+    let bus = Arc::new(Mutex::new(SystemBus::new(ram, uart, 0, 0)));
     bus.lock()
         .unwrap()
         .set_htif_write_callback(move |value| callback_copy.lock().unwrap().push(value));
-    let mut scw = RiscvCore::new(instruction_memory, bus);
-    scw.reset(0, 0);
-    scw.state_mut().regs[1] = HTIF_BASE + 4;
-    scw.state_mut().regs[2] = 0x1234_5678_9abc_def0;
-    assert!(matches!(
-        scw.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert!(matches!(
-        scw.step_outcome(),
-        StepOutcome::InstructionRetired(_)
-    ));
-    assert_eq!(scw.state().regs[4], 0);
+    let mut typed_sc = RiscvCore::new(instruction_memory, bus);
+    typed_sc.reset(0, 0);
+    set_mtvec(&mut typed_sc, 0x40);
+    typed_sc.state_mut().regs[1] = HTIF_BASE;
+    typed_sc.state_mut().regs[2] = 0x1234_5678_9abc_def0;
+    retired(&mut typed_sc);
+    retired(&mut typed_sc);
+    assert_eq!(typed_sc.state().regs[4], 0);
     assert_eq!(
         *callback_values.lock().unwrap(),
         vec![0x1234_5678_9abc_def0]
     );
-    transcript.push("sc.w@htif+4=retired/dword-callback".to_string());
+    transcript.push("typed.sc.d@htif=rd=0/dword-callback/non-conforming".to_string());
 
-    ruscv_sim::execute::clear_reservation();
-    transcript.join(";")
-}
+    // On the envelope route the HTIF endpoint rejects LR/SC before any
+    // mutation, and one RMW fires the callback exactly once (D-c, C21).
+    let (mut core, callbacks) = htif_core(&[
+        (0, lr_encoding(3, 1, 0b011)),
+        (4, sc_encoding(4, 1, 2, 0b011)),
+        (8, amo_raw(0b00001, 0b011, 5, 1, 2)),
+    ]);
+    core.state_mut().regs[1] = HTIF_BASE;
+    core.state_mut().regs[2] = 0x1234_5678_9abc_def0;
+    let outcome = core.step_outcome();
+    assert!(matches!(
+        outcome,
+        StepOutcome::TrapEntered(fact)
+            if fact.cause == ExceptionCause::LoadAccessFault && fact.mtval == HTIF_BASE
+    ));
+    assert!(callbacks.lock().unwrap().is_empty());
+    core.state_mut().pc = 4;
+    retired(&mut core);
+    assert_eq!(
+        core.state().regs[4],
+        1,
+        "no reservation: Hart-side SC failure"
+    );
+    assert!(callbacks.lock().unwrap().is_empty());
+    core.state_mut().pc = 8;
+    retired(&mut core);
+    assert_eq!(core.state().regs[5], 0);
+    assert_eq!(*callbacks.lock().unwrap(), vec![0x1234_5678_9abc_def0]);
+    transcript.push("port.htif=lr-cause5/sc-rd1/rmw-callback-once".to_string());
 
-#[test]
-fn global_reservation_characterization_isolated() {
-    if std::env::var_os(RESERVATION_CHILD_ENV).is_some() {
-        let transcript = run_reservation_scenario();
-        println!("A7_RESERVATION_TRANSCRIPT={transcript}");
-        return;
-    }
-
-    let mut expected = None;
-    for _ in 0..4 {
-        let result = run_child(RESERVATION_TEST_NAME, RESERVATION_CHILD_ENV);
-        assert_child_success(&result, RESERVATION_TEST_NAME);
-        let transcript = result
-            .stdout
-            .lines()
-            .find_map(|line| {
-                line.find("A7_RESERVATION_TRANSCRIPT=")
-                    .map(|index| line[index + "A7_RESERVATION_TRANSCRIPT=".len()..].trim())
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "reservation child did not emit its transcript\n{}\n{}",
-                    result.stdout, result.stderr
-                )
-            })
-            .to_string();
-        if let Some(previous) = &expected {
-            assert_eq!(
-                previous, &transcript,
-                "repeated isolated baseline runs diverged"
-            );
-        } else {
-            expected = Some(transcript);
-        }
-    }
+    assert_eq!(
+        transcript.join(";"),
+        "amoswap.w=retired/one-envelope/swap\
+         ;sc.no-reservation=retired/rd=1/no-write\
+         ;lr->other-core-sc=rd=1/per-hart\
+         ;lr->reset->sc=rd=1/reservation-cleared\
+         ;lr@b0->sc@b8=retired/rd=1/span\
+         ;lr->sd->sc=rd=1/committed-write\
+         ;lr->fsd->sc=rd=1/committed-write\
+         ;lr->host-write_mem->sc=rd=1/committed-write\
+         ;lr->failed-sd->sc=success/no-commit\
+         ;sc.write-fault=trap/store-fault/retained-per-hart\
+         ;typed.sc.d@htif=rd=0/dword-callback/non-conforming\
+         ;port.htif=lr-cause5/sc-rd1/rmw-callback-once"
+    );
 }
 
 #[test]

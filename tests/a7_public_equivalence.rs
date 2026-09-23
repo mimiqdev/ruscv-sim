@@ -43,9 +43,10 @@ const FP_DOUBLE_BITS: u64 = 0x400c_0000_0000_0001; // non-symmetric normal f64 b
 const FP_WORD_SENTINEL: u32 = 0x8877_6655;
 const FP_DWORD_SENTINEL: u64 = 0x1122_3344_5566_7788;
 
-// The legacy reservation is intentionally process-global.  All workflow tests
-// in this integration binary hold this lock across their complete run so test
-// scheduling cannot interleave LR/SC pairs from independent simulators.
+// The per-Hart reservation lives in each simulator's CoreState (A8 T3), so
+// workflow tests no longer need serialization for correctness; the lock is
+// retained as a belt-and-suspenders guard for the LR/SC rows so concurrent
+// test scheduling cannot perturb them.
 static WORKFLOW_RESERVATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn workflow_reservation_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -198,26 +199,25 @@ fn workflow_fixture(
     push(&mut code, &mut pc, fixture::ld(3, 1, 0));
     push_check_branch(&mut code, &mut pc, &mut failure_branches, 3, 16);
 
-    // AMOADD.W, LR.W, and SC.W use the characterized legacy typed helper
-    // choices.  In this implementation the LR/SC funct3=010 path invokes the
-    // dword helper; the address is eight-byte aligned so that preservation is
-    // observable without repairing the known width debt.
+    // AMOADD.W (the real funct5=00000 encoding, now that funct5=00001 is
+    // AMOSWAP), LR.W, and SC.W exercise the atomic envelope route through
+    // the same data port as the ordinary accesses.
     push(
         &mut code,
         &mut pc,
-        amo_raw(0b00001, 0b010, 6, 1, 2), // AMOADD.W x6, x2, (x1)
+        amo_raw(0b00000, 0b010, 6, 1, 2), // AMOADD.W x6, x2, (x1)
     );
     push_check_branch(&mut code, &mut pc, &mut failure_branches, 6, 16);
     push(
         &mut code,
         &mut pc,
-        amo_raw(0b00010, 0b010, 7, 1, 0), // characterized LR path
+        amo_raw(0b00010, 0b010, 7, 1, 0), // LR.W
     );
     push(&mut code, &mut pc, fixture::addi(2, 0, conditional_value));
     push(
         &mut code,
         &mut pc,
-        amo_raw(0b00011, 0b010, 8, 1, 2), // characterized SC path
+        amo_raw(0b00011, 0b010, 8, 1, 2), // SC.W
     );
     push_check_branch(&mut code, &mut pc, &mut failure_branches, 7, 17);
     push_check_branch(&mut code, &mut pc, &mut failure_branches, 8, 0);

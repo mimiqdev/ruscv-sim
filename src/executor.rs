@@ -5,8 +5,8 @@
 //! with tohost exit signal support.
 
 use crate::core::{
-    commits::CommitLogger, CoreState, RiscvCore, SharedPhysicalAccess, SimulatorFailure,
-    StepOutcome, TrapContinuationPolicy,
+    commits::CommitLogger, CoreState, RiscvCore, SharedDataAccess, SharedPhysicalAccess,
+    SimulatorFailure, StepOutcome, TrapContinuationPolicy,
 };
 use crate::elf::{load_elf_file, ElfError, SignatureInfo};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
@@ -1345,7 +1345,7 @@ fn install_image_with_physical_ports(
     ) -> (
         Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
         SharedPhysicalAccess,
-        SharedPhysicalAccess,
+        SharedDataAccess,
     ),
 ) -> (RiscvCore, Arc<Mutex<dyn MemoryInterface + Send + Sync>>) {
     let ram = Arc::new(Mutex::new(SimpleMemory::new(program.len())));
@@ -1465,9 +1465,9 @@ pub fn load_and_run(
             let instruction_access: SharedPhysicalAccess = Arc::new(Mutex::new(
                 ValidatedPhysicalAccess::new(SystemBus::physical_backend(bus.clone())),
             ));
-            let data_access: SharedPhysicalAccess = Arc::new(Mutex::new(
-                ValidatedPhysicalAccess::new(SystemBus::physical_backend(bus.clone())),
-            ));
+            let data_access: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+                SystemBus::physical_backend(bus.clone()),
+            )));
             let bus_interface: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = bus;
             (bus_interface, instruction_access, data_access)
         },
@@ -1765,7 +1765,7 @@ impl RiscVSimulator {
         let instruction_access: SharedPhysicalAccess = Arc::new(Mutex::new(
             ValidatedPhysicalAccess::new(NativeRamBackend::new(memory.clone(), 0, mem_size)),
         ));
-        let data_access: SharedPhysicalAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        let data_access: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
             NativeRamBackend::new(memory.clone(), 0, mem_size),
         )));
         let core = RiscvCore::new_with_physical_access(
@@ -1866,7 +1866,7 @@ impl RiscVSimulator {
                     Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
                         NativeRamBackend::new(ram.clone(), 0, memory.len()),
                     )));
-                let data_access: SharedPhysicalAccess =
+                let data_access: SharedDataAccess =
                     Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
                         NativeRamBackend::new(ram.clone(), 0, memory.len()),
                     )));

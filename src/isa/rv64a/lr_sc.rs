@@ -1,109 +1,91 @@
 //! RV64A Load-Reserved / Store-Conditional instructions
 //!
-//! Implements LR (Load-Reserved) and SC (Store-Conditional) instructions
-//! for atomic memory operations per the RISC-V ISA specification.
+//! Implements LR (Load-Reserved) and SC (Store-Conditional) instructions for
+//! atomic memory operations under the A8 per-Hart reservation profile
+//! (dev-plan §5.4, §11 item 2).
 //!
 //! # Reservation Mechanism
 //!
-//! LR/SC provides atomic read-modify-write operations:
-//! - LR loads a value and creates a reservation on the memory location
-//! - SC attempts to store only if the reservation is still valid
-//! - If successful, returns 0; otherwise returns non-zero
+//! - LR loads a value and establishes this Hart's single reservation: the
+//!   exact reserved byte span keyed by the address issued to the access
+//!   route, plus the committed-write snapshot for port-route LRs.
+//! - SC succeeds only when the reservation is present and the SC span is
+//!   contained in the reserved span; on the envelope route the backend also
+//!   re-checks the LR-time committed-write snapshot inside its critical
+//!   section.  An executed SC consumes the reservation on success and on
+//!   conditional failure; a faulting SC retains it.
+//! - The reservation lives in [`CoreState`]: one record per Hart, cleared by
+//!   reset and by image reload (which replaces the core), replaced by the
+//!   next successful LR.
 //!
-//! # Limitations
+//! # Compatibility adapter
 //!
-//! **Multi-core Scaling**: This implementation uses a global reservation singleton.
-//! In a production multi-core system, reservations must be per-hart (hardware thread).
-//! This is a known limitation documented in the architecture design.
+//! These helpers are the typed `MemoryInterface` route used by the old
+//! `RiscvCore::new` constructor.  That route is a labeled non-conforming
+//! compatibility adapter (dev-plan §7.1, C24): its typed read/write pairs are
+//! not indivisible and carry no committed-write bookkeeping, so a typed SC
+//! cannot observe a competing committed write and its conditional check is
+//! span containment only.  Standard facades issue the atomic envelope
+//! instead; both routes share the one per-Hart reservation record here.
 //!
 //! # References
 //!
-//! - RISC-V ISA Volume I: Unprivileged Spec, Section 8.3 (Load-Reserved/Store-Conditional)
-//! - RISC-V ISA Volume II: Privileged Spec, Section 3.5.1 (Reservation Granularity)
+//! - RISC-V ISA Volume I: Unprivileged Spec ("A" extension, Zalrsc)
 
 use crate::core::CoreState;
-
-/// LR/SC funct5 encoding constants (RISC-V ISA Table 19.3)
-#[allow(dead_code)]
-const AMO_FUNCT5_LR: u8 = 0b00010;
-#[allow(dead_code)]
-const AMO_FUNCT5_SC: u8 = 0b00011;
 use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 use crate::memory::MemoryInterface;
+use crate::physical::{CommittedWriteSnapshot, PhysicalSpan, PhysicalWidth};
 
-/// Reservation set for LR/SC operations
+/// The per-Hart reservation record (dev-plan §5.4, C23).
 ///
-/// Tracks the address of the reservation for each hart.
-/// In a multi-core system, this would need to be per-hart.
-#[derive(Debug, Clone)]
+/// One reservation exists per Hart; it lives in [`CoreState::reservation`].
+/// The record keys the exact reserved byte span by the physical address the
+/// Hart issued at its access route — the port-issued physical address on the
+/// standard envelope route — plus the committed-write version snapshot the
+/// load-reserved envelope returned.  A reservation established through the
+/// typed compatibility adapter carries no snapshot; the typed route cannot
+/// check committed competing writes, which is exactly why that route is the
+/// labeled non-conforming adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReservationSet {
-    /// Reserved address, or None if no reservation
-    reserved_addr: Option<u64>,
+    /// The exact reserved byte span: the issued physical address and width.
+    pub reserved: PhysicalSpan,
+    /// The LR-time committed-write snapshot, present on the envelope route.
+    pub snapshot: Option<CommittedWriteSnapshot>,
 }
 
 impl ReservationSet {
-    /// Create a new reservation set
-    pub fn new() -> Self {
+    /// Records a reservation for the issued physical address and width.
+    pub fn new(paddr: u64, width: PhysicalWidth, snapshot: Option<CommittedWriteSnapshot>) -> Self {
         Self {
-            reserved_addr: None,
+            reserved: PhysicalSpan { paddr, width },
+            snapshot,
         }
     }
 
-    /// Check if we have a reservation for the given address
-    pub fn has_reservation(&self, addr: u64) -> bool {
-        self.reserved_addr == Some(addr)
-    }
-
-    /// Create a reservation for the given address
-    pub fn reserve(&mut self, addr: u64) {
-        self.reserved_addr = Some(addr);
-    }
-
-    /// Clear the reservation
-    pub fn clear(&mut self) {
-        self.reserved_addr = None;
-    }
-
-    /// Clear reservation for a specific address (only if matching)
-    pub fn clear_if_matching(&mut self, addr: u64) {
-        if self.reserved_addr == Some(addr) {
-            self.reserved_addr = None;
-        }
-    }
-
-    /// Get the reserved address if any
-    pub fn reserved_address(&self) -> Option<u64> {
-        self.reserved_addr
+    /// Returns whether the reservation's span contains the given span.
+    ///
+    /// Span containment is the Hart-side SC precondition (dev-plan §5.4):
+    /// the SC's own span must be covered by the recorded reserved span, so a
+    /// wider or displaced SC cannot partially overwrite the reservation.
+    pub fn covers(&self, paddr: u64, width: PhysicalWidth) -> bool {
+        let (Some(reserved_end), Some(span_end)) = (
+            self.reserved.checked_end_inclusive(),
+            (PhysicalSpan { paddr, width }).checked_end_inclusive(),
+        ) else {
+            return false;
+        };
+        self.reserved.paddr <= paddr && span_end <= reserved_end
     }
 }
 
-impl Default for ReservationSet {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-use once_cell::sync::Lazy;
-/// Global reservation set (singleton for single-core simulation)
+/// LR.D - Load-Reserved (64-bit, typed compatibility route)
 ///
-/// In a real multi-core system, this would be per-hart.
-use std::sync::Mutex;
-
-static GLOBAL_RESERVATION: Lazy<Mutex<ReservationSet>> =
-    Lazy::new(|| Mutex::new(ReservationSet::new()));
-
-/// LR - Load-Reserved (64-bit)
-///
-/// Loads a 64-bit value from memory and creates a reservation on that address.
-///
-/// # Encoding
-/// - funct5 = 00010 for LR
-/// - rs2 = 00000 (no second source register)
-///
-/// # Operation
-/// rd = MEM\[rs1\]
-/// Create reservation on rs1
+/// Loads a 64-bit value at `rs1` and replaces this Hart's reservation with
+/// the issued address's 8-byte span.  A faulting load establishes no new
+/// reservation and preserves any prior one.
 #[inline]
 pub fn exec_lr(
     instr: &DecodedInstruction,
@@ -114,15 +96,10 @@ pub fn exec_lr(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-
-    // Read the value from memory (64-bit)
     let value = mem.read_dword(addr).map_err(ExecuteError::MemoryError)?;
 
-    // Create reservation
-    let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
-    reservation.reserve(addr);
-
-    // Write result to rd (unless rd = x0)
+    // A successful LR replaces any prior reservation (one per Hart).
+    state.reservation = Some(ReservationSet::new(addr, PhysicalWidth::Doubleword, None));
     if rd != 0 {
         state.regs[rd] = value;
     }
@@ -130,14 +107,10 @@ pub fn exec_lr(
     Ok(())
 }
 
-/// LR.W - Load-Reserved 32-bit (RV64A specific)
+/// LR.W - Load-Reserved (32-bit, typed compatibility route)
 ///
-/// Loads a 32-bit value from memory, sign-extending to 64 bits.
-/// Creates a reservation on the address.
-///
-/// # Operation
-/// rd = sext(MEM\[rs1\]\[31:0\])
-/// Create reservation on rs1
+/// Loads a 32-bit value at `rs1`, sign-extends it into `rd`, and replaces
+/// this Hart's reservation with the issued address's 4-byte span.
 #[inline]
 pub fn exec_lr_w(
     instr: &DecodedInstruction,
@@ -148,46 +121,28 @@ pub fn exec_lr_w(
     let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
 
     let addr = state.regs[rs1];
-
-    // Read 32-bit value from memory
     let value = mem.read_word(addr).map_err(ExecuteError::MemoryError)?;
 
-    // Sign-extend to 64 bits
-    let value = (value as i32) as i64 as u64;
-
-    // Create reservation
-    let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
-    reservation.reserve(addr);
-
-    // Write result to rd
+    state.reservation = Some(ReservationSet::new(addr, PhysicalWidth::Word, None));
     if rd != 0 {
-        state.regs[rd] = value;
+        state.regs[rd] = (value as i32) as i64 as u64;
     }
 
     Ok(())
 }
 
-/// SC - Store-Conditional (64-bit)
+/// Shared typed-route SC core: conditionally write `width` bytes of `value`.
 ///
-/// Conditionally stores a 64-bit value to memory only if the reservation
-/// is still valid.
-///
-/// # Encoding
-/// - funct5 = 00011 for SC
-/// - rs2 contains the value to store
-///
-/// # Operation
-/// if reservation valid:
-///   MEM\[rs1\] = rs2
-///   rd = 0
-/// else:
-///   rd = non-zero
-/// Clear reservation regardless of success
-#[inline]
-pub fn exec_sc(
+/// The Hart-side precondition is reservation presence plus span containment;
+/// a reservation the typed route cannot satisfy retires `rd = 1` with no
+/// memory call.  An executed SC consumes the reservation on success and on
+/// conditional failure; a faulting write retains it (approved faulting-SC
+/// retain, dev-plan §5.4/§11 item 2).  Failure code is the profile value 1.
+fn exec_sc_typed(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     mem: &mut dyn MemoryInterface,
+    width: PhysicalWidth,
 ) -> Result<(), ExecuteError> {
     let rs1 = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as usize;
     let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
@@ -196,68 +151,63 @@ pub fn exec_sc(
     let addr = state.regs[rs1];
     let value = state.regs[rs2];
 
-    // Check reservation
-    let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
-    let success = reservation.has_reservation(addr);
-
-    if success {
-        // Store the value (64-bit)
-        mem.write_dword(addr, value)
-            .map_err(ExecuteError::MemoryError)?;
+    // The typed adapter carries no committed-write bookkeeping, so its
+    // conditional check is span containment alone (labeled non-conformance).
+    let covered = state
+        .reservation
+        .as_ref()
+        .is_some_and(|reservation| reservation.covers(addr, width));
+    // An executed SC consumes the reservation on every completed outcome;
+    // a faulting write below retains it only because the staged state is
+    // discarded when the trap is entered.
+    state.reservation = None;
+    if !covered {
         if rd != 0 {
-            state.regs[rd] = 0; // Success
+            state.regs[rd] = 1;
         }
-    } else if rd != 0 {
-        state.regs[rd] = 1; // Failure (non-zero)
+        return Ok(());
     }
 
-    // Clear reservation regardless
-    reservation.clear();
-
+    match width {
+        PhysicalWidth::Word => mem
+            .write_word(addr, value as u32)
+            .map_err(ExecuteError::MemoryError)?,
+        PhysicalWidth::Doubleword => mem
+            .write_dword(addr, value)
+            .map_err(ExecuteError::MemoryError)?,
+        _ => return Err(ExecuteError::InvalidOperation),
+    }
+    if rd != 0 {
+        state.regs[rd] = 0;
+    }
     Ok(())
 }
 
-/// SC.W - Store-Conditional 32-bit
+/// SC.D - Store-Conditional (64-bit, typed compatibility route)
 ///
-/// Conditionally stores a 32-bit value to memory.
+/// Conditionally stores `rs2`'s 64-bit value at `rs1` when this Hart's
+/// reservation covers the span; writes `rd = 0` on success, `rd = 1` on
+/// conditional failure.
+#[inline]
+pub fn exec_sc(
+    instr: &DecodedInstruction,
+    state: &mut CoreState,
+    mem: &mut dyn MemoryInterface,
+) -> Result<(), ExecuteError> {
+    exec_sc_typed(instr, state, mem, PhysicalWidth::Doubleword)
+}
+
+/// SC.W - Store-Conditional (32-bit, typed compatibility route)
+///
+/// Conditionally stores `rs2`'s low 32 bits at `rs1` when this Hart's
+/// reservation covers the 4-byte span.
 #[inline]
 pub fn exec_sc_w(
     instr: &DecodedInstruction,
     state: &mut CoreState,
     mem: &mut dyn MemoryInterface,
 ) -> Result<(), ExecuteError> {
-    let rs1 = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as usize;
-    let rs2 = instr.rs2.ok_or(ExecuteError::InvalidOperation)? as usize;
-    let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
-
-    let addr = state.regs[rs1];
-    let value = state.regs[rs2] as u32;
-
-    // Check reservation
-    let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
-    let success = reservation.has_reservation(addr);
-
-    if success {
-        // Store the lower 32 bits
-        mem.write_word(addr, value)
-            .map_err(ExecuteError::MemoryError)?;
-        if rd != 0 {
-            state.regs[rd] = 0; // Success
-        }
-    } else if rd != 0 {
-        state.regs[rd] = 1; // Failure
-    }
-
-    // Clear reservation regardless
-    reservation.clear();
-
-    Ok(())
-}
-
-/// Clear global reservation (for testing)
-pub fn clear_reservation() {
-    let mut reservation = GLOBAL_RESERVATION.lock().unwrap();
-    reservation.clear();
+    exec_sc_typed(instr, state, mem, PhysicalWidth::Word)
 }
 
 #[cfg(test)]
@@ -265,53 +215,19 @@ mod tests {
     use super::*;
     use crate::decode::{DecodedInstruction, Funct3, InstructionFormat, Opcode};
     use crate::memory::SimpleMemory;
-    use std::sync::Mutex;
 
-    // Test serialization lock to prevent concurrent access to GLOBAL_RESERVATION
-    // This is needed because tests share the global reservation state
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
-    fn create_lr_instr(rs1: u8, rd: u8, funct5: u8, _aq: u8, rl: u8) -> DecodedInstruction {
-        // LR: funct5 = 00010, rs2 = 00000
-        // SC: funct5 = 00011, rs2 = source register
-        let raw = ((funct5 as u32) << 27)
-            | ((rl as u32) << 25)
-            | ((rs1 as u32) << 15)
-            | ((rd as u32) << 7)
-            | 0b010_1111;
-        DecodedInstruction {
-            raw,
-            format: InstructionFormat::RType,
-            opcode: Opcode::Amo,
-            funct3: Some(Funct3::Slt), // width = 32-bit
-            funct7: None,
-            rs1: Some(rs1),
-            rs2: Some(0), // 0 for LR
-            rs3: None,
-            rd: Some(rd),
-            imm: None,
-            branch_taken: false,
-        }
-    }
-
-    fn create_sc_instr(
-        rs1: u8,
-        rs2: u8,
-        rd: u8,
-        funct5: u8,
-        _aq: u8,
-        _rl: u8,
-    ) -> DecodedInstruction {
+    fn create_instr(rs1: u8, rs2: u8, rd: u8, funct5: u8, funct3: Funct3) -> DecodedInstruction {
         let raw = ((funct5 as u32) << 27)
             | ((rs2 as u32) << 20)
             | ((rs1 as u32) << 15)
+            | ((funct3 as u32) << 12)
             | ((rd as u32) << 7)
             | 0b010_1111;
         DecodedInstruction {
             raw,
             format: InstructionFormat::RType,
             opcode: Opcode::Amo,
-            funct3: Some(Funct3::Slt),
+            funct3: Some(funct3),
             funct7: None,
             rs1: Some(rs1),
             rs2: Some(rs2),
@@ -322,217 +238,318 @@ mod tests {
         }
     }
 
+    fn lr_w(rs1: u8, rd: u8) -> DecodedInstruction {
+        create_instr(rs1, 0, rd, 0b00010, Funct3::Slt)
+    }
+
+    fn lr_d(rs1: u8, rd: u8) -> DecodedInstruction {
+        create_instr(rs1, 0, rd, 0b00010, Funct3::Sltu)
+    }
+
+    fn sc_w(rs1: u8, rs2: u8, rd: u8) -> DecodedInstruction {
+        create_instr(rs1, rs2, rd, 0b00011, Funct3::Slt)
+    }
+
+    fn sc_d(rs1: u8, rs2: u8, rd: u8) -> DecodedInstruction {
+        create_instr(rs1, rs2, rd, 0b00011, Funct3::Sltu)
+    }
+
+    fn reserved_span(state: &CoreState) -> Option<(u64, u8)> {
+        state
+            .reservation
+            .as_ref()
+            .map(|record| (record.reserved.paddr, record.reserved.width as u8))
+    }
+
     #[test]
-    fn test_lr_basic() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        clear_reservation();
+    fn test_lr_w_reads_sign_extended_word_and_reserves_four_bytes() {
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
-
-        // Write a value to memory
-        mem.write_word(0x100, 0x1234_5678).unwrap();
-
+        mem.write_dword(0x100, 0x1234_5678_8000_0001).unwrap();
         state.regs[1] = 0x100;
 
-        let instr = create_lr_instr(1, 2, 0b00010, 0, 0);
-        let result = exec_lr(&instr, &mut state, &mut mem);
+        exec_lr_w(&lr_w(1, 2), &mut state, &mut mem).unwrap();
 
-        assert!(result.is_ok());
-        assert_eq!(state.regs[2], 0x1234_5678);
+        assert_eq!(state.regs[2], 0xFFFF_FFFF_8000_0001);
+        assert_eq!(reserved_span(&state), Some((0x100, 4)));
     }
 
     #[test]
-    fn test_lr_creates_reservation() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        clear_reservation();
+    fn test_lr_d_reads_full_dword_and_reserves_eight_bytes() {
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
+        mem.write_dword(0x108, 0x1234_5678_9abc_def0).unwrap();
+        state.regs[1] = 0x108;
 
-        mem.write_word(0x200, 0xDEAD_BEEF).unwrap();
-        state.regs[1] = 0x200;
+        exec_lr(&lr_d(1, 2), &mut state, &mut mem).unwrap();
 
-        let instr = create_lr_instr(1, 2, 0b00010, 0, 0);
-        exec_lr(&instr, &mut state, &mut mem).unwrap();
-
-        // Verify reservation was created by checking internal state
-        let reservation = GLOBAL_RESERVATION.lock().unwrap();
-        assert!(reservation.has_reservation(0x200));
-        assert_eq!(reservation.reserved_address(), Some(0x200));
-        drop(reservation);
-
-        // Also verify by executing SC successfully
-        state.regs[3] = 0xCAFE_BABE;
-        let sc_instr = create_sc_instr(1, 3, 4, 0b00011, 0, 0);
-        exec_sc(&sc_instr, &mut state, &mut mem).unwrap();
-
-        assert_eq!(state.regs[4], 0); // Success
-        assert_eq!(mem.read_word(0x200).unwrap(), 0xCAFE_BABE);
+        assert_eq!(state.regs[2], 0x1234_5678_9abc_def0);
+        assert_eq!(reserved_span(&state), Some((0x108, 8)));
     }
 
     #[test]
-    fn test_sc_success() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        clear_reservation();
+    fn test_lr_replaces_the_prior_reservation() {
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
+        mem.write_dword(0x100, 1).unwrap();
+        mem.write_dword(0x108, 2).unwrap();
+        state.regs[1] = 0x100;
+        state.regs[3] = 0x108;
 
-        // First, create a reservation with LR
-        mem.write_word(0x300, 0x0000_0000).unwrap();
+        exec_lr(&lr_d(1, 2), &mut state, &mut mem).unwrap();
+        exec_lr(&lr_d(3, 4), &mut state, &mut mem).unwrap();
+
+        assert_eq!(reserved_span(&state), Some((0x108, 8)));
+    }
+
+    #[test]
+    fn test_faulting_lr_preserves_the_prior_reservation() {
+        let mut state = CoreState::default();
+        let mut mem = SimpleMemory::new(0x1000);
+        mem.write_dword(0x100, 1).unwrap();
+        state.regs[1] = 0x100;
+        state.regs[3] = 0x8000; // beyond the 0x1000-sized memory
+
+        exec_lr(&lr_d(1, 2), &mut state, &mut mem).unwrap();
+        let outcome = exec_lr(&lr_d(3, 4), &mut state, &mut mem);
+
+        assert!(outcome.is_err(), "the out-of-range LR must fault");
+        assert_eq!(
+            reserved_span(&state),
+            Some((0x100, 8)),
+            "a faulting LR establishes no new reservation and keeps the prior one"
+        );
+    }
+
+    #[test]
+    fn test_sc_w_success_writes_word_and_consumes() {
+        let mut state = CoreState::default();
+        let mut mem = SimpleMemory::new(0x1000);
+        mem.write_dword(0x300, 0).unwrap();
         state.regs[1] = 0x300;
-        let lr_instr = create_lr_instr(1, 2, 0b00010, 0, 0);
-        exec_lr(&lr_instr, &mut state, &mut mem).unwrap();
+        state.regs[3] = 0xABCD_EFFF;
 
-        // Now SC should succeed
-        state.regs[3] = 0xABCDEFFF;
-        let sc_instr = create_sc_instr(1, 3, 4, 0b00011, 0, 0);
-        let result = exec_sc(&sc_instr, &mut state, &mut mem);
+        exec_lr_w(&lr_w(1, 2), &mut state, &mut mem).unwrap();
+        exec_sc_w(&sc_w(1, 3, 4), &mut state, &mut mem).unwrap();
 
-        assert!(result.is_ok());
-        assert_eq!(state.regs[4], 0); // Success
-
-        // Check memory was updated
-        assert_eq!(mem.read_word(0x300).unwrap(), 0xABCDEFFF);
+        assert_eq!(state.regs[4], 0);
+        assert_eq!(mem.read_word(0x300).unwrap(), 0xABCD_EFFF);
+        assert_eq!(
+            reserved_span(&state),
+            None,
+            "an executed SC consumes the reservation"
+        );
     }
 
     #[test]
-    fn test_sc_fail_no_reservation() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        clear_reservation();
+    fn test_sc_d_success_writes_dword_and_consumes() {
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
+        mem.write_dword(0x308, 0).unwrap();
+        state.regs[1] = 0x308;
+        state.regs[3] = 0x1234_5678_9abc_def0;
 
-        // Write initial value to memory first so read succeeds
-        mem.write_word(0x400, 0x0000_0000).unwrap();
+        exec_lr(&lr_d(1, 2), &mut state, &mut mem).unwrap();
+        exec_sc(&sc_d(1, 3, 4), &mut state, &mut mem).unwrap();
 
-        // Try SC without LR first - should fail
+        assert_eq!(state.regs[4], 0);
+        assert_eq!(mem.read_dword(0x308).unwrap(), 0x1234_5678_9abc_def0);
+        assert_eq!(reserved_span(&state), None);
+    }
+
+    #[test]
+    fn test_sc_without_reservation_fails_with_rd_1_and_no_write() {
+        let mut state = CoreState::default();
+        let mut mem = SimpleMemory::new(0x1000);
+        mem.write_dword(0x400, 0x55).unwrap();
         state.regs[1] = 0x400;
-        state.regs[2] = 0x1234_5678;
-        let sc_instr = create_sc_instr(1, 2, 3, 0b00011, 0, 0);
-        let result = exec_sc(&sc_instr, &mut state, &mut mem);
+        state.regs[2] = 0xaa;
 
-        assert!(result.is_ok());
-        assert_ne!(state.regs[3], 0); // Failure
+        exec_sc_w(&sc_w(1, 2, 3), &mut state, &mut mem).unwrap();
 
-        // Memory should be unchanged
-        assert_eq!(mem.read_word(0x400).unwrap(), 0x0000_0000);
+        assert_eq!(state.regs[3], 1);
+        assert_eq!(mem.read_dword(0x400).unwrap(), 0x55);
     }
 
     #[test]
-    fn test_sc_fail_after_conflict() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        clear_reservation();
+    fn test_sc_outside_the_reserved_span_fails_with_rd_1() {
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
-
-        // Create reservation with LR
-        mem.write_word(0x500, 0x0000_0000).unwrap();
+        mem.write_dword(0x500, 1).unwrap();
+        mem.write_dword(0x508, 3).unwrap();
         state.regs[1] = 0x500;
-        let lr_instr = create_lr_instr(1, 2, 0b00010, 0, 0);
-        exec_lr(&lr_instr, &mut state, &mut mem).unwrap();
+        state.regs[2] = 9;
 
-        // Clear reservation manually (simulating another hart)
-        clear_reservation();
+        exec_lr_w(&lr_w(1, 5), &mut state, &mut mem).unwrap();
+        state.regs[1] = 0x508;
+        exec_sc_w(&sc_w(1, 2, 3), &mut state, &mut mem).unwrap();
 
-        // Now SC should fail
-        state.regs[3] = 0xABCDEFFF;
-        let sc_instr = create_sc_instr(1, 3, 4, 0b00011, 0, 0);
-        let result = exec_sc(&sc_instr, &mut state, &mut mem);
-
-        assert!(result.is_ok());
-        assert_ne!(state.regs[4], 0); // Failure
+        assert_eq!(
+            state.regs[3], 1,
+            "a span the reservation does not cover fails"
+        );
+        assert_eq!(mem.read_dword(0x508).unwrap(), 3);
+        assert_eq!(reserved_span(&state), None, "the SC consumed it");
     }
 
     #[test]
-    fn test_lr_sc_atomic_sequence() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        clear_reservation();
+    fn test_sc_span_containment_crosses_widths_both_directions() {
+        // LR.W@p then SC.D@p: the 8-byte SC span is not contained in the
+        // 4-byte reservation, so the SC fails (approved span containment).
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
+        mem.write_dword(0x600, 0).unwrap();
+        state.regs[1] = 0x600;
+        state.regs[3] = 0xee;
+        exec_lr_w(&lr_w(1, 2), &mut state, &mut mem).unwrap();
+        exec_sc(&sc_d(1, 3, 4), &mut state, &mut mem).unwrap();
+        assert_eq!(state.regs[4], 1);
+        assert_eq!(mem.read_dword(0x600).unwrap(), 0);
 
-        let addr = 0x600;
-        mem.write_word(addr, 0x1000).unwrap();
-
-        // LR
-        state.regs[1] = addr;
-        let lr_instr = create_lr_instr(1, 2, 0b00010, 0, 0);
-        exec_lr(&lr_instr, &mut state, &mut mem).unwrap();
-        let old_value = state.regs[2];
-
-        // Modify (increment)
-        state.regs[3] = old_value.wrapping_add(1);
-
-        // SC
-        let sc_instr = create_sc_instr(1, 3, 4, 0b00011, 0, 0);
-        exec_sc(&sc_instr, &mut state, &mut mem).unwrap();
-
-        assert_eq!(state.regs[4], 0); // Success
-        assert_eq!(mem.read_word(addr).unwrap(), 0x1001);
+        // LR.D@p then SC.W@(p+4): the 4-byte span is inside the reserved
+        // dword, so the conditional write succeeds.
+        let mut state = CoreState::default();
+        let mut mem = SimpleMemory::new(0x1000);
+        mem.write_dword(0x600, 0).unwrap();
+        state.regs[1] = 0x600;
+        state.regs[3] = 0x66;
+        exec_lr(&lr_d(1, 2), &mut state, &mut mem).unwrap();
+        state.regs[1] = 0x604;
+        exec_sc_w(&sc_w(1, 3, 4), &mut state, &mut mem).unwrap();
+        assert_eq!(state.regs[4], 0);
+        assert_eq!(mem.read_word(0x604).unwrap(), 0x66);
     }
 
     #[test]
-    fn test_sc_clears_reservation() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        clear_reservation();
-        let mut state = CoreState::default();
-        let mut mem = SimpleMemory::new(0x1000);
+    fn test_faulting_sc_retains_the_reservation() {
+        struct FailingOnce {
+            inner: SimpleMemory,
+            fail: bool,
+        }
+        impl MemoryInterface for FailingOnce {
+            fn read_dword(&self, addr: u64) -> Result<u64, crate::memory::MemoryError> {
+                self.inner.read_dword(addr)
+            }
+            fn read_word(&self, addr: u64) -> Result<u32, crate::memory::MemoryError> {
+                self.inner.read_word(addr)
+            }
+            fn read_half(&self, addr: u64) -> Result<u16, crate::memory::MemoryError> {
+                self.inner.read_half(addr)
+            }
+            fn read_byte(&self, addr: u64) -> Result<u8, crate::memory::MemoryError> {
+                self.inner.read_byte(addr)
+            }
+            fn read_word_zext(&self, addr: u64) -> Result<u64, crate::memory::MemoryError> {
+                self.inner.read_word_zext(addr)
+            }
+            fn read_half_zext(&self, addr: u64) -> Result<u64, crate::memory::MemoryError> {
+                self.inner.read_half_zext(addr)
+            }
+            fn read_byte_zext(&self, addr: u64) -> Result<u64, crate::memory::MemoryError> {
+                self.inner.read_byte_zext(addr)
+            }
+            fn read_word_sext(&self, addr: u64) -> Result<u64, crate::memory::MemoryError> {
+                self.inner.read_word_sext(addr)
+            }
+            fn read_half_sext(&self, addr: u64) -> Result<u64, crate::memory::MemoryError> {
+                self.inner.read_half_sext(addr)
+            }
+            fn read_byte_sext(&self, addr: u64) -> Result<u64, crate::memory::MemoryError> {
+                self.inner.read_byte_sext(addr)
+            }
+            fn write_dword(
+                &mut self,
+                addr: u64,
+                value: u64,
+            ) -> Result<(), crate::memory::MemoryError> {
+                if self.fail {
+                    return Err(crate::memory::MemoryError::InvalidAddress(addr));
+                }
+                self.inner.write_dword(addr, value)
+            }
+            fn write_word(
+                &mut self,
+                addr: u64,
+                value: u32,
+            ) -> Result<(), crate::memory::MemoryError> {
+                if self.fail {
+                    return Err(crate::memory::MemoryError::InvalidAddress(addr));
+                }
+                self.inner.write_word(addr, value)
+            }
+            fn write_half(
+                &mut self,
+                addr: u64,
+                value: u16,
+            ) -> Result<(), crate::memory::MemoryError> {
+                if self.fail {
+                    return Err(crate::memory::MemoryError::InvalidAddress(addr));
+                }
+                self.inner.write_half(addr, value)
+            }
+            fn write_byte(
+                &mut self,
+                addr: u64,
+                value: u8,
+            ) -> Result<(), crate::memory::MemoryError> {
+                if self.fail {
+                    return Err(crate::memory::MemoryError::InvalidAddress(addr));
+                }
+                self.inner.write_byte(addr, value)
+            }
+            fn size(&self) -> usize {
+                self.inner.size()
+            }
+        }
 
-        // Create reservation
-        mem.write_word(0x700, 0).unwrap();
+        let mut state = CoreState::default();
+        let mut mem = FailingOnce {
+            inner: SimpleMemory::new(0x1000),
+            fail: false,
+        };
+        mem.inner.write_dword(0x700, 5).unwrap();
         state.regs[1] = 0x700;
-        let lr_instr = create_lr_instr(1, 2, 0b00010, 0, 0);
-        exec_lr(&lr_instr, &mut state, &mut mem).unwrap();
+        state.regs[3] = 9;
 
-        // First SC
-        state.regs[3] = 0x1111_1111;
-        let sc_instr = create_sc_instr(1, 3, 4, 0b00011, 0, 0);
-        exec_sc(&sc_instr, &mut state, &mut mem).unwrap();
-
-        // Second SC should fail (reservation cleared)
-        state.regs[3] = 0x2222_2222;
-        let sc_instr2 = create_sc_instr(1, 3, 5, 0b00011, 0, 0);
-        let result = exec_sc(&sc_instr2, &mut state, &mut mem);
-
-        assert!(result.is_ok());
-        assert_ne!(state.regs[5], 0); // Failure
+        exec_lr(&lr_d(1, 2), &mut state, &mut mem).unwrap();
+        mem.fail = true;
+        let outcome = exec_sc(&sc_d(1, 3, 4), &mut state, &mut mem);
+        assert!(outcome.is_err(), "the faulting SC must error");
+        // Approved faulting-SC retain is realized by the Hart's staged state:
+        // the helper writes into staged state, the trap discards it, so the
+        // architectural reservation survives.  This helper-level call models
+        // the discard by restoring the record the failed step kept.
+        state.reservation = Some(ReservationSet::new(0x700, PhysicalWidth::Doubleword, None));
+        mem.fail = false;
+        exec_sc(&sc_d(1, 3, 4), &mut state, &mut mem).unwrap();
+        assert_eq!(state.regs[4], 0, "the retained reservation still allows SC");
+        assert_eq!(mem.inner.read_dword(0x700).unwrap(), 9);
     }
 
     #[test]
-    fn test_lr_x0_dest() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        clear_reservation();
+    fn test_lr_sc_x0_dest_and_separate_harts() {
         let mut state = CoreState::default();
         let mut mem = SimpleMemory::new(0x1000);
-
-        mem.write_word(0x800, 0x1234_5678).unwrap();
+        mem.write_dword(0x800, 0x1234_5678).unwrap();
         state.regs[1] = 0x800;
 
-        let instr = create_lr_instr(1, 0, 0b00010, 0, 0);
-        let result = exec_lr(&instr, &mut state, &mut mem);
+        // rd = x0 suppresses only the register write.
+        exec_lr_w(&lr_w(1, 0), &mut state, &mut mem).unwrap();
+        assert_eq!(state.regs[0], 0);
+        assert_eq!(reserved_span(&state), Some((0x800, 4)));
 
-        assert!(result.is_ok());
-        assert_eq!(state.regs[0], 0); // x0 always 0
-    }
+        // A different Hart's state does not share this reservation.
+        let mut other = CoreState::default();
+        other.regs[1] = 0x800;
+        other.regs[3] = 7;
+        exec_sc_w(&sc_w(1, 3, 4), &mut other, &mut mem).unwrap();
+        assert_eq!(other.regs[4], 1, "reservations are per-Hart");
+        assert_eq!(mem.read_dword(0x800).unwrap(), 0x1234_5678);
 
-    #[test]
-    fn test_reservation_set_operations() {
-        let mut rs = ReservationSet::new();
-
-        assert!(!rs.has_reservation(0x100));
-        assert!(rs.reserved_address().is_none());
-
-        rs.reserve(0x100);
-        assert!(rs.has_reservation(0x100));
-        assert_eq!(rs.reserved_address(), Some(0x100));
-
-        rs.clear();
-        assert!(!rs.has_reservation(0x100));
-        assert!(rs.reserved_address().is_none());
-
-        rs.reserve(0x200);
-        rs.clear_if_matching(0x100); // Wrong address
-        assert!(rs.has_reservation(0x200));
-
-        rs.clear_if_matching(0x200); // Correct address
-        assert!(!rs.has_reservation(0x200));
+        // This Hart's own SC still succeeds afterwards.
+        state.regs[3] = 7;
+        exec_sc_w(&sc_w(1, 3, 4), &mut state, &mut mem).unwrap();
+        assert_eq!(state.regs[4], 0);
+        assert_eq!(mem.read_dword(0x800).unwrap(), 7);
     }
 }

@@ -12,9 +12,10 @@ use ruscv_sim::executor::{SystemBus, SYSTEM_BUS_UART_BASE};
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 use ruscv_sim::peripherals::Uart16550;
 use ruscv_sim::physical::{
-    AccessCategory, AccessWidth, NativeRamBackend, NativeSystemBusBackend, PhysicalBackend,
-    PhysicalBackendError, PhysicalBackendResult, PhysicalRequest, PhysicalResponse,
-    PhysicalTargetRejectionReason, ValidatedPhysicalAccess,
+    AccessCategory, AccessWidth, AtomicBackend, AtomicBackendResult, AtomicRequest,
+    NativeRamBackend, NativeSystemBusBackend, PhysicalBackend, PhysicalBackendError,
+    PhysicalBackendResult, PhysicalRequest, PhysicalResponse, PhysicalTargetRejectionReason,
+    ValidatedPhysicalAccess,
 };
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -47,6 +48,14 @@ impl PhysicalBackend for TraceBackend {
             payload: request.payload().map(ToOwned::to_owned),
         });
         self.inner.transact(request)
+    }
+}
+
+impl AtomicBackend for TraceBackend {
+    /// Forward atomics to the wrapped RAM target; the call is recorded so
+    /// the atomic envelope never travels a second domain.
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        self.inner.transact_atomic(request)
     }
 }
 
@@ -84,6 +93,17 @@ impl PhysicalBackend for PlannedBackend {
     }
 }
 
+impl AtomicBackend for PlannedBackend {
+    /// This fixture only serves planned ordinary accesses; an atomic
+    /// envelope is a target rejection, not a planned effect.
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        Err(PhysicalBackendError::target(
+            PhysicalTargetRejectionReason::UnsupportedCategory,
+            format!("planned backend received unexpected atomic {request:?}"),
+        ))
+    }
+}
+
 #[derive(Debug)]
 struct RepeatingFetchBackend {
     instruction: u32,
@@ -114,6 +134,17 @@ impl PhysicalBackend for UnknownAfterEffectBackend {
         *self.effects.lock().unwrap() += 1;
         Err(PhysicalBackendError::unknown(
             "injected side effect may have committed",
+        ))
+    }
+}
+
+impl AtomicBackend for UnknownAfterEffectBackend {
+    /// This fixture only serves ordinary writes; an atomic envelope is a
+    /// target rejection, not an unknown completion.
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        Err(PhysicalBackendError::target(
+            PhysicalTargetRejectionReason::UnsupportedCategory,
+            format!("unknown-after-effect backend received unexpected atomic {request:?}"),
         ))
     }
 }
