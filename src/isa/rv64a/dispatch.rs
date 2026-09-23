@@ -239,37 +239,33 @@ pub(crate) fn execute_amo_port(
             Ok(())
         }
         AmoKind::StoreConditional => {
-            // Address conversion and storage-offset rejection are target
-            // rejections, not conditional failures (dev-plan §5.1/§5.7): a
-            // guest address below the flat image base or one whose storage
-            // offset is not width-aligned enters a store/AMO access fault
-            // (cause 7) with the original guest address, and the staged
-            // discard retains the reservation (approved faulting-SC retain,
-            // C15).  Only after a formed issued address does the Hart-side
-            // precondition apply: no reservation, or one whose span does not
-            // cover the SC's span, retires rd = 1 and issues no physical
-            // request (C13).  An executed SC consumes the reservation on
-            // success and on conditional failure.
-            let paddr = adapter
-                .issued_addr(ea, span_width)
-                .map_err(ExecuteError::MemoryError)?;
-            let covered = state
-                .reservation
-                .as_ref()
-                .is_some_and(|reservation| reservation.covers(paddr, span_width));
-            let reservation = state.reservation.take();
-            if !covered {
+            // C13's no-reservation case is resolved entirely in the Hart:
+            // retire rd = 1 without address conversion or any physical
+            // request.  If a reservation exists, preserve the established
+            // conversion-before-coverage behavior: a guest address below the
+            // flat image base or a rejected storage offset faults as cause 7
+            // with the original guest mtval, and the staged discard retains
+            // the live reservation (approved faulting-SC retain, C15).
+            if state.reservation.is_none() {
                 if decoded.rd != 0 {
                     state.regs[decoded.rd] = 1;
                 }
                 return Ok(());
             }
-            // `covered` implies the record exists.
-            let reservation = reservation.ok_or_else(|| {
+            let paddr = adapter
+                .issued_addr(ea, span_width)
+                .map_err(ExecuteError::MemoryError)?;
+            let reservation = state.reservation.take().ok_or_else(|| {
                 ExecuteError::MemoryError(MemoryError::Protocol(
-                    "a covered store-conditional found no reservation record".into(),
+                    "a store-conditional lost its reservation before address validation".into(),
                 ))
             })?;
+            if !reservation.covers(paddr, span_width) {
+                if decoded.rd != 0 {
+                    state.regs[decoded.rd] = 1;
+                }
+                return Ok(());
+            }
             let snapshot = reservation.snapshot.ok_or_else(|| {
                 ExecuteError::MemoryError(MemoryError::Protocol(
                     "the per-Hart reservation has no committed-write snapshot".into(),

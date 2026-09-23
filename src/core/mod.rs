@@ -508,9 +508,11 @@ impl<'a> PhysicalAtomicAdapter<'a> {
     ///
     /// A failure is a [`MemoryError::InvalidAddress`] target rejection; the
     /// Hart maps it to the access-class fault with the original guest
-    /// address — including for store-conditional, which faults instead of
-    /// retiring `rd = 1` and retains its reservation (the conditional
-    /// failure path applies only once an issued address exists).
+    /// address. For a store-conditional this conversion is reached only when
+    /// a per-Hart reservation exists: no-reservation SC is resolved first as
+    /// `rd = 1` with no address conversion or physical request (C13). A live
+    /// reservation whose issued address is rejected traps and is retained by
+    /// staged-state discard (C15).
     pub fn issued_addr(&self, ea: u64, width: PhysicalWidth) -> Result<u64, MemoryError> {
         hart_issued_paddr(ea, self.base_addr, self.storage_alignment, width)
     }

@@ -185,6 +185,10 @@ impl Spy {
             .filter(|(category, _)| *category == AccessCategory::DataWrite)
             .count()
     }
+
+    fn data_request_count(&self) -> usize {
+        self.atomics.lock().unwrap().len() + self.raws.lock().unwrap().len()
+    }
 }
 
 impl PhysicalBackend for SpyBackend {
@@ -643,51 +647,95 @@ fn reservation_record_lifecycle_is_hart_owned() {
     assert_eq!(record.reserved.paddr, P);
 }
 
-/// Two cores sharing storage keep independent reservations: labeled
-/// test-object evidence for the per-Hart record (dev-plan §8 T3: the
-/// current single-Hart API carries the record in `CoreState`, so two
-/// `RiscvCore` instances are the per-Hart isolation probe).
+/// Two independently constructed Core objects share the exact same RAM and
+/// data-port/domain lock.  This is test-object evidence for per-Core
+/// reservation ownership and committed-write visibility only; it does not
+/// exercise multi-Hart execution, scheduling, or coherence.
 #[test]
 fn two_cores_on_one_domain_hold_independent_reservations() {
     const P: u64 = 0x80;
-    let (mut first, memory, _spy_a) = spy_core(&[(0, lr_d(3, 1)), (4, sc_d(4, 1, 2))], 0x100);
-    let (mut second, _other, _spy_b) = spy_core(
-        &[(0, sc_d(4, 1, 2)), (4, lr_d(5, 1)), (8, sc_d(6, 1, 2))],
-        0x100,
+    const SIZE: usize = 0x100;
+    const SECOND_PC: u64 = 0x20;
+    let memory = memory_with_words(
+        &[
+            (0, lr_d(3, 1)),
+            (4, sc_d(4, 1, 2)),
+            (SECOND_PC, sc_d(4, 1, 2)),
+            (SECOND_PC + 4, lr_d(5, 1)),
+            (SECOND_PC + 8, sc_d(6, 1, 2)),
+        ],
+        SIZE,
     );
     memory.lock().unwrap().write_dword(P, 1).unwrap();
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(memory.clone(), 0, SIZE),
+    )));
+    let (backend, spy) = SpyBackend::new(memory.clone(), SIZE);
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(backend)));
+
+    // Both independently constructed cores hold clones of the same
+    // instruction and data-port handles.  In particular, there is one
+    // physical data-domain lock and one shared backing/write-bookkeeping
+    // object, not two spy_core() fixtures with separate memories.
+    let mut first = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port.clone(),
+        data_port.clone(),
+    );
+    first.reset(0, 0);
+    let mut second = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port,
+        data_port,
+    );
+    second.reset(SECOND_PC, 0);
     first.state_mut().regs[1] = P;
     first.state_mut().regs[2] = 7;
     second.state_mut().regs[1] = P;
     second.state_mut().regs[2] = 9;
 
-    // First Hart reserves on its own storage.
+    // First core reserves shared address P; the second has no architectural
+    // reservation despite sharing the same physical domain.
     retired(&mut first);
     assert!(first.state().reservation.is_some());
     assert!(second.state().reservation.is_none());
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 1);
 
-    // The second Hart's SC at the same address fails: reservations are
-    // per-Hart, so no record covers its span (and no envelope is issued).
+    // The second core's SC fails without using the first core's reservation
+    // or changing the shared bytes.
     retired(&mut second);
     assert_eq!(second.state().regs[4], 1);
+    assert!(second.state().reservation.is_none());
+    assert!(first.state().reservation.is_some());
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 1);
 
-    // Each Hart's own reservation still governs only its own SC.
-    second.state_mut().pc = 4;
-    retired(&mut second); // second's LR installs its own record
-    second.state_mut().pc = 8;
+    // The second core independently reserves the same shared bytes.  The
+    // first core then commits a competing SC; the second core's later SC
+    // sees that committed write through the shared physical domain and fails.
+    second.state_mut().pc = SECOND_PC + 4;
     retired(&mut second);
-    assert_eq!(
-        second.state().regs[6],
-        0,
-        "the second Hart's own LR/SC pair works"
-    );
-
+    assert!(second.state().reservation.is_some());
     first.state_mut().pc = 4;
     retired(&mut first);
+    assert_eq!(first.state().regs[4], 0);
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 7);
+    assert!(second.state().reservation.is_some());
+
+    second.state_mut().pc = SECOND_PC + 8;
+    retired(&mut second);
+    assert_eq!(second.state().regs[6], 1);
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 7);
     assert_eq!(
-        first.state().regs[4],
-        0,
-        "the first Hart's reservation was never shared"
+        spy.atomic_kinds(),
+        [
+            AtomicAccessKind::LoadReserved,
+            AtomicAccessKind::LoadReserved,
+            AtomicAccessKind::StoreConditional,
+            AtomicAccessKind::StoreConditional,
+        ],
+        "the unreserved SC issues no envelope; both LR/SC pairs share one port"
     );
 }
 
@@ -1134,6 +1182,58 @@ fn cross_thread_writer_cannot_interpose_inside_the_sc_envelope() {
         0x6b,
         "the writer's commit landed strictly after the envelope"
     );
+}
+
+/// A no-reservation SC below the flat image base still fails architecturally
+/// without converting its address or touching the physical data port (C13).
+/// Both a normal destination and rd=x0 preserve the SC no-op semantics.
+#[test]
+fn unreserved_sc_below_flat_base_retires_without_data_access() {
+    const BASE: u64 = 0x8000_0000;
+    const P: u64 = 0x80;
+
+    for rd in [4, 0] {
+        let memory = memory_with_words(&[(0, sc_d(rd, 1, 2))], 0x100);
+        memory.lock().unwrap().write_dword(P, 0x1234).unwrap();
+        let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+            NativeRamBackend::new(memory.clone(), 0, 0x100),
+        )));
+        let (backend, spy) = SpyBackend::new(memory.clone(), 0x100);
+        let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(backend)));
+        let mut core = RiscvCore::new_with_physical_ports(
+            memory.clone(),
+            memory.clone(),
+            instruction_port,
+            data_port,
+        );
+        core.set_physical_storage_alignment(0, 0x100);
+        core.reset(BASE, BASE);
+        core.state_mut().regs[1] = BASE - 8; // aligned guest address below image
+        core.state_mut().regs[2] = 0xfeed;
+
+        let outcome = core.step_outcome();
+        assert!(
+            matches!(outcome, StepOutcome::InstructionRetired(_)),
+            "an unreserved SC.D below the image base must retire, got {outcome:?}"
+        );
+        assert_eq!(core.state().regs[rd as usize], if rd == 0 { 0 } else { 1 });
+        assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 0x1234);
+        assert_eq!(
+            spy.data_request_count(),
+            0,
+            "the no-reservation SC issued data I/O"
+        );
+        assert_eq!(
+            spy.atomic_count(),
+            0,
+            "the no-reservation SC issued an envelope"
+        );
+        assert_eq!(
+            spy.data_write_count(),
+            0,
+            "the no-reservation SC wrote data"
+        );
+    }
 }
 
 /// A port-route SC whose issued address fails conversion — a guest address
