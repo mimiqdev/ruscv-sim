@@ -65,6 +65,7 @@ Test language follows the layer rather than the simulator implementation languag
 - [A7 public-facade physical-loop observation](a7-physical-loop-observation.json) — pre-migration/current public `load_and_run` measurements with guest-result and retirement checks
 - [A7 cumulative T5 review checklist](a7-t5-cumulative-review-checklist.md) — source/test dependencies and independent-review boundary for the final PR head
 - [A8 T4 public atomic bridge exit and equivalence](a8-public-atomic.md) — standard-facade route audit, cross-facade atomic guests, P2a visibility, D-c boundaries, and no-closeout evidence
+- [A8 T5 exact-head evidence and acceptance audit](a8-t5-evidence.md) — cumulative T0–T4 source/test audit, final exact-head checks, separate project-guest/ACT4 identities, residual debt, and bounded conclusion
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)
 
