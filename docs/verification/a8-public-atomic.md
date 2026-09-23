@@ -83,9 +83,44 @@ dword; and an AMO that writes the tohost exit signal. Historical guest-set
 identities are not merged or redefined here, and this T4 record does not state
 a new suite total.
 
-A missing RISC-V cross-toolchain follows the existing skip policy (status 77);
-that outcome is unavailable evidence, not a guest pass. CI continues to treat
-a missing toolchain as a failure when `RISCV_REQUIRE_RISCV_TOOLCHAIN=1`.
+**Observed fresh build/run:** source revision
+`de56ffbb9c73c43577c16b611205442cb9ce90fd` was mounted from this task
+worktree into the local development image
+`ghcr.io/mimiqdev/ruscv-sim-dev:main`
+(`sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c`).
+The image reported GNU assembler and linker 2.40. Cargo used
+`target/container-cargo`; fresh guest artifacts used
+`target/container-riscv-elves`; `RISCV_SOURCE_HEAD` was passed from the host
+because the mounted worktree's `.git` indirection is not container-resolvable.
+The invocation was:
+
+```bash
+head=$(git rev-parse HEAD)
+docker run --rm --init --env RISCV_SOURCE_HEAD="$head" \
+  --volume "$PWD:/workspace" --workdir /workspace \
+  ghcr.io/mimiqdev/ruscv-sim-dev:main bash -c \
+  'export CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/container-cargo RISCV_TEST_OUTDIR=target/container-riscv-elves RISCV_SOURCE_HEAD="${RISCV_SOURCE_HEAD}" RISCV_REQUIRE_RISCV_TOOLCHAIN=1; ./scripts/run_elf_tests.sh'
+```
+
+`run_elf_tests.sh` freshly assembled/linked the source suite and completed
+public CLI execution successfully, including all seven added A8 atomic guests:
+
+| Guest | CLI cycles | Result |
+| --- | ---: | --- |
+| `rv64a/amo_d.S` | 28 | exit 0 |
+| `rv64a/amo_w.S` | 29 | exit 0 |
+| `rv64a/aq_rl_set.S` | 23 | exit 0 |
+| `rv64a/atomic_near_ram_end.S` | 8 | exit 0 |
+| `rv64a/atomic_tohost_exit.S` | 4 | exit 0 |
+| `rv64a/lrsc_loop.S` | 16 | exit 0 |
+| `rv64a/sc_after_store_failure.S` | 20 | exit 0 |
+
+The historical RV64I/RV64M cases remained ahead of the RV64A additions and
+also passed in that invocation. This is a T4 run record, not an A8 closeout or
+an aggregate-suite-total claim; the updated total belongs to T5. A missing
+RISC-V cross-toolchain follows the existing skip policy (status 77) and is
+unavailable evidence, not a guest pass. CI continues to treat a missing
+toolchain as a failure when `RISCV_REQUIRE_RISCV_TOOLCHAIN=1`.
 
 ## Explicit boundaries
 
