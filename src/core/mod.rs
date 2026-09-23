@@ -613,7 +613,12 @@ impl MemoryInterface for PhysicalMemoryAdapter<'_> {
 }
 
 impl RiscvCore {
-    /// Create new core instance
+    /// Create a core over legacy typed `MemoryInterface` handles.
+    ///
+    /// AMO/LR/SC use the typed read/write compatibility route here, which is a
+    /// labeled non-conforming adapter: it cannot provide indivisible physical
+    /// envelopes or committed-write visibility. Standard facades install
+    /// validated physical ports instead.
     pub fn new(
         instruction_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
         data_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
@@ -941,10 +946,10 @@ impl RiscvCore {
                         .execute_with_csr_access(&decoded, &mut staged, &mut physical_view)
                 }
                 _ => {
-                    // Legacy typed view: hold the outer data-memory lock for the
-                    // complete Executor/helper call.  In particular, AMO/LR/SC
-                    // must not drop this guard between their read and write or
-                    // reacquire the same mutex through a raw adapter.
+                    // Legacy typed view for cores created without physical
+                    // ports: hold the outer data-memory lock for the complete
+                    // Executor/helper call. This is the labeled non-conforming
+                    // compatibility adapter, not a standard-facade route.
                     let mut mem = match self.data_mem.lock() {
                         Ok(mem) => mem,
                         Err(_) => {
@@ -1215,9 +1220,11 @@ impl RiscvCore {
         PhysicalAtomicAdapter::new(port, self.base_addr, self.physical_storage_alignment)
     }
 
-    /// Only ordinary integer/FP memory operations use the raw physical port.
-    /// AMO/LR/SC and all non-memory instructions stay on the explicit legacy
-    /// typed view so their existing helper and reservation behavior is exact.
+    /// Ordinary integer/FP memory operations use the raw physical port.
+    /// AMO/LR/SC use the atomic envelope route above whenever a physical data
+    /// port is installed; the typed branch below is only for the explicitly
+    /// non-conforming `RiscvCore::new` compatibility adapter. Other
+    /// non-memory instructions stay on their existing execution path.
     fn uses_non_atomic_access(instruction: &DecodedInstruction) -> bool {
         matches!(
             instruction.opcode,
