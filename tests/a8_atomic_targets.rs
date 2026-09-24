@@ -110,6 +110,24 @@ fn assert_atomic_target(
     );
 }
 
+fn assert_sc_rejected_as_unmapped(
+    port: &mut impl AtomicAccess,
+    paddr: u64,
+    width: PhysicalWidth,
+    reservation: Option<AtomicReservationContext>,
+) {
+    let payload = [0xa5; 8];
+    let request = AtomicRequest::store_conditional(
+        paddr,
+        width,
+        ORDERING,
+        &payload[..width.bytes()],
+        reservation,
+    )
+    .unwrap();
+    assert_atomic_target(port, request, PhysicalTargetRejectionReason::Unmapped);
+}
+
 /// Runs one LR through the port and returns its old bytes plus the
 /// reservation context a Hart would carry into a later SC.
 fn lr(
@@ -171,6 +189,55 @@ fn rmw(
 
 fn snapshot(bytes: &[u8]) -> CommittedWriteSnapshot {
     CommittedWriteSnapshot::from_bytes(bytes).expect("snapshot fits the inline representation")
+}
+
+#[test]
+fn mismatched_ram_window_rejects_absent_and_disjoint_sc_wd() {
+    const BASE: u64 = 0x9000;
+    const ACTUAL_SIZE: usize = 0x100;
+    const DECLARED_SIZE: usize = 0x200;
+    const INVALID: u64 = BASE + 0x180;
+
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(ACTUAL_SIZE)));
+    ram.lock().unwrap().write_dword(0xf8, 0x1122).unwrap();
+    let mut ram_port =
+        ValidatedAtomicAccess::new(NativeRamBackend::new(ram.clone(), BASE, DECLARED_SIZE));
+
+    for width in [PhysicalWidth::Word, PhysicalWidth::Doubleword] {
+        let (_, context) = lr(&mut ram_port, BASE + 0x80, width);
+        assert_sc_rejected_as_unmapped(&mut ram_port, INVALID, width, None);
+        assert_sc_rejected_as_unmapped(&mut ram_port, INVALID, width, Some(context));
+        let (_, after) = lr(&mut ram_port, BASE + 0x80, width);
+        assert_eq!(after.snapshot, context.snapshot);
+    }
+    assert_eq!(ram.lock().unwrap().read_dword(0xf8).unwrap(), 0x1122);
+
+    // The SystemBus map also trusts its declared window until the backing RAM
+    // is checked. SC must reject the actual short backing store before absent
+    // or disjoint reservation can become conditional Failure.
+    let system_ram = Arc::new(Mutex::new(SimpleMemory::new(ACTUAL_SIZE)));
+    system_ram
+        .lock()
+        .unwrap()
+        .write_dword(0xf8, 0x3344)
+        .unwrap();
+    let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
+    let bus = Arc::new(Mutex::new(SystemBus::new(
+        system_ram.clone(),
+        uart,
+        BASE,
+        DECLARED_SIZE,
+    )));
+    let mut bus_port = ValidatedAtomicAccess::new(NativeSystemBusBackend::new(bus.clone()));
+    for width in [PhysicalWidth::Word, PhysicalWidth::Doubleword] {
+        let (_, context) = lr(&mut bus_port, BASE + 0x80, width);
+        assert_sc_rejected_as_unmapped(&mut bus_port, INVALID, width, None);
+        assert_sc_rejected_as_unmapped(&mut bus_port, INVALID, width, Some(context));
+        let (_, after) = lr(&mut bus_port, BASE + 0x80, width);
+        assert_eq!(after.snapshot, context.snapshot);
+    }
+    assert_eq!(system_ram.lock().unwrap().read_dword(0xf8).unwrap(), 0x3344);
+    assert_eq!(bus.lock().unwrap().htif_committed_write_version(), 0);
 }
 
 // ---------------------------------------------------------------------------

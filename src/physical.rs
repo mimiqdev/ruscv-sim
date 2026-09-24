@@ -28,7 +28,7 @@
 //! so the boundary itself does not add a heap allocation to an ordinary step.
 //! Error context is owned only on failure paths.
 
-use crate::memory::{MemoryError, SimpleMemory};
+use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -1042,6 +1042,25 @@ pub(crate) fn native_ram_atomic_transact(
     let mut ram = memory
         .lock()
         .map_err(|_| PhysicalBackendError::host("RAM lock poisoned"))?;
+    // The native map's declared window and its public backing store can be
+    // configured with different sizes. Validate the actual storage span under
+    // the lock before even an unreserved/uncovered SC may report Failure.
+    let actual_ram_size = ram.size();
+    if !crate::memory::contains_range(
+        ram_base,
+        actual_ram_size,
+        descriptor.paddr,
+        descriptor.width.bytes(),
+    ) {
+        return Err(PhysicalBackendError::target(
+            PhysicalTargetRejectionReason::Unmapped,
+            format!(
+                "backing RAM does not contain the complete atomic span at {:#018x} ({} bytes)",
+                descriptor.paddr,
+                descriptor.width.bytes()
+            ),
+        ));
+    }
     let offset = descriptor.paddr - ram_base;
     let width = descriptor.width.bytes();
     match descriptor.kind {

@@ -60,17 +60,19 @@ Hart reservation. Native UART/HTIF availability, flat address offsets, and the
 existing artifact-error policy remain documented configuration differences.
 
 The native public facade dynamically exercises LR rejection at HTIF without a
-platform exit and AMO-to-HTIF callback/exit ordering. D-c's valid-reservation
+platform exit and AMO-to-HTIF callback/exit ordering. D-c's covered-reservation
 SC rejection and exact callback counts are additionally exercised against the
 same native `SystemBus` data-port composition with a seeded reservation in the
-core seam. A standard guest cannot create that reservation: LR at the D-c
-endpoint is rejected, and `load_and_run` exposes no initial-Hart-state or
-backend-injection API. Therefore the valid-reservation SC case is not literally
-injectable through the public runner; the direct-core case is explicit and is
-not represented as a public-runner execution. `tests/a8_atomic_targets.rs`
-provides the independent target policy and exactly-once callback proof. This
-boundary must remain visible rather than being papered over by a new production
-injection API.
+core seam. A standard guest cannot create a reservation covering HTIF because
+LR at that endpoint is rejected; therefore the covered-HTIF SC case is not
+literally injectable through the public runner and remains explicitly labeled
+as a direct-core test. In the follow-up SC correction, public ELF guests now
+also execute LR.W/D on RAM then SC.W/D at HTIF with a live uncovered
+reservation. Their trap handlers assert cause, original `mtval`, unchanged
+`rd`, untouched RAM, retained reservation via a successful retry, and no
+premature tohost exit. `tests/a8_atomic_targets.rs` provides independent target
+policy and exactly-once callback proof. This boundary remains explicit without
+adding a production injection API.
 
 **Follow-up SC correction:** the previous T4 observation that no-reservation
 SC was a Hart-side rejection is superseded by the maintainer-authorized

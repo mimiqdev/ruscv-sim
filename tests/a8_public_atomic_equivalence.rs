@@ -155,7 +155,13 @@ fn public_sc_target_fault_guest(width: AccessWidth, target: u64, live_uncovered:
     if target & 0xfff != 0 {
         code.push(fixture::addi(13, 13, (target & 0xfff) as i32));
     }
-    append_sc_payload(&mut code);
+    if target == HTIF_TOHOST {
+        // If a rejected HTIF SC accidentally reaches the tohost callback, this
+        // is a valid exit signal (code 1) and proves the handler was skipped.
+        code.push(fixture::addi(2, 0, 3));
+    } else {
+        append_sc_payload(&mut code);
+    }
 
     if live_uncovered {
         code.push(fixture::addi(1, 8, 0));
@@ -854,12 +860,14 @@ fn flat_public_facade_disjoint_sc_failure_is_wd_and_consumes_reservation() {
 }
 
 #[test]
-fn native_public_facade_sc_fault_matrix_checks_mtval_rd_ram_uart_and_exit() {
+fn native_public_facade_sc_fault_matrix_checks_mtval_rd_ram_uart_htif_and_exit() {
     let cases = [
         (AccessWidth::Word, NATIVE_UART + 4),
         (AccessWidth::Doubleword, NATIVE_UART),
         (AccessWidth::Word, NATIVE_UNMAPPED),
         (AccessWidth::Doubleword, NATIVE_UNMAPPED),
+        (AccessWidth::Word, HTIF_TOHOST),
+        (AccessWidth::Doubleword, HTIF_TOHOST),
     ];
 
     for (width, target) in cases {
@@ -883,9 +891,14 @@ fn native_public_facade_sc_fault_matrix_checks_mtval_rd_ram_uart_and_exit() {
                 Some(fixture::BASE + TARGET_OFFSET as u64)
             );
             let expected_ram: u64 = if live_uncovered {
+                let retry_payload = if target == HTIF_TOHOST {
+                    3
+                } else {
+                    ORIGINAL_TARGET
+                };
                 match width {
-                    AccessWidth::Word => 0x5566_7788,
-                    AccessWidth::Doubleword => 0x1122_3344_5566_7788,
+                    AccessWidth::Word => retry_payload as u32 as u64,
+                    AccessWidth::Doubleword => retry_payload,
                     _ => unreachable!(),
                 }
             } else {
@@ -1019,10 +1032,12 @@ fn native_core_with_program(
 
 #[test]
 fn native_htif_valid_sc_faults_without_callback_and_amo_calls_callback_once() {
-    // D-c rejects LR and a valid-reservation SC as access faults without
-    // invoking the callback. This core seam uses the same SystemBus/backend
-    // composition as load_and_run; a public guest cannot manufacture the SC
-    // reservation because LR at the D-c endpoint is itself rejected.
+    // D-c rejects LR and a seeded reservation covering HTIF as access faults
+    // without invoking the callback. This core seam uses the same
+    // SystemBus/backend composition as load_and_run. A public guest cannot
+    // create a reservation covering HTIF because LR there is rejected; the
+    // public native guest matrix separately tests LR-on-RAM then uncovered
+    // SC-on-HTIF for both W and D.
     let (mut lr_core, _bus, lr_callbacks) = native_core_at_htif(lr_d(3, 1, false, false));
     assert!(matches!(
         lr_core.step_outcome(),

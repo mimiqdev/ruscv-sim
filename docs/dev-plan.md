@@ -938,10 +938,19 @@ values):
   base (dword callback today), or any dispatched AMO at HTIF (store/AMO
   access fault today)** — the existing HTIF
   fixtures cover only the buggy `LR.W` dword read and `SC.W`@base+4. Their
-  old→new transitions (C10, C11, C4, C21) are therefore covered only by the
-  new T0 baseline rows and the T3 exhaustive decode-matrix/width tests, and
-  the T0 ledger records that no existing expectation changes for them
-  beyond those rows.
+  original Hart/decode old→new transitions (C10, C11, C4, C21) are captured by
+  the T0 baseline rows and T3 exhaustive decode-matrix/width tests. C21's
+  standard-route target rejection and side effects are also exercised by the
+  T4 facade suite; the covered-HTIF reservation remains a seeded direct-core
+  case because no public guest can reserve the D-c endpoint.
+* **SC-follow-up public HTIF coverage (C13/C21/T4):**
+  `tests/a8_public_atomic_equivalence.rs::native_public_facade_sc_fault_matrix_checks_mtval_rd_ram_uart_htif_and_exit`
+  runs public LR.W/D-on-RAM → live-uncovered SC.W/D-on-HTIF guests, plus the
+  no-reservation HTIF cases. Trap handlers check cause, original `mtval`,
+  untouched `rd`, unchanged RAM, and (for live reservations) successful retry;
+  the SC payload is an exit marker so a premature HTIF callback cannot be
+  mistaken for a successful trap path. This supplements, but does not rewrite,
+  the historical A7 transcripts.
 * **Historical evidence untouched:** the recorded A7 transcripts, closeout,
   and verification records stay as-is; reclassification happens in new/edited
   test files at the A8 implementation head with the ledger citing them.
