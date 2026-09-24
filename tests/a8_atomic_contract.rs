@@ -13,7 +13,7 @@
 //! 1. Atomic envelope widths are 4/8 only; byte/halfword envelopes are
 //!    malformed request input, never target refusals.
 //! 2. Payload rules: RMW operand bytes and transform, SC write payload and
-//!    reservation context (span + snapshot), LR carries nothing extra.
+//!    optional reservation context (span + snapshot), LR carries nothing extra.
 //! 3. Every AMO operation (all nine) applies through the one Hart-owned
 //!    arithmetic module at both widths; the envelope carries the transform
 //!    opaquely and the vocabulary adds no arithmetic of its own.
@@ -364,10 +364,18 @@ fn envelope_payload_rules_fail_before_backend_dispatch() {
             actual: 3,
         })
     ));
-    // A store-conditional always requires a reservation context by
-    // signature: the type system leaves no way to omit it.
+    // No reservation context is a well-formed SC envelope: the target must
+    // validate the request before returning conditional failure.
+    assert!(AtomicRequest::store_conditional(
+        0x3000,
+        AccessWidth::Word,
+        AtomicOrdering::default(),
+        &[1, 2, 3, 4],
+        None,
+    )
+    .is_ok());
 
-    // The echoed snapshot must describe at least one covered block.
+    // A supplied reservation context still needs a non-empty snapshot.
     assert!(matches!(
         AtomicRequest::store_conditional(
             0x3000,
@@ -413,9 +421,9 @@ fn envelope_payload_rules_fail_before_backend_dispatch() {
         Err(AtomicProtocolError::ReservationSpanOverflow { .. })
     ));
 
-    // Span containment: the SC span must be contained in the reserved span.
-    // Equal and interior spans are valid (the C30 shapes at vocabulary
-    // level); extending past either end is not.
+    // Hart coverage is not a constructor-level protocol failure: the target
+    // must receive an uncovered SC envelope and report conditional failure
+    // only after validating the requested physical target.
     let reserved_word = word_context_at(0x4000, &[9]);
     assert!(
         AtomicRequest::store_conditional(
@@ -453,16 +461,10 @@ fn envelope_payload_rules_fail_before_backend_dispatch() {
     ];
     for (paddr, width, payload) in cases {
         let context = word_context_at(0x4000, &[9]);
-        assert!(matches!(
-            AtomicRequest::store_conditional(paddr, width, AQ_RL, payload, context,),
-            Err(AtomicProtocolError::ReservationSpanMismatch {
-                reserved,
-                requested,
-            }) if reserved.width == AccessWidth::Word
-                && reserved.paddr == 0x4000
-                && requested.paddr == paddr
-                && requested.width == width,
-        ));
+        let request = AtomicRequest::store_conditional(paddr, width, AQ_RL, payload, context)
+            .expect("an uncovered reservation is still a well-formed SC envelope");
+        assert_eq!(request.kind(), AtomicAccessKind::StoreConditional);
+        assert_eq!(request.reservation(), Some(context));
     }
 
     // Every rejection above happened at the constructors; the spy stayed
@@ -773,6 +775,66 @@ fn store_conditional_failure_is_a_successful_envelope_not_an_error() {
     assert_eq!(response.old_bytes(), None);
     assert_eq!(response.snapshot(), None);
     assert_eq!(port.backend().calls.len(), 1);
+}
+
+#[test]
+fn unreserved_sc_accepts_only_conditional_failure() {
+    let sc = AtomicRequest::store_conditional(
+        0x6200,
+        AccessWidth::Doubleword,
+        AtomicOrdering::default(),
+        &[0xde; 8],
+        None,
+    )
+    .unwrap();
+    let mut backend = AtomicSpyBackend::default();
+    backend.push(Ok(AtomicResponse::store_conditional_for(
+        &sc,
+        ConditionalStatus::Failure,
+    )));
+    backend.push(Ok(AtomicResponse::store_conditional_for(
+        &sc,
+        ConditionalStatus::Success,
+    )));
+    let mut port = ValidatedAtomicAccess::new(backend);
+
+    assert_eq!(
+        port.access_atomic(sc).unwrap().conditional_status(),
+        Some(ConditionalStatus::Failure)
+    );
+    assert!(matches!(
+        port.access_atomic(sc),
+        Err(AtomicAccessError::Protocol(
+            AtomicProtocolError::ConditionalSuccessWithoutReservation
+        ))
+    ));
+    assert_eq!(port.backend().calls.len(), 2);
+}
+
+#[test]
+fn sc_success_is_rejected_when_context_does_not_cover_the_request() {
+    let context = word_context_at(0x6200, &[0x42]);
+    let sc = AtomicRequest::store_conditional(
+        0x6204,
+        AccessWidth::Word,
+        AtomicOrdering::default(),
+        &[0xaa; 4],
+        context,
+    )
+    .unwrap();
+    let mut backend = AtomicSpyBackend::default();
+    backend.push(Ok(AtomicResponse::store_conditional_for(
+        &sc,
+        ConditionalStatus::Success,
+    )));
+    let mut port = ValidatedAtomicAccess::new(backend);
+
+    assert!(matches!(
+        port.access_atomic(sc),
+        Err(AtomicAccessError::Protocol(
+            AtomicProtocolError::ConditionalSuccessOutsideReservation { .. }
+        ))
+    ));
 }
 
 // ---------------------------------------------------------------------------

@@ -110,6 +110,24 @@ fn assert_atomic_target(
     );
 }
 
+fn assert_sc_rejected_as_unmapped(
+    port: &mut impl AtomicAccess,
+    paddr: u64,
+    width: PhysicalWidth,
+    reservation: Option<AtomicReservationContext>,
+) {
+    let payload = [0xa5; 8];
+    let request = AtomicRequest::store_conditional(
+        paddr,
+        width,
+        ORDERING,
+        &payload[..width.bytes()],
+        reservation,
+    )
+    .unwrap();
+    assert_atomic_target(port, request, PhysicalTargetRejectionReason::Unmapped);
+}
+
 /// Runs one LR through the port and returns its old bytes plus the
 /// reservation context a Hart would carry into a later SC.
 fn lr(
@@ -171,6 +189,55 @@ fn rmw(
 
 fn snapshot(bytes: &[u8]) -> CommittedWriteSnapshot {
     CommittedWriteSnapshot::from_bytes(bytes).expect("snapshot fits the inline representation")
+}
+
+#[test]
+fn mismatched_ram_window_rejects_absent_and_disjoint_sc_wd() {
+    const BASE: u64 = 0x9000;
+    const ACTUAL_SIZE: usize = 0x100;
+    const DECLARED_SIZE: usize = 0x200;
+    const INVALID: u64 = BASE + 0x180;
+
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(ACTUAL_SIZE)));
+    ram.lock().unwrap().write_dword(0xf8, 0x1122).unwrap();
+    let mut ram_port =
+        ValidatedAtomicAccess::new(NativeRamBackend::new(ram.clone(), BASE, DECLARED_SIZE));
+
+    for width in [PhysicalWidth::Word, PhysicalWidth::Doubleword] {
+        let (_, context) = lr(&mut ram_port, BASE + 0x80, width);
+        assert_sc_rejected_as_unmapped(&mut ram_port, INVALID, width, None);
+        assert_sc_rejected_as_unmapped(&mut ram_port, INVALID, width, Some(context));
+        let (_, after) = lr(&mut ram_port, BASE + 0x80, width);
+        assert_eq!(after.snapshot, context.snapshot);
+    }
+    assert_eq!(ram.lock().unwrap().read_dword(0xf8).unwrap(), 0x1122);
+
+    // The SystemBus map also trusts its declared window until the backing RAM
+    // is checked. SC must reject the actual short backing store before absent
+    // or disjoint reservation can become conditional Failure.
+    let system_ram = Arc::new(Mutex::new(SimpleMemory::new(ACTUAL_SIZE)));
+    system_ram
+        .lock()
+        .unwrap()
+        .write_dword(0xf8, 0x3344)
+        .unwrap();
+    let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
+    let bus = Arc::new(Mutex::new(SystemBus::new(
+        system_ram.clone(),
+        uart,
+        BASE,
+        DECLARED_SIZE,
+    )));
+    let mut bus_port = ValidatedAtomicAccess::new(NativeSystemBusBackend::new(bus.clone()));
+    for width in [PhysicalWidth::Word, PhysicalWidth::Doubleword] {
+        let (_, context) = lr(&mut bus_port, BASE + 0x80, width);
+        assert_sc_rejected_as_unmapped(&mut bus_port, INVALID, width, None);
+        assert_sc_rejected_as_unmapped(&mut bus_port, INVALID, width, Some(context));
+        let (_, after) = lr(&mut bus_port, BASE + 0x80, width);
+        assert_eq!(after.snapshot, context.snapshot);
+    }
+    assert_eq!(system_ram.lock().unwrap().read_dword(0xf8).unwrap(), 0x3344);
+    assert_eq!(bus.lock().unwrap().htif_committed_write_version(), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +322,137 @@ fn ram_load_reserved_and_store_conditional_roundtrip() {
         memory.lock().unwrap().read_dword(0x10).unwrap(),
         u64::from_le_bytes(payload)
     );
+}
+
+#[test]
+fn ram_sc_without_or_outside_reservation_fails_without_any_write_or_bookkeeping() {
+    const P: u64 = 0x9010;
+    const Q: u64 = 0x9020;
+    let (memory, mut port) = ram_atomic_port(0x9000, 0x80);
+    memory
+        .lock()
+        .unwrap()
+        .write_dword(P - 0x9000, 0x1122)
+        .unwrap();
+    memory
+        .lock()
+        .unwrap()
+        .write_dword(Q - 0x9000, 0x3344)
+        .unwrap();
+
+    let (_, context) = lr(&mut port, P, AccessWidth::Doubleword);
+    let no_context_payload = 0xa5a5_a5a5_a5a5_a5a5u64.to_le_bytes();
+    let no_context = AtomicRequest::store_conditional(
+        P,
+        AccessWidth::Doubleword,
+        ORDERING,
+        &no_context_payload,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        port.access_atomic(no_context).unwrap().conditional_status(),
+        Some(ConditionalStatus::Failure)
+    );
+    assert_eq!(
+        memory.lock().unwrap().read_dword(P - 0x9000).unwrap(),
+        0x1122
+    );
+
+    let uncovered_payload = 0xdead_beefu64.to_le_bytes();
+    let uncovered = AtomicRequest::store_conditional(
+        Q,
+        AccessWidth::Doubleword,
+        ORDERING,
+        &uncovered_payload,
+        context,
+    )
+    .unwrap();
+    assert_eq!(
+        port.access_atomic(uncovered).unwrap().conditional_status(),
+        Some(ConditionalStatus::Failure)
+    );
+    assert_eq!(
+        memory.lock().unwrap().read_dword(Q - 0x9000).unwrap(),
+        0x3344
+    );
+
+    // Neither conditional failure committed bytes or bumped bookkeeping: the
+    // original covered context remains eligible to commit on the valid span.
+    let covered_payload = 0x5566u64.to_le_bytes();
+    let covered = AtomicRequest::store_conditional(
+        P,
+        AccessWidth::Doubleword,
+        ORDERING,
+        &covered_payload,
+        context,
+    )
+    .unwrap();
+    assert_eq!(
+        port.access_atomic(covered).unwrap().conditional_status(),
+        Some(ConditionalStatus::Success)
+    );
+    assert_eq!(
+        memory.lock().unwrap().read_dword(P - 0x9000).unwrap(),
+        0x5566
+    );
+}
+
+#[test]
+fn system_bus_ram_sc_checks_valid_target_before_absent_or_uncovered_failure() {
+    const P: u64 = 0x9010;
+    const Q: u64 = 0x9020;
+    let (ram, _uart, bus, mut port) = bus_atomic_port(0x9000, 0x80);
+    ram.lock().unwrap().write_dword(P - 0x9000, 0x1122).unwrap();
+    ram.lock().unwrap().write_dword(Q - 0x9000, 0x3344).unwrap();
+    let (_, context) = lr(&mut port, P, AccessWidth::Doubleword);
+
+    let no_context_payload = 0xa5a5_a5a5_a5a5_a5a5u64.to_le_bytes();
+    let no_context = AtomicRequest::store_conditional(
+        P,
+        AccessWidth::Doubleword,
+        ORDERING,
+        &no_context_payload,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        port.access_atomic(no_context).unwrap().conditional_status(),
+        Some(ConditionalStatus::Failure)
+    );
+
+    let uncovered_payload = 0xdead_beefu64.to_le_bytes();
+    let uncovered = AtomicRequest::store_conditional(
+        Q,
+        AccessWidth::Doubleword,
+        ORDERING,
+        &uncovered_payload,
+        context,
+    )
+    .unwrap();
+    assert_eq!(
+        port.access_atomic(uncovered).unwrap().conditional_status(),
+        Some(ConditionalStatus::Failure)
+    );
+    assert_eq!(ram.lock().unwrap().read_dword(P - 0x9000).unwrap(), 0x1122);
+    assert_eq!(ram.lock().unwrap().read_dword(Q - 0x9000).unwrap(), 0x3344);
+
+    let covered_payload = 0x5566u64.to_le_bytes();
+    let covered = AtomicRequest::store_conditional(
+        P,
+        AccessWidth::Doubleword,
+        ORDERING,
+        &covered_payload,
+        context,
+    )
+    .unwrap();
+    assert_eq!(
+        port.access_atomic(covered).unwrap().conditional_status(),
+        Some(ConditionalStatus::Success),
+        "conditional failures did not mutate bookkeeping"
+    );
+    assert_eq!(ram.lock().unwrap().read_dword(P - 0x9000).unwrap(), 0x5566);
+    assert_eq!(bus.lock().unwrap().htif_committed_write_version(), 0);
 }
 
 #[test]
@@ -425,7 +623,20 @@ fn rejected_atomic_requests_leave_ram_uart_htif_and_the_exit_latch_unchanged() {
     let iir_before = uart.lock().unwrap().interrupt_id();
     let version_before = bus.lock().unwrap().htif_committed_write_version();
 
-    // RAM-side rejections: out-of-domain span.
+    // RAM-side rejections: out-of-domain SC must reject before its absent
+    // reservation could become conditional failure.
+    assert_atomic_target(
+        &mut port,
+        AtomicRequest::store_conditional(
+            0x9000,
+            AccessWidth::Doubleword,
+            ORDERING,
+            &[0xaa; 8],
+            None,
+        )
+        .unwrap(),
+        PhysicalTargetRejectionReason::Unmapped,
+    );
     assert_atomic_target(
         &mut port,
         AtomicRequest::load_reserved(0x9000, AccessWidth::Doubleword, ORDERING).unwrap(),
@@ -450,7 +661,20 @@ fn rejected_atomic_requests_leave_ram_uart_htif_and_the_exit_latch_unchanged() {
         .unwrap(),
         PhysicalTargetRejectionReason::UnsupportedWidth,
     );
-    // HTIF rejections: LR/SC on category, wrong-width AMO on width.
+    // HTIF rejections: no-context SC and LR on category, wrong-width AMO on
+    // width. Reservation absence cannot bypass D-c capability validation.
+    assert_atomic_target(
+        &mut port,
+        AtomicRequest::store_conditional(
+            SYSTEM_BUS_HTIF_BASE,
+            AccessWidth::Doubleword,
+            ORDERING,
+            &[0xbb; 8],
+            None,
+        )
+        .unwrap(),
+        PhysicalTargetRejectionReason::UnsupportedCategory,
+    );
     assert_atomic_target(
         &mut port,
         AtomicRequest::load_reserved(SYSTEM_BUS_HTIF_BASE, AccessWidth::Doubleword, ORDERING)
@@ -469,7 +693,13 @@ fn rejected_atomic_requests_leave_ram_uart_htif_and_the_exit_latch_unchanged() {
         .unwrap(),
         PhysicalTargetRejectionReason::UnsupportedWidth,
     );
-    // A completely unmapped envelope.
+    // A completely unmapped target rejects no-context SC too.
+    assert_atomic_target(
+        &mut port,
+        AtomicRequest::store_conditional(0x6000, AccessWidth::Word, ORDERING, &[0xcc; 4], None)
+            .unwrap(),
+        PhysicalTargetRejectionReason::Unmapped,
+    );
     assert_atomic_target(
         &mut port,
         AtomicRequest::load_reserved(0x6000, AccessWidth::Word, ORDERING).unwrap(),
@@ -550,6 +780,14 @@ fn uart_rejects_every_atomic_kind_on_width_before_any_effect() {
             fake_context,
         )
         .unwrap(),
+        AtomicRequest::store_conditional(
+            SYSTEM_BUS_UART_BASE,
+            AccessWidth::Word,
+            ORDERING,
+            &[0x44; 4],
+            None,
+        )
+        .unwrap(),
         AtomicRequest::rmw(
             SYSTEM_BUS_UART_BASE,
             AccessWidth::Doubleword,
@@ -623,6 +861,18 @@ fn htif_d_c_rejects_lr_and_sc_without_callback_and_allows_one_amo_envelope() {
             ORDERING,
             &0x1122_3344_5566_7788u64.to_le_bytes(),
             sc_context,
+        )
+        .unwrap(),
+        PhysicalTargetRejectionReason::UnsupportedCategory,
+    );
+    assert_atomic_target(
+        &mut port,
+        AtomicRequest::store_conditional(
+            SYSTEM_BUS_HTIF_BASE,
+            AccessWidth::Doubleword,
+            ORDERING,
+            &0x8877_6655_4433_2211u64.to_le_bytes(),
+            None,
         )
         .unwrap(),
         PhysicalTargetRejectionReason::UnsupportedCategory,
@@ -1404,24 +1654,27 @@ fn conditional_failure_and_malformed_contexts_commit_nothing() {
         "a malformed committed-write snapshot is a protocol failure, got {error:?}"
     );
 
-    // A reserved span that does not contain the request span is rejected by
-    // envelope validation before the backend is reached.
-    assert!(matches!(
-        AtomicRequest::store_conditional(
-            0x8020,
-            AccessWidth::Doubleword,
-            ORDERING,
-            &[0; 8],
-            AtomicReservationContext {
-                reserved: PhysicalSpan {
-                    paddr: 0x8018,
-                    width: AccessWidth::Doubleword,
-                },
-                snapshot: snapshot(&[0; 64]),
+    // An uncovered context is a valid SC request. The RAM target validates
+    // the requested span, then reports conditional failure without a write.
+    let uncovered = AtomicRequest::store_conditional(
+        0x8020,
+        AccessWidth::Doubleword,
+        ORDERING,
+        &[0; 8],
+        AtomicReservationContext {
+            reserved: PhysicalSpan {
+                paddr: 0x8018,
+                width: AccessWidth::Doubleword,
             },
-        ),
-        Err(AtomicProtocolError::ReservationSpanMismatch { .. })
-    ));
+            snapshot: snapshot(&[0; 64]),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        port.access_atomic(uncovered).unwrap().conditional_status(),
+        Some(ConditionalStatus::Failure)
+    );
+    assert_eq!(memory.lock().unwrap().read_dword(0x20).unwrap(), 0);
 
     // A reservation context whose reserved span extends outside this RAM's
     // bookkeeping domain — while still containing the request span — is a

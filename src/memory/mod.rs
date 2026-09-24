@@ -459,12 +459,12 @@ impl SimpleMemory {
     /// commit nothing.
     ///
     /// Returns `Ok(true)` when the conditional write committed and
-    /// `Ok(false)` when the snapshot showed a committed write overlapping the
-    /// reserved span — conditional failure is a completed check, not an
-    /// error.  `reserved_offset`/`reserved_width` describe the Hart's
-    /// reserved span (which covers the write span); a snapshot that cannot
-    /// describe that span is a [`MemoryError::Protocol`] failure, never a
-    /// silent conditional outcome.
+    /// `Ok(false)` when the reserved span does not cover the write span or
+    /// the snapshot shows an overlapping committed write. Conditional failure
+    /// is a completed check, not an error. `reserved_offset`/`reserved_width`
+    /// describe the Hart's reserved span; a snapshot that cannot describe a
+    /// covered span is a [`MemoryError::Protocol`] failure, never a silent
+    /// conditional outcome.
     pub fn atomic_store_conditional(
         &mut self,
         offset: u64,
@@ -491,6 +491,15 @@ impl SimpleMemory {
             return Err(MemoryError::Protocol(
                 "reservation context describes a span outside this storage".into(),
             ));
+        }
+        let requested_end = offset
+            .checked_add(width as u64)
+            .ok_or(MemoryError::InvalidAddress(offset))?;
+        let reserved_end = reserved_offset
+            .checked_add(reserved_width as u64)
+            .ok_or_else(|| MemoryError::Protocol("reservation span wraps address space".into()))?;
+        if offset < reserved_offset || requested_end > reserved_end {
+            return Ok(false);
         }
         let index = usize::try_from(offset).map_err(|_| MemoryError::InvalidAddress(offset))?;
         let end = index

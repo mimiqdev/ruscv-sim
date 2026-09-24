@@ -27,7 +27,7 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 `RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
 评估约束。
 
-当前合同是已批准的 A8 单 Hart 原子收敛里程碑；T4 正在验证标准 facade 的原子桥接退出，不能据此声称整个里程碑已完成。后续方向见
+当前合同是已批准的 A8 单 Hart 原子收敛里程碑；T4 和 T5 PR 均已合并，A8 正式收尾仍待 review/remediation 与最终证据。后续方向见
 [post-A7 short-term technical development roadmap proposal](docs/proposals/post-a7-roadmap.md)，该文档只是 Draft
 阶段性技术实施规划，不是整体产品路线图，也不替换 `docs/dev-plan.md`。
 

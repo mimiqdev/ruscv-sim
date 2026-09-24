@@ -12,8 +12,8 @@
 //! The atomic envelope is a separate request/response family, structurally
 //! distinct from [`PhysicalRequest`]/[`PhysicalResponse`]: a fetch, read, or
 //! write pair can never represent an AMO or store-conditional, because the
-//! Hart-supplied pure transform, the operand bytes, the reservation context,
-//! the old-value result, and the conditional status exist only on
+//! Hart-supplied pure transform, the operand bytes, the optional reservation
+//! context, the old-value result, and the conditional status exist only on
 //! [`AtomicRequest`]/[`AtomicResponse`].  The transform is produced only by
 //! the single Hart-owned AMO arithmetic module ([`crate::hart_amods`]); the
 //! physical domain applies it opaquely and implements no ISA semantics.
@@ -28,7 +28,7 @@
 //! so the boundary itself does not add a heap allocation to an ordinary step.
 //! Error context is owned only on failure paths.
 
-use crate::memory::{MemoryError, SimpleMemory};
+use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -1042,6 +1042,25 @@ pub(crate) fn native_ram_atomic_transact(
     let mut ram = memory
         .lock()
         .map_err(|_| PhysicalBackendError::host("RAM lock poisoned"))?;
+    // The native map's declared window and its public backing store can be
+    // configured with different sizes. Validate the actual storage span under
+    // the lock before even an unreserved/uncovered SC may report Failure.
+    let actual_ram_size = ram.size();
+    if !crate::memory::contains_range(
+        ram_base,
+        actual_ram_size,
+        descriptor.paddr,
+        descriptor.width.bytes(),
+    ) {
+        return Err(PhysicalBackendError::target(
+            PhysicalTargetRejectionReason::Unmapped,
+            format!(
+                "backing RAM does not contain the complete atomic span at {:#018x} ({} bytes)",
+                descriptor.paddr,
+                descriptor.width.bytes()
+            ),
+        ));
+    }
     let offset = descriptor.paddr - ram_base;
     let width = descriptor.width.bytes();
     match descriptor.kind {
@@ -1083,35 +1102,43 @@ pub(crate) fn native_ram_atomic_transact(
                     "validated store-conditional envelope was missing its payload",
                 )
             })?;
-            let context = request.reservation().ok_or_else(|| {
-                PhysicalBackendError::protocol(
-                    "validated store-conditional envelope was missing its reservation context",
-                )
-            })?;
-            // The reserved span must describe this RAM's bookkeeping domain;
-            // a context the Hart could not have obtained here is a protocol
-            // failure, never a silent conditional outcome.
-            if !crate::memory::contains_range(
-                ram_base,
-                ram_size,
-                context.reserved.paddr,
-                context.reserved.width.bytes(),
-            ) {
-                return Err(PhysicalBackendError::protocol(format!(
-                    "reservation context span {:?} is outside this RAM's bookkeeping domain",
-                    context.reserved
-                )));
-            }
-            let committed = ram
-                .atomic_store_conditional(
-                    offset,
-                    width,
-                    payload,
-                    context.reserved.paddr - ram_base,
-                    context.reserved.width.bytes(),
-                    context.snapshot.as_bytes(),
-                )
-                .map_err(map_native_memory_error)?;
+            let committed = if let Some(context) = request.reservation() {
+                let covered = context.reserved.paddr <= descriptor.paddr
+                    && descriptor
+                        .span()
+                        .checked_end_inclusive()
+                        .zip(context.reserved.checked_end_inclusive())
+                        .is_some_and(|(requested_end, reserved_end)| requested_end <= reserved_end);
+                if !covered {
+                    false
+                } else {
+                    // A covered reservation must describe this RAM's
+                    // bookkeeping domain. An uncovered one is already a
+                    // conditional failure and touches no guest bytes.
+                    if !crate::memory::contains_range(
+                        ram_base,
+                        ram_size,
+                        context.reserved.paddr,
+                        context.reserved.width.bytes(),
+                    ) {
+                        return Err(PhysicalBackendError::protocol(format!(
+                            "reservation context span {:?} is outside this RAM's bookkeeping domain",
+                            context.reserved
+                        )));
+                    }
+                    ram.atomic_store_conditional(
+                        offset,
+                        width,
+                        payload,
+                        context.reserved.paddr - ram_base,
+                        context.reserved.width.bytes(),
+                        context.snapshot.as_bytes(),
+                    )
+                    .map_err(map_native_memory_error)?
+                }
+            } else {
+                false
+            };
             Ok(AtomicResponse::store_conditional_for(
                 request,
                 if committed {
@@ -1587,11 +1614,11 @@ pub enum ConditionalStatus {
 /// The Hart reservation context carried by a store-conditional envelope
 /// (dev-plan §5.2 M1, §5.4).
 ///
-/// Span-coverage preconditions are Hart-side: a conforming Hart issues no
-/// physical request for a no-reservation or uncovered SC, so every envelope
-/// that reaches a backend carries a context whose reserved span covers the
-/// requested span.  The snapshot re-check is the backend's, inside its one
-/// critical section.
+/// A store-conditional envelope may carry no reservation context. The target
+/// must still validate the requested store span and its atomic capability
+/// before returning conditional failure for absent or uncovered reservation
+/// context. When a context is present and covers the request, the snapshot
+/// re-check and write are the backend's, inside its one critical section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AtomicReservationContext {
     /// Exact reserved byte span (port-issued paddr + width) recorded at the
@@ -1636,9 +1663,19 @@ pub enum AtomicProtocolError {
         /// Supplied transform width in bytes.
         actual: usize,
     },
-    /// A store-conditional envelope was missing its reservation context.
-    #[error("store-conditional envelope is missing its Hart reservation context")]
-    MissingReservation,
+    /// The backend reported conditional success for an SC without Hart
+    /// reservation context.
+    #[error("store-conditional succeeded without Hart reservation context")]
+    ConditionalSuccessWithoutReservation,
+    /// The backend reported conditional success for an SC outside the Hart's
+    /// reserved byte span.
+    #[error("store-conditional succeeded for span {requested:?} outside reservation {reserved:?}")]
+    ConditionalSuccessOutsideReservation {
+        /// Hart's reserved span.
+        reserved: PhysicalSpan,
+        /// Requested SC span.
+        requested: PhysicalSpan,
+    },
     /// A reservation context or LR response carried an empty snapshot.
     #[error("committed-write snapshot is empty; it cannot describe any covered block")]
     EmptySnapshot,
@@ -1648,7 +1685,9 @@ pub enum AtomicProtocolError {
         /// The wrapping reserved span.
         reserved: PhysicalSpan,
     },
-    /// The store-conditional span is not contained in the reserved span.
+    /// Legacy protocol diagnosis for a caller that requires reservation-span
+    /// containment. The standard atomic envelope accepts this as a valid SC
+    /// request and asks the target to return conditional failure.
     #[error("envelope span {requested:?} is not contained in the reserved span {reserved:?}")]
     ReservationSpanMismatch {
         /// The reserved span carried by the context.
@@ -1713,11 +1752,11 @@ pub enum AtomicProtocolError {
 /// A valid, borrowed atomic operation envelope request (dev-plan §5.2 M1).
 ///
 /// The constructors enforce the kind/payload rules and retain borrowed bytes
-/// by reference, so constructing an envelope does not allocate.  A conforming
+/// by reference, so constructing an envelope does not allocate. A conforming
 /// request is one indivisible event: an RMW carries the operand and the
 /// Hart-supplied transform; a load-reserved carries nothing extra; a
-/// store-conditional carries the write payload and the Hart reservation
-/// context.  No field or constructor can express an AMO/SC through the
+/// store-conditional carries the write payload and optional Hart reservation
+/// context. No field or constructor can express an AMO/SC through the
 /// ordinary [`PhysicalRequest`] categories.
 #[derive(Debug, Clone, Copy)]
 pub struct AtomicRequest<'a> {
@@ -1770,14 +1809,16 @@ impl<'a> AtomicRequest<'a> {
         Ok(request)
     }
 
-    /// Creates a store-conditional envelope carrying the write payload and
-    /// the Hart reservation context.
+    /// Creates the existing store-conditional envelope carrying the write
+    /// payload and optional Hart reservation context. `None` represents no
+    /// reservation; an uncovered context is also permitted so the target can
+    /// validate access and capability before reporting conditional failure.
     pub fn store_conditional(
         paddr: u64,
         width: PhysicalWidth,
         ordering: AtomicOrdering,
         payload: &'a [u8],
-        reservation: AtomicReservationContext,
+        reservation: impl Into<Option<AtomicReservationContext>>,
     ) -> Result<Self, AtomicProtocolError> {
         let request = Self {
             descriptor: AtomicRequestDescriptor::new(
@@ -1789,7 +1830,7 @@ impl<'a> AtomicRequest<'a> {
             operand: None,
             transform: None,
             store_payload: Some(payload),
-            reservation: Some(reservation),
+            reservation: reservation.into(),
         };
         request.validate()?;
         Ok(request)
@@ -1841,7 +1882,8 @@ impl<'a> AtomicRequest<'a> {
         self.store_payload
     }
 
-    /// Returns the Hart reservation context, or `None` for other kinds.
+    /// Returns the optional Hart reservation context (`None` for an
+    /// unreserved SC and for other envelope kinds).
     pub const fn reservation(&self) -> Option<AtomicReservationContext> {
         self.reservation
     }
@@ -1898,32 +1940,18 @@ impl<'a> AtomicRequest<'a> {
                         actual: payload.len(),
                     });
                 }
-                let reservation = self
-                    .reservation
-                    .ok_or(AtomicProtocolError::MissingReservation)?;
-                if reservation.snapshot.is_empty() {
-                    return Err(AtomicProtocolError::EmptySnapshot);
-                }
-                if AmoWidth::from_physical_width(reservation.reserved.width).is_none() {
-                    return Err(AtomicProtocolError::UnsupportedAtomicWidth {
-                        requested: reservation.reserved.width.bytes(),
-                    });
-                }
-                if reservation.reserved.checked_end_inclusive().is_none() {
-                    return Err(AtomicProtocolError::ReservationSpanOverflow {
-                        reserved: reservation.reserved,
-                    });
-                }
-                if let (Some(reserved_end), Some(requested_end)) = (
-                    reservation.reserved.checked_end_inclusive(),
-                    self.descriptor.span().checked_end_inclusive(),
-                ) {
-                    if self.descriptor.paddr < reservation.reserved.paddr
-                        || requested_end > reserved_end
-                    {
-                        return Err(AtomicProtocolError::ReservationSpanMismatch {
+                if let Some(reservation) = self.reservation {
+                    if reservation.snapshot.is_empty() {
+                        return Err(AtomicProtocolError::EmptySnapshot);
+                    }
+                    if AmoWidth::from_physical_width(reservation.reserved.width).is_none() {
+                        return Err(AtomicProtocolError::UnsupportedAtomicWidth {
+                            requested: reservation.reserved.width.bytes(),
+                        });
+                    }
+                    if reservation.reserved.checked_end_inclusive().is_none() {
+                        return Err(AtomicProtocolError::ReservationSpanOverflow {
                             reserved: reservation.reserved,
-                            requested: self.descriptor.span(),
                         });
                     }
                 }
@@ -2168,12 +2196,18 @@ pub type AtomicBackendResult = Result<AtomicResponse, PhysicalBackendError>;
 
 /// The untrusted transport/backend seam for an atomic envelope.
 ///
-/// Implementations execute the single critical section and report raw old
-/// bytes, snapshots, conditional status, and typed failure categories only.
-/// They do not implement ISA arithmetic, interpret the transform, enter
-/// traps, or retry.  A backend is not certified merely by implementing this
-/// trait; callers must place it behind [`ValidatedAtomicAccess`] to obtain
-/// envelope/response validation.
+/// Implementations execute the single target-visible transaction and report
+/// raw old bytes, snapshots, conditional status, and typed failure categories
+/// only. For StoreConditional, they must validate the complete store span and
+/// target atomic capability before returning conditional Failure for absent
+/// or uncovered Hart reservation context. A valid supported target returns
+/// Failure without reading/writing guest bytes or committing bookkeeping; an
+/// unsupported/denied target reports a target rejection instead. They must
+/// never report Success without reservation context. These target checks are
+/// not Hart/MMU/PMP checks. Backends do not implement ISA arithmetic,
+/// interpret the transform, enter traps, or retry. A backend is not certified
+/// merely by implementing this trait; callers must place it behind
+/// [`ValidatedAtomicAccess`] to obtain envelope/response validation.
 pub trait AtomicBackend {
     /// Services one complete envelope without retaining the borrowed request.
     fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult;
@@ -2327,6 +2361,30 @@ fn validate_atomic_response(
                 actual: completion.kind(),
             },
         ));
+    }
+    if matches!(
+        completion,
+        AtomicResponseCompletion::StoreConditional(ConditionalStatus::Success)
+    ) {
+        let Some(reservation) = request.reservation() else {
+            return Err(AtomicAccessError::Protocol(
+                AtomicProtocolError::ConditionalSuccessWithoutReservation,
+            ));
+        };
+        let requested = request.span();
+        let covered = reservation.reserved.paddr <= requested.paddr
+            && requested
+                .checked_end_inclusive()
+                .zip(reservation.reserved.checked_end_inclusive())
+                .is_some_and(|(requested_end, reserved_end)| requested_end <= reserved_end);
+        if !covered {
+            return Err(AtomicAccessError::Protocol(
+                AtomicProtocolError::ConditionalSuccessOutsideReservation {
+                    reserved: reservation.reserved,
+                    requested,
+                },
+            ));
+        }
     }
 
     match completion {

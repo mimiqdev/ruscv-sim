@@ -239,6 +239,10 @@ struct LegacyFixture {
     backing: SharedRam,
 }
 
+/// Builds the standard port-configured Hart with a traced legacy typed view
+/// for host inspection. Despite the historical helper name, guest atomics use
+/// the physical envelope; `RiscvCore::new` remains the separate, explicitly
+/// non-conforming typed compatibility route.
 fn legacy_core(backing: SharedRam, program: &[u32]) -> LegacyFixture {
     {
         let mut ram = backing.lock().unwrap();
@@ -513,8 +517,8 @@ fn rejected_write_keeps_reservation_and_faulting_sc_retains_it() {
         12
     );
 
-    // A different Hart holds no reservation: a fresh facade's SC fails
-    // conditionally even at the same address.
+    // A different Hart holds no reservation: SC at valid RAM still submits
+    // one envelope, then fails conditionally even at the same address.
     let other_backing = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
     other_backing.lock().unwrap().write_dword(0x80, 11).unwrap();
     let mut after_fault = legacy_core(other_backing, &[sc(5, 1, 2)]);
@@ -526,6 +530,17 @@ fn rejected_write_keeps_reservation_and_faulting_sc_retains_it() {
         after_fault.core.state().regs[5],
         1,
         "reservations are per-Hart; another core's SC fails"
+    );
+    assert_eq!(
+        after_fault
+            .atomic_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request.kind)
+            .collect::<Vec<_>>(),
+        [AtomicAccessKind::StoreConditional],
+        "the unreserved SC reaches the valid RAM target once"
     );
     assert_eq!(
         after_fault
@@ -559,6 +574,20 @@ fn per_hart_reservation_clears_on_reset_and_does_not_cross_facades() {
         1,
         "reset clears the per-Hart reservation; SC fails with rd = 1"
     );
+    assert_eq!(
+        first
+            .atomic_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request.kind)
+            .collect::<Vec<_>>(),
+        [
+            AtomicAccessKind::LoadReserved,
+            AtomicAccessKind::StoreConditional
+        ],
+        "reset does not suppress the later SC target check"
+    );
     assert_eq!(first.backing.lock().unwrap().read_dword(0x80).unwrap(), 1);
 
     // A replacement core on different storage holds no reservation either:
@@ -574,6 +603,17 @@ fn per_hart_reservation_clears_on_reset_and_does_not_cross_facades() {
         second.core.state().regs[4],
         1,
         "the reservation record is Hart-owned, not address-keyed global"
+    );
+    assert_eq!(
+        second
+            .atomic_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request.kind)
+            .collect::<Vec<_>>(),
+        [AtomicAccessKind::StoreConditional],
+        "the fresh Hart's SC still validates the valid RAM target"
     );
     assert_eq!(second.backing.lock().unwrap().read_dword(0x80).unwrap(), 2);
 }
@@ -727,12 +767,22 @@ fn htif_atomic_policy_rejects_lr_sc_and_commits_one_rmw_callback() {
     ));
     assert!(observed.lock().unwrap().is_empty());
 
-    // SC with no reservation fails Hart-side (rd = 1) and never issues an
-    // envelope; the callback stays silent either way.
+    // SC with no reservation still submits its StoreConditional envelope;
+    // D-c rejects the HTIF target before conditional failure or callback.
     core.state_mut().pc = 4;
     core.state_mut().regs[2] = 0x1234_5678_9abc_def0;
-    retired(&mut core);
-    assert_eq!(core.state().regs[4], 1);
+    core.state_mut().regs[4] = 0xbeef;
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::TrapEntered(trap)
+            if trap.cause == ExceptionCause::StoreAccessFault
+                && trap.mtval == SYSTEM_BUS_HTIF_BASE
+    ));
+    assert_eq!(
+        core.state().regs[4],
+        0xbeef,
+        "faulting SC does not write rd"
+    );
     assert!(observed.lock().unwrap().is_empty());
 
     // AMOSWAP.D at the endpoint: one indivisible envelope whose old value is

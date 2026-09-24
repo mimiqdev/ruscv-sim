@@ -8,7 +8,8 @@
 //! * the complete §2/§5.3 operation matrix at both widths with Hart-owned
 //!   arithmetic (`hart_amods`) and exactly-one-envelope issue;
 //! * Hart-side preconditions that issue zero physical requests (reserved
-//!   `funct5`, LR `rs2 != 0`, bad `funct3`, uncovered SC span);
+//!   `funct5`, LR `rs2 != 0`, bad `funct3`, and rejected address conversion);
+//!   no-reservation and uncovered SCs still issue one envelope for target checks;
 //! * the per-Hart reservation lifecycle (recorded span + snapshot in
 //!   `CoreState`, consume/replace/retain rules, reset/reload clearing);
 //! * the writer-visibility contract W1–W3: a committed overlapping write —
@@ -28,8 +29,9 @@ use ruscv_sim::executor::RiscVSimulator;
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 use ruscv_sim::physical::{
     AccessCategory, AtomicAccessKind, AtomicBackend, AtomicBackendResult, AtomicRequest,
-    AtomicRequestDescriptor, NativeRamBackend, PhysicalBackend, PhysicalBackendResult,
-    PhysicalRequest, PhysicalTargetRejectionReason, PhysicalWidth, ValidatedPhysicalAccess,
+    AtomicRequestDescriptor, NativeRamBackend, PhysicalBackend, PhysicalBackendError,
+    PhysicalBackendResult, PhysicalRequest, PhysicalTargetRejectionReason, PhysicalWidth,
+    ValidatedPhysicalAccess,
 };
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
@@ -177,6 +179,15 @@ impl Spy {
             .collect()
     }
 
+    fn data_read_count(&self) -> usize {
+        self.raws
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(category, _)| *category == AccessCategory::DataRead)
+            .count()
+    }
+
     fn data_write_count(&self) -> usize {
         self.raws
             .lock()
@@ -184,6 +195,10 @@ impl Spy {
             .iter()
             .filter(|(category, _)| *category == AccessCategory::DataWrite)
             .count()
+    }
+
+    fn data_request_count(&self) -> usize {
+        self.atomics.lock().unwrap().len() + self.raws.lock().unwrap().len()
     }
 }
 
@@ -227,6 +242,39 @@ fn spy_core(words: &[(u64, u32)], size: usize) -> (RiscvCore, Arc<Mutex<SimpleMe
 /// driven into a store-AMO access fault (cause 7).
 struct ScRejectBackend {
     inner: NativeRamBackend,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum InjectedScFailure {
+    Host,
+    Unknown,
+}
+
+struct ScFailureBackend {
+    inner: NativeRamBackend,
+    requests: Arc<Mutex<Vec<AtomicRequestDescriptor>>>,
+    failure: InjectedScFailure,
+}
+
+impl PhysicalBackend for ScFailureBackend {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.inner.transact(request)
+    }
+}
+
+impl AtomicBackend for ScFailureBackend {
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        self.requests.lock().unwrap().push(request.descriptor());
+        if request.descriptor().kind == AtomicAccessKind::StoreConditional {
+            return Err(match self.failure {
+                InjectedScFailure::Host => PhysicalBackendError::host("injected SC host failure"),
+                InjectedScFailure::Unknown => {
+                    PhysicalBackendError::unknown("injected SC unknown completion")
+                }
+            });
+        }
+        self.inner.transact_atomic(request)
+    }
 }
 
 impl PhysicalBackend for ScRejectBackend {
@@ -508,9 +556,9 @@ fn lr_sc_issue_one_envelope_each_and_aq_rl_are_informational() {
     }
 }
 
-/// Every Hart-side rejection issues zero physical requests: reserved
-/// funct5 values, LR with rs2 != 0, bad funct3, and an SC span the
-/// reservation does not cover.
+/// Hart legality rejections issue zero requests. SC reservation absence or
+/// uncovered span is not a pre-target rejection: one envelope validates the
+/// target and then returns conditional failure without writing.
 #[test]
 fn hart_side_rejections_issue_zero_requests() {
     const P: u64 = 0x80;
@@ -559,7 +607,8 @@ fn hart_side_rejections_issue_zero_requests() {
     ));
     assert_eq!(spy.atomic_count(), 0);
 
-    // SC with no reservation → rd = 1, no envelope, no write.
+    // SC with no reservation → one envelope reaches valid RAM, which returns
+    // rd = 1 without reading or writing guest bytes.
     let (mut core, memory, spy) = spy_core(&[(0, sc_w(4, 1, 2))], 0x100);
     memory.lock().unwrap().write_dword(P, 5).unwrap();
     core.state_mut().regs[1] = P;
@@ -567,10 +616,20 @@ fn hart_side_rejections_issue_zero_requests() {
     retired(&mut core);
     assert_eq!(core.state().regs[4], 1);
     assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 5);
-    assert_eq!(spy.atomic_count(), 0);
+    assert_eq!(spy.atomic_kinds(), [AtomicAccessKind::StoreConditional]);
+    assert_eq!(
+        spy.data_read_count(),
+        0,
+        "failure is not a separate data read"
+    );
+    assert_eq!(
+        spy.data_write_count(),
+        0,
+        "failure is not a separate data write"
+    );
 
-    // LR.W reserves four bytes; SC.D's wider span is uncovered → rd = 1,
-    // and the SC issued no envelope (only the LR's one).
+    // LR.W reserves four bytes; SC.D's wider span is uncovered → one SC
+    // envelope reaches RAM and fails without modifying the adjacent bytes.
     let (mut core, memory, spy) = spy_core(&[(0, lr_w(3, 1)), (4, sc_d(4, 1, 2))], 0x100);
     memory.lock().unwrap().write_dword(P, 5).unwrap();
     core.state_mut().regs[1] = P;
@@ -579,7 +638,186 @@ fn hart_side_rejections_issue_zero_requests() {
     retired(&mut core);
     assert_eq!(core.state().regs[4], 1);
     assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 5);
-    assert_eq!(spy.atomic_kinds(), [AtomicAccessKind::LoadReserved]);
+    assert_eq!(spy.data_read_count(), 0, "SC is not an ordinary data read");
+    assert_eq!(
+        spy.data_write_count(),
+        0,
+        "SC is not an ordinary data write"
+    );
+    assert_eq!(
+        spy.atomic_kinds(),
+        [
+            AtomicAccessKind::LoadReserved,
+            AtomicAccessKind::StoreConditional
+        ]
+    );
+}
+
+#[test]
+fn live_disjoint_sc_fails_after_valid_ram_target_check_at_word_and_doubleword() {
+    const P: u64 = 0x80;
+    const Q: u64 = 0x90;
+
+    for width in [PhysicalWidth::Word, PhysicalWidth::Doubleword] {
+        let (lr, sc) = match width {
+            PhysicalWidth::Word => (lr_w(3, 1), sc_w(4, 1, 2)),
+            PhysicalWidth::Doubleword => (lr_d(3, 1), sc_d(4, 1, 2)),
+            _ => unreachable!(),
+        };
+        let (mut core, memory, spy) = spy_core(&[(0, lr), (4, sc)], 0x100);
+        memory
+            .lock()
+            .unwrap()
+            .write_dword(P, 0x1122_3344_5566_7788)
+            .unwrap();
+        memory
+            .lock()
+            .unwrap()
+            .write_dword(Q, 0x8877_6655_4433_2211)
+            .unwrap();
+        core.state_mut().regs[1] = P;
+        core.state_mut().regs[2] = 0xaabb_ccdd_eeff_0011;
+        retired(&mut core);
+        assert!(core.state().reservation.is_some());
+
+        // The live reservation is deliberately disjoint from the valid RAM
+        // target; its context reaches RAM and yields conditional Failure.
+        core.state_mut().regs[1] = Q;
+        retired(&mut core);
+        assert_eq!(core.state().regs[4], 1, "{width:?} disjoint SC fails");
+        assert!(
+            core.state().reservation.is_none(),
+            "completed failure consumes"
+        );
+        assert_eq!(
+            memory.lock().unwrap().read_dword(Q).unwrap(),
+            0x8877_6655_4433_2211,
+            "{width:?} disjoint failure writes no bytes"
+        );
+        assert_eq!(
+            spy.atomic_kinds(),
+            [
+                AtomicAccessKind::LoadReserved,
+                AtomicAccessKind::StoreConditional
+            ],
+            "{width:?} LR and SC each issue one envelope"
+        );
+    }
+}
+
+#[test]
+fn unreserved_and_uncovered_sc_preserve_host_and_unknown_failure_taxonomy() {
+    const P: u64 = 0x80;
+    const Q: u64 = 0x90;
+
+    for width in [PhysicalWidth::Word, PhysicalWidth::Doubleword] {
+        for live_uncovered in [false, true] {
+            for injected_failure in [InjectedScFailure::Host, InjectedScFailure::Unknown] {
+                let (lr, sc) = match width {
+                    PhysicalWidth::Word => (lr_w(3, 1), sc_w(4, 1, 2)),
+                    PhysicalWidth::Doubleword => (lr_d(3, 1), sc_d(4, 1, 2)),
+                    _ => unreachable!(),
+                };
+                let program = if live_uncovered {
+                    vec![(0, lr), (4, sc)]
+                } else {
+                    vec![(0, sc)]
+                };
+                let memory = memory_with_words(&program, 0x100);
+                memory.lock().unwrap().write_dword(P, 0x1122).unwrap();
+                memory.lock().unwrap().write_dword(Q, 0x3344).unwrap();
+                let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+                    NativeRamBackend::new(memory.clone(), 0, 0x100),
+                )));
+                let requests = Arc::new(Mutex::new(Vec::new()));
+                let data_port =
+                    Arc::new(Mutex::new(ValidatedPhysicalAccess::new(ScFailureBackend {
+                        inner: NativeRamBackend::new(memory.clone(), 0, 0x100),
+                        requests: requests.clone(),
+                        failure: injected_failure,
+                    })));
+                let mut core = RiscvCore::new_with_physical_ports(
+                    memory.clone(),
+                    memory.clone(),
+                    instruction_port,
+                    data_port,
+                );
+                core.reset(0, 0);
+                core.state_mut().regs[1] = if live_uncovered { P } else { Q };
+                core.state_mut().regs[2] = 0xaabb_ccdd;
+                core.state_mut().regs[4] = 0xbeef;
+
+                if live_uncovered {
+                    retired(&mut core);
+                    assert!(core.state().reservation.is_some());
+                    core.state_mut().regs[1] = Q;
+                }
+
+                let sc_pc = core.state().pc;
+                let minstret = core.state().csr.read(machine::MINSTRET).unwrap();
+                let reservation = core.state().reservation.clone();
+                let outcome = core.step_outcome();
+                let StepOutcome::SimulatorFailure(failure) = outcome else {
+                    panic!(
+                        "{width:?} live_uncovered={live_uncovered} must preserve the injected simulator failure, got {outcome:?}"
+                    );
+                };
+                assert_eq!(
+                    failure.kind,
+                    ruscv_sim::core::SimulatorFailureKind::HostBackend
+                );
+                assert_eq!(core.state().pc, sc_pc, "SC failure does not retire");
+                assert_eq!(
+                    core.state().csr.read(machine::MINSTRET).unwrap(),
+                    minstret,
+                    "SC failure does not increment minstret"
+                );
+                assert_eq!(core.state().regs[4], 0xbeef, "SC failure does not write rd");
+                assert_eq!(
+                    core.state().reservation,
+                    reservation,
+                    "failure retains Hart state"
+                );
+                assert_eq!(memory.lock().unwrap().read_dword(Q).unwrap(), 0x3344);
+                assert_eq!(
+                    requests
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|r| r.kind)
+                        .collect::<Vec<_>>(),
+                    if live_uncovered {
+                        vec![
+                            AtomicAccessKind::LoadReserved,
+                            AtomicAccessKind::StoreConditional,
+                        ]
+                    } else {
+                        vec![AtomicAccessKind::StoreConditional]
+                    },
+                    "the SC is exactly one envelope after any LR"
+                );
+
+                match injected_failure {
+                    InjectedScFailure::Host => {
+                        assert!(core.unresolved_physical_access().is_none());
+                    }
+                    InjectedScFailure::Unknown => {
+                        assert!(core.unresolved_physical_access().is_some());
+                        let retry = core.step_outcome();
+                        assert!(matches!(retry, StepOutcome::SimulatorFailure(_)));
+                        assert_eq!(core.state().pc, sc_pc);
+                        assert_eq!(core.state().regs[4], 0xbeef);
+                        assert_eq!(core.state().reservation, reservation);
+                        assert_eq!(
+                            requests.lock().unwrap().len(),
+                            if live_uncovered { 2 } else { 1 },
+                            "unknown completion is terminal and is never retried"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -643,51 +881,96 @@ fn reservation_record_lifecycle_is_hart_owned() {
     assert_eq!(record.reserved.paddr, P);
 }
 
-/// Two cores sharing storage keep independent reservations: labeled
-/// test-object evidence for the per-Hart record (dev-plan §8 T3: the
-/// current single-Hart API carries the record in `CoreState`, so two
-/// `RiscvCore` instances are the per-Hart isolation probe).
+/// Two independently constructed Core objects share the exact same RAM and
+/// data-port/domain lock.  This is test-object evidence for per-Core
+/// reservation ownership and committed-write visibility only; it does not
+/// exercise multi-Hart execution, scheduling, or coherence.
 #[test]
 fn two_cores_on_one_domain_hold_independent_reservations() {
     const P: u64 = 0x80;
-    let (mut first, memory, _spy_a) = spy_core(&[(0, lr_d(3, 1)), (4, sc_d(4, 1, 2))], 0x100);
-    let (mut second, _other, _spy_b) = spy_core(
-        &[(0, sc_d(4, 1, 2)), (4, lr_d(5, 1)), (8, sc_d(6, 1, 2))],
-        0x100,
+    const SIZE: usize = 0x100;
+    const SECOND_PC: u64 = 0x20;
+    let memory = memory_with_words(
+        &[
+            (0, lr_d(3, 1)),
+            (4, sc_d(4, 1, 2)),
+            (SECOND_PC, sc_d(4, 1, 2)),
+            (SECOND_PC + 4, lr_d(5, 1)),
+            (SECOND_PC + 8, sc_d(6, 1, 2)),
+        ],
+        SIZE,
     );
     memory.lock().unwrap().write_dword(P, 1).unwrap();
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(memory.clone(), 0, SIZE),
+    )));
+    let (backend, spy) = SpyBackend::new(memory.clone(), SIZE);
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(backend)));
+
+    // Both independently constructed cores hold clones of the same
+    // instruction and data-port handles.  In particular, there is one
+    // physical data-domain lock and one shared backing/write-bookkeeping
+    // object, not two spy_core() fixtures with separate memories.
+    let mut first = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port.clone(),
+        data_port.clone(),
+    );
+    first.reset(0, 0);
+    let mut second = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port,
+        data_port,
+    );
+    second.reset(SECOND_PC, 0);
     first.state_mut().regs[1] = P;
     first.state_mut().regs[2] = 7;
     second.state_mut().regs[1] = P;
     second.state_mut().regs[2] = 9;
 
-    // First Hart reserves on its own storage.
+    // First core reserves shared address P; the second has no architectural
+    // reservation despite sharing the same physical domain.
     retired(&mut first);
     assert!(first.state().reservation.is_some());
     assert!(second.state().reservation.is_none());
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 1);
 
-    // The second Hart's SC at the same address fails: reservations are
-    // per-Hart, so no record covers its span (and no envelope is issued).
+    // The second core's SC fails without using the first core's reservation
+    // or changing the shared bytes.
     retired(&mut second);
     assert_eq!(second.state().regs[4], 1);
+    assert!(second.state().reservation.is_none());
+    assert!(first.state().reservation.is_some());
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 1);
 
-    // Each Hart's own reservation still governs only its own SC.
-    second.state_mut().pc = 4;
-    retired(&mut second); // second's LR installs its own record
-    second.state_mut().pc = 8;
+    // The second core independently reserves the same shared bytes.  The
+    // first core then commits a competing SC; the second core's later SC
+    // sees that committed write through the shared physical domain and fails.
+    second.state_mut().pc = SECOND_PC + 4;
     retired(&mut second);
-    assert_eq!(
-        second.state().regs[6],
-        0,
-        "the second Hart's own LR/SC pair works"
-    );
-
+    assert!(second.state().reservation.is_some());
     first.state_mut().pc = 4;
     retired(&mut first);
+    assert_eq!(first.state().regs[4], 0);
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 7);
+    assert!(second.state().reservation.is_some());
+
+    second.state_mut().pc = SECOND_PC + 8;
+    retired(&mut second);
+    assert_eq!(second.state().regs[6], 1);
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 7);
     assert_eq!(
-        first.state().regs[4],
-        0,
-        "the first Hart's reservation was never shared"
+        spy.atomic_kinds(),
+        [
+            AtomicAccessKind::LoadReserved,
+            AtomicAccessKind::StoreConditional,
+            AtomicAccessKind::LoadReserved,
+            AtomicAccessKind::StoreConditional,
+            AtomicAccessKind::StoreConditional,
+        ],
+        "each unreserved and reserved SC uses one StoreConditional envelope"
     );
 }
 
@@ -1136,7 +1419,115 @@ fn cross_thread_writer_cannot_interpose_inside_the_sc_envelope() {
     );
 }
 
-/// A port-route SC whose issued address fails conversion — a guest address
+/// An aligned SC below the flat image base reaches address conversion even
+/// without a reservation; conversion failure is a cause-7 fault, not a
+/// reservation-based conditional failure (spec-first SC check order).
+#[test]
+fn unreserved_sc_below_flat_base_faults_during_address_conversion() {
+    const BASE: u64 = 0x8000_0000;
+    const P: u64 = 0x80;
+
+    for rd in [4, 0] {
+        let memory = memory_with_words(&[(0, sc_d(rd, 1, 2))], 0x100);
+        memory.lock().unwrap().write_dword(P, 0x1234).unwrap();
+        let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+            NativeRamBackend::new(memory.clone(), 0, 0x100),
+        )));
+        let (backend, spy) = SpyBackend::new(memory.clone(), 0x100);
+        let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(backend)));
+        let mut core = RiscvCore::new_with_physical_ports(
+            memory.clone(),
+            memory.clone(),
+            instruction_port,
+            data_port,
+        );
+        core.set_physical_storage_alignment(0, 0x100);
+        core.reset(BASE, BASE);
+        core.state_mut().regs[1] = BASE - 8; // aligned guest address below image
+        core.state_mut().regs[2] = 0xfeed;
+        core.state_mut().regs[rd as usize] = if rd == 0 { 0 } else { 0xbeef };
+
+        core.state_mut()
+            .csr
+            .write(machine::MTVEC, BASE + 0x40)
+            .unwrap();
+        let outcome = core.step_outcome();
+        assert!(
+            matches!(
+                outcome,
+                StepOutcome::TrapEntered(trap)
+                    if trap.cause == ExceptionCause::StoreAccessFault
+                        && trap.mtval == BASE - 8
+            ),
+            "an unreserved SC.D below the image base must fault at the original guest address, got {outcome:?}"
+        );
+        assert_eq!(
+            core.state().regs[rd as usize],
+            if rd == 0 { 0 } else { 0xbeef },
+            "faulting SC does not write rd"
+        );
+        assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 0x1234);
+        assert_eq!(
+            spy.data_request_count(),
+            0,
+            "the rejected guest-to-port conversion issued data I/O"
+        );
+        assert_eq!(
+            spy.atomic_count(),
+            0,
+            "the rejected guest-to-port conversion issued an envelope"
+        );
+        assert_eq!(
+            spy.data_write_count(),
+            0,
+            "the rejected guest-to-port conversion wrote data"
+        );
+    }
+}
+
+#[test]
+fn unreserved_sc_odd_flat_offset_faults_before_backend_dispatch() {
+    const ODD_BASE: u64 = 0x8000_0004;
+    let memory = memory_with_words(&[(0, sc_d(4, 1, 2))], 0x100);
+    memory.lock().unwrap().write_dword(0x78, 0x1234).unwrap();
+    let instruction_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(memory.clone(), 0, 0x100),
+    )));
+    let (backend, spy) = SpyBackend::new(memory.clone(), 0x100);
+    let data_port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(backend)));
+    let mut core = RiscvCore::new_with_physical_ports(
+        memory.clone(),
+        memory.clone(),
+        instruction_port,
+        data_port,
+    );
+    core.set_physical_storage_alignment(0, 0x100);
+    core.reset(ODD_BASE, ODD_BASE);
+    core.state_mut().regs[1] = ODD_BASE + 0x7c; // guest aligned, flat paddr 0x7c
+    core.state_mut().regs[2] = 0xfeed;
+    core.state_mut().regs[4] = 0xdead;
+    set_mtvec(&mut core, ODD_BASE + 0x40);
+
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::TrapEntered(trap)
+            if trap.cause == ExceptionCause::StoreAccessFault
+                && trap.mtval == ODD_BASE + 0x7c
+    ));
+    assert_eq!(
+        core.state().regs[4],
+        0xdead,
+        "faulting SC does not write rd"
+    );
+    assert_eq!(memory.lock().unwrap().read_dword(0x78).unwrap(), 0x1234);
+    assert_eq!(
+        spy.atomic_count(),
+        0,
+        "conversion fails before target dispatch"
+    );
+}
+
+/// A legal SC whose issued address fails conversion — a guest address
 /// below the flat image base, or a guest-aligned address whose storage
 /// offset is not width-aligned — is a store/AMO access fault (cause 7) with
 /// the original guest `mtval`, never a conditional `rd = 1` retirement.
@@ -1342,6 +1733,24 @@ fn target_rejections_map_to_access_faults_with_guest_mtval() {
         StepOutcome::TrapEntered(trap)
             if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x400
     ));
+
+    // Even without a reservation, a legal SC to an unmapped target must
+    // reach store-access validation and fault instead of retiring rd = 1.
+    let (mut unreserved, _memory, unreserved_spy) = spy_core(&[(0, sc_d(4, 1, 2))], 0x100);
+    unreserved.state_mut().regs[1] = 0x400;
+    unreserved.state_mut().regs[4] = 0xdead;
+    set_mtvec(&mut unreserved, 0x40);
+    assert!(matches!(
+        unreserved.step_outcome(),
+        StepOutcome::TrapEntered(trap)
+            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x400
+    ));
+    assert_eq!(unreserved_spy.atomic_count(), 1);
+    assert_eq!(
+        unreserved.state().regs[4],
+        0xdead,
+        "faulting SC does not write rd"
+    );
 
     // A covered SC envelope rejected by the target → store access fault,
     // and the approved faulting-SC retain keeps the reservation: retrying

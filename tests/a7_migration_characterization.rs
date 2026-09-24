@@ -760,7 +760,8 @@ fn per_hart_reservation_transcript_in_process() {
     assert_eq!(memory.lock().unwrap().read_word(0x40).unwrap(), 5);
     transcript.push("amoswap.w=retired/one-envelope/swap".to_string());
 
-    // SC without a reservation retires rd = 1 and issues no envelope.
+    // On the standard physical route, SC without a reservation submits one
+    // envelope; valid RAM returns rd = 1 without writing bytes.
     let (mut core, memory) = port_core_for_words(&[(0, sc_encoding(3, 1, 2, 0b010))], 0x200);
     memory.lock().unwrap().write_dword(0x80, 0x55).unwrap();
     core.state_mut().regs[1] = 0x80;
@@ -768,10 +769,10 @@ fn per_hart_reservation_transcript_in_process() {
     retired(&mut core);
     assert_eq!(core.state().regs[3], 1);
     assert_eq!(memory.lock().unwrap().read_dword(0x80).unwrap(), 0x55);
-    transcript.push("sc.no-reservation=retired/rd=1/no-write".to_string());
+    transcript.push("sc.no-reservation=retired/rd=1/one-envelope/no-write".to_string());
 
-    // Reservations are per-Hart: an SC in a different core at the same
-    // address fails conditionally (flipped from the global singleton).
+    // Reservations are per-Hart: an unreserved SC in a different core at
+    // the same valid RAM address submits one envelope and fails conditionally.
     let address = 0x90;
     let (mut first, first_memory) = port_core_for_words(&[(0, lr_encoding(3, 1, 0b010))], 0x200);
     first_memory
@@ -796,9 +797,10 @@ fn per_hart_reservation_transcript_in_process() {
         second_memory.lock().unwrap().read_dword(address).unwrap(),
         7
     );
-    transcript.push("lr->other-core-sc=rd=1/per-hart".to_string());
+    transcript.push("lr->other-core-sc=rd=1/per-hart/one-envelope".to_string());
 
-    // Reset installs a fresh CoreState and clears the reservation.
+    // Reset installs a fresh CoreState and clears the reservation. The later
+    // no-reservation SC still reaches valid RAM for target validation.
     let reset_address = 0xa0;
     let (mut core, memory) = port_core_for_words(&[(0, lr_encoding(3, 1, 0b010))], 0x200);
     memory
@@ -822,11 +824,10 @@ fn per_hart_reservation_transcript_in_process() {
         memory.lock().unwrap().read_dword(reset_address).unwrap(),
         11
     );
-    transcript.push("lr->reset->sc=rd=1/reservation-cleared".to_string());
+    transcript.push("lr->reset->sc=rd=1/reservation-cleared/one-envelope".to_string());
 
-    // The key is the exact issued span: an SC whose span is not contained
-    // in the reservation fails with rd = 1 and issues no envelope
-    // (unchanged observable, now under span containment).
+    // The reservation is not wide enough for this SC span: the valid RAM
+    // target returns conditional failure after the SC envelope.
     let (mut key_sc, other_memory) = port_core_for_words(
         &[
             (0, lr_encoding(3, 1, 0b010)),
@@ -843,7 +844,7 @@ fn per_hart_reservation_transcript_in_process() {
     retired(&mut key_sc);
     assert_eq!(key_sc.state().regs[4], 1);
     assert_eq!(other_memory.lock().unwrap().read_dword(0xb8).unwrap(), 31);
-    transcript.push("lr@b0->sc@b8=retired/rd=1/span".to_string());
+    transcript.push("lr@b0->sc@b8=retired/rd=1/span/one-envelope".to_string());
 
     // A committed overlapping scalar store invalidates the reservation on
     // the envelope route: the SC fails with rd = 1 and performs no write
@@ -1056,7 +1057,8 @@ fn per_hart_reservation_transcript_in_process() {
     transcript.push("typed.sc.d@htif=rd=0/dword-callback/non-conforming".to_string());
 
     // On the envelope route the HTIF endpoint rejects LR/SC before any
-    // mutation, and one RMW fires the callback exactly once (D-c, C21).
+    // mutation, even with no reservation, and one RMW fires the callback
+    // exactly once (D-c, C21).
     let (mut core, callbacks) = htif_core(&[
         (0, lr_encoding(3, 1, 0b011)),
         (4, sc_encoding(4, 1, 2, 0b011)),
@@ -1072,33 +1074,38 @@ fn per_hart_reservation_transcript_in_process() {
     ));
     assert!(callbacks.lock().unwrap().is_empty());
     core.state_mut().pc = 4;
-    retired(&mut core);
+    core.state_mut().regs[4] = 0xbeef;
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::TrapEntered(fact)
+            if fact.cause == ExceptionCause::StoreAccessFault && fact.mtval == HTIF_BASE
+    ));
     assert_eq!(
         core.state().regs[4],
-        1,
-        "no reservation: Hart-side SC failure"
+        0xbeef,
+        "faulting SC does not write rd"
     );
     assert!(callbacks.lock().unwrap().is_empty());
     core.state_mut().pc = 8;
     retired(&mut core);
     assert_eq!(core.state().regs[5], 0);
     assert_eq!(*callbacks.lock().unwrap(), vec![0x1234_5678_9abc_def0]);
-    transcript.push("port.htif=lr-cause5/sc-rd1/rmw-callback-once".to_string());
+    transcript.push("port.htif=lr-cause5/sc-cause7/rmw-callback-once".to_string());
 
     assert_eq!(
         transcript.join(";"),
         "amoswap.w=retired/one-envelope/swap\
-         ;sc.no-reservation=retired/rd=1/no-write\
-         ;lr->other-core-sc=rd=1/per-hart\
-         ;lr->reset->sc=rd=1/reservation-cleared\
-         ;lr@b0->sc@b8=retired/rd=1/span\
+         ;sc.no-reservation=retired/rd=1/one-envelope/no-write\
+         ;lr->other-core-sc=rd=1/per-hart/one-envelope\
+         ;lr->reset->sc=rd=1/reservation-cleared/one-envelope\
+         ;lr@b0->sc@b8=retired/rd=1/span/one-envelope\
          ;lr->sd->sc=rd=1/committed-write\
          ;lr->fsd->sc=rd=1/committed-write\
          ;lr->host-write_mem->sc=rd=1/committed-write\
          ;lr->failed-sd->sc=success/no-commit\
          ;sc.write-fault=trap/store-fault/retained-per-hart\
          ;typed.sc.d@htif=rd=0/dword-callback/non-conforming\
-         ;port.htif=lr-cause5/sc-rd1/rmw-callback-once"
+         ;port.htif=lr-cause5/sc-cause7/rmw-callback-once"
     );
 }
 

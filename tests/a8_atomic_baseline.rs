@@ -101,7 +101,8 @@ fn memory_with_words(words: &[(u64, u32)], size: usize) -> Arc<Mutex<SimpleMemor
 }
 
 /// Typed-only core (the old `RiscvCore::new` compatibility route): fetch and
-/// AMO/LR/SC both use the typed handles — the labeled adapter (C24).
+/// AMO/LR/SC both use the typed handles — the explicitly non-conforming
+/// adapter (C24), with no physical target permission/capability guarantees.
 fn typed_core(words: &[(u64, u32)], size: usize) -> (RiscvCore, Arc<Mutex<SimpleMemory>>) {
     let memory = memory_with_words(words, size);
     let mut core = RiscvCore::new(memory.clone(), memory.clone());
@@ -335,7 +336,8 @@ enum DispatchExpectation {
     /// sign-extended old word; D writes `d` at the dword span and retires
     /// the full old dword.
     Retire { w: u32, d: u64, note: &'static str },
-    /// SC with no reservation retires `rd=1` and performs no access.
+    /// The explicitly non-conforming typed compatibility SC returns
+    /// `rd=1` without target permission/capability validation.
     ScNoReservation,
     /// A reserved encoding traps illegal-instruction before any access:
     /// every unassigned `funct5` and `funct5=00010` with `rs2 != 0` (C6).
@@ -1015,7 +1017,8 @@ fn write_faulting_sc_retains_the_reservation_for_a_later_sc() {
 }
 
 // ---------------------------------------------------------------------------
-// Group 4: §3.4 HTIF per-encoding Hart outcomes on the envelope route.
+// Group 4: §3.4 HTIF per-encoding Hart outcomes on the envelope route,
+// including SC target checks before conditional failure.
 // ---------------------------------------------------------------------------
 
 /// LR at the HTIF endpoint is a target rejection → load access fault with
@@ -1046,8 +1049,8 @@ fn htif_lr_is_a_target_rejection_at_base_and_interior() {
         );
     }
 
-    // A faulting LR establishes no reservation: the following SC fails
-    // Hart-side with rd = 1 and issues no envelope at all.
+    // A faulting LR establishes no reservation: the following SC still
+    // reaches the endpoint's store-access/capability check and faults.
     let (mut core, _calls, atomic_calls, callbacks, _bus) =
         htif_core(&[lr_encoding(3, 1, 0b010), sc_encoding(4, 1, 2, 0b010)]);
     core.state_mut().regs[1] = base;
@@ -1056,30 +1059,35 @@ fn htif_lr_is_a_target_rejection_at_base_and_interior() {
     let trap = trapped(&mut core);
     assert_eq!(trap.cause, ExceptionCause::LoadAccessFault);
     core.state_mut().pc = 4;
-    retired(&mut core);
-    assert_eq!(core.state().regs[4], 1);
+    let sc_trap = trapped(&mut core);
+    assert_eq!(sc_trap.cause, ExceptionCause::StoreAccessFault);
+    assert_eq!(sc_trap.mtval, base);
+    assert_eq!(core.state().regs[4], 0, "faulting SC does not write rd");
     assert_eq!(
         atomic_calls.lock().unwrap().len(),
-        1,
-        "only the LR envelope was issued; the SC retired Hart-side"
+        2,
+        "LR and SC each issue one envelope; SC reaches target validation"
     );
     assert!(callbacks.lock().unwrap().is_empty());
 }
 
-/// SC with no reservation retires `rd = 1` at the endpoint without issuing
-/// an envelope; interior-offset doubleword encodings trap Hart-side
-/// misalignment before any envelope (unchanged Hart prechecks).
+/// SC with no reservation still validates the target: D-c rejects the
+/// endpoint as a store/AMO access fault with one envelope. Interior-offset
+/// doubleword encodings trap Hart-side before any envelope.
 #[test]
-fn htif_sc_hart_side_preconditions_issue_no_envelope() {
+fn htif_sc_target_validation_precedes_unreserved_failure() {
     let base = SYSTEM_BUS_HTIF_BASE;
 
     let (mut core, _calls, atomic_calls, callbacks, _bus) =
         htif_core(&[sc_encoding(4, 1, 2, 0b010)]);
     core.state_mut().regs[1] = base;
     core.state_mut().regs[2] = 0x1234_5678_9abc_def0;
-    retired(&mut core);
-    assert_eq!(core.state().regs[4], 1);
-    assert!(atomic_calls.lock().unwrap().is_empty());
+    set_mtvec(&mut core, 0x40);
+    let trap = trapped(&mut core);
+    assert_eq!(trap.cause, ExceptionCause::StoreAccessFault);
+    assert_eq!(trap.mtval, base);
+    assert_eq!(core.state().regs[4], 0, "faulting SC does not write rd");
+    assert_eq!(atomic_calls.lock().unwrap().len(), 1);
     assert!(callbacks.lock().unwrap().is_empty());
 
     // SC.D at base+4: the encoded-width misalignment precheck traps before
