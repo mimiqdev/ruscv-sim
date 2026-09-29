@@ -4,15 +4,15 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-09-24
+**Last reviewed:** 2026-09-29
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
 ## Sources of truth
 
-1. [Current milestone contract](dev-plan.md) — objective, scope boundaries, non-goals, constraints, deliverables, and acceptance criteria.
+1. [Milestone plan and activation status](dev-plan.md) — objective, scope boundaries, non-goals, constraints, deliverables, acceptance criteria, and whether the proposed successor is active.
 2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
-3. [Current implementation architecture](architecture/current-state.md) — descriptive source-to-target inventory and gap matrix.
+3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests and the [A8 assessment](verification/a8-closeout-assessment.md) for the subsequent atomic route.
 4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
 5. [Development environment](development-environment.md) — normative container toolchain and usage.
 6. [Documentation policy](documentation-policy.md) — status, authority, and archival rules.
@@ -25,21 +25,23 @@ Target architecture is not implementation status. Component presence is not end-
 ## Architecture
 
 - [Architecture diagrams](architecture/README.md)
-- [Current implementation and gap matrix](architecture/current-state.md)
+- [A7-era implementation and gap snapshot](architecture/current-state.md)
 - [Architecture principles](architecture/principles.md)
 - [Architecture decision records](architecture/decisions/README.md) — ADR-0001 through ADR-0004 accepted on 2026-09-07
 - [A0 closeout record](archive/milestones/a0-closeout-record.md) — accepted architecture, completion evidence and limitations
 - [Implementation scope navigation](architecture/first-implementation-scope.md) — A1–A4 completed; A5 ACT4 detailed contract approved in PR #31; broader migration remains unapproved
 
-## Current contract and proposal history
+## Current contract on merge and proposal history
 
-- [Current A8 single-Hart atomic/physical convergence contract](dev-plan.md) — profile approved and activated 2026-09-21 at candidate head `41ece090737bd9b899ee2d8c9fd79bae70946f3f` (PR #56), following the completed A7 closeout. Indivisible atomic envelopes, spec-correct AMO/LR/SC decode/width repair, per-Hart reservation state, explicit writer visibility, HTIF D-c device policy, and legacy typed-bridge exit from the standard facades are in scope; the old typed constructor remains a labeled compatibility adapter. Activation itself was documentation-only. The bounded implementation evidence at merged head `4c4d0a295f620ed85557b10475d46bef1be5ea17` is in the [A8 closeout assessment](verification/a8-closeout-assessment.md); that assessment does not replace this current contract or activate a successor. [Archived proposal snapshot](proposals/a8-single-hart-atomic-convergence.md).
+- [Approved A9 successor — Current on merge](dev-plan.md) — post-A7 roadmap Stage 2, limited to the existing native/flat single-Hart configurations. Hart-owned optional observation, Machine composition/lifecycle, and unchanged public CLI/library behavior are the bounded goal; no new board, MMU, interrupt scheduler, TLM or multi-Hart support is implied. This detailed contract and documentation-only rotation were explicitly approved for merge on 2026-09-29, subject to required checks and independent review. A8 remains Current on main until merge; at merge A9 becomes Current. The rotation starts no A9 Rust implementation.
+
+- [A8 single-Hart atomic/physical convergence contract archive record](archive/milestones/a8-single-hart-atomic-physical-convergence.md) — this approved rotation archives the A8 contract at merge; A8 remains Current on main until then. The snapshot preserves A8's approved profile and full scope. Implementation evidence at `4c4d0a295f620ed85557b10475d46bef1be5ea17` and limitations are in the [A8 closeout assessment](verification/a8-closeout-assessment.md). [Approved A8 proposal snapshot](proposals/a8-single-hart-atomic-convergence.md) remains drafting history.
 
 - [Archived A7 non-atomic physical-access contract](archive/milestones/a7-non-atomic-physical-access-migration.md) — approved and activated 2026-09-18, following formal A6 acceptance; fetch and ordinary integer/FP loads/stores migrated to the raw physical boundary while legacy atomics retained behavior on shared storage/locking as explicit debt. Activation merged in PR #47 as `9ee9c5f24c072779f06ce141b3340f953b614442`; the A7 closeout delivery is merged at `c059500a6af20f93569099c4b05ced3364a7703b`; [closeout record](archive/milestones/a7-closeout-record.md) and [proposal history](archive/milestones/a7-non-atomic-physical-access-proposal.md) remain archived.
 
 - [Post-A7 short-term technical development roadmap proposal](proposals/post-a7-roadmap.md) — Draft A7-after technical implementation planning; not an overall product roadmap and does not activate a successor contract.
 
-- [A8 single-Hart atomic/physical convergence proposal snapshot](proposals/a8-single-hart-atomic-convergence.md) — profile approved at the recommended §11 defaults and activated on 2026-09-21 as the [Current contract](dev-plan.md); this file is the unchanged archived snapshot (drafting history), not a second active contract. No implementation is started by the activation.
+- [A8 single-Hart atomic/physical convergence proposal snapshot](proposals/a8-single-hart-atomic-convergence.md) — the unchanged 2026-09-21 drafting source of the A8 archive record that takes effect when the approved A9 rotation is merged; not a second active contract.
 
 ## Verification
 
@@ -54,7 +56,7 @@ Target architecture is not implementation status. Component presence is not end-
 - [A6 capability and acceptance assessment](verification/a6-capability-assessment.md)
 - [A6 retained A5 ACT4 replay summary](verification/a6-act4-replay-35325844246.json)
 - [A7 bounded closeout record](archive/milestones/a7-closeout-record.md) — six-item acceptance, exact PR/source identities, independent cumulative review outcome, two 51-case boundaries, and residual debt
-- [A8 bounded closeout assessment](verification/a8-closeout-assessment.md) — T0–T5 evidence matrix, exact implementation/CI identities, fresh 58-case project guest inventory, separate frozen ACT4 evidence, and residual limitations; does not replace `dev-plan.md`
+- [A8 bounded closeout assessment](verification/a8-closeout-assessment.md) — T0–T5 evidence matrix, exact implementation/CI identities, fresh 58-case project guest inventory, separate frozen ACT4 evidence, and residual limitations; historical A8 evidence, not A9 implementation evidence
 - [External RISC-V test integration contract](verification/external-riscv-tests.md)
 - [Commit tracing and differential testing](verification/commit-tracing.md)
 

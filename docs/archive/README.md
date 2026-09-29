@@ -12,9 +12,11 @@ This directory preserves superseded plans, completed milestones, historical repo
 - [`reference/`](reference/) — old implementation notes, format analyses, and dependency snapshots.
 - Sprint documents in this directory — historical planning records predating the rolling-plan workflow.
 
-Consult [`../dev-plan.md`](../dev-plan.md) for the sole current milestone contract
-(Milestone A7: Non-Atomic Physical-Access Boundary Migration) and
+On `main`, A8 remains the sole Current contract until the approved A9
+rotation merges; this [A8 archive record](milestones/a8-single-hart-atomic-physical-convergence.md)
+takes effect at that merge. The [A9 plan](../dev-plan.md) is approved to become
+Current on merge, subject to required checks and independent review. Consult
 [`../architecture/README.md`](../architecture/README.md) for the current target
 architecture. The [post-A7 short-term technical development roadmap proposal](../proposals/post-a7-roadmap.md) is
-Draft technical planning input only; it is not an overall product roadmap and
-does not activate a successor.
+Draft technical planning context only; it is not an overall product roadmap or
+a second active contract. The A8 [closeout evidence](../verification/a8-closeout-assessment.md) records bounded historical evidence.

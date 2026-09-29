@@ -1,8 +1,8 @@
-# Current Implementation Architecture
+# A7-Era Implementation Architecture Snapshot
 
-**Status:** Current implementation inventory
+**Status:** Historical source-inspected A7 inventory; not a current A8/A9 atomic route description.
 
-**Authority:** Informational
+**Authority:** Informational historical snapshot. Its present-tense legacy AMO/LR/SC and A8-not-started statements describe the A7 inspection date below; for the subsequently implemented native single-Hart atomic route and its precise limits use the [A8 closeout assessment](../verification/a8-closeout-assessment.md), current source/tests, and the [milestone plan](../dev-plan.md) (A9 is approved to become Current on merge; A8 remains Current on `main` until then).
 
 **Last verified:** 2026-09-19 at A7 implementation evidence head `fb6f51c771f32585f1547422c9633379f7ae370b`;
 A4 evidence updated 2026-09-11;
@@ -16,7 +16,7 @@ retains the exact-head Rust, project-ELF, and historical ACT4 evidence.
 
 **Scope:** The public ELF execution path, adjacent library APIs, and the integration status of existing ISS/VP components
 
-This document describes what the repository implements today. It is deliberately separate from the [target architecture](./README.md): target diagrams define intended ownership, while this inventory records current wiring and boundary debt. Source code and verified tests remain authoritative for implementation claims.
+This document preserves the repository's A7-era wiring inventory. It is deliberately separate from the [target architecture](./README.md): target diagrams define intended ownership, while this snapshot records the former A7 wiring and boundary debt. It is not updated by the A8 implementation; source code, verified tests, and the [A8 assessment](../verification/a8-closeout-assessment.md) are authoritative for current integration claims.
 
 ## 1. How to read the status labels
 
