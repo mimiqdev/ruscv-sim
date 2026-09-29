@@ -2,7 +2,7 @@
 
 **Status:** Historical source-inspected A7 inventory; not a current A8/A9 atomic route description.
 
-**Authority:** Informational historical snapshot. Its present-tense legacy AMO/LR/SC and A8-not-started statements describe the A7 inspection date below; for the subsequently implemented native single-Hart atomic route and its precise limits use the [A8 closeout assessment](../verification/a8-closeout-assessment.md), current source/tests, and the sole [active milestone contract](../dev-plan.md).
+**Authority:** Informational historical snapshot. Its present-tense legacy AMO/LR/SC and A8-not-started statements describe the A7 inspection date below; for the subsequently implemented native single-Hart atomic route and its precise limits use the [A8 closeout assessment](../verification/a8-closeout-assessment.md), current source/tests, and the [milestone plan](../dev-plan.md) (A9 is approved to become Current on merge; A8 remains Current on `main` until then).
 
 **Last verified:** 2026-09-19 at A7 implementation evidence head `fb6f51c771f32585f1547422c9633379f7ae370b`;
 A4 evidence updated 2026-09-11;

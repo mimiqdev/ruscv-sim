@@ -4,7 +4,7 @@ This directory contains completed and explicitly superseded milestone plans with
 
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
-[A8 contract snapshot](a8-single-hart-atomic-physical-convergence.md) for the sole current milestone on `main` while this A9 rotation remains an unmerged activation candidate. A9 becomes Current only after explicit approval and merge.
+[A8 contract snapshot](a8-single-hart-atomic-physical-convergence.md) for the sole current milestone on `main` until the approved A9 rotation merges. At merge, A9 becomes Current and the A8 snapshot below takes effect as its archive record.
 
 ## Rolling process
 
@@ -19,8 +19,8 @@ that predates end-to-end integration or ACT4 verification. Consult the
 
 ## Records
 
-- [A8: Single-Hart atomic/physical convergence — proposed archived contract snapshot](a8-single-hart-atomic-physical-convergence.md)
-  - A8 remains the sole Current contract on `main` until this A9 rotation is explicitly approved and merged. The snapshot records its 2026-09-21 activation, 2026-09-29 archival candidate, implementation merged at `4c4d0a2`, and [closeout assessment](../../verification/a8-closeout-assessment.md) merged at `902a428`; its original task/activation wording is historical, not A9 scope.
+- [A8: Single-Hart atomic/physical convergence — archive record on A9 rotation merge](a8-single-hart-atomic-physical-convergence.md)
+  - A8 remains the sole Current contract on `main` until the approved rotation merges; this record takes effect at that merge. It records A8's 2026-09-21 activation, implementation merged at `4c4d0a2`, and [closeout assessment](../../verification/a8-closeout-assessment.md) merged at `902a428`; its original task/activation wording is historical, not A9 scope.
   - [Approved A8 proposal snapshot](../../proposals/a8-single-hart-atomic-convergence.md) remains unchanged historical context
 
 - [A7: Non-atomic physical-access migration — bounded closeout record](a7-closeout-record.md)

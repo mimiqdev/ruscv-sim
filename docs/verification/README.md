@@ -74,8 +74,9 @@ The A1 matrix and gap register are current as-of evidence records, not an A1
 closeout and not a claim that component tests or old CI/reference logs prove
 public-path support. The A7 and A8 closeout records are bounded evidence; neither
 certifies unrelated components. A8 remains the sole Current contract on `main`
-while the A9 plan in `docs/dev-plan.md` is an unmerged activation candidate;
-A9 becomes Current only after explicit approval and merge. The matrix records the exact revision, the initial host
+until the approved A9 plan in `docs/dev-plan.md` is merged; at merge A9 becomes
+Current. The rotation is documentation-only and does not claim implementation.
+The matrix records the exact revision, the initial host
 limitation, and the successful Docker-based guest evidence for its batch.
 The [A1 closeout](../archive/milestones/a1-closeout-record.md) additionally records
 exact-merge main CI with guest compilation and 46/46 execution; historical

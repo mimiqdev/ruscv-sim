@@ -28,7 +28,7 @@ A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七�
 `RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
 评估约束。
 
-候选后继计划见 [`docs/dev-plan.md`](docs/dev-plan.md)：A9（Hart 事实与安全的 N=1 Machine 生命周期），限定在现有单 Hart native／flat 配置。该轮换尚未合并或激活；获得明确批准并合并前，main 上唯一当前合同仍是 A8。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及本候选分支拟归档的[完整合同快照](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
+已批准的后继计划见 [`docs/dev-plan.md`](docs/dev-plan.md)：A9（Hart 事实与安全的 N=1 Machine 生命周期），限定在现有单 Hart native／flat 配置。该详细合同和文档轮换于 2026-09-29 获明确授权在所需检查和独立审查后合并，并于合并时成为唯一当前合同；合并前 main 上仍由 A8 保持 Current。轮换本身不实现 A9 Rust 代码。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及随轮换生效的[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
 
 ## 快速开始
 
