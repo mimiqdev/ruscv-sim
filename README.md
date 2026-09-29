@@ -20,16 +20,15 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 公开 CLI 目前只有 `run`。GDB 服务器和交互式调试器作为 library API 存在，没有单独的调试 binary。ELF 核心循环按 32 位指令取指；压缩指令、页表翻译和 TLM 外设总线还没有全部接到这条路径。
 
 外部验证已有 [A7 有界能力证据](docs/verification/a7-capability-assessment.md)：
-项目自建 ELF 和 ACT4 选择集各自保持 51 个用例边界；ACT4 仍只是 RV64I
-非陷阱证据，不代表完整 ISA、原子、特权/MMU、中断或 OS 支持。A7 的普通取指和
+A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七个项目原子 guest，
+项目自建用例现为 58 个，ACT4 冻结选择仍是独立的 51 个 RV64I 非陷阱用例。
+它们不代表完整 ISA、原子扩展认证、特权/MMU、中断或 OS 支持。A7 的普通取指和
 整数/浮点 load/store 已接入验证过的 raw physical boundary；A8 之后 AMO/LR/SC
 在标准路径上通过同一验证数据端口发送原子 envelope（每指令恰好一个），旧
 `RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
 评估约束。
 
-当前唯一有效合同仍是 `docs/dev-plan.md` 中的 A8 单 Hart 原子收敛里程碑。实现证据绑定于合并提交 `4c4d0a295f620ed85557b10475d46bef1be5ea17`；[A8 有界收尾评估](docs/verification/a8-closeout-assessment.md)记录逐项证据、限制和非声明。该证据文档不归档或替换当前合同，也不激活后继里程碑。后续方向见
-[post-A7 short-term technical development roadmap proposal](docs/proposals/post-a7-roadmap.md)，该文档只是 Draft
-阶段性技术实施规划，不是整体产品路线图，也不替换 `docs/dev-plan.md`。
+当前合同见 [`docs/dev-plan.md`](docs/dev-plan.md)：A9（Hart 事实与安全的 N=1 Machine 生命周期），限定在现有单 Hart native／flat 配置。A8 已有[有界收尾评估](docs/verification/a8-closeout-assessment.md)并[归档完整合同](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)；不因此宣称 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
 
 ## 快速开始
 

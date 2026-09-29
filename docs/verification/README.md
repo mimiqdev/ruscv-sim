@@ -65,15 +65,16 @@ Test language follows the layer rather than the simulator implementation languag
 - [A7 public-facade physical-loop observation](a7-physical-loop-observation.json) — pre-migration/current public `load_and_run` measurements with guest-result and retirement checks
 - [A7 cumulative T5 review checklist](a7-t5-cumulative-review-checklist.md) — source/test dependencies and independent-review boundary for the final PR head
 - [A8 T4 public atomic bridge exit and equivalence](a8-public-atomic.md) — standard-facade route audit, cross-facade atomic guests, P2a visibility, D-c boundaries, and no-closeout evidence
-- [A8 T5 exact-head evidence and acceptance audit](a8-t5-evidence.md) — cumulative T0–T4 source/test audit, final exact-head checks, separate project-guest/ACT4 identities, residual debt, and bounded conclusion
+- [A8 T5 earlier-head evidence and acceptance audit](a8-t5-evidence.md) — historical checks bound to `45a170f`, explicitly stale for later implementation heads
+- [A8 bounded closeout assessment](a8-closeout-assessment.md) — current A8 implementation-tree evidence, T0–T5 matrix, 58 fresh project guests, separate frozen ACT4 51-case run, and residual limitations; not A9 implementation evidence
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)
 
 The A1 matrix and gap register are current as-of evidence records, not an A1
 closeout and not a claim that component tests or old CI/reference logs prove
-public-path support. The A7 closeout record is bounded to the non-atomic
-migration; it does not replace the sole current `docs/dev-plan.md` contract or
-select a successor milestone. The matrix records the exact revision, the initial host
+public-path support. The A7 and A8 closeout records are bounded historical evidence; neither
+replaces the sole current A9 `docs/dev-plan.md` contract or certifies unrelated
+components. The matrix records the exact revision, the initial host
 limitation, and the successful Docker-based guest evidence for its batch.
 The [A1 closeout](../archive/milestones/a1-closeout-record.md) additionally records
 exact-merge main CI with guest compilation and 46/46 execution; historical

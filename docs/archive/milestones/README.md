@@ -5,7 +5,7 @@ This directory contains completed and explicitly superseded milestone plans with
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
 [current contract](../../dev-plan.md) for the sole current milestone:
-Milestone A7 — Non-Atomic Physical-Access Boundary Migration.
+Milestone A9 — Hart Facts and Safe N=1 Machine Lifecycle.
 
 ## Rolling process
 
@@ -14,11 +14,15 @@ Milestone A7 — Non-Atomic Physical-Access Boundary Migration.
 3. If planning is deliberately reset, archive the replaced plan as superseded without claiming completion.
 4. Add completion evidence or the supersession reason and known limitations to the archived record.
 5. Promote the next milestone into `docs/dev-plan.md` only after it is separately
-   approved. A completed A7 closeout record does not invent a successor; until
-   that decision, `docs/dev-plan.md` remains the sole Current technical contract.
-   The [post-A7 short-term technical development roadmap proposal](../../proposals/post-a7-roadmap.md) is Draft technical planning input, not an overall product roadmap or successor.
+   approved. The archived A8 record documents only its own bounded completion;
+   the [post-A7 roadmap proposal](../../proposals/post-a7-roadmap.md) remains Draft
+   technical planning context, not a second current contract.
 
 ## Records
+
+- [A8: Single-Hart atomic/physical convergence — completed contract](a8-single-hart-atomic-physical-convergence.md)
+  - Activated 2026-09-21 and archived 2026-09-29; bounded native single-Hart implementation merged at `4c4d0a2` and [closeout assessment](../../verification/a8-closeout-assessment.md) merged at `902a428`. The archived contract retains its original task/activation wording as history, not as current scope.
+  - [Approved A8 proposal snapshot](../../proposals/a8-single-hart-atomic-convergence.md) remains unchanged historical context
 
 - [A7: Non-atomic physical-access migration — bounded closeout record](a7-closeout-record.md)
   - Bounded non-atomic acceptance recorded 2026-09-19; closeout delivery merged at `c059500a6af20f93569099c4b05ced3364a7703b`; rolling successor selection remains pending
