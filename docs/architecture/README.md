@@ -10,7 +10,7 @@
 
 This document describes the intended product architecture. It does not claim that every depicted component is implemented or integrated. Current capability must be established from the source code and verified tests.
 
-For the corresponding as-is execution path, component wiring, and Current → Target gaps, see [Current Implementation Architecture](current-state.md).
+For the A7-era execution path, component wiring, and then-observed gaps, see the [historical implementation snapshot](current-state.md). For the subsequent A8 native atomic route and limits, see the [A8 closeout assessment](../verification/a8-closeout-assessment.md) and current source/tests.
 
 ## 1. Product evolution
 
