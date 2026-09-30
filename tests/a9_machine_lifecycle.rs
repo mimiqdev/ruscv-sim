@@ -169,6 +169,79 @@ fn metadata_placement_fresh_reset_zero_fill_and_rerun_match_native_and_flat() {
 }
 
 #[test]
+fn signature_inspection_preserves_empty_absent_and_unreadable_regions_after_fresh_reset() {
+    let cases = [
+        None,
+        Some((elf::BASE + 0x30_000, 0)),
+        Some((elf::BASE - 8, 0)),
+        Some((u64::MAX, 0)),
+        Some((elf::SIGNATURE, 8)),
+        Some((elf::BASE + 0x30_000, 8)),
+        Some((elf::BASE - 8, 8)),
+    ];
+    for kind in [PlatformKind::Native, PlatformKind::Flat] {
+        for region in cases {
+            let description = Arc::new(
+                LoadImage::parse(&elf::elf_with_signature(
+                    &[elf::nop()],
+                    0,
+                    elf::BASE,
+                    None,
+                    region,
+                    0x4000,
+                ))
+                .unwrap(),
+            );
+            let owner = owner(kind, description.clone());
+            let initial_generation = owner.status().unwrap().generation;
+            for fresh in [false, true] {
+                if fresh {
+                    owner.resume().unwrap();
+                    assert!(owner.step(true).unwrap().hart().control.retired);
+                    drained(&owner);
+                    owner.fresh_reset().unwrap();
+                }
+                let snapshot = owner.inspect().unwrap();
+                assert!(Arc::ptr_eq(&snapshot.image, &description));
+                match region {
+                    None => {
+                        assert!(snapshot.image.signature().is_none());
+                        assert!(snapshot.signature.is_none());
+                    }
+                    Some((address, size)) => {
+                        let metadata = snapshot.image.signature().unwrap();
+                        assert_eq!(metadata.vaddr, address);
+                        assert_eq!(metadata.size, size);
+                        assert_eq!(
+                            metadata.file_offset,
+                            elf::LOAD_OFFSET as u64 + elf::SIGNATURE_SEGMENT_OFFSET
+                        );
+                        let artifact = snapshot.signature.as_ref().unwrap();
+                        if size == 0 {
+                            assert_eq!(
+                                artifact.as_ref().unwrap(),
+                                &Vec::<u8>::new(),
+                                "{kind:?} {address:#x}, fresh={fresh}"
+                            );
+                        } else if address == elf::SIGNATURE {
+                            assert_eq!(artifact.as_ref().unwrap(), &elf::SIGNATURE_BYTES);
+                        } else {
+                            assert!(artifact.is_err(), "nonempty unmapped signature must fail");
+                        }
+                    }
+                }
+                assert_eq!(snapshot.hart.pc, description.entry_point());
+                assert_eq!(snapshot.hart.csr.read(machine::MINSTRET).unwrap(), 0);
+                assert!(snapshot.events.is_empty());
+                assert!(owner.status().unwrap().work.is_empty());
+                assert_eq!(snapshot.generation > initial_generation, fresh);
+            }
+            owner.teardown().unwrap();
+        }
+    }
+}
+
+#[test]
 fn pure_zero_fill_segment_preserves_loader_order_and_restores_overlapping_file_bytes() {
     let mut bytes = elf::elf_with_code(&[elf::nop()], 0, true, false, 0x4000);
     bytes[56..58].copy_from_slice(&2u16.to_le_bytes()); // two program headers

@@ -197,6 +197,11 @@ impl Platform {
     }
     pub fn signature(&self, image: &LoadImage) -> Option<Result<Vec<u8>, String>> {
         image.signature().map(|info| {
+            // Empty artifacts preserve metadata without mapping or target reads
+            // (ADR-0003 §7), even when the declared address is outside RAM.
+            if info.size == 0 {
+                return Ok(Vec::new());
+            }
             let addr = self
                 .placement
                 .signature_address(info, self.form)

@@ -114,7 +114,10 @@ machine.teardown()?;
 克隆 handle 使用存储偏移（native 也仅访问 RAM，不访问设备）；fresh reset/reload 后旧
 handle 仍可写旧 RAM，但不能影响新一代存储或退出事件。当前代写入在 quiesce 期间明确拒绝，
 已准入的写入继续完成。`inspect()` 提供协调快照；handle/`read_mem` 仅是 volatile RAM 视图。
-控制状态编辑必须已 drain，且使 reservation 失效，不能导入旧一代的 LR snapshot。
+签名元数据不存在时 `inspect().signature` 为 `None`；零长度签名保留元数据并返回
+`Some(Ok(Vec::new()))`，不要求地址可映射；非空不可读区域返回 `Some(Err(...))`，
+由 Runner 决定最终 artifact 策略。控制状态编辑必须已 drain，且使 reservation 失效，
+不能导入旧一代的 LR snapshot。
 
 返回的 `MachineTurn` 保持已接受的边界/观察工作存活；保留 receipt 或正在执行 callback/sink
 时不能完成 drain 或重置。未知完成始终拒绝重用、reset 和 teardown；目前没有 adapter
