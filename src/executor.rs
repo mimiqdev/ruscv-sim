@@ -1168,84 +1168,13 @@ impl RunControl {
     }
 }
 
-/// Address form a configuration uses for image-declared metadata.
-///
-/// Both public entry points address the same loaded image differently: the
-/// native bus maps RAM at the image base, so a guest address is already the
-/// address the bus takes, while the flat library holds the image relative to its
-/// base and addresses it by a checked storage offset.
-#[derive(Debug, Clone, Copy)]
-enum AddressForm {
-    /// Native bus configuration: image/guest addresses pass through unchanged.
-    Bus,
-    /// Flat configuration: image/guest addresses resolve to buffer offsets.
-    Flat { base_addr: u64, memory_size: u64 },
-}
+use crate::image::AddressForm;
 
-impl AddressForm {
-    /// Resolve an image-declared guest range into this configuration's address.
-    ///
-    /// The flat form is checked: an address below the image base, a range that
-    /// overflows the address space, or a range that leaves the image buffer is
-    /// an explicit error rather than a wrapped or truncated offset. Per-use
-    /// requirements such as the exit poll's eight-byte alignment are enforced by
-    /// the caller, not here.
-    fn resolve(self, guest_addr: u64, len: u64, what: &str) -> Result<u64, ExecutorError> {
-        match self {
-            AddressForm::Bus => Ok(guest_addr),
-            AddressForm::Flat {
-                base_addr,
-                memory_size,
-            } => {
-                let offset = guest_addr.checked_sub(base_addr).ok_or_else(|| {
-                    ExecutorError::ExecutionError(format!(
-                        "{what} address 0x{guest_addr:016x} is below image base 0x{base_addr:016x}"
-                    ))
-                })?;
-                let end = offset.checked_add(len).ok_or_else(|| {
-                    ExecutorError::ExecutionError(format!(
-                        "{what} address 0x{guest_addr:016x} overlaps the end of the address space"
-                    ))
-                })?;
-                if end > memory_size {
-                    return Err(ExecutorError::ExecutionError(format!(
-                        "{what} address 0x{guest_addr:016x} maps to flat offset 0x{offset:016x}, outside the {memory_size:#x}-byte image memory"
-                    )));
-                }
-                Ok(offset)
-            }
-        }
-    }
-
-    /// The virtual-to-physical base the core is reset with in this form.
-    ///
-    /// The bus form maps RAM at the image base on the bus itself, so the core
-    /// passes guest addresses through unchanged; the flat form stores the
-    /// image at the start of its buffer, so the core subtracts the image base.
-    fn core_translation_base(self) -> u64 {
-        match self {
-            AddressForm::Bus => 0,
-            AddressForm::Flat { base_addr, .. } => base_addr,
-        }
-    }
-}
-
-/// Where a loaded image declares its exit signal and signature artifact.
-///
-/// One owner holds the image's placement facts so both entry points resolve them
-/// through the same checked conversion instead of each implementing its own.
+/// Compatibility adapter retains the existing ExecutorError representation.
+/// Shared metadata conversion lives below Runner in crate::image; Machine does
+/// not depend on a run result, stop policy or Runner diagnostic type.
 #[derive(Debug, Clone, Default)]
-struct ImagePlacement {
-    /// Lowest load-segment address of the image.
-    base_addr: u64,
-    /// Bytes addressable in the configuration's image buffer or RAM window.
-    memory_size: u64,
-    /// Image-declared exit signal, as a guest address.
-    tohost: Option<u64>,
-    /// Image-declared signature region, as guest metadata.
-    signature: Option<SignatureInfo>,
-}
-
+struct ImagePlacement(crate::image::ImagePlacement);
 impl ImagePlacement {
     fn new(
         base_addr: u64,
@@ -1253,49 +1182,35 @@ impl ImagePlacement {
         tohost: Option<u64>,
         signature: Option<SignatureInfo>,
     ) -> Self {
-        Self {
+        Self(crate::image::ImagePlacement::new(
             base_addr,
-            memory_size: memory_size as u64,
+            memory_size,
             tohost,
             signature,
-        }
+        ))
     }
-
-    /// The address form the flat library configuration addresses images in.
     fn address_form(&self) -> AddressForm {
-        AddressForm::Flat {
-            base_addr: self.base_addr,
-            memory_size: self.memory_size,
-        }
+        self.0.address_form()
     }
-
-    /// The image's declared exit signal in the requested address form.
-    ///
-    /// Absent metadata yields `None`; a placement this configuration cannot
-    /// address is an error.
     fn tohost(&self, form: AddressForm) -> Result<Option<u64>, ExecutorError> {
-        self.tohost
-            .map(|addr| form.resolve(addr, 8, "ELF tohost"))
-            .transpose()
+        self.0
+            .tohost(form)
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))
     }
-
-    /// The address of a declared signature region in the requested address form.
     fn signature_address(
         &self,
         info: &SignatureInfo,
         form: AddressForm,
     ) -> Result<u64, ExecutorError> {
-        form.resolve(info.vaddr, info.size, "ELF signature")
+        self.0
+            .signature_address(info, form)
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))
     }
-
-    /// The image's declared signature metadata, including its guest address.
     fn signature_info(&self) -> Option<&SignatureInfo> {
-        self.signature.as_ref()
+        self.0.signature_info()
     }
-
-    /// The image-declared exit signal as a guest address, if it declares one.
     fn tohost_guest(&self) -> Option<u64> {
-        self.tohost
+        self.0.tohost_guest()
     }
 }
 
@@ -2191,7 +2106,7 @@ impl RiscVSimulator {
 #[cfg(test)]
 #[allow(dead_code)]
 #[path = "../tests/common/public_elf.rs"]
-mod observation_fixture;
+pub(crate) mod observation_fixture;
 
 #[cfg(test)]
 mod tests {

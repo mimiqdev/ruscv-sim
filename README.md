@@ -84,6 +84,43 @@ Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在
 
 退出码来自客户程序的 `tohost` 值。超时、加载失败或模拟器内部错误时进程以非零状态退出。
 
+## 显式 Machine 生命周期 API（A9 T2）
+
+`machine::Machine` 直接拥有一个 Hart 与现有 native 或 flat Platform 的组合。
+`elf::LoadImage::parse` 只提供不可变的段、零填充和地址元数据；Machine 协调安装，
+Platform 放置字节。当前 CLI 和 `RiscVSimulator` 尚未迁移到此所有者（T3），
+原有构造器及 core-only `reset` 仍保留，不能被当作安全 fresh Machine reset。
+
+```rust,ignore
+use ruscv_sim::elf::LoadImage;
+use ruscv_sim::machine::{Machine, MachineConfig, PlatformKind};
+use std::sync::Arc;
+
+let image = Arc::new(LoadImage::parse(&elf_bytes)?);
+let machine = Machine::new(MachineConfig::new(PlatformKind::Flat));
+machine.install(image)?;               // 初始配置已静止；安装后保持静止
+machine.resume()?;                     // 开放普通执行与 host RAM 写入
+{
+    let turn = machine.step(false)?;    // 同一 Hart 语义；返回未经退出策略分类的事实
+    assert!(turn.hart().observation.is_none());
+}                                      // 消费边界 receipt 后才能推进/完成 drain
+machine.request_quiesce()?;
+machine.try_drain()?;                  // 在途工作存在时返回拒绝，不阻塞等待
+machine.fresh_reset()?;                // 保留 image/config，恢复 RAM/Hart/devices
+machine.teardown()?;
+```
+
+`memory()`、`write_mem` 和 `clear_tohost` 在普通执行期间保持真实的 RAM/version 写入。
+克隆 handle 使用存储偏移（native 也仅访问 RAM，不访问设备）；fresh reset/reload 后旧
+handle 仍可写旧 RAM，但不能影响新一代存储或退出事件。当前代写入在 quiesce 期间明确拒绝，
+已准入的写入继续完成。`inspect()` 提供协调快照；handle/`read_mem` 仅是 volatile RAM 视图。
+控制状态编辑必须已 drain，且使 reservation 失效，不能导入旧一代的 LR snapshot。
+
+返回的 `MachineTurn` 保持已接受的边界/观察工作存活；保留 receipt 或正在执行 callback/sink
+时不能完成 drain 或重置。未知完成始终拒绝重用、reset 和 teardown；目前没有 adapter
+终止证明/恢复接口。若调用者丢弃未知或无法证明安全的 owner，其失败 domain 会被保留到
+进程退出，而不是假装已安全清理。这是资源保留的失败策略，不是强制恢复或完整 VP 声明。
+
 ## 仓库结构
 
 ```text

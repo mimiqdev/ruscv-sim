@@ -138,6 +138,16 @@ pub mod mcr_bits {
     pub const LOOP: u8 = 0x10;
 }
 
+/// Side-effect-free coherent device inspection (not debugger wiring).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UartInspection {
+    pub base_addr: u64,
+    pub rx_fifo: Vec<u8>,
+    pub tx_fifo: Vec<u8>,
+    /// IER, FCR, LCR, MCR, LSR, MSR, SCR, DLL, DLM and RX trigger.
+    pub registers: [u8; 10],
+}
+
 /// UART 16550 外设
 pub struct Uart16550 {
     /// 基地址
@@ -230,6 +240,26 @@ impl Uart16550 {
         };
         uart.update_lsr();
         uart
+    }
+
+    pub(crate) fn inspect(&self) -> UartInspection {
+        UartInspection {
+            base_addr: self.base_addr,
+            rx_fifo: self.rx_fifo.clone(),
+            tx_fifo: self.tx_fifo.clone(),
+            registers: [
+                self.ier,
+                self.fcr,
+                self.lcr,
+                self.mcr,
+                self.lsr,
+                self.msr,
+                self.scr,
+                self.dll,
+                self.dlm,
+                self.rx_trigger,
+            ],
+        }
     }
 
     /// 获取基地址
