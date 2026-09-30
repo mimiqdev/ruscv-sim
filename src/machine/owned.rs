@@ -3,6 +3,24 @@
 //! composition, transition and last-owner quarantine remain the T2 mechanisms.
 use super::*;
 
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SignalOperation {
+    Poll,
+    Clear,
+}
+#[cfg(test)]
+type BeforeSignal = Arc<dyn Fn(SignalOperation) + Send + Sync>;
+#[cfg(test)]
+type SignalLockProbe = Arc<dyn Fn(SignalOperation, bool) + Send + Sync>;
+#[cfg(test)]
+#[derive(Default)]
+struct SignalHooks {
+    before: Option<BeforeSignal>,
+    probe: Option<SignalLockProbe>,
+    after_clear: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
 pub(crate) struct OwnedMachine {
     control: Machine,
     installed: Option<Installed>,
@@ -11,6 +29,8 @@ pub(crate) struct OwnedMachine {
     edit_reservation: Option<crate::isa::rv64a::lr_sc::ReservationSet>,
     #[cfg(test)]
     before_drain: Option<Arc<dyn Fn() + Send + Sync>>,
+    #[cfg(test)]
+    signal_hooks: SignalHooks,
 }
 impl OwnedMachine {
     pub(crate) fn new(config: MachineConfig, image: Arc<LoadImage>) -> Result<Self, MachineError> {
@@ -32,6 +52,8 @@ impl OwnedMachine {
             edit_reservation: None,
             #[cfg(test)]
             before_drain: None,
+            #[cfg(test)]
+            signal_hooks: SignalHooks::default(),
         })
     }
     fn domain(&self) -> &Installed {
@@ -152,19 +174,52 @@ impl OwnedMachine {
         let view = self.control.host_view().unwrap();
         *view.writer.before_lock.lock().unwrap() = Some(hook);
     }
+    #[cfg(test)]
+    pub(crate) fn test_signal_hooks(
+        &mut self,
+        before: BeforeSignal,
+        probe: SignalLockProbe,
+        after_clear: Arc<dyn Fn() + Send + Sync>,
+    ) {
+        self.signal_hooks = SignalHooks {
+            before: Some(before),
+            probe: Some(probe),
+            after_clear: Some(after_clear),
+        };
+    }
+    #[cfg(test)]
+    fn probe_signal_lock(&self, operation: SignalOperation, memory: &SharedMemory) {
+        if let Some(before) = &self.signal_hooks.before {
+            before(operation);
+        }
+        if let Some(probe) = &self.signal_hooks.probe {
+            // Probe only the actual selected mutex, dropping any acquired guard
+            // before the normal blocking acquisition. Never used as drain proof.
+            let contended = matches!(memory.try_lock(), Err(std::sync::TryLockError::WouldBlock));
+            probe(operation, contended);
+        }
+    }
     pub(crate) fn failure(&self) -> Option<crate::core::SimulatorFailure> {
         self.control
             .status()
             .ok()
             .and_then(|status| status.last_failure)
     }
+    fn signal_memory(&self) -> &SharedMemory {
+        match self.control.inner.config.platform {
+            // Preserve the flat facade's public clone-guard serialization.
+            PlatformKind::Flat => &self.memory,
+            // Native bus/device callbacks retain their independent RAM writers.
+            PlatformKind::Native => &self.domain().platform.typed,
+        }
+    }
     pub(crate) fn observe_tohost(&self, turn: &mut MachineTurn, address: u64) {
+        let signal_memory = self.signal_memory();
+        #[cfg(test)]
+        self.probe_signal_lock(SignalOperation::Poll, signal_memory);
         turn.tohost = Some(TohostSample {
             address,
-            value: self
-                .domain()
-                .platform
-                .typed
+            value: signal_memory
                 .lock()
                 .map_err(|_| MemoryError::Backend("poisoned Platform".into()))
                 .and_then(|memory| memory.read_dword(address)),
@@ -172,8 +227,28 @@ impl OwnedMachine {
     }
     /// Decode belongs to Runner; accepted post-boundary clearing stays within
     /// the receipt and the same Platform/version domain. Retain byte-clear policy.
+    /// Flat acquires the public capability before RAM, with no admission gate
+    /// held. Write through the owned storage beneath that guard, not HostMemory:
+    /// this already accepted receipt may finish even after quiesce stops new work.
     pub(crate) fn clear_signal(&self, _turn: &MachineTurn, address: u64, verbose: bool) {
-        if let Ok(mut memory) = self.domain().platform.typed.lock() {
+        let signal_memory = self.signal_memory();
+        #[cfg(test)]
+        self.probe_signal_lock(SignalOperation::Clear, signal_memory);
+        let result = (|| -> Result<(), MemoryError> {
+            let _serialization =
+                if self.control.inner.config.platform == PlatformKind::Flat {
+                    Some(signal_memory.lock().map_err(|_| {
+                        MemoryError::Backend("poisoned host memory capability".into())
+                    })?)
+                } else {
+                    None
+                };
+            let mut memory = self
+                .domain()
+                .platform
+                .typed
+                .lock()
+                .map_err(|_| MemoryError::Backend("poisoned Platform".into()))?;
             for i in 0..8 {
                 let result = address
                     .checked_add(i)
@@ -185,8 +260,14 @@ impl OwnedMachine {
                     }
                 }
             }
-        } else if verbose {
+            Ok(())
+        })();
+        if result.is_err() && verbose {
             eprintln!("[WARN] Failed to lock memory for clear_tohost");
+        }
+        #[cfg(test)]
+        if let Some(after_clear) = &self.signal_hooks.after_clear {
+            after_clear();
         }
     }
     pub(crate) fn signature(&self) -> Option<Result<Vec<u8>, String>> {

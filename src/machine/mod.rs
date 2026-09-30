@@ -8,6 +8,8 @@ mod host_port;
 mod owned;
 mod platform;
 pub(crate) use owned::OwnedMachine;
+#[cfg(test)]
+pub(crate) use owned::SignalOperation;
 
 use crate::core::observation::{HartTransition, ObservationSink};
 use crate::core::{CoreState, RiscvCore, StepOutcome};

@@ -499,3 +499,144 @@ fn lifecycle_request_during_native_observation_is_in_final_boundary_facts() {
     assert_eq!(result.cycles, 1);
     assert!(result.error.unwrap().contains("T3 sink failure"));
 }
+
+#[test]
+fn flat_signal_poll_waits_for_guarded_multipart_write_and_decodes_final_value() {
+    use crate::machine::SignalOperation;
+    let mut sim = loaded(&[elf::nop()]);
+    let clone = sim.memory().clone();
+    let control = sim.machine.test_control();
+    let (poll_ready, poll_rx) = mpsc::channel();
+    let (allow_poll, poll_wait) = mpsc::channel();
+    let poll_wait = Mutex::new(poll_wait);
+    let (clear_ready, clear_rx) = mpsc::channel();
+    let (allow_clear, clear_wait) = mpsc::channel();
+    let clear_wait = Mutex::new(clear_wait);
+    let (probe, probe_rx) = mpsc::channel();
+    sim.machine.test_signal_hooks(
+        Arc::new(move |operation| match operation {
+            SignalOperation::Poll => {
+                poll_ready.send(()).unwrap();
+                poll_wait.lock().unwrap().recv().unwrap();
+            }
+            SignalOperation::Clear => {
+                clear_ready.send(()).unwrap();
+                clear_wait.lock().unwrap().recv().unwrap();
+            }
+        }),
+        Arc::new(move |operation, contended| {
+            if operation == SignalOperation::Poll {
+                probe.send(contended).unwrap();
+            }
+        }),
+        Arc::new(|| {}),
+    );
+    let runner = thread::spawn(move || {
+        let result = sim.run(Some(1)).unwrap();
+        (sim, result)
+    });
+    poll_rx.recv().unwrap(); // actual Runner: after NOP retirement, before poll
+    assert_eq!(control.status().unwrap().work.boundary, 1);
+    let mut guard = clone.lock().unwrap();
+    guard.write_byte(elf::TOHOST_SEGMENT_OFFSET, 1).unwrap();
+    allow_poll.send(()).unwrap();
+    let contended = probe_rx.recv().unwrap();
+    if !contended {
+        // Deterministic pre-fix reproduction: raw polling already decoded the
+        // partial 1 before this same guarded writer supplied the remaining bytes.
+        clear_rx.recv().unwrap();
+    }
+    guard.write_byte(elf::TOHOST_SEGMENT_OFFSET, 7).unwrap();
+    guard.write_byte(elf::TOHOST_SEGMENT_OFFSET + 1, 1).unwrap();
+    assert_eq!(guard.read_dword(elf::TOHOST_SEGMENT_OFFSET).unwrap(), 0x107);
+    drop(guard);
+    if contended {
+        clear_rx.recv().unwrap();
+    }
+    allow_clear.send(()).unwrap();
+    let (sim, result) = runner.join().unwrap();
+    assert_eq!(
+        result.exit_code, 0x83,
+        "decode the final guarded 0x107, not partial 1"
+    );
+    assert!(contended, "poll must wait on the public clone guard");
+    assert_eq!((result.cycles, result.final_pc), (1, elf::BASE + 4));
+    assert!(!result.timed_out && result.error.is_none());
+    assert_eq!(sim.read_mem(elf::TOHOST_SEGMENT_OFFSET, 8).unwrap(), [0; 8]);
+}
+
+#[test]
+fn flat_signal_clear_waits_for_clone_guard_and_remains_receipt_covered_after_quiesce() {
+    use crate::machine::SignalOperation;
+    for quiesce in [false, true] {
+        let mut sim = loaded(&[elf::nop()]);
+        sim.write_mem(elf::TOHOST_SEGMENT_OFFSET, &7u64.to_le_bytes())
+            .unwrap();
+        let clone = sim.memory().clone();
+        let control = sim.machine.test_control();
+        let (clear_ready, clear_rx) = mpsc::channel();
+        let (allow_clear, clear_wait) = mpsc::channel();
+        let clear_wait = Mutex::new(clear_wait);
+        let (probe, probe_rx) = mpsc::channel();
+        let (cleared, cleared_rx) = mpsc::channel();
+        let (allow_return, return_wait) = mpsc::channel();
+        let return_wait = Mutex::new(return_wait);
+        sim.machine.test_signal_hooks(
+            Arc::new(move |operation| {
+                if operation == SignalOperation::Clear {
+                    clear_ready.send(()).unwrap();
+                    clear_wait.lock().unwrap().recv().unwrap();
+                }
+            }),
+            Arc::new(move |operation, contended| {
+                if operation == SignalOperation::Clear {
+                    probe.send(contended).unwrap();
+                }
+            }),
+            Arc::new(move || {
+                cleared.send(()).unwrap();
+                return_wait.lock().unwrap().recv().unwrap();
+            }),
+        );
+        let runner = thread::spawn(move || {
+            let result = sim.run(Some(1)).unwrap();
+            (sim, result)
+        });
+        clear_rx.recv().unwrap(); // actual Runner has decoded and retained code 3
+        let mut guard = clone.lock().unwrap();
+        guard.write_byte(elf::TOHOST_SEGMENT_OFFSET, 1).unwrap();
+        if quiesce {
+            // Finish this host update before quiesce; only receipt-covered
+            // clearing, not newly admitted host writes, may follow the request.
+            guard.write_byte(elf::TOHOST_SEGMENT_OFFSET + 1, 2).unwrap();
+            control.request_quiesce().unwrap();
+            assert!(control.write_mem(0x300, &[1]).is_err());
+        }
+        allow_clear.send(()).unwrap();
+        let contended = probe_rx.recv().unwrap();
+        if !contended {
+            cleared_rx.recv().unwrap(); // pre-fix clear ran despite held guard
+        }
+        let while_guarded = guard.read_dword(elf::TOHOST_SEGMENT_OFFSET).unwrap();
+        if !quiesce {
+            guard.write_byte(elf::TOHOST_SEGMENT_OFFSET + 1, 2).unwrap();
+        }
+        assert_eq!(control.status().unwrap().work.boundary, 1);
+        assert!(matches!(control.try_drain(), Err(MachineError::Busy)));
+        drop(guard);
+        if contended {
+            cleared_rx.recv().unwrap();
+        }
+        allow_return.send(()).unwrap();
+        let (sim, result) = runner.join().unwrap();
+        assert!(contended, "clear must wait on the public clone guard");
+        assert_eq!(while_guarded, if quiesce { 0x201 } else { 1 });
+        assert_eq!(
+            result.exit_code, 3,
+            "retain decoded code, never read after clear"
+        );
+        assert_eq!((result.cycles, result.final_pc), (1, elf::BASE + 4));
+        assert!(!result.timed_out && result.error.is_none());
+        assert_eq!(sim.read_mem(elf::TOHOST_SEGMENT_OFFSET, 8).unwrap(), [0; 8]);
+    }
+}

@@ -132,6 +132,11 @@ image 的 RAM／零填充与 Hart，保留预算、verbosity 和手工 tohost �
 状态／内存访问或执行请求结束编辑阶段并重新开放普通写入。编辑可保留当前 reservation，
 但不能导入不同的 opaque LR token。未知完成无法通过编辑、重载或 fresh reset 清除；
 无法返回 `Result` 的旧 `state_mut()` 在不能证明 drain 时 panic，其他生命周期操作返回错误。
+flat Runner 的 tohost 取样与逐字节清除均与公共 `memory()` mutex 的 guard 串行，
+不会把仍在同一 guard 内分段更新的信号提前解码为退出码。取样与清除仍是分开的操作，
+保留先解码、后清除的客户码；已接受的边界 receipt 允许清除在 quiesce 后完成，
+不把它当作新的 host 写入准入。native callback／HTIF 优先级不变。
+
 未实现的合法指令仍是失败的 started slot，不退休、不退出；该兼容 facade 允许 host
 修补和下一次独立 run／step 请求（不重试同一 run 的失败 slot），不适用于 host／未知完成。
 
