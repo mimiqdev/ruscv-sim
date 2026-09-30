@@ -1,15 +1,16 @@
-# A9 Stage 2 progress — frozen T0, T1 facts and T2 direct-owner checkpoints
+# A9 Stage 2 progress — frozen T0 through T3 public-facade checkpoints
 
 ## 1. Scope and evidence identity
 
-This record covers **T0–T2 only**, under [the A9 contract](../dev-plan.md) §5.
+This record covers **T0–T3 only**, under [the A9 contract](../dev-plan.md) §5.
 Sections 2–5 preserve the frozen T0 inventory, evidence and original expectations;
 §6 records the T1 Hart observation checkpoint; §7 records its CLI reporting-error
 correction. §8 records T2's directly tested N=1 composition/lifecycle owner;
-§9 records its same-scope empty-signature correction.
-T3 facade/Runner migration and T4 fresh guest/final acceptance remain deferred,
-requiring their separate continuations. Earlier checkpoint evidence/status is
-historical and is not automatically reused as evidence of T2 or later integration.
+§9 records its same-scope empty-signature correction. §10 records the separately
+authorized T3 migration of both public facades through that composition.
+T4 fresh guest/final acceptance remains deferred, requiring its separate
+continuation. Earlier checkpoint evidence/status is historical and is not
+automatically reused as evidence of T3 or later integration.
 ADR-0001–0004 remain accepted authorities; the [A8 assessment](a8-closeout-assessment.md)
 remains unchanged and bounded, not full ADR conformance or ISA certification.
 
@@ -746,6 +747,196 @@ four lifecycle unit tests, two builder/boundary unit tests, three reporting unit
 tests, and both owner/facade signature filters. The full suite passed including
 855 library tests and 27 doctests. The documentation-only child adding this
 record must receive its own exact-HEAD verification and independent review;
-these checks do not approve a later HEAD automatically. All T3/T4 deferrals,
-unknown-completion quarantine/proof limitations, cross-toolchain/ACT4 and
-formal PR-head acceptance non-claims in §8 remain unchanged.
+these checks do not approve a later HEAD automatically. At this R2 checkpoint,
+all T3/T4 deferrals, unknown-completion quarantine/proof limitations,
+cross-toolchain/ACT4 and formal PR-head acceptance non-claims in §8 remained
+unchanged. Subsequent T3 integration is recorded below.
+
+## 10. T3 public-facade migration checkpoint
+
+Implementation/test checkpoint:
+`124c4a49a4f39a35242e8b2474a5b54250613e45`, based on the unchanged T2/R2
+ancestor `ae1a5397feadc35945df261b81ac469bf433c34c`. This section is a
+later documentation-only change and requires its own submitted-HEAD checks.
+Neither preceding review nor local runtime verification is formal PR-head
+acceptance, fresh guest evidence, or authorization to begin T4.
+
+### One composition/transition path, compatible borrowing
+
+- Both [`load_and_run`/CLI and `RiscVSimulator`](../../src/executor.rs) now
+  construct [`OwnedMachine`](../../src/machine/owned.rs), an exclusive borrowing
+  adapter for the **same** T2 composition, Platform, admission, generation and
+  drain mechanisms. `Installed::build` owns Hart/port wiring; `Installed::turn`
+  in [`machine`](../../src/machine/mod.rs) is the sole standard invocation of
+  `RiscvCore::step_transition`, shared with cloneable `Machine` control. No
+  facade constructor, image installer or Runner loop invokes a separate core.
+- The exclusive adapter holds the actual installed Hart so `state()` and
+  `state_mut()` preserve `&CoreState` / `&mut CoreState`, not guards or mirrored
+  snapshots. `memory()` preserves its borrowed cloneable Arc/mutex interface.
+  Before dropping the adapter, it reattaches that same installed domain to the
+  admission owner; existing leases retain it through host/boundary work, and
+  T2's unknown/poison quarantine remains fail-closed. The internal shared
+  controller is not exposed as a public mutable facade capability.
+- Runner obtains `LoadImage` metadata and requests coordinated installation;
+  Platform retains one active storage/version domain. No flattened second
+  execution RAM, virtual translation, second ISA dispatcher, device topology,
+  or performance infrastructure is added. The pre-load flat constructor uses a
+  blank description with exactly its requested RAM size, preserving construction
+  and host-written instruction execution before an ELF is installed.
+- [`host_port`](../../src/machine/host_port.rs) forwards fetch/data/atomic calls
+  to the same validated ports, retaining flat `memory()` mutex serialization and
+  poison-as-host-failure behavior. Native callback work keeps its independent
+  admitted RAM-writer path. This is not a fallback transaction or a new target;
+  host poisoning does not become a guest trap or retirement.
+
+### Runner facts, lifecycle, writers and presentation
+
+Runner still owns started-slot budgets, completed-turn counts, log demand/
+delivery, native HTIF-before-selected-RAM priority, decode-before-byte-clear,
+result assembly and artifact policy. Machine receipts retain completed Hart,
+raw Platform and requested signal facts alongside budget/single-step,
+reporting-error and lifecycle/uncertainty context. Lifecycle is refreshed after
+observer delivery, including a quiesce request made by that delivery. A failure
+in the final slot does not gain a completed turn, exit poll or budget-exhausted
+fact. Zero budget begins no turn. A retired exit store, its decoded guest code,
+final-slot budget and reporting error coexist without undoing architectural
+state; R1 still presents zero-code reporting failure as FAILED/nonzero in the
+actual CLI. No instruction count is renamed virtual time or `mcycle`.
+
+Selected signal sampling is requested lazily through the Machine to preserve
+native callback-HTIF priority without reading/clearing a lower-priority signal.
+Raw Platform facts are not a selected terminal reason. Signature inspection
+coordinates admitted writers without treating run return as drain; absent and
+zero-length artifacts retain R2 semantics. Nonempty unreadable native artifacts
+remain suppressed, while flat artifacts are reported without erasing the
+primary exit/PC/count. The logger uses immutable Hart facts, retains the existing
+Spike text/omission rules, and performs no architectural snapshot or refetch.
+
+Public flat `fresh_reset()` is a separate safe lifecycle operation, not the
+legacy core reset: it stops new writer admission, waits for already-admitted
+host work, acknowledges the same drain conditions as T2, restores immutable
+image/zero-fill and Hart state in a fresh generation, preserves facade limits,
+verbosity and selected manual signal, and reopens ordinary admission. Public
+`load_elf` validates/builds before closing the old composition, then drains and
+publishes transactionally. Invalid metadata leaves identity/state and writable
+behavior intact. Stale clones remain writable only on detached old RAM; they
+cannot modify fresh bytes, reservations or pending exit. Normal run/step returns
+keep resumable state and do **not** automatically quiesce or reset.
+
+Borrowed `state_mut()` fences/drains existing host writes before returning the
+actual mutable reference. New current-generation writes are explicitly refused
+through its edit phase; the next state/memory access or execution request
+reopens ordinary admission after Rust has ended that borrow. Current legitimate
+reservation context is preserved across ordinary register edits, but introducing
+a different opaque reservation through the borrow is discarded before another
+turn, preventing old-generation LR import. Unknown completion refuses mutation,
+reload/reset, retry and safe teardown even after a test-confirmed late effect.
+The legacy infallible `state_mut()` necessarily panics on a drain refusal; typed
+lifecycle operations return errors. README/API docs describe this boundary.
+
+A narrow legacy-facade compatibility rule retains host correction and a new
+independent run/step request after an **unsupported legal operation**. During
+migration, a focused regression first reproduced an unintended refusal of a
+cloned host `write_word` after FENCE.I failed; it now patches that word and
+retires it on a separate request. The original failure remains a failed started
+slot with no observation/exit, and no retry occurs within its run budget.
+This rule never clears host/transport/unknown failure and does not change the
+direct shared owner's known-failure fresh-restoration requirement.
+
+### Compatibility helper and direct-route inventory
+
+| Surface | T3 boundary |
+| --- | --- |
+| `load_and_run`, `load_and_run_file`, CLI, `ExecutionResult`, `SystemBus` | Names/options/result shape remain. Native RAM/UART/fixed HTIF, override→ELF→default signal, log format and artifact suppression are retained. |
+| `RiscVSimulator::{new,load_elf,step,run,state,state_mut,memory,read_mem,write_mem}` | Same borrowed APIs, flat offsets/devices/artifact policy, manual signal precedence, budgets, byte-prefix writes and resumability; all standard turns/installations now use Machine. |
+| `run_until_exit` | Delegates to the migrated flat Runner; no extra core. |
+| `reset_core`, `step_once`, `get_core_state` | Retained explicit core-only/typed component helpers, not facade installation or safe fresh lifecycle. `reset_core` docs now explicitly disclaim RAM/device restoration/drain. |
+| `RiscvCore::new` and typed adapter | Still usable and labeled non-conforming; not a certified Machine target. The old executor `install_image` exists only as a `cfg(test)` typed helper fixture. |
+
+### Deterministic public/negative evidence
+
+[`tests/a9_facade_composition.rs`](../../tests/a9_facade_composition.rs) adds
+**six public integration tests**: actual borrowed constructor/state/memory API;
+same-ELF ordinary/AMO/LR/successful and failed SC/exit plus fresh rerun/stale
+writers; native-only UART/HTIF mapping; unsupported-operation host patch/resume;
+current-versus-imported reservation edits; and a narrow standard-facade source
+route audit. The audit checks the common owner/turn path and absence of facade
+core constructors, invocation, snapshots, decoder or legacy physical installer.
+The A8 source-route assertion is updated for that migration; its semantic
+ordinary/atomic/exit assertions are unchanged. Existing A7 public workflows
+continue to exercise nonzero placement/entry, real ECALL/guest handler/MRET,
+integer/FP/atomic oracles, actual CLI, reload, artifacts and budgets; A4/A6/A8
+and frozen T0 retain their respective error/priority/refetch/writer regressions.
+
+[`executor_facade_tests`](../../src/executor_facade_tests.rs) adds **eight unit
+integration tests through the actual facade Runners**, not alternate engines:
+
+- Native completed exit store + final budget + observer error retains Hart-owned
+  memory effects and guest code 0; completed trap + sink error retains trap and
+  zero retirement; quiesce requested during observation is in final facts.
+- Channel-gated native UART/HTIF callbacks and downstream sinks demonstrate
+  in-flight Hart work and subsequent receipt work separately block mutation/
+  drain; retirement/event/result facts follow the actual callback.
+- Controlled adapters inject possible late RAM writes into flat public run and
+  late native HTIF callback into native run. Failure emits no commit/trap/exit or
+  final-slot budget fact, issues one request, and never retries. Flat public
+  edit/reload/fresh reset remain refused before and after the real late effect.
+  These are internal seams in the existing domain, not a supported async public
+  adapter or a recovery-proof API.
+- A cloned public memory handle writes **during an admitted flat Hart slot**;
+  overlapping/disjoint cases cause the actual SC failure/success respectively.
+- Channel-gated admitted cloned writes are drained before public fresh reset,
+  reload and borrowed edit. New writes refuse during quiesce, started writes
+  finish, old handles detach after replacement, and ordinary edit admission
+  reopens explicitly. No concurrency test relies on timing sleeps.
+
+### Exact committed-checkpoint verification and remaining limits
+
+Host tools: `rustc 1.98.1 (48a229cea 2026-09-01)` and
+`cargo 1.98.1 (797e8a9bc 2026-08-05)`. At clean committed implementation HEAD
+`124c4a49a4f39a35242e8b2474a5b54250613e45`, these commands passed and were
+recorded as separate exact-HEAD checks:
+
+```bash
+cargo test --all-features \
+  --test a9_facade_composition --test a9_machine_lifecycle --test a9_hart_facts \
+  --test a9_baseline_characterization --test a9_cli_reporting \
+  --test a6_task3_core_trap_test --test a8_hart_atomic \
+  --test a8_public_atomic_equivalence --test a4_run_control --test a7_public_equivalence
+cargo test --all-features --lib facade_tests
+cargo test --all-features --lib machine::tests
+cargo test --all-features --lib core::observation
+cargo test --all-features --lib t1_reporting
+cargo test --all-features --test a9_cli_reporting
+cargo fmt --all -- --check
+cargo check --all-features
+cargo clippy --all-features --all-targets -- -D warnings
+cargo test --all-features
+cargo doc --all-features --no-deps
+git diff --check b36b4d08e10b6919e096209be4817ab26441d526..HEAD
+```
+
+Totals: **109 focused integration tests**, **17 focused unit tests** (eight T3,
+four T2, two fact-builder/boundary, three reporting), and both actual CLI log
+process cases rerun. Full all-feature tests passed, including **863 library
+tests and 27 doctests** plus integration suites. A preliminary working-tree
+gate hit its command time limit during the default-budget executor test and was
+not recorded as a pass; the complete gate subsequently ran successfully with an
+adequate command window, then ran again at the committed checkpoint above.
+Test-construction/type-lifetime and whitespace-sensitive audit failures were
+corrected before commit; the host-patch compatibility regression was reproduced
+and corrected as described above.
+
+This is **public-facade integration** of the bounded N=1 native/flat owner, not
+full ADR conformance, ISA/extension certification or milestone completion.
+There is still no unknown-completion termination/resolution API; unsafe last-
+owner drop retains uncertain resources until process exit. Raw memory handles
+remain volatile and may admit nondeterministic competing writes in ordinary
+execution; no replay/coherence guarantee is inferred. No new board, MMU/PMP,
+interrupt/WFI/time scheduler, debugger, TLM/SystemC, multi-Hart/DMA, block/JIT,
+checkpoint or performance infrastructure is implemented. No T4 toolchain-required
+fresh 58-project-guest build/run, new ACT4 run, development-image run, PR CI or
+formal independent PR-head acceptance is claimed. T4 remains separately deferred;
+final acceptance requires its approved execution and exact committed PR-head
+verification/review. This documentation-only child must itself be checked and
+reviewed; runtime evidence above does not automatically certify a later SHA.
