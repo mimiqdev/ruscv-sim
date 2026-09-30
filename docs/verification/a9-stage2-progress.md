@@ -5,7 +5,8 @@
 This record covers **T0–T2 only**, under [the A9 contract](../dev-plan.md) §5.
 Sections 2–5 preserve the frozen T0 inventory, evidence and original expectations;
 §6 records the T1 Hart observation checkpoint; §7 records its CLI reporting-error
-correction. §8 records T2's directly tested N=1 composition/lifecycle owner.
+correction. §8 records T2's directly tested N=1 composition/lifecycle owner;
+§9 records its same-scope empty-signature correction.
 T3 facade/Runner migration and T4 fresh guest/final acceptance remain deferred,
 requiring their separate continuations. Earlier checkpoint evidence/status is
 historical and is not automatically reused as evidence of T2 or later integration.
@@ -682,3 +683,69 @@ PR-head review, full ADR/ISA certification, or A9 completion is claimed. No new
 board, topology, MMU/PMP, scheduler/interrupt/WFI/time, TLM/SystemC, debugger,
 multi-Hart/DMA, block/JIT or performance infrastructure was added. T3/T4 remain
 deferred, not self-activated by this checkpoint.
+
+## 9. R2: empty signature inspection before address resolution
+
+The T2 checkpoint `314d9d7162af3e508b2f35527276bc08270178d6` had a
+**source defect**, not merely missing evidence: `Platform::signature` resolved
+flat metadata before checking its length. An empty `.signature` at
+`BASE + 0x30_000`, outside allocated RAM, therefore produced `Some(Err(...))`
+through the direct Machine owner. The existing facade's empty artifact behavior
+and [ADR-0003 §7](../architecture/decisions/0003-runner-machine-and-platform-ownership.md#7-runner-result-limits-and-inspection)
+require `Some(Ok(Vec::new()))` without a mapping check. The earlier A7 facade
+regression did not exercise the new owner path.
+
+At correction checkpoint `1929d5f5916885b5b59c0d2325a0fd3b085cd706`,
+[`Platform::signature`](../../src/machine/platform.rs) returns an empty artifact
+for `size == 0` **before** resolving addresses, converting sizes, locking the
+memory target or reading bytes. Absent metadata still yields `None`; nonempty
+unreadable regions still yield a raw artifact error for subsequent Runner
+policy. Metadata is retained unchanged; this adds no guest access, architectural
+transition or new facade/stop policy. T0/T1/R1 and the remaining T2 lifecycle
+mechanisms are unchanged.
+
+The added
+`signature_inspection_preserves_empty_absent_and_unreadable_regions_after_fresh_reset`
+in [`tests/a9_machine_lifecycle.rs`](../../tests/a9_machine_lifecycle.rs) first
+failed before the production correction with the exact flat outside-RAM error.
+It now checks **seven metadata cases on native and flat, before and after fresh
+reset** (28 inspection combinations): absent; empty above RAM, below image base
+and at `u64::MAX`; readable nonempty; and unreadable nonempty above/below RAM.
+Each inspection preserves image identity and address/size/file-offset metadata,
+keeps PC/MINSTRET unchanged, and does not create pending events/work. Each fresh
+reset follows a real NOP retirement and acknowledged drain, increments the
+storage generation and restores the starting Hart state. Nonempty errors remain
+distinct from empty success and absent output. README documents the direct-owner
+artifact contract; the public native/flat facade artifact policies remain unchanged.
+
+The correction checkpoint above was freshly verified using:
+
+```bash
+cargo test --all-features signature_ \
+  --test a9_machine_lifecycle --test a7_public_equivalence
+cargo test --all-features \
+  --test a9_machine_lifecycle --test a9_hart_facts \
+  --test a9_baseline_characterization --test a9_cli_reporting \
+  --test a6_task3_core_trap_test --test a8_hart_atomic \
+  --test a8_public_atomic_equivalence --test a4_run_control \
+  --test a7_public_equivalence
+cargo test --all-features --lib machine::tests
+cargo test --all-features --lib core::observation
+cargo test --all-features --lib t1_reporting
+cargo test --all-features --test a9_cli_reporting
+cargo fmt --all -- --check
+cargo check --all-features
+cargo clippy --all-features --all-targets -- -D warnings
+cargo test --all-features
+cargo doc --all-features --no-deps
+git diff --check b36b4d08e10b6919e096209be4817ab26441d526..HEAD
+```
+
+All passed at that committed HEAD: **103 focused integration tests** (T2 now 14),
+four lifecycle unit tests, two builder/boundary unit tests, three reporting unit
+tests, and both owner/facade signature filters. The full suite passed including
+855 library tests and 27 doctests. The documentation-only child adding this
+record must receive its own exact-HEAD verification and independent review;
+these checks do not approve a later HEAD automatically. All T3/T4 deferrals,
+unknown-completion quarantine/proof limitations, cross-toolchain/ACT4 and
+formal PR-head acceptance non-claims in §8 remain unchanged.
