@@ -8,6 +8,7 @@ use super::*;
 pub(crate) enum SignalOperation {
     Poll,
     Clear,
+    Signature,
 }
 #[cfg(test)]
 type BeforeSignal = Arc<dyn Fn(SignalOperation) + Send + Sync>;
@@ -275,9 +276,22 @@ impl OwnedMachine {
         if info.size == 0 {
             return Some(Ok(Vec::new()));
         }
-        // Exclusive Hart borrowing plus admission exclusion makes this artifact
-        // coherent with already-started host writers, without declaring drain or
-        // disabling ordinary resumable writes after a run result.
+        #[cfg(test)]
+        self.probe_signal_lock(SignalOperation::Signature, self.signal_memory());
+        // A flat clone can retain its guard between individually admitted writes.
+        // Acquire that guard BEFORE the admission gate: the holder must remain
+        // able to admit and finish its remaining writes while extraction waits.
+        let _serialization = if self.control.inner.config.platform == PlatformKind::Flat {
+            Some(match self.memory.lock() {
+                Ok(memory) => memory,
+                Err(_) => return Some(Err("poisoned host memory capability".into())),
+            })
+        } else {
+            None
+        };
+        // Keep the existing coherent-inspection checks as well: raw admitted
+        // owner writers need not hold the facade mutex. No drain is inferred,
+        // and ordinary resumable admission is not disabled by artifact assembly.
         let mut admission = match lock(&self.control.inner.gate) {
             Ok(state) => state,
             Err(error) => return Some(Err(error.to_string())),

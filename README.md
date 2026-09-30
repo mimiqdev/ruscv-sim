@@ -136,6 +136,9 @@ flat Runner 的 tohost 取样与逐字节清除均与公共 `memory()` mutex 的
 不会把仍在同一 guard 内分段更新的信号提前解码为退出码。取样与清除仍是分开的操作，
 保留先解码、后清除的客户码；已接受的边界 receipt 允许清除在 quiesce 后完成，
 不把它当作新的 host 写入准入。native callback／HTIF 优先级不变。
+非空 flat 签名提取同样等待公共 clone guard 结束，再进行协调检查与读取；
+等待公共 mutex 时不持有准入 gate，guard 持有者仍能完成其剩余 host 写入。
+不存在／零长度签名不访问目标或等待该 mutex，native 签名检查行为不变。
 
 未实现的合法指令仍是失败的 started slot，不退休、不退出；该兼容 facade 允许 host
 修补和下一次独立 run／step 请求（不重试同一 run 的失败 slot），不适用于 host／未知完成。

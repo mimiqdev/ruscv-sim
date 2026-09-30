@@ -523,6 +523,7 @@ fn flat_signal_poll_waits_for_guarded_multipart_write_and_decodes_final_value() 
                 clear_ready.send(()).unwrap();
                 clear_wait.lock().unwrap().recv().unwrap();
             }
+            SignalOperation::Signature => panic!("fixture has no signature"),
         }),
         Arc::new(move |operation, contended| {
             if operation == SignalOperation::Poll {
@@ -639,4 +640,177 @@ fn flat_signal_clear_waits_for_clone_guard_and_remains_receipt_covered_after_qui
         assert!(!result.timed_out && result.error.is_none());
         assert_eq!(sim.read_mem(elf::TOHOST_SEGMENT_OFFSET, 8).unwrap(), [0; 8]);
     }
+}
+
+#[test]
+fn flat_zero_budget_signature_waits_for_guarded_multipart_update_and_returns_final_bytes() {
+    use crate::machine::SignalOperation;
+    let mut sim = RiscVSimulator::new(1);
+    sim.load_elf(&elf::elf_with_code(&[elf::nop()], 0, true, true, 0x4000))
+        .unwrap();
+    let clone = sim.memory().clone();
+    let control = sim.machine.test_control();
+    let (signature_ready, signature_rx) = mpsc::channel();
+    let (allow_signature, signature_wait) = mpsc::channel();
+    let signature_wait = Mutex::new(signature_wait);
+    let (probe, probe_rx) = mpsc::channel();
+    sim.machine.test_signal_hooks(
+        Arc::new(move |operation| {
+            assert!(operation == SignalOperation::Signature);
+            signature_ready.send(()).unwrap();
+            signature_wait.lock().unwrap().recv().unwrap();
+        }),
+        Arc::new(move |operation, contended| {
+            assert!(operation == SignalOperation::Signature);
+            probe.send(contended).unwrap();
+        }),
+        Arc::new(|| panic!("zero budget cannot poll or clear a signal")),
+    );
+    let (finished, result_rx) = mpsc::channel();
+    let runner = thread::spawn(move || {
+        let result = sim.run(Some(0)).unwrap();
+        finished.send(result).unwrap();
+        sim
+    });
+    signature_rx.recv().unwrap();
+    let mut guard = clone.lock().unwrap();
+    let expected = [0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7];
+    for (index, byte) in expected[..2].iter().enumerate() {
+        guard
+            .write_byte(elf::SIGNATURE_SEGMENT_OFFSET + index as u64, *byte)
+            .unwrap();
+    }
+    assert!(
+        control.status().unwrap().work.is_empty(),
+        "no admitted call does not imply this guard ended"
+    );
+    allow_signature.send(()).unwrap();
+    let contended = probe_rx.recv().unwrap();
+    let premature = if contended {
+        None
+    } else {
+        // Reproduction cleanup: the reviewed raw path reads while this guard is
+        // still held. Capture its actual partial result before finishing writes.
+        Some(result_rx.recv().unwrap())
+    };
+    // These real guarded host writes need the admission gate. Completing them
+    // while extraction waits proves the artifact wait does not hold that gate.
+    for (index, byte) in expected[2..].iter().enumerate() {
+        guard
+            .write_byte(elf::SIGNATURE_SEGMENT_OFFSET + index as u64 + 2, *byte)
+            .unwrap();
+    }
+    drop(guard);
+    let result = premature.unwrap_or_else(|| result_rx.recv().unwrap());
+    let sim = runner.join().unwrap();
+    assert_eq!(
+        result.signature_data,
+        Some(expected.to_vec()),
+        "artifact must contain the final guarded update, not its prefix"
+    );
+    assert!(
+        contended,
+        "nonempty flat extraction must wait for the public clone guard"
+    );
+    assert_eq!(
+        (result.cycles, result.final_pc, result.exit_code),
+        (0, elf::BASE, 1)
+    );
+    assert!(result.timed_out);
+    assert_eq!(result.error.as_deref(), Some("Timeout after 0 cycles"));
+    assert_eq!(result.signature_addr, Some(elf::SIGNATURE));
+    assert_eq!(sim.state().csr.read(machine::MINSTRET).unwrap(), 0);
+}
+
+#[test]
+fn flat_zero_budget_absent_and_unmapped_empty_artifacts_do_not_wait_for_clone_guard() {
+    for signature in [None, Some((elf::BASE + 0x30_000, 0))] {
+        let mut sim = RiscVSimulator::new(1);
+        sim.load_elf(&elf::elf_with_signature(
+            &[elf::nop()],
+            0,
+            elf::BASE,
+            Some(elf::TOHOST),
+            signature,
+            0x4000,
+        ))
+        .unwrap();
+        sim.machine.test_signal_hooks(
+            Arc::new(|_| panic!("absent/empty artifact must not touch a target")),
+            Arc::new(|_, _| panic!("absent/empty artifact must not acquire a mutex")),
+            Arc::new(|| panic!("zero budget cannot clear")),
+        );
+        let clone = sim.memory().clone();
+        let guard = clone.lock().unwrap();
+        let (finished, completion) = mpsc::channel();
+        let runner = thread::spawn(move || {
+            let result = sim.run(Some(0)).unwrap();
+            finished.send(result).unwrap();
+            sim
+        });
+        let result = completion.recv().unwrap(); // completes WHILE clone guard is held
+        assert_eq!(result.signature_addr, signature.map(|(address, _)| address));
+        assert_eq!(result.signature_data, signature.map(|_| Vec::new()));
+        assert_eq!((result.cycles, result.final_pc), (0, elf::BASE));
+        assert!(result.timed_out);
+        assert_eq!(result.error.as_deref(), Some("Timeout after 0 cycles"));
+        drop(guard);
+        let sim = runner.join().unwrap();
+        assert_eq!(sim.state().csr.read(machine::MINSTRET).unwrap(), 0);
+    }
+}
+
+#[test]
+fn native_zero_budget_signature_keeps_raw_platform_inspection_not_flat_clone_serialization() {
+    use crate::machine::SignalOperation;
+    let bytes = elf::elf_with_code(&[elf::nop()], 0, true, true, 0x4000);
+    let (memory_tx, memory_rx) = mpsc::channel();
+    let (ready, ready_rx) = mpsc::channel();
+    let (allow, wait) = mpsc::channel();
+    let wait = Mutex::new(wait);
+    let (probe, probe_rx) = mpsc::channel();
+    let hooks = NativeHooks {
+        prepare: Some(Box::new(move |owner| {
+            memory_tx.send(owner.memory().clone()).unwrap();
+            owner.test_signal_hooks(
+                Arc::new(move |operation| {
+                    assert!(operation == SignalOperation::Signature);
+                    ready.send(()).unwrap();
+                    wait.lock().unwrap().recv().unwrap();
+                }),
+                Arc::new(move |operation, contended| {
+                    assert!(operation == SignalOperation::Signature);
+                    probe.send(contended).unwrap();
+                }),
+                Arc::new(|| panic!("zero budget cannot clear")),
+            );
+        })),
+        ..NativeHooks::default()
+    };
+    let runner = thread::spawn(move || {
+        run_native_inner(&bytes, Some(0), None, None, false, None, hooks).unwrap()
+    });
+    let clone = memory_rx.recv().unwrap(); // internal native RAM capability, not a new public facade API
+    ready_rx.recv().unwrap();
+    let guard = clone.lock().unwrap();
+    allow.send(()).unwrap();
+    let contended = probe_rx.recv().unwrap();
+    // Native inspects its raw Platform and therefore finishes before this clone
+    // guard ends. Drop early only to clean up an incorrect mutex selection.
+    let result = if contended {
+        drop(guard);
+        runner.join().unwrap()
+    } else {
+        let result = runner.join().unwrap();
+        drop(guard);
+        result
+    };
+    assert!(
+        !contended,
+        "native must not adopt flat clone-mutex semantics"
+    );
+    assert_eq!(result.signature_data, Some(elf::SIGNATURE_BYTES.to_vec()));
+    assert_eq!((result.cycles, result.final_pc), (0, elf::BASE));
+    assert!(result.timed_out);
+    assert_eq!(result.error.as_deref(), Some("Timeout after 0 cycles"));
 }
