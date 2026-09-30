@@ -8,7 +8,8 @@ Sections 2–5 preserve the frozen T0 inventory, evidence and original expectati
 correction. §8 records T2's directly tested N=1 composition/lifecycle owner;
 §9 records its same-scope empty-signature correction. §10 records the separately
 authorized T3 migration of both public facades through that composition; §11
-records R3's flat cloned-writer signal-serialization correction.
+records R3's flat cloned-writer signal-serialization correction; §12 records
+R4's analogous flat signature-extraction correction.
 T4 fresh guest/final acceptance remains deferred, requiring its separate
 continuation. Earlier checkpoint evidence/status is historical and is not
 automatically reused as evidence of T3 or later integration.
@@ -1035,3 +1036,102 @@ quarantine limitations, T4 fresh cross-toolchain 58-guest deferral, ACT4/PR CI/
 formal PR-head acceptance non-claims and A9-not-complete boundary remain. The
 documentation-only child adding this record still requires fresh final-HEAD
 verification and independent review; these checks do not approve it by inference.
+
+## 12. R4: nonempty flat artifacts serialize with public clone guards
+
+The R3 submitted checkpoint `903e84006aa6f454f028080faea5393c7323174c`
+correctly repaired signal serialization, but its reviewed range retained the
+analogous **T3 source defect in flat signature extraction** despite all six
+passing Rust checks. `OwnedMachine::signature` excluded admitted host calls,
+then read `Platform.typed` directly. Zero admitted calls did not establish that
+a public clone guard had ended: a holder could update a signature prefix and
+pause under that guard while zero-budget `run` returned the partial artifact.
+Baseline flat extraction used `read_mem` and waited on the public mutex.
+
+Correction implementation/test checkpoint:
+`d0c1e7c82ac8809b9a0b6fd03d901715957a30c7`.
+[`OwnedMachine::signature`](../../src/machine/owned.rs) now acquires the flat
+public memory capability mutex **before** acquiring the admission gate, retains
+that guard through extraction, and keeps the existing uncertainty, in-flight
+Hart/receipt, admitted-host and poison/coherent-inspection checks. A guarded
+writer can still acquire admission and finish its remaining real writes while
+the artifact waits; acquisition cannot invert public mutex → admission gate.
+Only after both exclusion conditions hold does the Platform read the existing
+RAM. Neither a mutex acquisition nor run return becomes a drain acknowledgment.
+No host writer is disabled to simplify inspection, no second storage domain is
+created, and no guest load/turn/retirement is executed for the artifact.
+
+Absent metadata and zero-length artifacts still return **before target, mutex
+or admission checks**, including unmapped empty metadata. Native inspection
+retains its original admission/raw-Platform path and does not adopt the flat
+public mutex. Artifact error/suppression policy, zero-budget timeout/PC/count,
+R1 reporting precedence, R2 metadata distinctions, and R3 receipt-covered signal
+clearing are unchanged. README now describes this nonempty artifact boundary.
+
+Three tests added to
+[`executor_facade_tests`](../../src/executor_facade_tests.rs) use the actual
+Runner paths and the existing test-only channel/selected-mutex probe seams:
+
+- `flat_zero_budget_signature_waits_for_guarded_multipart_update_and_returns_final_bytes`
+  holds a public clone guard across a readable signature's prefix and remaining
+  writes. Its first two byte writes have completed their individual admission,
+  so work counts are empty while the guard is still held. Zero-budget extraction
+  observes mutex contention, waits, and permits the remaining guarded writes to
+  admit/complete. The result contains all final bytes `[0xa0, ..., 0xa7]`,
+  unchanged signature metadata, PC `BASE`, zero turns/MINSTRET, and the original
+  timeout/code-1 result rather than a new artifact/architectural failure.
+- `flat_zero_budget_absent_and_unmapped_empty_artifacts_do_not_wait_for_clone_guard`
+  completes absent and unmapped empty artifacts while the clone guard remains
+  held; target/mutex hooks must never run. Metadata and zero-budget result stay
+  intact, exercising the fast paths rather than merely inspecting source.
+- `native_zero_budget_signature_keeps_raw_platform_inspection_not_flat_clone_serialization`
+  runs the actual native Runner with a gated internal native RAM capability.
+  Its readable signature completes before that capability's guard ends, with
+  no selected-mutex contention and unchanged bytes/result. The capability is
+  an internal test seam, not a newly exposed native public facade API.
+
+Before the production correction, with only the test seam added to the reviewed
+raw artifact path, the flat multipart regression failed deterministically:
+it returned `[0xa0, 0xa1, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]` instead of the
+final `[0xa0, ..., 0xa7]`. Channels capture the actual premature result while
+the writer guard is still held, then finish writes and join the Runner before
+asserting. No sleeps, probabilistic arrival ordering or skipped assertions are
+used. The successful post-fix remaining writes also exercise the absence of an
+admission-gate inversion during the artifact's mutex wait.
+
+At clean committed correction HEAD
+`d0c1e7c82ac8809b9a0b6fd03d901715957a30c7`, the following focused/full checks
+passed and were freshly recorded at that exact HEAD:
+
+```bash
+cargo test --all-features \
+  --test a9_facade_composition --test a9_machine_lifecycle --test a9_hart_facts \
+  --test a9_baseline_characterization --test a9_cli_reporting \
+  --test a6_task3_core_trap_test --test a8_hart_atomic \
+  --test a8_public_atomic_equivalence --test a4_run_control --test a7_public_equivalence
+cargo test --all-features --lib facade_tests
+cargo test --all-features --lib machine::tests
+cargo test --all-features --lib core::observation
+cargo test --all-features --lib t1_reporting
+cargo test --all-features --test a9_cli_reporting
+cargo fmt --all -- --check
+cargo check --all-features
+cargo clippy --all-features --all-targets -- -D warnings
+cargo test --all-features
+cargo doc --all-features --no-deps
+git diff --check b36b4d08e10b6919e096209be4817ab26441d526..HEAD
+```
+
+Totals: **109 focused integration tests**, **22 focused unit tests** (13 facade,
+four lifecycle, two fact-builder/boundary, three reporting), plus both actual
+CLI log process cases rerun. Full all-feature tests passed, including **868
+library tests and 27 doctests** plus integration suites. Earlier source/check
+identities are not reused as verification of this correction or its later
+submitted documentation-only child.
+
+This is a same-scope T3 artifact compatibility repair, not a new inspection API,
+ISA/ADR certification, T4 guest pass or A9 completion. All preceding uncertainty/
+quarantine limits, raw-handle volatility and T4 fresh 58-guest/toolchain/ACT4/
+PR CI/formal PR-head acceptance deferrals remain. The documentation-only child
+requires its own final-HEAD checks and independent review; runtime evidence above
+does not approve it automatically.
