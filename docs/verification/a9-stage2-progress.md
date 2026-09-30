@@ -1,13 +1,14 @@
-# A9 Stage 2 progress — frozen T0 and T1 Hart facts checkpoints
+# A9 Stage 2 progress — frozen T0, T1 facts and T2 direct-owner checkpoints
 
 ## 1. Scope and evidence identity
 
-This record covers **T0 and T1 only**, under [the A9 contract](../dev-plan.md) §5.
+This record covers **T0–T2 only**, under [the A9 contract](../dev-plan.md) §5.
 Sections 2–5 preserve the frozen T0 inventory, evidence and original expectations;
-§6 records the implemented T1 Hart observation boundary and its new evidence;
-§7 records the same-scope CLI reporting-error correction.
-T2–T4 (Machine ownership, safe fresh reset/quiesce/drain, facade composition and
-fresh guest verification) remain unimplemented, requiring separate continuations.
+§6 records the T1 Hart observation checkpoint; §7 records its CLI reporting-error
+correction. §8 records T2's directly tested N=1 composition/lifecycle owner.
+T3 facade/Runner migration and T4 fresh guest/final acceptance remain deferred,
+requiring their separate continuations. Earlier checkpoint evidence/status is
+historical and is not automatically reused as evidence of T2 or later integration.
 ADR-0001–0004 remain accepted authorities; the [A8 assessment](a8-closeout-assessment.md)
 remains unchanged and bounded, not full ADR conformance or ISA certification.
 
@@ -420,15 +421,15 @@ claimed. Optional guest skips in native tests do not establish T4 verification.
 
 ### Remaining boundaries and risks
 
-T1 adds no Machine owner, installation change, fresh reset, writer fencing,
+At the T1 checkpoint, there was no Machine owner, installation change, fresh reset, writer fencing,
 quiesce/drain, facade composition migration, scheduler or debugger integration.
 All lifecycle debt from the frozen inventory remains: reset over mutated RAM,
 clone writer admission, callbacks and unknown late effects cannot be declared
 drained by a returned transition or successful observation delivery. An unknown
 completion remains terminal; its lack of a completed observation is not evidence
 that no physical effect occurred. Existing typed APIs/ISA behavior are retained,
-not newly certified. T2–T4 remain deferred pending their explicit continuations,
-not silently implemented by this Hart fact boundary.
+not newly certified. T2–T4 were deferred at this checkpoint, not silently
+implemented by the Hart fact boundary. See §8 for subsequent T2 evidence.
 
 ## 7. T1 reporting-error presentation correction
 
@@ -491,5 +492,193 @@ Totals: **89 focused integration tests**, two builder/boundary unit tests and
 three native reporting unit tests; full all-feature tests passed including
 851 library tests and 27 doctests. This is fresh checkpoint verification, not
 reuse of the preceding HEAD's evidence. A final documentation-only HEAD still
-requires its own verification and independent review. All T2–T4 deferrals and
-cross-toolchain/ACT4/lifecycle non-claims remain unchanged.
+requires its own verification and independent review. At this R1 checkpoint,
+T2–T4 remained deferred, with no cross-toolchain/ACT4/lifecycle claims. The
+subsequent T2 checkpoint is recorded below.
+
+## 8. T2 N=1 composition and fenced lifecycle checkpoint
+
+Implementation/test checkpoint:
+`d22fd7bbcf7959ac9ac8f23659b8a126ba0b8a71`, based on the unchanged ancestor
+`1a45cd257f751adbfa1d86ba480176170a810508` (T1/R1). The documentation-only
+commit adding this section requires its own final-HEAD verification. Neither
+prior checkpoint review nor these local checks constitute formal PR-head/fresh-
+guest acceptance or authorize T3 advancement.
+
+### Ownership, installation and state restoration
+
+- [`machine::Machine`](../../src/machine/mod.rs) actually owns one installed Hart
+  and one native or flat Platform, wires the existing validated fetch/data/atomic
+  ports and invokes the **same `RiscvCore` semantic engine**. Control clones share
+  one owner, not separate cores. No call to `load_and_run` or second ISA dispatcher
+  hides behind the owner. The pre-install state is configured/drained with no
+  image; execution before installation is refused.
+- [`elf::LoadImage::parse`](../../src/elf.rs) uses the existing ELF parser/profile
+  to describe ordered file bytes, explicit zero tails, entry, image base/rounded
+  allocation size, flags, physical-address metadata, signature and tohost. It
+  allocates immutable restoration inputs, not active execution RAM. Placement
+  retains the existing `p_vaddr` policy; flags/`p_paddr` metadata do not introduce
+  permission enforcement or MMU translation.
+- [`machine::platform::Platform`](../../src/machine/platform.rs) performs placement
+  into **one active RAM allocation**, shares it with typed/raw/atomic views, and
+  owns existing `SystemBus`/UART/HTIF routing and raw device events. Segment order,
+  pure zero-fill/overlap, gaps and allocation padding match the compatibility
+  loader. [`image`](../../src/image.rs) supplies shared address/metadata conversions
+  without Runner error/result/policy dependencies; the small compatibility adapter
+  in [`executor`](../../src/executor.rs) preserves existing `ExecutorError` behavior.
+- Install/replacement and `fresh_reset` require an acknowledged drain. Construction
+  and validation occur before publishing the new domain, so rejected placement
+  leaves current identity, memory capability, PC and generation unchanged. Fresh
+  reset retains the same immutable image identity and static configuration/
+  callback connections, but allocates a fresh, exclusively active generation,
+  restores image bytes/zero fill, resets Hart PC/privilege/GPR/FPR/FCSR/CSR/counters/
+  reservation, and creates fresh device registers/FIFOs/event queues. Initial RAM
+  tohost bytes are restored from the image, not arbitrarily rewritten to zero.
+  This is explicitly different from the retained legacy core-only reset.
+- `inspect` coordinates owned Hart, device, metadata, signature and signal views
+  under admission exclusion. It refuses in-flight or uncertain inspection; raw
+  host memory views remain volatile, not coherent Machine snapshots. Signature
+  inspection retains the existing native bus versus checked flat address forms.
+  Selected tohost samples and HTIF/UART events are raw facts, **not decoded guest
+  exit or Runner stop policy**. No virtual-time/cycle model is introduced.
+
+### Admission, causal delivery and drain proof
+
+[`machine::admission`](../../src/machine/admission.rs) tracks admitted Hart work,
+host operations and completed boundary receipts independently of the Platform
+mutex. The synchronous physical operation and native callback are inside their
+parent Hart lease. A `MachineTurn` receipt keeps completed control/Platform facts
+and accepted observation delivery admitted until the caller consumes/drops it;
+sinks borrow the immutable T1 facts, without entering Hart execution. The next
+turn is refused while that receipt exists, preserving delivery order. No
+per-instruction callback, materialized architectural record or serialization is
+added for observation-off control. Returning from a step is not drain.
+
+`request_quiesce` stops **new live-generation work**. Already admitted writes,
+turns, callbacks and boundary/sink delivery finish normally. `try_drain` is a
+nonblocking acknowledgment only after a request and all admitted work/receipts
+have completed, and returns residual causal signal/event facts with the
+acknowledgment. Install/reset/control edit/teardown refuse while work exists or
+while no drain has been acknowledged. Zero outstanding work, run return,
+timeout, an outer NoProgress claim or a single mutex acquisition cannot grant
+mutation. This does not implement a scheduler or infer NoProgress eligibility.
+
+All admitted work leases retain the **entire owner**, so dropping the last control
+handle cannot destroy the domain during host, physical, callback or observation
+work. The drained control-state edit API takes an owned value rather than leaking
+`&mut RiscvCore`; edits invalidate reservations to prevent importing a prior
+storage generation's opaque LR snapshot. No GDB/debug integration is implied.
+
+### Host writer and unknown-completion boundaries
+
+[`machine::host_memory`](../../src/machine/host_memory.rs) keeps typed B/H/W/D
+writes, `write_mem` (including accepted byte prefixes) and RAM-backed `clear_tohost`
+in the same `SimpleMemory` bytes/version domain as Hart atomics. Ordinary live-
+generation writes remain admitted between and during resumable turns; quiesce
+refuses new writes explicitly, not silently. The new native host view is RAM-only
+and storage-offset addressed, like the flat host view; devices/ports are not
+exposed through it. New owner APIs require `resume` after drained install/reset
+before admitting ordinary writes. Existing unmanaged facade writer APIs are
+unchanged in T2.
+
+After proven drain, reset/replacement publishes another RAM generation. Stale
+clones remain usable on detached old RAM, but cannot mutate fresh RAM, invalidate
+fresh reservations or trigger a new native callback/exit. No active bytes are
+copied into a second running Hart/storage domain. Detached writes are not work
+on the current Machine. No raw active RAM/port/device mutation capability escapes
+the owner.
+
+Unknown completion is **terminal and fail-closed**: the original typed failure
+remains in status, no commit/trap/exit is fabricated, and no turn, state edit,
+install, fresh reset, coherent inspection or teardown bypasses uncertainty.
+This fixed synchronous configuration has no adapter termination/state-resolution
+proof API; it conservatively refuses recovery even when a test has released and
+joined a possible late effect. A joined test thread, cleared flag, cancellation
+request or timeout is not an accepted adapter proof. Known completed failures
+can drain, but resume still requires fresh restoration.
+
+If the last control handle is dropped while completion/safety is unknown or the
+owner is poisoned, implicit cleanup quarantines the installed domain rather than
+claiming teardown/drain or disconnecting an unresolved transport. **Resources are
+intentionally retained until process exit.** This is a bounded safety trade-off,
+not an async transport, force recovery or proof that uncertain prior state was
+correct. External callback-owned state/output streams are not Platform state and
+are not rolled back by reset; configured callbacks are synchronous connections.
+
+### Deterministic direct-owner evidence
+
+[`tests/a9_machine_lifecycle.rs`](../../tests/a9_machine_lifecycle.rs) has **13 tests**:
+
+- Native/flat metadata and initial bytes versus the existing loader; construct/
+  install/reset/execute/inspect/drain/fresh rerun/teardown; BSS and pure zero-fill
+  overlapping segments; image identity, counters/CSR/privilege/FPR/FCSR/reservation
+  restoration. The pure zero-fill case first reproduced a placement-seam defect
+  (empty raw write rejected) before its focused correction.
+- Replacement entry/base/signature/tohost isolation; rejected flat placement;
+  stale cloned and channel-controlled cross-thread writers; active overlap versus
+  disjoint writes and clear-tohost preserve SC version semantics and byte prefixes.
+- Retained off/on boundary and blocked observer receipts refuse mutation/drain;
+  sink failure preserves retirement; UART/HTIF callback work blocks drain before
+  retirement and its returned causal receipt also blocks drain afterward.
+- Native UART registers/FIFOs and callback connections rerun freshly; HTIF store
+  retirement, event/payload, cleared per-run event state and no stale signal leak;
+  failed versus faulting SC/x0/HTIF D-c retain T1/A8 facts; drained state edits do
+  not import stale-generation reservation snapshots.
+
+Four unit tests in [`machine::tests`](../../src/machine/tests.rs) use controlled
+seams, not sleep races or public recovery switches:
+
+- Channel-gate the **real admitted writer path before RAM locking**, covering
+  typed dword, prefix `write_mem` and `clear_tohost` across native/flat and fresh
+  reset/replacement (12 combinations). New writes are rejected after quiesce;
+  started writes finish and are reflected in the drain report before mutation.
+- Inject one unknown write into the already composed native/flat port, then
+  release an actual delayed RAM effect or native HTIF callback through that same
+  original port. Mutation/drain/retry remain refused both before and after the
+  channel-confirmed late effect; generation/PC/MINSTRET and original failure
+  remain unchanged; exactly one request was issued. Failure emits no observation
+  or presented exit. Last-owner drop retains the uncertain domain.
+- Native callback unwind also cannot be declared drained/restorable.
+- Boundary/host leases keep the whole owner alive after the last control handle
+  is dropped; after proven synchronous completion, retained RAM is detached.
+
+### Exact committed-checkpoint verification and integration limits
+
+At `d22fd7bbcf7959ac9ac8f23659b8a126ba0b8a71`, these commands passed:
+
+```bash
+cargo test --all-features \
+  --test a9_machine_lifecycle --test a9_hart_facts \
+  --test a9_baseline_characterization --test a9_cli_reporting \
+  --test a6_task3_core_trap_test --test a8_hart_atomic \
+  --test a8_public_atomic_equivalence --test a4_run_control \
+  --test a7_public_equivalence
+cargo test --all-features --lib machine::tests
+cargo test --all-features --lib core::observation
+cargo test --all-features --lib t1_reporting
+cargo test --all-features --test a9_cli_reporting
+cargo fmt --all -- --check
+cargo check --all-features
+cargo clippy --all-features --all-targets -- -D warnings
+cargo test --all-features
+cargo doc --all-features --no-deps
+git diff --check b36b4d08e10b6919e096209be4817ab26441d526..HEAD
+```
+
+Focused totals: **102 integration tests** (T2 13 plus the preceding 89), **four
+T2 unit tests**, **two T1 builder/boundary tests** and **three reporting tests**.
+The full all-feature suite passed including 855 library tests and 27 doctests.
+R1's actual CLI failing/working-log cases both ran and passed at this exact HEAD;
+guest code 0 and retired PC/cycles remain preserved, with reporting failure
+presented as FAILED/nonzero. Frozen T0 tests and evidence identity remain intact.
+
+This is **direct Machine composition/lifecycle integration**, not migration of
+`load_and_run`/CLI or `RiscVSimulator`. Those facades/helpers/typed compatibility
+constructor and their existing run/step/host-writer behavior remain unchanged;
+legacy core-only reset is still not a fresh Machine reset. T3 must integrate the
+owner and preserve all public policy/artifact/configuration differences. No
+T4 fresh 58-guest cross-toolchain run, ACT4, development-image run, PR CI/formal
+PR-head review, full ADR/ISA certification, or A9 completion is claimed. No new
+board, topology, MMU/PMP, scheduler/interrupt/WFI/time, TLM/SystemC, debugger,
+multi-Hart/DMA, block/JIT or performance infrastructure was added. T3/T4 remain
+deferred, not self-activated by this checkpoint.
