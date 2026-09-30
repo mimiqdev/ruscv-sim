@@ -1,22 +1,24 @@
-# A9 Stage 2 progress — T0 frozen baseline checkpoint
+# A9 Stage 2 progress — frozen T0 and T1 Hart facts checkpoints
 
 ## 1. Scope and evidence identity
 
-This record covers **T0 only**, under [the A9 contract](../dev-plan.md) §5.
-It inventories existing behavior and adds characterization, not Hart observation
-facts, a Machine, safe fresh reset, quiesce/drain, or facade migration. T1–T4
-remain future work requiring their authorized continuations. ADR-0001–0004 remain
-accepted authorities; the [A8 assessment](a8-closeout-assessment.md) remains
-unchanged and bounded, not full ADR conformance or ISA certification.
+This record covers **T0 and T1 only**, under [the A9 contract](../dev-plan.md) §5.
+Sections 2–5 preserve the frozen T0 inventory, evidence and original expectations;
+§6 records the implemented T1 Hart observation boundary and its new evidence.
+T2–T4 (Machine ownership, safe fresh reset/quiesce/drain, facade composition and
+fresh guest verification) remain unimplemented, requiring separate continuations.
+ADR-0001–0004 remain accepted authorities; the [A8 assessment](a8-closeout-assessment.md)
+remains unchanged and bounded, not full ADR conformance or ISA certification.
 
 | Identity | Meaning |
 | --- | --- |
 | `b36b4d08e10b6919e096209be4817ab26441d526` | Frozen spawn/source baseline (merged plan rotation PR #68). All source line ranges in §2 refer to this revision. |
 | `1e2733d7789988402d0a63ce92de37b04dc4e042` | Committed T0 characterization checkpoint; adds only `tests/a9_baseline_characterization.rs`. Source is unchanged from the frozen baseline. Focused observations below were rerun at this exact HEAD, not inferred from A8 evidence. |
 
-The documentation addition that contains this record is a later documentation-only
-commit. The recorded runtime commands in §4 apply **only to the full checkpoint
-SHA above**, not automatically to a later SHA. Final checkpoint verification must
+The accepted T0 checkpoint is `2a14ea154fa991d44a2bdb68a1d845c56fe93787`,
+the documentation-only addition following the characterization commit. It remains
+an unchanged ancestor. The recorded runtime commands in §4 apply **only to the
+characterization checkpoint SHA above**, not automatically to a later SHA. Final checkpoint verification must
 be rerun against the submitted committed HEAD. Commit identities and exact commands
 here stand on their own; private check identifiers are not proof of a pass.
 
@@ -255,7 +257,7 @@ T4 requires the development image/separate output directories and fresh guest
 identities prescribed by the plan. Historical A8 project/ACT4 evidence is not
 carried forward as T0 or T4 evidence.
 
-## 5. Next-stage seams and risks — expectations, not implemented capabilities
+## 5. T0 next-stage expectations — T1 status is recorded separately in §6
 
 1. **T1 Hart fact boundary:** staged state acceptance and `enter_trap` are the
    completed-transition seams. Capture authoritative effects internally where
@@ -300,5 +302,129 @@ carried forward as T0 or T4 evidence.
    into automatic fresh resets. No interrupt/time scheduler or debug integration
    is implied by these seams.
 
-This is readiness evidence for independent T0 checkpoint review and later bounded
-continuation, **not authorization to self-advance** or a declaration of A9 completion.
+The preceding sections were readiness evidence for the T0 checkpoint, not
+current implementation claims. Neither checkpoint authorizes self-advancement
+or declares A9 complete.
+
+## 6. T1 completed Hart facts checkpoint
+
+### Implementation and ownership
+
+T1 implementation/test checkpoint:
+`4a2ba70125464459b1f03a03fcfc8e6cee35a6a9`. The documentation-only commit
+adding this section does not change its implementation. The final submitted HEAD
+must still be independently reverified; checkpoint evidence is not automatically
+portable to later commits.
+
+- [`RiscvCore::step_transition`](../../src/core/mod.rs) executes the existing
+  staged Hart transition once. Its always-present `ControlFacts` describes PC,
+  privilege, attempted instruction, retirement/trap status and MINSTRET before/
+  after. Terminal repeat calls after unknown completion report no new attempt.
+  `step_outcome()` remains an observation-off compatibility wrapper.
+- [`core::observation`](../../src/core/observation.rs) is the single Hart-owned
+  completed record builder. `CommitRecord` carries the exact fetched word and
+  four-byte active-profile length, Hart identity and retirement/control identity;
+  `TrapRecord` carries precise trap entry, optional fetched identity (absent on
+  fetch/alignment failure), and accepted trap CSR effects. No completed record
+  is built for `SimulatorFailure`.
+- [`Executor::execute_transition`](../../src/execute/mod.rs) returns destination
+  intent from the executed dispatch, not from a second Runner decoder. Equal
+  GPR writes are facts; x0, stores and FP-only destinations do not fabricate GPR
+  writes. [`CsrFile`](../../src/csr/mod.rs) journals accepted explicit/implicit
+  writes, including equal writes, trap-entry/MRET writes and MINSTRET precedence.
+  [`FpuRegisterFile`](../../src/fpu/mod.rs) journals actual written indices;
+  FCSR changes are captured at acceptance. This observes existing ISA behavior,
+  including its existing FPU dispatch/suppression rules, not new F/D certification.
+- [`ObservedMemory`](../../src/core/observed_memory.rs) forwards each ordinary
+  typed operation once and captures accepted bytes, width, guest address and
+  issued address. Atomic completion capture in `PhysicalAtomicAdapter` preserves
+  validated old bytes, transformed AMO bytes, successful SC payload/status and
+  aq/rl metadata. Failed SC has no memory write (even rd=x0); faulting SC has no
+  retirement/destination. Typed compatibility atomics explicitly carry
+  `indivisible=false`; a typed failed SC with no issued operation has no issued
+  address. Reservation before/after is retained. No observer refetch/readback,
+  synthetic physical atomicity, or address translation is added.
+- Returned observations are owned completed values, independent of mutable Hart
+  state; sinks borrow them read-only through `HartTransition::deliver`. No sink
+  runs inside Hart execution or a physical transaction. Native Runner delivery
+  is synchronous and ordered once per completed turn, before the next turn.
+  Sink errors are outer reporting errors and do not replace the returned facts
+  or undo architectural/device effects. No async observer queue/drain is claimed.
+- Native [`load_and_run`](../../src/executor.rs) consumes these facts, eliminating
+  Runner GPR snapshots and refetch. [`CommitLogger`](../../src/core/commits.rs)
+  preserves the text format, equal-value GPR omission, no FP/CSR/memory text and
+  no trap line; the old public formatting helper remains available. Log delivery
+  errors are now reported in `ExecutionResult.error` after causal exit polling
+  and completed-turn accounting, preserving guest exit code/PC/cycles and final
+  budget context. This is distinct from a failed Hart turn. [README](../../README.md)
+  documents the observable reporting behavior.
+
+### Demand gate and deterministic evidence
+
+[`tests/a9_hart_facts.rs`](../../tests/a9_hart_facts.rs) contains 13 tests:
+
+- GPR equal/suppressed writes, CSR read-only/equal writes, MINSTRET explicit write
+  precedence, branch identity, ordinary B/H/W/D loads/stores, FP load/store/equal
+  writes and FCSR changes; flat base conversion is observed once without MMU.
+- W/D LR/SC/AMO through physical and typed routes, rd=x0, reservation changes,
+  successful versus failed SC; precise traps/MRET and fetch/data fault identity.
+- Target versus host/protocol errors, malformed atomic completions and terminal
+  unknown writes: no commit/trap on simulator failure, no retry or invented guest
+  trap. Sink failure preserves both a completed retirement and trap entry.
+- On/off state/control/physical-call parity and no off sink calls. A thread-local
+  global allocator spy measures only a warmed-up ADDI turn: off allocates once
+  for existing CSR state staging, on allocates more for subscribed effects. Host
+  setup/TLS initialization is excluded; this is not an allocation-free execution
+  or performance claim. The builder spy below covers first/disabled turns too.
+
+Two unit tests in `core::observation::tests` directly spy on completed record
+construction: eight off turns build zero records; an on retirement builds one;
+unsupported simulator failure builds none; a completed trap builds another.
+A native HTIF store callback sees zero materialized records while in the physical
+request, then the returned retirement contains its accepted store bytes and is
+presented after the boundary without another physical write.
+
+Two `executor::tests::t1_reporting*` tests inject a failing writer into the actual
+native Runner (not another execution path). They verify completed PC/cycles,
+a successful exit-causing final-slot store and preserved guest exit code, and
+separate reporting-failure classification with final-budget context.
+
+### Recorded committed-checkpoint verification
+
+At `4a2ba70125464459b1f03a03fcfc8e6cee35a6a9`, these commands passed:
+
+```bash
+cargo test --all-features \
+  --test a9_hart_facts --test a9_baseline_characterization \
+  --test a6_task3_core_trap_test --test a8_hart_atomic \
+  --test a8_public_atomic_equivalence --test a4_run_control \
+  --test a7_public_equivalence
+cargo test --all-features --lib core::observation
+cargo test --all-features --lib t1_reporting
+cargo fmt --all -- --check
+cargo check --all-features
+cargo clippy --all-features --all-targets -- -D warnings
+cargo test --all-features
+cargo doc --all-features --no-deps
+git diff --check b36b4d08e10b6919e096209be4817ab26441d526..HEAD
+```
+
+Focused totals: A9 T1 13, frozen T0 10, A6 17, A8 Hart 23, A8 public 12,
+A4 2, A7 10 (**87 integration tests**), plus **four T1 unit tests**. The full
+all-feature suite also passed (850 library tests and 27 doctests, plus integration
+suites). The configured Rust check set and focused commands were recorded against
+that exact committed HEAD, separately from all T0 evidence. No fresh cross-toolchain
+project guest, ACT4, development-image, PR CI or independent T1 review evidence is
+claimed. Optional guest skips in native tests do not establish T4 verification.
+
+### Remaining boundaries and risks
+
+T1 adds no Machine owner, installation change, fresh reset, writer fencing,
+quiesce/drain, facade composition migration, scheduler or debugger integration.
+All lifecycle debt from the frozen inventory remains: reset over mutated RAM,
+clone writer admission, callbacks and unknown late effects cannot be declared
+drained by a returned transition or successful observation delivery. An unknown
+completion remains terminal; its lack of a completed observation is not evidence
+that no physical effect occurred. Existing typed APIs/ISA behavior are retained,
+not newly certified. T2–T4 remain deferred pending their explicit continuations,
+not silently implemented by this Hart fact boundary.
