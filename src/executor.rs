@@ -27,7 +27,9 @@ use thiserror::Error;
 /// Execution result
 #[derive(Debug, Clone, Default)]
 pub struct ExecutionResult {
-    /// Exit code (0 for success, non-zero for failure)
+    /// Guest exit code when available (retained even on a reporting error),
+    /// otherwise the run's failure code. A zero code alone does not establish
+    /// success; callers must also inspect `error` and `timed_out`.
     pub exit_code: u32,
     /// Number of completed Hart turns (retirements and synchronous trap entries).
     /// Started turns that end in `SimulatorFailure` are not included.
@@ -2239,6 +2241,35 @@ mod tests {
         let error = result.error.unwrap();
         assert!(error.contains("Commit log reporting failure"));
         assert!(error.contains("guest exit code 3 retained"));
+    }
+
+    #[test]
+    fn t1_reporting_failure_preserves_zero_guest_exit_after_completed_nop() {
+        let mut fixture = observation_fixture::elf_with_code(
+            &[observation_fixture::nop()],
+            0,
+            true,
+            false,
+            0x4000,
+        );
+        let offset =
+            observation_fixture::LOAD_OFFSET + observation_fixture::TOHOST_SEGMENT_OFFSET as usize;
+        fixture[offset..offset + 8].copy_from_slice(&1u64.to_le_bytes());
+        let sink = CommitLogger::for_test(Box::new(FailingLog {
+            completed_lines: 0,
+            fail_after: 0,
+        }));
+        let result = run_native(&fixture, Some(1), None, None, false, Some(sink)).unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "reporting error must not overwrite guest success"
+        );
+        assert_eq!(result.cycles, 1);
+        assert_eq!(result.final_pc, observation_fixture::BASE + 4);
+        assert!(!result.timed_out);
+        let error = result.error.unwrap();
+        assert!(error.contains("Commit log reporting failure"));
+        assert!(error.contains("guest exit code 0 retained"));
     }
 
     #[test]

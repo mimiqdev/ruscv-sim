@@ -74,7 +74,14 @@ fn main() {
             match run_elf(&elf, max_cycles, tohost, log_commits, verbose) {
                 Ok(result) => {
                     print_result(&result);
-                    std::process::exit(result.exit_code as i32);
+                    // Guest success does not hide a separate reporting error.
+                    // Preserve nonzero guest codes and the library result itself.
+                    let process_code = if result.exit_code == 0 && result.error.is_some() {
+                        1
+                    } else {
+                        result.exit_code as i32
+                    };
+                    std::process::exit(process_code);
                 }
                 Err(e) => {
                     eprintln!("Error: {}", e);
@@ -111,7 +118,7 @@ fn print_result(result: &ExecutionResult) {
 
     if result.timed_out {
         println!("Status:     TIMEOUT");
-    } else if result.exit_code == 0 {
+    } else if result.exit_code == 0 && result.error.is_none() {
         println!("Status:     SUCCESS");
     } else {
         println!("Status:     FAILED");
