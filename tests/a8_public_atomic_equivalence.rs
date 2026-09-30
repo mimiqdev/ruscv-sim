@@ -424,23 +424,29 @@ fn standard_facades_route_admitted_atomics_only_through_one_validated_envelope()
         .split("pub fn load_and_run_file")
         .next()
         .unwrap();
-    // A9 T1: identity/effects are now delivered from the Hart record rather
-    // than formatted from architectural snapshots in the Runner.
-    assert!(native_runner.contains("core.step_transition(commit_logger.is_some())"));
-    assert!(native_runner.contains("transition.deliver(logger)"));
+    // A9 T3: both facade Runner policies invoke the actual Machine owner;
+    // completed Hart records, not snapshots or re-fetches, feed the logger.
+    assert!(native_runner.contains("machine.step_request("));
+    assert!(native_runner.contains("commit_logger.is_some() || hooks.observer.is_some()"));
+    assert!(native_runner.contains("turn.deliver(logger)"));
     assert!(!native_runner.contains("regs_before") && !native_runner.contains("regs_after"));
     let logger = std::fs::read_to_string("src/core/commits.rs").unwrap();
     let record_sink = logger.split("pub fn log_record").nth(1).unwrap();
     assert!(record_sink.contains("retired.instruction") && record_sink.contains("retired.pc"));
     assert_eq!(
-        executor
-            .matches("install_image_with_physical_ports(")
-            .count(),
-        3,
-        "one shared installer definition and its native/flat facade call sites"
+        executor.matches("OwnedMachine::new(").count(),
+        2,
+        "native and flat construct the same exclusive Machine adapter"
     );
-    assert!(executor.contains("SystemBus::physical_backend(bus.clone())"));
-    assert!(executor.contains("NativeRamBackend::new(ram.clone(), 0, memory.len())"));
+    let owner = std::fs::read_to_string("src/machine/mod.rs").unwrap();
+    assert_eq!(
+        owner.matches("self.core.step_transition(observe)").count(),
+        1,
+        "one shared Machine-to-Hart invocation"
+    );
+    let platform = std::fs::read_to_string("src/machine/platform.rs").unwrap();
+    assert!(platform.contains("SystemBus::physical_backend(bus.clone())"));
+    assert!(platform.contains("NativeRamBackend::new(ram.clone(), 0, image.memory_size())"));
 
     // Each instruction-kind arm has one atomic port call.  The validated
     // backend's one-call property is independently guarded by the target spy

@@ -305,6 +305,17 @@ pub struct ImageSegment {
 }
 
 impl LoadImage {
+    /// Compatibility constructor's uninitialized flat RAM, not an ELF profile.
+    pub(crate) fn blank(memory_size: usize) -> Self {
+        Self {
+            entry_point: 0,
+            base_addr: 0,
+            memory_size,
+            segments: Vec::new(),
+            signature: None,
+            tohost: None,
+        }
+    }
     /// Parse using the existing ELF profile and memory-size/metadata rules.
     /// `p_vaddr` remains the placement address, as in the compatibility loader.
     pub fn parse(data: &[u8]) -> Result<Self, ElfError> {

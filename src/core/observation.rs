@@ -116,7 +116,7 @@ pub trait ObservationSink {
 impl HartTransition {
     /// Delivery failure is an outer reporting error. The transition, control
     /// facts and immutable observation remain owned by the caller unchanged.
-    pub fn deliver<S: ObservationSink>(&self, sink: &mut S) -> Result<(), S::Error> {
+    pub fn deliver<S: ObservationSink + ?Sized>(&self, sink: &mut S) -> Result<(), S::Error> {
         if let Some(observation) = &self.observation {
             sink.observe(observation)?;
         }

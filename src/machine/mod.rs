@@ -1,9 +1,13 @@
 //! N=1 composition and explicit lifecycle, separate from Runner budgets/results.
-//! The standard public facades are not migrated here. Returned boundary receipts
+//! Shared and exclusive ownership adapters use the same composition/turn path.
+//! Returned boundary receipts
 //! keep accepted control/observation work admitted until consumed (dropped).
 mod admission;
 mod host_memory;
+mod host_port;
+mod owned;
 mod platform;
+pub(crate) use owned::OwnedMachine;
 
 use crate::core::observation::{HartTransition, ObservationSink};
 use crate::core::{CoreState, RiscvCore, StepOutcome};
@@ -15,7 +19,7 @@ pub use admission::{Lifecycle, WorkCounts};
 use host_memory::HostMemory;
 pub use platform::PlatformEvent;
 use platform::{Platform, SharedMemory};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlatformKind {
@@ -83,6 +87,27 @@ pub struct TohostSample {
     pub value: Result<u64, MemoryError>,
 }
 
+/// Supported outer boundary facts, not a selected Runner terminal reason.
+#[derive(Debug)]
+pub struct BoundaryFacts {
+    pub budget_exhausted: bool,
+    pub single_step: bool,
+    pub reporting_error: Option<String>,
+    pub lifecycle: Lifecycle,
+    pub uncertain: bool,
+}
+impl Default for BoundaryFacts {
+    fn default() -> Self {
+        Self {
+            budget_exhausted: false,
+            single_step: false,
+            reporting_error: None,
+            lifecycle: Lifecycle::Running,
+            uncertain: false,
+        }
+    }
+}
+
 /// A completed boundary. No mutable core/port/device capability escapes.
 /// Keep this receipt through sink delivery and causal accounting, then drop it
 /// before the next turn or drain acknowledgment. Historical fact copies are not
@@ -91,9 +116,22 @@ pub struct MachineTurn {
     hart: HartTransition,
     events: Vec<PlatformEvent>,
     tohost: Option<TohostSample>,
+    boundary: BoundaryFacts,
     _receipt: Lease,
 }
 impl MachineTurn {
+    pub fn boundary(&self) -> &BoundaryFacts {
+        &self.boundary
+    }
+    /// Attach downstream reporting context and the lifecycle facts now visible
+    /// after delivery, without changing the immutable completed Hart record.
+    pub(crate) fn finish_reporting(&mut self, error: Option<String>) -> Result<(), MachineError> {
+        self.boundary.reporting_error = error;
+        let (lifecycle, uncertain) = self._receipt.boundary_state()?;
+        self.boundary.lifecycle = lifecycle;
+        self.boundary.uncertain = uncertain;
+        Ok(())
+    }
     pub fn hart(&self) -> &HartTransition {
         &self.hart
     }
@@ -105,7 +143,7 @@ impl MachineTurn {
     }
     /// The receipt covers the entire callback, even if another control clone
     /// requests quiesce. Errors leave all completed Hart/Platform facts intact.
-    pub fn deliver<S: ObservationSink>(&self, sink: &mut S) -> Result<(), S::Error> {
+    pub fn deliver<S: ObservationSink + ?Sized>(&self, sink: &mut S) -> Result<(), S::Error> {
         self.hart.deliver(sink)
     }
 }
@@ -142,6 +180,8 @@ struct Installed {
     core: RiscvCore,
     platform: Platform,
     image: Arc<LoadImage>,
+    #[cfg(test)]
+    before_turn: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl Installed {
     fn build(config: &MachineConfig, image: Arc<LoadImage>) -> Result<Self, MachineError> {
@@ -161,6 +201,47 @@ impl Installed {
             core,
             platform,
             image,
+            #[cfg(test)]
+            before_turn: None,
+        })
+    }
+    /// Sole Machine-to-Hart invocation used by shared controls and facades.
+    fn turn(
+        &mut self,
+        lease: Lease,
+        observe: bool,
+        sample: bool,
+    ) -> Result<MachineTurn, MachineError> {
+        #[cfg(test)]
+        if let Some(hook) = &self.before_turn {
+            hook();
+        }
+        let hart = self.core.step_transition(observe);
+        let failure = match &hart.outcome {
+            StepOutcome::SimulatorFailure(failure) => Some(failure.clone()),
+            _ => None,
+        };
+        let failed = failure.is_some();
+        let uncertain = self.core.unresolved_physical_access().is_some();
+        let events = if failed {
+            Vec::new()
+        } else {
+            self.platform.take_events()?
+        };
+        let tohost = (sample && !failed).then(|| self.sample());
+        let receipt = lease.boundary(uncertain, failure)?;
+        let (lifecycle, uncertain) = receipt.boundary_state()?;
+        Ok(MachineTurn {
+            hart,
+            events,
+            tohost,
+            boundary: BoundaryFacts {
+                single_step: true,
+                lifecycle,
+                uncertain,
+                ..BoundaryFacts::default()
+            },
+            _receipt: receipt,
         })
     }
     fn sample(&self) -> TohostSample {
@@ -170,6 +251,24 @@ impl Installed {
         }
     }
 }
+fn acknowledge_drain(
+    admission: &mut Admission,
+    installed: Option<&Installed>,
+) -> Result<DrainReport, MachineError> {
+    admission.drain_allowed()?;
+    let (tohost, events) = match installed {
+        Some(domain) => (Some(domain.sample()), domain.platform.take_events()?),
+        None => (None, Vec::new()),
+    };
+    admission.lifecycle = Lifecycle::DrainComplete;
+    Ok(DrainReport {
+        generation: admission.generation,
+        lifecycle: Lifecycle::DrainComplete,
+        tohost,
+        events,
+    })
+}
+
 #[derive(Clone)]
 struct HostView {
     memory: SharedMemory,
@@ -181,6 +280,7 @@ struct Inner {
     gate: Gate,
     installed: Mutex<Option<Installed>>,
     host: Mutex<Option<HostView>>,
+    work_changed: Condvar,
 }
 
 impl Drop for Inner {
@@ -215,7 +315,8 @@ impl Drop for Inner {
 }
 
 /// Cloneable control handles refer to ONE owned Hart/Platform association.
-/// New Machine APIs do not change unmanaged compatibility constructors/facades.
+/// The exclusive facade adapter retains the same composition/admission machinery;
+/// the old typed Hart constructors remain explicit unmanaged compatibility routes.
 #[derive(Clone)]
 pub struct Machine {
     inner: Arc<Inner>,
@@ -231,6 +332,7 @@ impl Machine {
                 })),
                 installed: Mutex::new(None),
                 host: Mutex::new(None),
+                work_changed: Condvar::new(),
             }),
         }
     }
@@ -257,11 +359,19 @@ impl Machine {
         admission: &mut Admission,
         image: Arc<LoadImage>,
     ) -> Result<(), MachineError> {
+        let installed = Installed::build(&self.inner.config, image)?;
+        self.publish(admission, installed)
+    }
+    fn publish(
+        &self,
+        admission: &mut Admission,
+        mut installed: Installed,
+    ) -> Result<(), MachineError> {
+        admission.mutation_allowed()?;
         let generation = admission
             .generation
             .checked_add(1)
             .ok_or_else(|| MachineError::Placement("generation exhausted".into()))?;
-        let installed = Installed::build(&self.inner.config, image)?;
         let writer = HostMemory {
             ram: installed.platform.ram.clone(),
             gate: self.inner.gate.clone(),
@@ -275,6 +385,11 @@ impl Machine {
             writer,
             tohost_offset: installed.platform.ram_tohost_offset,
         };
+        host_port::attach(
+            &mut installed,
+            view.memory.clone(),
+            self.inner.config.platform,
+        );
         // Acquire all publishing locks before changing any state.
         let mut domain = self
             .inner
@@ -344,26 +459,7 @@ impl Machine {
             .lock()
             .map_err(|_| MachineError::Poisoned)?;
         let installed = domain.as_mut().ok_or(MachineError::NoImage)?;
-        let hart = installed.core.step_transition(observe);
-        let failure = match &hart.outcome {
-            StepOutcome::SimulatorFailure(failure) => Some(failure.clone()),
-            _ => None,
-        };
-        let failed = failure.is_some();
-        let uncertain = installed.core.unresolved_physical_access().is_some();
-        let events = if failed {
-            Vec::new()
-        } else {
-            installed.platform.take_events()?
-        };
-        let tohost = (!failed).then(|| installed.sample());
-        let receipt = lease.boundary(uncertain, failure)?;
-        Ok(MachineTurn {
-            hart,
-            events,
-            tohost,
-            _receipt: receipt,
-        })
+        installed.turn(lease, observe, true)
     }
     /// Stop admission, including new host writes to the live generation. Already
     /// admitted writes/turns/callbacks/boundary deliveries are allowed to finish.
@@ -382,35 +478,13 @@ impl Machine {
     /// not. No resolution API guesses that an unknown backend has terminated.
     pub fn try_drain(&self) -> Result<DrainReport, MachineError> {
         let mut admission = lock(&self.inner.gate)?;
-        if admission.uncertain {
-            return Err(MachineError::UnknownCompletion);
-        }
-        if !admission.work.is_empty() {
-            return Err(MachineError::Busy);
-        }
-        if !matches!(
-            admission.lifecycle,
-            Lifecycle::QuiesceRequested | Lifecycle::DrainComplete
-        ) {
-            return Err(MachineError::NotDrained);
-        }
+        admission.drain_allowed()?;
         let domain = self
             .inner
             .installed
             .lock()
             .map_err(|_| MachineError::Poisoned)?;
-        let (tohost, events) = if let Some(installed) = domain.as_ref() {
-            (Some(installed.sample()), installed.platform.take_events()?)
-        } else {
-            (None, Vec::new())
-        };
-        admission.lifecycle = Lifecycle::DrainComplete;
-        Ok(DrainReport {
-            generation: admission.generation,
-            lifecycle: Lifecycle::DrainComplete,
-            tohost,
-            events,
-        })
+        acknowledge_drain(&mut admission, domain.as_ref())
     }
     /// Coherent inspection under admission exclusion, not raw volatile handles.
     pub fn inspect(&self) -> Result<MachineInspection, MachineError> {

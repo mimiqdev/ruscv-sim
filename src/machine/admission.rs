@@ -63,6 +63,21 @@ impl Admission {
         }
         Ok(())
     }
+    pub fn drain_allowed(&self) -> Result<(), MachineError> {
+        if self.uncertain {
+            return Err(MachineError::UnknownCompletion);
+        }
+        if !self.work.is_empty() {
+            return Err(MachineError::Busy);
+        }
+        if !matches!(
+            self.lifecycle,
+            Lifecycle::QuiesceRequested | Lifecycle::DrainComplete
+        ) {
+            return Err(MachineError::NotDrained);
+        }
+        Ok(())
+    }
     fn running(&self) -> Result<(), MachineError> {
         if self.uncertain {
             return Err(MachineError::UnknownCompletion);
@@ -93,6 +108,10 @@ pub(super) struct Lease {
     _owner: Arc<Inner>,
 }
 impl Lease {
+    pub fn boundary_state(&self) -> Result<(Lifecycle, bool), MachineError> {
+        let state = lock(&self.gate)?;
+        Ok((state.lifecycle, state.uncertain))
+    }
     pub fn hart(gate: &Gate) -> Result<Self, MachineError> {
         let mut state = lock(gate)?;
         state.running()?;
@@ -157,6 +176,7 @@ impl Drop for Lease {
                 Work::Host => state.work.host -= 1,
                 Work::Boundary => state.work.boundary -= 1,
             }
+            self._owner.work_changed.notify_all();
         }
     }
 }

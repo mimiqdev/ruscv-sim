@@ -84,12 +84,15 @@ Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在
 
 退出码来自客户程序的 `tohost` 值。超时、加载失败或模拟器内部错误时进程以非零状态退出。
 
-## 显式 Machine 生命周期 API（A9 T2）
+## N=1 Machine 与公共 facade（A9 T2/T3）
 
 `machine::Machine` 直接拥有一个 Hart 与现有 native 或 flat Platform 的组合。
 `elf::LoadImage::parse` 只提供不可变的段、零填充和地址元数据；Machine 协调安装，
-Platform 放置字节。当前 CLI 和 `RiscVSimulator` 尚未迁移到此所有者（T3），
-原有构造器及 core-only `reset` 仍保留，不能被当作安全 fresh Machine reset。
+Platform 放置字节。CLI／`load_and_run` 的 native 配置与 `RiscVSimulator` 的 flat 配置
+均通过同一 Machine 组合和 Hart 调用路径执行；Runner 仍选择预算、日志、退出优先级和
+artifact 策略。flat 地址仍为存储偏移，不获得 native UART／HTIF 映射；native 不可读签名
+仍省略，flat 则报告 artifact 错误。原有构造器及 core-only `reset` helper 保留，
+不能被当作安全 fresh Machine reset。
 
 ```rust,ignore
 use ruscv_sim::elf::LoadImage;
@@ -118,6 +121,19 @@ handle 仍可写旧 RAM，但不能影响新一代存储或退出事件。当前
 `Some(Ok(Vec::new()))`，不要求地址可映射；非空不可读区域返回 `Some(Err(...))`，
 由 Runner 决定最终 artifact 策略。控制状态编辑必须已 drain，且使 reservation 失效，
 不能导入旧一代的 LR snapshot。
+
+`RiscVSimulator::run`／`step` 返回后保持可续跑状态，不自动 fresh reset 或确认 drain。
+新增 `fresh_reset()` 会停止新写入、等待已准入的 host 写入、确认 drain，然后恢复已安装
+image 的 RAM／零填充与 Hart，保留预算、verbosity 和手工 tohost 选择，并开放新一代写入。
+`load_elf` 同样协调替换；无效 image 保持原状态。旧 `memory()` 克隆不能影响新 image。
+
+`state()`／`state_mut()`／`memory()` 仍返回实际借用引用，不是快照或 guard 替代 API。
+`state_mut()` 先排空已准入写入；编辑阶段的新 host 写入明确拒绝，下一次 facade
+状态／内存访问或执行请求结束编辑阶段并重新开放普通写入。编辑可保留当前 reservation，
+但不能导入不同的 opaque LR token。未知完成无法通过编辑、重载或 fresh reset 清除；
+无法返回 `Result` 的旧 `state_mut()` 在不能证明 drain 时 panic，其他生命周期操作返回错误。
+未实现的合法指令仍是失败的 started slot，不退休、不退出；该兼容 facade 允许 host
+修补和下一次独立 run／step 请求（不重试同一 run 的失败 slot），不适用于 host／未知完成。
 
 返回的 `MachineTurn` 保持已接受的边界/观察工作存活；保留 receipt 或正在执行 callback/sink
 时不能完成 drain 或重置。未知完成始终拒绝重用、reset 和 teardown；目前没有 adapter
