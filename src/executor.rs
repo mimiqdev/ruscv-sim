@@ -1387,6 +1387,26 @@ pub fn load_and_run(
     log_commits: Option<&Path>,
     verbose: bool,
 ) -> Result<ExecutionResult, ExecutorError> {
+    run_native(
+        elf_data,
+        max_cycles,
+        tohost_addr,
+        log_commits,
+        verbose,
+        None,
+    )
+}
+
+// The same native Runner, with an internal sink-injection seam for deterministic
+// reporting-failure tests. No alternate Hart or composition path.
+fn run_native(
+    elf_data: &[u8],
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<&Path>,
+    verbose: bool,
+    logger_override: Option<CommitLogger>,
+) -> Result<ExecutionResult, ExecutorError> {
     let max_cycles = max_cycles.unwrap_or(DEFAULT_MAX_CYCLES);
 
     // Step 1: Load ELF file
@@ -1474,25 +1494,29 @@ pub fn load_and_run(
     );
 
     // Create commit logger if requested
-    let mut commit_logger: Option<CommitLogger> = log_commits
-        .map(|path| {
-            CommitLogger::new_file(path).map_err(|e| {
-                let error_type = match e.kind() {
-                    std::io::ErrorKind::PermissionDenied => "Permission denied",
-                    std::io::ErrorKind::NotFound => "Path not found",
-                    std::io::ErrorKind::AlreadyExists => "File already exists",
-                    std::io::ErrorKind::IsADirectory => "Path is a directory",
-                    _ => "Unknown error",
-                };
-                ExecutorError::ExecutionError(format!(
-                    "Failed to create commit log file '{}': {} ({})",
-                    path.display(),
-                    error_type,
-                    e
-                ))
+    let mut commit_logger: Option<CommitLogger> = if let Some(logger) = logger_override {
+        Some(logger)
+    } else {
+        log_commits
+            .map(|path| {
+                CommitLogger::new_file(path).map_err(|e| {
+                    let error_type = match e.kind() {
+                        std::io::ErrorKind::PermissionDenied => "Permission denied",
+                        std::io::ErrorKind::NotFound => "Path not found",
+                        std::io::ErrorKind::AlreadyExists => "File already exists",
+                        std::io::ErrorKind::IsADirectory => "Path is a directory",
+                        _ => "Unknown error",
+                    };
+                    ExecutorError::ExecutionError(format!(
+                        "Failed to create commit log file '{}': {} ({})",
+                        path.display(),
+                        error_type,
+                        e
+                    ))
+                })
             })
-        })
-        .transpose()?;
+            .transpose()?
+    };
 
     // Step 4: Execution loop. The started-slot budget, completed-turn count and the exit rule
     // live in the shared run control; this loop supplies stepping, signal order,
@@ -1516,30 +1540,20 @@ pub fn load_and_run(
         // slot.
         control.start_slot();
 
-        // Capture register state before execution for the optional commit log.
         let current_pc = core.state().pc;
-        let regs_before = core.state().regs;
 
         // Execute one Hart turn.  Only an InstructionRetired fact is a commit;
         // TrapEntered consumes a completed turn but is not an instruction
         // retirement.
-        let outcome = core.step_outcome();
-        let step = match outcome {
-            StepOutcome::InstructionRetired(retired) => {
-                let regs_after = core.state().regs;
-                if let Some(ref mut logger) = commit_logger {
-                    let _ = logger.log_commit(
-                        0,
-                        retired.privilege as u8,
-                        retired.pc,
-                        retired.instruction,
-                        &regs_before,
-                        &regs_after,
-                        None,
-                    );
-                }
-                Ok(())
-            }
+        let transition = core.step_transition(commit_logger.is_some());
+        // Delivery is after completed Hart execution. It cannot roll back or
+        // change the Hart outcome. Causal exit polling/accounting still runs.
+        let reporting_error = commit_logger
+            .as_mut()
+            .and_then(|logger| transition.deliver(logger).err())
+            .map(|error| format!("Commit log reporting failure after Hart boundary: {error}"));
+        let step = match transition.outcome {
+            StepOutcome::InstructionRetired(_) => Ok(()),
             StepOutcome::TrapEntered(trap) => match trap.continuation {
                 TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
             },
@@ -1605,6 +1619,27 @@ pub fn load_and_run(
             step.map_err(|e| format!("Execution error at PC 0x{:016x}: {}", current_pc, e)),
             &mut [&mut observe_htif, &mut observe_ram],
         );
+        if let Some(error) = reporting_error {
+            let (code, boundary_context) = match decision {
+                RunDecision::GuestExit(code) => {
+                    (code, format!("; guest exit code {code} retained"))
+                }
+                RunDecision::Timeout => (
+                    1,
+                    "; execution budget exhausted at this boundary".to_owned(),
+                ),
+                _ => (1, String::new()),
+            };
+            return Ok(cli_result(
+                &bus_interface,
+                &placement,
+                code,
+                control.cycles(),
+                core.state().pc,
+                false,
+                Some(error + &boundary_context),
+            ));
+        }
         match &decision {
             RunDecision::GuestExit(code) => {
                 return Ok(cli_result(
@@ -2152,8 +2187,81 @@ impl RiscVSimulator {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
+#[path = "../tests/common/public_elf.rs"]
+mod observation_fixture;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FailingLog {
+        completed_lines: usize,
+        fail_after: usize,
+    }
+    impl std::io::Write for FailingLog {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.contains(&b'\n') {
+                if self.completed_lines == self.fail_after {
+                    return Err(std::io::Error::other("injected sink failure"));
+                }
+                self.completed_lines += 1;
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn t1_reporting_failure_preserves_retired_exit_and_final_slot_causal_facts() {
+        let fixture = observation_fixture::elf_with_code(
+            &[
+                observation_fixture::auipc(1, 1),
+                observation_fixture::addi(2, 0, 7),
+                observation_fixture::sd(2, 1, 0),
+            ],
+            0,
+            true,
+            false,
+            0x4000,
+        );
+        let sink = CommitLogger::for_test(Box::new(FailingLog {
+            completed_lines: 0,
+            fail_after: 2,
+        }));
+        let result = run_native(&fixture, Some(3), None, None, false, Some(sink)).unwrap();
+        assert_eq!(result.cycles, 3);
+        assert_eq!(result.final_pc, observation_fixture::BASE + 12);
+        assert_eq!(result.exit_code, 3);
+        assert!(!result.timed_out);
+        let error = result.error.unwrap();
+        assert!(error.contains("Commit log reporting failure"));
+        assert!(error.contains("guest exit code 3 retained"));
+    }
+
+    #[test]
+    fn t1_reporting_failure_is_not_a_failed_hart_turn_or_timeout() {
+        let fixture = observation_fixture::elf_with_code(
+            &[observation_fixture::nop()],
+            0,
+            false,
+            false,
+            0x4000,
+        );
+        let sink = CommitLogger::for_test(Box::new(FailingLog {
+            completed_lines: 0,
+            fail_after: 0,
+        }));
+        let result = run_native(&fixture, Some(1), None, None, false, Some(sink)).unwrap();
+        assert_eq!(result.cycles, 1);
+        assert_eq!(result.final_pc, observation_fixture::BASE + 4);
+        assert!(!result.timed_out);
+        let error = result.error.unwrap();
+        assert!(error.contains("Commit log reporting failure"));
+        assert!(error.contains("execution budget exhausted"));
+    }
 
     #[test]
     fn test_htif_exit_code_extraction() {

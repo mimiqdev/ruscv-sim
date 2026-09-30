@@ -82,6 +82,8 @@ impl fmt::Debug for Fpr {
 pub struct FpuRegisterFile {
     /// 32 floating-point registers (f0-f31)
     regs: [Fpr; 32],
+    /// Subscribed write identities (including equal-value writes), not a sink.
+    observed_writes: Option<u32>,
 }
 
 impl FpuRegisterFile {
@@ -89,12 +91,28 @@ impl FpuRegisterFile {
     pub fn new() -> Self {
         Self {
             regs: [Fpr::default(); 32],
+            observed_writes: None,
         }
     }
 
     /// Reset all registers to default (NaN boxed 0.0)
     pub fn reset(&mut self) {
         self.regs = [Fpr::default(); 32];
+        self.observed_writes = None;
+    }
+
+    pub(crate) fn begin_observation(&mut self, enabled: bool) {
+        self.observed_writes = enabled.then_some(0);
+    }
+
+    pub(crate) fn observed_writes(&self) -> u32 {
+        self.observed_writes.unwrap_or(0)
+    }
+
+    fn observe_write(&mut self, index: usize) {
+        if let Some(writes) = &mut self.observed_writes {
+            *writes |= 1 << index;
+        }
     }
 
     /// Read a floating-point register
@@ -107,6 +125,7 @@ impl FpuRegisterFile {
     pub fn write(&mut self, reg: usize, value: Fpr) {
         let reg = reg & 0x1F;
         if reg != 0 {
+            self.observe_write(reg);
             self.regs[reg] = value;
         }
     }
@@ -115,6 +134,7 @@ impl FpuRegisterFile {
     pub fn write_u32(&mut self, reg: usize, value: u32) {
         let reg = reg & 0x1F;
         if reg != 0 {
+            self.observe_write(reg);
             // NaN box the 32-bit value
             self.regs[reg] = Fpr::from_bits(value as u64 | 0xFFFF_FFFF_0000_0000u64);
         }

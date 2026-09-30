@@ -125,6 +125,8 @@ impl CsrAccess {
 pub struct CsrFile {
     /// CSR storage (64-bit for RV64)
     csrs: HashMap<u16, u64>,
+    /// Internal subscribed transition journal; absent during ordinary execution.
+    observed_writes: Option<Vec<CsrAccess>>,
     /// Current privilege mode
     privilege: PrivilegeMode,
     /// Hart ID (hardware thread ID)
@@ -181,6 +183,7 @@ impl CsrFile {
 
         Self {
             csrs,
+            observed_writes: None,
             privilege: PrivilegeMode::Machine,
             hart_id,
         }
@@ -242,6 +245,7 @@ impl CsrFile {
             return Err(CsrError::InvalidAddress(addr));
         }
 
+        let old_value = self.csrs[&addr];
         // Special handling for certain CSRs
         match addr {
             machine::MHARTID => {
@@ -274,7 +278,31 @@ impl CsrFile {
             }
         }
 
+        if let Some(writes) = &mut self.observed_writes {
+            writes.push(CsrAccess {
+                addr,
+                old_value,
+                new_value: self.csrs[&addr],
+                wrote: true,
+            });
+        }
         Ok(())
+    }
+
+    pub(crate) fn begin_observation(&mut self, enabled: bool) {
+        self.observed_writes = enabled.then(Vec::new);
+    }
+
+    pub(crate) fn take_observed_writes(&mut self) -> Vec<CsrAccess> {
+        self.observed_writes.take().unwrap_or_default()
+    }
+
+    pub(crate) fn hart_id(&self) -> u64 {
+        self.hart_id
+    }
+
+    pub(crate) fn architectural_value(&self, addr: u16) -> u64 {
+        self.csrs.get(&addr).copied().unwrap_or(0)
     }
 
     /// Return the authoritative Machine-mode retirement counter without
@@ -293,7 +321,16 @@ impl CsrFile {
     /// instruction.
     pub(crate) fn increment_minstret(&mut self) -> u64 {
         let value = self.csrs.entry(machine::MINSTRET).or_insert(0);
+        let old_value = *value;
         *value = value.wrapping_add(1);
+        if let Some(writes) = &mut self.observed_writes {
+            writes.push(CsrAccess {
+                addr: machine::MINSTRET,
+                old_value,
+                new_value: *value,
+                wrote: true,
+            });
+        }
         *value
     }
 

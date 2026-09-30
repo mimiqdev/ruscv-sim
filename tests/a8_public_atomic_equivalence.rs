@@ -424,8 +424,14 @@ fn standard_facades_route_admitted_atomics_only_through_one_validated_envelope()
         .split("pub fn load_and_run_file")
         .next()
         .unwrap();
-    assert!(native_runner.contains("retired.instruction"));
-    assert!(native_runner.contains("retired.pc"));
+    // A9 T1: identity/effects are now delivered from the Hart record rather
+    // than formatted from architectural snapshots in the Runner.
+    assert!(native_runner.contains("core.step_transition(commit_logger.is_some())"));
+    assert!(native_runner.contains("transition.deliver(logger)"));
+    assert!(!native_runner.contains("regs_before") && !native_runner.contains("regs_after"));
+    let logger = std::fs::read_to_string("src/core/commits.rs").unwrap();
+    let record_sink = logger.split("pub fn log_record").nth(1).unwrap();
+    assert!(record_sink.contains("retired.instruction") && record_sink.contains("retired.pc"));
     assert_eq!(
         executor
             .matches("install_image_with_physical_ports(")

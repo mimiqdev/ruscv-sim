@@ -59,6 +59,11 @@ impl CommitLogger {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn for_test(output: Box<dyn Write>) -> Self {
+        Self { output }
+    }
+
     /// Log a commit in Spike-compatible format
     ///
     /// Format: `core   <hartid>: <privilege> <pc> (<opcode>) [x<reg>  <value>]... [mem <addr> [<value>]]`
@@ -129,11 +134,40 @@ impl CommitLogger {
         writeln!(self.output)
     }
 
+    /// Format Hart-owned effects with the established snapshot-era text
+    /// presentation. Rich memory/CSR/FPR facts remain available to other sinks;
+    /// this compatibility text deliberately omits them. Equal-value writes
+    /// are facts, but remain omitted in this presentation.
+    pub fn log_record(&mut self, record: &super::observation::CommitRecord) -> io::Result<()> {
+        let retired = record.retired;
+        write!(
+            self.output,
+            "core   {}: {} {:#018x} ({:#010x})",
+            record.hart_id, retired.privilege as u8, retired.pc, retired.instruction
+        )?;
+        for write in &record.effects.gpr {
+            if write.before != write.after {
+                write!(self.output, " x{}  {:#018x}", write.index, write.after)?;
+            }
+        }
+        writeln!(self.output)
+    }
+
     /// Log a comment/tag line (Spike-compatible)
     ///
     /// Format: >>>>>  &lt;text&gt;
     pub fn log_comment(&mut self, text: &str) -> io::Result<()> {
         writeln!(self.output, ">>>>  {}", text)
+    }
+}
+
+impl super::observation::ObservationSink for CommitLogger {
+    type Error = io::Error;
+    fn observe(&mut self, observation: &super::observation::Observation) -> io::Result<()> {
+        match observation {
+            super::observation::Observation::Commit(record) => self.log_record(record),
+            super::observation::Observation::Trap(_) => Ok(()),
+        }
     }
 }
 

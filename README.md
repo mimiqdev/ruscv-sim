@@ -75,6 +75,11 @@ cargo run -- run path/to/program.elf --max-cycles 100000
 | `-v, --verbose` | 详细日志 |
 | `--log-commits <FILE>` | 写出 Spike 兼容的 commit log |
 
+Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在 Runner 中比较寄存器快照。
+文本格式保留原有的 GPR 展示与省略规则，并非完整的 FPR/CSR/内存效果导出。
+未启用日志时不构造每条指令的观察记录。日志写入失败会在运行结果的 `error`
+中报告，但不会撤销已退休指令、存储或已识别的客户退出码。
+
 退出码来自客户程序的 `tohost` 值。超时、加载失败或模拟器内部错误时进程以非零状态退出。
 
 ## 仓库结构
