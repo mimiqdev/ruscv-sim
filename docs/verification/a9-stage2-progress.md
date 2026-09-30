@@ -7,7 +7,8 @@ Sections 2–5 preserve the frozen T0 inventory, evidence and original expectati
 §6 records the T1 Hart observation checkpoint; §7 records its CLI reporting-error
 correction. §8 records T2's directly tested N=1 composition/lifecycle owner;
 §9 records its same-scope empty-signature correction. §10 records the separately
-authorized T3 migration of both public facades through that composition.
+authorized T3 migration of both public facades through that composition; §11
+records R3's flat cloned-writer signal-serialization correction.
 T4 fresh guest/final acceptance remains deferred, requiring its separate
 continuation. Earlier checkpoint evidence/status is historical and is not
 automatically reused as evidence of T3 or later integration.
@@ -940,3 +941,97 @@ formal independent PR-head acceptance is claimed. T4 remains separately deferred
 final acceptance requires its approved execution and exact committed PR-head
 verification/review. This documentation-only child must itself be checked and
 reviewed; runtime evidence above does not automatically certify a later SHA.
+
+## 11. R3: flat signal polling/clearing serialize with public clone guards
+
+The T3 submitted checkpoint `62e4ad31e620f048568139242ac4710d985fcf93`
+had a **source defect despite passing all six Rust checks**: `observe_tohost`
+and `clear_signal` in the exclusive owner locked `Platform.typed` (inner RAM),
+not the flat facade's public `memory()` capability mutex. A clone holder between
+retirement and polling could write signal byte 1 and pause within its guard;
+the Runner could then sample/clear that partial payload and return guest code 0,
+instead of waiting for the remaining guarded writes and decoding their final
+value. The physical-port clone serialization recorded in §10 did not establish
+serialization of these post-retirement signal operations.
+
+Correction implementation/regression checkpoint:
+`abab576df5af7ce17bc0d01741c0f420c4565e66`. In
+[`OwnedMachine::signal_memory`](../../src/machine/owned.rs), flat signal sampling
+now selects the same public capability mutex used by `memory()` clones. Clearing
+holds that mutex for the complete existing byte-clear loop, then writes through
+the **same underlying owned RAM/version domain**, not `HostMemory`'s new-host-
+write admission. It remains work already accepted under the retained boundary
+receipt and can complete after quiesce refuses new writers. Native sampling,
+bus/device callback connections and HTIF-before-RAM priority are unchanged.
+
+Neither operation holds the admission gate while waiting for the public mutex.
+The flat lock order is public capability → RAM, consistent with its physical
+ports and host accesses; clearing acquires no new host lease. Receipt counts,
+not mutex acquisition, continue to block lifecycle drain/mutation until all
+boundary work finishes. Poll and clear still acquire separate guards: this
+restores the baseline serialization, not a new atomic read-and-clear operation.
+Runner retains the decoded code before clearing; no retirement, trap, guest
+write, rollback or fresh reset is synthesized by the correction. README now
+states the signal-serialization and receipt-covered-clear boundary explicitly.
+
+Two new tests in
+[`executor_facade_tests`](../../src/executor_facade_tests.rs) run the actual flat
+Runner with test-only channel gates/probes around the selected signal mutex:
+
+- `flat_signal_poll_waits_for_guarded_multipart_write_and_decodes_final_value`
+  stops after actual NOP retirement, holds a public clone guard across a partial
+  signal 1, then completes its bytes to `0x107` before releasing the guard. The
+  selected mutex is observed contended, polling waits, and the result is code
+  **131**, one completed turn, PC `BASE + 4`, no timeout/error, and cleared RAM.
+- `flat_signal_clear_waits_for_clone_guard_and_remains_receipt_covered_after_quiesce`
+  holds a clone guard after the real poll has retained code **3**, across another
+  multipart signal update and the start of clearing. Both ordinary and quiesce
+  variants observe contention and preserve guarded bytes until release; clearing
+  subsequently zeros all bytes without changing code/PC/count. The quiesce case
+  finishes its host update before requesting quiesce, proves new host writes
+  refuse and drain stays Busy, then proves receipt-covered clearing still works.
+
+Before the production correction, with only the new test gates/probes attached
+to the reviewed raw signal path, both regressions failed deterministically:
+the polling case returned **0 versus expected 131**, and clearing did not wait
+on the public guard. Channels distinguish premature completion from contention
+and allow cleanup before assertions, without sleeps or probabilistic polling.
+The probe drops its temporary guard before the normal blocking acquisition and
+never substitutes a lock result for lifecycle acknowledgment. These hooks exist
+only under `cfg(test)`; no public injection/recovery API is added.
+
+At clean committed correction HEAD
+`abab576df5af7ce17bc0d01741c0f420c4565e66`, these commands passed as freshly
+recorded exact-HEAD focused and full-gate checks:
+
+```bash
+cargo test --all-features \
+  --test a9_facade_composition --test a9_machine_lifecycle --test a9_hart_facts \
+  --test a9_baseline_characterization --test a9_cli_reporting \
+  --test a6_task3_core_trap_test --test a8_hart_atomic \
+  --test a8_public_atomic_equivalence --test a4_run_control --test a7_public_equivalence
+cargo test --all-features --lib facade_tests
+cargo test --all-features --lib machine::tests
+cargo test --all-features --lib core::observation
+cargo test --all-features --lib t1_reporting
+cargo test --all-features --test a9_cli_reporting
+cargo fmt --all -- --check
+cargo check --all-features
+cargo clippy --all-features --all-targets -- -D warnings
+cargo test --all-features
+cargo doc --all-features --no-deps
+git diff --check b36b4d08e10b6919e096209be4817ab26441d526..HEAD
+```
+
+Totals: **109 focused integration tests**, **19 focused unit tests** (ten facade,
+four lifecycle, two fact-builder/boundary, three reporting), plus both actual
+CLI log process cases rerun; full all-feature tests passed, including **865
+library tests and 27 doctests** plus integration suites. R1/R2, prior T0–T3
+negative/unknown-completion and native callback/priority regressions remain green
+at this exact correction checkpoint, not inherited from their older heads.
+
+This is a same-scope T3 compatibility correction. All §10 unknown-resolution/
+quarantine limitations, T4 fresh cross-toolchain 58-guest deferral, ACT4/PR CI/
+formal PR-head acceptance non-claims and A9-not-complete boundary remain. The
+documentation-only child adding this record still requires fresh final-HEAD
+verification and independent review; these checks do not approve it by inference.
