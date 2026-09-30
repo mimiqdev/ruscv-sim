@@ -4,7 +4,8 @@
 
 This record covers **T0 and T1 only**, under [the A9 contract](../dev-plan.md) §5.
 Sections 2–5 preserve the frozen T0 inventory, evidence and original expectations;
-§6 records the implemented T1 Hart observation boundary and its new evidence.
+§6 records the implemented T1 Hart observation boundary and its new evidence;
+§7 records the same-scope CLI reporting-error correction.
 T2–T4 (Machine ownership, safe fresh reset/quiesce/drain, facade composition and
 fresh guest verification) remain unimplemented, requiring separate continuations.
 ADR-0001–0004 remain accepted authorities; the [A8 assessment](a8-closeout-assessment.md)
@@ -428,3 +429,67 @@ completion remains terminal; its lack of a completed observation is not evidence
 that no physical effect occurred. Existing typed APIs/ISA behavior are retained,
 not newly certified. T2–T4 remain deferred pending their explicit continuations,
 not silently implemented by this Hart fact boundary.
+
+## 7. T1 reporting-error presentation correction
+
+Implementation/regression checkpoint:
+`c5df7221029037317d5d2501f2e3e176d4557575`. Independent review of the
+previous submitted HEAD `051ba1ac7e4366946d85c048d9d36f8e850c122a` found a
+source defect despite its passing Rust checks: a commit-log error coincident
+with guest exit 0 was retained in `ExecutionResult.error`, but the CLI printed
+`SUCCESS` and exited 0. Passing checks at that HEAD did not establish correct
+presentation of this coincidence.
+
+The new regression reproduced that defect before the CLI correction: a NOP
+image with preloaded `tohost=1`, one started slot and a failing log write printed
+`Exit Code: 0`, `Cycles: 1`, final PC `0x80000004`, `SUCCESS`, and the reporting
+error, with process code 0.
+
+[`src/main.rs`](../../src/main.rs) now requires both guest code 0 and no error
+before printing `SUCCESS`; a result error with guest code 0 gives process code 1.
+The displayed/library guest code is not overwritten. Existing nonzero guest
+process codes and timeout presentation remain unchanged. No Hart facts, sink
+semantics, lifecycle behavior or public API layout changes are made.
+[`ExecutionResult::exit_code`](../../src/executor.rs) documents that a zero code
+alone does not establish success; [README](../../README.md) explains the distinction
+between preserved guest code and CLI process status.
+
+Deterministic new coverage:
+
+- `executor::tests::t1_reporting_failure_preserves_zero_guest_exit_after_completed_nop`
+  injects the existing failing writer into the real native Runner and proves guest
+  code 0, completed cycle/PC and no timeout remain available alongside a reporting
+  error and retained exit context.
+- [`tests/a9_cli_reporting.rs`](../../tests/a9_cli_reporting.rs) executes the actual
+  CLI binary twice. Its negative case gives only the child a zero regular-file
+  size limit, ignoring SIGXFSZ so the log write returns an I/O error. Log creation
+  succeeds, then the first write fails, without timing sleeps, `/dev/full`, or a
+  production injection API. It proves `FAILED`, process code 1, preserved displayed
+  guest code 0, completed cycle/PC, and a reporting-error diagnostic. The control
+  case writes one log line, prints `SUCCESS`, and exits 0. These two process tests
+  are Unix-gated and ran locally; no non-Unix process-fault injection is claimed.
+
+At the exact committed checkpoint above, the following commands passed:
+
+```bash
+cargo test --all-features \
+  --test a9_cli_reporting --test a9_hart_facts --test a9_baseline_characterization \
+  --test a6_task3_core_trap_test --test a8_hart_atomic \
+  --test a8_public_atomic_equivalence --test a4_run_control \
+  --test a7_public_equivalence
+cargo test --all-features --lib core::observation
+cargo test --all-features --lib t1_reporting
+cargo fmt --all -- --check
+cargo check --all-features
+cargo clippy --all-features --all-targets -- -D warnings
+cargo test --all-features
+cargo doc --all-features --no-deps
+git diff --check b36b4d08e10b6919e096209be4817ab26441d526..HEAD
+```
+
+Totals: **89 focused integration tests**, two builder/boundary unit tests and
+three native reporting unit tests; full all-feature tests passed including
+851 library tests and 27 doctests. This is fresh checkpoint verification, not
+reuse of the preceding HEAD's evidence. A final documentation-only HEAD still
+requires its own verification and independent review. All T2–T4 deferrals and
+cross-toolchain/ACT4/lifecycle non-claims remain unchanged.
