@@ -1,8 +1,9 @@
-# A9 Stage 2 progress — frozen T0 through T3 public-facade checkpoints
+# A9 Stage 2 progress — T0–T3 checkpoints and local T4 evidence
 
 ## 1. Scope and evidence identity
 
-This record covers **T0–T3 only**, under [the A9 contract](../dev-plan.md) §5.
+This record preserves **T0–T3 checkpoints** and adds the separately authorized
+**local T4 evidence** in §13, under [the A9 contract](../dev-plan.md) §5.
 Sections 2–5 preserve the frozen T0 inventory, evidence and original expectations;
 §6 records the T1 Hart observation checkpoint; §7 records its CLI reporting-error
 correction. §8 records T2's directly tested N=1 composition/lifecycle owner;
@@ -10,9 +11,10 @@ correction. §8 records T2's directly tested N=1 composition/lifecycle owner;
 authorized T3 migration of both public facades through that composition; §11
 records R3's flat cloned-writer signal-serialization correction; §12 records
 R4's analogous flat signature-extraction correction.
-T4 fresh guest/final acceptance remains deferred, requiring its separate
-continuation. Earlier checkpoint evidence/status is historical and is not
-automatically reused as evidence of T3 or later integration.
+Earlier checkpoint deferrals/evidence remain historical; they are not rewritten
+as later-head results. Fresh T4 guest evidence is recorded separately in the
+[bounded assessment](a9-closeout-assessment.md). Final PR CI, independent
+PR-head acceptance and milestone completion remain pending.
 ADR-0001–0004 remain accepted authorities; the [A8 assessment](a8-closeout-assessment.md)
 remains unchanged and bounded, not full ADR conformance or ISA certification.
 
@@ -1135,3 +1137,45 @@ quarantine limits, raw-handle volatility and T4 fresh 58-guest/toolchain/ACT4/
 PR CI/formal PR-head acceptance deferrals remain. The documentation-only child
 requires its own final-HEAD checks and independent review; runtime evidence above
 does not approve it automatically.
+
+## 13. T4 local cumulative audit and fresh guest evidence
+
+The separately authorized final evidence increment audited T0–T3 and R1–R4 at
+clean committed checkpoint `1f723b6e7186a0e3796f8f7d9167d05e3a0fe059`.
+Its independent checkpoint review reported no actionable findings at that exact
+head; this is not a final PR-head review. No additional same-scope source defect
+was identified, and this increment changes documentation/evidence only.
+
+The [A9 bounded closeout assessment](a9-closeout-assessment.md) contains the
+criterion-by-criterion source/test matrix, exact checkpoint/tool/image identities,
+commands/results, all eight head-bound checkpoint review outcomes, public and
+negative/lifecycle evidence, compatibility exceptions and remaining debt.
+The self-contained [guest evidence JSON](a9-t4-guest-evidence.json) retains both
+fresh compile manifests, all source/ELF hashes, release simulator digest, 58
+individual CLI outcomes, A6 required-toolchain observations and Rust suite totals.
+
+Fresh execution at that checkpoint ran **2026-10-01T04:13:31Z–04:18:38Z** in the
+pinned `linux/arm64` development image
+`ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c`,
+using non-login `bash -c`, `CARGO_BUILD_JOBS=2`, separate
+`target/a9-container-cargo`, and `target/a9-fresh-riscv-elves`.
+All nine A9 full-gate commands passed, plus the host-side committed-range diff
+check. All-feature tests passed **868 library, 940 integration and 27 doctests**
+(1,835 total, zero failed/ignored). `RISCV_REQUIRE_RISCV_TOOLCHAIN=1` was exported;
+no optional skip counts as a pass. The separately logged A6 command rebuilt its
+five trap guests and passed each through CLI, native library and flat facade.
+
+The explicit project compile and the run script's own second fresh rebuild each
+compiled **58/58**, with zero failures. All ELF hashes matched between those
+builds. The public release CLI passed **58/58** at 100,000-cycle budgets,
+including all seven A8 atomic guests, entry/_start checks and Hello! output.
+No old ELF, skip-build switch or caller-supplied simulator was used. This does
+not establish 58 flat-facade guest runs or a new external certification result.
+
+The commit adding this record is later than the checkpoint run and must receive
+new clean exact-HEAD execution and captured Rust validation; neither equal trees
+nor earlier reviews certify it automatically. Supervisor-managed PR delivery,
+applicable CI and final independent PR-head review remain required. The historical
+ACT4 51-case evidence, active A9 plan and accepted ADRs are unchanged. There is no
+new ACT4 run, adapter recovery API, full ISA/VP/ADR claim, Stage 3 work, milestone
+completion, rolling replacement or landing authorization.

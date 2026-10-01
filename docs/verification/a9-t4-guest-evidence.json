@@ -1,0 +1,1955 @@
+{
+  "schema": 1,
+  "assessment": "A9 bounded local T4 evidence; not PR-head acceptance or milestone completion",
+  "source_head": "1f723b6e7186a0e3796f8f7d9167d05e3a0fe059",
+  "source_worktree_clean_during_run": true,
+  "runtime_git_objects": {
+    "Cargo.lock": {
+      "kind": "blob",
+      "git_object": "79e557f5205bb9b70b00bbd0ee0bf138866db71e"
+    },
+    "Cargo.toml": {
+      "kind": "blob",
+      "git_object": "2a8ee26506188c29c7731125bf579fd39426071d"
+    },
+    "Dockerfile": {
+      "kind": "blob",
+      "git_object": "ae30762a346f3ff029c74e302d3c8e720b6aa225"
+    },
+    "ruscv-macros": {
+      "kind": "tree",
+      "git_object": "61c9f68128e67b902924f83b7950f25426bfb731"
+    },
+    "scripts": {
+      "kind": "tree",
+      "git_object": "315aade5ea2235fc71a33d1d5a854232c1dea683"
+    },
+    "src": {
+      "kind": "tree",
+      "git_object": "7ddd705ea5edb4b3dc855c84d4a726c6d3c5657a"
+    },
+    "tests": {
+      "kind": "tree",
+      "git_object": "0f35391055eadc652833c938aa014617c0c1bf25"
+    }
+  },
+  "started_utc": "2026-10-01T04:13:31Z",
+  "ended_utc": "2026-10-01T04:18:38Z",
+  "image": "ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c",
+  "image_id": "sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c",
+  "image_platform": "linux/arm64",
+  "environment_observation": "Linux 48a5851780ea 6.8.0-117-generic #117-Ubuntu SMP PREEMPT_DYNAMIC Thu May  7 17:26:37 UTC 2026 aarch64 GNU/Linux\n2026-10-01T04:12:34Z\nrustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\ncargo 1.97.1 (c980f4866 2026-06-30)\nclippy 0.1.97 (8bab26f4f6 2026-07-14)\nrustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)\n/usr/bin/riscv64-unknown-elf-as\nGNU assembler (2.40-2+4+b1) 2.40\n/usr/bin/riscv64-unknown-elf-ld\nGNU ld (2.40-2+4+b1) 2.40\n/usr/bin/riscv64-unknown-elf-readelf\nGNU readelf (2.40-2+4+b1) 2.40\n/usr/bin/riscv64-unknown-elf-nm\nGNU nm (2.40-2+4+b1) 2.40\n/usr/bin/riscv64-unknown-elf-gcc\nriscv64-unknown-elf-gcc (12.2.0-14+deb12u1+11+b2) 12.2.0\n0159aa61f690f3735e20af1d0add8874950de4fca8fd5e264ec3b96ec53826d6  /usr/bin/riscv64-unknown-elf-as\nad20783564aa8facfbc7d494ad219f00c276d03a492627644e3827cbfaa5fb1e  /usr/bin/riscv64-unknown-elf-ld\nc3b7db29587e9a624444d758828b64d7318d4368a6931a68ea8a51de5c64babc  /usr/bin/riscv64-unknown-elf-readelf\n08488f3820090751e5260f90d263f7d544f83124454a5d851543be2f6c93221b  /usr/bin/riscv64-unknown-elf-nm\nSpike RISC-V ISA Simulator 1.1.0\n\nusage: spike [host options] <target program> [target options]\n",
+  "exported_environment": {
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_TARGET_DIR": "target/a9-container-cargo",
+    "RISCV_REQUIRE_RISCV_TOOLCHAIN": "1",
+    "RISCV_TEST_OUTDIR": "target/a9-fresh-riscv-elves",
+    "CARGO_TERM_COLOR": "never",
+    "RISCV_SOURCE_HEAD": "1f723b6e7186a0e3796f8f7d9167d05e3a0fe059"
+  },
+  "unset_environment": [
+    "RISCV_TEST_SKIP_BUILD",
+    "RUSCV_SIM_BIN"
+  ],
+  "shell": "non-login bash -c",
+  "disposable_shell_payload": "#!/usr/bin/env bash\nset -euo pipefail\n: \"${A9_EVIDENCE_DIR:?}\" \"${RISCV_SOURCE_HEAD:?}\"\nmkdir -p \"$A9_EVIDENCE_DIR\"\nexport CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/a9-container-cargo\nexport RISCV_REQUIRE_RISCV_TOOLCHAIN=1 RISCV_TEST_OUTDIR=target/a9-fresh-riscv-elves\nexport CARGO_TERM_COLOR=never\nunset RISCV_TEST_SKIP_BUILD RUSCV_SIM_BIN\nprintf 'source_head=%s\\nstarted=%s\\n' \"$RISCV_SOURCE_HEAD\" \"$(date -u +%FT%TZ)\" > \"$A9_EVIDENCE_DIR/status.txt\"\ncommands=(\n 'cargo fmt --all -- --check'\n 'cargo check --all-features'\n 'cargo clippy --all-features --all-targets -- -D warnings'\n 'cargo test --all-features'\n 'cargo doc --all-features --no-deps'\n 'bash scripts/test_riscv_elf_guards.sh'\n 'RISCV_REQUIRE_RISCV_TOOLCHAIN=1 cargo test --test a6_trap_elf_integration -- --nocapture'\n 'RISCV_TEST_OUTDIR=target/a9-fresh-riscv-elves ./scripts/compile_riscv_tests.sh'\n 'RISCV_TEST_OUTDIR=target/a9-fresh-riscv-elves ./scripts/run_elf_tests.sh'\n)\nfor i in \"${!commands[@]}\"; do\n command=\"${commands[$i]}\"\n printf 'START %s %s %s\\n' \"$((i+1))\" \"$(date -u +%FT%TZ)\" \"$command\" | tee -a \"$A9_EVIDENCE_DIR/status.txt\"\n set +e\n bash -c \"$command\" > \"$A9_EVIDENCE_DIR/$((i+1)).log\" 2>&1\n status=$?\n set -e\n printf 'END %s %s status=%s\\n' \"$((i+1))\" \"$(date -u +%FT%TZ)\" \"$status\" | tee -a \"$A9_EVIDENCE_DIR/status.txt\"\n if [ \"$status\" -ne 0 ]; then tail -80 \"$A9_EVIDENCE_DIR/$((i+1)).log\"; exit \"$status\"; fi\n if [ \"$i\" = 7 ]; then\n  cp \"$RISCV_TEST_OUTDIR/manifest.txt\" \"$A9_EVIDENCE_DIR/explicit-compile-manifest.txt\"\n  find \"$RISCV_TEST_OUTDIR\" -name '*.elf' -type f | LC_ALL=C sort | xargs sha256sum > \"$A9_EVIDENCE_DIR/explicit-compile-sha256.txt\"\n fi\ndone\ncp \"$RISCV_TEST_OUTDIR/manifest.txt\" \"$A9_EVIDENCE_DIR/run-rebuild-manifest.txt\"\nfind \"$RISCV_TEST_OUTDIR\" -name '*.elf' -type f | LC_ALL=C sort | xargs sha256sum > \"$A9_EVIDENCE_DIR/run-rebuild-sha256.txt\"\nsha256sum \"$CARGO_TARGET_DIR/release/ruscv-sim\" > \"$A9_EVIDENCE_DIR/simulator-sha256.txt\"\nfind tests/bare-metal-riscv-test -type f \\( -name '*.S' -o -name linker.ld \\) | LC_ALL=C sort | xargs sha256sum > \"$A9_EVIDENCE_DIR/source-sha256.txt\"\ndiff -u \"$A9_EVIDENCE_DIR/explicit-compile-sha256.txt\" \"$A9_EVIDENCE_DIR/run-rebuild-sha256.txt\" > \"$A9_EVIDENCE_DIR/rebuild-diff.txt\"\nprintf 'COMPLETE %s\\n' \"$(date -u +%FT%TZ)\" | tee -a \"$A9_EVIDENCE_DIR/status.txt\"\n",
+  "commands": [
+    {
+      "number": 1,
+      "command": "cargo fmt --all -- --check",
+      "started_utc": "2026-10-01T04:13:31Z",
+      "ended_utc": "2026-10-01T04:13:32Z",
+      "exit_status": 0,
+      "transcript_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "number": 2,
+      "command": "cargo check --all-features",
+      "started_utc": "2026-10-01T04:13:32Z",
+      "ended_utc": "2026-10-01T04:13:52Z",
+      "exit_status": 0,
+      "transcript_sha256": "4ba3c4784e9eec0887d0d5a363ea1694ad5916ea45c3d67a1d464632d222805a"
+    },
+    {
+      "number": 3,
+      "command": "cargo clippy --all-features --all-targets -- -D warnings",
+      "started_utc": "2026-10-01T04:13:52Z",
+      "ended_utc": "2026-10-01T04:14:06Z",
+      "exit_status": 0,
+      "transcript_sha256": "5b870bc8d651d35af834ebc6bdf2e99a665f9f26d25ab1f041f7026fa1bb07ed"
+    },
+    {
+      "number": 4,
+      "command": "cargo test --all-features",
+      "started_utc": "2026-10-01T04:14:06Z",
+      "ended_utc": "2026-10-01T04:18:10Z",
+      "exit_status": 0,
+      "transcript_sha256": "a8db85aa28a2fbfd364e6a59b93b57310329fe33dc8620a122bbeb025cc64379"
+    },
+    {
+      "number": 5,
+      "command": "cargo doc --all-features --no-deps",
+      "started_utc": "2026-10-01T04:18:10Z",
+      "ended_utc": "2026-10-01T04:18:11Z",
+      "exit_status": 0,
+      "transcript_sha256": "c5184666efb90e2e971fd8464f759d0b64fabbada1e40de693542c579396a408"
+    },
+    {
+      "number": 6,
+      "command": "bash scripts/test_riscv_elf_guards.sh",
+      "started_utc": "2026-10-01T04:18:11Z",
+      "ended_utc": "2026-10-01T04:18:11Z",
+      "exit_status": 0,
+      "transcript_sha256": "cf72dc20c9eb0816692b537316f970f01585505bedf9aa3f3e934b44b7988442"
+    },
+    {
+      "number": 7,
+      "command": "RISCV_REQUIRE_RISCV_TOOLCHAIN=1 cargo test --test a6_trap_elf_integration -- --nocapture",
+      "started_utc": "2026-10-01T04:18:11Z",
+      "ended_utc": "2026-10-01T04:18:15Z",
+      "exit_status": 0,
+      "transcript_sha256": "7929e8e25db58721895a3c4352b52966da63051f1f485eb5305a126c640f5d0c"
+    },
+    {
+      "number": 8,
+      "command": "RISCV_TEST_OUTDIR=target/a9-fresh-riscv-elves ./scripts/compile_riscv_tests.sh",
+      "started_utc": "2026-10-01T04:18:15Z",
+      "ended_utc": "2026-10-01T04:18:16Z",
+      "exit_status": 0,
+      "transcript_sha256": "1396a3345463987bf3bcb20fc768273e699d2296fe4cd0ab6b129aab1cc23d60"
+    },
+    {
+      "number": 9,
+      "command": "RISCV_TEST_OUTDIR=target/a9-fresh-riscv-elves ./scripts/run_elf_tests.sh",
+      "started_utc": "2026-10-01T04:18:16Z",
+      "ended_utc": "2026-10-01T04:18:38Z",
+      "exit_status": 0,
+      "transcript_sha256": "258299f30a0dd6fe19affea93bb8087ec5222f011b31c3699958d51e12287165"
+    }
+  ],
+  "rust_suites": [
+    {
+      "suite": "src/lib.rs",
+      "passed": 868,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "src/main.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a4_integrated_equivalence.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a4_run_control.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a6_task3_core_trap_test.rs",
+      "passed": 17,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a6_trap_elf_integration.rs",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a7_hart_physical.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a7_legacy_atomic_compat.rs",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a7_migration_characterization.rs",
+      "passed": 11,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a7_native_targets.rs",
+      "passed": 13,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a7_physical_contract.rs",
+      "passed": 12,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a7_public_equivalence.rs",
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a8_atomic_baseline.rs",
+      "passed": 17,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a8_atomic_contract.rs",
+      "passed": 18,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a8_atomic_targets.rs",
+      "passed": 27,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a8_hart_atomic.rs",
+      "passed": 23,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a8_public_atomic_equivalence.rs",
+      "passed": 12,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a9_baseline_characterization.rs",
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a9_cli_reporting.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a9_facade_composition.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a9_hart_facts.rs",
+      "passed": 13,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "a9_machine_lifecycle.rs",
+      "passed": 14,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "ad_bits_test.rs",
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "amo_test.rs",
+      "passed": 31,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "cli_test.rs",
+      "passed": 15,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "commits_test.rs",
+      "passed": 13,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "csr_access_test.rs",
+      "passed": 27,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "csr_basic_test.rs",
+      "passed": 39,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "d_arith_test.rs",
+      "passed": 21,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "d_convert_test.rs",
+      "passed": 30,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "div_test.rs",
+      "passed": 31,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "executor.rs",
+      "passed": 58,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "f_arith_test.rs",
+      "passed": 15,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "f_compare_test.rs",
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "f_convert_test.rs",
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "f_div_test.rs",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "f_madd_test.rs",
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "f_register_test.rs",
+      "passed": 18,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "memory_bounds.rs",
+      "passed": 11,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "mret_conformance_test.rs",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "mul_test.rs",
+      "passed": 26,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "nan_boxing_test.rs",
+      "passed": 50,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "peripheral_proptest.rs",
+      "passed": 17,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "peripheral_tests.rs",
+      "passed": 28,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "privilege_transition_test.rs",
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "public_behavior.rs",
+      "passed": 46,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "rv64c_test.rs",
+      "passed": 38,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "sv39_test.rs",
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "test_add_direct.rs",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "test_elf_loader.rs",
+      "passed": 15,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "tlb_test.rs",
+      "passed": 15,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "tlm_tests.rs",
+      "passed": 34,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "translation_test.rs",
+      "passed": 23,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "trap_test.rs",
+      "passed": 38,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "suite": "ruscv_sim",
+      "passed": 27,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "rust_total_passed": 1835,
+  "a6_required_toolchain_observation": "   Compiling ruscv-sim v0.1.0 (/workspace)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.75s\n     Running tests/a6_trap_elf_integration.rs (target/a9-container-cargo/debug/deps/a6_trap_elf_integration-2988945bca6122b9)\n\nrunning 1 test\n[PASS] trap_ecall: CLI process, load_and_run, and RiscVSimulator exit 0\n[PASS] trap_illegal: CLI process, load_and_run, and RiscVSimulator exit 0\n[PASS] trap_ebreak: CLI process, load_and_run, and RiscVSimulator exit 0\n[PASS] trap_vectored: CLI process, load_and_run, and RiscVSimulator exit 0\n[PASS] trap_mret_priv: CLI process, load_and_run, and RiscVSimulator exit 0\ntest a6_trap_guests_pass_through_library_and_cli ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s\n\n",
+  "output_path_guard_observation": "[PASS] repository with trailing slash: rejected /workspace/ (output must be directly below)\n[PASS] repository root: rejected /workspace (output must be directly below)\n[PASS] bare-metal source directory: rejected /workspace/tests/bare-metal-riscv-test/rv64i (output must be directly below)\n[PASS] parent alias into source: rejected /workspace/target/../tests/bare-metal-riscv-test/rv64i (output must be directly below)\n[PASS] target root: rejected /workspace/target (output must be directly below)\n[PASS] dot output component: rejected /workspace/target/a6-path-guard-probe/. (output must be a named disposable directory)\n[PASS] dot-dot output component: rejected /workspace/target/a6-path-guard-probe/.. (output must be a named disposable directory)\n[PASS] ordinary temporary output: accepted /tmp/ruscv-elf-guards.NIHQnP/project/target/ordinary-output\n[PASS] output symlink: rejected /tmp/ruscv-elf-guards.NIHQnP/project/target/output-link (output path is a symlink)\n[PASS] symlinked ancestor: rejected /tmp/ruscv-elf-guards.NIHQnP/project/target/ancestor-link/output (output must be directly below)\n[PASS] target-root symlink: rejected /tmp/ruscv-elf-guards.NIHQnP/symlink-project/target/output (target root is a symlink)\n[PASS] all ELF output-path guard cases\n",
+  "explicit_compile_manifest": {
+    "source_head": "1f723b6e7186a0e3796f8f7d9167d05e3a0fe059",
+    "source_dir": "/workspace/tests/bare-metal-riscv-test",
+    "output_dir": "/workspace/target/a9-fresh-riscv-elves",
+    "toolchain_prefix": "riscv64-unknown-elf-",
+    "assembler": "riscv64-unknown-elf-as",
+    "linker": "riscv64-unknown-elf-ld",
+    "source_count": "58",
+    "compiled_count": "58",
+    "failed_count": "0"
+  },
+  "run_script_rebuild_manifest": {
+    "source_head": "1f723b6e7186a0e3796f8f7d9167d05e3a0fe059",
+    "source_dir": "/workspace/tests/bare-metal-riscv-test",
+    "output_dir": "/workspace/target/a9-fresh-riscv-elves",
+    "toolchain_prefix": "riscv64-unknown-elf-",
+    "assembler": "riscv64-unknown-elf-as",
+    "linker": "riscv64-unknown-elf-ld",
+    "source_count": "58",
+    "compiled_count": "58",
+    "failed_count": "0"
+  },
+  "all_58_elf_hashes_match_between_fresh_builds": true,
+  "simulator_path": "/workspace/target/a9-container-cargo/release/ruscv-sim",
+  "simulator_sha256": "e96e53dbb9b2edc6902ef5be65a2d273227f8c0f84e3c799c0f3747c2778f29d",
+  "linker_script_sha256": "97d853e50c72538b22918d543f803059a96fdbd2887463555d491cab78ef654c",
+  "source_sha256": {
+    "tests/bare-metal-riscv-test/linker.ld": "97d853e50c72538b22918d543f803059a96fdbd2887463555d491cab78ef654c",
+    "tests/bare-metal-riscv-test/rv64a/amo_d.S": "a38858b77a3746e495b55220c1486e32bee777c3e60fd60850ad6cedb8b0cc00",
+    "tests/bare-metal-riscv-test/rv64a/amo_w.S": "d578ec31ffa62df09764f51235a4b2a50c9b139f8a02901442869b1937aebe47",
+    "tests/bare-metal-riscv-test/rv64a/aq_rl_set.S": "ae43ea63d8c33de52eab0befb6fe616917b2b40d980f4322ba2492c2b5a27156",
+    "tests/bare-metal-riscv-test/rv64a/atomic_near_ram_end.S": "22c67ad6952af0f1366e98be49dfd80a0ad91c826e731164047d62d3438528c5",
+    "tests/bare-metal-riscv-test/rv64a/atomic_tohost_exit.S": "525edcb5063df3dbbbf2a0eb042a785872b3a61a05be2b0818d84fbe506314c1",
+    "tests/bare-metal-riscv-test/rv64a/lrsc_loop.S": "5d337c2fb0bcea3f90389ebe53fe3a9c47e2f3e68194050992d4a4d7e8a3f680",
+    "tests/bare-metal-riscv-test/rv64a/sc_after_store_failure.S": "27ac9d16dcb25a3970c917461f0199a646d8a4281103b42d91400fe79351d21b",
+    "tests/bare-metal-riscv-test/rv64i/add.S": "9207c29bcdd36e7edb6518a980b6a479aa1522c3d15b352ff05ec4b8734298fe",
+    "tests/bare-metal-riscv-test/rv64i/addi.S": "72a2e08e727d8dce6ff896e74202067f81125d0e14c2329d3fc7f79187b3079d",
+    "tests/bare-metal-riscv-test/rv64i/and.S": "85be0cc9a221e2d703ca5aa1f8c3567bf414e408f5687b6a98ec2bb13d897b6f",
+    "tests/bare-metal-riscv-test/rv64i/andi.S": "18c9a6a39747d9f81ba5660704a7f6a056b5822b3d49acce3bbdc085f832899f",
+    "tests/bare-metal-riscv-test/rv64i/beq.S": "46f915cc3915cb7a9542fa6665ffe4538f3b6336fa0dac4634317f75b4979385",
+    "tests/bare-metal-riscv-test/rv64i/bge.S": "b726374f81e6b331c2e1d0bb6af3f72ac01139fe4a5ef18e5e646652719d2a85",
+    "tests/bare-metal-riscv-test/rv64i/bgeu.S": "5f08efeae97338a2e140a9f4fc0bc7bad287283fff9b0058b706ade4a605d2d2",
+    "tests/bare-metal-riscv-test/rv64i/blt.S": "02b35240d14f5ac833b2c78e7b30b7037d33b49195e8fd9633a0c799894eb297",
+    "tests/bare-metal-riscv-test/rv64i/bltu.S": "42e7c669dc8ee8dd5e03d109b8696662cb3c73dcd0a825a9af0b505633d6c9a9",
+    "tests/bare-metal-riscv-test/rv64i/bne.S": "9a1258b6a84631540bafc454ded51a1dbb1b4b334430508820fe2dee5f61d336",
+    "tests/bare-metal-riscv-test/rv64i/csrrc.S": "c1d5e43d84408590e6b598b39efa2b15eddd3f3c8e874cbc67d792a608fef746",
+    "tests/bare-metal-riscv-test/rv64i/csrrci.S": "541baa931b64d7ac69ffc1cf4086ec07e7e7ce763a2e460a4d7466c9f086c875",
+    "tests/bare-metal-riscv-test/rv64i/csrrs.S": "50455a27cae4593cf19bb9c9a4ab654cd1b09e497cac025b92288a96af32811d",
+    "tests/bare-metal-riscv-test/rv64i/csrrsi.S": "d7a95025b981bec1fb2e03458563ced119edcb23e49808f1f58c37f362bb6813",
+    "tests/bare-metal-riscv-test/rv64i/csrrw.S": "30cd8c53e801615dd6a95568ab9a6d9a561a976929e1c31b72c6d6842f407362",
+    "tests/bare-metal-riscv-test/rv64i/csrrwi.S": "4b0f2a5e6fb10c8473f8d251d133a70f400e1020756f0ecffbfcabb48ac982aa",
+    "tests/bare-metal-riscv-test/rv64i/fib.S": "ecc84c78fb23ec70468ba800a315b08b738d885622013db962e21ef48ca8b5c2",
+    "tests/bare-metal-riscv-test/rv64i/hello.S": "0a7d213e57f2b21c99f2a286ca9e3037b9d1866f20922df7d7dc1928caa2fd1a",
+    "tests/bare-metal-riscv-test/rv64i/jal.S": "396efed15170d04b8d26af2b94c9268cd184e551d0737b58e94b6dfe26ff80b9",
+    "tests/bare-metal-riscv-test/rv64i/jalr.S": "d3c51ed8b01880e1871f5d8aab994d4fd747345e97992a7d03deaeb9ddf6f88d",
+    "tests/bare-metal-riscv-test/rv64i/lb.S": "cd946d50c80972fc5fbdf90804a9df4fb2f43ee1c9f88b069cb47212f131168a",
+    "tests/bare-metal-riscv-test/rv64i/lh.S": "61fc88e64ffa288574bbb38fc7153954ccd17986512f405cc670ca4c80202617",
+    "tests/bare-metal-riscv-test/rv64i/lw.S": "87133ce68e084db9c58ef942b687d51b6558eb91967a28cf5cea18cc05d36215",
+    "tests/bare-metal-riscv-test/rv64i/lwu.S": "ea576c88711850bb8b0963c77f3e62dad7a0e3644fa0136207e909c629839078",
+    "tests/bare-metal-riscv-test/rv64i/or.S": "c58e45d2f994c7ba82180b5b7f088701cabd34eca551812d32640570b53392d6",
+    "tests/bare-metal-riscv-test/rv64i/ori.S": "46055f94ced912051014ca104c5f809cdf569d7800681cbd7df3f9ea4a7c768e",
+    "tests/bare-metal-riscv-test/rv64i/sb.S": "f8f0e0ee30ae145936cf77a1a42bb57c3e791a5e26deb125855c0e8a2e787010",
+    "tests/bare-metal-riscv-test/rv64i/sh.S": "a058469def70c45d2a36a6def6a3b49dc0b0c5c3987316a08a3576ed6e354b56",
+    "tests/bare-metal-riscv-test/rv64i/sll.S": "d89b7117583c9688677c9ed3a1a80dbfc601ebd76fa8079edca49b79dc2d620b",
+    "tests/bare-metal-riscv-test/rv64i/slli.S": "9771115503d4f3b5ba9d170952e17cb4d53ecd505f03236c171d1ed299cd1748",
+    "tests/bare-metal-riscv-test/rv64i/sra.S": "65245502f7d24d2bb6f02d2129acd1824b2edcb9c3e854ac92ce37532f751d0b",
+    "tests/bare-metal-riscv-test/rv64i/srai.S": "f1aea2f5bda9a6debb807ce412ef864eb60bc0546f39e06750e766c06b3772ea",
+    "tests/bare-metal-riscv-test/rv64i/srl.S": "e735fd56b6b905167c9a1f47ec3036e68c6f84a33d10c145dd30e2ece261152e",
+    "tests/bare-metal-riscv-test/rv64i/srli.S": "d63eb9a301352004c474cbf568fb5618f83b3b1d4682b4caa4c9c5a835dbb71f",
+    "tests/bare-metal-riscv-test/rv64i/sub.S": "06f0bd200d1e14f515b3da35820f6291b4e12f51dc24a402e34357e02ea7b0bd",
+    "tests/bare-metal-riscv-test/rv64i/sw.S": "ef346c18ebfa067f353a6eee1029a3883d3ad02332dc0dc6cfdf60b95ea28e7b",
+    "tests/bare-metal-riscv-test/rv64i/trap_ebreak.S": "3c7dc7df0a7b4869303d99282066f8954ef4af646f1241fac04aeffbe6e683cb",
+    "tests/bare-metal-riscv-test/rv64i/trap_ecall.S": "e664d308cc53722fb77413127dcb944faef036a23567b0e5bd1060349b8333c6",
+    "tests/bare-metal-riscv-test/rv64i/trap_illegal.S": "603d58b767491c862a42332659c3391db1088830007f26cfcbe9f79286277a9b",
+    "tests/bare-metal-riscv-test/rv64i/trap_mret_priv.S": "158bc3fc0ad2ba51cf32032fde982afbe54d4fe191626e8a5783d7f59e1fb348",
+    "tests/bare-metal-riscv-test/rv64i/trap_vectored.S": "a2eeca9e30a71036e46be635426b73253d882cf98eedd346e43a2f4b25db9393",
+    "tests/bare-metal-riscv-test/rv64i/xor.S": "63c19d462b831d9a30153bcb4bb6aadb2573adf38f2ad96fc04193df2c1e17ad",
+    "tests/bare-metal-riscv-test/rv64i/xori.S": "2a3b91e34cdbc96b693a9948615bd2a26f59bb6805dfb62a6735d01aff22d852",
+    "tests/bare-metal-riscv-test/rv64m/div.S": "72d6426fdf2a623739b7b16ecebf260976f271229ed5ffc89f4e0a2e9eea7465",
+    "tests/bare-metal-riscv-test/rv64m/divu.S": "262503b2e32a9d5ebfcf4743aaffe919663f679e13956fcffdc8ccfbca3b0fdb",
+    "tests/bare-metal-riscv-test/rv64m/mul.S": "3772acfa07f8ad75cd81ec153495d5ca462002a88ca878b36dc01cb8cc94e5e1",
+    "tests/bare-metal-riscv-test/rv64m/mulh.S": "f1d732be34e79cab113831e043b9aa6468e9b34948dfe6ff876dcd2e06816964",
+    "tests/bare-metal-riscv-test/rv64m/mulhsu.S": "92c6aea28fad503dbf567848d31a91456e7c32e8fd5c1b185d2e137d7e181010",
+    "tests/bare-metal-riscv-test/rv64m/mulhu.S": "5c442624ba74ee61721423e8672cd7bea6062e74d89bb5abf9c92716f6d80a88",
+    "tests/bare-metal-riscv-test/rv64m/rem.S": "e3a43c57bcf3e52c414bfb2013e2a401478482f7bfc4404d26b2193a12dfdad4",
+    "tests/bare-metal-riscv-test/rv64m/remu.S": "8c7dd5438c4d08be2777475211d7fc48ee360c17f0396b2081237308c2ecacfe"
+  },
+  "total_guests": 58,
+  "passed_guests": 58,
+  "failed_guests": 0,
+  "skipped_guests": 0,
+  "cases": [
+    {
+      "number": 1,
+      "case": "rv64i/add.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/add.S",
+      "source_sha256": "9207c29bcdd36e7edb6518a980b6a479aa1522c3d15b352ff05ec4b8734298fe",
+      "elf_sha256": "3020f590c4f3929aba50f3b81ca3d584eb340355a795cb7b408a4967f8caca8b",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/add.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 53,
+      "final_pc": "0x0000000080000048",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     53\nFinal PC:   0x0000000080000048\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 2,
+      "case": "rv64i/addi.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/addi.S",
+      "source_sha256": "72a2e08e727d8dce6ff896e74202067f81125d0e14c2329d3fc7f79187b3079d",
+      "elf_sha256": "4373a2c5f453500eb069ff3e1610bb2e84d459a535c375d0d3c34a2e8503b6d8",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/addi.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 32,
+      "final_pc": "0x0000000080000084",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     32\nFinal PC:   0x0000000080000084\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 3,
+      "case": "rv64i/and.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/and.S",
+      "source_sha256": "85be0cc9a221e2d703ca5aa1f8c3567bf414e408f5687b6a98ec2bb13d897b6f",
+      "elf_sha256": "14d7434913b94ca882fecb4548b6722f21d837ed4953f1b61e1f4b0e7219ad44",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/and.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 45,
+      "final_pc": "0x00000000800000b8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     45\nFinal PC:   0x00000000800000b8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 4,
+      "case": "rv64i/andi.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/andi.S",
+      "source_sha256": "18c9a6a39747d9f81ba5660704a7f6a056b5822b3d49acce3bbdc085f832899f",
+      "elf_sha256": "1a18f1e859ad6c993efcd3e696ceb5c8f1cbe4110d4d01a25b655e379f9ab575",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/andi.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 44,
+      "final_pc": "0x00000000800000b4",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     44\nFinal PC:   0x00000000800000b4\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 5,
+      "case": "rv64i/beq.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/beq.S",
+      "source_sha256": "46f915cc3915cb7a9542fa6665ffe4538f3b6336fa0dac4634317f75b4979385",
+      "elf_sha256": "00e9c8f9cdb6c04aa830dc386e58a3882ed92aa79fc403a438668059b83845e5",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/beq.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 23,
+      "final_pc": "0x0000000080000070",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     23\nFinal PC:   0x0000000080000070\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 6,
+      "case": "rv64i/bge.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/bge.S",
+      "source_sha256": "b726374f81e6b331c2e1d0bb6af3f72ac01139fe4a5ef18e5e646652719d2a85",
+      "elf_sha256": "ddfab791e4e29409f410b1b9d3d0753f578849494915b246b7db0531e63574be",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/bge.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 29,
+      "final_pc": "0x000000008000008c",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     29\nFinal PC:   0x000000008000008c\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 7,
+      "case": "rv64i/bgeu.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/bgeu.S",
+      "source_sha256": "5f08efeae97338a2e140a9f4fc0bc7bad287283fff9b0058b706ade4a605d2d2",
+      "elf_sha256": "1965b4e24843fa806e1345362ca7a8f7f8af8998b4fcd12a55b4c89db8fb77ed",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/bgeu.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 34,
+      "final_pc": "0x00000000800000a8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     34\nFinal PC:   0x00000000800000a8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 8,
+      "case": "rv64i/blt.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/blt.S",
+      "source_sha256": "02b35240d14f5ac833b2c78e7b30b7037d33b49195e8fd9633a0c799894eb297",
+      "elf_sha256": "23c1f2d274ed1c28a69a549124e6e83c58e3d84fec94ff5fc78d6fb9442befba",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/blt.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 29,
+      "final_pc": "0x0000000080000088",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     29\nFinal PC:   0x0000000080000088\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 9,
+      "case": "rv64i/bltu.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/bltu.S",
+      "source_sha256": "42e7c669dc8ee8dd5e03d109b8696662cb3c73dcd0a825a9af0b505633d6c9a9",
+      "elf_sha256": "37e7cd51f67e457a229542827cc9a2afb11afe97579677c80062b9a9ab9af06b",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/bltu.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 29,
+      "final_pc": "0x0000000080000088",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     29\nFinal PC:   0x0000000080000088\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 10,
+      "case": "rv64i/bne.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/bne.S",
+      "source_sha256": "9a1258b6a84631540bafc454ded51a1dbb1b4b334430508820fe2dee5f61d336",
+      "elf_sha256": "b4657e715afccbeecc6fd4a9108cd9e8857ae61fa42d7b1926e9c5f4ae604bb4",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/bne.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 26,
+      "final_pc": "0x000000008000007c",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     26\nFinal PC:   0x000000008000007c\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 11,
+      "case": "rv64i/csrrc.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/csrrc.S",
+      "source_sha256": "c1d5e43d84408590e6b598b39efa2b15eddd3f3c8e874cbc67d792a608fef746",
+      "elf_sha256": "5e36d7551ba6215ee6679d1e17d54c1b8714d813af07de5aec5cb1aa2d62e337",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/csrrc.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 48,
+      "final_pc": "0x00000000800000c8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     48\nFinal PC:   0x00000000800000c8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 12,
+      "case": "rv64i/csrrci.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/csrrci.S",
+      "source_sha256": "541baa931b64d7ac69ffc1cf4086ec07e7e7ce763a2e460a4d7466c9f086c875",
+      "elf_sha256": "7b1ff94fbe5c78e27fcd3082dc72a06fec9daaaa5b75d0e332e67245fbb1a7e4",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/csrrci.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 46,
+      "final_pc": "0x00000000800000c0",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     46\nFinal PC:   0x00000000800000c0\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 13,
+      "case": "rv64i/csrrs.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/csrrs.S",
+      "source_sha256": "50455a27cae4593cf19bb9c9a4ab654cd1b09e497cac025b92288a96af32811d",
+      "elf_sha256": "95815c627403590f5fdf8e3b97eb5789eed7d3c7cc95ffff70dba57f281505bb",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/csrrs.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 48,
+      "final_pc": "0x00000000800000c8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     48\nFinal PC:   0x00000000800000c8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 14,
+      "case": "rv64i/csrrsi.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/csrrsi.S",
+      "source_sha256": "d7a95025b981bec1fb2e03458563ced119edcb23e49808f1f58c37f362bb6813",
+      "elf_sha256": "d3cc570cf01c572354f1828ce7030cf5897e5e53801ab8b8089e176bb0d25631",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/csrrsi.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 39,
+      "final_pc": "0x00000000800000a4",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     39\nFinal PC:   0x00000000800000a4\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 15,
+      "case": "rv64i/csrrw.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/csrrw.S",
+      "source_sha256": "30cd8c53e801615dd6a95568ab9a6d9a561a976929e1c31b72c6d6842f407362",
+      "elf_sha256": "f2ab9f269ed6d44e66e89bf846df908ca49ebe52a2ef1c809f1491b94b163b3b",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/csrrw.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 44,
+      "final_pc": "0x00000000800000b8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     44\nFinal PC:   0x00000000800000b8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 16,
+      "case": "rv64i/csrrwi.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/csrrwi.S",
+      "source_sha256": "4b0f2a5e6fb10c8473f8d251d133a70f400e1020756f0ecffbfcabb48ac982aa",
+      "elf_sha256": "a2a6cce96943847abb3bd0e9634b227c2de2ce2e0984b1cff7b8667abc007b47",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/csrrwi.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 28,
+      "final_pc": "0x0000000080000078",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     28\nFinal PC:   0x0000000080000078\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 17,
+      "case": "rv64i/fib.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/fib.S",
+      "source_sha256": "ecc84c78fb23ec70468ba800a315b08b738d885622013db962e21ef48ca8b5c2",
+      "elf_sha256": "2e46a48c580a291e5161ea34ec4a5f6ca6c9cafe4c7e922c1eb0c6f4adffb7cf",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/fib.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 68,
+      "final_pc": "0x0000000080000054",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     68\nFinal PC:   0x0000000080000054\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 18,
+      "case": "rv64i/hello.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/hello.S",
+      "source_sha256": "0a7d213e57f2b21c99f2a286ca9e3037b9d1866f20922df7d7dc1928caa2fd1a",
+      "elf_sha256": "9f064f7e2bac880377cb3a3fb64101761b254e9df1641c906c57e79ff113d57a",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/hello.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 58,
+      "final_pc": "0x0000000080000088",
+      "presentation": "SUCCESS",
+      "stdout": "Hello!\n\n========== Execution Result ==========\nExit Code:  0\nCycles:     58\nFinal PC:   0x0000000080000088\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 19,
+      "case": "rv64i/jal.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/jal.S",
+      "source_sha256": "396efed15170d04b8d26af2b94c9268cd184e551d0737b58e94b6dfe26ff80b9",
+      "elf_sha256": "0bd9ad07d893a91d5cd0f97252ed35b57f2cc2dbf1192dd862e4366dce13a285",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/jal.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 28,
+      "final_pc": "0x0000000080000074",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     28\nFinal PC:   0x0000000080000074\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 20,
+      "case": "rv64i/jalr.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/jalr.S",
+      "source_sha256": "d3c51ed8b01880e1871f5d8aab994d4fd747345e97992a7d03deaeb9ddf6f88d",
+      "elf_sha256": "e95f6451cb43dc95fcfe561c28d59e96863918a801d8bcc2ec668ddbece31a7e",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/jalr.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 34,
+      "final_pc": "0x00000000800000a0",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     34\nFinal PC:   0x00000000800000a0\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 21,
+      "case": "rv64i/lb.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/lb.S",
+      "source_sha256": "cd946d50c80972fc5fbdf90804a9df4fb2f43ee1c9f88b069cb47212f131168a",
+      "elf_sha256": "8fac1ef480891b0a211a8939f90b78400b2fb496eb6595e2aeb5be58f7e9280c",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/lb.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 63,
+      "final_pc": "0x0000000080000100",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     63\nFinal PC:   0x0000000080000100\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 22,
+      "case": "rv64i/lh.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/lh.S",
+      "source_sha256": "61fc88e64ffa288574bbb38fc7153954ccd17986512f405cc670ca4c80202617",
+      "elf_sha256": "d0ffe222a68ac3aea8757cee2d7470d7cf537dff41056bfa767a00fe470e2eee",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/lh.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 57,
+      "final_pc": "0x00000000800000e8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     57\nFinal PC:   0x00000000800000e8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 23,
+      "case": "rv64i/lw.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/lw.S",
+      "source_sha256": "87133ce68e084db9c58ef942b687d51b6558eb91967a28cf5cea18cc05d36215",
+      "elf_sha256": "1524e7eb2efe06917d2b7f2cfe714cea4f07d93634439019ae236d7cdf9d6793",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/lw.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 49,
+      "final_pc": "0x00000000800000cc",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     49\nFinal PC:   0x00000000800000cc\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 24,
+      "case": "rv64i/lwu.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/lwu.S",
+      "source_sha256": "ea576c88711850bb8b0963c77f3e62dad7a0e3644fa0136207e909c629839078",
+      "elf_sha256": "43a0b12c359c8993685131b3a5ee7f708197b7ef946c2a2f5f154cb59770ac9b",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/lwu.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 87,
+      "final_pc": "0x0000000080000164",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     87\nFinal PC:   0x0000000080000164\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 25,
+      "case": "rv64i/or.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/or.S",
+      "source_sha256": "c58e45d2f994c7ba82180b5b7f088701cabd34eca551812d32640570b53392d6",
+      "elf_sha256": "25729e113fa6134f599327ffc32218dc3540d56c9334bd11bd51895dde5e9fe1",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/or.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 45,
+      "final_pc": "0x00000000800000b8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     45\nFinal PC:   0x00000000800000b8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 26,
+      "case": "rv64i/ori.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/ori.S",
+      "source_sha256": "46055f94ced912051014ca104c5f809cdf569d7800681cbd7df3f9ea4a7c768e",
+      "elf_sha256": "0994c4fcbb4874c029d3b04c71ac424c2895f8599cde77eb0b59fe3039da214b",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/ori.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 47,
+      "final_pc": "0x00000000800000c0",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     47\nFinal PC:   0x00000000800000c0\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 27,
+      "case": "rv64i/sb.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/sb.S",
+      "source_sha256": "f8f0e0ee30ae145936cf77a1a42bb57c3e791a5e26deb125855c0e8a2e787010",
+      "elf_sha256": "4f0f40364fcfaa076dbbd0279a1b692ad7112b1f4be9439255b6e828aa61bd45",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/sb.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 127,
+      "final_pc": "0x0000000080000200",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     127\nFinal PC:   0x0000000080000200\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 28,
+      "case": "rv64i/sh.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/sh.S",
+      "source_sha256": "a058469def70c45d2a36a6def6a3b49dc0b0c5c3987316a08a3576ed6e354b56",
+      "elf_sha256": "a84a3f2241e979fec9dc9949c9d8cd9ecdaf871f181347c05373637e6e5d5e58",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/sh.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 105,
+      "final_pc": "0x00000000800001a8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     105\nFinal PC:   0x00000000800001a8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 29,
+      "case": "rv64i/sll.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/sll.S",
+      "source_sha256": "d89b7117583c9688677c9ed3a1a80dbfc601ebd76fa8079edca49b79dc2d620b",
+      "elf_sha256": "aeeff9c7c2fb31e539971c899842877b561006106af79ac7c5472ba543950a67",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/sll.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 36,
+      "final_pc": "0x0000000080000094",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     36\nFinal PC:   0x0000000080000094\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 30,
+      "case": "rv64i/slli.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/slli.S",
+      "source_sha256": "9771115503d4f3b5ba9d170952e17cb4d53ecd505f03236c171d1ed299cd1748",
+      "elf_sha256": "7c3dc88fc743cc86d48ce6541f75eb112e17ee3db09af48ee29b612bdcfa57aa",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/slli.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 36,
+      "final_pc": "0x0000000080000094",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     36\nFinal PC:   0x0000000080000094\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 31,
+      "case": "rv64i/sra.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/sra.S",
+      "source_sha256": "65245502f7d24d2bb6f02d2129acd1824b2edcb9c3e854ac92ce37532f751d0b",
+      "elf_sha256": "ce777e4a04302f6962ca26249a1c8c596fdda5c1ba986f4ca3e35df6f6da5e2f",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/sra.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 40,
+      "final_pc": "0x00000000800000a4",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     40\nFinal PC:   0x00000000800000a4\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 32,
+      "case": "rv64i/srai.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/srai.S",
+      "source_sha256": "f1aea2f5bda9a6debb807ce412ef864eb60bc0546f39e06750e766c06b3772ea",
+      "elf_sha256": "a1226929ee0baabdfeba567d45e88d6368ebd53352ec7e7a1d4bbe6a4c1f2ecb",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/srai.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 34,
+      "final_pc": "0x000000008000008c",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     34\nFinal PC:   0x000000008000008c\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 33,
+      "case": "rv64i/srl.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/srl.S",
+      "source_sha256": "e735fd56b6b905167c9a1f47ec3036e68c6f84a33d10c145dd30e2ece261152e",
+      "elf_sha256": "8b1a5630df9d0d80dee04dba63b8292123bcf64eacff5ba84f6e10c7e97d4b58",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/srl.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 36,
+      "final_pc": "0x0000000080000094",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     36\nFinal PC:   0x0000000080000094\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 34,
+      "case": "rv64i/srli.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/srli.S",
+      "source_sha256": "d63eb9a301352004c474cbf568fb5618f83b3b1d4682b4caa4c9c5a835dbb71f",
+      "elf_sha256": "8eb510fb35a68e60d48ad6151595f2422e412f42fb14e43c93f4bdc0416a0c88",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/srli.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 36,
+      "final_pc": "0x0000000080000094",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     36\nFinal PC:   0x0000000080000094\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 35,
+      "case": "rv64i/sub.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/sub.S",
+      "source_sha256": "06f0bd200d1e14f515b3da35820f6291b4e12f51dc24a402e34357e02ea7b0bd",
+      "elf_sha256": "1729da478343537b8d46bec324707bdbb2ca91dc9a5b28819ab5512d2d8ab062",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/sub.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 28,
+      "final_pc": "0x0000000080000074",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     28\nFinal PC:   0x0000000080000074\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 36,
+      "case": "rv64i/sw.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/sw.S",
+      "source_sha256": "ef346c18ebfa067f353a6eee1029a3883d3ad02332dc0dc6cfdf60b95ea28e7b",
+      "elf_sha256": "f312e3b79a12865e852d4427539dd67b3dea28ad9dcdcfc84760cf99390aad72",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/sw.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 103,
+      "final_pc": "0x00000000800001a0",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     103\nFinal PC:   0x00000000800001a0\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 37,
+      "case": "rv64i/trap_ebreak.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/trap_ebreak.S",
+      "source_sha256": "3c7dc7df0a7b4869303d99282066f8954ef4af646f1241fac04aeffbe6e683cb",
+      "elf_sha256": "b34f4044f882247ad6e4fdcd8ac58b8910ee0ddb1036ef7baaf9d6e77b9d8c50",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/trap_ebreak.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 41,
+      "final_pc": "0x00000000800000a8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     41\nFinal PC:   0x00000000800000a8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 38,
+      "case": "rv64i/trap_ecall.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/trap_ecall.S",
+      "source_sha256": "e664d308cc53722fb77413127dcb944faef036a23567b0e5bd1060349b8333c6",
+      "elf_sha256": "e37a40cb1a47bb269085f3e16139a1304f1aa44f54fe11f97ca27126a4cbf3fb",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/trap_ecall.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 51,
+      "final_pc": "0x00000000800000d4",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     51\nFinal PC:   0x00000000800000d4\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 39,
+      "case": "rv64i/trap_illegal.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/trap_illegal.S",
+      "source_sha256": "603d58b767491c862a42332659c3391db1088830007f26cfcbe9f79286277a9b",
+      "elf_sha256": "471b9af78c3d9af69f16de49739fc5a4d4a8436dbd21a4d7b41ec62276e38c54",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/trap_illegal.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 44,
+      "final_pc": "0x00000000800000b4",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     44\nFinal PC:   0x00000000800000b4\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 40,
+      "case": "rv64i/trap_mret_priv.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/trap_mret_priv.S",
+      "source_sha256": "158bc3fc0ad2ba51cf32032fde982afbe54d4fe191626e8a5783d7f59e1fb348",
+      "elf_sha256": "6883f831bd0d32ac716aaba6c56ccc2fd6e6f94a28b30876faa0cb1ce88ac401",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/trap_mret_priv.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 65,
+      "final_pc": "0x0000000080000108",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     65\nFinal PC:   0x0000000080000108\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 41,
+      "case": "rv64i/trap_vectored.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/trap_vectored.S",
+      "source_sha256": "a2eeca9e30a71036e46be635426b73253d882cf98eedd346e43a2f4b25db9393",
+      "elf_sha256": "8db05bbcbd4850d57f1db97e77b26ce423c871278059679e938797b4d6da04fa",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/trap_vectored.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 41,
+      "final_pc": "0x00000000800000d4",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     41\nFinal PC:   0x00000000800000d4\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 42,
+      "case": "rv64i/xor.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/xor.S",
+      "source_sha256": "63c19d462b831d9a30153bcb4bb6aadb2573adf38f2ad96fc04193df2c1e17ad",
+      "elf_sha256": "bfacfe1706c0ac5cb53c714ac47af95ec5597410d0fa541f9ea8ce7c91676429",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/xor.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 44,
+      "final_pc": "0x00000000800000b4",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     44\nFinal PC:   0x00000000800000b4\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 43,
+      "case": "rv64i/xori.elf",
+      "group": "rv64i",
+      "source": "tests/bare-metal-riscv-test/rv64i/xori.S",
+      "source_sha256": "2a3b91e34cdbc96b693a9948615bd2a26f59bb6805dfb62a6735d01aff22d852",
+      "elf_sha256": "3ddd700831012c8a87f47adcbfbd36103d15a22c215c21b9e204e6a424a75171",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64i/xori.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 48,
+      "final_pc": "0x00000000800000c4",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     48\nFinal PC:   0x00000000800000c4\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 44,
+      "case": "rv64m/div.elf",
+      "group": "rv64m",
+      "source": "tests/bare-metal-riscv-test/rv64m/div.S",
+      "source_sha256": "72d6426fdf2a623739b7b16ecebf260976f271229ed5ffc89f4e0a2e9eea7465",
+      "elf_sha256": "102e6d1dc1dcc949831b69213086d23561db9c08728b931517800b7bc6febf5d",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64m/div.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 71,
+      "final_pc": "0x0000000080000124",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     71\nFinal PC:   0x0000000080000124\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 45,
+      "case": "rv64m/divu.elf",
+      "group": "rv64m",
+      "source": "tests/bare-metal-riscv-test/rv64m/divu.S",
+      "source_sha256": "262503b2e32a9d5ebfcf4743aaffe919663f679e13956fcffdc8ccfbca3b0fdb",
+      "elf_sha256": "559bfea90d5f781796ba12522062d226f9e137a71111578b4901bd5a7be7b725",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64m/divu.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 59,
+      "final_pc": "0x00000000800000f4",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     59\nFinal PC:   0x00000000800000f4\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 46,
+      "case": "rv64m/mul.elf",
+      "group": "rv64m",
+      "source": "tests/bare-metal-riscv-test/rv64m/mul.S",
+      "source_sha256": "3772acfa07f8ad75cd81ec153495d5ca462002a88ca878b36dc01cb8cc94e5e1",
+      "elf_sha256": "923ad468530452cf6b90bbfdc41eabe974a89847a8c03cacf1c458ba4b4ed89d",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64m/mul.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 49,
+      "final_pc": "0x00000000800000cc",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     49\nFinal PC:   0x00000000800000cc\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 47,
+      "case": "rv64m/mulh.elf",
+      "group": "rv64m",
+      "source": "tests/bare-metal-riscv-test/rv64m/mulh.S",
+      "source_sha256": "f1d732be34e79cab113831e043b9aa6468e9b34948dfe6ff876dcd2e06816964",
+      "elf_sha256": "2a49dd3748f80aec2d5909b809acaba3fd2f5b9e7c019aad603cfb1c1c28abaa",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64m/mulh.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 52,
+      "final_pc": "0x00000000800000d8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     52\nFinal PC:   0x00000000800000d8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 48,
+      "case": "rv64m/mulhsu.elf",
+      "group": "rv64m",
+      "source": "tests/bare-metal-riscv-test/rv64m/mulhsu.S",
+      "source_sha256": "92c6aea28fad503dbf567848d31a91456e7c32e8fd5c1b185d2e137d7e181010",
+      "elf_sha256": "aeda6a8c99e2f5060915e1171288ddca09969ec3fd438ab6fec741a628cf3a27",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64m/mulhsu.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 48,
+      "final_pc": "0x00000000800000c8",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     48\nFinal PC:   0x00000000800000c8\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 49,
+      "case": "rv64m/mulhu.elf",
+      "group": "rv64m",
+      "source": "tests/bare-metal-riscv-test/rv64m/mulhu.S",
+      "source_sha256": "5c442624ba74ee61721423e8672cd7bea6062e74d89bb5abf9c92716f6d80a88",
+      "elf_sha256": "45a508796d409f54285e5d478dcb1479918ece26cdc2d25ec8cb53786e77fb11",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64m/mulhu.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 58,
+      "final_pc": "0x00000000800000f0",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     58\nFinal PC:   0x00000000800000f0\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 50,
+      "case": "rv64m/rem.elf",
+      "group": "rv64m",
+      "source": "tests/bare-metal-riscv-test/rv64m/rem.S",
+      "source_sha256": "e3a43c57bcf3e52c414bfb2013e2a401478482f7bfc4404d26b2193a12dfdad4",
+      "elf_sha256": "7b250527fd0326ca1f2cfe0e7a604cb412737a04a7e9ddea870999a7e48f0788",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64m/rem.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 62,
+      "final_pc": "0x0000000080000100",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     62\nFinal PC:   0x0000000080000100\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 51,
+      "case": "rv64m/remu.elf",
+      "group": "rv64m",
+      "source": "tests/bare-metal-riscv-test/rv64m/remu.S",
+      "source_sha256": "8c7dd5438c4d08be2777475211d7fc48ee360c17f0396b2081237308c2ecacfe",
+      "elf_sha256": "1cb14ae9ac927605d8812d6a1bfc79f3aa71cc37f575e643a1ac581ff79c75f0",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64m/remu.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 54,
+      "final_pc": "0x00000000800000e0",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     54\nFinal PC:   0x00000000800000e0\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 52,
+      "case": "rv64a/amo_d.elf",
+      "group": "rv64a",
+      "source": "tests/bare-metal-riscv-test/rv64a/amo_d.S",
+      "source_sha256": "a38858b77a3746e495b55220c1486e32bee777c3e60fd60850ad6cedb8b0cc00",
+      "elf_sha256": "a58469021ee5d992d2d6c908a406186e25d3dbfed120c77b1cba62a9e483072e",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64a/amo_d.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 28,
+      "final_pc": "0x0000000080000074",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     28\nFinal PC:   0x0000000080000074\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 53,
+      "case": "rv64a/amo_w.elf",
+      "group": "rv64a",
+      "source": "tests/bare-metal-riscv-test/rv64a/amo_w.S",
+      "source_sha256": "d578ec31ffa62df09764f51235a4b2a50c9b139f8a02901442869b1937aebe47",
+      "elf_sha256": "2eccd96bc01b87b12ebfd2469553b59bb461fca3ee5bca7f1ea092b895334b19",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64a/amo_w.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 29,
+      "final_pc": "0x0000000080000078",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     29\nFinal PC:   0x0000000080000078\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 54,
+      "case": "rv64a/aq_rl_set.elf",
+      "group": "rv64a",
+      "source": "tests/bare-metal-riscv-test/rv64a/aq_rl_set.S",
+      "source_sha256": "ae43ea63d8c33de52eab0befb6fe616917b2b40d980f4322ba2492c2b5a27156",
+      "elf_sha256": "d2bbde4b08be93c0bf8996250a170ab6682e38a0dd3a74c77f895eaba8e8f072",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64a/aq_rl_set.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 23,
+      "final_pc": "0x0000000080000060",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     23\nFinal PC:   0x0000000080000060\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 55,
+      "case": "rv64a/atomic_near_ram_end.elf",
+      "group": "rv64a",
+      "source": "tests/bare-metal-riscv-test/rv64a/atomic_near_ram_end.S",
+      "source_sha256": "22c67ad6952af0f1366e98be49dfd80a0ad91c826e731164047d62d3438528c5",
+      "elf_sha256": "d6fdc3bbb4b98575c76bdd585e46b116b3ada467de27c6f632fc079a3d768fab",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64a/atomic_near_ram_end.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 12,
+      "final_pc": "0x0000000080000030",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     12\nFinal PC:   0x0000000080000030\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 56,
+      "case": "rv64a/atomic_tohost_exit.elf",
+      "group": "rv64a",
+      "source": "tests/bare-metal-riscv-test/rv64a/atomic_tohost_exit.S",
+      "source_sha256": "525edcb5063df3dbbbf2a0eb042a785872b3a61a05be2b0818d84fbe506314c1",
+      "elf_sha256": "ca2a52451772cd5760af8f07cb6ba134da8dc3c81528137b0e17eb669f9fe992",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64a/atomic_tohost_exit.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 4,
+      "final_pc": "0x0000000080000010",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     4\nFinal PC:   0x0000000080000010\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 57,
+      "case": "rv64a/lrsc_loop.elf",
+      "group": "rv64a",
+      "source": "tests/bare-metal-riscv-test/rv64a/lrsc_loop.S",
+      "source_sha256": "5d337c2fb0bcea3f90389ebe53fe3a9c47e2f3e68194050992d4a4d7e8a3f680",
+      "elf_sha256": "a4d6f5d2783e5466cbc7c7fbad9ed9458a5a550cd2af84bb2452e9f81b679bc5",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64a/lrsc_loop.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 16,
+      "final_pc": "0x0000000080000044",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     16\nFinal PC:   0x0000000080000044\nStatus:     SUCCESS\n====================================="
+    },
+    {
+      "number": 58,
+      "case": "rv64a/sc_after_store_failure.elf",
+      "group": "rv64a",
+      "source": "tests/bare-metal-riscv-test/rv64a/sc_after_store_failure.S",
+      "source_sha256": "27ac9d16dcb25a3970c917461f0199a646d8a4281103b42d91400fe79351d21b",
+      "elf_sha256": "b24a1ba07a1124679cfadae37fd912152bc3b10f7be3efde98a5ec30b717e54b",
+      "entry": "0x80000000",
+      "start_symbol": "0x0000000080000000",
+      "entry_matches_start": true,
+      "argv": [
+        "/workspace/target/a9-container-cargo/release/ruscv-sim",
+        "run",
+        "/workspace/target/a9-fresh-riscv-elves/rv64a/sc_after_store_failure.elf",
+        "--max-cycles",
+        "100000"
+      ],
+      "process_exit_status": 0,
+      "guest_exit_code": 0,
+      "cycles": 20,
+      "final_pc": "0x0000000080000054",
+      "presentation": "SUCCESS",
+      "stdout": "========== Execution Result ==========\nExit Code:  0\nCycles:     20\nFinal PC:   0x0000000080000054\nStatus:     SUCCESS\n====================================="
+    }
+  ],
+  "limitations": [
+    "CLI 58-case project suite is separate from the five required A6 guests checked through both library facades.",
+    "No ACT4/reference execution, new external selection, final PR CI/review, or milestone completion is claimed.",
+    "Later documentation-only delivery HEAD requires its own execution; these observations belong only to source_head."
+  ]
+}

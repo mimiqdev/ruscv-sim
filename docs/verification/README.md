@@ -4,7 +4,7 @@
 
 **Authority:** Normative for test-layer ownership; individual tool integrations require their own verified setup
 
-**Last reviewed:** 2026-09-19
+**Last reviewed:** 2026-10-01
 
 ## Test layers
 
@@ -67,15 +67,19 @@ Test language follows the layer rather than the simulator implementation languag
 - [A8 T4 public atomic bridge exit and equivalence](a8-public-atomic.md) — standard-facade route audit, cross-facade atomic guests, P2a visibility, D-c boundaries, and no-closeout evidence
 - [A8 T5 earlier-head evidence and acceptance audit](a8-t5-evidence.md) — historical checks bound to `45a170f`, explicitly stale for later implementation heads
 - [A8 bounded closeout assessment](a8-closeout-assessment.md) — current A8 implementation-tree evidence, T0–T5 matrix, 58 fresh project guests, separate frozen ACT4 51-case run, and residual limitations; not A9 implementation evidence
+- [A9 T0–T3 checkpoints and local T4 progress](a9-stage2-progress.md) — frozen route inventory, Hart facts, direct-owner lifecycle, public-facade migration and R1–R4 reproductions
+- [A9 bounded local closeout assessment](a9-closeout-assessment.md) — cumulative acceptance audit, fresh pinned-image gate, 58 project guests, checkpoint review identities and explicit pending PR-head acceptance
+- [A9 T4 source/tool/artifact and per-case evidence](a9-t4-guest-evidence.json) — self-contained checkpoint execution record; not ACT4 or milestone certification
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)
 
 The A1 matrix and gap register are current as-of evidence records, not an A1
 closeout and not a claim that component tests or old CI/reference logs prove
 public-path support. The A7 and A8 closeout records are bounded evidence; neither
-certifies unrelated components. A8 remains the sole Current contract on `main`
-until the approved A9 plan in `docs/dev-plan.md` is merged; at merge A9 becomes
-Current. The rotation is documentation-only and does not claim implementation.
+certifies unrelated components. A9 is Current following the plan rotation
+merged in PR #68; `docs/dev-plan.md` remains its authority. The rotation itself
+was documentation-only. A9's local implementation/evidence assessment does not
+replace final PR-head CI/review or declare milestone completion.
 The matrix records the exact revision, the initial host
 limitation, and the successful Docker-based guest evidence for its batch.
 The [A1 closeout](../archive/milestones/a1-closeout-record.md) additionally records
