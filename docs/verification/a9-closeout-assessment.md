@@ -1,8 +1,8 @@
-# A9 bounded closeout assessment — local T4 evidence
+# A9 bounded technical acceptance and merged delivery assessment
 
-**Assessment date:** 2026-10-01 (UTC). **Status:** local implementation/evidence assessment; PR CI and final independent PR-head review remain pending. **Authority:** [the active A9 contract](../dev-plan.md) and accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md), [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md).
+**Assessment dates:** local checkpoint 2026-10-01; final technical acceptance and merge evidence 2026-10-02 (UTC). **Status:** Current — bounded implementation/evidence accepted; rolling transition pending successor approval. **Authority:** Informational assessment constrained by [the active A9 contract](../dev-plan.md) and accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md), [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md).
 
-This assessment does not close the milestone, rotate the plan, amend an ADR, authorize landing, or certify an ISA/VP. T4 adds evidence and navigation only: the cumulative source/test audit found no additional same-scope defect requiring a production change. The [T0–T3 progress record](a9-stage2-progress.md) preserves earlier checkpoints and R1–R4 reproductions; their old checks are not substituted for the fresh execution below.
+A9's bounded technical implementation and evidence are accepted as of 2026-10-02: PR #69 has merged and exact merge-head push CI succeeded (§7). Formal rolling milestone completion remains pending a separately approved successor contract and actual plan rotation. The active A9 contract remains `docs/dev-plan.md`; successor implementation is not an A9 acceptance requirement. This assessment neither rotates the plan nor amends an ADR or certifies an ISA/VP. T4 added evidence and navigation only: the cumulative source/test audit found no additional same-scope defect requiring a production change. The [T0–T3 progress record](a9-stage2-progress.md) preserves earlier checkpoints and R1–R4 reproductions; their old checks are not substituted for the fresh execution below.
 
 ## 1. Exact identities and evidence levels
 
@@ -17,13 +17,13 @@ This assessment does not close the milestone, rotate the plan, amend an ADR, aut
 
 The evidence JSON [a9-t4-guest-evidence.json](a9-t4-guest-evidence.json) records execution timestamps, exact commands, environment/tool identities, source and ELF SHA-256 values, simulator digest, both fresh build manifests, all 58 CLI outcomes, and Rust suite totals. It is an observation record, not an executable test framework. Raw local transcripts are retained under `target/a9-t4-checkpoint-evidence/`; this document and JSON remain usable without those disposable files or a private task system.
 
-The commit introducing this assessment is a later **documentation/evidence-only delivery**, identifiable in Git history. The checkpoint run is not relabeled as a run at that delivery SHA. Delivery must receive a new clean exact-HEAD full gate and captured Rust validation after commit; equal source trees alone do not prove execution. A future PR-head review/CI must likewise name its own actual head.
+The commit introducing this assessment is a later **documentation/evidence-only delivery**, identifiable in Git history. The checkpoint run is not relabeled as a run at that delivery SHA. At the local assessment checkpoint, delivery still required a new clean exact-HEAD full gate and captured Rust validation after commit; equal source trees alone do not prove execution. Those final PR/merge observations are now recorded separately in §7, not substituted into the checkpoint JSON.
 
 Evidence levels below are deliberate: **H** = direct Hart/physical seam, **M** = directly composed Machine owner, **F** = actual standard facade/CLI, **G** = freshly assembled project guests. A passing component does not establish public integration.
 
 ## 2. Cumulative acceptance audit
 
-All tests cited here are included in the fresh all-feature run in §3. Anchors identify functions/tests, not moving line numbers. “Evidenced” means the bounded local criterion, not final milestone acceptance.
+All tests cited here are included in the checkpoint all-feature run in §3 and the separately recorded final-head verification in §7. Anchors identify functions/tests, not moving line numbers. The matrix preserves the original local audit dispositions; §7 establishes bounded final technical acceptance for T0–T4, without expanding any row's evidence level or limitations.
 
 | Contract criterion | Actual implementation and deterministic evidence | Local disposition / boundary |
 | --- | --- | --- |
@@ -190,7 +190,7 @@ Read-only independent checkpoint reviews inspected the cumulative range from `b3
 | `903e84006aa6f454f028080faea5393c7323174c` | R3 resolved; R4 identified analogous nonempty artifact bypass. |
 | `1f723b6e7186a0e3796f8f7d9167d05e3a0fe059` | T0–T3 + R1–R4: no actionable findings; R4 guard-before-admission repair and actual Runner regressions inspected. |
 
-The review history and reproductions are summarized here so the assessment does not depend on access to private execution stores. No earlier verdict approves this later T4 evidence/documentation commit. **Final exact-PR-head independent review and applicable PR CI are not yet available** and remain supervisor-managed delivery requirements. This coding increment neither pushes nor creates/merges a PR, mutates `main`, tags a release, or rotates A9.
+The review history and reproductions are summarized here so the assessment does not depend on access to private execution stores. No earlier verdict approves a later T4 evidence/documentation commit. At this 2026-10-01 checkpoint, final exact-PR-head independent review and applicable PR CI were pending. §7 supersedes that delivery status only: it records the actual final PR head, review, CI and merge, not a retroactive change to these checkpoint verdicts.
 
 ## 6. Residual debt and explicit non-claims
 
@@ -199,4 +199,92 @@ The review history and reproductions are summarized here so the assessment does 
 - **Compatibility exceptions:** native devices vs flat storage, native unreadable-artifact suppression vs flat reporting, continued synchronous traps, old typed/core-only helpers, infallible borrowed edit panic, and unsupported-legal correction on a new facade request remain explicit. Typed-only constructors do not gain physical atomic certification.
 - **ISA and architecture:** fixed 32-bit instruction fetch/identity, inherited FPU/CSR/atomic profile limitations and existing semantics remain. No full ADR/ISA certification, board/topology, MMU/Sv39/PMP or page-walk/A-D integration, interrupt/WFI/time/deadline scheduler, debugger/Debug Mode/GDB wiring, TLM/SystemC/DMI/FFI, multi-Hart/DMA/RVWMO, block/JIT, checkpoint or Stage 3 performance facility is delivered.
 - **External evidence:** the frozen ACT4 51-case nontrapping RV64I selection remains historical at its own heads and artifact identities in [A8 assessment §4.2](a8-closeout-assessment.md#42-frozen-act4-selection--a-distinct-51-case-run) and [A7 replay](a7-act4-replay-35432032788.json). T4 does not rerun/retrieve/replay it, add an atomic selection, repair a historical artifact retrieval limitation, or combine its denominator with the 58 project guests.
-- **Acceptance boundary:** local gates/guest observations and checkpoint reviews are supplied, not formal PR-head acceptance. Final PR CI/review, authorized merge, required repository evidence and separately approved rolling replacement remain necessary. A9 stays Current and is **not declared complete** by this assessment.
+- **Acceptance boundary:** local checkpoint gates and reviews are not final-head execution. §7 supplies separate final PR-head acceptance and merged delivery evidence. A9 technical implementation/evidence is accepted, but formal rolling completion still awaits separately approved replacement and rotation; A9 stays the sole Current contract. No later documentation-only SHA is relabeled as tested runtime.
+
+
+## 7. Final PR-head acceptance and exact merge-head evidence
+
+**Verified 2026-10-02 through GitHub CLI/API and the full run/job logs**, separately
+from the local checkpoint above. Durable sources are the PR, review comment,
+workflow jobs and their command logs, not disposable transcripts or private
+execution references.
+
+| Exact identity | Durable evidence and disposition |
+| --- | --- |
+| Activation `b36b4d08e10b6919e096209be4817ab26441d526` | [PR #68](https://github.com/mimiqdev/ruscv-sim/pull/68) activated A9 on 2026-09-29 UTC, following approval that day. A8's contract was archived; the rotation itself implemented no Rust. |
+| Final PR head `d0bff0847795057a3141f1ac0562512131f623ad` | [PR #69](https://github.com/mimiqdev/ruscv-sim/pull/69), cumulative range from `b36b4d0`. The [durable final review/evidence comment](https://github.com/mimiqdev/ruscv-sim/pull/69#issuecomment-5926146762), posted 2026-10-01T06:41:33Z, records all six Rust requirements and a separate exact-head pinned-container nine-command gate/evidence audit passing: 1,835 Rust/doc results, 58/58 fresh CLI guests, five required-toolchain A6 guests on CLI/native/flat and output-path guards. This is a final-head execution attestation, not reassignment of the checkpoint JSON's hashes/timestamps. |
+| Independent final PR-head review | Same comment: separate read-only reviewer, `no_actionable_findings`, 0 findings. Static source/assertion review; reviewer executed no tests/builds/edits. T0–T4 and R1–R4 accepted only within the matrix and residual limitations above. |
+| PR CI `36819008505` associated with head `d0bff084…` | [Run](https://github.com/mimiqdev/ruscv-sim/actions/runs/36819008505), [Quality and tests job 110230290057](https://github.com/mimiqdev/ruscv-sim/actions/runs/36819008505/job/110230290057): success, completed 2026-10-01T05:24:01Z. Run metadata names PR head `d0bff084…`; checkout log names synthetic PR merge `909267461dacfa54866a0c90c62d72bbc371fa90` (merge of that head into `b36b4d0`). Logs independently total 1,835 passed, 0 failed/ignored at that checkout, not a direct-head runtime run. Release/smoke and standalone 58-guest compile/run steps were skipped on PR policy; those passes come from the separate container gate, not PR CI. Coverage skipped, not passed. |
+| Merge `0898f1215c4508e98d4db958080f6dd01b5745bf` | PR API records authorized merge at **2026-10-02T14:49:55Z**. Git tree `c583a213aebfc389fa65b54c8d81571a35fa5afa` equals the reviewed PR-head tree. This is content equality only, not execution. Crate remains `0.1.0`; no release/tag implied. |
+| Main push CI `37022637776` at exact `0898f121…` | [Run](https://github.com/mimiqdev/ruscv-sim/actions/runs/37022637776), [Quality and tests job 110889281263](https://github.com/mimiqdev/ruscv-sim/actions/runs/37022637776/job/110889281263): **success**, job 2026-10-02T14:50:02Z–14:56:28Z, run completed 14:56:29Z. Checkout log names exact merge SHA. Rust/doc logs total 1,835 passed, 0 failed/ignored. Release build, smoke, fresh assembly/link and all 58 actual CLI executions passed. Coverage skipped, never coverage evidence. |
+
+The six final PR Rust requirements are formatting, all-feature check, strict
+all-target clippy, all-feature tests, no-dependency docs, and committed-range
+`git diff --check b36b4d08e10b6919e096209be4817ab26441d526..HEAD`.
+The separately attested nine container commands are exactly the nine command
+rows in §3 (A6 with `-- --nocapture`); image pinned to
+`ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c`.
+The final-head aggregate attestation does not provide a new per-case artifact
+manifest in this repository; §4/JSON remain the original checkpoint identities.
+
+### Merge-head command and guest audit
+
+The actual [CI definition](../../.github/workflows/ci.yml) uses
+`CARGO_BUILD_JOBS=2`, `CARGO_TARGET_DIR=target/ci-cargo`,
+`RISCV_REQUIRE_RISCV_TOOLCHAIN=1`, `RISCV_TEST_OUTDIR=target/ci-riscv-elves`.
+The merge job logs show stable `x86_64-unknown-linux-gnu` Rust 1.99.0
+(`b940084d7`, 2026-09-28), unlike the pinned ARM64 local container. These are
+separate executions/environments, not a performance comparison. Commands:
+
+```bash
+cargo fmt --all -- --check
+python3 -m unittest discover -s scripts/a5 -p 'test_*.py'
+bash -n scripts/a5/experiment.sh
+cargo clippy --all-features --all-targets -- -D warnings
+cargo test --all-features
+cargo doc --all-features --no-deps
+bash -n scripts/riscv_elf_paths.sh scripts/compile_riscv_tests.sh scripts/run_elf_tests.sh scripts/test_riscv_elf_guards.sh
+bash scripts/test_riscv_elf_guards.sh
+cargo build --release --all-features
+./target/ci-cargo/release/ruscv-sim --version
+./scripts/compile_riscv_tests.sh
+RISCV_TEST_SKIP_BUILD=1 ./scripts/run_elf_tests.sh
+```
+
+Here **skip-build is not stale guest reuse**: the immediately preceding compile
+step freshly assembled/linked 58 sources at the merge SHA. Its summary and
+consumed manifest both name `source_head=0898f1215c4508e98d4db958080f6dd01b5745bf`,
+`source_count=58`, `compiled_count=58`, failed 0. The run script requires and prints that
+manifest and rebuilds/uses the release simulator; the preceding compile step and
+log audit establish its freshness/head identity (the script itself does not validate
+all manifest identities). It skips only a redundant
+second guest compilation in this CI job. This differs explicitly from the
+local container's two fresh rebuilds. Each actual CLI invocation uses
+`target/ci-cargo/release/ruscv-sim run <target/ci-riscv-elves/...elf> --max-cycles 100000`.
+The full log contains unique cases 1–58, 58 `CLI exit status 0` observations,
+all guest code 0/SUCCESS with entry/PC/count output, Hello! output, and
+`Total: 58 / Passed: 58 / Failed: 0 / Cases: 58` plus the final all-fresh-cases
+PASS summary. The inventory remains 43 RV64I + 8 RV64M + 7 RV64A; it is not
+58 flat runs or external certification. Required A6 CLI/native/flat evidence
+remains separately identified in the final container gate.
+
+Reinspection commands (read-only; not runtime re-execution):
+
+```bash
+gh pr view 69 --repo mimiqdev/ruscv-sim --json url,state,headRefOid,mergeCommit,mergedAt
+gh api repos/mimiqdev/ruscv-sim/issues/comments/5926146762
+gh run view 36819008505 --repo mimiqdev/ruscv-sim --json headSha,event,status,conclusion,jobs
+gh run view 36819008505 --repo mimiqdev/ruscv-sim --log
+gh run view 37022637776 --repo mimiqdev/ruscv-sim --json headSha,event,status,conclusion,jobs
+gh run view 37022637776 --repo mimiqdev/ruscv-sim --log
+git rev-parse 0898f1215c4508e98d4db958080f6dd01b5745bf^{tree} d0bff0847795057a3141f1ac0562512131f623ad^{tree}
+```
+
+**Disposition:** T0 characterization, T1 Hart facts, T2 safe N=1 lifecycle,
+T3 public-facade migration and T4 final verification/review meet the bounded
+technical acceptance contract. Implementation delivery is merged with exact
+merge-head CI evidence. The [standalone closeout record](../archive/milestones/a9-closeout-record.md)
+records this boundary. Formal rolling completion is still pending successor
+approval and actual archival/replacement; the [Stage 3 draft](../proposals/a10-performance-test-infrastructure.md)
+is not active, implemented or an additional A9 criterion. No runtime, ACT4 or
+performance experiment was run by this documentation consolidation.

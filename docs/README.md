@@ -4,7 +4,7 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-10-01
+**Last reviewed:** 2026-10-02
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
@@ -12,7 +12,7 @@ This index is the entry point for project decisions and technical documentation.
 
 1. [Milestone plan and activation status](dev-plan.md) — objective, scope boundaries, non-goals, constraints, deliverables, acceptance criteria, and whether the proposed successor is active.
 2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
-3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests, the [A8 assessment](verification/a8-closeout-assessment.md) for the atomic route, and the [A9 local assessment](verification/a9-closeout-assessment.md) for Hart facts/Machine integration. Local evidence is not final PR-head acceptance.
+3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests, the [A8 assessment](verification/a8-closeout-assessment.md) for the atomic route, and the [A9 acceptance assessment](verification/a9-closeout-assessment.md) for Hart facts/Machine integration, separating historical checkpoint and final PR/merge-head evidence.
 4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
 5. [Development environment](development-environment.md) — normative container toolchain and usage.
 6. [Documentation policy](documentation-policy.md) — status, authority, and archival rules.
@@ -33,13 +33,15 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Current A9 contract](dev-plan.md) — activated by documentation-only plan rotation PR #68 at `b36b4d08e10b6919e096209be4817ab26441d526`; post-A7 roadmap Stage 2, limited to the existing native/flat single-Hart configurations. Hart-owned optional observation, Machine composition/lifecycle, and unchanged public CLI/library behavior are the bounded goal; no new board, MMU, interrupt scheduler, TLM or multi-Hart support is implied. The rotation itself implemented no Rust. Subsequent local A9 evidence does not replace final PR-head CI/review or declare milestone completion.
+- [Current A9 contract](dev-plan.md) — activated by documentation-only plan rotation PR #68 at `b36b4d08e10b6919e096209be4817ab26441d526`; post-A7 roadmap Stage 2, limited to the existing native/flat single-Hart configurations. Hart-owned optional observation, Machine composition/lifecycle, and unchanged public CLI/library behavior are the bounded goal; no new board, MMU, interrupt scheduler, TLM or multi-Hart support is implied. The rotation itself implemented no Rust. PR #69 implementation merged on 2026-10-02 at `0898f1215c4508e98d4db958080f6dd01b5745bf` with bounded technical acceptance, final independent review and exact merge-head CI. Formal rolling completion still awaits successor approval and actual replacement; the active A9 contract stays here.
 
 - [A8 single-Hart atomic/physical convergence contract archive record](archive/milestones/a8-single-hart-atomic-physical-convergence.md) — archived by PR #68; the snapshot preserves A8's approved profile and full scope. Implementation evidence at `4c4d0a295f620ed85557b10475d46bef1be5ea17` and limitations are in the [A8 closeout assessment](verification/a8-closeout-assessment.md). [Approved A8 proposal snapshot](proposals/a8-single-hart-atomic-convergence.md) remains drafting history.
 
 - [Archived A7 non-atomic physical-access contract](archive/milestones/a7-non-atomic-physical-access-migration.md) — approved and activated 2026-09-18, following formal A6 acceptance; fetch and ordinary integer/FP loads/stores migrated to the raw physical boundary while legacy atomics retained behavior on shared storage/locking as explicit debt. Activation merged in PR #47 as `9ee9c5f24c072779f06ce141b3340f953b614442`; the A7 closeout delivery is merged at `c059500a6af20f93569099c4b05ced3364a7703b`; [closeout record](archive/milestones/a7-closeout-record.md) and [proposal history](archive/milestones/a7-non-atomic-physical-access-proposal.md) remain archived.
 
 - [Post-A7 short-term technical development roadmap proposal](proposals/post-a7-roadmap.md) — Draft A7-after technical implementation planning; not an overall product roadmap and does not activate a successor contract.
+
+- [A10 / Stage 3 detailed performance infrastructure draft](proposals/a10-performance-test-infrastructure.md) — bounded approval candidate based on merged A9 APIs; not active, not implemented, no performance result. The A7-era roadmap's global-reservation/current-A7/host-writer-choice claims are historical and superseded by A8/A9, not inherited work.
 
 - [A8 single-Hart atomic/physical convergence proposal snapshot](proposals/a8-single-hart-atomic-convergence.md) — the unchanged 2026-09-21 drafting source of the A8 archive record; not a second active contract.
 
@@ -58,7 +60,8 @@ Target architecture is not implementation status. Component presence is not end-
 - [A7 bounded closeout record](archive/milestones/a7-closeout-record.md) — six-item acceptance, exact PR/source identities, independent cumulative review outcome, two 51-case boundaries, and residual debt
 - [A8 bounded closeout assessment](verification/a8-closeout-assessment.md) — T0–T5 evidence matrix, exact implementation/CI identities, fresh 58-case project guest inventory, separate frozen ACT4 evidence, and residual limitations; historical A8 evidence, not A9 implementation evidence
 - [A9 stage progress](verification/a9-stage2-progress.md) — frozen T0–T3 checkpoints, R1–R4 repairs and separately labeled local T4 evidence
-- [A9 bounded local closeout assessment](verification/a9-closeout-assessment.md) — cumulative criterion audit, pinned-image full gate and 58 fresh project guests; final PR-head acceptance remains pending
+- [A9 bounded acceptance assessment](verification/a9-closeout-assessment.md) — criterion audit, preserved checkpoint identity, separate final PR gate/review and exact merge-head CI; 58 fresh project CLI guests, Coverage skipped
+- [A9 implementation closeout record](archive/milestones/a9-closeout-record.md) — technical acceptance recorded 2026-10-02; not archival of the active contract or formal rolling replacement
 - [A9 T4 per-case source/tool/artifact evidence](verification/a9-t4-guest-evidence.json) — self-contained checkpoint execution record, not a new ACT4 run
 - [External RISC-V test integration contract](verification/external-riscv-tests.md)
 - [Commit tracing and differential testing](verification/commit-tracing.md)
