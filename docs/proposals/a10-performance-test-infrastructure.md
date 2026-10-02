@@ -40,7 +40,7 @@ Actual available seams, not proposed capability claims:
 
 ## 3. Selected scope and exclusions
 
-In scope after approval: a small versioned workload/oracle manifest, a Rust measurement driver plus repository command wrapper, schema/parser and negative controls, three cost phases, route/observation matrix, environment capture, raw sample retention, baseline/PR comparison, weekly reporting and documentation. Recommend standard Rust `Instant`, existing Criterion for component controls, and a small dedicated driver for exact phase boundaries; Rust type/module choices do not need separate user micro-decisions.
+In scope after approval: a small versioned workload/oracle manifest, a Rust measurement driver plus repository command wrapper, schema/parser and negative controls, three cost phases, route/observation matrix, environment capture, raw sample retention, baseline/PR comparison, weekly reporting and documentation. Serialized-log measurements require file serialization through existing public APIs; in-memory serialization is N/A/deferred, not a mandatory cell or an additive writer-construction API deliverable. Recommend standard Rust `Instant`, existing Criterion for component controls, and a small dedicated driver for exact phase boundaries; Rust type/module choices do not need separate user micro-decisions.
 
 Non-goals: hotspot optimization, fast paths or second ISA engine; runtime semantic fixes/weakening; universal percentage gate; new board/topology; MMU/PMP/page walks, interrupts/WFI/time scheduler, debug/GDB, TLM/SystemC/DMI, OS/Linux, multi-Hart/DMA/coherence; full ADR/ISA/RV64A certification or new ACT4 selection/run; hardware timing; external runner purchase; platform/public API break. No recovery/force-reset API. If a measurement cannot be made through existing APIs, label it unavailable or surface a bounded compatibility decision, not expose internals or alter semantics silently.
 
@@ -64,14 +64,14 @@ Observation oracles: off has no materialized records; on has one commit per reti
 
 ## 5. Route, observation and phase matrix
 
-Required matrix, with explicit unsupported cells:
+Required matrix, with explicit unsupported cells. [CommitLogger constructors](../../src/core/commits.rs) publicly support `new_stdout` and `new_file`; arbitrary-writer `for_test` is `cfg(test)` and `pub(crate)`, not a public harness seam. **File serialization is mandatory where indicated below; in-memory serialization is N/A/deferred on every route and excluded from mandatory-cell acceptance.** No access to test-only internals or new writer constructor is required. The checked fact sink consumes immutable observations without text serialization; it is distinct from an in-memory serialized-log variant.
 
-| Route | Off | Fact materialization + checked sink | Serialized log |
+| Route | Off | Fact materialization + checked sink | Serialized file log |
 | --- | --- | --- | --- |
-| Public native and flat `Machine::step` driver | Required, same `Installed::turn` | Required, same fixtures; control-only accounting remains even off | Required using existing `CommitLogger` as a sink; separately label in-memory serialization versus file serialization |
-| Native library `load_and_run` / file variant | Required | No public arbitrary sink toggle: N/A; Machine rows cover facts | Required via existing log path |
-| Real CLI `ruscv-sim run` | Required | N/A, not a new CLI flag | Required `--log-commits` |
-| Flat `RiscVSimulator` facade | Required | N/A: no public subscriber toggle | N/A: no public logger; flat Machine rows cover on/serialization without calling them facade benchmarks |
+| Public native and flat `Machine::step` driver | Required, same `Installed::turn` | Required, same fixtures; control-only accounting remains even off | Required via public `CommitLogger::new_file` and `MachineTurn::deliver` |
+| Native library `load_and_run` / file variant | Required | No public arbitrary sink toggle: N/A; Machine rows cover facts | Required via existing file-log path |
+| Real CLI `ruscv-sim run` | Required | N/A, not a new CLI flag | Required `--log-commits <FILE>` |
+| Flat `RiscVSimulator` facade | Required | N/A: no public subscriber toggle | N/A: no public logger; flat Machine rows cover on/file serialization without calling them facade benchmarks |
 
 Each applicable fixture × route × observation cell must produce these distinct layers; load-only observation toggles are N/A because no Hart executes:
 
@@ -125,12 +125,12 @@ Task names and commands below are **proposed deliverables**, not existing passes
 | Task / prerequisite | Deliverable and executable exit |
 | --- | --- |
 | P0 — manifest and oracle, after approval/rotation | Pin the mandatory families in §4, exact ELF/tool/source identities and independently derived counts/signatures/results. Run each through native/flat applicable public routes. Mutated exit, PC/signature, work/retirement and device/atomic expectations must each fail. No missing future VP guest is required. |
-| P1 — driver and phase boundaries, after P0 | Implement the one command and three distinct layers/matrix. Setup/drop clock-scope spies or deterministic driver tests prove no load/reset/teardown in execute-only and zero Hart turns in load-only. Real CLI process and both library facades exercised; no raw Executor substitute. Off/on and serialized logs match oracles; N/A cells explicit. |
+| P1 — driver and phase boundaries, after P0 | Implement the one command and three distinct layers/matrix. Setup/drop clock-scope spies or deterministic driver tests prove no load/reset/teardown in execute-only and zero Hart turns in load-only. Real CLI process and both library facades exercised; no raw Executor substitute. Off/on and mandatory serialized file logs match oracles using the public seams in §5; in-memory serialization remains N/A/deferred, and all N/A cells are explicit. |
 | P2 — evidence/schema, after P1 | Valid schema and complete per-sample metadata/raw output; parser rejects missing identities, wrong schema, mismatched counts, semantic failures and unsafe output paths. Fixture build cannot reuse unproven stale ELFs. Failed reporting cannot become pass. Fresh lifecycle/repeated runs reproduce work; A9 negative safety regressions retained. |
 | P3 — calibration/comparison, after P2 | Three correct full sessions at exact clean HEAD, ≥30 usable samples for each required measurement cell, retained baseline bundle and same-revision comparison via the same command. Publish timer/noise/sufficiency calibration. Synthetic missing baseline/changed host or tools/insufficient samples/noise tests return inconclusive, wrong semantic oracle returns failure. Ratios only on comparable cells. No speed target. |
 | P4 — CI/retention/docs, after P3 | Smoke/negative/schema CI and weekly/manual public reporting; at least one actual exact-head CI artifact downloaded and digest/schema/oracle validated, selected baseline retrievable with declared retention/expiry. Document one local and one PR comparison procedure reusing the facility, N/A and inconclusive examples, seven component-control limits. Obtain independent final PR-head review and applicable CI. |
 
-Final proposed acceptance requires all P0–P4 artifacts, a clean committed implementation head, bounded report with each mandatory cell present and correct, calibrated comparable baseline evidence and required CI/review. Unavailable required tools or measurements block infrastructure acceptance; demonstration of intentional inconclusive negative controls is required, not a substitute for obtaining the mandatory usable samples. No benchmark speedup is required. Run the repository full Rust gate:
+Final proposed acceptance requires all P0–P4 artifacts, a clean committed implementation head, bounded report with each mandatory cell present and correct, calibrated comparable baseline evidence and required CI/review. Serialized-log acceptance requires the applicable file-log cells in §5, not the explicitly N/A/deferred in-memory variants. Unavailable required tools or measurements block infrastructure acceptance; demonstration of intentional inconclusive negative controls is required, not a substitute for obtaining the mandatory usable samples. No benchmark speedup is required. Run the repository full Rust gate:
 
 ```bash
 cargo fmt --all -- --check
