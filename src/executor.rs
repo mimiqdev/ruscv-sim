@@ -5,20 +5,20 @@
 //! with tohost exit signal support.
 
 use crate::core::{
-    commits::CommitLogger, CoreState, RiscvCore, SharedDataAccess, SharedPhysicalAccess,
-    SimulatorFailure, StepOutcome, TrapContinuationPolicy,
+    commits::CommitLogger, CoreState, RiscvCore, SimulatorFailure, StepOutcome,
+    TrapContinuationPolicy,
 };
-use crate::elf::{load_elf_file, ElfError, SignatureInfo};
+use crate::elf::{ElfError, LoadImage, SignatureInfo};
+use crate::machine::{MachineConfig, OwnedMachine, PlatformEvent, PlatformKind};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::Uart16550;
 pub use crate::physical::NativeSystemBusBackend;
 use crate::physical::{
     map_native_memory_error, native_ram_atomic_transact, AtomicAccessKind, AtomicBackend,
     AtomicBackendResult, AtomicRequest, AtomicResponse, NativeAtomicTarget, NativePhysicalTarget,
-    NativeRamBackend, PhysicalAccessKind, PhysicalBackend, PhysicalBackendError,
-    PhysicalBackendResult, PhysicalRequest, PhysicalResponse, PhysicalResponseBytes,
-    PhysicalResponseCompletion, PhysicalTargetRejectionReason, PhysicalWidth,
-    ValidatedPhysicalAccess,
+    PhysicalAccessKind, PhysicalBackend, PhysicalBackendError, PhysicalBackendResult,
+    PhysicalRequest, PhysicalResponse, PhysicalResponseBytes, PhysicalResponseCompletion,
+    PhysicalTargetRejectionReason, PhysicalWidth,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -27,7 +27,9 @@ use thiserror::Error;
 /// Execution result
 #[derive(Debug, Clone, Default)]
 pub struct ExecutionResult {
-    /// Exit code (0 for success, non-zero for failure)
+    /// Guest exit code when available (retained even on a reporting error),
+    /// otherwise the run's failure code. A zero code alone does not establish
+    /// success; callers must also inspect `error` and `timed_out`.
     pub exit_code: u32,
     /// Number of completed Hart turns (retirements and synchronous trap entries).
     /// Started turns that end in `SimulatorFailure` are not included.
@@ -959,6 +961,7 @@ pub(crate) fn try_extract_exit_code(tohost_value: u64) -> Option<u32> {
 /// Clear tohost value in memory (Spike-compatible behavior)
 ///
 /// After processing a tohost write, the tohost location should be cleared to 0.
+#[allow(dead_code)] // Retained raw-memory compatibility helper, not facade lifecycle.
 pub(crate) fn clear_tohost(
     mem: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
     tohost_addr: u64,
@@ -979,25 +982,21 @@ pub(crate) fn clear_tohost(
     }
 }
 
-/// Read the image's declared signature region through the native bus.
-///
-/// The bus configuration reads at the guest address, and its documented policy
-/// suppresses a failed read: the caller passes [`ArtifactPolicy::Suppress`].
-fn read_bus_artifact(
-    bus: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
-    signature: Option<&SignatureInfo>,
-) -> ArtifactOutcome {
-    match dump_signature(bus, signature) {
-        Ok(Some(bytes)) if bytes.is_empty() => ArtifactOutcome::Empty,
-        Ok(Some(bytes)) => ArtifactOutcome::Read(bytes),
-        Ok(None) => ArtifactOutcome::Absent,
-        Err(error) => ArtifactOutcome::Failed(format!("Signature artifact unavailable: {error}")),
+/// Runner applies artifact policy to the Machine's raw inspection outcome.
+fn machine_artifact(machine: &OwnedMachine) -> ArtifactOutcome {
+    match machine.signature() {
+        Some(Ok(bytes)) if bytes.is_empty() => ArtifactOutcome::Empty,
+        Some(Ok(bytes)) => ArtifactOutcome::Read(bytes),
+        None => ArtifactOutcome::Absent,
+        Some(Err(error)) => {
+            ArtifactOutcome::Failed(format!("Signature artifact unavailable: {error}"))
+        }
     }
 }
 
 /// Build the CLI configuration's result from observed facts and its artifact read.
 fn cli_result(
-    bus: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
+    machine: &OwnedMachine,
     placement: &ImagePlacement,
     exit_code: u32,
     cycles: u64,
@@ -1014,7 +1013,7 @@ fn cli_result(
         placement.signature_info(),
         ArtifactPolicy::Suppress,
     )
-    .build(read_bus_artifact(bus, placement.signature_info()))
+    .build(machine_artifact(machine))
 }
 
 use std::path::Path;
@@ -1166,84 +1165,13 @@ impl RunControl {
     }
 }
 
-/// Address form a configuration uses for image-declared metadata.
-///
-/// Both public entry points address the same loaded image differently: the
-/// native bus maps RAM at the image base, so a guest address is already the
-/// address the bus takes, while the flat library holds the image relative to its
-/// base and addresses it by a checked storage offset.
-#[derive(Debug, Clone, Copy)]
-enum AddressForm {
-    /// Native bus configuration: image/guest addresses pass through unchanged.
-    Bus,
-    /// Flat configuration: image/guest addresses resolve to buffer offsets.
-    Flat { base_addr: u64, memory_size: u64 },
-}
+use crate::image::AddressForm;
 
-impl AddressForm {
-    /// Resolve an image-declared guest range into this configuration's address.
-    ///
-    /// The flat form is checked: an address below the image base, a range that
-    /// overflows the address space, or a range that leaves the image buffer is
-    /// an explicit error rather than a wrapped or truncated offset. Per-use
-    /// requirements such as the exit poll's eight-byte alignment are enforced by
-    /// the caller, not here.
-    fn resolve(self, guest_addr: u64, len: u64, what: &str) -> Result<u64, ExecutorError> {
-        match self {
-            AddressForm::Bus => Ok(guest_addr),
-            AddressForm::Flat {
-                base_addr,
-                memory_size,
-            } => {
-                let offset = guest_addr.checked_sub(base_addr).ok_or_else(|| {
-                    ExecutorError::ExecutionError(format!(
-                        "{what} address 0x{guest_addr:016x} is below image base 0x{base_addr:016x}"
-                    ))
-                })?;
-                let end = offset.checked_add(len).ok_or_else(|| {
-                    ExecutorError::ExecutionError(format!(
-                        "{what} address 0x{guest_addr:016x} overlaps the end of the address space"
-                    ))
-                })?;
-                if end > memory_size {
-                    return Err(ExecutorError::ExecutionError(format!(
-                        "{what} address 0x{guest_addr:016x} maps to flat offset 0x{offset:016x}, outside the {memory_size:#x}-byte image memory"
-                    )));
-                }
-                Ok(offset)
-            }
-        }
-    }
-
-    /// The virtual-to-physical base the core is reset with in this form.
-    ///
-    /// The bus form maps RAM at the image base on the bus itself, so the core
-    /// passes guest addresses through unchanged; the flat form stores the
-    /// image at the start of its buffer, so the core subtracts the image base.
-    fn core_translation_base(self) -> u64 {
-        match self {
-            AddressForm::Bus => 0,
-            AddressForm::Flat { base_addr, .. } => base_addr,
-        }
-    }
-}
-
-/// Where a loaded image declares its exit signal and signature artifact.
-///
-/// One owner holds the image's placement facts so both entry points resolve them
-/// through the same checked conversion instead of each implementing its own.
+/// Compatibility adapter retains the existing ExecutorError representation.
+/// Shared metadata conversion lives below Runner in crate::image; Machine does
+/// not depend on a run result, stop policy or Runner diagnostic type.
 #[derive(Debug, Clone, Default)]
-struct ImagePlacement {
-    /// Lowest load-segment address of the image.
-    base_addr: u64,
-    /// Bytes addressable in the configuration's image buffer or RAM window.
-    memory_size: u64,
-    /// Image-declared exit signal, as a guest address.
-    tohost: Option<u64>,
-    /// Image-declared signature region, as guest metadata.
-    signature: Option<SignatureInfo>,
-}
-
+struct ImagePlacement(crate::image::ImagePlacement);
 impl ImagePlacement {
     fn new(
         base_addr: u64,
@@ -1251,63 +1179,41 @@ impl ImagePlacement {
         tohost: Option<u64>,
         signature: Option<SignatureInfo>,
     ) -> Self {
-        Self {
+        Self(crate::image::ImagePlacement::new(
             base_addr,
-            memory_size: memory_size as u64,
+            memory_size,
             tohost,
             signature,
-        }
+        ))
     }
-
-    /// The address form the flat library configuration addresses images in.
     fn address_form(&self) -> AddressForm {
-        AddressForm::Flat {
-            base_addr: self.base_addr,
-            memory_size: self.memory_size,
-        }
+        self.0.address_form()
     }
-
-    /// The image's declared exit signal in the requested address form.
-    ///
-    /// Absent metadata yields `None`; a placement this configuration cannot
-    /// address is an error.
     fn tohost(&self, form: AddressForm) -> Result<Option<u64>, ExecutorError> {
-        self.tohost
-            .map(|addr| form.resolve(addr, 8, "ELF tohost"))
-            .transpose()
+        self.0
+            .tohost(form)
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))
     }
-
-    /// The address of a declared signature region in the requested address form.
+    #[cfg(test)]
     fn signature_address(
         &self,
         info: &SignatureInfo,
         form: AddressForm,
     ) -> Result<u64, ExecutorError> {
-        form.resolve(info.vaddr, info.size, "ELF signature")
+        self.0
+            .signature_address(info, form)
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))
     }
-
-    /// The image's declared signature metadata, including its guest address.
     fn signature_info(&self) -> Option<&SignatureInfo> {
-        self.signature.as_ref()
+        self.0.signature_info()
     }
-
-    /// The image-declared exit signal as a guest address, if it declares one.
     fn tohost_guest(&self) -> Option<u64> {
-        self.tohost
+        self.0.tohost_guest()
     }
 }
 
-/// The image-installation sequence both entry points share.
-///
-/// It creates RAM sized to the loaded image, loads the program bytes at the
-/// start of storage, wraps that RAM in the configuration's memory backend,
-/// constructs the core over the backend and resets it to the entry point with
-/// the translation base of the configuration's address form.
-///
-/// The backend is where the configurations differ, and it stays with the
-/// caller: the native bus composes the RAM with its devices, the flat library
-/// uses the RAM unchanged. Installation shares the sequence, not the
-/// configuration.
+/// Historical typed-constructor fixture for component/helper compatibility.
+/// This is not a standard facade composition or certified physical target.
 #[cfg(test)]
 fn install_image(
     program: &[u8],
@@ -1325,45 +1231,6 @@ fn install_image(
 
     let memory = backend(ram);
     let mut core = RiscvCore::new(memory.clone(), memory.clone());
-    core.set_verbose(verbose);
-    core.reset(entry_point, form.core_translation_base());
-    (core, memory)
-}
-
-/// T3 installation seam used by the two standard facades.  The typed memory
-/// handles and the raw fetch/data ports are returned independently so the
-/// constructor does not merge caller-supplied instruction/data domains.  The
-/// standard closures connect both views to one backing RAM/device object.
-fn install_image_with_physical_ports(
-    program: &[u8],
-    base_addr: u64,
-    entry_point: u64,
-    form: AddressForm,
-    verbose: bool,
-    backend: impl FnOnce(
-        Arc<Mutex<SimpleMemory>>,
-    ) -> (
-        Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
-        SharedPhysicalAccess,
-        SharedDataAccess,
-    ),
-) -> (RiscvCore, Arc<Mutex<dyn MemoryInterface + Send + Sync>>) {
-    let ram = Arc::new(Mutex::new(SimpleMemory::new(program.len())));
-    {
-        let guard = ram.lock().unwrap();
-        guard.load_program(program, base_addr);
-    }
-
-    let (memory, instruction_access, data_access) = backend(ram);
-    let mut core = RiscvCore::new_with_physical_access(
-        memory.clone(),
-        memory.clone(),
-        instruction_access,
-        data_access,
-    );
-    if matches!(form, AddressForm::Bus) {
-        core.set_physical_storage_alignment(base_addr, program.len());
-    }
     core.set_verbose(verbose);
     core.reset(entry_point, form.core_translation_base());
     (core, memory)
@@ -1387,112 +1254,114 @@ pub fn load_and_run(
     log_commits: Option<&Path>,
     verbose: bool,
 ) -> Result<ExecutionResult, ExecutorError> {
+    run_native(
+        elf_data,
+        max_cycles,
+        tohost_addr,
+        log_commits,
+        verbose,
+        None,
+    )
+}
+
+type NativeObserver =
+    Box<dyn crate::core::observation::ObservationSink<Error = std::io::Error> + Send>;
+type PrepareMachine = Box<dyn FnOnce(&mut OwnedMachine) + Send>;
+type BoundaryObserver = Box<dyn FnMut(&crate::machine::MachineTurn) + Send>;
+#[derive(Default)]
+struct NativeHooks {
+    observer: Option<NativeObserver>,
+    prepare: Option<PrepareMachine>,
+    boundary: Option<BoundaryObserver>,
+    #[cfg(test)]
+    config: Option<MachineConfig>,
+}
+
+// Same native Runner with bounded internal test seams; no alternate engine.
+fn run_native(
+    elf_data: &[u8],
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<&Path>,
+    verbose: bool,
+    logger_override: Option<CommitLogger>,
+) -> Result<ExecutionResult, ExecutorError> {
+    run_native_inner(
+        elf_data,
+        max_cycles,
+        tohost_addr,
+        log_commits,
+        verbose,
+        logger_override,
+        NativeHooks::default(),
+    )
+}
+
+fn run_native_inner(
+    elf_data: &[u8],
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<&Path>,
+    verbose: bool,
+    logger_override: Option<CommitLogger>,
+    mut hooks: NativeHooks,
+) -> Result<ExecutionResult, ExecutorError> {
     let max_cycles = max_cycles.unwrap_or(DEFAULT_MAX_CYCLES);
 
-    // Step 1: Load ELF file
-    let loaded = load_elf_file(elf_data)?;
-    let (entry_point, memory, signature, elf_tohost, base_addr) = (
-        loaded.entry_point,
-        loaded.memory,
-        loaded.signature,
-        loaded.tohost,
-        loaded.base_addr,
-    );
-
+    let image = Arc::new(LoadImage::parse(elf_data)?);
+    let entry_point = image.entry_point();
+    let base_addr = image.base_addr();
     if verbose {
         eprintln!("[DEBUG] load_elf_file returned: entry_point=0x{:016x}, base_addr=0x{:016x}, memory.len()={}, elf_tohost={:?}",
-                  entry_point, base_addr, memory.len(), elf_tohost);
+            entry_point, base_addr, image.memory_size(), image.tohost());
     }
-
-    // The bus configuration maps RAM at the image base, so image-declared
-    // metadata resolves to its own guest address.
-    let placement = ImagePlacement::new(base_addr, memory.len(), elf_tohost, signature);
-
-    // Determine tohost address with priority:
-    // 1. Command line provided address (tohost_addr)
-    // 2. Address from ELF .tohost section (elf_tohost)
-    // 3. Default address (DEFAULT_TOHOST)
+    let placement = ImagePlacement::new(
+        base_addr,
+        image.memory_size(),
+        image.tohost(),
+        image.signature().cloned(),
+    );
     let tohost = tohost_addr
         .or(placement.tohost(AddressForm::Bus)?)
         .unwrap_or(DEFAULT_TOHOST);
-
-    // Step 2: Guard the image size before installation.
-    let mem_size = memory.len();
-    if mem_size == 0 {
-        return Err(ExecutorError::MemoryAllocationFailed);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.verbose = verbose;
+    config.tohost_override = tohost_addr;
+    config.uart_output = Some(Arc::new(|byte| print!("{}", byte as char)));
+    #[cfg(test)]
+    if let Some(test_config) = hooks.config.take() {
+        config = test_config;
+    }
+    let mut machine = OwnedMachine::new(config, image)
+        .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+    if let Some(prepare) = hooks.prepare.take() {
+        prepare(&mut machine);
     }
 
-    // Exit signal tracker recorded by the HTIF write callback below.
-    let exit_code = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(u32::MAX)); // u32::MAX = not set
-    let exit_code_clone = exit_code.clone();
-
-    // Step 3: Install the image and construct the core through the shared
-    // sequence. This configuration's backend composes the loaded RAM at the
-    // image base with the UART and the HTIF endpoint on the system bus; the
-    // bus maps guest addresses itself, so the core is reset with the bus
-    // form's pass-through translation base.
-    let (mut core, bus_interface) = install_image_with_physical_ports(
-        &memory,
-        base_addr,
-        entry_point,
-        AddressForm::Bus,
-        verbose,
-        |ram| {
-            // UART output goes to stdout. No explicit flush here - stdout
-            // will be flushed at program exit.
-            let uart = Arc::new(Mutex::new(Uart16550::new(0x10000000)));
-            {
-                let mut uart_guard = uart.lock().unwrap();
-                uart_guard.set_output_callback(|byte| {
-                    print!("{}", byte as char);
-                });
-            }
-
-            let bus = Arc::new(Mutex::new(SystemBus::new(ram, uart, base_addr, mem_size)));
-
-            // Register HTIF write callback
-            {
-                let mut bus_guard = bus.lock().unwrap();
-                let exit_code_inner = exit_code_clone.clone();
-                bus_guard.set_htif_write_callback(move |value| {
-                    // Check if this is an exit signal
-                    if let Some(code) = try_extract_exit_code(value) {
-                        exit_code_inner.store(code, std::sync::atomic::Ordering::SeqCst);
-                    }
-                });
-            }
-
-            let instruction_access: SharedPhysicalAccess = Arc::new(Mutex::new(
-                ValidatedPhysicalAccess::new(SystemBus::physical_backend(bus.clone())),
-            ));
-            let data_access: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-                SystemBus::physical_backend(bus.clone()),
-            )));
-            let bus_interface: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = bus;
-            (bus_interface, instruction_access, data_access)
-        },
-    );
-
     // Create commit logger if requested
-    let mut commit_logger: Option<CommitLogger> = log_commits
-        .map(|path| {
-            CommitLogger::new_file(path).map_err(|e| {
-                let error_type = match e.kind() {
-                    std::io::ErrorKind::PermissionDenied => "Permission denied",
-                    std::io::ErrorKind::NotFound => "Path not found",
-                    std::io::ErrorKind::AlreadyExists => "File already exists",
-                    std::io::ErrorKind::IsADirectory => "Path is a directory",
-                    _ => "Unknown error",
-                };
-                ExecutorError::ExecutionError(format!(
-                    "Failed to create commit log file '{}': {} ({})",
-                    path.display(),
-                    error_type,
-                    e
-                ))
+    let mut commit_logger: Option<CommitLogger> = if let Some(logger) = logger_override {
+        Some(logger)
+    } else {
+        log_commits
+            .map(|path| {
+                CommitLogger::new_file(path).map_err(|e| {
+                    let error_type = match e.kind() {
+                        std::io::ErrorKind::PermissionDenied => "Permission denied",
+                        std::io::ErrorKind::NotFound => "Path not found",
+                        std::io::ErrorKind::AlreadyExists => "File already exists",
+                        std::io::ErrorKind::IsADirectory => "Path is a directory",
+                        _ => "Unknown error",
+                    };
+                    ExecutorError::ExecutionError(format!(
+                        "Failed to create commit log file '{}': {} ({})",
+                        path.display(),
+                        error_type,
+                        e
+                    ))
+                })
             })
-        })
-        .transpose()?;
+            .transpose()?
+    };
 
     // Step 4: Execution loop. The started-slot budget, completed-turn count and the exit rule
     // live in the shared run control; this loop supplies stepping, signal order,
@@ -1509,62 +1378,101 @@ pub fn load_and_run(
                   entry_point, tohost_pa);
     }
 
-    let mut decision = control.start::<String>();
+    let initial = machine
+        .control_boundary(!control.may_execute())
+        .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+    let mut decision = if initial.budget_exhausted {
+        RunDecision::Timeout
+    } else {
+        control.start::<String>()
+    };
     while matches!(decision, RunDecision::Continue) {
         // Reserve the slot before invoking the Hart.  A host failure in this
         // slot therefore cannot be retried even when it is the final budget
         // slot.
         control.start_slot();
 
-        // Capture register state before execution for the optional commit log.
-        let current_pc = core.state().pc;
-        let regs_before = core.state().regs;
+        let current_pc = machine.state().pc;
 
         // Execute one Hart turn.  Only an InstructionRetired fact is a commit;
         // TrapEntered consumes a completed turn but is not an instruction
         // retirement.
-        let outcome = core.step_outcome();
-        let step = match outcome {
-            StepOutcome::InstructionRetired(retired) => {
-                let regs_after = core.state().regs;
-                if let Some(ref mut logger) = commit_logger {
-                    let _ = logger.log_commit(
-                        0,
-                        retired.privilege as u8,
-                        retired.pc,
-                        retired.instruction,
-                        &regs_before,
-                        &regs_after,
-                        None,
-                    );
-                }
-                Ok(())
+        let mut turn = match machine.step_request(
+            commit_logger.is_some() || hooks.observer.is_some(),
+            false,
+            !control.may_execute(),
+        ) {
+            Ok(turn) => turn,
+            Err(error) => {
+                let detail = machine
+                    .failure()
+                    .map(format_failure)
+                    .unwrap_or_else(|| error.to_string());
+                return Ok(cli_result(
+                    &machine,
+                    &placement,
+                    1,
+                    control.cycles(),
+                    current_pc,
+                    false,
+                    Some(format!(
+                        "Execution error at PC 0x{current_pc:016x}: {detail}"
+                    )),
+                ));
             }
+        };
+        // Delivery is after completed Hart execution. It cannot roll back or
+        // change the Hart outcome. Causal exit polling/accounting still runs.
+        let mut reporting_error = commit_logger
+            .as_mut()
+            .and_then(|logger| turn.deliver(logger).err())
+            .or_else(|| {
+                hooks
+                    .observer
+                    .as_deref_mut()
+                    .and_then(|sink| turn.deliver(sink).err())
+            })
+            .map(|error| format!("Commit log reporting failure after Hart boundary: {error}"));
+        if let Err(error) = turn.finish_reporting(reporting_error.clone()) {
+            reporting_error = Some(format!(
+                "Boundary reporting synchronization failure: {error}{}",
+                reporting_error
+                    .map(|detail| format!("; {detail}"))
+                    .unwrap_or_default()
+            ));
+        }
+        let step = match &turn.hart().outcome {
+            StepOutcome::InstructionRetired(_) => Ok(()),
             StepOutcome::TrapEntered(trap) => match trap.continuation {
                 TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
             },
-            StepOutcome::SimulatorFailure(failure) => Err(format_failure(failure)),
+            StepOutcome::SimulatorFailure(failure) => Err(format_failure(failure.clone())),
         };
+        // Raw callback facts are visible only after the parent Hart transition.
+        let htif_exit = turn
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                PlatformEvent::HtifWrite(value) => try_extract_exit_code(*value),
+                _ => None,
+            })
+            .find(|code| *code != u32::MAX);
         let mut observe_htif = |_| {
-            // Check for exit signal from HTIF callback first
-            // This handles writes to HTIF MMIO at 0x40008000
-            let htif_exit = exit_code.load(std::sync::atomic::Ordering::SeqCst);
-            if htif_exit != u32::MAX {
-                if verbose {
-                    eprintln!("[DEBUG] HTIF exit signal detected: code={}", htif_exit);
+            if verbose {
+                if let Some(code) = htif_exit {
+                    eprintln!("[DEBUG] HTIF exit signal detected: code={}", code);
                 }
-                // Reset for potential re-use
-                exit_code.store(u32::MAX, std::sync::atomic::Ordering::SeqCst);
-                return Some(htif_exit);
             }
-            None
+            htif_exit
         };
         let mut observe_ram = |cycles: u64| {
             // Check for tohost write (exit signal) after EVERY instruction
             // This ensures we detect the write immediately
-            if let Ok(mem_guard) = bus_interface.lock() {
-                match mem_guard.read_dword(tohost_pa) {
-                    Ok(tohost_value) => {
+            {
+                machine.observe_tohost(&mut turn, tohost_pa);
+                match &turn.tohost().expect("requested signal fact").value {
+                    Ok(value) => {
+                        let tohost_value = *value;
                         // Track tohost value changes for debugging
                         if verbose && tohost_value != last_tohost_value {
                             eprintln!(
@@ -1576,9 +1484,8 @@ pub fn load_and_run(
 
                         // The shared exit rule decodes the value and clears
                         // the signal only after the code is retained.
-                        drop(mem_guard);
                         if let Some(exit_code_val) = RunControl::take_ram_exit(tohost_value, || {
-                            clear_tohost(&bus_interface, tohost_pa, verbose)
+                            machine.clear_signal(&turn, tohost_pa, verbose)
                         }) {
                             if verbose {
                                 eprintln!("[DEBUG] Exit signal detected: code={}", exit_code_val);
@@ -1605,14 +1512,40 @@ pub fn load_and_run(
             step.map_err(|e| format!("Execution error at PC 0x{:016x}: {}", current_pc, e)),
             &mut [&mut observe_htif, &mut observe_ram],
         );
+        if let Some(boundary) = hooks.boundary.as_mut() {
+            boundary(&turn);
+        }
+        if let Some(error) = reporting_error {
+            let (code, boundary_context) = match decision {
+                RunDecision::GuestExit(code) => {
+                    (code, format!("; guest exit code {code} retained"))
+                }
+                RunDecision::Timeout => (
+                    1,
+                    "; execution budget exhausted at this boundary".to_owned(),
+                ),
+                _ => (1, String::new()),
+            };
+            drop(turn);
+            return Ok(cli_result(
+                &machine,
+                &placement,
+                code,
+                control.cycles(),
+                machine.state().pc,
+                false,
+                Some(error + &boundary_context),
+            ));
+        }
+        drop(turn);
         match &decision {
             RunDecision::GuestExit(code) => {
                 return Ok(cli_result(
-                    &bus_interface,
+                    &machine,
                     &placement,
                     *code,
                     control.cycles(),
-                    core.state().pc,
+                    machine.state().pc,
                     false,
                     None,
                 ));
@@ -1620,7 +1553,7 @@ pub fn load_and_run(
             RunDecision::Continue | RunDecision::Timeout => {
                 // Preserve periodic diagnostics on the final timeout slot.
                 if verbose && control.cycles().is_multiple_of(1000) {
-                    let state = core.state();
+                    let state = machine.state();
                     eprintln!(
                         "[DEBUG] Cycle {}: PC=0x{:010x}, ra={}, sp={}, gp={}",
                         control.cycles(),
@@ -1633,7 +1566,7 @@ pub fn load_and_run(
             }
             RunDecision::ExecutionError(error) => {
                 return Ok(cli_result(
-                    &bus_interface,
+                    &machine,
                     &placement,
                     1,
                     control.cycles(),
@@ -1650,17 +1583,17 @@ pub fn load_and_run(
         eprintln!(
             "[DEBUG] Timeout at cycle {}: PC=0x{:016x}, tohost=0x{:016x}",
             control.cycles(),
-            core.state().pc,
+            machine.state().pc,
             last_tohost_value
         );
     }
 
     Ok(cli_result(
-        &bus_interface,
+        &machine,
         &placement,
         1, // Non-zero indicates abnormal termination
         control.cycles(),
-        core.state().pc,
+        machine.state().pc,
         true,
         Some(control.timeout_message()),
     ))
@@ -1697,9 +1630,8 @@ pub fn load_and_run_file(
     )
 }
 
-/// Reset the simulator state
-///
-/// Creates a fresh core state ready for execution
+/// Reset only Hart architectural state through the legacy compatibility API.
+/// This does not restore RAM/devices or prove Machine drain/fresh lifecycle.
 pub fn reset_core(core: &mut RiscvCore, entry_point: u64, base_addr: u64) {
     core.reset(entry_point, base_addr);
 }
@@ -1744,8 +1676,8 @@ pub fn run_until_exit(
 /// after loading always overrides the image. Loading an image with no declared
 /// tohost clears a previous image's derived offset instead of reusing it.
 pub struct RiscVSimulator {
-    /// The RISC-V core
-    core: RiscvCore,
+    /// Exclusive Machine owns the actual Hart and borrows it without copying.
+    machine: OwnedMachine,
     /// Shared memory
     memory: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
     /// Explicit flat storage offset set through `set_tohost`
@@ -1761,21 +1693,14 @@ pub struct RiscVSimulator {
 impl RiscVSimulator {
     /// Create new simulator with memory
     pub fn new(mem_size: usize) -> Self {
-        let memory = Arc::new(Mutex::new(SimpleMemory::new(mem_size)));
-        let instruction_access: SharedPhysicalAccess = Arc::new(Mutex::new(
-            ValidatedPhysicalAccess::new(NativeRamBackend::new(memory.clone(), 0, mem_size)),
-        ));
-        let data_access: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-            NativeRamBackend::new(memory.clone(), 0, mem_size),
-        )));
-        let core = RiscvCore::new_with_physical_access(
-            memory.clone(),
-            memory.clone(),
-            instruction_access,
-            data_access,
-        );
+        let machine = OwnedMachine::new(
+            MachineConfig::new(PlatformKind::Flat),
+            Arc::new(LoadImage::blank(mem_size)),
+        )
+        .expect("flat compatibility constructor");
+        let memory = machine.memory().clone();
         Self {
-            core,
+            machine,
             memory,
             manual_tohost: None,
             image: ImagePlacement::default(),
@@ -1803,7 +1728,7 @@ impl RiscVSimulator {
     /// Set verbosity
     pub fn set_verbose(&mut self, verbose: bool) {
         self.verbose = verbose;
-        self.core.set_verbose(verbose);
+        self.machine.set_verbose(verbose);
     }
 
     /// Load ELF data into memory and reset the core to its entry point.
@@ -1828,18 +1753,15 @@ impl RiscVSimulator {
     /// # Returns
     /// The entry point address from the ELF header
     pub fn load_elf(&mut self, elf_data: &[u8]) -> Result<u64, ExecutorError> {
-        let loaded = load_elf_file(elf_data)?;
-        let (entry_point, memory, sig, tohost, base_addr) = (
-            loaded.entry_point,
-            loaded.memory,
-            loaded.signature,
-            loaded.tohost,
-            loaded.base_addr,
-        );
+        let description = Arc::new(LoadImage::parse(elf_data)?);
+        let entry_point = description.entry_point();
+        let base_addr = description.base_addr();
+        let sig = description.signature().cloned();
+        let tohost = description.tohost();
         // Resolve image-derived metadata before mutating wrapper state, so a
         // placement this configuration cannot address leaves the wrapper
         // unchanged.
-        let image = ImagePlacement::new(base_addr, memory.len(), tohost, sig);
+        let image = ImagePlacement::new(base_addr, description.memory_size(), tohost, sig);
         if let (Some(guest), Some(offset)) =
             (image.tohost_guest(), image.tohost(image.address_form())?)
         {
@@ -1850,32 +1772,11 @@ impl RiscVSimulator {
             }
         }
 
-        // Install the image and construct the core through the shared
-        // sequence. This configuration's backend is the flat RAM itself: no
-        // devices are composed, so use load_and_run for the native bus. The
-        // image is stored relative to its base, so the core is reset with the
-        // flat form's subtracting translation base.
-        let (core, flat_memory) = install_image_with_physical_ports(
-            &memory,
-            base_addr,
-            entry_point,
-            image.address_form(),
-            self.verbose,
-            |ram| {
-                let instruction_access: SharedPhysicalAccess =
-                    Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-                        NativeRamBackend::new(ram.clone(), 0, memory.len()),
-                    )));
-                let data_access: SharedDataAccess =
-                    Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-                        NativeRamBackend::new(ram.clone(), 0, memory.len()),
-                    )));
-                let flat: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = ram;
-                (flat, instruction_access, data_access)
-            },
-        );
-        self.memory = flat_memory;
-        self.core = core;
+        self.machine
+            .install(description)
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+        self.machine.set_verbose(self.verbose);
+        self.memory = self.machine.memory().clone();
 
         // Replace image-owned metadata. A manual offset set before this load is
         // superseded when the image declares its own tohost; an image without
@@ -1884,6 +1785,7 @@ impl RiscVSimulator {
             self.manual_tohost = None;
         }
         self.image = image;
+        self.machine.select_signal(self.tohost_offset()?);
 
         Ok(entry_point)
     }
@@ -1912,13 +1814,25 @@ impl RiscVSimulator {
     /// the image.
     pub fn set_tohost(&mut self, addr: u64) {
         self.manual_tohost = Some(addr);
+        self.machine.select_signal(addr);
     }
 
     /// Step one instruction
     pub fn step(&mut self) -> Result<(), ExecutorError> {
-        self.core
-            .step()
-            .map_err(|e| ExecutorError::ExecutionError(e.to_string()))
+        let turn = self.machine.step(false).map_err(|error| {
+            ExecutorError::ExecutionError(
+                self.machine
+                    .failure()
+                    .map(format_failure)
+                    .unwrap_or_else(|| error.to_string()),
+            )
+        })?;
+        match &turn.hart().outcome {
+            StepOutcome::SimulatorFailure(failure) => Err(ExecutorError::ExecutionError(
+                format_failure(failure.clone()),
+            )),
+            _ => Ok(()),
+        }
     }
 
     /// Run until the guest exits, the budget is exhausted, or a step fails.
@@ -1935,38 +1849,75 @@ impl RiscVSimulator {
         // The started-slot budget, completed-turn count and exit rule come from the shared
         // run control; this loop owns stepping and its own diagnostics.
         let mut control = RunControl::new(max_cycles);
+        if let Err(error) = self.machine.admit() {
+            let detail = self
+                .machine
+                .failure()
+                .map(format_failure)
+                .unwrap_or_else(|| error.to_string());
+            return Ok(self.finish(0, 1, false, Some(format!("Execution error: {detail}"))));
+        }
 
         // Track last tohost value for verbose diagnostics
         let mut last_tohost_value: u64 = 0;
 
-        let mut decision = control.start::<String>();
+        let initial = self
+            .machine
+            .control_boundary(!control.may_execute())
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+        let mut decision = if initial.budget_exhausted {
+            RunDecision::Timeout
+        } else {
+            control.start::<String>()
+        };
         while matches!(decision, RunDecision::Continue) {
             // Reserve the slot before invoking the Hart.  A host failure in the
             // final slot consumes it without completing a reported turn.
             control.start_slot();
-            let outcome = self.core.step_outcome();
-            let step = match outcome {
+            let mut turn = match self
+                .machine
+                .step_request(false, false, !control.may_execute())
+            {
+                Ok(turn) => turn,
+                Err(error) => {
+                    let detail = self
+                        .machine
+                        .failure()
+                        .map(format_failure)
+                        .unwrap_or_else(|| error.to_string());
+                    return Ok(self.finish(
+                        control.cycles(),
+                        1,
+                        false,
+                        Some(format!("Execution error: {detail}")),
+                    ));
+                }
+            };
+            let step = match &turn.hart().outcome {
                 StepOutcome::InstructionRetired(_) => Ok(()),
                 StepOutcome::TrapEntered(trap) => match trap.continuation {
                     TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
                 },
-                StepOutcome::SimulatorFailure(failure) => {
-                    Err(format!("Execution error: {}", format_failure(failure)))
-                }
+                StepOutcome::SimulatorFailure(failure) => Err(format!(
+                    "Execution error: {}",
+                    format_failure(failure.clone())
+                )),
             };
 
             let mut observe_ram = |cycles: u64| {
                 // Check for tohost write AFTER executing instruction
                 // This ensures we detect the write immediately
-                let observed = self.memory.lock().unwrap().read_dword(tohost);
+                self.machine.observe_tohost(&mut turn, tohost);
+                let observed = &turn.tohost().expect("requested signal fact").value;
                 match observed {
-                    Ok(tohost_value) => {
+                    Ok(value) => {
+                        let tohost_value = *value;
                         // Track tohost value changes for debugging
                         if self.verbose && tohost_value != last_tohost_value {
                             eprintln!(
                             "[DEBUG] Cycle {}: PC=0x{:010x}, tohost changed from 0x{:016x} to 0x{:016x}",
                             cycles,
-                            self.core.state().pc,
+                            self.machine.state().pc,
                             last_tohost_value,
                             tohost_value
                         );
@@ -1976,7 +1927,7 @@ impl RiscVSimulator {
                         // The shared exit rule decodes the value and clears the signal
                         // only after the code is retained.
                         if let Some(exit_code) = RunControl::take_ram_exit(tohost_value, || {
-                            clear_tohost(&self.memory, tohost, self.verbose)
+                            self.machine.clear_signal(&turn, tohost, self.verbose)
                         }) {
                             if self.verbose {
                                 eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
@@ -1993,7 +1944,7 @@ impl RiscVSimulator {
                             eprintln!(
                                 "[DEBUG] Cycle {}: PC=0x{:010x}, tohost read failed: {}",
                                 cycles,
-                                self.core.state().pc,
+                                self.machine.state().pc,
                                 e
                             );
                         }
@@ -2003,6 +1954,7 @@ impl RiscVSimulator {
             };
             // The flat configuration has only its selected RAM observer.
             decision = control.after_completed(step, &mut [&mut observe_ram]);
+            drop(turn);
             match &decision {
                 RunDecision::GuestExit(code) => {
                     return Ok(self.finish(control.cycles(), *code, false, None));
@@ -2019,7 +1971,7 @@ impl RiscVSimulator {
             eprintln!(
                 "[DEBUG] Timeout at cycle {}: PC=0x{:010x}, tohost=0x{:016x}",
                 control.cycles(),
-                self.core.state().pc,
+                self.machine.state().pc,
                 last_tohost_value
             );
         }
@@ -2043,7 +1995,7 @@ impl RiscVSimulator {
         ResultInputs::new(
             exit_code,
             cycles,
-            self.core.state().pc,
+            self.machine.state().pc,
             timed_out,
             error,
             self.image.signature_info(),
@@ -2061,43 +2013,45 @@ impl RiscVSimulator {
     /// cannot be mapped or read yields [`ArtifactOutcome::Failed`] instead of
     /// silent absence.
     fn artifact_outcome(&self) -> ArtifactOutcome {
-        let Some(info) = self.image.signature_info() else {
-            return ArtifactOutcome::Absent;
-        };
-        let size = info.size;
+        machine_artifact(&self.machine)
+    }
 
-        if size == 0 {
-            return ArtifactOutcome::Empty;
-        }
-
-        match self
-            .image
-            .signature_address(info, self.image.address_form())
-        {
-            Ok(offset) => match self.read_mem(offset, size as usize) {
-                Ok(bytes) => ArtifactOutcome::Read(bytes),
-                Err(error) => {
-                    ArtifactOutcome::Failed(format!("Signature artifact unavailable: {error}"))
-                }
-            },
-            Err(error) => {
-                ArtifactOutcome::Failed(format!("Signature artifact unavailable: {error}"))
-            }
-        }
+    /// Coordinated fresh Machine reset, unlike legacy core-only reset helpers.
+    /// Waits for already-admitted host writers after stopping new admission;
+    /// restores installed image bytes/zero fill, Hart state and selected signal
+    /// configuration. Unknown completion refuses restoration. Old memory clones
+    /// stay usable only on detached RAM. Ordinary admission resumes on success.
+    pub fn fresh_reset(&mut self) -> Result<(), ExecutorError> {
+        self.machine
+            .fresh_reset()
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+        self.machine.set_verbose(self.verbose);
+        self.memory = self.machine.memory().clone();
+        self.machine.select_signal(self.tohost_offset()?);
+        Ok(())
     }
 
     /// Get current core state
     pub fn state(&self) -> &CoreState {
-        self.core.state()
+        let _ = self.machine.admit();
+        self.machine.state()
     }
 
-    /// Get mutable core state
+    /// Borrow actual Hart state after fencing and draining admitted host writes.
+    /// New host writes remain refused until the next facade access/run operation
+    /// ends this exclusive edit phase. Introducing a different reservation token
+    /// through this borrow is rejected before the next turn.
+    ///
+    /// # Panics
+    /// Panics if drain cannot be established (notably unknown completion). This
+    /// legacy borrowed-reference API cannot return a typed lifecycle refusal.
     pub fn state_mut(&mut self) -> &mut CoreState {
-        self.core.state_mut()
+        self.machine.state_mut()
     }
 
     /// Get memory reference
     pub fn memory(&self) -> &Arc<Mutex<dyn MemoryInterface + Send + Sync>> {
+        let _ = self.machine.admit();
         &self.memory
     }
 
@@ -2122,6 +2076,7 @@ impl RiscVSimulator {
             )));
         }
 
+        let _ = self.machine.admit(); // finish a prior exclusive state-edit phase
         let mut data = Vec::with_capacity(size);
         let guard = self.memory.lock().unwrap();
         for offset in 0..size {
@@ -2141,6 +2096,9 @@ impl RiscVSimulator {
 
     /// Write to memory
     pub fn write_mem(&self, addr: u64, data: &[u8]) -> Result<(), ExecutorError> {
+        self.machine
+            .admit()
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
         let mut guard = self.memory.lock().unwrap();
         for (i, &byte) in data.iter().enumerate() {
             guard
@@ -2152,8 +2110,114 @@ impl RiscVSimulator {
 }
 
 #[cfg(test)]
+#[path = "executor_facade_tests.rs"]
+mod facade_tests;
+
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../tests/common/public_elf.rs"]
+pub(crate) mod observation_fixture;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FailingLog {
+        completed_lines: usize,
+        fail_after: usize,
+    }
+    impl std::io::Write for FailingLog {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.contains(&b'\n') {
+                if self.completed_lines == self.fail_after {
+                    return Err(std::io::Error::other("injected sink failure"));
+                }
+                self.completed_lines += 1;
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn t1_reporting_failure_preserves_retired_exit_and_final_slot_causal_facts() {
+        let fixture = observation_fixture::elf_with_code(
+            &[
+                observation_fixture::auipc(1, 1),
+                observation_fixture::addi(2, 0, 7),
+                observation_fixture::sd(2, 1, 0),
+            ],
+            0,
+            true,
+            false,
+            0x4000,
+        );
+        let sink = CommitLogger::for_test(Box::new(FailingLog {
+            completed_lines: 0,
+            fail_after: 2,
+        }));
+        let result = run_native(&fixture, Some(3), None, None, false, Some(sink)).unwrap();
+        assert_eq!(result.cycles, 3);
+        assert_eq!(result.final_pc, observation_fixture::BASE + 12);
+        assert_eq!(result.exit_code, 3);
+        assert!(!result.timed_out);
+        let error = result.error.unwrap();
+        assert!(error.contains("Commit log reporting failure"));
+        assert!(error.contains("guest exit code 3 retained"));
+    }
+
+    #[test]
+    fn t1_reporting_failure_preserves_zero_guest_exit_after_completed_nop() {
+        let mut fixture = observation_fixture::elf_with_code(
+            &[observation_fixture::nop()],
+            0,
+            true,
+            false,
+            0x4000,
+        );
+        let offset =
+            observation_fixture::LOAD_OFFSET + observation_fixture::TOHOST_SEGMENT_OFFSET as usize;
+        fixture[offset..offset + 8].copy_from_slice(&1u64.to_le_bytes());
+        let sink = CommitLogger::for_test(Box::new(FailingLog {
+            completed_lines: 0,
+            fail_after: 0,
+        }));
+        let result = run_native(&fixture, Some(1), None, None, false, Some(sink)).unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "reporting error must not overwrite guest success"
+        );
+        assert_eq!(result.cycles, 1);
+        assert_eq!(result.final_pc, observation_fixture::BASE + 4);
+        assert!(!result.timed_out);
+        let error = result.error.unwrap();
+        assert!(error.contains("Commit log reporting failure"));
+        assert!(error.contains("guest exit code 0 retained"));
+    }
+
+    #[test]
+    fn t1_reporting_failure_is_not_a_failed_hart_turn_or_timeout() {
+        let fixture = observation_fixture::elf_with_code(
+            &[observation_fixture::nop()],
+            0,
+            false,
+            false,
+            0x4000,
+        );
+        let sink = CommitLogger::for_test(Box::new(FailingLog {
+            completed_lines: 0,
+            fail_after: 0,
+        }));
+        let result = run_native(&fixture, Some(1), None, None, false, Some(sink)).unwrap();
+        assert_eq!(result.cycles, 1);
+        assert_eq!(result.final_pc, observation_fixture::BASE + 4);
+        assert!(!result.timed_out);
+        let error = result.error.unwrap();
+        assert!(error.contains("Commit log reporting failure"));
+        assert!(error.contains("execution budget exhausted"));
+    }
 
     #[test]
     fn test_htif_exit_code_extraction() {

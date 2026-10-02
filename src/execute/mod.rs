@@ -94,8 +94,21 @@ impl Executor {
         state: &mut CoreState,
         mem: &mut dyn MemoryInterface,
     ) -> Result<Option<CsrAccess>, ExecuteError> {
+        self.execute_transition(instr, state, mem)
+            .map(|(csr, _)| csr)
+    }
+
+    /// The executed dispatch arm supplies destination intent, including equal
+    /// writes. This metadata accompanies execution; observers do not decode.
+    pub(crate) fn execute_transition(
+        &mut self,
+        instr: &DecodedInstruction,
+        state: &mut CoreState,
+        mem: &mut dyn MemoryInterface,
+    ) -> Result<(Option<CsrAccess>, Option<u8>), ExecuteError> {
         if instr.opcode == Opcode::System {
-            return exec_system_with_csr_access(instr, state, mem);
+            return exec_system_with_csr_access(instr, state, mem)
+                .map(|access| (access, access.and(instr.rd)));
         }
 
         let result = match instr.opcode {
@@ -158,7 +171,7 @@ impl Executor {
                     Err(ExecuteError::InvalidOperation)
                 }
             }
-            Opcode::OpFp => self.execute_fpu(instr, state, mem),
+            Opcode::OpFp => return self.execute_fpu(instr, state, mem).map(|rd| (None, rd)),
             Opcode::Amo => self.execute_amo(instr, state, mem),
             Opcode::MiscMem => exec_fence(instr, state, mem),
             // SYSTEM is handled above so this arm is unreachable, but keeping
@@ -166,7 +179,19 @@ impl Executor {
             Opcode::System => unreachable!("SYSTEM was handled before dispatch"),
         };
 
-        result.map(|_| None)
+        result.map(|_| {
+            (
+                None,
+                match instr.opcode {
+                    Opcode::Store
+                    | Opcode::StoreFp
+                    | Opcode::Branch
+                    | Opcode::MiscMem
+                    | Opcode::LoadFp => None,
+                    _ => instr.rd,
+                },
+            )
+        })
     }
 
     /// Execute decoded instruction.
@@ -179,77 +204,78 @@ impl Executor {
         self.execute_with_csr_access(instr, state, mem).map(|_| ())
     }
 
-    /// Execute FPU (Floating-Point Unit) instructions
+    /// Execute FPU and return GPR destination intent from the selected helper.
     fn execute_fpu(
         &self,
         instr: &DecodedInstruction,
         state: &mut CoreState,
         mem: &mut dyn MemoryInterface,
-    ) -> Result<(), ExecuteError> {
+    ) -> Result<Option<u8>, ExecuteError> {
         let funct7 = instr.funct7.unwrap_or(0);
         let funct3 = instr.funct3.map(|f| f as u8).unwrap_or(0);
         let is_d_extension = (funct7 & 0x20) != 0; // Bit 5 set for D extension
 
-        match (funct7 & 0x1F, funct3, is_d_extension) {
+        let dispatch = (funct7 & 0x1F, funct3, is_d_extension);
+        match dispatch {
             // FADD.S / FADD.D
-            (0x00, 0, false) => exec_fadd_s(instr, state, mem),
-            (0x00, 0, true) => exec_fadd_d(instr, state, mem),
+            (0x00, 0, false) => exec_fadd_s(instr, state, mem).map(|_| None),
+            (0x00, 0, true) => exec_fadd_d(instr, state, mem).map(|_| None),
             // FSUB.S / FSUB.D
-            (0x04, 0, false) => exec_fsub_s(instr, state, mem),
-            (0x04, 0, true) => exec_fsub_d(instr, state, mem),
+            (0x04, 0, false) => exec_fsub_s(instr, state, mem).map(|_| None),
+            (0x04, 0, true) => exec_fsub_d(instr, state, mem).map(|_| None),
             // FMUL.S / FMUL.D
-            (0x08, 0, false) => exec_fmul_s(instr, state, mem),
-            (0x08, 0, true) => exec_fmul_d(instr, state, mem),
+            (0x08, 0, false) => exec_fmul_s(instr, state, mem).map(|_| None),
+            (0x08, 0, true) => exec_fmul_d(instr, state, mem).map(|_| None),
             // FDIV.S / FDIV.D
-            (0x0C, 0, false) => exec_fdiv_s(instr, state, mem),
-            (0x0C, 0, true) => exec_fdiv_d(instr, state, mem),
+            (0x0C, 0, false) => exec_fdiv_s(instr, state, mem).map(|_| None),
+            (0x0C, 0, true) => exec_fdiv_d(instr, state, mem).map(|_| None),
             // FSQRT.S / FSQRT.D
-            (0x2C, 0, false) => exec_fsqrt_s(instr, state, mem),
-            (0x2C, 0, true) => exec_fsqrt_d(instr, state, mem),
+            (0x2C, 0, false) => exec_fsqrt_s(instr, state, mem).map(|_| None),
+            (0x2C, 0, true) => exec_fsqrt_d(instr, state, mem).map(|_| None),
             // FCLASS.S / FCLASS.D
-            (0x70, 1, false) => exec_fclass_s(instr, state, mem),
-            (0x70, 1, true) => exec_fclass_d(instr, state, mem),
+            (0x70, 1, false) => exec_fclass_s(instr, state, mem).map(|_| instr.rd),
+            (0x70, 1, true) => exec_fclass_d(instr, state, mem).map(|_| instr.rd),
             // FCVT.W.S / FCVT.L.S / FCVT.W.D / FCVT.L.D
-            (0x60, 0, false) => exec_fcvt_w_s(instr, state, mem),
-            (0x60, 0, true) => exec_fcvt_l_d(instr, state, mem),
+            (0x60, 0, false) => exec_fcvt_w_s(instr, state, mem).map(|_| instr.rd),
+            (0x60, 0, true) => exec_fcvt_l_d(instr, state, mem).map(|_| instr.rd),
             // FCVT.WU.S / FCVT.LU.S / FCVT.WU.D / FCVT.LU.D
-            (0x61, 0, false) => exec_fcvt_wu_s(instr, state, mem),
-            (0x61, 0, true) => exec_fcvt_lu_d(instr, state, mem),
+            (0x61, 0, false) => exec_fcvt_wu_s(instr, state, mem).map(|_| instr.rd),
+            (0x61, 0, true) => exec_fcvt_lu_d(instr, state, mem).map(|_| instr.rd),
             // FCVT.S.W / FCVT.S.L / FCVT.D.W / FCVT.D.L
-            (0x68, 0, false) => exec_fcvt_s_w(instr, state, mem),
-            (0x68, 0, true) => exec_fcvt_d_l(instr, state, mem),
+            (0x68, 0, false) => exec_fcvt_s_w(instr, state, mem).map(|_| None),
+            (0x68, 0, true) => exec_fcvt_d_l(instr, state, mem).map(|_| None),
             // FCVT.S.WU / FCVT.S.LU / FCVT.D.WU / FCVT.D.LU
-            (0x69, 0, false) => exec_fcvt_s_wu(instr, state, mem),
-            (0x69, 0, true) => exec_fcvt_d_lu(instr, state, mem),
+            (0x69, 0, false) => exec_fcvt_s_wu(instr, state, mem).map(|_| None),
+            (0x69, 0, true) => exec_fcvt_d_lu(instr, state, mem).map(|_| None),
             // FCVT.S.D (Single from Double) / FCVT.D.S (Double from Single)
-            (0x40, 0, false) => exec_fcvt_s_d(instr, state, mem),
-            (0x40, 0, true) => exec_fcvt_d_s(instr, state, mem),
+            (0x40, 0, false) => exec_fcvt_s_d(instr, state, mem).map(|_| None),
+            (0x40, 0, true) => exec_fcvt_d_s(instr, state, mem).map(|_| None),
             // FCVT.W.D / FCVT.L.D
-            (0x41, 0, false) => exec_fcvt_w_s(instr, state, mem), // Not used
-            (0x41, 0, true) => exec_fcvt_w_d(instr, state, mem),
+            (0x41, 0, false) => exec_fcvt_w_s(instr, state, mem).map(|_| instr.rd), // Not used
+            (0x41, 0, true) => exec_fcvt_w_d(instr, state, mem).map(|_| instr.rd),
             // FCVT.WU.D / FCVT.LU.D
             #[allow(unreachable_patterns)]
-            (0x41, 0, false) => exec_fcvt_wu_s(instr, state, mem), // Not used
+            (0x41, 0, false) => exec_fcvt_wu_s(instr, state, mem).map(|_| instr.rd), // Not used
             #[allow(unreachable_patterns)]
-            (0x41, 0, true) => exec_fcvt_wu_d(instr, state, mem),
+            (0x41, 0, true) => exec_fcvt_wu_d(instr, state, mem).map(|_| instr.rd),
             // FCVT.D.W / FCVT.D.WU
-            (0x43, 0, false) => exec_fcvt_s_w(instr, state, mem), // Not used
-            (0x43, 0, true) => exec_fcvt_d_w(instr, state, mem),
+            (0x43, 0, false) => exec_fcvt_s_w(instr, state, mem).map(|_| None), // Not used
+            (0x43, 0, true) => exec_fcvt_d_w(instr, state, mem).map(|_| None),
             // FCVT.D.W / FCVT.D.WU
-            (0x42, 0, false) => exec_fcvt_s_wu(instr, state, mem), // Not used
-            (0x42, 0, true) => exec_fcvt_d_wu(instr, state, mem),
+            (0x42, 0, false) => exec_fcvt_s_wu(instr, state, mem).map(|_| None), // Not used
+            (0x42, 0, true) => exec_fcvt_d_wu(instr, state, mem).map(|_| None),
             // FEQ.S / FLT.S / FLE.S / FEQ.D / FLT.D / FLE.D
-            (0x50, 0, false) => exec_feq_s(instr, state, mem),
-            (0x50, 0, true) => exec_feq_d(instr, state, mem),
+            (0x50, 0, false) => exec_feq_s(instr, state, mem).map(|_| instr.rd),
+            (0x50, 0, true) => exec_feq_d(instr, state, mem).map(|_| instr.rd),
             // FMSUB.S / FMSUB.D
-            (0x01, 0, false) => exec_fmsub_s(instr, state, mem),
-            (0x01, 0, true) => exec_fmsub_d(instr, state, mem),
+            (0x01, 0, false) => exec_fmsub_s(instr, state, mem).map(|_| None),
+            (0x01, 0, true) => exec_fmsub_d(instr, state, mem).map(|_| None),
             // FNMSUB.S / FNMSUB.D
-            (0x02, 0, false) => exec_fnmsub_s(instr, state, mem),
-            (0x02, 0, true) => exec_fnmsub_d(instr, state, mem),
+            (0x02, 0, false) => exec_fnmsub_s(instr, state, mem).map(|_| None),
+            (0x02, 0, true) => exec_fnmsub_d(instr, state, mem).map(|_| None),
             // FNMADD.S / FNMADD.D
-            (0x03, 0, false) => exec_fnmadd_s(instr, state, mem),
-            (0x03, 0, true) => exec_fnmadd_d(instr, state, mem),
+            (0x03, 0, false) => exec_fnmadd_s(instr, state, mem).map(|_| None),
+            (0x03, 0, true) => exec_fnmadd_d(instr, state, mem).map(|_| None),
             _ => Err(ExecuteError::InvalidOperation),
         }
     }

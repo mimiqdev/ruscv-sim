@@ -283,6 +283,113 @@ pub struct LoadedElf {
     pub base_addr: u64,
 }
 
+/// Immutable load-image description; parsing performs no Platform placement.
+#[derive(Debug)]
+pub struct LoadImage {
+    entry_point: u64,
+    base_addr: u64,
+    memory_size: usize,
+    segments: Vec<ImageSegment>,
+    signature: Option<SignatureInfo>,
+    tohost: Option<u64>,
+}
+
+/// File bytes followed by an explicit zero-filled tail, in loader order.
+#[derive(Debug)]
+pub struct ImageSegment {
+    pub guest_address: u64,
+    pub physical_address: u64,
+    pub flags: ElfPhFlags,
+    pub file_bytes: std::sync::Arc<[u8]>,
+    pub zero_fill: usize,
+}
+
+impl LoadImage {
+    /// Compatibility constructor's uninitialized flat RAM, not an ELF profile.
+    pub(crate) fn blank(memory_size: usize) -> Self {
+        Self {
+            entry_point: 0,
+            base_addr: 0,
+            memory_size,
+            segments: Vec::new(),
+            signature: None,
+            tohost: None,
+        }
+    }
+    /// Parse using the existing ELF profile and memory-size/metadata rules.
+    /// `p_vaddr` remains the placement address, as in the compatibility loader.
+    pub fn parse(data: &[u8]) -> Result<Self, ElfError> {
+        let loader = ElfLoader::load(&mut std::io::Cursor::new(data))?;
+        let (base_addr, end) = loader.memory_footprint();
+        let size = end
+            .checked_sub(base_addr)
+            .and_then(u64::checked_next_power_of_two)
+            .ok_or(ElfError::SegmentOutOfBounds)?
+            .max(0x10000);
+        let memory_size = usize::try_from(size).map_err(|_| ElfError::SegmentOutOfBounds)?;
+        let mut segments = Vec::new();
+        for segment in loader.load_segments() {
+            let offset =
+                usize::try_from(segment.p_offset).map_err(|_| ElfError::SegmentOutOfBounds)?;
+            let filesz =
+                usize::try_from(segment.p_filesz).map_err(|_| ElfError::SegmentOutOfBounds)?;
+            let memsz =
+                usize::try_from(segment.p_memsz).map_err(|_| ElfError::SegmentOutOfBounds)?;
+            let mem_offset = segment
+                .p_vaddr
+                .checked_sub(base_addr)
+                .and_then(|offset| usize::try_from(offset).ok())
+                .ok_or(ElfError::SegmentOutOfBounds)?;
+            if mem_offset >= memory_size
+                || mem_offset
+                    .checked_add(memsz)
+                    .is_none_or(|end| end > memory_size)
+            {
+                return Err(ElfError::SegmentOutOfBounds);
+            }
+            let end = offset
+                .checked_add(filesz)
+                .ok_or(ElfError::SegmentOutOfBounds)?;
+            let bytes = data.get(offset..end).ok_or(ElfError::SegmentOutOfBounds)?;
+            segments.push(ImageSegment {
+                guest_address: segment.p_vaddr,
+                physical_address: segment.p_paddr,
+                flags: ElfPhFlags(segment.p_flags),
+                file_bytes: bytes.into(),
+                zero_fill: memsz
+                    .checked_sub(filesz)
+                    .ok_or(ElfError::SegmentOutOfBounds)?,
+            });
+        }
+        Ok(Self {
+            entry_point: loader.entry_point(),
+            base_addr,
+            memory_size,
+            segments,
+            signature: loader.signature_section().cloned(),
+            tohost: loader.tohost_addr(),
+        })
+    }
+    pub fn entry_point(&self) -> u64 {
+        self.entry_point
+    }
+    pub fn base_addr(&self) -> u64 {
+        self.base_addr
+    }
+    pub fn memory_size(&self) -> usize {
+        self.memory_size
+    }
+    pub fn segments(&self) -> &[ImageSegment] {
+        &self.segments
+    }
+    pub fn signature(&self) -> Option<&SignatureInfo> {
+        self.signature.as_ref()
+    }
+    pub fn tohost(&self) -> Option<u64> {
+        self.tohost
+    }
+}
+
 impl ElfLoader {
     /// Load ELF file from reader
     pub fn load<R: Read + Seek>(reader: &mut R) -> Result<Self, ElfError> {

@@ -3,6 +3,8 @@
 //! Implements RISC-V processor core fetch-decode-execute cycle
 
 pub mod commits;
+pub mod observation;
+mod observed_memory;
 pub mod trap;
 use crate::csr::{machine, CsrFile};
 use crate::decode::{DecodeError, DecodedInstruction, InstructionDecoder, Opcode};
@@ -16,6 +18,8 @@ use crate::physical::{
 };
 use crate::tlm::TlmInterface;
 use anyhow::Result;
+use observation::{AtomicEffect, ControlFacts, HartTransition, MemoryEffect, MemoryJournal};
+use observed_memory::ObservedMemory;
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 pub use trap::{
@@ -198,6 +202,10 @@ pub struct RiscvCore {
     /// Hart until the host explicitly resolves/reconstructs the physical
     /// domain.  Keeping the fact here prevents an accidental retry.
     unresolved_physical_access: Option<SimulatorFailure>,
+    /// Internal per-call demand/journals, never an external observer callback.
+    observation_demand: bool,
+    memory_journal: Option<MemoryJournal>,
+    gpr_destination: Option<u8>,
     /// Machine-mode synchronous trap handler.
     trap_handler: TrapHandler,
     /// TLM interface（可选）
@@ -482,6 +490,7 @@ fn hart_issued_paddr(
 /// view performs no ISA interpretation of its own.
 pub struct PhysicalAtomicAdapter<'a> {
     port: &'a mut (dyn PhysicalDataAccess + Send),
+    journal: Option<&'a MemoryJournal>,
     base_addr: u64,
     /// The same optional storage-offset alignment range the ordinary raw
     /// view preserves, so an atomic envelope hits the identical target
@@ -498,6 +507,7 @@ impl<'a> PhysicalAtomicAdapter<'a> {
     ) -> Self {
         Self {
             port,
+            journal: None,
             base_addr,
             storage_alignment,
         }
@@ -526,7 +536,55 @@ impl<'a> PhysicalAtomicAdapter<'a> {
         &mut self,
         request: AtomicRequest<'_>,
     ) -> Result<AtomicResponse, MemoryError> {
-        self.port.access_atomic(request).map_err(Self::map_error)
+        let response = self.port.access_atomic(request).map_err(Self::map_error)?;
+        // Keep malformed completion handling independent of subscription.
+        // Normally the validated port has already enforced this width.
+        if response
+            .old_bytes()
+            .is_some_and(|bytes| bytes.len() != request.width().bytes())
+        {
+            return Err(MemoryError::Protocol(
+                "atomic completion has incorrect old-byte width".into(),
+            ));
+        }
+        if let Some(journal) = self.journal {
+            let mut old = [0; 8];
+            let read = response.old_bytes().map(|bytes| {
+                old[..bytes.len()].copy_from_slice(bytes);
+                old
+            });
+            let write = match request.kind() {
+                crate::physical::AtomicAccessKind::Rmw => request
+                    .transform()
+                    .zip(response.old_bytes())
+                    .zip(request.operand_bytes())
+                    .map(|((transform, old), operand)| transform.apply(old, operand)),
+                crate::physical::AtomicAccessKind::StoreConditional
+                    if response.conditional_status()
+                        == Some(crate::physical::ConditionalStatus::Success) =>
+                {
+                    let mut bytes = [0; 8];
+                    bytes[..request.width().bytes()]
+                        .copy_from_slice(request.store_payload().expect("validated SC payload"));
+                    Some(bytes)
+                }
+                _ => None,
+            };
+            journal.borrow_mut().push(MemoryEffect {
+                guest_address: request.paddr() + self.base_addr,
+                issued_address: Some(request.paddr()),
+                width: request.width(),
+                read,
+                write,
+                atomic: Some(AtomicEffect {
+                    kind: request.kind(),
+                    ordering: request.ordering(),
+                    conditional: response.conditional_status(),
+                    indivisible: true,
+                }),
+            });
+        }
+        Ok(response)
     }
 
     fn map_error(error: AtomicAccessError) -> MemoryError {
@@ -634,6 +692,9 @@ impl RiscvCore {
             data_access: None,
             physical_storage_alignment: None,
             unresolved_physical_access: None,
+            observation_demand: false,
+            memory_journal: None,
+            gpr_destination: None,
             trap_handler: TrapHandler::new(),
             tlm_interface: None,
             base_addr: 0,
@@ -746,6 +807,55 @@ impl RiscvCore {
     /// use [`StepOutcome::SimulatorFailure`]; no error-string inspection is
     /// involved in that classification.
     pub fn step_outcome(&mut self) -> StepOutcome {
+        self.step_transition(false).outcome
+    }
+
+    /// Execute once and optionally materialize authoritative completed Hart
+    /// facts. There is no observer callback during this call. Delivery is an
+    /// outer operation on the returned immutable observation.
+    pub fn step_transition(&mut self, observe: bool) -> HartTransition {
+        let before = observe.then(|| self.state.clone());
+        let before_pc = self.state.pc;
+        let before_privilege = self.state.privilege;
+        let minstret_before = self.state.csr.minstret_value();
+        let instruction_attempted = self.unresolved_physical_access.is_none();
+        self.observation_demand = observe;
+        self.memory_journal = observe.then(|| RefCell::new(Vec::new()));
+        self.gpr_destination = None;
+        let outcome = self.execute_turn();
+        let control = ControlFacts {
+            before_pc,
+            after_pc: self.state.pc,
+            before_privilege,
+            after_privilege: self.state.privilege,
+            instruction_attempted,
+            retired: matches!(outcome, StepOutcome::InstructionRetired(_)),
+            trap_entered: matches!(outcome, StepOutcome::TrapEntered(_)),
+            minstret_before,
+            minstret_after: self.state.csr.minstret_value(),
+        };
+        let memory = self.memory_journal.take().map(RefCell::into_inner);
+        let observation = before.and_then(|before| {
+            observation::build(
+                &before,
+                &mut self.state,
+                &outcome,
+                self.gpr_destination,
+                memory.unwrap_or_default(),
+            )
+        });
+        self.state.csr.begin_observation(false);
+        self.state.fpr.begin_observation(false);
+        self.observation_demand = false;
+        self.gpr_destination = None;
+        HartTransition {
+            outcome,
+            control,
+            observation,
+        }
+    }
+
+    fn execute_turn(&mut self) -> StepOutcome {
         if let Some(failure) = &self.unresolved_physical_access {
             return StepOutcome::SimulatorFailure(failure.clone());
         }
@@ -906,6 +1016,8 @@ impl RiscvCore {
         // GPR/CSR/PC/privilege effects without pretending that external MMIO is
         // rollback-able.
         let mut staged = self.state.clone();
+        staged.csr.begin_observation(self.observation_demand);
+        staged.fpr.begin_observation(self.observation_demand);
         let physical_access = self.data_access.clone();
         let execution_result = if let (Opcode::Amo, Some(access)) =
             (decoded.opcode, &physical_access)
@@ -928,7 +1040,7 @@ impl RiscvCore {
             };
             let mut atomic_view = self.physical_atomic_adapter(&mut *port);
             crate::isa::rv64a::execute_amo_port(&decoded, &mut staged, &mut atomic_view)
-                .map(|()| None)
+                .map(|()| (None, decoded.rd))
         } else {
             match (Self::uses_non_atomic_access(&decoded), physical_access) {
                 (true, Some(access)) => {
@@ -943,8 +1055,13 @@ impl RiscvCore {
                         }
                     };
                     let mut physical_view = self.physical_adapter(&mut *port);
+                    let mut memory = ObservedMemory::new(
+                        &mut physical_view,
+                        self.memory_journal.as_ref(),
+                        self.base_addr,
+                    );
                     self.executor
-                        .execute_with_csr_access(&decoded, &mut staged, &mut physical_view)
+                        .execute_transition(&decoded, &mut staged, &mut memory)
                 }
                 _ => {
                     // Legacy typed view for cores created without physical
@@ -962,17 +1079,28 @@ impl RiscvCore {
                         }
                     };
                     let mut legacy_view = LegacyTypedMemoryAdapter::new(&mut *mem, self.base_addr);
+                    let mut memory = ObservedMemory::new(
+                        &mut legacy_view,
+                        self.memory_journal.as_ref(),
+                        self.base_addr,
+                    );
                     self.executor
-                        .execute_with_csr_access(&decoded, &mut staged, &mut legacy_view)
+                        .execute_transition(&decoded, &mut staged, &mut memory)
                 }
             }
         };
-        let csr_access = match execution_result {
+        let (csr_access, destination) = match execution_result {
             Ok(access) => access,
             Err(error) => {
                 return self.classify_execute_error(error, &decoded, pc_before, instruction)
             }
         };
+
+        if decoded.opcode == Opcode::Amo && self.data_access.is_none() {
+            if let Some(journal) = &self.memory_journal {
+                observation::typed_atomic(&decoded, &self.state, journal);
+            }
+        }
 
         // Executor-owned taken branches/jumps/returns leave PC in place;
         // ordinary instructions receive their fall-through PC here.
@@ -989,6 +1117,7 @@ impl RiscvCore {
         } else {
             staged.csr.increment_minstret()
         };
+        self.gpr_destination = destination;
         let privilege = self.state.privilege;
         let next_privilege = staged.privilege;
         let next_pc = staged.pc;
@@ -1060,6 +1189,8 @@ impl RiscvCore {
     ) -> StepOutcome {
         let source_privilege = self.state.privilege;
         let mut staged = self.state.clone();
+        staged.csr.begin_observation(self.observation_demand);
+        staged.fpr.begin_observation(self.observation_demand);
         staged.branch_taken = false;
         let vector_pc = match self.trap_handler.handle_trap_checked(
             Trap::Exception(cause),
@@ -1215,10 +1346,13 @@ impl RiscvCore {
     /// mutex lifetime, so the complete AMO/LR/SC operation runs inside the
     /// backend's single critical section.
     fn physical_atomic_adapter<'a>(
-        &self,
+        &'a self,
         port: &'a mut (dyn PhysicalDataAccess + Send),
     ) -> PhysicalAtomicAdapter<'a> {
-        PhysicalAtomicAdapter::new(port, self.base_addr, self.physical_storage_alignment)
+        let mut adapter =
+            PhysicalAtomicAdapter::new(port, self.base_addr, self.physical_storage_alignment);
+        adapter.journal = self.memory_journal.as_ref();
+        adapter
     }
 
     /// Ordinary integer/FP memory operations use the raw physical port.
