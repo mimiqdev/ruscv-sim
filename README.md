@@ -28,7 +28,7 @@ A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七�
 `RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
 评估约束。
 
-当前合同见 [`docs/dev-plan.md`](docs/dev-plan.md)：A9（Hart 事实与安全的 N=1 Machine 生命周期），限定在现有单 Hart native／flat 配置。合同轮换已随 PR #68 合并；轮换本身不实现 A9 Rust 代码，也不代表后续实现已获最终验收。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
+当前合同见 [`docs/dev-plan.md`](docs/dev-plan.md)：A9（Hart 事实与安全的 N=1 Machine 生命周期），限定在现有单 Hart native／flat 配置。合同轮换已随 PR #68 合并；PR #69 的实现于 2026-10-02 合并，有界技术验收和精确 merge-head CI 已记录。正式滚动收尾仍等待下一份合同的独立批准与实际轮换，A9 合同不移走。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
 
 ## 快速开始
 
@@ -148,10 +148,12 @@ flat Runner 的 tohost 取样与逐字节清除均与公共 `memory()` mutex 的
 终止证明/恢复接口。若调用者丢弃未知或无法证明安全的 owner，其失败 domain 会被保留到
 进程退出，而不是假装已安全清理。这是资源保留的失败策略，不是强制恢复或完整 VP 声明。
 
-[A9 本地 T4 有界评估](docs/verification/a9-closeout-assessment.md)记录 T0–T3／R1–R4
-审计、固定开发镜像的完整 gate、58 个新编译项目 guest 的逐例结果及工具／artifact 身份；
-[阶段记录](docs/verification/a9-stage2-progress.md)保留原始 checkpoint 与缺陷复现。
-这些本地证据不替代最终 PR-head CI／独立审查，不是新的 ACT4 结果或 A9 完成声明。
+[A9 有界验收评估](docs/verification/a9-closeout-assessment.md)保留原始 checkpoint／工具／artifact
+身份，另列最终 PR-head 的完整 gate、独立审查，以及 merge-head CI 的 58/58 新编译
+项目 CLI guest 结果；Coverage 为 skipped，不是通过。[阶段记录](docs/verification/a9-stage2-progress.md)
+保留原始缺陷复现；[实现收尾记录](docs/archive/milestones/a9-closeout-record.md)明确技术验收与
+正式滚动轮换的边界。[Stage 3 详细 Draft](docs/proposals/a10-performance-test-infrastructure.md)
+仅供独立批准，不是当前合同或已实现的性能设施；无新 ACT4／性能结果声明。
 
 ## 仓库结构
 

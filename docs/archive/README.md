@@ -12,10 +12,12 @@ This directory preserves superseded plans, completed milestones, historical repo
 - [`reference/`](reference/) — old implementation notes, format analyses, and dependency snapshots.
 - Sprint documents in this directory — historical planning records predating the rolling-plan workflow.
 
-On `main`, A8 remains the sole Current contract until the approved A9
-rotation merges; this [A8 archive record](milestones/a8-single-hart-atomic-physical-convergence.md)
-takes effect at that merge. The [A9 plan](../dev-plan.md) is approved to become
-Current on merge, subject to required checks and independent review. Consult
+PR #68 activated the sole Current [A9 plan](../dev-plan.md) and archived the
+[A8 contract](milestones/a8-single-hart-atomic-physical-convergence.md) on 2026-09-29 UTC.
+PR #69 delivered A9 on 2026-10-02; the [A9 implementation closeout record](milestones/a9-closeout-record.md)
+records bounded technical acceptance, not archival of its active contract.
+Formal rolling completion still awaits separately approved successor replacement.
+The [Stage 3 detailed draft](../proposals/a10-performance-test-infrastructure.md) is not active. Consult
 [`../architecture/README.md`](../architecture/README.md) for the current target
 architecture. The [post-A7 short-term technical development roadmap proposal](../proposals/post-a7-roadmap.md) is
 Draft technical planning context only; it is not an overall product roadmap or

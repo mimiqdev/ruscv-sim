@@ -4,7 +4,7 @@
 
 **Authority:** Normative for test-layer ownership; individual tool integrations require their own verified setup
 
-**Last reviewed:** 2026-10-01
+**Last reviewed:** 2026-10-02
 
 ## Test layers
 
@@ -68,7 +68,9 @@ Test language follows the layer rather than the simulator implementation languag
 - [A8 T5 earlier-head evidence and acceptance audit](a8-t5-evidence.md) — historical checks bound to `45a170f`, explicitly stale for later implementation heads
 - [A8 bounded closeout assessment](a8-closeout-assessment.md) — current A8 implementation-tree evidence, T0–T5 matrix, 58 fresh project guests, separate frozen ACT4 51-case run, and residual limitations; not A9 implementation evidence
 - [A9 T0–T3 checkpoints and local T4 progress](a9-stage2-progress.md) — frozen route inventory, Hart facts, direct-owner lifecycle, public-facade migration and R1–R4 reproductions
-- [A9 bounded local closeout assessment](a9-closeout-assessment.md) — cumulative acceptance audit, fresh pinned-image gate, 58 project guests, checkpoint review identities and explicit pending PR-head acceptance
+- [A9 bounded acceptance assessment](a9-closeout-assessment.md) — cumulative audit, preserved checkpoint, separate final PR-head gate/review and exact merged-main CI; 58 fresh project CLI guests, Coverage skipped
+- [A9 implementation closeout record](../archive/milestones/a9-closeout-record.md) — bounded technical acceptance 2026-10-02, with formal rolling transition pending successor approval
+- [A10 / Stage 3 detailed draft](../proposals/a10-performance-test-infrastructure.md) — proposed public-path performance facility and executable acceptance; not active or implemented
 - [A9 T4 source/tool/artifact and per-case evidence](a9-t4-guest-evidence.json) — self-contained checkpoint execution record; not ACT4 or milestone certification
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)
@@ -78,8 +80,11 @@ closeout and not a claim that component tests or old CI/reference logs prove
 public-path support. The A7 and A8 closeout records are bounded evidence; neither
 certifies unrelated components. A9 is Current following the plan rotation
 merged in PR #68; `docs/dev-plan.md` remains its authority. The rotation itself
-was documentation-only. A9's local implementation/evidence assessment does not
-replace final PR-head CI/review or declare milestone completion.
+was documentation-only. PR #69 delivered A9 on 2026-10-02 with final PR-head
+verification/review and separate successful merge-head CI. Bounded technical
+implementation/evidence acceptance does not complete the rolling transition:
+A9 remains active pending a separately approved successor and actual replacement.
+Checkpoint JSON is not relabeled as final-head execution; no new ACT4 or performance result.
 The matrix records the exact revision, the initial host
 limitation, and the successful Docker-based guest evidence for its batch.
 The [A1 closeout](../archive/milestones/a1-closeout-record.md) additionally records

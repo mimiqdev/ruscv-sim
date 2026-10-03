@@ -1,4 +1,16 @@
-# A9 Stage 2 progress — T0–T3 checkpoints and local T4 evidence
+# A9 Stage 2 progress — preserved T0–T3 checkpoints and local T4 evidence
+
+**Status:** Current historical-evidence navigation; checkpoint bodies retain their original as-of status.
+
+**Authority:** Informational; the active A9 contract and accepted ADRs constrain interpretation.
+
+**Delivery update (2026-10-02):** PR #69 has merged at `0898f1215c4508e98d4db958080f6dd01b5745bf`.
+Final PR-head gate/review and exact merge-head CI success are recorded separately in
+[assessment §7](a9-closeout-assessment.md#7-final-pr-head-acceptance-and-exact-merge-head-evidence)
+and the [implementation closeout record](../archive/milestones/a9-closeout-record.md).
+The pending CI/review statements below describe their original checkpoints only.
+No checkpoint result is relabeled as final-head execution. Technical implementation/evidence
+is accepted; A9 remains active pending successor approval and actual rolling replacement.
 
 ## 1. Scope and evidence identity
 
@@ -13,8 +25,9 @@ records R3's flat cloned-writer signal-serialization correction; §12 records
 R4's analogous flat signature-extraction correction.
 Earlier checkpoint deferrals/evidence remain historical; they are not rewritten
 as later-head results. Fresh T4 guest evidence is recorded separately in the
-[bounded assessment](a9-closeout-assessment.md). Final PR CI, independent
-PR-head acceptance and milestone completion remain pending.
+[bounded assessment](a9-closeout-assessment.md). At those checkpoints, final PR CI,
+independent PR-head acceptance and milestone completion remained pending; see the
+separate delivery update above for final evidence and the remaining rolling boundary.
 ADR-0001–0004 remain accepted authorities; the [A8 assessment](a8-closeout-assessment.md)
 remains unchanged and bounded, not full ADR conformance or ISA certification.
 

@@ -5,6 +5,16 @@
 **Authority:** Informational proposal awaiting maintainer/user approval; it is not a
 milestone contract and does not replace [`docs/dev-plan.md`](../dev-plan.md).
 
+**As-of boundary (2026-10-02 navigation update):** The bodies below preserve the
+A7-era planning input, not today's backlog. A8's verified atomic convergence and
+A9's [bounded acceptance](../verification/a9-closeout-assessment.md) supersede
+its current-A7, global-reservation/legacy atomic debt and open host-writer-choice
+claims: admitted host writers remain real participants, with A9 lifecycle fencing
+and stale-generation isolation. Unknown completion still has no adapter resolution
+API. A9 is the sole Current contract; the [detailed Stage 3 successor draft](a10-performance-test-infrastructure.md)
+is a separate approval candidate, not activation or implementation. Historical
+A7 evidence and recommendations below are not rewritten as A8/A9 results.
+
 **Planning baseline:** repository commit `c059500a6af20f93569099c4b05ced3364a7703b`,
 which contains the merged A7 closeout delivery. Runtime evidence cited below is
 bound to the recorded A7 implementation head
