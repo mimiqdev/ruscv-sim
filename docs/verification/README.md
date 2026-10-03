@@ -4,7 +4,7 @@
 
 **Authority:** Normative for test-layer ownership; individual tool integrations require their own verified setup
 
-**Last reviewed:** 2026-10-02
+**Last reviewed:** 2026-10-03
 
 ## Test layers
 
@@ -69,8 +69,10 @@ Test language follows the layer rather than the simulator implementation languag
 - [A8 bounded closeout assessment](a8-closeout-assessment.md) — current A8 implementation-tree evidence, T0–T5 matrix, 58 fresh project guests, separate frozen ACT4 51-case run, and residual limitations; not A9 implementation evidence
 - [A9 T0–T3 checkpoints and local T4 progress](a9-stage2-progress.md) — frozen route inventory, Hart facts, direct-owner lifecycle, public-facade migration and R1–R4 reproductions
 - [A9 bounded acceptance assessment](a9-closeout-assessment.md) — cumulative audit, preserved checkpoint, separate final PR-head gate/review and exact merged-main CI; 58 fresh project CLI guests, Coverage skipped
-- [A9 implementation closeout record](../archive/milestones/a9-closeout-record.md) — bounded technical acceptance 2026-10-02, with formal rolling transition pending successor approval
-- [A10 / Stage 3 detailed draft](../proposals/a10-performance-test-infrastructure.md) — proposed public-path performance facility and executable acceptance; not active or implemented
+- [A9 implementation closeout record](../archive/milestones/a9-closeout-record.md) — technical acceptance 2026-10-02, closeout documents delivered 2026-10-03, approved rotation; formal completion effective on actual merge
+- [Approved A10 contract](../dev-plan.md) — sole Current on rotation merge; public-path performance infrastructure remains future implementation
+- [A10 approved informational snapshot](../proposals/a10-performance-test-infrastructure.md) — full drafting history, original approval-request wording is historical; not a second contract or implemented facility
+- [A10 documentation-rotation audit](a10-contract-rotation.md) — executable whole-contract preservation/link/scope/status/evidence audit; no runtime/performance claims
 - [A9 T4 source/tool/artifact and per-case evidence](a9-t4-guest-evidence.json) — self-contained checkpoint execution record; not ACT4 or milestone certification
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)
@@ -78,12 +80,7 @@ Test language follows the layer rather than the simulator implementation languag
 The A1 matrix and gap register are current as-of evidence records, not an A1
 closeout and not a claim that component tests or old CI/reference logs prove
 public-path support. The A7 and A8 closeout records are bounded evidence; neither
-certifies unrelated components. A9 is Current following the plan rotation
-merged in PR #68; `docs/dev-plan.md` remains its authority. The rotation itself
-was documentation-only. PR #69 delivered A9 on 2026-10-02 with final PR-head
-verification/review and separate successful merge-head CI. Bounded technical
-implementation/evidence acceptance does not complete the rolling transition:
-A9 remains active pending a separately approved successor and actual replacement.
+certifies unrelated components. PR #69 delivered A9 on 2026-10-02 with final PR-head verification/review and separate successful merge-head CI. PR #70 delivered closeout documents on 2026-10-03 with document-head checks/static review and distinct synthetic PR-checkout CI, not new direct-head runtime evidence. Detailed A10 successor and docs-only rotation approved 2026-10-03 UTC. On actual rotation merge A9 is formally completed and [its entire contract archived](../archive/milestones/a9-hart-facts-safe-n1-machine-lifecycle.md); [A10](../dev-plan.md) becomes sole Current. Until then main retains A9. P0–P4 implementation is subsequent scoped work, not part of this rotation.
 Checkpoint JSON is not relabeled as final-head execution; no new ACT4 or performance result.
 The matrix records the exact revision, the initial host
 limitation, and the successful Docker-based guest evidence for its batch.

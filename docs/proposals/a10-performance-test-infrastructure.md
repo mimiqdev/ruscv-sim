@@ -1,10 +1,20 @@
+# A10 — approved informational proposal snapshot
+
+**Status:** Current approved snapshot — detailed successor approved 2026-10-03 UTC; not a second Current milestone contract.
+
+**Authority:** Informational drafting record. [docs/dev-plan.md](../dev-plan.md) contains the promoted normative A10 contract, approved for activation on actual rotation merge. Until that merge main retains A9; on merge A9 is formally completed/archived. P0–P4 implementation is subsequent scoped work, not part of this documentation rotation. No performance infrastructure or result is claimed.
+
+**Snapshot boundary:** The complete proposal from baseline `32bb28e84fd433446caa93f870d921a86b3ddab3` follows. Its original Draft status, decision-request/pending-approval phrasing and future recommendations are historical drafting language, not a new approval request or present authority. The original A9 Current-contract link now targets the stable archive. Approval covers these detailed technical boundaries, not old roadmap debt or later features; Git/PR history records rotation delivery.
+
+## Preserved approved proposal
+
 # A10 candidate — independent public-path performance-test infrastructure
 
 **Status:** Draft
 
 **Authority:** Informational detailed successor proposal awaiting approval; not `docs/dev-plan.md`, not active and not an implementation or performance result.
 
-**Prepared:** 2026-10-02. **Source baseline:** merged A9 `0898f1215c4508e98d4db958080f6dd01b5745bf`. The [A9 acceptance](../verification/a9-closeout-assessment.md#7-final-pr-head-acceptance-and-exact-merge-head-evidence) establishes bounded native/flat integration and evidence, not a performance facility. A9 remains the sole [Current contract](../dev-plan.md) until separately approved rolling replacement.
+**Prepared:** 2026-10-02. **Source baseline:** merged A9 `0898f1215c4508e98d4db958080f6dd01b5745bf`. The [A9 acceptance](../verification/a9-closeout-assessment.md#7-final-pr-head-acceptance-and-exact-merge-head-evidence) establishes bounded native/flat integration and evidence, not a performance facility. A9 remains the sole [Current contract](../archive/milestones/a9-hart-facts-safe-n1-machine-lifecycle.md) until separately approved rolling replacement.
 
 ## 1. Decision requested and objective
 

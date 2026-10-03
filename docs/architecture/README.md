@@ -10,7 +10,7 @@
 
 This document describes the intended product architecture. It does not claim that every depicted component is implemented or integrated. Current capability must be established from the source code and verified tests.
 
-For the A7-era execution path, component wiring, and then-observed gaps, see the [historical implementation snapshot](current-state.md). For the subsequent A8 native atomic route and limits, see the [A8 closeout assessment](../verification/a8-closeout-assessment.md) and current source/tests.
+For the A7-era execution path, component wiring, and then-observed gaps, see the [historical implementation snapshot](current-state.md). For the subsequent A8 native atomic route and limits, see the [A8 closeout assessment](../verification/a8-closeout-assessment.md) and current source/tests. For the subsequent A9 Hart facts and native/flat Machine integration, see the [bounded acceptance](../verification/a9-closeout-assessment.md) and [entire completed contract](../archive/milestones/a9-hart-facts-safe-n1-machine-lifecycle.md). The [approved A10 infrastructure contract](../dev-plan.md) activates on actual rotation merge (main retains A9 until then); it is a future measurement facility, not new VP capability or architecture completeness. Detailed successor/rotation approved 2026-10-03 UTC; implementation is subsequent scoped work.
 
 ## 1. Product evolution
 
