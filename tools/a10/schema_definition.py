@@ -62,7 +62,7 @@ SCHEMA = dict({'$schema':'https://json-schema.org/draft/2020-12/schema', '$id':'
  'identity': obj({'schema_sha256':SHA,'suite':ref('version'),'oracle':ref('version'),'policy':ref('version'),'harness':obj({'id':{'const':'public-driver/2'},'sha256':SHA,'sources':array(obj({'path':PATH,'sha256':SHA}))})}),
  'source': ref('source'), 'race_checks': obj({'before':ref('source'),'after':ref('source'),'stage':S}),
  'setup': obj({'artifact':PATH,'sha256':SHA}),
- 'build': obj({'profile':{'const':'release'},'features':TEXTS,'target':S,'argv':TEXTS,'env':ref('build_env'),'inputs':ref('inputs'),'effective_rustc':TEXTS,'codegen':ref('codegen'),'transcript':PATH,'events':PATH,'lockfile_sha256':SHA}),
+ 'build': obj({'profile':{'const':'release'},'features':TEXTS,'target':S,'argv':TEXTS,'env':ref('build_env'),'inputs':ref('inputs'),'effective_rustc':TEXTS,'codegen':ref('codegen'),'transcript':PATH,'stdout':PATH,'events':PATH,'lockfile_sha256':SHA}),
  'tools': obj({key:ref('tool') for key in ('rustc','cargo','rustfmt','as','ld','nm','objdump')}),
  'binaries': obj({key:ref('binary') for key in ('driver','cli','probe')}),
  'environment': obj({'execution':ref('host'),'physical_host':OBS,'container':OBS,'ci':OBS,'filesystem':OBS,'sink_policy':S,'concurrency':S}),

@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from integrity import canonical, digest, Invalid, json_new, loads, read, retrieve, safe, seal, write_new
-from report_schema import aggregates, obs, schema_check
+from report_schema import aggregates, build_events, obs, schema_check
 from schema_definition import SCHEMA
 from collect import ROOT, observation
 
@@ -111,6 +111,10 @@ class SchemaTests(unittest.TestCase):
             with self.assertRaises(Invalid):seal(root,'bundle-id')
             path=root/'report.json';path.chmod(0o644);path.write_bytes(b'wrong')
             with self.assertRaises(Invalid):retrieve(root)
+    def test_verbose_cargo_multiplexed_stdout_is_not_mislabeled_jsonl(self):
+        raw=b'{"reason":"compiler-artifact"}\n[proc-macro2 1.0] cargo:rustc-check-cfg=cfg(example)\n{"reason":"build-finished","success":true}\n'
+        self.assertEqual(build_events(raw),[{'reason':'compiler-artifact'},{'reason':'build-finished','success':True}])
+        with self.assertRaises(Invalid):build_events(b'{"reason":"build-finished","success":true,"success":false}\n')
     def test_real_reporting_write_failure_is_not_success(self):
         if Path('/dev/full').exists():
             with open('/dev/full','wb',buffering=0) as file,self.assertRaises(OSError):file.write(b'report')

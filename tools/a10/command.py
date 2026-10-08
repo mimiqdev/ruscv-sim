@@ -13,7 +13,7 @@ sys.dont_write_bytecode = True
 from audit_fixtures import audit
 from collect import ROOT, build_inputs, command as text, environment, git_snapshot, tool, utc
 from integrity import canonical, digest, Invalid, json_new, loads, require, seal, Unavailable, write_new
-from report_schema import make_report, validate
+from report_schema import build_events, make_report, validate
 
 def run(argv, env=None):
     subprocess.run(argv, cwd=ROOT, env=env, check=True)
@@ -102,9 +102,14 @@ def main(argv):
     triple = os.environ.get('CARGO_BUILD_TARGET') or next(line[6:] for line in tools['rustc']['version'].splitlines() if line.startswith('host: '))
     env = dict(os.environ,CARGO_BUILD_JOBS='2',CARGO_TARGET_DIR=str(out/'cargo'),RISCV_PERF_BUILD_HEAD=head,CARGO_TERM_COLOR='never')
     build = ['cargo','build','--release','--all-features','--locked','--bins','--target',triple,'--message-format=json-render-diagnostics','-vv']
-    result = captured(build,env,out/'evidence/build-events.jsonl',out/'evidence/build-transcript.txt')
+    result = captured(build,env,out/'evidence/build.stdout',out/'evidence/build-transcript.txt')
     if result.returncode:
         raise Invalid('release build failed; transcripts retained, no valid report')
+    # Cargo -vv multiplexes build-script stdout with JSON events. Preserve ALL
+    # original bytes and derive the explicit JSON event stream, never label the
+    # mixed stdout itself as strict JSONL or discard the original transcript.
+    events=build_events(result.stdout)
+    write_new(out/'evidence/build-events.jsonl',b'\n'.join(canonical(event) for event in events)+b'\n')
     # Used actual target triple/bin artifacts, not a cached alternate mount.
     bin_dir = out/'cargo'/triple/'release'
     binaries = {}
@@ -138,7 +143,7 @@ def main(argv):
     c_flags = sorted(set(re.findall(r'-C\s*([^\s`]+)', '\n'.join(effective))))
     build_info = {'profile':'release','features':['default','tlm'],'target':triple,'argv':build,'env':{k:env.get(k) for k in ('CARGO_BUILD_JOBS','CARGO_TARGET_DIR','RISCV_PERF_BUILD_HEAD','RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','RUSTC','RUSTC_WRAPPER','RUSTC_WORKSPACE_WRAPPER','RUSTUP_TOOLCHAIN','CARGO_BUILD_TARGET')},
                   'inputs':build_inputs(out,env),'effective_rustc':effective,'codegen':{'method':'observed effective rustc -C flags; complete raw commands retained, no inferred optimization defaults','c_flags':c_flags,'release_manifest':tomllib.loads((ROOT/'Cargo.toml').read_text()).get('profile',{}).get('release',{}),'target_cpu_reason':'no explicit -C target-cpu; compiler default, host compatibility separately recorded' if not any(f.startswith('target-cpu') for f in c_flags) else None},
-                  'transcript':'evidence/build-transcript.txt','events':'evidence/build-events.jsonl','lockfile_sha256':digest((ROOT/'Cargo.lock').read_bytes())}
+                  'transcript':'evidence/build-transcript.txt','stdout':'evidence/build.stdout','events':'evidence/build-events.jsonl','lockfile_sha256':digest((ROOT/'Cargo.lock').read_bytes())}
     setup = {'run_id':str(uuid.uuid4()),'started_utc':started,'prepared_utc':utc(),'argv':[str(ROOT/'scripts/perf-test.sh')]+argv,'repetitions':args.repetitions,
              'source_head':head,'source_tree':source['tree'],'clean':True,'source':source,'identity':identity,'tools':tools,'binaries':binaries,'environment':execution_environment,'fixtures':fixtures,'build':build_info}
     json_new(out/'setup.json',setup)

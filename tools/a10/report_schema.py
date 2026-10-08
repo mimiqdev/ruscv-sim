@@ -12,6 +12,10 @@ from collect import ROOT, observation, utc
 
 ORACLE_SHA = '89a89bfb960484079468d419d51639b60d439561828a4e3516abd0829c627733'
 
+def build_events(stdout):
+    """Cargo -vv stdout is mixed; strict JSON objects + retained raw script lines."""
+    return [loads(line) for line in stdout.splitlines() if line.lstrip().startswith(b'{')]
+
 def schema_check(value, rule, definitions, where='$'):
     if rule is False:
         raise Invalid(where + ': forbidden item')
@@ -209,7 +213,7 @@ def validate(path, reader, expected_digest=None, sealed=True):
         require(bundle['id'] == report['bundle']['id'] == report['run']['id'], 'bundle/run identity conflict')
     require(report['identity']['schema_sha256'] == digest(read(root,'evidence/source/tools/a10/ruscv-perf-1.schema.json')), 'schema identity digest')
     if sealed:
-        references = {'report.json','raw-report.json',report['setup']['artifact'],report['source']['manifest'],report['source']['commit'],report['build']['transcript'],report['build']['events']}
+        references = {'report.json','raw-report.json',report['setup']['artifact'],report['source']['manifest'],report['source']['commit'],report['build']['transcript'],report['build']['events'],report['build']['stdout']}
         references.update(v['artifact'] for v in report['identity'].values() if type(v) is dict and 'artifact' in v)
         references.update(v['artifact'] for group in ('tools','binaries') for v in report[group].values())
         references.update(v['artifact'] for v in report['build']['inputs']['wrappers'])
@@ -240,6 +244,8 @@ def validate(path, reader, expected_digest=None, sealed=True):
     require(build['features'] == ['default','tlm'] and build['lockfile_sha256'] == digest(read(root,'evidence/source/Cargo.lock')) and '--locked' in build['argv'] and '--all-features' in build['argv'] and '--release' in build['argv'] and build['target'] in build['argv'], 'actual build identity/settings')
     require(build['effective_rustc'] and all(line in read(root,build['transcript']).decode() for line in build['effective_rustc']), 'effective rustc invocation missing/mismatched')
     events = [loads(line) for line in read(root,build['events']).splitlines() if line]
+    stdout_events=build_events(read(root,build['stdout']))
+    require(events==stdout_events,'derived build event stream disagrees with retained original stdout')
     require(events and events[-1].get('reason')=='build-finished' and events[-1].get('success') is True,'failed/missing build accounting')
     for name,item in report['binaries'].items():
         matches=[e for e in events if e.get('reason')=='compiler-artifact' and e.get('executable')==item['path']]
