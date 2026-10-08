@@ -336,6 +336,9 @@ fn execution_and_load_spies_exclude_setup_inspection_drops_and_reset_sums() {
         wire.scope = "public-library-call+uart-flush".into();
         wire.interval.elapsed_ns += 1;
         assert!(wire.check(route).is_err());
+        wire.interval.elapsed_ns -= 1;
+        wire.interval.origin = "parent-Instant".into();
+        assert!(wire.check(route).is_err());
     }
     let mut native = ScopeAudit::new("end_to_end", "native-bytes", "off");
     for op in [Op::Start, Op::ChildLaunch, Op::ChildWait, Op::Stop] {
@@ -436,6 +439,55 @@ fn real_capture_failure_timeout_file_error_and_receipt_lifecycle_reject_timing()
         "actual public result must survive final-copy failure"
     );
     assert!(inside(&spy.ops).contains(&Op::DropOwner));
+    let bad_inputs = temp.path().join("bad-inputs");
+    std::fs::create_dir(&bad_inputs).unwrap();
+    std::fs::write(bad_inputs.join(format!("{}.elf", f.id)), b"malformed-ELF").unwrap();
+    let bad_paths = Paths {
+        fixtures: &bad_inputs,
+        artifacts: p.artifacts,
+        cli: p.cli,
+        driver: p.driver,
+    };
+    let mut spy = Spy::default();
+    let bad = measure_cell(
+        &m,
+        f,
+        Cell {
+            route: "machine-native",
+            phase: "load_only",
+            mode: "none",
+        },
+        &bad_paths,
+        1,
+        &mut spy,
+    );
+    assert_eq!(accepted_total(&bad), None);
+    assert!(bad[0].interval.is_some());
+    assert_eq!(inside(&spy.ops), vec![Op::Start, Op::Parse, Op::Stop]);
+    assert!(bad[0].load.is_none());
+    struct Backward {
+        calls: usize,
+    }
+    impl Clock for Backward {
+        fn now_ns(&mut self) -> u64 {
+            self.calls += 1;
+            if self.calls % 2 == 1 {
+                1000
+            } else {
+                999
+            }
+        }
+    }
+    let rows = measure_cell(&m, f, cell, &p, 1, &mut Backward { calls: 0 });
+    assert_eq!(
+        rows[0].semantic_status, "correct",
+        "clock failure must not falsely report an ISA/oracle failure"
+    );
+    assert!(rows[0].scope_error.is_some());
+    assert!(rows[0].measurement_status.starts_with("unavailable"));
+    assert!(rows[0].accepted_ns.is_none());
+    assert_eq!(accepted_total(&rows), None);
+    validate(&m, f, rows[0].sample.as_ref().unwrap()).unwrap();
     let mut timeout = f.clone();
     timeout.turns = 0;
     let rows = measure_cell(&m, &timeout, cell, &p, 1, &mut Spy::default());

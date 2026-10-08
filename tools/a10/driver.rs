@@ -108,13 +108,21 @@ fn run() -> Result<i32, String> {
                 .push(r.clone());
         }
     }
-    let aggregates:Vec<_>=groups.iter().map(|(key,rows)|serde_json::json!({"key":key,"basic_interval_sum_ns":accepted_total(rows),"warmup_count":rows.iter().filter(|r|r.warmup).count(),"basic_count":rows.iter().filter(|r|!r.warmup).count(),"eligibility":"inconclusive-smoke-uncalibrated"})).collect();
+    let aggregates:Vec<_>=groups.iter().map(|(key,rows)|serde_json::json!({"key":key,"basic_interval_sum_ns":accepted_total(rows),"warmup_count":rows.iter().filter(|r|r.warmup).count(),"basic_count":rows.iter().filter(|r|!r.warmup).count(),"eligibility":if accepted_total(rows).is_some(){"inconclusive-smoke-uncalibrated"}else{"unavailable-or-rejected"}})).collect();
     let failed = records
         .iter()
         .any(|r| r.semantic_status == "semantic_failure");
     let unavailable = records.iter().any(|r| r.semantic_status == "unavailable");
     let changed =
         head != git(&["rev-parse", "HEAD"])? || !git(&["status", "--porcelain"])?.is_empty();
+    let measurement_unavailable = records
+        .iter()
+        .any(|r| r.semantic_status != "not_applicable" && r.accepted_ns.is_none());
+    let measurement = if failed || changed || unavailable || measurement_unavailable {
+        "unavailable-or-rejected"
+    } else {
+        "inconclusive-smoke-uncalibrated"
+    };
     let semantic = if failed || changed {
         "semantic_failure"
     } else if unavailable {
@@ -122,7 +130,7 @@ fn run() -> Result<i32, String> {
     } else {
         "correct"
     };
-    let report = serde_json::json!({"checkpoint_format":"a10-p1-checkpoint/1","not_full_p2_schema":true,"suite":"public-v1","profile":"smoke","source_head":head,"source_tree":setup["source_tree"],"environment":setup,"clock":"std::time::Instant monotonic ns; child origins are separate","policy":{"warmup_repetitions":1,"basic_repetitions":repetitions,"calibrated":false,"comparison":"unavailable until P2/P3","scope_identity_in_each_record":true},"semantic_status":semantic,"measurement_status":"inconclusive-smoke-uncalibrated","records":records,"aggregates":aggregates});
+    let report = serde_json::json!({"checkpoint_format":"a10-p1-checkpoint/1","not_full_p2_schema":true,"suite":"public-v1","profile":"smoke","source_head":head,"source_tree":setup["source_tree"],"environment":setup,"clock":"std::time::Instant monotonic ns; child origins are separate","policy":{"warmup_repetitions":1,"basic_repetitions":repetitions,"calibrated":false,"comparison":"unavailable until P2/P3","scope_identity_in_each_record":true},"semantic_status":semantic,"measurement_status":measurement,"records":records,"aggregates":aggregates});
     // Report assembly/serialization/writes happen only after all phase clocks.
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -137,10 +145,10 @@ fn run() -> Result<i32, String> {
     )
     .map_err(|e| e.to_string())?;
     std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
-    println!("P1 smoke semantics: {semantic}; measurement: INCONCLUSIVE (uncalibrated, no comparison). {} raw rows / {} applicable cells. Report: {}",records.len(),groups.len(),out.join("report.json").display());
+    println!("P1 smoke semantics: {semantic}; measurement: {measurement} (no comparison). {} raw rows / {} applicable cells. Report: {}",records.len(),groups.len(),out.join("report.json").display());
     Ok(if failed || changed {
         1
-    } else if unavailable {
+    } else if unavailable || measurement_unavailable {
         2
     } else {
         0

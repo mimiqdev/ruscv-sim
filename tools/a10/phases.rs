@@ -247,6 +247,7 @@ pub struct Record {
     pub semantic_status: String,
     pub measurement_status: String,
     pub reason: Option<String>,
+    pub scope_error: Option<String>,
     pub sample: Option<Sample>,
     pub load: Option<LoadEvidence>,
     pub argv: Vec<String>,
@@ -276,15 +277,30 @@ impl Record {
             interval: None,
             accepted_ns: None,
             semantic_status: "unavailable".into(),
-            measurement_status: "inconclusive-smoke-uncalibrated".into(),
+            measurement_status: "unavailable".into(),
             reason: None,
+            scope_error: None,
             sample: None,
             load: None,
             argv: Vec::new(),
         }
     }
+    fn accept_interval(&mut self) {
+        self.accepted_ns = if self.scope_error.is_none() {
+            self.interval.as_ref().map(|i| i.elapsed_ns)
+        } else {
+            None
+        };
+        self.measurement_status = if self.accepted_ns.is_some() {
+            "inconclusive-smoke-uncalibrated"
+        } else {
+            "unavailable-invalid-or-missing-scope"
+        }
+        .into();
+    }
     fn reject(&mut self, reason: String) {
         self.semantic_status = "semantic_failure".into();
+        self.measurement_status = "unavailable-rejected-sample".into();
         self.reason = Some(reason);
         self.accepted_ns = None;
     }
@@ -315,11 +331,12 @@ pub fn accept_sample<C: Clock>(
     match &result {
         Ok(()) => {
             record.semantic_status = "correct".into();
-            record.accepted_ns = record.interval.as_ref().map(|i| i.elapsed_ns);
+            record.accept_interval();
         }
         Err(Rejection::Semantic(e)) => record.reject(e.clone()),
         Err(Rejection::Unavailable(e)) => {
             record.semantic_status = "unavailable".into();
+            record.measurement_status = "unavailable-oracle-evidence".into();
             record.reason = Some(e.clone());
             record.accepted_ns = None;
         }
@@ -328,7 +345,11 @@ pub fn accept_sample<C: Clock>(
 }
 /// No aggregate can erase a bad warmup or basic repetition. Raw rows survive.
 pub fn accepted_total(records: &[Record]) -> Option<u128> {
-    if records.is_empty() || records.iter().any(|r| r.semantic_status != "correct") {
+    if records.is_empty()
+        || records
+            .iter()
+            .any(|r| r.semantic_status != "correct" || r.accepted_ns.is_none())
+    {
         return None;
     }
     records
@@ -438,14 +459,20 @@ fn install<C: Clock>(
     bytes: &[u8],
     config: MachineConfig,
     meter: &mut Meter<C>,
-) -> Result<Machine, String> {
+    owner: &mut Option<Machine>,
+) -> Result<(), String> {
     meter.event(Op::Parse);
     let image = Arc::new(LoadImage::parse(bytes).map_err(|e| e.to_string())?);
     meter.event(Op::Construct);
-    let owner = Machine::new(config);
+    *owner = Some(Machine::new(config));
     meter.event(Op::Install);
-    owner.install(image).map_err(|e| e.to_string())?;
-    Ok(owner)
+    // Even an installation error retains the owner until the caller has
+    // stopped load-only timing. Error cleanup cannot hide a drop in that span.
+    owner
+        .as_ref()
+        .unwrap()
+        .install(image)
+        .map_err(|e| e.to_string())
 }
 fn teardown<C: Clock>(owner: Machine, meter: &mut Meter<C>) -> Result<(), String> {
     meter.event(Op::Drain);
@@ -601,7 +628,7 @@ fn capture_child<C: Clock>(
         .split_once("\nA10_P1_NATIVE ")
         .ok_or("missing native function-scope transport")?;
     let wire: LibraryWire = serde_json::from_str(json.trim()).map_err(|e| e.to_string())?;
-    wire.check(&record.route)?;
+    record.scope_error = wire.check(&record.route).err();
     record.interval = Some(wire.interval);
     let mut sample = Sample::public(&record.route, &record.mode, wire.result);
     sample.uart = Some(uart.as_bytes().to_vec());
@@ -627,6 +654,7 @@ pub fn measure_cell<C: Clock>(
     if let Err(reason) = availability(m, f, route, phase, mode) {
         let mut r = Record::new(f, route, phase, mode, 0, false);
         r.semantic_status = "not_applicable".into();
+        r.measurement_status = "not_applicable".into();
         r.reason = Some(reason);
         return vec![r];
     }
@@ -651,7 +679,9 @@ pub fn measure_cell<C: Clock>(
                 meter.event(Op::Prepare);
                 let (config, uart) = machine_config(kind(route));
                 uart.lock().unwrap().reserve(f.uart.len());
-                let owner = install(bytes, config, &mut meter)?;
+                let mut retained = None;
+                install(bytes, config, &mut meter, &mut retained)?;
+                let owner = retained.unwrap();
                 meter.event(Op::Inspect);
                 initial(&owner, f)?;
                 machine = Some((owner, uart));
@@ -665,7 +695,7 @@ pub fn measure_cell<C: Clock>(
         if setup.is_err()
             || records
                 .iter()
-                .any(|r: &Record| r.semantic_status != "correct")
+                .any(|r: &Record| r.semantic_status != "correct" || r.accepted_ns.is_none())
         {
             record.reason = Some(
                 setup
@@ -687,10 +717,18 @@ pub fn measure_cell<C: Clock>(
                 meter.event(Op::Prepare);
                 let (config, uart) = machine_config(kind(route));
                 uart.lock().unwrap().reserve(f.uart.len());
+                let mut retained = None;
                 let start = meter.start();
-                let owner = install(bytes, config, &mut meter);
+                let installed = install(bytes, config, &mut meter, &mut retained);
                 record.interval = Some(meter.stop(start, "driver-Instant"));
-                let owner = owner?;
+                if let Err(error) = installed {
+                    if let Some(owner) = retained {
+                        teardown(owner, &mut meter)
+                            .map_err(|cleanup| format!("{error}; cleanup: {cleanup}"))?;
+                    }
+                    return Err(error);
+                }
+                let owner = retained.unwrap();
                 meter.event(Op::Inspect);
                 let checked = initial(&owner, f);
                 drop(uart);
@@ -768,10 +806,15 @@ pub fn measure_cell<C: Clock>(
             } else {
                 record.sample = Some(capture_child(f, &mut record, paths, &log, &mut meter)?);
             }
-            meter.audit.check()?;
+            let audit_error = meter.audit.check().err();
+            if record.scope_error.is_none() {
+                record.scope_error = audit_error;
+            }
             if phase != "load_only" {
                 meter.event(Op::Validate);
                 accept_sample(m, f, &mut record, meter.clock).map_err(|e| format!("{e:?}"))?;
+            } else {
+                record.accept_interval();
             }
             Ok(())
         })();

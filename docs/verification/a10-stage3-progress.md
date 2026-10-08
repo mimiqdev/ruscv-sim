@@ -1,10 +1,10 @@
-# A10 infrastructure progress — P0 checkpoint
+# A10 infrastructure progress — P0 and P1 checkpoints
 
 **Status:** Current
 
 **Authority:** Informational; implementation and verification inventory, not an acceptance contract.
 
-**Scope:** P0 correctness infrastructure only. This is not A10 completion, an ACT4 claim, or a performance verdict. P1–P4 (measurement phases, stable command/schema, comparison and CI/final acceptance) are not implemented here.
+**Scope:** P0 correctness infrastructure and P1 public-path phase driver/smoke command. This is not A10 completion, an ACT4 claim, or a performance verdict. Full P2 schema/identity guarantees, P3 calibration/comparison and P4 CI/retention/final acceptance remain unimplemented.
 
 **Contract references:** [Current A10 contract](../dev-plan.md), accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md) and [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md). [A9 closeout](a9-closeout-assessment.md) remains the historical safety baseline, not performance evidence.
 
@@ -117,7 +117,7 @@ Development observation on 2026-10-08: the repaired focused suite ran **8 passed
 
 Subsequent **clean committed** container verification at `b13b7c20620b39d2266fdb4cf8878e90aebbf1a0` passed the full wrapper (2026-10-08T03:29:21Z–03:34:24Z), including fresh artifacts, full Rust gates, 148-cell focused suite and A9 suites. Local output was `target/a10-p0-verify-XoIdwH/verification.log`; fresh build-report SHA-256 was `8f97daa860e69bab5305a801354041410047488e106050e112d78541e396bf7f`. The separate host six-check run passed five requirements but **failed strict Clippy**: Rust 1.98 introduced `map_or_identity` on a harness-only `lr.map_or(0, |i| i)`. It was replaced with `lr.unwrap_or(0)`, not suppressed. The changed checkpoint HEAD must rerun **all** gates; the earlier passed container observation is not carried forward.
 
-At `931fe310a90a250952d1dad79aaa2c6697c734de`, all six host requirements and the fresh pinned-container wrapper passed and were recorded at the clean committed HEAD; [public evidence](https://github.com/mimiqdev/ruscv-sim/pull/72#issuecomment-6051768319) includes command/environment/binary/ELF identities. The subsequent ordinary-CI producer-identity failure described above required a same-scope harness repair. That record remains historical, **not** evidence for the repaired PR head. [PR #72](https://github.com/mimiqdev/ruscv-sim/pull/72) is the bounded P0 checkpoint, not authorization to merge or begin P1.
+At `931fe310a90a250952d1dad79aaa2c6697c734de`, all six host requirements and the fresh pinned-container wrapper passed and were recorded at the clean committed HEAD; [public evidence](https://github.com/mimiqdev/ruscv-sim/pull/72#issuecomment-6051768319) includes command/environment/binary/ELF identities. The subsequent ordinary-CI producer-identity failure described above required a same-scope harness repair. That record remains historical, **not** evidence for the repaired PR head. [PR #72](https://github.com/mimiqdev/ruscv-sim/pull/72) carries the successive bounded infrastructure checkpoints; those earlier records do not approve a later revision or authorize merging.
 
 The independently reviewed P0 revision `5d3a6ce7b32f721316e6688be440ac77d4abf1cf` had passing [public verification evidence](https://github.com/mimiqdev/ruscv-sim/pull/72#issuecomment-6051979166) and [CI Quality and tests](https://github.com/mimiqdev/ruscv-sim/actions/runs/37725234480/job/113141781010), with Coverage skipped. Static read-only review nevertheless found the CLI signature ambiguity and non-public reproduction instructions in this document. Both are addressed in the source/tests and repository-only commands below; earlier-head verification is historical, not proof of the repair revision.
 
@@ -146,4 +146,61 @@ git diff --check e73b12b8467fd635b398382a5cbc7ce75d842f68..HEAD
 
 These instructions are **not claims of a passed repair revision**. Record the full committed revision/tree and clean state with each command's output, environment and artifact hashes in public PR verification evidence. Run the pinned-container wrapper as well: a host test result with missing cross tools cannot establish the public-route fixture assertions. Any later source change invalidates prior verification and requires fresh checks and independent PR-head review under [repository guidance](../../AGENTS.md).
 
-P0 coverage is limited to the correctness artifacts above. No timings, throughput, speed verdict, repeated-run schema/driver, comparison mode, benchmark CI, full 58-guest rebuild matrix, final nine-command P4 acceptance, merge or release is claimed.
+P0 coverage is limited to the correctness artifacts above. P1 adds the bounded timing driver below, not a calibrated performance verdict, full repeated-run schema, comparison mode, benchmark CI, full 58-guest rebuild matrix, final nine-command P4 acceptance, merge or release.
+
+## P1 — actual phase driver and smoke command
+
+The reviewed P0 boundary is `29bc58729ade28d611d17c524a26bd3369a64140`: [checkpoint evidence and zero-finding independent review](https://github.com/mimiqdev/ruscv-sim/pull/72#issuecomment-6052545885). It is a historical correctness checkpoint, not verification of a P1 revision. P1 implementation is in [`phases.rs`](../../tools/a10/phases.rs), [`driver.rs`](../../tools/a10/driver.rs), [`command.py`](../../tools/a10/command.py), [`audit_fixtures.py`](../../tools/a10/audit_fixtures.py) and [`scripts/perf-test.sh`](../../scripts/perf-test.sh). Production APIs/semantics, P0 manifest/fixtures/oracles, accepted contracts/ADRs, historical guests/evidence, Cargo dependencies/version and CI workflows are unchanged.
+
+From a clean committed checkout with Rust and the cross tools available:
+
+```bash
+./scripts/perf-test.sh run --suite public-v1 --profile smoke --out target/perf/p1-new
+# Optional basic repetitions (1..16); every cell also has one warmup:
+./scripts/perf-test.sh run --suite public-v1 --profile smoke --out target/perf/p1-other --repetitions 1
+```
+
+Each output must be a **new** named directory below canonical `target/`. Existing output, protected/source paths, parent escapes, symlinked roots/ancestors, missing tools, dirty/uncommitted source, mismatched source revisions and stale fixture/source/linker/ELF identities are refused; nothing is deleted or overwritten. Setup builds release/all-features driver, real CLI and P0 transport with locked dependencies in isolated output, then freshly builds/audits the unchanged P0 fixtures **outside all phase clocks**. Source/tree/argv/UTC/tool/build/binary identities are recorded in `setup.json`. Python setup disables repository bytecode caches so it cannot dirty its own evidence checkout.
+
+### Concrete boundaries and capture policies
+
+| Route/phase | Timed scope | Outside the interval |
+|---|---|---|
+| Native/flat Machine `load_only` | Pre-read bytes → `LoadImage::parse` → `Machine::new` allocation/composition → `install`; owner retained | Callback/buffer preparation, filesystem read, image/segment/signature metadata checks, complete initial RAM/zero-fill/PC/GPR/MINSTRET/device/signal checks, drain/teardown/drop |
+| Native/flat Machine `execute_only` | First real `step` through terminal boundary, synchronous checked sink/file delivery and consumption of every receipt | Parse/install, requested/proven drain, `fresh_reset`, full restored-image checks, `resume`, logger/sink/buffer preparation; log close, final inspection, P0 validation and destruction |
+| Preloaded flat facade `execute_only` | Actual public `run`, including its own result/artifact/selected-signal policy | Construct/load, public coordinated `fresh_reset`, full initial image/BSS/GPR/counter check; direct final-state copy, P0 validation and drop |
+| Flat facade `end_to_end` | **One continuous** construct → `load_elf` → real `run`/`ExecutionResult` → owned minimum final GPR/RAM/MINSTRET/selected-signal copy via public live APIs → actual normal facade drop | Fixture disk read/hash/build and metadata preparation; semantic expectation comparison and JSON/report assembly |
+| Native bytes/file `end_to_end` | **In the child:** actual `load_and_run` (bytes pre-read) / `load_and_run_file` (its file I/O included), normal API-local teardown and explicit UART stdout flush | Probe startup, bytes-route input read, argument preparation, structured transport JSON/exit, parent wait/parsing/log readback/validation |
+| CLI `end_to_end` | Direct `Command` launch through wait: normal CLI input/load/run/artifacts/output/log/process destruction plus stdout/stderr pipe capture | Command/argv preparation, build/hash; report parsing, log readback, P0 validation and outer JSON |
+
+The flat continuous interpretation includes allocation/copy cost needed to preserve **that same run's** complete own oracle before destruction. It is explicitly **not** pure execution or a capture-free facade cost: scope and `flat-live-owned-final-copy-before-drop/1` identity appear in every corresponding row and aggregation key. Retained data is plain owned `Sample` values, never a facade/Memory/Machine/Arc handle or receipt postponing drop. There is no pause/restart, subtraction or segmented sum in this end-to-end interval. Capture errors preserve available owned public-result data but invalidate timing. Compare only identical route/phase/capture policy; the native call and CLI child policies are distinct.
+
+`MachineRun::prepare`, `execute`, `close_log` and `inspect` split the old P0 capture wrapper without changing its validator. The wrapper remains available to all P0 regressions. Off has no materialized/delivered facts; on/file consume immutable Hart observations, not snapshot/refetch reconstructions. The public file logger uses synchronous unbuffered `File` writes: delivery/write errors reject the sample, close is outside Machine execute-only, and no buffered deferred flush or `fsync` guarantee is claimed. CLI/library file lifetime is included in their actual public call/process scope. Native-library UART is flushed explicitly before its child function-scope clock stops; serialization remains after stop.
+
+### Matrix, repetitions and eligibility
+
+**180 applicable phase cells:** 22 Machine load (no observation variant), 66 Machine execute, 10 flat-facade execute, 82 real CLI/native-bytes/native-file/flat end-to-end. This exercises all 148 P0 fixture/route/mode cells through their actual APIs. **324 explicit N/A cells** cover unsupported phase/mode/device combinations: convenience CLI/library preload/execute, non-Machine combined load, Machine end-to-end not included as a facade metric, unsupported subscribers/flat logger, and native devices on flat configurations. Load has mode `none`, execution-not-started and zero turns/counter, not an invented guest exit.
+
+Default smoke uses **one warmup and two basic repetitions per applicable cell**: 540 independently validated intervals plus 324 N/A rows. Every repetition—including warmup—uses the same reusable P0 `validate`; preflight/companion success cannot bless a later result. Fresh reset/resume and initial-state proof precede every preloaded execution. Basic interval sums group only identical fixture/route/phase/mode/capture policy; setup/reset is never in a timed batch and warmups are retained but excluded from the basic sum. Any bad warmup/basic, transport/reporting/capture failure, or unavailable mandatory evidence invalidates its aggregate. Failed evidence is retained; that cell stops without automatic retry/reuse. Unknown completion remains quarantined, never forced to drain/reset.
+
+`report.json` is deliberately **`a10-p1-checkpoint/1`, not full `ruscv-perf/1`**. It retains raw per-repetition UTC/monotonic-ns intervals, origins, actual owned oracle fields/verdicts, CLI/native argv/raw stdout/stderr/logs, load evidence, N/A reasons, scope/capture identities and separate semantic/measurement statuses. Invalid/nonmonotonic scopes have their own `scope_error`: the same run's P0 oracle can still be correct while timing/aggregation is unavailable; a clock failure is not falsely labeled an ISA failure. [`check_smoke.py`](../../tools/a10/check_smoke.py) checks bounded retained bookkeeping only, not a full P2 schema/identity parser or second semantic engine. Measurement/comparison eligibility is always **INCONCLUSIVE: smoke uncalibrated**. Exit 0 means the bounded report's semantics are correct, never a speed pass. Failure is nonzero; calibrated/compare/schema commands explicitly return unavailable (2). No 30-sample sufficiency, three-session calibration, baseline ratios, retention/index guarantees or performance CI is implemented.
+
+### Scope and negative tests
+
+[`a10_p1_phases.rs`](../../tests/a10_p1_phases.rs) contains six focused tests. Injectable clocks/events are owned by the harness and placed at the actual public operations; the real matrix runs in addition to deterministic weighted clocks. `ordered_real_flat_scope_includes_owned_copy_and_actual_drop` proves start/construct/load/run/final-copy/drop/stop/validate/report order. Mutations of those actual traces reject missing drop/copy, timed validation/report/reset/read, execute-only parse/install/prepare/inspect/drop/log-close contamination, load-only guest steps and unconsumed receipts. Reset/inspection have large deterministic costs outside the measured sums. Native tests prove no parent clock surrounds probe launch and reject changed scope/origin/interval metadata.
+
+`bad_warmup_or_basic_repetition_cannot_be_blessed_by_preflight` injects wrong exit/PC/signature/work/counter/RAM/x0/device/facts or delayed reporting error into actual captured repetitions after a successful preflight; no rejected row or aggregate receives accepted timing. Real malformed-load, final-copy failure, nonmonotonic-clock and timeout paths retain failure evidence, exclude load cleanup from its clock and exercise flat normal drop; public `/dev/full` proves file errors cannot become success. Retained Machine receipts refuse mutation/drain, consumption permits proven drain/restoration. Existing nine P0 tests (148 cells) and A9 Hart/lifecycle/facade/CLI regressions remain verification requirements.
+
+### Evidence and reproduction
+
+Development-only observation: clean implementation revision `737e8e5dc9dfc72bf5ca13ed6e801371e35d23f0` ran the release command in the pinned Linux/ARM64 image, Rust/Cargo 1.97.1, GNU binutils 2.40, strict pinned producer identities. It produced **540 correct raw intervals / 180 cells / 324 N/A**, with measurement status **inconclusive-smoke-uncalibrated**. Local `target/perf-p1-development-737e8e5/report.json` SHA-256: `fede3cb9930f2e253cac38fc7d91ca6bf06d5f514ce958b4d8be20c1ea3b7399`. This predates the final documentation/verification revision and is not carried forward as final checkpoint evidence. Initial container attempts failed before measurements because a linked worktree's absolute Git paths/ownership were unavailable; no failed setup was relabeled passed.
+
+Reproduce the full exact-committed-revision P1 verification, including fresh isolated Rust and release-smoke builds, with:
+
+```bash
+bash tools/a10/verify_p1.sh
+```
+
+The wrapper runs the Rust gate, focused P1/P0 suites, A9 regressions, unchanged-source scope audit, real smoke command and bounded report audit, retaining logs/hashes locally under a new `target/a10-p1-verify-*`. It mounts the worktree at its original absolute path and common Git metadata **read-only**, disables optional index writes and sets `safe.directory` for only that process/explicit checkout (no global/wildcard config). Non-login shell, two Cargo jobs, required cross tools and pinned ARM64 tool identities are explicit. Missing host/physical-machine/calibration metadata remains a P2/P3 limitation; container identity is not a claim of a calibrated host.
+
+Public PR evidence must identify the actual new committed HEAD/tree, applicable CI, command output and artifact hashes; source changes require new verification and independent read-only review. P1 ends with this bounded driver/checkpoint; P2–P4 and final A10 acceptance remain separate work.
