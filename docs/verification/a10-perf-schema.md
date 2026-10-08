@@ -1,8 +1,8 @@
 # A10 public-path evidence: `ruscv-perf/1`
 
-- Status: Draft
+- Status: Current
 - Authority: Informational
-- Scope: A10 P2 local smoke/evidence, not P3 calibration or P4 retention
+- Scope: implemented A10 P2 local smoke/evidence; not independent review acceptance, P3 calibration or P4 retention
 - Contract: [current contract](../dev-plan.md), [ADRs](../architecture/decisions/README.md)
 - Implementation: [`report_schema.py`](../../tools/a10/report_schema.py), [`replay.rs`](../../tools/a10/replay.rs)
 - Machine-readable definition: [`ruscv-perf-1.schema.json`](../../tools/a10/ruscv-perf-1.schema.json) (Draft 2020-12)
@@ -59,4 +59,4 @@ Bundles are local evidence, not accepted performance baselines. No P4 baseline i
 
 ## Falsifiable checks
 
-[`a10_p2_schema.rs`](../../tests/a10_p2_schema.rs) round-trips actual public phase captures, replays every own warmup/basic oracle and mutates results/state/effects/lifecycle/scopes/clock/origin/inventory/widths. [`test_schema.py`](../../tools/a10/test_schema.py) tests strict shape/duplicate/non-finite/overflow controls, immutable retrieval/path/reporting failures and descriptive statistics. The strict wrapper additionally runs actual sealed release-bundle round-trip and negative controls. P0/P1 scope spies, A9 lifecycle/receipt/unknown-completion regressions and the full Rust gate remain required.
+[`a10_p2_schema.rs`](../../tests/a10_p2_schema.rs) round-trips actual public phase captures, replays every own warmup/basic oracle and mutates results/state/effects/lifecycle/scopes/clock/origin/inventory/widths. [`test_schema.py`](../../tools/a10/test_schema.py) tests strict shape/duplicate/non-finite/overflow controls, immutable retrieval/path/reporting failures (including post-check symlink swaps), Cargo mixed stdout/codegen tokenization and descriptive statistics. The strict wrapper additionally runs actual sealed release-bundle round-trip and negative controls. P0/P1 scope spies, A9 lifecycle/receipt/unknown-completion regressions and the full Rust gate remain required.

@@ -300,6 +300,9 @@ def validate(path, reader, expected_digest=None, sealed=True):
             require(actual[field] == expected[field] == digest(read(root,actual[refkey])), 'fixture/source/linker/ELF identity')
         require(actual['source'] == 'evidence/source/'+expected['source'] and actual['linker'] == 'evidence/source/'+expected['linker'] and actual['elf'] == 'fixtures/'+expected['id']+'.elf', 'fixture references')
         require(actual['producer'] == fixture_build['fixtures'][expected['id']], 'producer argv/source/ELF cross-link')
+        producer=actual['producer'];out_elf=Path(producer['argv_ld'][-1]);source_root=Path(setup['argv'][0]).parent.parent
+        require(producer['argv_as']==[report['tools']['as']['command'][0],'-march=rv64ima_zicsr','-mabi=lp64',str(source_root/expected['source']),'-o',str(out_elf.with_suffix('.o'))] and producer['argv_ld']==[report['tools']['ld']['command'][0],'-T'+str(source_root/expected['linker']),str(out_elf.with_suffix('.o')),'-o',str(out_elf)],'producer build argv/source/linker/march/ABI/ELF identity')
+        require(producer['source_sha256']==expected['source_sha256'] and producer['linker_sha256']==expected['linker_sha256'] and producer['elf_sha256']==expected['elf_sha256'],'producer immutable bytes identity')
         require(actual['metadata'] == {k:expected[k] for k in ('entry','segments','tohost','signature_addr','signature_file_offset','memory_size','native_only')}, 'entry/base/segment/zero-fill/signature/tohost identity')
         for tool in ('as','ld','nm','objdump'):
             require(fixture_build['tools'][tool]['sha256'] == report['tools'][tool]['sha256'] and fixture_build['tools'][tool]['version'] == report['tools'][tool]['version'].splitlines()[0], 'actual producer executable identity')
