@@ -3,7 +3,6 @@
 import argparse
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -13,7 +12,7 @@ sys.dont_write_bytecode = True
 from audit_fixtures import audit
 from collect import ROOT, build_inputs, command as text, environment, git_snapshot, tool, utc
 from integrity import canonical, digest, Invalid, json_new, loads, require, seal, Unavailable, write_new
-from report_schema import build_events, make_report, validate
+from report_schema import build_events, codegen_flags, make_report, validate
 
 def run(argv, env=None):
     subprocess.run(argv, cwd=ROOT, env=env, check=True)
@@ -140,7 +139,7 @@ def main(argv):
     transcript = (out/'evidence/build-transcript.txt').read_text()
     effective = [line for line in transcript.splitlines() if 'Running `' in line and ('rustc ' in line or '/rustc ' in line)]
     require(effective,'missing effective compiler invocations')
-    c_flags = sorted(set(re.findall(r'-C\s*([^\s`]+)', '\n'.join(effective))))
+    c_flags = codegen_flags(effective)
     build_info = {'profile':'release','features':['default','tlm'],'target':triple,'argv':build,'env':{k:env.get(k) for k in ('CARGO_BUILD_JOBS','CARGO_TARGET_DIR','RISCV_PERF_BUILD_HEAD','RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','RUSTC','RUSTC_WRAPPER','RUSTC_WORKSPACE_WRAPPER','RUSTUP_TOOLCHAIN','CARGO_BUILD_TARGET')},
                   'inputs':build_inputs(out,env),'effective_rustc':effective,'codegen':{'method':'observed effective rustc -C flags; complete raw commands retained, no inferred optimization defaults','c_flags':c_flags,'release_manifest':tomllib.loads((ROOT/'Cargo.toml').read_text()).get('profile',{}).get('release',{}),'target_cpu_reason':'no explicit -C target-cpu; compiler default, host compatibility separately recorded' if not any(f.startswith('target-cpu') for f in c_flags) else None},
                   'transcript':'evidence/build-transcript.txt','stdout':'evidence/build.stdout','events':'evidence/build-events.jsonl','lockfile_sha256':digest((ROOT/'Cargo.lock').read_bytes())}

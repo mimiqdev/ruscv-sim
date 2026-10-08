@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from integrity import canonical, digest, Invalid, json_new, loads, read, retrieve, safe, seal, write_new
-from report_schema import aggregates, build_events, obs, schema_check
+from report_schema import aggregates, build_events, codegen_flags, obs, schema_check
 from schema_definition import SCHEMA
 from collect import ROOT, observation
 
@@ -115,6 +115,9 @@ class SchemaTests(unittest.TestCase):
         raw=b'{"reason":"compiler-artifact"}\n[proc-macro2 1.0] cargo:rustc-check-cfg=cfg(example)\n{"reason":"build-finished","success":true}\n'
         self.assertEqual(build_events(raw),[{'reason':'compiler-artifact'},{'reason':'build-finished','success':True}])
         with self.assertRaises(Invalid):build_events(b'{"reason":"build-finished","success":true,"success":false}\n')
+    def test_effective_codegen_flags_are_tokens_not_license_env_substrings(self):
+        commands=['    Running `CARGO_PKG_LICENSE=BSD-3-Clause /compiler/rustc --crate-name example -C opt-level=3 -Clto=thin -C target-cpu=native`']
+        self.assertEqual(codegen_flags(commands),['lto=thin','opt-level=3','target-cpu=native'])
     def test_real_reporting_write_failure_is_not_success(self):
         if Path('/dev/full').exists():
             with open('/dev/full','wb',buffering=0) as file,self.assertRaises(OSError):file.write(b'report')

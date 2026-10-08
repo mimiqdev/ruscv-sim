@@ -5,6 +5,7 @@ from datetime import datetime
 import hashlib
 from pathlib import Path
 import re
+import shlex
 import statistics
 import subprocess
 from integrity import canonical, digest, json_new, loads, read, require, retrieve, Invalid
@@ -15,6 +16,20 @@ ORACLE_SHA = '89a89bfb960484079468d419d51639b60d439561828a4e3516abd0829c627733'
 def build_events(stdout):
     """Cargo -vv stdout is mixed; strict JSON objects + retained raw script lines."""
     return [loads(line) for line in stdout.splitlines() if line.lstrip().startswith(b'{')]
+
+def codegen_flags(commands):
+    """Tokenized actual rustc command flags, not -C substrings in env/licenses."""
+    flags=[]
+    for line in commands:
+        body=line.split('Running `',1)[1].rsplit('`',1)[0]
+        tokens=shlex.split(body)
+        for i,token in enumerate(tokens):
+            if token=='-C':
+                require(i+1<len(tokens),'incomplete codegen flag')
+                flags.append(tokens[i+1])
+            elif token.startswith('-C'):
+                flags.append(token[2:])
+    return sorted(set(flags))
 
 def schema_check(value, rule, definitions, where='$'):
     if rule is False:
@@ -259,7 +274,7 @@ def validate(path, reader, expected_digest=None, sealed=True):
     for key in ('CARGO_BUILD_TARGET','CARGO_BUILD_JOBS','CARGO_TARGET_DIR','RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','RUSTC','RUSTC_WRAPPER','RUSTC_WORKSPACE_WRAPPER','RUSTUP_TOOLCHAIN'):
         require(build['inputs']['env'][key]==build['env'][key],'effective/collected build environment mismatch')
     require(build['env']['RISCV_PERF_BUILD_HEAD']==report['source']['head'] and build['env']['CARGO_BUILD_JOBS']=='2','effective build environment/revision')
-    c_flags=sorted(set(re.findall(r'-C\\s*([^\\s`]+)','\\n'.join(build['effective_rustc']))))
+    c_flags=codegen_flags(build['effective_rustc'])
     import tomllib
     release=tomllib.loads(read(root,'evidence/source/Cargo.toml').decode()).get('profile',{}).get('release',{})
     require(build['codegen']['c_flags']==c_flags and build['codegen']['release_manifest']==release,'actual codegen/LTO/CPU flags')
