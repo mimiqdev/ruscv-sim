@@ -452,7 +452,7 @@ fn receipt_drain_live_reservation_bss_stale_handles_and_equivalent_rerun() {
                     .trace
                     .iter()
                     .position(|t| t.memory.iter().any(|e| e.atomic.as_deref() == Some("lr")));
-                let prefix = lr.map_or(0, |i| i);
+                let prefix = lr.unwrap_or(0);
                 for _ in 0..prefix {
                     drop(owner.step(mode != "off").unwrap())
                 }
