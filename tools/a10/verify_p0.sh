@@ -27,7 +27,7 @@ REL="${OUT#"$ROOT/"}"
     docker run --rm --init --volume "$ROOT:/workspace" --workdir /workspace \
       --env CARGO_BUILD_JOBS=2 --env "CARGO_TARGET_DIR=$REL/cargo" \
       --env "P0_EVIDENCE_DIR=$REL" --env "RISCV_SOURCE_HEAD=$HEAD" \
-      --env RISCV_REQUIRE_RISCV_TOOLCHAIN=1 --env CARGO_TERM_COLOR=never \
+      --env RISCV_REQUIRE_RISCV_TOOLCHAIN=1 --env RISCV_REQUIRE_A10_PINNED_TOOLS=1 --env CARGO_TERM_COLOR=never \
       "$IMAGE" bash -c '
         set -euo pipefail
         date -u +%Y-%m-%dT%H:%M:%SZ

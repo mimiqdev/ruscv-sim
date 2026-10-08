@@ -27,7 +27,8 @@ fn build() -> Option<&'static Build> {
                 let message =
                     "UNAVAILABLE: P0 fresh cross-toolchain/public-route evidence (not a pass)";
                 assert!(
-                    std::env::var_os("RISCV_REQUIRE_RISCV_TOOLCHAIN").is_none(),
+                    std::env::var_os("RISCV_REQUIRE_RISCV_TOOLCHAIN").is_none()
+                        && std::env::var_os("RISCV_REQUIRE_A10_PINNED_TOOLS").is_none(),
                     "{message}"
                 );
                 eprintln!("{message}");
@@ -74,19 +75,27 @@ fn build() -> Option<&'static Build> {
                 )
                 .unwrap();
             }
-            for (tool, version) in &m.tool_versions {
-                assert_eq!(
-                    identity["tools"][tool]["version"].as_str(),
-                    Some(version.as_str())
-                );
-                // Executable bytes differ by host architecture. Exact ARM64 pins
-                // apply to the confirmed development image used for P0 evidence.
-                if cfg!(target_arch = "aarch64") && cfg!(target_os = "linux") {
+            if std::env::var_os("RISCV_REQUIRE_A10_PINNED_TOOLS").is_some() {
+                if !(cfg!(target_arch = "aarch64") && cfg!(target_os = "linux")) {
+                    panic!("UNAVAILABLE: pinned tool-byte profile requires Linux/aarch64");
+                }
+                for (tool, version) in &m.tool_versions {
+                    assert_eq!(
+                        identity["tools"][tool]["version"].as_str(),
+                        Some(version.as_str())
+                    );
                     assert_eq!(
                         identity["tools"][tool]["sha256"].as_str(),
                         Some(m.arm64_tool_sha256[tool].as_str())
                     );
                 }
+            } else {
+                // Source/linker/ELF bytes and build flags above remain mandatory.
+                // Other tool identities are recorded, never relabeled as pinned.
+                eprintln!(
+                    "P0 artifact-equivalence only; not pinned-toolchain evidence: {}",
+                    identity["tools"]
+                );
             }
             Some(Build { _temp: temp, out })
         })
@@ -609,13 +618,65 @@ fn p0_oracle_audits_and_regressions_are_not_simulator_recordings() {
     let output = Command::new("python3")
         .arg("tools/a10/derive_oracles.py")
         .arg(&build.out)
-        .arg("--check")
+        .arg(
+            if std::env::var_os("RISCV_REQUIRE_A10_PINNED_TOOLS").is_some() {
+                "--check"
+            } else {
+                "--check-artifacts"
+            },
+        )
         .output()
         .unwrap();
     assert!(
         output.status.success(),
         "independent derivation: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    // CI reproduced an identity-only mismatch: Ubuntu binutils 2.42 emitted
+    // byte-identical pinned ELFs. An artifact-only audit must not certify tools,
+    // and must still reject any changed artifact identity.
+    let temp = TempDir::new_in("target/a10-p0-tests").unwrap();
+    let fresh = temp.path().join("identity-regression");
+    assert!(Command::new("python3")
+        .arg("tools/a10/build_fixtures.py")
+        .arg("--out")
+        .arg(&fresh)
+        .status()
+        .unwrap()
+        .success());
+    let report = fresh.join("build.json");
+    let mut identity: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+    let original_tools = identity["tools"].clone();
+    identity["tools"]["as"]["version"] = "negative-control-other-tool-version".into();
+    identity["tools"]["as"]["sha256"] = "0".repeat(64).into();
+    std::fs::write(&report, serde_json::to_vec(&identity).unwrap()).unwrap();
+    let audit = |mode: &str| {
+        Command::new("python3")
+            .arg("tools/a10/derive_oracles.py")
+            .arg(&fresh)
+            .arg(mode)
+            .output()
+            .unwrap()
+    };
+    assert!(
+        !audit("--check").status.success(),
+        "tool mismatch cannot be pinned evidence"
+    );
+    assert!(
+        audit("--check-artifacts").status.success(),
+        "byte-identical artifacts can be checked without tool-pin claims"
+    );
+    identity["tools"] = original_tools;
+    identity["fixtures"]["fib"]["elf_sha256"] = "0".repeat(64).into();
+    std::fs::write(&report, serde_json::to_vec(&identity).unwrap()).unwrap();
+    assert!(
+        !audit("--check").status.success(),
+        "strict artifact identity mismatch must reject"
+    );
+    assert!(
+        !audit("--check-artifacts").status.success(),
+        "artifact identity mismatch must still reject"
     );
 }
 

@@ -4,8 +4,10 @@
 Reads linked opcode identities, NEVER executes/decodes instructions or reads a
 simulator result. Each emit below declares an algorithm/assembly effect directly.
 Not used at run time: changing these tables requires oracle-version review.
-Usage: python3 tools/a10/derive_oracles.py target/<fresh-build> [--check]
---check audits the checked-in derivation without changing any file.
+Usage: python3 tools/a10/derive_oracles.py target/<fresh-build> [--check|--check-artifacts]
+--check audits the complete checked-in derivation without changing any file.
+--check-artifacts excludes only build-tool identities: identical source/linker/ELF
+and semantic/placement expectations remain mandatory. It does not certify tools.
 """
 import json
 from pathlib import Path
@@ -19,6 +21,10 @@ BUILD = Path(sys.argv[1])
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT/'tools/a10/public-v1.json'
 manifest = json.loads(MANIFEST.read_text())
+original_tools = {k:manifest[k] for k in ['tool_versions', 'arm64_tool_sha256']}
+mode = sys.argv[2:]
+if mode not in [[], ['--check'], ['--check-artifacts']]:
+    raise ValueError('expected only --check or --check-artifacts')
 build = json.loads((BUILD/'build.json').read_text())
 manifest.update(schema='a10-oracle/1', version=1,
     image='ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c',
@@ -245,6 +251,10 @@ for f in manifest['fixtures']:
         if names[noff:].split(b'\0')[0]==b'.signature':
             f['signature_file_offset']=struct.unpack_from('<Q',elf,hdr+24)[0]
 
+# An explicit portable audit preserves the baseline tool metadata instead of
+# falsely certifying a different producer. build.json retains actual identities.
+if mode == ['--check-artifacts']:
+    manifest.update(original_tools)
 # Keep one complete trace row per line for bounded, reviewable diffs.
 header={k:v for k,v in manifest.items() if k!='fixtures'}
 lines=[json.dumps(header,indent=2)[:-2]+',\n  "fixtures": [']
@@ -260,9 +270,12 @@ for index,f in enumerate(manifest['fixtures']):
     lines.append('    }'+(',' if index+1<len(manifest['fixtures']) else ''))
 lines.extend(['  ]','}'])
 rendered='\n'.join(lines)+'\n'
-if '--check' in sys.argv[2:]:
+if mode:
     if rendered != MANIFEST.read_text():
         raise ValueError('checked-in oracle differs from independent derivation')
-    print('P0 linked-source/oracle derivation audit: matches (no simulator invoked)')
+    if mode == ['--check-artifacts']:
+        print('P0 artifact-equivalence/oracle audit: matches; NOT pinned-toolchain evidence (no simulator invoked)')
+    else:
+        print('P0 linked-source/oracle derivation audit: matches (no simulator invoked)')
 else:
     MANIFEST.write_text(rendered)
