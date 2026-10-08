@@ -252,6 +252,17 @@ fn all_mandatory_fixtures_own_their_public_route_oracle() {
                     let mut wrong = s.clone();
                     wrong.process_code = Some(99);
                     reject(&m, f, &wrong, "process code");
+                    let mut wrong = s.clone();
+                    wrong.cli_signature_size = Some(0);
+                    reject(&m, f, &wrong, "CLI signature size");
+                    if f.signature.is_some() {
+                        let mut missing = s.clone();
+                        missing.cli_signature_size = None;
+                        assert!(matches!(
+                            validate(&m, f, &missing),
+                            Err(Rejection::Unavailable(_))
+                        ));
+                    }
                 } else if f.signature.is_some() {
                     for index in [0, 8, 16] {
                         let mut wrong = s.clone();
@@ -555,6 +566,70 @@ fn malformed_cli_capture_is_not_a_correctness_pass() {
         assert!(routes::parse_cli(text, &[], Some(0), "off", None).is_err());
     }
     assert!(routes::parse_cli("", b"transport failure", Some(0), "off", None).is_err());
+}
+
+#[test]
+fn cli_signature_metadata_from_real_capture_is_exact_and_unique() {
+    let Some(build) = build() else { return };
+    let m = manifest();
+    let f = m.fixtures.iter().find(|f| f.id == "control_loop").unwrap();
+    let elf = build.out.join(format!("{}.elf", f.id));
+    let cli = Path::new(env!("CARGO_BIN_EXE_ruscv-sim"));
+    let captured =
+        routes::capture_cli(f, "off", &elf, cli, &build.out.join("metadata.log")).unwrap();
+    validate(&m, f, &captured).unwrap();
+    assert_eq!(captured.cli_signature_size, Some(24));
+    let output = Command::new(cli).arg("run").arg(&elf).output().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let parse =
+        |text: &str| routes::parse_cli(text, &output.stderr, output.status.code(), "off", None);
+    let valid = parse(&stdout).unwrap();
+    validate(&m, f, &valid).unwrap();
+    assert_eq!(valid.cli_signature_size, Some(24));
+    assert!(valid.result.as_ref().unwrap().signature.is_none());
+    let mut missing_size = valid.clone();
+    missing_size.cli_signature_size = None;
+    assert!(matches!(
+        validate(&m, f, &missing_size),
+        Err(Rejection::Unavailable(_))
+    ));
+    let metadata = format!(
+        "Signature:  0x{:016x} (24 bytes)\n",
+        f.signature_addr.unwrap()
+    );
+    assert_eq!(stdout.matches(&metadata).count(), 1);
+    let zero = metadata.replace("(24 bytes)", "(0 bytes)");
+    let wrong_size = parse(&stdout.replace(&metadata, &zero)).unwrap();
+    reject(&m, f, &wrong_size, "CLI signature size");
+    for duplicate in [
+        format!("{zero}{metadata}"),
+        format!("{metadata}{zero}"),
+        format!("{metadata}{metadata}"),
+    ] {
+        assert!(
+            parse(&stdout.replace(&metadata, &duplicate)).is_err(),
+            "duplicate CLI signature passed"
+        );
+    }
+    for malformed in [
+        "Signature:  0x80002000\n",
+        "Signature:  0x0000000080002000 (bytes)\n",
+        "Signature:  0x0000000080002000 (24 bytes) junk\n",
+        "Signature:  junk (24 bytes)\n",
+        "Signature :  0x0000000080002000 (24 bytes)\n",
+        "Signature:  0x0000000080002000 (+24 bytes)\n",
+        "Signature:  0x0000000080002000 (18446744073709551616 bytes)\n",
+    ] {
+        assert!(
+            parse(&stdout.replace(&metadata, malformed)).is_err(),
+            "malformed CLI signature passed: {malformed}"
+        );
+    }
+    let missing = parse(&stdout.replace(&metadata, "")).unwrap();
+    assert!(
+        validate(&m, f, &missing).is_err(),
+        "missing CLI signature passed"
+    );
 }
 
 #[test]

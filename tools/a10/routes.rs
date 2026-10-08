@@ -70,18 +70,42 @@ pub fn parse_cli(
     let error = report
         .lines()
         .find_map(|s| s.strip_prefix("Error:      ").map(str::to_string));
-    let signature = report.lines().find_map(|s| s.strip_prefix("Signature:  "));
-    let signature_addr = signature
-        .map(|s| {
-            s.split_whitespace()
-                .next()
-                .ok_or("invalid signature address")
-                .and_then(|a| {
-                    u64::from_str_radix(a.trim_start_matches("0x"), 16)
-                        .map_err(|_| "invalid signature address")
-                })
-        })
-        .transpose()?;
+    // Optional means absent, not ambiguous: parse the entire field exactly
+    // once. Also reject malformed labels instead of silently treating them as
+    // absence (including when a valid Signature line follows them).
+    let signatures: Vec<_> = report
+        .lines()
+        .filter(|line| line.trim_start().starts_with("Signature"))
+        .collect();
+    let signature = match signatures.as_slice() {
+        [] => None,
+        [line] => {
+            let text = line
+                .strip_prefix("Signature:  ")
+                .ok_or("invalid CLI Signature field")?;
+            let (address, size) = text
+                .split_once(" (")
+                .ok_or("invalid CLI Signature metadata")?;
+            let address = u64::from_str_radix(
+                address
+                    .strip_prefix("0x")
+                    .ok_or("invalid CLI signature address")?,
+                16,
+            )
+            .map_err(|_| "invalid CLI signature address")?;
+            let size = size
+                .strip_suffix(" bytes)")
+                .ok_or("invalid CLI signature size")?
+                .parse::<u64>()
+                .map_err(|_| "invalid CLI signature size")?;
+            if *line != format!("Signature:  0x{address:016x} ({size} bytes)") {
+                return Err("invalid CLI Signature format".into());
+            }
+            Some((address, size))
+        }
+        _ => return Err("duplicate CLI Signature field".into()),
+    };
+    let signature_addr = signature.map(|(address, _)| address);
     let result = PublicResult {
         exit_code: field(report, "Exit Code:  ")?
             .parse::<u32>()
@@ -108,6 +132,7 @@ pub fn parse_cli(
     }
     let mut sample = Sample::public("cli", mode, result);
     sample.process_code = process_code;
+    sample.cli_signature_size = signature.map(|(_, size)| size);
     sample.uart = Some(uart.as_bytes().to_vec());
     sample.log = log;
     Ok(sample)
@@ -135,19 +160,9 @@ pub fn capture_cli(
     } else {
         None
     };
-    let sample = parse_cli(&stdout, &output.stderr, output.status.code(), mode, file)?;
-    // The public CLI exposes size, not bytes. Validate its own metadata too.
-    if let Some(bytes) = &f.signature {
-        let metadata = format!(
-            "Signature:  0x{:016x} ({} bytes)\n",
-            f.signature_addr.unwrap(),
-            bytes.len()
-        );
-        if !stdout.contains(&metadata) {
-            return Err("CLI signature metadata mismatch".into());
-        }
-    }
-    Ok(sample)
+    // Retain the single parsed address/size for the shared validator; searching
+    // stdout for an expected line cannot establish unambiguous evidence.
+    parse_cli(&stdout, &output.stderr, output.status.code(), mode, file)
 }
 pub fn capture_flat(f: &Fixture, bytes: &[u8]) -> Result<Sample, String> {
     let mut flat = RiscVSimulator::new(1);

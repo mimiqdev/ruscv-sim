@@ -150,6 +150,8 @@ pub struct Sample {
     pub mode: String,
     pub result: Option<PublicResult>,
     pub process_code: Option<i32>,
+    /// CLI metadata only: bytes are not exposed by the public CLI.
+    pub cli_signature_size: Option<u64>,
     pub counts: Option<Counts>,
     pub minstret: Option<u64>,
     pub regs: Option<Vec<u64>>,
@@ -169,6 +171,7 @@ impl Sample {
             mode: mode.into(),
             result: Some(result),
             process_code: None,
+            cli_signature_size: None,
             counts: None,
             minstret: None,
             regs: None,
@@ -304,6 +307,15 @@ pub fn validate(m: &Manifest, f: &Fixture, s: &Sample) -> Check {
             &f.signature,
         )?;
     } else {
+        if let Some(signature) = &f.signature {
+            equal(
+                "CLI signature size",
+                required("CLI signature size", &s.cli_signature_size)?,
+                &(signature.len() as u64),
+            )?;
+        } else {
+            equal("CLI signature size", &s.cli_signature_size, &None)?;
+        }
         equal(
             "process code",
             required("process code", &s.process_code)?,
