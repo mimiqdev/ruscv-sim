@@ -2,7 +2,7 @@
 
 **Status:** Current historical-evidence navigation; checkpoint bodies retain their original as-of status.
 
-**Authority:** Informational; the active A9 contract and accepted ADRs constrain interpretation.
+**Authority:** Informational; the [preserved approved A9 contract](../archive/milestones/a9-hart-facts-safe-n1-machine-lifecycle.md) and accepted ADRs constrain interpretation.
 
 **Delivery update (2026-10-02):** PR #69 has merged at `0898f1215c4508e98d4db958080f6dd01b5745bf`.
 Final PR-head gate/review and exact merge-head CI success are recorded separately in
@@ -10,12 +10,12 @@ Final PR-head gate/review and exact merge-head CI success are recorded separatel
 and the [implementation closeout record](../archive/milestones/a9-closeout-record.md).
 The pending CI/review statements below describe their original checkpoints only.
 No checkpoint result is relabeled as final-head execution. Technical implementation/evidence
-is accepted; A9 remains active pending successor approval and actual rolling replacement.
+is accepted. Detailed A10 successor and documentation-only rotation approved 2026-10-03 UTC; formal A9 completion/archival takes effect on actual rotation merge. Until then main retains A9; on merge [A10](../dev-plan.md) becomes sole Current. PR #70 closeout document delivery and distinct CI identities are in the closeout record; no new runtime evidence is assigned to that document SHA.
 
 ## 1. Scope and evidence identity
 
 This record preserves **T0–T3 checkpoints** and adds the separately authorized
-**local T4 evidence** in §13, under [the A9 contract](../dev-plan.md) §5.
+**local T4 evidence** in §13, under [the A9 contract](../archive/milestones/a9-hart-facts-safe-n1-machine-lifecycle.md#5-dependencies-deliverables-and-executable-acceptance) §5.
 Sections 2–5 preserve the frozen T0 inventory, evidence and original expectations;
 §6 records the T1 Hart observation checkpoint; §7 records its CLI reporting-error
 correction. §8 records T2's directly tested N=1 composition/lifecycle owner;

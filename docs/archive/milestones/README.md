@@ -4,10 +4,9 @@ This directory contains completed and explicitly superseded milestone plans with
 
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
-[active A9 contract](../../dev-plan.md), activated by PR #68 on 2026-09-29 UTC.
+[approved A10 contract](../../dev-plan.md), active on actual rotation merge following approval 2026-10-03 UTC. Until then main retains A9; on merge A9 is formally completed/archived.
 The [A8 snapshot](a8-single-hart-atomic-physical-convergence.md) is historical.
-The A9 implementation closeout record below accepts technical evidence only;
-it does not archive/move that active contract or complete the rolling transition.
+A9's entire contract and standalone closeout below preserve distinct implementation and document-delivery evidence; this docs-only rotation is not A10 implementation.
 
 ## Rolling process
 
@@ -22,9 +21,11 @@ it does not archive/move that active contract or complete the rolling transition
 
 ## Records
 
+- [A9: Entire approved Hart facts and safe N=1 lifecycle contract](a9-hart-facts-safe-n1-machine-lifecycle.md)
+  - Technical acceptance 2026-10-02; closeout document delivery 2026-10-03; successor/rotation approved 2026-10-03 UTC. Full original body preserved, formal completion/archival effective on actual rotation merge.
 - [A9: Implementation acceptance and closeout record](a9-closeout-record.md)
-  - Technical acceptance and implementation delivery recorded 2026-10-02, PR #69 merge `0898f121…` with exact merge-head CI; active contract stays in `docs/dev-plan.md`, formal rolling completion pending successor approval/rotation.
-  - [Detailed Stage 3 draft](../../proposals/a10-performance-test-infrastructure.md) is an approval candidate only, not active or implemented.
+  - PR #69 merge `0898f121…` has exact merge-head runtime CI; PR #70 document merge `32bb28e…` has separate exact-head static review/document checks and synthetic PR-checkout CI, not direct-head runtime evidence. Docs-only main push CI is not scheduled by policy.
+  - [Approved Stage 3 informational snapshot](../../proposals/a10-performance-test-infrastructure.md) is not a second Current contract or implemented facility.
 
 - [A8: Single-Hart atomic/physical convergence — archived contract](a8-single-hart-atomic-physical-convergence.md)
   - Archived by A9 activation PR #68 on 2026-09-29 UTC. It records A8's 2026-09-21 activation, implementation merged at `4c4d0a2`, and [closeout assessment](../../verification/a8-closeout-assessment.md) merged at `902a428`; its original task/activation wording is historical, not A9 scope.
