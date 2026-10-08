@@ -1,14 +1,18 @@
 # A10 infrastructure progress — P0 checkpoint
 
-**Scope/status:** P0 correctness infrastructure only. Implementation is committed; independent checkpoint review and exact-clean-HEAD gates are still required before P1 authorization. This is not A10 completion, an ACT4 claim, or a performance verdict. P1–P4 (measurement phases, stable command/schema, comparison and CI/final acceptance) are not implemented here.
+**Status:** Current
 
-**Authority:** [Current A10 contract](../dev-plan.md), accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md) and [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md). [A9 closeout](a9-closeout-assessment.md) remains the historical safety baseline, not performance evidence.
+**Authority:** Informational; implementation and verification inventory, not an acceptance contract.
+
+**Scope:** P0 correctness infrastructure only. This is not A10 completion, an ACT4 claim, or a performance verdict. P1–P4 (measurement phases, stable command/schema, comparison and CI/final acceptance) are not implemented here.
+
+**Contract references:** [Current A10 contract](../dev-plan.md), accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md) and [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md). [A9 closeout](a9-closeout-assessment.md) remains the historical safety baseline, not performance evidence.
 
 ## Landed milestone activation
 
 [PR #71](https://github.com/mimiqdev/ruscv-sim/pull/71) merged **2026-10-08T02:53:47Z** as `e73b12b8467fd635b398382a5cbc7ce75d842f68`, formally completing/archiving A9 and activating A10 as the sole Current contract. The reviewed rotation head was `d78f212e70fab43362febf43d3055c920db3cf69`. Their tree/content equality is documentation provenance only, not runtime, ACT4 or performance verification. [Rotation evidence](https://github.com/mimiqdev/ruscv-sim/pull/71#issuecomment-6051203681) records the bounded documentation review/CI; Coverage, standalone release and ELF jobs were skipped there. Archived contract/proposal bodies and historical JSON are unchanged.
 
-P0 starts at that immutable merge baseline. Implementation commits are `56cf5b945343b03545c4cef2ad11c88e9a2dc530` (fixtures/oracles/public-route harness) and `02ba43863a00c6e29f482f299d515df6a5905824` (retirement-reader underflow regression). Git history identifies the subsequent checkpoint-document revision; no document can embed its own commit hash. Final verification must bind to the actual committed handoff HEAD, not merely these implementation revisions.
+P0 starts at that immutable merge baseline. Implementation commits are `56cf5b945343b03545c4cef2ad11c88e9a2dc530` (fixtures/oracles/public-route harness) and `02ba43863a00c6e29f482f299d515df6a5905824` (retirement-reader underflow regression). Git history identifies the subsequent checkpoint-document revision; no document can embed its own commit hash. Verification and review must bind to the exact committed PR revision, not merely these implementation revisions.
 
 ## Repository artifacts and public API inventory
 
@@ -84,7 +88,7 @@ Text logs are a separate exact presentation oracle: equal-value GPR writes are o
 
 ## Focused regressions and negative/lifecycle evidence
 
-Eight tests in `a10_p0_oracles.rs`:
+Nine tests in `a10_p0_oracles.rs`:
 
 1. `versioned_manifest_and_capabilities_fail_closed`: version/schema, required capabilities/N/A and manifest expectations.
 2. `all_mandatory_fixtures_own_their_public_route_oracle`: all 148 cells, independent captures and applicable negative mutations for result/code/PC/signature/counters/GPR/x0/RAM/UART/device/signal/events/log/facts; missing evidence fails closed.
@@ -94,6 +98,7 @@ Eight tests in `a10_p0_oracles.rs`:
 6. `p0_oracle_audits_and_regressions_are_not_simulator_recordings`: fresh-source derivation audit and discovered UART/capture regressions.
 7. `corrupted_guest_and_mutated_work_expectations_fail_real_public_samples`: actual faulty linked guest fails every route; wrong work/checksum/reader expectations and invalid reader underflow reject real captures.
 8. `public_file_write_failure_never_becomes_a_correct_sample`: Unix `/dev/full`, using only public logger construction; native library, CLI and both Machine kinds reject failed reporting while preserving the already-retired first instruction and receipt/drain obligations.
+9. `cli_signature_metadata_from_real_capture_is_exact_and_unique`: validate a real CLI capture, retain its signature size, then reject wrong size, conflicting/identical duplicate fields, malformed complete fields and missing signature metadata. The same validator checks size on every applicable CLI matrix sample; no substring search or companion bytes can bless contradictory evidence.
 
 Development failures were reproduced and repaired **only in the harness**:
 
@@ -101,6 +106,7 @@ Development failures were reproduced and repaired **only in the harness**:
 - hello initially expected UART LSR `0x60` for every poll. Existing UART retains TX bytes: only the first read is `0x60`, later reads are `0x20`. The source-derived oracle and regression pin that contract, without changing the device.
 - Flat Machine's empty UART capture was initially not checked; a mutation now proves rejection.
 - A zero retirement expectation underflowed `retirements - 6`; the reproducer panicked. Checked subtraction now returns semantic rejection, covered by the same real-sample negative test.
+- CLI capture formerly discarded signature size and accepted an expected metadata line anywhere in stdout, allowing a contradictory zero-byte field followed by the correct field. A real-capture wrong-size regression reproduced the false pass. Parsing now requires exactly one complete canonical optional field, retaining both address and size for validation; duplicate/malformed fields fail during capture and size mismatch fails the shared validator.
 - [PR #72 CI run 37724337992](https://github.com/mimiqdev/ruscv-sim/actions/runs/37724337992) failed the harness at `931fe310a90a250952d1dad79aaa2c6697c734de`: Ubuntu binutils 2.42 produced the exact pinned ELF hashes but differed from the development image's 2.40 version string. Ordinary cross-toolchain correctness now explicitly checks artifact equivalence and records actual producer identities, without claiming tool pins. Required checkpoint verification remains strict under `RISCV_REQUIRE_A10_PINNED_TOOLS=1`: exact version and ARM64 tool-byte identities plus the complete `--check` audit. A fresh-build metadata-mutation regression proves that portable audit accepts identity-only differences, strict audit rejects them, and **both** reject changed ELF identity. No CI workflow/performance facility changed.
 
 Existing A9 tests remain unchanged. Their separate Hart/lifecycle/facade/CLI suites are included in the exact-HEAD verification command, in addition to the full Rust suite. Unknown physical completion remains quarantined; no forced drain/recovery, guest trap repair, fixed-width fetch change or host nondeterminism suppression is added.
@@ -113,6 +119,8 @@ Subsequent **clean committed** container verification at `b13b7c20620b39d2266fdb
 
 At `931fe310a90a250952d1dad79aaa2c6697c734de`, all six host requirements and the fresh pinned-container wrapper passed and were recorded at the clean committed HEAD; [public evidence](https://github.com/mimiqdev/ruscv-sim/pull/72#issuecomment-6051768319) includes command/environment/binary/ELF identities. The subsequent ordinary-CI producer-identity failure described above required a same-scope harness repair. That record remains historical, **not** evidence for the repaired PR head. [Draft PR #72](https://github.com/mimiqdev/ruscv-sim/pull/72) is the bounded P0 checkpoint, not authorization to merge or begin P1.
 
+The independently reviewed P0 revision `5d3a6ce7b32f721316e6688be440ac77d4abf1cf` had passing [public verification evidence](https://github.com/mimiqdev/ruscv-sim/pull/72#issuecomment-6051979166) and [CI Quality and tests](https://github.com/mimiqdev/ruscv-sim/actions/runs/37725234480/job/113141781010), with Coverage skipped. Static read-only review nevertheless found the CLI signature ambiguity and non-public reproduction instructions in this document. Both are addressed in the source/tests and repository-only commands below; earlier-head verification is historical, not proof of the repair revision.
+
 Environment inspected: Docker image `ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c`, Linux/aarch64, Rust/Cargo 1.97.1, GNU RISC-V binutils 2.40. Host checks are separate: Darwin/arm64, Rust/Cargo 1.98.1. A host test run without a cross toolchain explicitly prints **UNAVAILABLE** for those fixtures; its process success cannot substitute for required-toolchain container evidence.
 
 From a clean committed P0 HEAD, reproduce the bounded toolchain/artifact/public-route verification with:
@@ -123,13 +131,19 @@ bash tools/a10/verify_p0.sh
 
 The wrapper uses non-login `bash -c`, `CARGO_BUILD_JOBS=2`, `RISCV_REQUIRE_RISCV_TOOLCHAIN=1`, `RISCV_REQUIRE_A10_PINNED_TOOLS=1`, `--locked`, a new `target/a10-p0-verify-XXXXXX/cargo` build output, and a separate fresh fixture output. It runs fmt, all-features check, strict all-target Clippy, all-features tests/docs, focused P0 with `--nocapture`, A9 regression suites, derivation audit, baseline-to-HEAD diff check and unchanged production/historical-source scope audit. It records source HEAD/tree, timestamps, OS/tool/image identities, actual source/manifest/Cargo.lock/binary/ELF/build-report hashes and logs under that local ignored output. It refuses a dirty worktree and checks that HEAD/tree cleanliness did not change during execution; it deletes nothing.
 
-Worker protocol records **separate exact-HEAD observations**, not prose-derived pass hints:
+The separate host Rust quality gate and baseline whitespace audit are repository-owned commands:
 
 ```bash
-qing verify a10-performance-infrastructure --check-set a10-rust --json
-qing verify a10-performance-infrastructure --check a10-p0-public-oracles --json -- bash tools/a10/verify_p0.sh
+git rev-parse HEAD
+git status --porcelain
+cargo fmt --all -- --check
+cargo check --all-features
+cargo clippy --all-features --all-targets -- -D warnings
+cargo test --all-features
+cargo doc --all-features --no-deps
+git diff --check e73b12b8467fd635b398382a5cbc7ce75d842f68..HEAD
 ```
 
-The immutable six captured requirements retain their existing IDs: `a9-fmt`, `a9-check`, `a9-clippy`, `a9-tests`, `a9-doc`, `a10-implementation-diff`. All must be observed at the final committed handoff HEAD. These commands are reproduction instructions, **not claims that the final observations have already passed**. Exact-HEAD command output and artifact hashes must accompany checkpoint delivery/review; any later code change requires new verification and independent review.
+These instructions are **not claims of a passed repair revision**. Record the full committed revision/tree and clean state with each command's output, environment and artifact hashes in public PR verification evidence. Run the pinned-container wrapper as well: a host test result with missing cross tools cannot establish the public-route fixture assertions. Any later source change invalidates prior verification and requires fresh checks and independent PR-head review under [repository guidance](../../AGENTS.md).
 
-Remaining: final exact-clean-HEAD observations, typed P0-only handoff and independent committed-head review; supervisor authorization before P1. No timings, throughput, speed verdict, repeated-run schema/driver, comparison mode, benchmark CI, full 58-guest rebuild matrix, final nine-command P4 acceptance, merge, release or successor activation is claimed.
+P0 coverage is limited to the correctness artifacts above. No timings, throughput, speed verdict, repeated-run schema/driver, comparison mode, benchmark CI, full 58-guest rebuild matrix, final nine-command P4 acceptance, merge or release is claimed.
