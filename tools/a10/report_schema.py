@@ -85,6 +85,14 @@ def obs(value):
     else:
         require(value['availability'] == 'known' and value['value'] is not None and value['reason'] is None and value['provenance'], 'known observation contradicts absence')
 
+def host_check(value, schema):
+    """All known host identities require the same complete typed observations."""
+    host_rule=schema['$defs']['host']
+    schema_check(value,host_rule,schema['$defs'],'host')
+    for key in host_rule['properties']:
+        if key not in ('observer','utc'):
+            obs(value[key])
+
 def source_check(root, source):
     manifest = loads(read(root, source['manifest']))
     require(digest(read(root, source['manifest'])) == source['manifest_sha256'], 'source manifest digest')
@@ -314,15 +322,14 @@ def validate(path, reader, expected_digest=None, sealed=True):
         if env[key]['availability'] == 'known' and 'artifact' in env[key]['provenance']:
             data = read(root,env[key]['provenance']['artifact'])
             require(digest(data) == env[key]['provenance']['sha256'] and loads(data) == env[key]['value'], 'environment provenance bytes mismatch')
-    for value in env['execution'].values():
-        if type(value) is dict:
-            obs(value)
+    host_check(env['execution'],schema)
     if env['container']['availability'] == 'known' and env['container']['value'].get('kind')=='native-no-known-container':
         require(env['execution']['container_detected']['value'] is False and env['container']['value']['inspection']==env['execution']['container_detected'],'native container/OS observation mismatch')
     elif env['container']['availability'] == 'known':
         c = env['container']['value']; require(c['container']['Image'] == c['image']['Id'] and '@sha256:' in c['container']['Config']['Image'] and c['container']['Config']['Image'] in c['image']['RepoDigests'], 'actual container digest/platform mismatch')
         require(c['image']['Os'].lower() == env['execution']['os']['value'].lower() and {'arm64':'aarch64','amd64':'x86_64'}.get(c['image']['Architecture'],c['image']['Architecture']) == env['execution']['architecture']['value'], 'container platform vs inspected execution OS')
     if env['physical_host']['availability'] == 'known':
+        host_check(env['physical_host']['value'],schema)
         require(env['physical_host']['value']['container_detected']['value'] is False, 'container identity is not physical host inspection')
     clocks = {c['id']:c for c in report['clocks']}
     require(len(clocks) == len(report['clocks']), 'duplicate/conflicting clock IDs')

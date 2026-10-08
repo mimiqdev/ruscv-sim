@@ -49,7 +49,7 @@ pub trait Clock {
         None
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClockEvidence {
     pub id: String,
@@ -103,7 +103,7 @@ impl Clock for HostClock {
             .expect("host clock exceeds u64 ns")
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Interval {
     pub start_ns: u64,

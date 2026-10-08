@@ -213,6 +213,120 @@ fn missing_duplicate_reordered_wrong_route_repetitions_and_clock_origins_fail() 
     }
 }
 #[test]
+fn native_timing_must_equal_complete_own_child_interval_and_clock() {
+    let Some(a) = actual() else { return };
+    for route in ["native-bytes", "native-file"] {
+        for mode in ["off", "file"] {
+            for rep in [0, 1] {
+                let basic = index(&a.report, route, "end_to_end", mode, "fib");
+                let i = basic - 1 + rep;
+                for field in [
+                    "timestamps",
+                    "method",
+                    "empty_controls",
+                    "read_controls",
+                    "resolution_reason",
+                ] {
+                    let mut bad = a.report.clone();
+                    let r = &mut bad["records"][i]["raw"];
+                    match field {
+                        "timestamps" => {
+                            for key in ["start_ns", "stop_ns"] {
+                                r["interval"][key] =
+                                    json!(r["interval"][key].as_u64().unwrap() + 17);
+                            }
+                        }
+                        "method" => {
+                            r["clock"]["method"] =
+                                json!("fabricated method with unchanged clock id")
+                        }
+                        "resolution_reason" => {
+                            r["clock"]["advertised_resolution_reason"] =
+                                json!("fabricated resolution provenance")
+                        }
+                        _ => {
+                            let key = if field == "empty_controls" {
+                                "empty_timer_ns"
+                            } else {
+                                "successive_read_ns"
+                            };
+                            r["clock"][key][0] = json!(r["clock"][key][0].as_u64().unwrap() + 17);
+                            let c = &r["clock"];
+                            let min = c["empty_timer_ns"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .chain(c["successive_read_ns"].as_array().unwrap())
+                                .filter_map(Value::as_u64)
+                                .filter(|n| *n > 0)
+                                .min();
+                            r["clock"]["observed_resolution_ns"] = json!(min);
+                        }
+                    }
+                    // Duration/ID/local control accounting still agree; original stdout
+                    // is untouched. Only full own-child equality can reject these.
+                    assert!(
+                        replay::validate_report(&a.root, &bad).is_err(),
+                        "{route}/{mode}/rep{rep}/{field} accepted"
+                    );
+                }
+            }
+        }
+    }
+}
+#[test]
+fn native_sample_cannot_fabricate_unexposed_introspection() {
+    let Some(a) = actual() else { return };
+    for route in ["native-bytes", "native-file"] {
+        for mode in ["off", "file"] {
+            for rep in [0, 1] {
+                let basic = index(&a.report, route, "end_to_end", mode, "fib");
+                let i = basic - 1 + rep;
+                for field in [
+                    "counts",
+                    "regs",
+                    "x0",
+                    "ram",
+                    "minstret",
+                    "process_code",
+                    "cli_signature_size",
+                    "uart_state",
+                    "signal",
+                    "events",
+                    "facts",
+                    "reporting_error",
+                ] {
+                    let mut bad = a.report.clone();
+                    let s = &mut bad["records"][i]["raw"]["sample"];
+                    match field {
+                        "counts" => {
+                            s[field] = json!({"attempts":0,"turns":0,"retirements":0,"traps":0})
+                        }
+                        "regs" | "x0" => {
+                            s["regs"] = json!(vec![0; 32]);
+                            if field == "x0" {
+                                s["regs"][0] = json!(1);
+                            }
+                        }
+                        "ram" => s[field] = json!([{"offset":0,"bytes":[123]}]),
+                        "events" | "facts" => s[field] = json!([]),
+                        "uart_state" => {
+                            s[field] = json!({"base_addr":0x10000000_u64,"rx_fifo":[],"tx_fifo":[],"registers":vec![0;10]})
+                        }
+                        "signal" => s[field] = json!([0, 0]),
+                        "reporting_error" => s[field] = json!("fabricated reporting metadata"),
+                        _ => s[field] = json!(0),
+                    }
+                    assert!(
+                        replay::validate_report(&a.root, &bad).is_err(),
+                        "{route}/{mode}/rep{rep}/{field} accepted"
+                    );
+                }
+            }
+        }
+    }
+}
+#[test]
 fn strict_python_shapes_safe_references_immutable_reporting_and_stats_controls() {
     assert!(Command::new("python3")
         .args(["-B", "tools/a10/test_schema.py"])

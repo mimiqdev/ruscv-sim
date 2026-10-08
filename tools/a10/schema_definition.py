@@ -50,6 +50,10 @@ DEFS = {
  'binary': obj({'path': S, 'sha256': SHA, 'bytes': U, 'artifact': PATH}),
  'tool': obj({'command': TEXTS, 'path': S, 'version': {'type':'string','minLength':1}, 'sha256': SHA, 'bytes': U, 'artifact': PATH}),
  'host': obj(dict({'observer':S,'utc':S}, **{key:OBS for key in ('architecture','os','kernel','logical_cpus','container_detected','cpu_model','model','memory','virtualization','governor','turbo','affinity')})),
+ 'host_observation': {'oneOf':[
+     obj({'availability':{'const':'known'},'value':ref('host'),'reason':{'type':'null'},'provenance':{'type':'object','minProperties':1}}),
+     obj({'availability':{'const':'unavailable'},'value':{'type':'null'},'reason':{'type':'string','minLength':1},'provenance':{'type':'object','minProperties':1}})
+ ]},
  'codegen': obj({'method':S,'c_flags':TEXTS,'release_manifest':{'type':'object'},'target_cpu_reason':nullable(S)}),
  'inputs': obj({'env':{'type':'object','required':list(('CARGO_BUILD_TARGET','CARGO_BUILD_JOBS','CARGO_TARGET_DIR','RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','RUSTC','RUSTC_WRAPPER','RUSTC_WORKSPACE_WRAPPER','RUSTUP_TOOLCHAIN','CARGO_HOME','RUSTUP_HOME','RISCV_PREFIX','RISCV_REQUIRE_A10_PINNED_TOOLS'))},'configs':array(obj({'path':S,'sha256':SHA,'build_sections':{'type':'object'},'other_sections_reason':S})),'wrappers':array(obj({'env':S,'path':S,'sha256':SHA,'bytes':U,'artifact':PATH})),'cargo_toml':PATH,'lockfile':PATH}),
  'build_env': obj({key:nullable(S) for key in ('CARGO_BUILD_JOBS','CARGO_TARGET_DIR','RISCV_PERF_BUILD_HEAD','RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','RUSTC','RUSTC_WRAPPER','RUSTC_WORKSPACE_WRAPPER','RUSTUP_TOOLCHAIN','CARGO_BUILD_TARGET')}),
@@ -65,7 +69,7 @@ SCHEMA = dict({'$schema':'https://json-schema.org/draft/2020-12/schema', '$id':'
  'build': obj({'profile':{'const':'release'},'features':TEXTS,'target':S,'argv':TEXTS,'env':ref('build_env'),'inputs':ref('inputs'),'effective_rustc':TEXTS,'codegen':ref('codegen'),'transcript':PATH,'stdout':PATH,'events':PATH,'lockfile_sha256':SHA}),
  'tools': obj({key:ref('tool') for key in ('rustc','cargo','rustfmt','as','ld','nm','objdump')}),
  'binaries': obj({key:ref('binary') for key in ('driver','cli','probe')}),
- 'environment': obj({'execution':ref('host'),'physical_host':OBS,'container':OBS,'ci':OBS,'filesystem':OBS,'sink_policy':S,'concurrency':S}),
+ 'environment': obj({'execution':ref('host'),'physical_host':ref('host_observation'),'container':OBS,'ci':OBS,'filesystem':OBS,'sink_policy':S,'concurrency':S}),
  'fixtures': array(obj({'id':S,'source':PATH,'linker':PATH,'elf':PATH,'source_sha256':SHA,'linker_sha256':SHA,'elf_sha256':SHA,'metadata':{'type':'object'},'producer':{'type':'object'},'identity_class':{'enum':['strict-pinned-tools','portable-artifact-equivalence']}}),12),
  'clocks': array(ref('clock')), 'policy':obj({'basic_repetitions':integer(8,1),'warmup_repetitions':{'const':1},'calibrated':{'const':False},'version':S,'sufficiency':OBS}),
  'records': array(ref('record')), 'aggregates': array(ref('aggregate')), 'semantic_status':{'enum':['correct','semantic_failure','unavailable']}, 'comparison_status':{'const':'inconclusive'}, 'diagnostics':TEXTS,

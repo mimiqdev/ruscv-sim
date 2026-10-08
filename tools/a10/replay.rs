@@ -481,15 +481,25 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
                 wire.check(route)?;
                 need(r.scope_error.is_none(), "fabricated native scope/discard")?;
                 need(
-                    serde_json::to_value(&wire.result).unwrap()
-                        == serde_json::to_value(&s.result).unwrap()
-                        && s.uart.as_deref() == Some(uart.as_bytes())
-                        && r.clock.as_ref().map(|c| &c.id) == Some(&wire.clock.id)
-                        && r.interval.as_ref().map(|i| i.elapsed_ns)
-                            == Some(wire.interval.elapsed_ns)
+                    r.clock.as_ref() == Some(&wire.clock)
+                        && r.interval.as_ref() == Some(&wire.interval)
                         && r.native_ops.as_ref() == Some(&wire.ops)
                         && r.input_sha256.as_ref() == Some(&wire.input_sha256),
-                    "native sample/clock not own retained transport",
+                    "native interval/clock not own retained transport",
+                )?;
+                // The public native facade exports only this result, UART and
+                // optional file log. Compare the complete reconstructed carrier
+                // so unsupported introspection cannot be labeled as observed.
+                let mut captured = Sample::public(route, mode, wire.result);
+                captured.uart = Some(uart.as_bytes().to_vec());
+                captured.log = if mode == "file" {
+                    Some(String::from_utf8(read(root, &refs["log"])?).map_err(|e| e.to_string())?)
+                } else {
+                    None
+                };
+                need(
+                    serde_json::to_value(captured).unwrap() == serde_json::to_value(s).unwrap(),
+                    "native sample not its complete retained own public capture",
                 )?;
             }
         } else {

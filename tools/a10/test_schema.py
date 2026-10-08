@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from integrity import canonical, digest, Invalid, json_new, loads, read, retrieve, safe, seal, Unavailable, write_new
-from report_schema import aggregates, build_events, codegen_flags, obs, schema_check
+from report_schema import aggregates, build_events, codegen_flags, host_check, obs, schema_check
 from schema_definition import SCHEMA
 from collect import ROOT, observation
 
@@ -92,6 +92,32 @@ class SchemaTests(unittest.TestCase):
         for change in ({'reason':None},{'reason':''},{'value':3},{'provenance':{}}):
             bad = dict(valid,**change)
             with self.assertRaises(Invalid):obs(bad)
+    def test_known_physical_host_requires_every_typed_host_field(self):
+        host=example(SCHEMA['$defs']['host'])
+        for key,value in host.items():
+            if isinstance(value,dict):host[key]=observation(False if key=='container_detected' else 'observed value',{'observer':'test OS'})
+        known=observation(host,{'observer':'native OS'})
+        rule=SCHEMA['$defs']['host_observation']
+        schema_check(known,rule,SCHEMA['$defs']);host_check(host,SCHEMA)
+        for key in host:
+            bad=copy.deepcopy(known);bad['value'].pop(key)
+            with self.subTest(field=key),self.assertRaises(Invalid):schema_check(bad,rule,SCHEMA['$defs'])
+        forged=observation({'container_detected':{'value':False}},{'observer':'forged'})
+        with self.assertRaises(Invalid):schema_check(forged,rule,SCHEMA['$defs'])
+        unavailable=observation(None,{'observer':'unprivileged namespace'},'physical host inaccessible')
+        schema_check(unavailable,rule,SCHEMA['$defs'])
+    def test_every_nested_host_observation_has_consistent_availability_and_provenance(self):
+        host=example(SCHEMA['$defs']['host'])
+        for key,value in host.items():
+            if isinstance(value,dict):host[key]=observation(False if key=='container_detected' else 'value',{'observer':'OS'})
+        for key in host:
+            if not isinstance(host[key],dict):continue
+            for field in ('reason','provenance'):
+                bad=copy.deepcopy(host);bad[key].pop(field)
+                with self.subTest(key=key,field=field),self.assertRaises(Invalid):host_check(bad,SCHEMA)
+            for change in ({'value':None},{'reason':'unexpected known reason'},{'availability':'guess'},{'provenance':{}},{'availability':'unavailable','value':None,'reason':None},{'availability':'unavailable','value':None,'reason':''}):
+                bad=copy.deepcopy(host);bad[key].update(change)
+                with self.subTest(key=key,change=change),self.assertRaises(Invalid):host_check(bad,SCHEMA)
     def test_guarded_immutable_bundle_checksum_retrieval_never_overwrites_or_escapes(self):
         parent = ROOT/'target/a10-p2-python';parent.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as directory:
