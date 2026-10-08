@@ -2,6 +2,7 @@
 name = "ruscv-sim"
 version = "0.1.0"
 edition = "2021"
+default-run = "ruscv-sim"
 description = "RISC-V ISS with SystemC TLM2.0 interface"
 authors = ["RISC-V Virtual Platform Team"]
 license = "MIT"
@@ -41,6 +42,14 @@ tempfile = "3"
 [features]
 default = []
 tlm = []  # SystemC TLM2.0 接口支持
+
+# P0 test transport only: captures native library UART stdout in a child.
+# Not the P1 performance driver or a new simulator frontend.
+[[bin]]
+name = "a10-p0-probe"
+path = "tools/a10/probe.rs"
+test = false
+bench = false
 
 [[bench]]
 name = "decode_bench"
