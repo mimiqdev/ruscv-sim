@@ -1,7 +1,9 @@
 //! P1 clocks and public-route adapter orchestration. No calibration/comparison.
+#[path = "digest.rs"]
+pub mod digest;
 use crate::support::*;
 use ruscv_sim::executor::{load_and_run, load_and_run_file, RiscVSimulator};
-use ruscv_sim::machine::{Machine, MachineConfig, PlatformKind};
+use ruscv_sim::machine::{Machine, MachineConfig, PlatformEvent, PlatformKind};
 use ruscv_sim::{csr::machine::MINSTRET, elf::LoadImage};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -43,18 +45,56 @@ pub trait Clock {
     fn now_ns(&mut self) -> u64;
     fn event(&mut self, _op: Op) {}
     fn sample(&mut self, _sample: &mut Sample, _warmup: bool) {}
+    fn evidence(&self) -> Option<ClockEvidence> {
+        None
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClockEvidence {
+    pub id: String,
+    pub engine: String,
+    pub unit: String,
+    pub monotonic: bool,
+    pub method: String,
+    pub empty_timer_ns: Vec<u64>,
+    pub successive_read_ns: Vec<u64>,
+    pub observed_resolution_ns: Option<u64>,
+    pub advertised_resolution_reason: String,
 }
 pub struct HostClock {
     origin: Instant,
+    evidence: ClockEvidence,
 }
 impl Default for HostClock {
     fn default() -> Self {
-        Self {
-            origin: Instant::now(),
+        let origin = Instant::now();
+        let id = format!(
+            "instant-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("UTC")
+                .as_nanos()
+        );
+        let mut empty = Vec::with_capacity(64);
+        let mut reads = Vec::with_capacity(64);
+        let mut previous = origin.elapsed().as_nanos() as u64;
+        for _ in 0..64 {
+            let start = Instant::now();
+            empty.push(start.elapsed().as_nanos().try_into().expect("ns"));
+            let now = origin.elapsed().as_nanos().try_into().expect("ns");
+            reads.push(now - previous);
+            previous = now;
         }
+        let resolution = reads.iter().chain(&empty).copied().filter(|n| *n > 0).min();
+        Self{origin,evidence:ClockEvidence{id,engine:"std::time::Instant".into(),unit:"ns".into(),monotonic:true,method:"64 serial empty Instant-now/elapsed pairs and 64 successive origin reads before guest scope; observed minimum nonzero, not calibrated sufficiency".into(),empty_timer_ns:empty,successive_read_ns:reads,observed_resolution_ns:resolution,advertised_resolution_reason:"std Instant advertises no portable hardware resolution; empirical controls retained".into()}}
     }
 }
 impl Clock for HostClock {
+    fn evidence(&self) -> Option<ClockEvidence> {
+        Some(self.evidence.clone())
+    }
     fn now_ns(&mut self) -> u64 {
         self.origin
             .elapsed()
@@ -199,11 +239,13 @@ impl ScopeAudit {
 struct Meter<'a, C: Clock> {
     clock: &'a mut C,
     audit: ScopeAudit,
+    ops: Vec<Op>,
 }
 impl<C: Clock> Meter<'_, C> {
     fn event(&mut self, op: Op) {
         self.audit.event(op);
         self.clock.event(op);
+        self.ops.push(op);
     }
     fn start(&mut self) -> u64 {
         self.event(Op::Start);
@@ -224,6 +266,25 @@ impl<C: Clock> Meter<'_, C> {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InitialEvidence {
+    pub pc: u64,
+    pub minstret: u64,
+    pub regs: Vec<u64>,
+    pub image_sha256: String,
+    pub checked_bytes: usize,
+    pub reservation_clear: bool,
+    pub signal: [u64; 2],
+    pub events: Option<Vec<Event>>,
+    pub uart: Option<UartState>,
+    pub generation: Option<u64>,
+    pub previous_generation: Option<u64>,
+    pub drain: Option<String>,
+    pub stale_isolated: Option<bool>,
+    pub limits: Vec<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LoadEvidence {
     pub pc: u64,
     pub minstret: u64,
@@ -232,6 +293,7 @@ pub struct LoadEvidence {
     pub execution_not_started: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Record {
     pub fixture: String,
     pub route: String,
@@ -251,6 +313,12 @@ pub struct Record {
     pub sample: Option<Sample>,
     pub load: Option<LoadEvidence>,
     pub argv: Vec<String>,
+    pub initial: Option<InitialEvidence>,
+    pub ops: Vec<Op>,
+    pub native_ops: Option<Vec<Op>>,
+    pub clock: Option<ClockEvidence>,
+    pub transport_code: Option<i32>,
+    pub input_sha256: Option<String>,
 }
 impl Record {
     fn new(
@@ -283,6 +351,12 @@ impl Record {
             sample: None,
             load: None,
             argv: Vec::new(),
+            initial: None,
+            ops: Vec::new(),
+            native_ops: None,
+            clock: None,
+            transport_code: None,
+            input_sha256: None,
         }
     }
     fn accept_interval(&mut self) {
@@ -390,15 +464,16 @@ fn kind(route: &str) -> PlatformKind {
         PlatformKind::Flat
     }
 }
-fn initial(owner: &Machine, f: &Fixture) -> Result<LoadEvidence, String> {
+fn initial(owner: &Machine, f: &Fixture) -> Result<(LoadEvidence, InitialEvidence), String> {
     let i = owner.inspect().map_err(|e| e.to_string())?;
     image_identity(f, &i.image).map_err(|e| format!("{e:?}"))?;
     let minstret = i.hart.csr.read(MINSTRET).map_err(|e| e.to_string())?;
     if i.hart.pc != f.entry
         || i.hart.regs != [0; 32]
         || minstret != 0
+        || i.hart.reservation.is_some()
         || !i.events.is_empty()
-        || i.tohost.value.map_err(|e| e.to_string())? != 0
+        || *i.tohost.value.as_ref().map_err(|e| e.to_string())? != 0
         || i.uart.as_ref().is_some_and(|u| {
             !u.tx_fifo.is_empty() || !u.rx_fifo.is_empty() || u.registers[4] != 0x60
         })
@@ -411,26 +486,62 @@ fn initial(owner: &Machine, f: &Fixture) -> Result<LoadEvidence, String> {
         expected[offset..offset + s.file_bytes.len()].copy_from_slice(&s.file_bytes);
         expected[offset + s.file_bytes.len()..offset + s.file_bytes.len() + s.zero_fill].fill(0);
     }
-    if owner
+    let actual = owner
         .read_mem(0, expected.len())
-        .map_err(|e| e.to_string())?
-        != expected
-    {
+        .map_err(|e| e.to_string())?;
+    if actual != expected {
         return Err("initial image/zero-fill bytes mismatch".into());
     }
-    Ok(LoadEvidence {
+    let proof = InitialEvidence {
         pc: i.hart.pc,
         minstret,
-        completed_turns: 0,
-        checked_bytes: expected.len(),
-        execution_not_started: true,
-    })
+        regs: i.hart.regs.to_vec(),
+        image_sha256: digest::sha256(&actual),
+        checked_bytes: actual.len(),
+        reservation_clear: i.hart.reservation.is_none(),
+        signal: [i.tohost.address, *i.tohost.value.as_ref().unwrap()],
+        events: Some(
+            i.events
+                .iter()
+                .map(|e| match e {
+                    PlatformEvent::UartTransmit(b) => Event("uart".into(), u64::from(*b)),
+                    PlatformEvent::HtifWrite(v) => Event("htif".into(), *v),
+                })
+                .collect(),
+        ),
+        uart: i.uart.map(|u| UartState {
+            base_addr: u.base_addr,
+            rx_fifo: u.rx_fifo,
+            tx_fifo: u.tx_fifo,
+            registers: u.registers,
+        }),
+        generation: Some(i.generation),
+        previous_generation: None,
+        drain: None,
+        stale_isolated: None,
+        limits: vec![],
+    };
+    Ok((
+        LoadEvidence {
+            pc: i.hart.pc,
+            minstret,
+            completed_turns: 0,
+            checked_bytes: actual.len(),
+            execution_not_started: true,
+        },
+        proof,
+    ))
 }
-fn initial_flat(owner: &RiscVSimulator, f: &Fixture, bytes: &[u8]) -> Result<(), String> {
+fn initial_flat(
+    owner: &RiscVSimulator,
+    f: &Fixture,
+    bytes: &[u8],
+) -> Result<InitialEvidence, String> {
     let image = LoadImage::parse(bytes).map_err(|e| e.to_string())?;
     image_identity(f, &image).map_err(|e| format!("{e:?}"))?;
     if owner.state().pc != f.entry
         || owner.state().regs != [0; 32]
+        || owner.state().reservation.is_some()
         || owner
             .state()
             .csr
@@ -446,14 +557,14 @@ fn initial_flat(owner: &RiscVSimulator, f: &Fixture, bytes: &[u8]) -> Result<(),
         expected[offset..offset + s.file_bytes.len()].copy_from_slice(&s.file_bytes);
         expected[offset + s.file_bytes.len()..offset + s.file_bytes.len() + s.zero_fill].fill(0);
     }
-    if owner
+    let actual = owner
         .read_mem(0, expected.len())
-        .map_err(|e| e.to_string())?
-        != expected
-    {
+        .map_err(|e| e.to_string())?;
+    if actual != expected {
         return Err("flat initial full image/BSS/selected signal mismatch".into());
     }
-    Ok(())
+    let offset = f.tohost.ok_or("flat RAM signal")? - f.entry;
+    Ok(InitialEvidence{pc:owner.state().pc,minstret:owner.state().csr.read(MINSTRET).map_err(|e|e.to_string())?,regs:owner.state().regs.to_vec(),image_sha256:digest::sha256(&actual),checked_bytes:actual.len(),reservation_clear:owner.state().reservation.is_none(),signal:[offset,u64::from_le_bytes(owner.read_mem(offset,8).map_err(|e|e.to_string())?.try_into().unwrap())],events:None,uart:None,generation:None,previous_generation:None,drain:None,stale_isolated:None,limits:vec!["public flat facade fresh_reset coordinates drain/restoration internally; no public generation/drain/stale-handle/device introspection; no new API".into()]})
 }
 fn install<C: Clock>(
     bytes: &[u8],
@@ -496,6 +607,9 @@ pub struct LibraryWire {
     pub scope: String,
     pub interval: Interval,
     pub result: PublicResult,
+    pub clock: ClockEvidence,
+    pub ops: Vec<Op>,
+    pub input_sha256: String,
 }
 impl LibraryWire {
     pub fn check(&self, route: &str) -> Result<(), String> {
@@ -522,6 +636,7 @@ pub fn library_probe(
     let mut clock = HostClock::default();
     let mut meter = Meter {
         clock: &mut clock,
+        ops: Vec::with_capacity(8),
         audit: ScopeAudit::new(
             "end_to_end",
             route,
@@ -534,6 +649,13 @@ pub fn library_probe(
     } else {
         None
     };
+    // Identity read before and after file-call scope detects changed input; the
+    // public file function still performs its own real timed I/O.
+    let before = std::fs::read(elf).map_err(|e| e.to_string())?;
+    if bytes.as_ref().is_some_and(|data| data != &before) {
+        return Err("native bytes changed during preparation".into());
+    }
+    let input_sha256 = digest::sha256(bytes.as_deref().unwrap_or(&before));
     let elf_text = elf.to_str().ok_or("native file path must be UTF-8")?;
     let start = meter.start();
     meter.event(Op::NativeCall);
@@ -555,11 +677,17 @@ pub fn library_probe(
     let interval = meter.stop(start, "library-child-Instant");
     meter.audit.check()?;
     flush.map_err(|e| e.to_string())?;
+    if std::fs::read(elf).map_err(|e| e.to_string())? != before {
+        return Err("native input changed during call".into());
+    }
     Ok(LibraryWire {
         route: route.into(),
         scope: "public-library-call+uart-flush".into(),
         interval,
         result: result.map_err(|e| e.to_string())?.into(),
+        clock: meter.clock.evidence().ok_or("native clock evidence")?,
+        ops: meter.ops,
+        input_sha256,
     })
 }
 fn capture_child<C: Clock>(
@@ -603,6 +731,7 @@ fn capture_child<C: Clock>(
         record.interval = Some(meter.stop(start, "driver-Instant"));
     }
     let output = output.map_err(|e| e.to_string())?;
+    record.transport_code = output.status.code();
     // Raw output retention, parsing and log readback are outside all intervals.
     std::fs::write(log.with_extension("stdout"), &output.stdout).map_err(|e| e.to_string())?;
     std::fs::write(log.with_extension("stderr"), &output.stderr).map_err(|e| e.to_string())?;
@@ -629,6 +758,11 @@ fn capture_child<C: Clock>(
         .ok_or("missing native function-scope transport")?;
     let wire: LibraryWire = serde_json::from_str(json.trim()).map_err(|e| e.to_string())?;
     record.scope_error = wire.check(&record.route).err();
+    record.clock = Some(wire.clock);
+    record.native_ops = Some(wire.ops);
+    if record.input_sha256.as_ref() != Some(&wire.input_sha256) {
+        return Err("native actual input identity mismatch".into());
+    }
     record.interval = Some(wire.interval);
     let mut sample = Sample::public(&record.route, &record.mode, wire.result);
     sample.uart = Some(uart.as_bytes().to_vec());
@@ -661,6 +795,7 @@ pub fn measure_cell<C: Clock>(
     let mut meter = Meter {
         clock,
         audit: ScopeAudit::new(phase, route, mode),
+        ops: Vec::with_capacity(f.turns as usize * 3 + 64),
     };
     meter.event(Op::ReadInput);
     let input = std::fs::read(paths.fixtures.join(format!("{}.elf", f.id)));
@@ -692,6 +827,8 @@ pub fn measure_cell<C: Clock>(
     let mut records = Vec::new();
     for rep in 0..=repetitions {
         let mut record = Record::new(f, route, phase, mode, rep, rep == 0);
+        record.input_sha256 = input.as_ref().ok().map(|b| digest::sha256(b));
+        record.clock = meter.clock.evidence();
         if setup.is_err()
             || records
                 .iter()
@@ -705,9 +842,10 @@ pub fn measure_cell<C: Clock>(
                     .unwrap_or_else(|| "prior repetition rejected; no retry/reuse".into()),
             );
             records.push(record);
-            break;
+            continue;
         }
         meter.audit = ScopeAudit::new(phase, route, mode);
+        meter.ops.clear();
         let log = paths
             .artifacts
             .join(format!("{}-{route}-{phase}-{mode}-{rep}.log", f.id));
@@ -733,20 +871,39 @@ pub fn measure_cell<C: Clock>(
                 let checked = initial(&owner, f);
                 drop(uart);
                 let cleanup = teardown(owner, &mut meter);
-                record.load = Some(checked?);
+                let (loaded, proof) = checked?;
+                record.load = Some(loaded);
+                record.initial = Some(proof);
                 cleanup?;
                 record.semantic_status = "correct".into();
                 record.accepted_ns = record.interval.as_ref().map(|i| i.elapsed_ns);
             } else if phase == "execute_only" && route.starts_with("machine-") {
                 let (owner, uart) = machine.as_ref().unwrap();
                 meter.event(Op::Drain);
+                let previous = owner.status().map_err(|e| e.to_string())?.generation;
                 owner.request_quiesce().map_err(|e| e.to_string())?;
-                owner.try_drain().map_err(|e| e.to_string())?;
+                let drained = owner.try_drain().map_err(|e| e.to_string())?;
+                let stale = owner.memory().map_err(|e| e.to_string())?;
                 meter.event(Op::Reset);
                 owner.fresh_reset().map_err(|e| e.to_string())?;
+                // Detached old-generation RAM may be edited, but cannot reach
+                // the restored image. Drop that view before timing execution.
+                stale
+                    .lock()
+                    .map_err(|e| e.to_string())?
+                    .write_byte(0, 0xff)
+                    .map_err(|e| e.to_string())?;
+                drop(stale);
                 uart.lock().unwrap().clear();
                 meter.event(Op::Inspect);
-                initial(owner, f)?;
+                let (_, mut proof) = initial(owner, f)?;
+                if proof.generation.is_none_or(|g| g <= previous) {
+                    return Err("reset generation did not advance".into());
+                }
+                proof.previous_generation = Some(previous);
+                proof.drain = Some(format!("{:?}", drained.lifecycle));
+                proof.stale_isolated = Some(true);
+                record.initial = Some(proof);
                 meter.event(Op::Resume);
                 owner.resume().map_err(|e| e.to_string())?;
                 meter.event(Op::Prepare);
@@ -771,7 +928,7 @@ pub fn measure_cell<C: Clock>(
                     meter.event(Op::Reset);
                     owner.fresh_reset().map_err(|e| e.to_string())?;
                     meter.event(Op::Inspect);
-                    initial_flat(owner, f, bytes)?;
+                    record.initial = Some(initial_flat(owner, f, bytes)?);
                     let start = meter.start();
                     meter.event(Op::FlatRun);
                     let outcome = owner.run(Some(f.turns + 16));
@@ -823,7 +980,17 @@ pub fn measure_cell<C: Clock>(
                 record.reject(error);
             }
         }
+        if let Ok(bytes) = input.as_ref() {
+            if std::fs::read(paths.fixtures.join(format!("{}.elf", f.id)))
+                .as_ref()
+                .ok()
+                != Some(bytes)
+            {
+                record.reject("fixture bytes changed during repetition".into());
+            }
+        }
         meter.event(Op::Report);
+        record.ops = meter.ops.clone();
         records.push(record);
     }
     if let Some((owner, _)) = machine {

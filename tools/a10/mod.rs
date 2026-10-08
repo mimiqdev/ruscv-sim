@@ -144,7 +144,23 @@ impl From<ExecutionResult> for PublicResult {
 }
 /// Absence is not an empty successful capture. Route capabilities determine
 /// which evidence is mandatory; unsupported modes never receive a pass.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FactDetail {
+    pub hart_id: u64,
+    pub instruction_length: u8,
+    pub privilege: u8,
+    pub next_privilege: u8,
+    pub minstret: u64,
+    pub explicit_minstret_write: bool,
+    pub csr: Vec<[u64; 4]>,
+    pub fpr: Vec<Write>,
+    pub fcsr: Option<[u32; 2]>,
+    pub issued: Vec<Option<u64>>,
+    pub indivisible: Vec<Option<bool>>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Sample {
     pub route: String,
     pub mode: String,
@@ -161,6 +177,7 @@ pub struct Sample {
     pub signal: Option<[u64; 2]>,
     pub events: Option<Vec<Event>>,
     pub facts: Option<Vec<Trace>>,
+    pub fact_details: Option<Vec<FactDetail>>,
     pub log: Option<String>,
     pub reporting_error: Option<String>,
 }
@@ -181,6 +198,7 @@ impl Sample {
             signal: None,
             events: None,
             facts: None,
+            fact_details: None,
             log: None,
             reporting_error: None,
         }
@@ -603,6 +621,7 @@ pub fn machine_config(kind: PlatformKind) -> (MachineConfig, UartCapture) {
 }
 struct FactSink {
     facts: Vec<Trace>,
+    details: Vec<FactDetail>,
     kind: PlatformKind,
     base: u64,
 }
@@ -610,6 +629,41 @@ impl ObservationSink for FactSink {
     type Error = String;
     fn observe(&mut self, observation: &Observation) -> Result<(), String> {
         let record = capture_fact(observation, self.kind, self.facts.len(), self.base)?;
+        let Observation::Commit(c) = observation else {
+            return Err("unexpected trap".into());
+        };
+        self.details.push(FactDetail {
+            hart_id: c.hart_id,
+            instruction_length: c.instruction_length,
+            privilege: c.retired.privilege as u8,
+            next_privilege: c.retired.next_privilege as u8,
+            minstret: c.retired.minstret,
+            explicit_minstret_write: c.retired.explicit_minstret_write,
+            csr: c
+                .effects
+                .csr
+                .iter()
+                .map(|a| [a.addr as u64, a.old_value, a.new_value, u64::from(a.wrote)])
+                .collect(),
+            fpr: c
+                .effects
+                .fpr
+                .iter()
+                .map(|w| Write {
+                    index: w.index,
+                    before: w.before,
+                    after: w.after,
+                })
+                .collect(),
+            fcsr: c.effects.fcsr.map(|(a, b)| [a, b]),
+            issued: c.effects.memory.iter().map(|m| m.issued_address).collect(),
+            indivisible: c
+                .effects
+                .memory
+                .iter()
+                .map(|m| m.atomic.map(|a| a.indivisible))
+                .collect(),
+        });
         self.facts.push(record);
         Ok(())
     }
@@ -647,6 +701,11 @@ impl MachineRun {
                 None
             },
             sink: FactSink {
+                details: if mode == "off" {
+                    Vec::new()
+                } else {
+                    Vec::with_capacity(f.turns as usize)
+                },
                 facts: if mode == "off" {
                     Vec::new()
                 } else {
@@ -754,6 +813,7 @@ impl MachineRun {
             ..
         } = self;
         let facts = sink.facts;
+        let details = sink.details;
         let inspection = owner.inspect().map_err(|e| e.to_string())?;
         let signature = inspection
             .signature
@@ -809,6 +869,7 @@ impl MachineRun {
             registers: u.registers,
         });
         sample.facts = Some(facts);
+        sample.fact_details = Some(details);
         sample.uart = Some(uart.lock().unwrap().clone());
         sample.reporting_error = reporting_error;
         if mode == "file" {

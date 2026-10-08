@@ -1,5 +1,6 @@
-//! P1 smoke driver. Provisional checkpoint report, NOT full ruscv-perf/1.
+//! Shared public-path driver; untimed raw transport and P0 oracle replay.
 pub mod phases;
+pub mod replay;
 #[path = "mod.rs"]
 pub mod support;
 use phases::*;
@@ -21,14 +22,24 @@ fn main() {
     let code = match run() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("INCONCLUSIVE: {e}");
-            2
+            eprintln!("EVIDENCE FAILURE: {e}");
+            1
         }
     };
     std::process::exit(code);
 }
 fn run() -> Result<i32, String> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("oracle-replay") {
+        if args.len() != 3 {
+            return Err("oracle-replay REPORT (semantic plane only; public schema command is scripts/perf-test.sh validate)".into());
+        }
+        let path = Path::new(&args[2]);
+        let report = replay::unique_json(&std::fs::read(path).map_err(|e| e.to_string())?)?;
+        let code = replay::validate_report(path.parent().ok_or("report root")?, &report)?;
+        println!("P0 oracle/scope replay exit {code}; schema/bundle handled by public wrapper; no performance verdict");
+        return Ok(code);
+    }
     if args.get(1).map(String::as_str) == Some("probe-library") {
         if args.len() != 5 && args.len() != 6 {
             return Err("native transport arguments".into());
@@ -135,7 +146,7 @@ fn run() -> Result<i32, String> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(out.join("report.json"))
+        .open(out.join("raw-report.json"))
         .map_err(|e| e.to_string())?;
     std::io::Write::write_all(
         &mut file,
@@ -145,7 +156,7 @@ fn run() -> Result<i32, String> {
     )
     .map_err(|e| e.to_string())?;
     std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
-    println!("P1 smoke semantics: {semantic}; measurement: {measurement} (no comparison). {} raw rows / {} applicable cells. Report: {}",records.len(),groups.len(),out.join("report.json").display());
+    println!("P1 smoke semantics: {semantic}; measurement: {measurement} (no comparison). {} raw rows / {} applicable cells. Report: {}",records.len(),groups.len(),out.join("raw-report.json").display());
     Ok(if failed || changed {
         1
     } else if unavailable || measurement_unavailable {
