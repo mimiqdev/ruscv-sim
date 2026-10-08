@@ -608,7 +608,12 @@ fn command_guards_and_future_profiles_fail_without_overwrite_or_fake_pass() {
         .env("RISCV_PREFIX", "absent-p1-negative-control-")
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing-tool refusal stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(!missing_out.exists());
     let fixture = build.fixtures.join("fib.elf");
     let data = std::fs::read(&fixture).unwrap();
