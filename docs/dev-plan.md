@@ -4,6 +4,8 @@
 
 **Status:** Current accepted target — **approved for activation on merge**, 2026-10-03 UTC. This is exactly one detailed successor contract, not an implementation-completeness claim. Until the actual documentation-only rotation merges, `main` retains A9 as Current; on that merge A9 is formally completed and [its entire approved contract is archived](archive/milestones/a9-hart-facts-safe-n1-machine-lifecycle.md), and this A10 contract becomes sole Current. No unapproved successor decision remains pending.
 
+**Landed activation:** [PR #71](https://github.com/mimiqdev/ruscv-sim/pull/71) merged on **2026-10-08T02:53:47Z** as `e73b12b8467fd635b398382a5cbc7ce75d842f68`. A9 is formally completed/archived and A10 is now the sole Current contract. The approval/rotation conditions below preserve the accepted boundary, not a pending activation or implementation-completeness claim. [P0 progress](verification/a10-stage3-progress.md) records subsequent bounded infrastructure evidence.
+
 **Authority:** Normative milestone contract, constrained by accepted ADR-0001–0004. The [approved informational proposal snapshot](proposals/a10-performance-test-infrastructure.md) preserves drafting history and is not a second Current contract.
 
 **Approved:** 2026-10-03 UTC — the bounded detailed successor at baseline `32bb28e84fd433446caa93f870d921a86b3ddab3`, not new features/boards, optimization, thresholds, release or cleanup. P0–P4 implementation follows landed rotation in its own scoped task; no Rust implementation is part of this rotation.
