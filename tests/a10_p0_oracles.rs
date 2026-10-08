@@ -679,11 +679,12 @@ fn corrupted_guest_and_mutated_work_expectations_fail_real_public_samples() {
     }
     let s = routes::capture_flat(f, &original).unwrap();
     validate(&m, f, &s).unwrap();
-    for field in ["work", "checksum", "retirement-reader"] {
+    for field in ["work", "checksum", "retirement-reader", "underflow"] {
         let mut wrong = f.clone();
         match field {
             "work" => wrong.work += 1,
             "checksum" => wrong.checksum += 1,
+            "underflow" => wrong.retirements = 0,
             _ => wrong.retirements += 1,
         }
         reject(&m, &wrong, &s, "signature/work/checksum/counter reader");

@@ -290,7 +290,10 @@ pub fn validate(m: &Manifest, f: &Fixture, s: &Sample) -> Check {
                     "signature/work/checksum/counter reader size".into(),
                 ));
             }
-            for (index, expected) in [(0, f.work), (8, f.checksum), (16, f.retirements - 6)] {
+            let reader = f.retirements.checked_sub(6).ok_or_else(|| {
+                Rejection::Semantic("signature/work/checksum/counter reader underflow".into())
+            })?;
+            for (index, expected) in [(0, f.work), (8, f.checksum), (16, reader)] {
                 let value = u64::from_le_bytes(bytes[index..index + 8].try_into().unwrap());
                 equal("signature/work/checksum/counter reader", &value, &expected)?;
             }
