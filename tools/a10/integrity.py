@@ -5,6 +5,7 @@ import math
 import os
 from pathlib import Path
 import re
+import stat
 
 class Invalid(ValueError):
     code = 1
@@ -60,9 +61,23 @@ def safe(root, reference):
     return current
 
 def read(root, reference):
-    path = safe(root, reference)
-    require(path.is_file(), 'missing artifact: ' + reference)
-    return path.read_bytes()
+    safe(root, reference)  # lexical/early diagnostics; descriptor walk is authority
+    require(hasattr(os,'O_NOFOLLOW') and hasattr(os,'O_DIRECTORY'), 'safe artifact retrieval requires descriptor-relative no-follow OS support')
+    # Anchor every ancestor and component with O_NOFOLLOW. A concurrent rename
+    # cannot make a checked path follow a subsequently swapped symlink/escape.
+    directory = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        components = list(Path(root).absolute().parts[1:]) + list(Path(reference).parts)
+        for component in components[:-1]:
+            next_dir = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            os.close(directory)
+            directory = next_dir
+        descriptor = os.open(components[-1],os.O_RDONLY | os.O_NOFOLLOW,dir_fd=directory)
+        with os.fdopen(descriptor,'rb') as file:
+            require(stat.S_ISREG(os.fstat(file.fileno()).st_mode),'artifact is not a regular file: '+reference)
+            return file.read()
+    finally:
+        os.close(directory)
 
 def write_new(path, data):
     path = Path(path)

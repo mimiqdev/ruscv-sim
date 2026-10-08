@@ -8,6 +8,7 @@ import re
 import shlex
 import statistics
 import subprocess
+import tempfile
 from integrity import canonical, digest, json_new, loads, read, require, retrieve, Invalid
 from collect import ROOT, observation, utc
 
@@ -165,8 +166,8 @@ def quantile(values, fraction):
 
 def comparison_key(report, raw):
     return {'schema': report['identity']['schema_sha256'], 'suite':report['identity']['suite']['sha256'], 'oracle':report['identity']['oracle']['sha256'], 'harness':report['identity']['harness']['sha256'], 'policy':report['identity']['policy']['sha256'],
-            'fixture_elf': raw['input_sha256'], 'route':raw['route'], 'phase':raw['phase'], 'observation':raw['mode'], 'capture_policy':raw['capture_policy'], 'sink':sink(raw), 'build':report['build'],
-            'tools':{k:v['sha256'] for k,v in report['tools'].items()}, 'container': report['environment']['container'], 'host':report['environment']['physical_host'], 'clock_policy':'Instant empirical-controls/1; origins never subtracted across processes', 'candidate_revision':report['source']['head'], 'baseline_revision':None}
+            'fixture_elf': raw['input_sha256'], 'route':raw['route'], 'phase':raw['phase'], 'observation':raw['mode'], 'capture_policy':raw['capture_policy'], 'sink':sink(raw), 'build':{'sha256':digest(canonical(report['build'])),'reference':'#/build','compatibility':'exact identity; P3 compatibility normalization/acceptance deferred'},
+            'tools':{k:v['sha256'] for k,v in report['tools'].items()}, 'container':{'sha256':digest(canonical(report['environment']['container'])),'reference':'#/environment/container'}, 'host':{'sha256':digest(canonical(report['environment']['physical_host'])),'reference':'#/environment/physical_host'}, 'clock_policy':'Instant empirical-controls/1; origins never subtracted across processes', 'candidate_revision':report['source']['head'], 'baseline_revision':None}
 
 def aggregates(report):
     groups = {}
@@ -219,13 +220,16 @@ def validate(path, reader, expected_digest=None, sealed=True):
     path = Path(path)
     require(path.name == 'report.json' and not path.is_symlink() and not any(p.is_symlink() for p in path.parents), 'unsafe report/root path')
     root = path.parent
-    report = loads(path.read_bytes())
+    report_bytes=read(root,'report.json')
+    report = loads(report_bytes)
     schema = loads((ROOT / 'tools/a10/ruscv-perf-1.schema.json').read_bytes())
     schema_check(report,schema,schema['$defs'])
     bundle = retrieve(root,expected_digest) if sealed else None
     names = {e['path'] for e in bundle['files']} if bundle else set()
     if bundle:
         require(bundle['id'] == report['bundle']['id'] == report['run']['id'], 'bundle/run identity conflict')
+        identity=next(e for e in bundle['files'] if e['path']=='report.json')
+        require(len(report_bytes)==identity['bytes'] and digest(report_bytes)==identity['sha256'],'report changed during retrieval')
     require(report['identity']['schema_sha256'] == digest(read(root,'evidence/source/tools/a10/ruscv-perf-1.schema.json')), 'schema identity digest')
     if sealed:
         references = {'report.json','raw-report.json',report['setup']['artifact'],report['source']['manifest'],report['source']['commit'],report['build']['transcript'],report['build']['events'],report['build']['stdout']}
@@ -357,7 +361,24 @@ def validate(path, reader, expected_digest=None, sealed=True):
     require(report['aggregates'] == aggregates(report), 'distribution/count/discard/sum/comparison key mismatch')
     # Trust only repository-built reader, never execute bytes supplied by an
     # arbitrary JSON/artifact bundle. Invocation is untimed and immutable argv.
-    result = subprocess.run([str(reader), 'oracle-replay', str(path)], cwd=ROOT, capture_output=True, text=True)
+    # Replay only a private snapshot of the exact verified bytes. The Rust
+    # semantic plane never follows a path controlled by an untrusted bundle
+    # while reading its transport/ELFs (including concurrent symlink swaps).
+    referenced={'fixtures/'+f['id']+'.elf' for f in oracle['fixtures']}
+    referenced.update(v for e in report['records'] for v in e['artifacts'].values() if v is not None)
+    manifest_files={e['path']:e for e in bundle['files']} if bundle else {}
+    temp_parent=ROOT/'target/a10-replay-snapshots';temp_parent.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=temp_parent) as directory:
+        snapshot=Path(directory)
+        for name in referenced:
+            data=read(root,name)
+            if sealed:
+                identity=manifest_files.get(name)
+                require(identity is not None and len(data)==identity['bytes'] and digest(data)==identity['sha256'],'changed artifact before semantic replay')
+            from integrity import write_new
+            write_new(snapshot/name,data)
+        json_new(snapshot/'report.json',report)
+        result = subprocess.run([str(reader), 'oracle-replay', str(snapshot/'report.json')], cwd=ROOT, capture_output=True, text=True)
     if result.returncode not in (0,1,2):
         raise Invalid('semantic reader transport failure: '+result.stderr)
     if result.returncode == 1:

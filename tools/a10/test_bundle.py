@@ -42,7 +42,7 @@ def main(path, reader):
                     r=e['raw'];f=fixtures[r['fixture']]
                     e.update(cell=cell(r),sink=sink(r),evidence=evidence(r,f),clock_ref=r['clock']['id'] if r['clock'] else None)
                 bad['aggregates']=aggregates(bad)
-            raw['records']=[e['raw'] for e in bad['records']]
+            raw['records']=[e['raw'] for e in bad.get('records',report['records'])]
             json_new(root/'raw-report.json',raw)
             json_new(root/'setup.json',setup)
             bad['setup']['sha256']=digest(read(root,'setup.json'))

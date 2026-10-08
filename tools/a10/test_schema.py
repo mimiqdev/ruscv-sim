@@ -4,6 +4,7 @@ import copy
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from integrity import canonical, digest, Invalid, json_new, loads, read, retrieve, safe, seal, write_new
 from report_schema import aggregates, build_events, codegen_flags, obs, schema_check
 from schema_definition import SCHEMA
@@ -118,6 +119,16 @@ class SchemaTests(unittest.TestCase):
     def test_effective_codegen_flags_are_tokens_not_license_env_substrings(self):
         commands=['    Running `CARGO_PKG_LICENSE=BSD-3-Clause /compiler/rustc --crate-name example -C opt-level=3 -Clto=thin -C target-cpu=native`']
         self.assertEqual(codegen_flags(commands),['lto=thin','opt-level=3','target-cpu=native'])
+    def test_descriptor_read_refuses_a_symlink_swapped_after_lexical_check(self):
+        parent=ROOT/'target/a10-p2-python';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            root=Path(directory);write_new(root/'race',b'original');write_new(root/'other',b'not-reference')
+            def swap(root,name):
+                result=safe(root,name)
+                result.unlink() # test-owned path only, never original evidence
+                result.symlink_to(root/'other')
+                return result
+            with patch('integrity.safe',side_effect=swap),self.assertRaises(OSError):read(root,'race')
     def test_real_reporting_write_failure_is_not_success(self):
         if Path('/dev/full').exists():
             with open('/dev/full','wb',buffering=0) as file,self.assertRaises(OSError):file.write(b'report')
