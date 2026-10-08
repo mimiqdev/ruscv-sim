@@ -51,6 +51,13 @@ path = "tools/a10/probe.rs"
 test = false
 bench = false
 
+# P1 harness only; no new simulator runtime/frontend semantics.
+[[bin]]
+name = "a10-perf-driver"
+path = "tools/a10/driver.rs"
+test = false
+bench = false
+
 [[bench]]
 name = "decode_bench"
 harness = false

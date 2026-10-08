@@ -587,22 +587,26 @@ pub fn new_machine(
     bytes: &[u8],
     kind: PlatformKind,
 ) -> Result<(Machine, UartCapture), String> {
-    let uart = Arc::new(Mutex::new(Vec::new()));
-    let mut config = MachineConfig::new(kind);
-    let captured = uart.clone();
-    config.uart_output = Some(Arc::new(move |b| captured.lock().unwrap().push(b)));
+    let (config, uart) = machine_config(kind);
     let owner = Machine::new(config);
     let image = Arc::new(LoadImage::parse(bytes).map_err(|e| e.to_string())?);
     image_identity(f, &image).map_err(|e| format!("{e:?}"))?;
     owner.install(image).map_err(|e| e.to_string())?;
     Ok((owner, uart))
 }
-struct FactSink<'a> {
-    facts: &'a mut Vec<Trace>,
+pub fn machine_config(kind: PlatformKind) -> (MachineConfig, UartCapture) {
+    let uart = Arc::new(Mutex::new(Vec::new()));
+    let captured = uart.clone();
+    let mut config = MachineConfig::new(kind);
+    config.uart_output = Some(Arc::new(move |b| captured.lock().unwrap().push(b)));
+    (config, uart)
+}
+struct FactSink {
+    facts: Vec<Trace>,
     kind: PlatformKind,
     base: u64,
 }
-impl ObservationSink for FactSink<'_> {
+impl ObservationSink for FactSink {
     type Error = String;
     fn observe(&mut self, observation: &Observation) -> Result<(), String> {
         let record = capture_fact(observation, self.kind, self.facts.len(), self.base)?;
@@ -610,8 +614,210 @@ impl ObservationSink for FactSink<'_> {
         Ok(())
     }
 }
-/// Kept separate from construction/reset so the later driver can define clocks
-/// without changing capture or validation. Receipt consumption precedes next turn.
+/// Harness-owned preparation and immutable capture, not a production hook.
+#[derive(Debug, Clone, Copy)]
+pub enum TurnEvent {
+    Step,
+    Deliver,
+    Consume,
+}
+pub struct MachineRun {
+    logger: Option<CommitLogger>,
+    sink: FactSink,
+    counts: Counts,
+    events: Vec<Event>,
+    code: Option<u32>,
+    reporting_error: Option<String>,
+    observe: bool,
+}
+impl MachineRun {
+    pub fn prepare(
+        f: &Fixture,
+        kind: PlatformKind,
+        mode: &str,
+        log: &Path,
+    ) -> Result<Self, String> {
+        if !matches!(mode, "off" | "facts" | "file") {
+            return Err("unsupported Machine observation mode".into());
+        }
+        Ok(Self {
+            logger: if mode == "file" {
+                Some(CommitLogger::new_file(log).map_err(|e| e.to_string())?)
+            } else {
+                None
+            },
+            sink: FactSink {
+                facts: if mode == "off" {
+                    Vec::new()
+                } else {
+                    Vec::with_capacity(f.turns as usize)
+                },
+                kind,
+                base: f.entry,
+            },
+            counts: Counts {
+                attempts: 0,
+                turns: 0,
+                retirements: 0,
+                traps: 0,
+            },
+            events: Vec::with_capacity(f.events.len()),
+            code: None,
+            reporting_error: None,
+            observe: mode != "off",
+        })
+    }
+    /// Only actual turns, synchronous delivery and receipt consumption. No
+    /// resume, logger construction/close, final inspection or validation here.
+    pub fn execute(
+        &mut self,
+        f: &Fixture,
+        owner: &Machine,
+        mut notify: impl FnMut(TurnEvent),
+    ) -> Result<(), String> {
+        let Self {
+            logger,
+            sink,
+            counts,
+            events,
+            code,
+            reporting_error,
+            observe,
+        } = self;
+        for _ in 0..f.turns + 16 {
+            notify(TurnEvent::Step);
+            let turn = owner.step(*observe).map_err(|e| e.to_string())?;
+            let hart = turn.hart();
+            let c = hart.control;
+            counts.attempts += u64::from(c.instruction_attempted);
+            counts.retirements += u64::from(c.retired);
+            counts.traps += u64::from(c.trap_entered);
+            counts.turns += u64::from(c.retired || c.trap_entered);
+            if c.minstret_before + u64::from(c.retired) != c.minstret_after {
+                *reporting_error = Some("control counter mismatch".into());
+            }
+            if *observe {
+                notify(TurnEvent::Deliver);
+                if let Err(error) = turn.deliver(sink) {
+                    *reporting_error = Some(error);
+                }
+                if let Some(logger) = logger {
+                    if let Err(e) = turn.deliver(logger) {
+                        *reporting_error = Some(e.to_string());
+                    }
+                }
+            }
+            for e in turn.events() {
+                events.push(event(e));
+                if let PlatformEvent::HtifWrite(value) = e {
+                    *code = exit(*value)
+                }
+            }
+            if code.is_none() {
+                *code = turn
+                    .tohost()
+                    .and_then(|s| s.value.as_ref().ok())
+                    .and_then(|v| exit(*v));
+            }
+            let failed = matches!(
+                hart.outcome,
+                ruscv_sim::core::StepOutcome::SimulatorFailure(_)
+            );
+            drop(turn);
+            notify(TurnEvent::Consume);
+            if code.is_some() || failed {
+                break;
+            }
+        }
+        Ok(())
+    }
+    /// Unbuffered public file writes complete during delivery. Closing has no
+    /// public flush error seam; no buffering/fsync/durability claim is made.
+    pub fn close_log(&mut self) {
+        drop(self.logger.take());
+    }
+    pub fn inspect(
+        self,
+        f: &Fixture,
+        owner: &Machine,
+        uart: &UartCapture,
+        kind: PlatformKind,
+        mode: &str,
+        log_path: &Path,
+    ) -> Result<Sample, String> {
+        let Self {
+            sink,
+            counts,
+            events,
+            code,
+            reporting_error,
+            ..
+        } = self;
+        let facts = sink.facts;
+        let inspection = owner.inspect().map_err(|e| e.to_string())?;
+        let signature = inspection
+            .signature
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        let mut sample = Sample::public(
+            if kind == PlatformKind::Native {
+                "machine-native"
+            } else {
+                "machine-flat"
+            },
+            mode,
+            PublicResult {
+                exit_code: code.unwrap_or(1),
+                turns: counts.turns,
+                pc: inspection.hart.pc,
+                timed_out: code.is_none(),
+                error: None,
+                signature_addr: inspection.image.signature().map(|s| s.vaddr),
+                signature,
+            },
+        );
+        sample.counts = Some(counts);
+        sample.minstret = Some(
+            inspection
+                .hart
+                .csr
+                .read(MINSTRET)
+                .map_err(|e| e.to_string())?,
+        );
+        sample.regs = Some(inspection.hart.regs.to_vec());
+        sample.ram = Some(
+            f.ram
+                .iter()
+                .map(|r| {
+                    owner.read_mem(r.offset, r.bytes.len()).map(|bytes| Ram {
+                        offset: r.offset,
+                        bytes,
+                    })
+                })
+                .collect::<Result<_, _>>()
+                .map_err(|e| e.to_string())?,
+        );
+        sample.events = Some(events);
+        sample.signal = Some([
+            inspection.tohost.address,
+            inspection.tohost.value.map_err(|e| e.to_string())?,
+        ]);
+        sample.uart_state = inspection.uart.map(|u| UartState {
+            base_addr: u.base_addr,
+            rx_fifo: u.rx_fifo,
+            tx_fifo: u.tx_fifo,
+            registers: u.registers,
+        });
+        sample.facts = Some(facts);
+        sample.uart = Some(uart.lock().unwrap().clone());
+        sample.reporting_error = reporting_error;
+        if mode == "file" {
+            sample.log = Some(std::fs::read_to_string(log_path).map_err(|e| e.to_string())?)
+        }
+        Ok(sample)
+    }
+}
+/// P0 behavior preserved; P1 clocks only `MachineRun::execute` after preparation.
 pub fn capture_machine(
     f: &Fixture,
     owner: &Machine,
@@ -621,126 +827,8 @@ pub fn capture_machine(
     log_path: &Path,
 ) -> Result<Sample, String> {
     owner.resume().map_err(|e| e.to_string())?;
-    let mut logger = if mode == "file" {
-        Some(CommitLogger::new_file(log_path).map_err(|e| e.to_string())?)
-    } else {
-        None
-    };
-    let mut counts = Counts {
-        attempts: 0,
-        turns: 0,
-        retirements: 0,
-        traps: 0,
-    };
-    let mut facts = Vec::new();
-    let mut events = Vec::new();
-    let mut code = None;
-    let mut reporting_error = None;
-    for _ in 0..f.turns + 16 {
-        let turn = owner.step(mode != "off").map_err(|e| e.to_string())?;
-        let hart = turn.hart();
-        let c = hart.control;
-        counts.attempts += u64::from(c.instruction_attempted);
-        counts.retirements += u64::from(c.retired);
-        counts.traps += u64::from(c.trap_entered);
-        counts.turns += u64::from(c.retired || c.trap_entered);
-        if c.minstret_before + u64::from(c.retired) != c.minstret_after {
-            reporting_error = Some("control counter mismatch".into());
-        }
-        let mut sink = FactSink {
-            facts: &mut facts,
-            kind,
-            base: f.entry,
-        };
-        if let Err(error) = turn.deliver(&mut sink) {
-            reporting_error = Some(error)
-        }
-        if let Some(logger) = &mut logger {
-            if let Err(e) = turn.deliver(logger) {
-                reporting_error = Some(e.to_string())
-            }
-        }
-        for e in turn.events() {
-            events.push(event(e));
-            if let PlatformEvent::HtifWrite(value) = e {
-                code = exit(*value)
-            }
-        }
-        if code.is_none() {
-            code = turn
-                .tohost()
-                .and_then(|s| s.value.as_ref().ok())
-                .and_then(|v| exit(*v));
-        }
-        let failed = matches!(
-            hart.outcome,
-            ruscv_sim::core::StepOutcome::SimulatorFailure(_)
-        );
-        drop(turn);
-        if code.is_some() || failed {
-            break;
-        }
-    }
-    drop(logger); // File uses synchronous unbuffered writes, no fsync claim.
-    let inspection = owner.inspect().map_err(|e| e.to_string())?;
-    let signature = inspection
-        .signature
-        .transpose()
-        .map_err(|e| e.to_string())?;
-    let mut sample = Sample::public(
-        if kind == PlatformKind::Native {
-            "machine-native"
-        } else {
-            "machine-flat"
-        },
-        mode,
-        PublicResult {
-            exit_code: code.unwrap_or(1),
-            turns: counts.turns,
-            pc: inspection.hart.pc,
-            timed_out: code.is_none(),
-            error: None,
-            signature_addr: inspection.image.signature().map(|s| s.vaddr),
-            signature,
-        },
-    );
-    sample.counts = Some(counts);
-    sample.minstret = Some(
-        inspection
-            .hart
-            .csr
-            .read(MINSTRET)
-            .map_err(|e| e.to_string())?,
-    );
-    sample.regs = Some(inspection.hart.regs.to_vec());
-    sample.ram = Some(
-        f.ram
-            .iter()
-            .map(|r| {
-                owner.read_mem(r.offset, r.bytes.len()).map(|bytes| Ram {
-                    offset: r.offset,
-                    bytes,
-                })
-            })
-            .collect::<Result<_, _>>()
-            .map_err(|e| e.to_string())?,
-    );
-    sample.events = Some(events);
-    sample.signal = Some([
-        inspection.tohost.address,
-        inspection.tohost.value.map_err(|e| e.to_string())?,
-    ]);
-    sample.uart_state = inspection.uart.map(|u| UartState {
-        base_addr: u.base_addr,
-        rx_fifo: u.rx_fifo,
-        tx_fifo: u.tx_fifo,
-        registers: u.registers,
-    });
-    sample.facts = Some(facts);
-    sample.uart = Some(uart.lock().unwrap().clone());
-    sample.reporting_error = reporting_error;
-    if mode == "file" {
-        sample.log = Some(std::fs::read_to_string(log_path).map_err(|e| e.to_string())?)
-    }
-    Ok(sample)
+    let mut run = MachineRun::prepare(f, kind, mode, log_path)?;
+    run.execute(f, owner, |_| {})?;
+    run.close_log();
+    run.inspect(f, owner, uart, kind, mode, log_path)
 }

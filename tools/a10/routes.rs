@@ -168,7 +168,25 @@ pub fn capture_flat(f: &Fixture, bytes: &[u8]) -> Result<Sample, String> {
     let mut flat = RiscVSimulator::new(1);
     flat.load_elf(bytes).map_err(|e| e.to_string())?;
     let result = flat.run(Some(f.turns + 16)).map_err(|e| e.to_string())?;
+    inspect_flat(f, &flat, result)
+}
+/// Direct post-run state capture outside execute-only clocks.
+pub fn inspect_flat(
+    f: &Fixture,
+    flat: &RiscVSimulator,
+    result: ExecutionResult,
+) -> Result<Sample, String> {
     let mut sample = Sample::public("flat", "off", result.into());
+    copy_flat_into(f, flat, &mut sample)?;
+    Ok(sample)
+}
+/// Copy only owned final-state evidence. A caller may retain partial evidence
+/// on error; no live facade/port/lease is stored in the sample.
+pub fn copy_flat_into(
+    f: &Fixture,
+    flat: &RiscVSimulator,
+    sample: &mut Sample,
+) -> Result<(), String> {
     let offset = f.tohost.ok_or("flat fixture has no selected RAM tohost")? - f.entry;
     sample.signal = Some([
         offset,
@@ -193,5 +211,5 @@ pub fn capture_flat(f: &Fixture, bytes: &[u8]) -> Result<Sample, String> {
             .collect::<Result<_, _>>()
             .map_err(|e| e.to_string())?,
     );
-    Ok(sample)
+    Ok(())
 }
