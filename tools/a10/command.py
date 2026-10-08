@@ -84,7 +84,6 @@ def main(argv):
         print('INCONCLUSIVE: only public-v1 smoke (1..16 basic repetitions plus one warmup) is implemented',file=sys.stderr)
         return 2
     out = fresh_output(args.out)
-    head = clean()
     started = utc()
     prefix = os.environ.get('RISCV_PREFIX','riscv64-unknown-elf-')
     commands = {'rustc':[os.environ.get('RUSTC','rustc'),'-Vv'], 'cargo':['cargo','-V'], 'rustfmt':['rustfmt','--version']}
@@ -94,6 +93,10 @@ def main(argv):
         if shutil.which(command[0]) is None:
             raise Unavailable('required tool unavailable: '+command[0])
         text(command)
+    # Missing-tool discovery is independently classified as unavailable before
+    # source readiness. A dirty tree still rejects BEFORE creating output,
+    # building, guest execution or any evidence success.
+    head = clean()
     out.mkdir(parents=True)
     source = git_snapshot(out,head)
     tools = {name:tool(out,name,command) for name,command in commands.items()}

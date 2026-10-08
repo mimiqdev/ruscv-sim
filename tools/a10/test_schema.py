@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from integrity import canonical, digest, Invalid, json_new, loads, read, retrieve, safe, seal, write_new
+from integrity import canonical, digest, Invalid, json_new, loads, read, retrieve, safe, seal, Unavailable, write_new
 from report_schema import aggregates, build_events, codegen_flags, obs, schema_check
 from schema_definition import SCHEMA
 from collect import ROOT, observation
@@ -129,6 +129,16 @@ class SchemaTests(unittest.TestCase):
                 result.symlink_to(root/'other')
                 return result
             with patch('integrity.safe',side_effect=swap),self.assertRaises(OSError):read(root,'race')
+    def test_missing_tool_preflight_is_distinct_from_dirty_source_and_never_creates_output(self):
+        import command
+        import os
+        parent=ROOT/'target/a10-p2-python';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            out=Path(directory)/'never-created'
+            with patch.dict(os.environ,{'RISCV_PREFIX':'absent-p2-preflight-control-'}),patch('command.text',return_value='test tool version'),patch('command.clean',side_effect=Invalid('dirty tree')) as clean:
+                with self.assertRaises(Unavailable):command.main(['run','--suite','public-v1','--profile','smoke','--out',str(out)])
+                clean.assert_not_called()
+            self.assertFalse(out.exists())
     def test_real_reporting_write_failure_is_not_success(self):
         if Path('/dev/full').exists():
             with open('/dev/full','wb',buffering=0) as file,self.assertRaises(OSError):file.write(b'report')
