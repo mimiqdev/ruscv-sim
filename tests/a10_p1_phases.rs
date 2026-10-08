@@ -655,7 +655,9 @@ fn command_guards_and_future_profiles_fail_without_overwrite_or_fake_pass() {
         ])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(2));
+    // P2's wrapper contract classifies unsafe overwrite/schema refusal as 1,
+    // not measurement insufficiency; the original fail-closed guard remains.
+    assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8(output.stderr)
         .unwrap()
         .contains("reuse/overwrite"));
