@@ -322,7 +322,7 @@ def inspect_session(root,session,metadata,reader,oracle,plan=None,deadline=None)
     return results
 
 
-def qualify(root,sessions):
+def qualify(root,sessions,sinks_root=None):
     """Positive actual native/VM lineage PLUS exact measurement-thread identity."""
     try:
         require(len(sessions) in (1,2,3,4),'three independent sessions and at most one bounded rerun required')
@@ -351,14 +351,15 @@ def qualify(root,sessions):
             require(native[0]==native[1],'native boot/context/power/container/resources changed')
             preparation=loads(read(root,'preparation/setup.json'))
             original=Path(preparation['argv'][preparation['argv'].index('--out')+1]).parent
-            require(native[0]['limits']['Tmpfs']=={str(original/'local-sinks'):'rw,size=128m'},'required inspected 128MiB VM-local tmpfs sink not present; no file-policy equivalence')
+            base=Path(sinks_root) if sinks_root else original/'local-sinks'
+            require(native[0]['limits']['Tmpfs']=={str(base):'rw,size=128m'},'required inspected 128MiB VM-local tmpfs sink not present; no file-policy equivalence')
             from allocation import output
             for k in ('fs_before','fs_after'):
-                item=loads(read(root,s[k]));argv=['docker','exec',native[0]['container']['Id'],'df','-PT',str(original/'local-sinks')]
+                item=loads(read(root,s[k]));argv=['docker','exec',native[0]['container']['Id'],'df','-PT',str(base)]
                 lines=output(item,argv).splitlines()
                 require(len(lines)==2,'file filesystem inspection inventory')
                 columns=lines[1].split()
-                require(len(columns)==7 and columns[1]=='tmpfs' and columns[2]=='131072' and columns[-1]==str(original/'local-sinks'),'actual file sink is not bounded 128MiB tmpfs')
+                require(len(columns)==7 and columns[1]=='tmpfs' and columns[2]=='131072' and columns[-1]==str(base),'actual file sink is not bounded 128MiB tmpfs')
             require(native[0]['daemon']['kernel']==vm[0]['kernel'] and native[0]['daemon']['cpus']==vm[0]['logical_cpus'],'daemon and inspected VM mismatch')
             vm[0]['thread']={k:v for k,v in thread.items() if k not in ('pid','tid')}
             native_keys.append(native[0]);vm_keys.append(vm[0])
@@ -456,7 +457,7 @@ def validate(path,reader,expected_digest=None,sealed=True):
     elif len(report['sessions'])==4:
         retry=noise_index(statistics_rows[:3])
         require(retry is not None and active==[3 if i==retry else i for i in range(3)],'one predetermined full noise rerun only; originals retained')
-    q=qualify(root,report['sessions']);require(report['qualification']==q,'allocation qualification disagreement')
+    q=qualify(root,report['sessions'],report.get('sinks_root'));require(report['qualification']==q,'allocation qualification disagreement')
     cohort=three_sessions([statistics_rows[i] for i in active]) if len(statistics_rows)==3 else []
     require(report['three_session_calibration']==cohort,'three independent session medians/calibration')
     failed=any(s['exit_code']==1 or s['end']['semantic_failure'] for s in report['sessions'])
@@ -521,8 +522,9 @@ def worker(out,preparation,budget_ns,plan_path=None):
     require(digest(driver.read_bytes())==setup['binaries']['driver']['sha256'],'actual fresh built driver changed')
     argv=[str(driver),'calibrated-session',str(out),str(max(1,budget_ns))]
     if plan_path:argv.append(str(plan_path))
-    sinks=preparation.parent/'local-sinks'/out.name
-    sinks.mkdir()
+    sinks_root=os.environ.get('RISCV_PERF_CALIBRATION_SINKS_ROOT') or str(preparation.parent/'local-sinks')
+    sinks=Path(sinks_root)/out.name
+    sinks.mkdir(parents=True)
     env=dict(os.environ,RISCV_PERF_STREAM_ACK='1',RISCV_PERF_CALIBRATION_SINKS=str(sinks))
     start=None;end=None;summaries=[]
     with (out/'driver.stderr').open('xb') as stderr,(out/'driver.jsonl.gz').open('xb') as raw:
@@ -601,12 +603,18 @@ def run_collection(argv):
     head=clean();out=fresh_output(args.out);out.mkdir(parents=True)
     started=utc();tick=time.monotonic_ns();limit=POLICY['sampling']['session_wall_budget_ns']
     common=subprocess.check_output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=ROOT,text=True).strip()
-    cid=subprocess.check_output(['docker','create','--init','--volume',f'{ROOT}:{ROOT}','--volume',f'{common}:{common}:ro','--workdir',str(ROOT),
+    reuse=os.environ.get('RISCV_PERF_CALIBRATION_CONTAINER')
+    if reuse:
+        state=subprocess.check_output(['docker','inspect','--format','{{.Id}} {{.State.Status}}',reuse],cwd=ROOT,text=True).split()
+        require(state==[reuse,'running'],'continuing inspected allocation is not this running container')
+        cid=reuse
+    else:
+        cid=subprocess.check_output(['docker','create','--init','--volume',f'{ROOT}:{ROOT}','--volume',f'{common}:{common}:ro','--workdir',str(ROOT),
         '--env','GIT_OPTIONAL_LOCKS=0','--env','GIT_CONFIG_COUNT=1','--env','GIT_CONFIG_KEY_0=safe.directory','--env',f'GIT_CONFIG_VALUE_0={ROOT}',
         '--env','CARGO_BUILD_JOBS=2','--env','PYTHONDONTWRITEBYTECODE=1','--env','RISCV_REQUIRE_RISCV_TOOLCHAIN=1','--env','RISCV_REQUIRE_A10_PINNED_TOOLS=1',
         '--env',f'RISCV_PERF_PHYSICAL_HOST_RECORD={out}/physical-host.json','--env',f'RISCV_PERF_CONTAINER_RECORD={out}/container.json',
         '--tmpfs',f'{out}/local-sinks:rw,size=128m',IMAGE,'sleep','86400'],cwd=ROOT,text=True).strip()
-    subprocess.run(['docker','start',cid],cwd=ROOT,check=True)
+        subprocess.run(['docker','start',cid],cwd=ROOT,check=True)
     first=native(cid);json_new(out/'allocation-before.json',first)
     parsed=parse_native(first)
     json_new(out/'physical-host.json',first['host'])
@@ -632,7 +640,11 @@ def run_collection(argv):
     vm=capture(['docker','exec',cid,'python3','-B','tools/a10/allocation.py','probe']);json_new(sroot/'vm-before-command.json',vm)
     require(vm['code']==0,'VM inspection unavailable');json_new(sroot/'vm-before.json',loads(vm['stdout']))
     remaining=max(1,limit-(time.monotonic_ns()-tick)-reserve-reader_reserve)
-    result=subprocess.run(['docker','exec',cid,'python3','-B','tools/a10/calibrated.py','worker',str(sroot),str(out/'preparation'),str(remaining)],cwd=ROOT)
+    worker_command=['docker','exec']
+    if os.environ.get('RISCV_PERF_CALIBRATION_SINKS_ROOT'):
+        worker_command+=['-e','RISCV_PERF_CALIBRATION_SINKS_ROOT='+os.environ['RISCV_PERF_CALIBRATION_SINKS_ROOT']]
+    worker_command+=['-e',f'RISCV_PERF_CALIBRATION_CONTAINER={cid}',cid,'python3','-B','tools/a10/calibrated.py','worker',str(sroot),str(out/'preparation'),str(remaining)]
+    result=subprocess.run(worker_command,cwd=ROOT)
     json_new(sroot/'native-after.json',native(cid))
     json_new(sroot/'fs-after.json',capture(['docker','exec',cid,'df','-PT',str(out/'local-sinks')]))
     vm=capture(['docker','exec',cid,'python3','-B','tools/a10/allocation.py','probe']);json_new(sroot/'vm-after-command.json',vm)
@@ -641,7 +653,7 @@ def run_collection(argv):
     session={k:t[k] for k in ('id','start','end','summaries','exit_code')}
     session.update(artifact_prefix=prefix,native_before=prefix+'/native-before.json',native_after=prefix+'/native-after.json',vm_before=prefix+'/vm-before.json',vm_after=prefix+'/vm-after.json',fs_before=prefix+'/fs-before.json',fs_after=prefix+'/fs-after.json',stream=prefix+'/driver.jsonl.gz',stderr=prefix+'/driver.stderr')
     sessions=[session]
-    json_new(out/'collection-input-1.json',{'sessions':sessions,'start_utc':started,'argv':[str(ROOT/'scripts/perf-test.sh'),'run']+argv,'source_head':head,'limit_ns':limit,'elapsed_before_validation_ns':time.monotonic_ns()-tick})
+    json_new(out/'collection-input-1.json',{'sessions':sessions,'start_utc':started,'argv':[str(ROOT/'scripts/perf-test.sh'),'run']+argv,'source_head':head,'limit_ns':limit,'elapsed_before_validation_ns':time.monotonic_ns()-tick,'sinks_root':os.environ.get('RISCV_PERF_CALIBRATION_SINKS_ROOT')})
     # Strict semantic reconstruction runs in the SAME inspected VM, bounded by
     # the reader reserve; honest bounded partial evidence on exhaustion.
     analysed=subprocess.run(['docker','exec',cid,'python3','-B','tools/a10/calibrated.py','finish',str(out),'1'],cwd=ROOT)
@@ -677,7 +689,7 @@ def finish(out,count):
     elif count==4 and len(statistics_rows)==3:
         retry=noise_index(statistics_rows[:3]);require(retry is not None,'unauthorized non-noise retry')
         active=[3 if i==retry else i for i in range(3)]
-    q=qualify(out,data['sessions'])
+    q=qualify(out,data['sessions'],data.get('sinks_root'))
     elapsed=data['elapsed_before_validation_ns']+time.monotonic_ns()-began
     failed=any(s['exit_code']==1 or s['end']['semantic_failure'] for s in data['sessions'])
     unavailable=any(s['exit_code']==2 or not s['end']['complete'] for s in data['sessions']) or partial is not None
@@ -688,7 +700,7 @@ def finish(out,count):
             'metadata':{'report':'preparation/report.json','bundle_sha256':read(out,'preparation/bundle.sha256').decode().strip()},
             'source_head':data['source_head'],'policy_sha256':digest((ROOT/'tools/a10/calibrated-v1.json').read_bytes()),'workload':workload_identity(),
             'budget':{'limit_ns':data['limit_ns'],'elapsed_ns':elapsed,'includes':'native orchestration + fresh setup/build/fixtures + three serial process sessions + full own-P0/schema reconstruction; 120s validation reserve','exhausted':elapsed>data['limit_ns']},
-            'sessions':data['sessions'],'selected_sessions':active,'selection':None,'qualification':q,'statistics':statistics_rows,'three_session_calibration':cohort,
+            'sessions':data['sessions'],'selected_sessions':active,'selection':None,'qualification':q,'statistics':statistics_rows,'three_session_calibration':cohort,'sinks_root':data.get('sinks_root'),
             'semantic_status':'semantic_failure' if failed else 'unavailable' if unavailable else 'correct','comparison_status':'qualified-informational' if usable and not failed else 'inconclusive',
             'diagnostics':POLICY['compatibility']['limitations']+([partial] if partial else [])+([] if usable else ['required allocation/sample/warmup/work/clock/noise/budget evidence insufficient; no ratios']),
             'bundle':{'id':rid,'manifest':'bundle.json'}}
