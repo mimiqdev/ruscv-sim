@@ -7,7 +7,7 @@ import time
 import unittest
 from unittest.mock import patch
 import calibrated as c
-from integrity import json_new, loads, read, retrieve, Invalid
+from integrity import digest, json_new, loads, read, retrieve, Invalid
 
 class CalibratedControls(unittest.TestCase):
     def test_transport_controls_after_large_sorted_caller(self):
@@ -118,4 +118,74 @@ class CalibratedControls(unittest.TestCase):
             p=Path(d)/'report.json';json_new(p,{'run':{'profile':'calibrated'}})
             code,result=c.comparison(None,p,Path('/not-executed'))
             self.assertEqual(code,1);self.assertIsNone(result['ratios'])
+    @staticmethod
+    def member(i,pid=100,head='h',plan='p'):
+        from integrity import canonical
+        s={'id':f'session-{i}','start':{'pid':pid},'end':{'plan':{'cell':plan}},'exit_code':0}
+        return {'run':{'profile':'calibrated','id':f'run-{i}'},'source_head':head,'selected_sessions':[0],'selection':None,'policy_sha256':'pol','workload':{'w':1},
+                'qualification':{'eligible':True},'semantic_status':'correct','sessions':[s],
+                'statistics':[{'session':s['id'],'cells':[{'cell':'c','usable':True,'sufficient_noise':True,'values_ns':[1000]*31,'distribution':{'median_ns':1000}}]}]}
+    def build_cohort(self,tmp,mutate=None,plans=('p','p','p'),pids=(100,101,102),heads=('h','h','h')):
+        import json as _json
+        import uuid as _uuid
+        reports=[];tag=_uuid.uuid4().hex[:8]
+        for i in range(3):
+            r=self.member(i,pid=pids[i],head=heads[i],plan=plans[i])
+            p=Path(tmp)/f'm{i}-{tag}';p.mkdir();json_new(p/'report.json',r);(p/'bundle.sha256').write_text('0'*64+'\n');reports.append(p/'report.json')
+        if mutate:reports=mutate(reports)
+        captured={}
+        def fake_validate(path,reader,expected_digest=None,sealed=True):
+            captured['path']=path
+            r=loads(Path(path).read_bytes())
+            return (1 if r.get('bad') else 2),r,{}
+        real=c.validate;real_key=c.compatibility_key
+        c.validate=fake_validate;c.compatibility_key=lambda r,m:{'plan':r['sessions'][0]['end']['plan']['cell']}
+        out=Path(tmp)/f'out-{tag}'
+        try:code,result=c.cohort(out,reports,'reader',heads[0])
+        finally:c.validate=real;c.compatibility_key=real_key
+        return code,result,out
+    def test_cohort_binds_three_independent_validated_members(self):
+        with tempfile.TemporaryDirectory(dir=c.ROOT/'target') as d:
+            code,result,out=self.build_cohort(d)
+            self.assertEqual(code,0);self.assertEqual(result['comparison_status'],'qualified-informational')
+            retrieve(out,required={'cohort.json','baseline.json'})
+            bl=loads(read(out,'baseline.json'))
+            self.assertEqual(bl['cohort_sha256'],digest(read(out,'cohort.json')))
+            self.assertEqual(len(result['members']),3)
+    def test_cohort_rejects_copied_self_old_head_plan_and_bad_members(self):
+        with tempfile.TemporaryDirectory(dir=c.ROOT/'target') as d:
+            with self.assertRaises(c.Invalid):self.build_cohort(d,pids=(100,100,102))
+            with self.assertRaises(c.Invalid):self.build_cohort(d,heads=('h','h','old'))
+            with self.assertRaises(c.Invalid):self.build_cohort(d,plans=('p','q','p'))
+        with tempfile.TemporaryDirectory(dir=c.ROOT/'target') as d:
+            def bad(reports):
+                reports[1].write_bytes(b'{"bad":true}')
+                return reports
+            with self.assertRaises(c.Invalid):self.build_cohort(d,mutate=bad)
+    def test_comparison_cohort_baseline_independence_and_compatibility(self):
+        with tempfile.TemporaryDirectory(dir=c.ROOT/'target') as d:
+            code,result,root=self.build_cohort(d)
+            member_report=loads(read(root,'cohort.json'))['members'][0]['report']
+            cand=Path(d)/'cand';cand.mkdir();json_new(cand/'report.json',self.member(9,pid=999,head='h',plan='p'))
+            def fake_validate(path,reader,expected_digest=None,sealed=True):
+                r=loads(Path(path).read_bytes())
+                return 0,r,{}
+            real=c.validate;real_key=c.compatibility_key
+            c.validate=fake_validate;c.compatibility_key=lambda r,m:{'plan':r['sessions'][0]['end']['plan']['cell']}
+            try:
+                # Full-coverage ratios are required; one fake cell cannot satisfy
+                # the explicit 180-cell coverage require.
+                with self.assertRaises(c.Invalid):
+                    c.comparison(root/'baseline.json',cand/'report.json','reader')
+                # Candidate sharing a cohort pid is rejected as not independent.
+                cand2=Path(d)/'cand2';cand2.mkdir();json_new(cand2/'report.json',self.member(9,pid=100,head='h',plan='p'))
+                code3,res3=c.comparison(root/'baseline.json',cand2/'report.json','reader')
+                self.assertEqual(code3,2);self.assertTrue(any('independently produced' in r for r in res3['reasons']))
+                # Incompatible pinned work plan is rejected without ratios.
+                cand3=Path(d)/'cand3';cand3.mkdir();json_new(cand3/'report.json',self.member(9,pid=999,head='h',plan='other'))
+                code4,res4=c.comparison(root/'baseline.json',cand3/'report.json','reader')
+                self.assertEqual(code4,2);self.assertTrue(any('incompatible' in r for r in res4['reasons']))
+            finally:c.validate=real;c.compatibility_key=real_key
+
+
 if __name__=='__main__':unittest.main()

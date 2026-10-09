@@ -144,7 +144,18 @@ fixture bytes are reused only after one digest-verified read, and exhaustion
 produces honest bounded partial evidence (never success without
 integrity/oracles, and semantic failure still exits 1 first). One successful
 session never becomes a baseline; comparisons require the valid three-session
-cohort plus an independently produced candidate.
+cohort plus an independently produced candidate. The committed mechanism is
+the versioned `ruscv-perf-cohort/1` builder: after three independent
+invocations, `./scripts/perf-test.sh cohort --reports A/report.json
+B/report.json C/report.json --out target/perf/p3-cohort` revalidates every
+member against its retained raw evidence, requires one clean HEAD, distinct
+processes/run IDs, a shared pinned plan/policy/workload and one positively
+inspected allocation, and seals `cohort.json` plus the `baseline.json`
+compatibility binding; `compare --baseline …/baseline.json --candidate
+…/report.json` then requires an independently produced compatible candidate
+before any informational ratio. Focused negative controls reject copied/self
+members, old/mixed heads, plan drift, tampered members, cohort-pid candidates
+and incompatible work.
 
 ### Qualified affinity and allocation, not physical control
 

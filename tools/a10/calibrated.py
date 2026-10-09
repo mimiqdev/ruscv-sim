@@ -369,6 +369,60 @@ def qualify(root,sessions):
         return {'scope':POLICY['compatibility']['scope'],'eligible':False,'unobserved_uncontrolled':[],'limitations':POLICY['compatibility']['limitations'],'reasons':[str(error)],'positive_key':None}
 
 
+COHORT='ruscv-perf-cohort/1'
+BASELINE='ruscv-perf-baseline/1'
+
+
+def cohort(out,reports,reader,head):
+    """Bind THREE independently produced, fully validated session reports.
+
+    Rejects copied/self evidence, old/mixed heads and incompatible pinned
+    plans; the sealed cohort IS the usable baseline. No member is trusted
+    without its own validate() reconstruction from retained raw evidence.
+    """
+    out=Path(out);require(not out.exists() and not out.is_symlink(),'cohort output reuse/overwrite')
+    require(len(reports)==3,'exactly three independently produced session reports required')
+    members=[];heads=set();plans=[];pids=[];runs=[]
+    for path in reports:
+        path=Path(path)
+        code,report,metadata=validate(path,reader)
+        require(code!=1,'cohort member semantic/schema/reporting failure: '+str(path))
+        require(report['run']['profile']=='calibrated' and len(report['sessions'])==1 and report['selected_sessions']==[0],'cohort binds validated single-session invocation reports')
+        s=report['sessions'][0]
+        members.append((path,report,metadata,s))
+        heads.add(report['source_head']);plans.append(digest(canonical(s['end']['plan'])))
+        pids.append(s['start']['pid']);runs.append(s['id'])
+    require(len(heads)==1 and heads.pop()==head,'one final clean committed HEAD across all members')
+    require(len(set(pids))==len(members) and len(set(runs))==len(members),'copied/self/non-independent member evidence')
+    require(len(set(plans))==1,'members must share the pinned repetition/work plan')
+    require(len({canonical(m[1]['qualification']) for m in members})==1,'members must share one positively inspected allocation')
+    require(len({m[1]['policy_sha256'] for m in members})==1 and len({canonical(m[1]['workload']) for m in members})==1,'members must share policy/workload identities')
+    require(all(m[1]['qualification']['eligible'] for m in members),'member allocation qualification')
+    statistics=[{'session':m[3]['id'],'cells':m[1]['statistics'][0]['cells']} for m in members]
+    calibration=three_sessions(statistics)
+    usable=all(m[1]['statistics'][0]['cells'] and all(c['usable'] for c in m[1]['statistics'][0]['cells']) for m in members) and all(c['sufficient_noise'] for c in calibration)
+    statuses={m[1]['semantic_status'] for m in members}
+    semantic='semantic_failure' if 'semantic_failure' in statuses else ('unavailable' if 'unavailable' in statuses else 'correct')
+    rid=str(uuid.uuid4())
+    entry=[]
+    for path,report,metadata,s in members:
+        bytes_=(path).read_bytes()
+        entry.append({'report':str(path),'report_sha256':digest(bytes_),'run_id':report['run']['id'],'session_id':s['id'],'process_pid':s['start']['pid'],'bundle_sha256':(path.parent/'bundle.sha256').read_text().strip(),'plan_sha256':plans[0]})
+    cohort_report={'schema':COHORT,'version':1,'id':rid,'source_head':head,'policy_sha256':members[0][1]['policy_sha256'],'workload':members[0][1]['workload'],'members':entry,
+        'qualification':members[0][1]['qualification'],'cohort_calibration':calibration,'semantic_status':semantic,
+        'comparison_status':'qualified-informational' if usable else 'inconclusive','diagnostics':[] if usable else ['cohort lacks fully usable/noise-sufficient independent sessions; no baseline ratios']}
+    baseline={'schema':BASELINE,'version':1,'cohort_id':rid,'cohort_sha256':None,'source_head':head,'member_session_id':members[0][3]['id'],'compatibility_key_sha256':digest(canonical(compatibility_key(members[0][1],members[0][2])))}
+    out.mkdir(parents=True)
+    json_new(out/'cohort.json',cohort_report)
+    baseline['cohort_sha256']=digest(read(out,'cohort.json'))
+    json_new(out/'baseline.json',baseline)
+    entries=[]
+    for name in ('cohort.json','baseline.json'):
+        b=read(out,name);entries.append({'path':name,'bytes':len(b),'sha256':digest(b)})
+    seal(out,rid,staged=entries)
+    return (0 if usable else 2),cohort_report
+
+
 def validate(path,reader,expected_digest=None,sealed=True):
     path=Path(path);require(path.name=='report.json' and not path.is_symlink() and not any(p.is_symlink() for p in path.parents),'calibrated report/root path')
     root=path.parent;report=loads(read(root,'report.json'))
@@ -395,7 +449,9 @@ def validate(path,reader,expected_digest=None,sealed=True):
         require(rows=={'session':s['id'],'cells':inspected},'statistics/discards/links not reconstructed from all own raw rows')
         statistics_rows.append(inspected)
         if plan is None:plan=s['end']['plan']
-    active=report['selected_sessions'];require(len(active)==3 and len(set(active))==3 and all(type(i) is int and 0<=i<len(report['sessions']) for i in active),'selected independent sessions')
+    active=report['selected_sessions']
+    if len(report['sessions'])==1:require(active==[0],'single-session selection')
+    else:require(len(active)==3 and len(set(active))==3 and all(type(i) is int and 0<=i<len(report['sessions']) for i in active),'selected independent sessions')
     if len(report['sessions'])==3:require(active==[0,1,2],'no cherry picking')
     elif len(report['sessions'])==4:
         retry=noise_index(statistics_rows[:3])
@@ -660,11 +716,29 @@ def compatibility_key(report,metadata):
 
 
 def comparison(baseline,candidate,reader):
-    observations=[];errors=[];reasons=[]
+    observations=[];errors=[];reasons=[];cohort_pids=set();cohort_runs=set();base_descriptor=None
     for label,path in (('baseline',baseline),('candidate',candidate)):
         if path is None or not Path(path).exists():observations.append(None);reasons.append(label+' missing');continue
         try:
-            r=loads(read(Path(path).parent,'report.json'))
+            path=Path(path)
+            if path.name=='baseline.json':
+                # Cohort-backed baseline: revalidate the pinned member report.
+                root=path.parent;bl=loads(read(root,'baseline.json'))
+                require(bl.get('schema')==BASELINE,'unknown baseline artifact')
+                retrieve(root,required={'cohort.json','baseline.json'})
+                cr=loads(read(root,'cohort.json'))
+                require(digest(read(root,'cohort.json'))==bl['cohort_sha256'],'cohort report changed since sealing')
+                require(cr['id']==bl['cohort_id'] and cr['comparison_status']=='qualified-informational','cohort is not a usable baseline')
+                member=Path(cr['members'][0]['report'])
+                require(digest(member.read_bytes())==cr['members'][0]['report_sha256'],'baseline member report changed')
+                code,r,m=validate(member,reader)
+                require(code!=1,'baseline member semantic/schema/reporting failure')
+                if code==2:reasons.append('baseline member session inconclusive; no ratios')
+                observations.append((r,m))
+                cohort_pids={e['process_pid'] for e in cr['members']};cohort_runs={e['run_id'] for e in cr['members']}
+                base_descriptor={'kind':COHORT,'cohort_id':cr['id'],'cohort_sha256':bl['cohort_sha256'],'member_session_id':cr['members'][0]['session_id'],'compatibility_key_sha256':bl['compatibility_key_sha256']}
+                continue
+            r=loads(read(path.parent,'report.json'))
             if r.get('run',{}).get('profile')!='calibrated':
                 code=validate_smoke(Path(path),reader)
                 require(code!=1,label+' semantic failure')
@@ -681,13 +755,20 @@ def comparison(baseline,candidate,reader):
         if item:
             r,m=item;selection=r['selection'] if r['selection'] is not None else r['selected_sessions'][0]
             result[label]={'source_head':r['source_head'],'run_id':r['sessions'][selection]['id'],'process_pid':r['sessions'][selection]['start']['pid'],'selection':selection,'compatibility_key_sha256':digest(canonical(compatibility_key(r,m)))}
+    if base_descriptor is not None:result['baseline']=base_descriptor
     if errors:return 1,result
     if reasons:return 2,result
     b,c=observations
-    if compatibility_key(*b)!=compatibility_key(*c):result['reasons']=['incompatible known substantive allocation/build/tool/image/clock/sink/fixture/work policies'];return 2,result
-    if result['baseline']['process_pid']==result['candidate']['process_pid']:
+    if base_descriptor is not None:
+        if result['candidate']['run_id'] in cohort_runs or result['candidate']['process_pid'] in cohort_pids:
+            result['reasons']=['candidate is not independently produced from the cohort'];return 2,result
+        if result['candidate']['compatibility_key_sha256']!=base_descriptor['compatibility_key_sha256']:
+            result['reasons']=['incompatible known substantive allocation/build/tool/image/clock/sink/fixture/work policies'];return 2,result
+    elif compatibility_key(*b)!=compatibility_key(*c):result['reasons']=['incompatible known substantive allocation/build/tool/image/clock/sink/fixture/work policies'];return 2,result
+    if base_descriptor is None and result['baseline']['process_pid']==result['candidate']['process_pid']:
         result['reasons']=['not independent executions; copied report/group IDs do not establish independence'];return 2,result
-    bi=result['baseline']['selection'];ci=result['candidate']['selection'];ratios=[]
+    bi=result['baseline'].get('selection');ci=result['candidate']['selection']
+    bi=0 if bi is None else bi;ratios=[]
     for br,cr in zip(b[0]['statistics'][bi]['cells'],c[0]['statistics'][ci]['cells']):
         require(br['cell']==cr['cell'] and br['usable'] and cr['usable'],'own calibrated comparison cell')
         ratios.append(dict(ratio(br['values_ns'],cr['values_ns'],POLICY),cell=br['cell'],unit='ns/sample of identical independently validated work; not modeled guest cycles'))

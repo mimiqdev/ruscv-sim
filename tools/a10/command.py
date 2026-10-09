@@ -82,6 +82,15 @@ def main(argv):
         out.mkdir(parents=True);json_new(out/'comparison.json',result);(out/'comparison.json').chmod(0o444)
         print('QUALIFIED INFORMATIONAL; no speed gate' if code==0 else 'INCONCLUSIVE: no ratios' if code==2 else 'SEMANTIC/SCHEMA/REPORTING FAILURE: no ratios')
         return code
+    if argv and argv[0]=='cohort':
+        parser=argparse.ArgumentParser(description='Bind three independent validated single-session calibrated reports into the sealed usable baseline cohort')
+        parser.add_argument('--reports',nargs=3,required=True)
+        parser.add_argument('--out',required=True)
+        args=parser.parse_args(argv[1:]);out=fresh_output(args.out)
+        from calibrated import cohort as build
+        code,result=build(out,[Path(p) for p in args.reports],reader_binary(),clean())
+        print('USABLE COHORT BASELINE SEALED; informational only, no speed gate' if code==0 else 'INCONCLUSIVE: cohort lacks fully usable/noise-sufficient members; no ratios' if code==2 else 'SEMANTIC/SCHEMA/REPORTING FAILURE: no cohort')
+        return code
     if not argv or argv[0] != 'run':
         print('INCONCLUSIVE: use public-v1 smoke/calibrated, validate or compare; CI/retention deferred (P4)',file=sys.stderr)
         return 2
