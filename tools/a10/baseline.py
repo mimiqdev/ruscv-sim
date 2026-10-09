@@ -55,14 +55,24 @@ def verified(row):
 
 
 def build_fixtures(out):
-    """Pinned-container fixture build when the host lacks the cross tools."""
+    """Pinned-container fixture build when the host lacks the cross tools.
+
+    The producer audit runs in the SAME container as the build so actual
+    producer executables are verified where they exist; host-side audit
+    cannot open container-only tool paths.
+    """
     from shutil import which
     if which('riscv64-unknown-elf-as') is None:
-        subprocess.run(['docker', 'run', '--rm', '--volume', f'{ROOT}:{ROOT}', '--workdir', str(ROOT),
-                        '--env', 'PYTHONDONTWRITEBYTECODE=1', '--env', 'RISCV_REQUIRE_A10_PINNED_TOOLS=1',
-                        IMAGE, 'python3', '-B', 'tools/a10/build_fixtures.py', '--out', str(out)], cwd=ROOT, check=True)
-    else:
-        subprocess.run(['python3', '-B', 'tools/a10/build_fixtures.py', '--out', str(out)], cwd=ROOT, check=True)
+        script = ('python3 -B tools/a10/build_fixtures.py --out "$1" && '
+                  'python3 -B -c "import json,sys; from audit_fixtures import audit; print(json.dumps(audit(sys.argv[1])))" "$1"')
+        completed = subprocess.run(['docker', 'run', '--rm', '--volume', f'{ROOT}:{ROOT}', '--workdir', str(ROOT),
+                                    '--env', 'PYTHONDONTWRITEBYTECODE=1', '--env', 'RISCV_REQUIRE_A10_PINNED_TOOLS=1',
+                                    IMAGE, 'bash', '-c', script, 'fixtures', str(out)], cwd=ROOT, capture_output=True, text=True)
+        require = __import__('integrity').require
+        require(completed.returncode == 0, 'pinned-container fixture build/audit failed: ' + completed.stderr[-800:])
+        import json as _json
+        return _json.loads(completed.stdout.strip().splitlines()[-1])
+    subprocess.run(['python3', '-B', 'tools/a10/build_fixtures.py', '--out', str(out)], cwd=ROOT, check=True)
     return audit(out)
 
 
