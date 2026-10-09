@@ -1,4 +1,5 @@
 //! Shared public-path driver; untimed raw transport and P0 oracle replay.
+pub mod calibration;
 pub mod phases;
 pub mod replay;
 #[path = "mod.rs"]
@@ -60,7 +61,9 @@ fn run() -> Result<i32, String> {
         );
         return Ok(0);
     }
-    if args.len() != 4 || args[1] != "run" {
+    if !((args.len() == 4 && args[1] == "run")
+        || ((args.len() == 4 || args.len() == 5) && args[1] == "calibrated-session"))
+    {
         return Err(
             "usage: a10-perf-driver run PREPARED_OUTPUT REPETITIONS (use scripts/perf-test.sh)"
                 .into(),
@@ -81,11 +84,14 @@ fn run() -> Result<i32, String> {
     {
         return Err("stale source metadata".into());
     }
-    let audit = Command::new("python3")
+    let mut audit_command = Command::new("python3");
+    audit_command
         .arg("tools/a10/audit_fixtures.py")
-        .arg(out.join("fixtures"))
-        .status()
-        .map_err(|e| e.to_string())?;
+        .arg(out.join("fixtures"));
+    if args[1] == "calibrated-session" {
+        audit_command.stdout(std::io::stderr());
+    }
+    let audit = audit_command.status().map_err(|e| e.to_string())?;
     if !audit.success() {
         return Err("fresh fixture identity audit failed".into());
     }
@@ -100,6 +106,25 @@ fn run() -> Result<i32, String> {
         driver: &exe,
         artifacts: &artifacts,
     };
+    if args[1] == "calibrated-session" {
+        let budget: u64 = args[3].parse().map_err(|_| "session budget ns")?;
+        if budget == 0 || budget > 1_800_000_000_000 {
+            return Err("invalid bounded session budget".into());
+        }
+        let plan = args
+            .get(4)
+            .map(|p| {
+                std::fs::read(p)
+                    .map_err(|e| e.to_string())
+                    .and_then(|b| replay::unique_json(&b))
+            })
+            .transpose()?;
+        return calibration::session(
+            &paths,
+            std::time::Duration::from_nanos(budget),
+            plan.as_ref(),
+        );
+    }
     let repetitions: usize = args[3].parse().map_err(|_| "invalid repetitions")?;
     if !(1..=16).contains(&repetitions) {
         return Err("smoke repetitions must be 1..16; calibrated unavailable".into());

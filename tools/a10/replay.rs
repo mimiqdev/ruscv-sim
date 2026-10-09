@@ -98,7 +98,7 @@ fn read(root: &Path, reference: &Value) -> Result<Vec<u8>, String> {
     }
     std::fs::read(full).map_err(|e| e.to_string())
 }
-fn expected_ops(route: &str, phase: &str, mode: &str, turns: usize) -> Vec<Op> {
+fn expected_ops(route: &str, phase: &str, mode: &str, turns: usize, cli_affinity: bool) -> Vec<Op> {
     use Op::*;
     let mut ops = if phase == "load_only" {
         vec![
@@ -126,6 +126,10 @@ fn expected_ops(route: &str, phase: &str, mode: &str, turns: usize) -> Vec<Op> {
     } else {
         vec![ChildLaunch, ChildWait]
     };
+    if cli_affinity && route == "cli" {
+        ops.insert(0, AffinityInspect);
+        ops.push(AffinityInspect);
+    }
     if phase != "load_only" {
         ops.push(Validate);
     }
@@ -142,7 +146,15 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
     let reps = report["policy"]["basic_repetitions"]
         .as_u64()
         .ok_or("repetitions")?;
-    need((1..=16).contains(&reps), "P2 smoke repetitions")?;
+    let fragment = report.get("calibration_fragment");
+    if fragment.is_none() {
+        need((1..=16).contains(&reps), "P2 smoke repetitions")?;
+    } else {
+        need(
+            (1..=256).contains(&reps),
+            "bounded calibration fragment rows",
+        )?;
+    }
     let m = manifest();
     // Parse/reconstruct each immutable pinned initial image once per read. This
     // caches expected bytes only, never a sample verdict or companion run.
@@ -166,24 +178,60 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
         );
     }
     let mut expected = Vec::new();
-    for f in &m.fixtures {
-        for route in m.route_matrix.keys() {
-            for phase in ["load_only", "execute_only", "end_to_end"] {
-                for mode in if phase == "load_only" {
-                    vec!["none"]
-                } else {
-                    vec!["off", "facts", "file"]
-                } {
-                    let applicable = phases::availability(&m, f, route, phase, mode).is_ok();
-                    for rep in 0..=if applicable { reps } else { 0 } {
-                        expected.push((
-                            f.id.as_str(),
-                            route.as_str(),
-                            phase,
-                            mode,
-                            rep,
-                            applicable,
-                        ));
+    if let Some(fragment) = fragment {
+        let fixture = fragment["fixture"].as_str().ok_or("fragment fixture")?;
+        let f = m
+            .fixtures
+            .iter()
+            .find(|f| f.id == fixture)
+            .ok_or("unknown fragment fixture")?;
+        let route = fragment["route"].as_str().ok_or("fragment route")?;
+        let route = m
+            .route_matrix
+            .keys()
+            .find(|r| r.as_str() == route)
+            .ok_or("unknown fragment route")?;
+        let phase = fragment["phase"].as_str().ok_or("fragment phase")?;
+        let mode = fragment["mode"].as_str().ok_or("fragment mode")?;
+        need(
+            matches!(phase, "load_only" | "execute_only" | "end_to_end"),
+            "fragment phase",
+        )?;
+        need(
+            matches!(mode, "none" | "off" | "facts" | "file"),
+            "fragment mode",
+        )?;
+        let first = fragment["first_repetition"]
+            .as_u64()
+            .ok_or("fragment repetition")?;
+        let applicable = phases::availability(&m, f, route, phase, mode).is_ok();
+        need(
+            applicable || (reps == 1 && first == 0),
+            "N/A fragment count",
+        )?;
+        for rep in first..first.checked_add(reps).ok_or("fragment overflow")? {
+            expected.push((f.id.as_str(), route.as_str(), phase, mode, rep, applicable));
+        }
+    } else {
+        for f in &m.fixtures {
+            for route in m.route_matrix.keys() {
+                for phase in ["load_only", "execute_only", "end_to_end"] {
+                    for mode in if phase == "load_only" {
+                        vec!["none"]
+                    } else {
+                        vec!["off", "facts", "file"]
+                    } {
+                        let applicable = phases::availability(&m, f, route, phase, mode).is_ok();
+                        for rep in 0..=if applicable { reps } else { 0 } {
+                            expected.push((
+                                f.id.as_str(),
+                                route.as_str(),
+                                phase,
+                                mode,
+                                rep,
+                                applicable,
+                            ));
+                        }
                     }
                 }
             }
@@ -218,8 +266,17 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
             ) == (fixture, route, phase, mode, rep),
             "cell/repetition identity mismatch",
         )?;
-        need(r.warmup == (applicable && rep == 0), "warmup identity")?;
+        let warmup = if let Some(fragment) = fragment {
+            fragment["warmup"].as_bool().ok_or("fragment warmup")?
+        } else {
+            applicable && rep == 0
+        };
+        need(r.warmup == warmup, "warmup identity")?;
         let f = m.fixtures.iter().find(|f| f.id == fixture).unwrap();
+        need(
+            route == "cli" || r.cli_affinity.is_none(),
+            "non-CLI fabricated CLI affinity carrier",
+        )?;
         let (scope, policy) = phases::scope(route, phase);
         need(
             r.scope == scope && r.capture_policy == policy,
@@ -244,7 +301,8 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
                     && r.native_ops.is_none()
                     && r.argv.is_empty()
                     && r.transport_code.is_none()
-                    && r.measurement_status == "not_applicable",
+                    && r.measurement_status == "not_applicable"
+                    && r.cli_affinity.is_none(),
                 "N/A fabricated lifecycle/clock/result",
             )?;
             continue;
@@ -328,7 +386,13 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
                 )?;
             }
             if r.scope_error.is_none() && r.semantic_status == "correct" {
-                let expected = expected_ops(route, phase, mode, f.turns as usize);
+                let expected = expected_ops(
+                    route,
+                    phase,
+                    mode,
+                    f.turns as usize,
+                    r.cli_affinity.is_some(),
+                );
                 need(
                     r.ops == expected,
                     "ordered actual phase/reset/receipt trace mismatch",
@@ -341,6 +405,13 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
                 }
                 child.check()?;
                 let mut expected = vec![Op::Start, Op::NativeCall, Op::UartFlush, Op::Stop];
+                if r.native_ops
+                    .as_ref()
+                    .is_some_and(|ops| ops.contains(&Op::AffinityInspect))
+                {
+                    expected.insert(0, Op::AffinityInspect);
+                    expected.push(Op::AffinityInspect);
+                }
                 if route == "native-bytes" {
                     expected.insert(0, Op::ReadInput);
                 }

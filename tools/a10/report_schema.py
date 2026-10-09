@@ -230,6 +230,9 @@ def validate(path, reader, expected_digest=None, sealed=True):
     root = path.parent
     report_bytes=read(root,'report.json')
     report = loads(report_bytes)
+    if isinstance(report,dict) and isinstance(report.get('run'),dict) and report['run'].get('profile')=='calibrated':
+        from calibrated import validate as validate_calibrated
+        return validate_calibrated(path,reader,expected_digest,sealed)[0]
     schema = loads((ROOT / 'tools/a10/ruscv-perf-1.schema.json').read_bytes())
     schema_check(report,schema,schema['$defs'])
     bundle = retrieve(root,expected_digest) if sealed else None

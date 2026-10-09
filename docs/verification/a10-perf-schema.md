@@ -2,7 +2,7 @@
 
 - Status: Current
 - Authority: Informational
-- Scope: implemented A10 P2 local smoke/evidence; not independent review acceptance, P3 calibration or P4 retention
+- Scope: approved P2 local smoke/evidence and P3 implementation under development; not P3 acceptance or P4 retention
 - Contract: [current contract](../dev-plan.md), [ADRs](../architecture/decisions/README.md)
 - Implementation: [`report_schema.py`](../../tools/a10/report_schema.py), [`replay.rs`](../../tools/a10/replay.rs)
 - Machine-readable definition: [`ruscv-perf-1.schema.json`](../../tools/a10/ruscv-perf-1.schema.json) (Draft 2020-12)
@@ -20,7 +20,7 @@ bash tools/a10/verify_p2.sh
 
 `run` freshly builds release/all-features/locked binaries and fixtures before clocks. `--repetitions 1..16` selects basic repetitions; every cell also has one independently validated warmup. It retains 180 phase cells and 324 explicit N/A rows (864 total rows at the default two basic repetitions). Each actual repetition uses the unchanged reusable P0 oracle; no preflight/companion run blesses another sample. The 148 P0 route/mode matrix remains separately tested.
 
-Wrapper statuses are **0** valid report/all semantics correct (the reader), **1** semantic/schema/integrity/reporting failure, **2** measurement unavailable/inconclusive. A semantically correct **smoke `run` returns 2**, not performance PASS. Human output prints INCONCLUSIVE. `validate` can return 0 while comparison remains inconclusive: validity is not calibrated measurement acceptance. No public runtime CLI/library guest exit behavior changes. Compare/calibrated commands return 2 and are not implemented.
+Wrapper statuses are **0** valid report/all semantics correct (the reader), **1** semantic/schema/integrity/reporting failure, **2** measurement unavailable/inconclusive. A semantically correct **smoke `run` returns 2**, not performance PASS. Human output prints INCONCLUSIVE. `validate` can return 0 while comparison remains inconclusive: validity is not calibrated measurement acceptance. No public runtime CLI/library guest exit behavior changes. The calibrated/compare paths below are under development and have no accepted full-session evidence yet.
 
 ## Protocol and identities
 
@@ -59,7 +59,92 @@ The smoke policy lacks ≥30 samples, ≥5/1-second warmups, ≥10-ms calibrated
 
 Fresh named output must be below repository `target/`, never reused/protected/escaping/symlink-controlled. `bundle.json` lists immutable exclusive-created source/binary/tool/fixture/raw/report/stdout/stderr/log/facts/environment artifacts with SHA-256/size and stable safe relative references. `bundle.sha256` hashes the final manifest (no self-hash cycle); supply its separately retained digest for external retrieval identity. Missing/tampered/truncated/aliased/escaping/symlink artifacts or write/flush errors cannot become success. Files are read-only after seal; wrapper never replaces bytes under an existing ID. Checksums detect mutation, not a malicious re-signer/host. Cargo scratch caches are excluded; used binaries are separately copied and sealed.
 
-Bundles are local evidence, not accepted performance baselines. No P4 baseline index, upload, expiry/retention or CI policy is implemented. Historical evidence and seven component controls remain unchanged. P3/P4 and final A10 acceptance remain deferred.
+Bundles are local evidence, not accepted performance baselines. No P4 baseline index, upload, expiry/retention or CI policy is implemented. Historical evidence and seven component controls remain unchanged. P3 acceptance, P4 and final A10 acceptance remain deferred.
+
+## P3 qualified local calibration (under development)
+
+The implementation in [`calibrated.py`](../../tools/a10/calibrated.py) and
+[`calibration.rs`](../../tools/a10/calibration.rs) extends the same entry point:
+
+```bash
+./scripts/perf-test.sh run --suite public-v1 --profile calibrated --out target/perf/p3-new
+./scripts/perf-test.sh validate target/perf/p3-new/report.json
+./scripts/perf-test.sh compare --baseline target/perf/p3-new/baseline/report.json --candidate target/perf/p3-new/candidate/report.json --out target/perf/p3-comparison
+```
+
+These procedures are implementation targets, **not verified usable evidence**.
+The local policy requires native Darwin inspection and one continuing inspected
+Colima Linux/aarch64 container using the pinned repository image. Every full
+session is a new actual driver process with fresh fixtures and output IDs at
+one clean committed HEAD. Exported baseline/candidate views select different
+actual processes; copying retained bytes is not another session. Older P2
+smoke remains readable but cannot become a calibrated baseline.
+
+[`calibrated-v1.json`](../../tools/a10/calibrated-v1.json) fixes pilots, both
+warmup minima (five correct iterations AND one second of actual timed work),
+20-second warmup cap, final warmed repetition calibration, thirty samples and
+at least ten milliseconds of independently summed work per sample. Setup,
+reset, inspection, serialization and validation never enter those sums.
+Warmup/calibration failures and incomplete/unstarted batches remain explicit.
+No outliers are trimmed. Median, linear p05/p95, MAD and deterministic
+95% percentile-bootstrap median intervals use 10,000 resamples and seed
+104729. The 5% relative half-width is sufficiency, never a regression gate.
+Three independent session medians receive their own repeatability check.
+One predetermined full noise rerun may replace one session; all original
+records remain, and missing/control/semantic failures are not noise retries.
+
+Raw `calibrated-raw/1` JSONL is compressed after each independently captured
+and P0-validated record. Complete plain owned sample/clock values may share a
+retained-value ID **only after complete equality of each own fresh capture**.
+This does not reuse verdicts, skip execution/inspection or retain live owners.
+The reader expands every row and replays every repetition with the unchanged
+P0 validator. The VM-local collector acknowledges synchronous retention before
+any successor timer, avoiding compression overlapped with guest measurement.
+The 30-minute caller budget includes orchestration, build/fixtures, validation,
+inspection and bulk evidence publication; a conservative final small-metadata
+publication window is reserved. Insufficient budget remains inconclusive.
+
+### Qualified affinity and allocation, not physical control
+
+[`allocation.py`](../../tools/a10/allocation.py) retains actual native CPU/OS,
+boot UUID/time, power source/low-power settings, local Docker context/provider,
+daemon/image/container start/configuration/resources, VM boot/kernel and
+process namespaces. Before/after disagreement, missing positive lineage,
+whole-host absence or copied process/group identities cannot qualify.
+Unobservable physical affinity/governor/turbo retain original reasons and are
+**UNOBSERVED/UNCONTROLLED**, never null-equality operands or wildcards.
+VM vCPU masks are not physical core mapping; power settings are not frequency,
+governor or turbo readback. No sustained equal scheduler/DVFS guarantee, general
+cross-runner acceptance or cryptographic host attestation is claimed.
+
+For each real CLI launch, [`affinity.rs`](../../tools/a10/affinity.rs) inspects
+**the exact driver thread**, before direct launch and after wait/capture,
+outside both timer boundaries. It records PID/TID, namespace links, allowed
+vCPU list, online CPUs, effective cpuset, own cgroup membership/limits and
+injection-related environment. Executable bytes, actual argv and launcher
+source are bound to retained build/source evidence. No shell, taskset,
+pre-exec inspection or affinity-changing launch attributes are introduced.
+The method is **`linux-caller-affinity-inheritance/1`**, derived initial
+placement only. Direct child readback is explicitly not attempted and the
+child PID is unavailable through `Command::output`; no guessed observed mask
+or continuous child-mask stability is asserted.
+
+The kernel guarantee is per-thread process-creation/exec inheritance, subject
+to cpuset/online restrictions: [sched_setaffinity(2)](https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html),
+[cpuset(7)](https://man7.org/linux/man-pages/man7/cpuset.7.html) and
+[posix_spawn(3)](https://man7.org/linux/man-pages/man3/posix_spawn.3.html).
+No literal fork syscall is claimed observed. Native library transports inspect
+their own caller outside their child-local call/UART-flush interval. The P2
+complete interval/clock/sample equality requirement remains unchanged.
+
+The harmless Linux test helper reads **its own** inherited mask using the same
+`Command::output` mechanism. It temporarily restricts/restores only its calling
+libtest thread. Its result is not benchmark CLI or guest correctness evidence.
+Caller/thread confusion, changed masks/cgroup/cpuset/online CPUs/namespaces,
+injection, wrong source/argv/derived kind or false direct-readback labels fail
+closed. Missing inheritance or qualification/noise/sampling evidence means
+exit 2 and no ratios; semantic/schema/integrity/reporting failure means exit 1.
+Compatible usable ratios and confidence intervals are informational only.
 
 ## Falsifiable checks
 

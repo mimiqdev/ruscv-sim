@@ -61,7 +61,7 @@ class SchemaTests(unittest.TestCase):
                 with self.subTest(section=section,key=key),self.assertRaises(Invalid):
                     self.check(bad)
         raw = example(SCHEMA['$defs']['raw'])
-        for key in raw:
+        for key in SCHEMA['$defs']['raw']['required']:
             bad = copy.deepcopy(raw);del bad[key]
             with self.subTest(raw=key),self.assertRaises(Invalid):
                 schema_check(bad,SCHEMA['$defs']['raw'],SCHEMA['$defs'])

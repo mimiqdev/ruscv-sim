@@ -92,7 +92,8 @@ def write_new(path, data):
 def json_new(path, value):
     write_new(path, canonical(value) + b'\n')
 
-def seal(root, run_id):
+def stage(root, excluded=()):
+    """Hash/freeze payload bytes before the small final metadata publication."""
     root = Path(root)
     files = []
     for path in sorted(root.rglob('*')):
@@ -101,11 +102,20 @@ def seal(root, run_id):
             name = path.relative_to(root).as_posix()
             # Cargo scratch/caches are not integrity/retention artifacts. Used
             # binaries are copied into evidence/bin; exact transcripts retained.
-            if name.startswith('cargo/'):
+            if name.startswith('cargo/') or any(name.startswith(prefix+'/') for prefix in excluded):
                 continue
             require(name not in ('bundle.json', 'bundle.sha256'), 'bundle ID reuse')
             data = path.read_bytes()
             files.append({'path': name, 'bytes': len(data), 'sha256': digest(data)})
+    for entry in files:
+        safe(root, entry['path']).chmod(0o444)
+    return files
+
+
+def seal(root, run_id, excluded=(), staged=None):
+    root=Path(root)
+    files=stage(root,excluded) if staged is None else staged
+    require(len({f['path'] for f in files})==len(files),'duplicate staged artifact')
     manifest = {'schema': 'ruscv-artifacts/1', 'id': run_id, 'files': files,
                 'integrity': 'checksums, not a cryptographic signer/host attestation; immutable exclusive creation',
                 'self_hash': 'manifest excluded; external bundle.sha256 hashes its final bytes'}
@@ -117,7 +127,7 @@ def seal(root, run_id):
     (root / 'bundle.sha256').chmod(0o444)
     return manifest
 
-def retrieve(root, expected_digest=None):
+def retrieve(root, expected_digest=None, required=None):
     raw = read(root, 'bundle.json')
     claimed = read(root, 'bundle.sha256').decode().strip()
     require(re.fullmatch('[0-9a-f]{64}', claimed) is not None and digest(raw) == claimed, 'bundle digest mismatch')
@@ -133,5 +143,6 @@ def retrieve(root, expected_digest=None):
         data = read(root, entry['path'])
         require(type(entry['bytes']) is int and 0 <= entry['bytes'] <= 2**64-1 and len(data) == entry['bytes'], 'artifact size/type mismatch')
         require(digest(data) == entry['sha256'], 'artifact bytes/hash mismatch: ' + entry['path'])
-    require({'report.json', 'setup.json', 'raw-report.json', 'evidence/source-manifest.json', 'evidence/commit', 'fixtures/build.json'} <= names, 'missing mandatory bundle artifacts')
+    mandatory={'report.json', 'setup.json', 'raw-report.json', 'evidence/source-manifest.json', 'evidence/commit', 'fixtures/build.json'} if required is None else required
+    require(mandatory <= names, 'missing mandatory bundle artifacts')
     return bundle

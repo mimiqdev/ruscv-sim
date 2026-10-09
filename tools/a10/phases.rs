@@ -1,4 +1,6 @@
 //! P1 clocks and public-route adapter orchestration. No calibration/comparison.
+#[path = "affinity.rs"]
+pub mod affinity;
 #[path = "digest.rs"]
 pub mod digest;
 use crate::support::*;
@@ -24,6 +26,7 @@ pub enum Op {
     Reset,
     Resume,
     Inspect,
+    AffinityInspect,
     Validate,
     CloseLog,
     FinalCopy,
@@ -319,9 +322,11 @@ pub struct Record {
     pub clock: Option<ClockEvidence>,
     pub transport_code: Option<i32>,
     pub input_sha256: Option<String>,
+    #[serde(default)]
+    pub cli_affinity: Option<serde_json::Value>,
 }
 impl Record {
-    fn new(
+    pub(crate) fn new(
         f: &Fixture,
         route: &str,
         phase: &str,
@@ -357,6 +362,7 @@ impl Record {
             clock: None,
             transport_code: None,
             input_sha256: None,
+            cli_affinity: None,
         }
     }
     fn accept_interval(&mut self) {
@@ -610,6 +616,10 @@ pub struct LibraryWire {
     pub clock: ClockEvidence,
     pub ops: Vec<Op>,
     pub input_sha256: String,
+    #[serde(default)]
+    pub caller_before: Option<serde_json::Value>,
+    #[serde(default)]
+    pub caller_after: Option<serde_json::Value>,
 }
 impl LibraryWire {
     pub fn check(&self, route: &str) -> Result<(), String> {
@@ -657,6 +667,8 @@ pub fn library_probe(
     }
     let input_sha256 = digest::sha256(bytes.as_deref().unwrap_or(&before));
     let elf_text = elf.to_str().ok_or("native file path must be UTF-8")?;
+    meter.event(Op::AffinityInspect);
+    let caller_before = affinity::caller();
     let start = meter.start();
     meter.event(Op::NativeCall);
     let result = match route {
@@ -675,6 +687,8 @@ pub fn library_probe(
     meter.event(Op::UartFlush);
     let flush = std::io::Write::flush(&mut std::io::stdout());
     let interval = meter.stop(start, "library-child-Instant");
+    meter.event(Op::AffinityInspect);
+    let caller_after = affinity::caller();
     meter.audit.check()?;
     flush.map_err(|e| e.to_string())?;
     if std::fs::read(elf).map_err(|e| e.to_string())? != before {
@@ -688,6 +702,8 @@ pub fn library_probe(
         clock: meter.clock.evidence().ok_or("native clock evidence")?,
         ops: meter.ops,
         input_sha256,
+        caller_before,
+        caller_after,
     })
 }
 fn capture_child<C: Clock>(
@@ -723,12 +739,26 @@ fn capture_child<C: Clock>(
         .chain(command.get_args())
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
+    let caller_before = if library {
+        None
+    } else {
+        meter.event(Op::AffinityInspect);
+        affinity::caller()
+    };
     let start = if library { None } else { Some(meter.start()) };
     meter.event(Op::ChildLaunch);
     let output = command.output();
     meter.event(Op::ChildWait);
     if let Some(start) = start {
         record.interval = Some(meter.stop(start, "driver-Instant"));
+        meter.event(Op::AffinityInspect);
+        let caller_after = affinity::caller();
+        record.cli_affinity = Some(affinity::cli_proof(
+            caller_before,
+            caller_after,
+            &record.argv,
+            paths.cli,
+        ));
     }
     let output = output.map_err(|e| e.to_string())?;
     record.transport_code = output.status.code();
@@ -784,13 +814,67 @@ pub fn measure_cell<C: Clock>(
     repetitions: usize,
     clock: &mut C,
 ) -> Vec<Record> {
+    let mut collector = SmokeCollector {
+        records: Vec::new(),
+        next: 0,
+        repetitions,
+    };
+    measure_stream(m, f, cell, paths, clock, &mut collector);
+    collector.records
+}
+/// Streaming retention permits bounded-memory calibration without changing any
+/// public operation or phase boundary. Every record is still independently P0
+/// validated before the controller sees it. Controllers never bless a sample.
+pub trait RepetitionController {
+    fn next(&mut self) -> Option<(usize, bool)>;
+    fn retain(&mut self, record: Record);
+    fn failed(&self) -> bool;
+    fn cleanup_error(&mut self, reason: String);
+}
+struct SmokeCollector {
+    records: Vec<Record>,
+    next: usize,
+    repetitions: usize,
+}
+impl RepetitionController for SmokeCollector {
+    fn next(&mut self) -> Option<(usize, bool)> {
+        if self.next > self.repetitions {
+            return None;
+        }
+        let rep = self.next;
+        self.next += 1;
+        Some((rep, rep == 0))
+    }
+    fn retain(&mut self, record: Record) {
+        self.records.push(record);
+    }
+    fn failed(&self) -> bool {
+        self.records
+            .iter()
+            .any(|r| r.semantic_status != "correct" || r.accepted_ns.is_none())
+    }
+    fn cleanup_error(&mut self, reason: String) {
+        if let Some(record) = self.records.last_mut() {
+            record.reject(reason);
+        }
+    }
+}
+pub fn measure_stream<C: Clock, R: RepetitionController>(
+    m: &Manifest,
+    f: &Fixture,
+    cell: Cell<'_>,
+    paths: &Paths,
+    clock: &mut C,
+    controller: &mut R,
+) {
     let Cell { route, phase, mode } = cell;
     if let Err(reason) = availability(m, f, route, phase, mode) {
         let mut r = Record::new(f, route, phase, mode, 0, false);
         r.semantic_status = "not_applicable".into();
         r.measurement_status = "not_applicable".into();
         r.reason = Some(reason);
-        return vec![r];
+        controller.retain(r);
+        return;
     }
     let mut meter = Meter {
         clock,
@@ -824,16 +908,11 @@ pub fn measure_cell<C: Clock>(
         }
         Ok(())
     })();
-    let mut records = Vec::new();
-    for rep in 0..=repetitions {
-        let mut record = Record::new(f, route, phase, mode, rep, rep == 0);
+    while let Some((rep, warmup)) = controller.next() {
+        let mut record = Record::new(f, route, phase, mode, rep, warmup);
         record.input_sha256 = input.as_ref().ok().map(|b| digest::sha256(b));
         record.clock = meter.clock.evidence();
-        if setup.is_err()
-            || records
-                .iter()
-                .any(|r: &Record| r.semantic_status != "correct" || r.accepted_ns.is_none())
-        {
+        if setup.is_err() || controller.failed() {
             record.reason = Some(
                 setup
                     .as_ref()
@@ -841,7 +920,7 @@ pub fn measure_cell<C: Clock>(
                     .cloned()
                     .unwrap_or_else(|| "prior repetition rejected; no retry/reuse".into()),
             );
-            records.push(record);
+            controller.retain(record);
             continue;
         }
         meter.audit = ScopeAudit::new(phase, route, mode);
@@ -991,20 +1070,17 @@ pub fn measure_cell<C: Clock>(
         }
         meter.event(Op::Report);
         record.ops = meter.ops.clone();
-        records.push(record);
+        controller.retain(record);
     }
     if let Some((owner, _)) = machine {
         if let Err(e) = teardown(owner, &mut meter) {
-            if let Some(r) = records.last_mut() {
-                r.reject(e);
-            }
+            controller.cleanup_error(e);
         }
     }
     if let Some(owner) = flat {
         meter.event(Op::DropOwner);
         drop(owner);
     }
-    records
 }
 pub fn matrix<C: Clock>(
     m: &Manifest,

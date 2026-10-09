@@ -4,7 +4,7 @@
 
 **Authority:** Informational; implementation and verification inventory, not an acceptance contract.
 
-**Scope:** P0 correctness, P1 public-path phases and P2 local versioned evidence/schema. P2 is under new-head verification below; historical P0/P1 approval does not approve it. This is not A10 completion, an ACT4 claim or a performance verdict. P3 calibration/comparison and P4 CI/retention/final acceptance remain unimplemented.
+**Scope:** P0 correctness, P1 public-path phases and P2 local versioned evidence/schema. P2 is under new-head verification below; historical P0/P1 approval does not approve it. This is not A10 completion, an ACT4 claim or a performance verdict. P3 calibration/comparison is an unaccepted development prototype documented in [the schema guide](a10-perf-schema.md#p3-qualified-local-calibration-under-development); P4 CI/retention/final acceptance remains unimplemented. No three-session or usable-baseline evidence is claimed.
 
 **Contract references:** [Current A10 contract](../dev-plan.md), accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md) and [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md). [A9 closeout](a9-closeout-assessment.md) remains the historical safety baseline, not performance evidence.
 

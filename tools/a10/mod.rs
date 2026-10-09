@@ -119,7 +119,7 @@ pub struct Counts {
     pub retirements: u64,
     pub traps: u64,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PublicResult {
     pub exit_code: u32,
     pub turns: u64,
@@ -159,7 +159,7 @@ pub struct FactDetail {
     pub issued: Vec<Option<u64>>,
     pub indivisible: Vec<Option<bool>>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Sample {
     pub route: String,

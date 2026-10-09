@@ -1,0 +1,61 @@
+{
+  "id": "calibrated-v1",
+  "version": 1,
+  "sampling": {
+    "serial": true,
+    "raw_encoding": "calibrated-raw/1; complete owned sample/clock values reused only after equality of each independently captured and P0-validated value, never verdict reuse",
+    "retention_scheduling": "VM-local synchronous compressed retention acknowledgement before any successor timer; no overlapped compression/guest measurement",
+    "repetition_calibration": "pilot minimum for bounded planning; final minimum over every accepted warmup/calibration interval after BOTH warmup gates; ceiling of 1.5 times minimum sample work, frozen across independent sessions",
+    "pilot_iterations": 5,
+    "minimum_sample_ns": 10000000,
+    "repetition_safety_numerator": 3,
+    "repetition_safety_denominator": 2,
+    "maximum_repetitions_per_sample": 1000000,
+    "accepted_samples": 30,
+    "minimum_warmup_ns": 1000000000,
+    "minimum_warmup_iterations": 5,
+    "warmup_wall_cap_ns": 20000000000,
+    "session_wall_budget_ns": 1800000000000,
+    "publication_reserve_ns": 120000000000,
+    "independent_sessions": 3,
+    "maximum_noise_reruns": 1,
+    "outlier_trimming": false,
+    "empty_timer_fraction_limit": 0.01,
+    "resolution_fraction_limit": 0.01
+  },
+  "statistics": {
+    "quantiles": "linear interpolation at (n-1)*p",
+    "mad": "median absolute deviation from sample median",
+    "bootstrap": "percentile median, independent sampling with replacement",
+    "confidence": 0.95,
+    "resamples": 10000,
+    "seed": 104729,
+    "relative_ci_half_width_limit": 0.05,
+    "relative_ci_half_width_meaning": "evidence sufficiency only, NOT a regression threshold",
+    "three_session_calibration": "same percentile median bootstrap over three independent session medians; identical confidence/resamples/seed/half-width sufficiency target, never a speed gate"
+  },
+  "compatibility": {
+    "id": "local-colima-same-allocation/1",
+    "scope": "qualified informational SAME-ALLOCATION only",
+    "requires": [
+      "known physical host with native before/after boot UUID and boot time",
+      "stable observed native identity, power source and low-power settings",
+      "local Unix Docker endpoint linked to actual inspected Colima provider/configuration",
+      "same actual daemon, VM boot, live container ID/start/configuration/resources",
+      "actual measurement thread VM affinity; native library children own readback; CLI explicitly derived initial caller-thread affinity inheritance only, no direct/sustained child readback",
+      "same substantive build/tool/image/clock/sink/fixture/work policy",
+      "all independent-session oracle, sample, warmup, clock, overhead and noise gates"
+    ],
+    "unobserved_controls": "retain original absence reasons; NEVER compare nulls/reasons as equality operands or substitute power settings/VM affinity for physical DVFS/affinity",
+    "limitations": [
+      "physical macOS affinity may be UNOBSERVED/UNCONTROLLED",
+      "physical governor and turbo may be UNOBSERVED/UNCONTROLLED",
+      "vCPU affinity does not prove physical-core mapping",
+      "power source and low-power settings are not frequency/governor/turbo readback",
+      "no equal physical scheduler or DVFS state, controlled-host, cross-allocation or cross-runner guarantee",
+      "collector/checksum evidence is not cryptographic host attestation"
+    ],
+    "unknown_as_equal": false,
+    "performance_gate": false
+  }
+}

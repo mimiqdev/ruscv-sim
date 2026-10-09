@@ -563,7 +563,7 @@ fn command_guards_and_future_profiles_fail_without_overwrite_or_fake_pass() {
             "--suite",
             "public-v1",
             "--profile",
-            "calibrated",
+            "unapproved-future-profile",
             "--out",
             "target/never-created-p1",
         ],
