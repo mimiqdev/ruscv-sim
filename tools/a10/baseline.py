@@ -66,7 +66,7 @@ def build_fixtures(out):
         script = ('python3 -B tools/a10/build_fixtures.py --out "$1" && '
                   'python3 -B -c "import json,sys; from audit_fixtures import audit; print(json.dumps(audit(sys.argv[1])))" "$1"')
         completed = subprocess.run(['docker', 'run', '--rm', '--volume', f'{ROOT}:{ROOT}', '--workdir', str(ROOT),
-                                    '--env', 'PYTHONDONTWRITEBYTECODE=1', '--env', 'RISCV_REQUIRE_A10_PINNED_TOOLS=1',
+                                    '--env', 'PYTHONDONTWRITEBYTECODE=1', '--env', 'RISCV_REQUIRE_A10_PINNED_TOOLS=1', '--env', 'PYTHONPATH=tools/a10',
                                     IMAGE, 'bash', '-c', script, 'fixtures', str(out)], cwd=ROOT, capture_output=True, text=True)
         require = __import__('integrity').require
         require(completed.returncode == 0, 'pinned-container fixture build/audit failed: ' + completed.stderr[-800:])
