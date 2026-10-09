@@ -8,6 +8,7 @@ instruction identity. Original public-v1 sources/oracle are never written.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import struct
@@ -207,9 +208,20 @@ def derive(build):
         f.update(entry=BASE,final_pc=trace[-1]['next_pc'],exit_code=3,process_code=3,attempts=len(trace),turns=len(trace),retirements=len(trace),traps=0,
                  work=decl['work'],checksum=decl['checksum'],signature_addr=BASE+0x2000,signature=decl['signature'],uart=decl['uart'],events=decl['events'],ram=decl['ram'],regs=p.regs,trace=trace,
                  segments=segments,tohost=None if decl['fixed'] else BASE+0x1000,memory_size=size,signature_file_offset=sigoff)
-    require(report['tools'].keys()==manifest['tool_versions'].keys(),'pinned producer inventory')
-    for k,v in report['tools'].items():require(v['sha256']==manifest['arm64_tool_sha256'][k] and v['version']==manifest['tool_versions'][k],'required pinned producer identities')
+    require_tool_identities(report,manifest)
     return manifest
+
+
+def require_tool_identities(report,manifest):
+    """Version equality is ALWAYS mandatory (encodings can drift). Exact
+    binary sha256 is the pinned ARM64 dev-container evidence convention and is
+    required only under RISCV_REQUIRE_A10_PINNED_TOOLS; other environments
+    proceed on the build's actually recorded tool identities."""
+    require(report['tools'].keys()==manifest['tool_versions'].keys(),'pinned producer inventory')
+    pinned=os.environ.get('RISCV_REQUIRE_A10_PINNED_TOOLS')
+    for k,v in report['tools'].items():
+        require(v['version']==manifest['tool_versions'][k],'required producer tool version')
+        if pinned:require(v['sha256']==manifest['arm64_tool_sha256'][k],'required pinned producer identities')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
