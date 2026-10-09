@@ -41,6 +41,30 @@ fn run() -> Result<i32, String> {
         println!("P0 oracle/scope replay exit {code}; schema/bundle handled by public wrapper; no performance verdict");
         return Ok(code);
     }
+    if args.get(1).map(String::as_str) == Some("oracle-replay-server") {
+        if args.len() != 3 {
+            return Err("oracle-replay-server ROOT (persistent shared-P0 replay; one validated fragment per canonical stdin line)".into());
+        }
+        let root = Path::new(&args[2]);
+        let mut input = String::new();
+        loop {
+            input.clear();
+            if std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut input)
+                .map_err(|e| e.to_string())?
+                == 0
+            {
+                return Ok(0);
+            }
+            let outcome = replay::unique_json(input.trim().as_bytes())
+                .map_err(|e| e.to_string())
+                .and_then(|report| replay::validate_report(root, &report));
+            match outcome {
+                Ok(code) => println!("REPLAY {code}"),
+                Err(error) => println!("REPLAY_ERR {}", error.replace('\n', " ")),
+            }
+            std::io::Write::flush(&mut std::io::stdout()).map_err(|e| e.to_string())?;
+        }
+    }
     if args.get(1).map(String::as_str) == Some("probe-library") {
         if args.len() != 5 && args.len() != 6 {
             return Err("native transport arguments".into());

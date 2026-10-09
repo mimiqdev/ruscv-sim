@@ -66,42 +66,83 @@ def frames(root,reference):
             yield loads(line)
 
 
+_REPLAY = {}
+
+
+def _server(reader):
+    """Persistent repository-built shared-P0 replay server (v6 reader policy).
+
+    One long-lived validated driver replaces per-fragment subprocesses; its
+    scratch is VM-local /tmp, never the shared host filesystem. Fragment
+    requests remain complete strict reports; responses are typed REPLAY lines.
+    """
+    handle = _REPLAY.get(str(reader))
+    if handle is None:
+        scratch = Path(tempfile.mkdtemp(prefix='a10-replay-', dir='/tmp'))
+        (scratch/'fixtures').mkdir()
+        proc = subprocess.Popen([str(reader),'oracle-replay-server',str(scratch)],cwd=ROOT,stdin=subprocess.PIPE,stdout=subprocess.PIPE)
+        handle = {'proc':proc,'scratch':scratch,'fixtures':{}}
+        _REPLAY[str(reader)] = handle
+    return handle
+
+
+def close_replay_servers():
+    for handle in _REPLAY.values():
+        try:
+            handle['proc'].stdin.close()
+            handle['proc'].wait(timeout=60)
+        finally:
+            if handle['proc'].poll() is None:
+                handle['proc'].kill();handle['proc'].wait(timeout=60)
+            shutil.rmtree(handle['scratch'],ignore_errors=True)
+    _REPLAY.clear()
+
+
 def replay(root,reader,rows,role,prefix,oracle):
-    """Only repository-built reader, private snapshots of verified retained bytes."""
+    """Persistent shared-P0 replay of private snapshots of verified bytes."""
     if not rows:return 0
     first=rows[0];names=('fixture','route','phase','mode')
     require(all(tuple(r[k] for k in names)==tuple(first[k] for k in names) for r in rows),'mixed replay fragment')
     require([r['repetition'] for r in rows]==list(range(first['repetition'],first['repetition']+len(rows))),'fragment repetition gap')
+    handle=_server(reader);proc=handle['proc'];scratch=handle['scratch']
+    fixture=first['fixture']
+    if fixture not in handle['fixtures']:
+        # Digest the retained ELF once; later fragments reuse only this proven
+        # verified byte identity, never a hash string or a reused verdict.
+        data=read(root,prefix+'/fixtures/'+fixture+'.elf')
+        expected=next(f['elf_sha256'] for f in oracle['fixtures'] if f['id']==fixture)
+        require(digest(data)==expected,'replay retained fixture identity')
+        write_new(scratch/'fixtures'/(fixture+'.elf'),data)
+        handle['fixtures'][fixture]=data
     entries=[]
-    parent=ROOT/'target/a10-replay-snapshots';parent.mkdir(parents=True,exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=parent) as directory:
-        snapshot=Path(directory)
-        for f in oracle['fixtures']:
-            if f['id']==first['fixture']:
-                write_new(snapshot/('fixtures/'+f['id']+'.elf'),read(root,prefix+'/fixtures/'+f['id']+'.elf'))
-        for n,r in enumerate(rows):
-            stem=prefix+f"/samples/{r['fixture']}-{r['route']}-{r['phase']}-{r['mode']}-{r['repetition']}"
-            refs={}
-            for key,suffix in (('stdout','.stdout'),('stderr','.stderr'),('log','.log')):
-                name=stem+suffix
-                needed=(key=='log' and r['mode']=='file') or (key in ('stdout','stderr') and r['route'] in ('cli','native-bytes','native-file'))
-                if needed and r['sample'] is not None:
-                    write_new(snapshot/name,read(root,name));refs[key]=name
-                else:refs[key]=None
-            entries.append({'id':f'sample-{n:06d}','sequence':n,'fixture_elf':'fixtures/'+r['fixture']+'.elf','artifacts':refs,'raw':r})
-        semantic='semantic_failure' if any(r['semantic_status']=='semantic_failure' for r in rows) else ('unavailable' if any(r['semantic_status']=='unavailable' for r in rows) else 'correct')
-        fragment=dict({k:first[k] for k in names},first_repetition=first['repetition'],warmup=role in ('pilot','warmup'),oracle_sha256=workload_identity()['oracle_sha256'])
-        report={'schema':'ruscv-perf/1','policy':{'basic_repetitions':len(rows)},'calibration_fragment':fragment,'records':entries,'semantic_status':semantic}
-        json_new(snapshot/'report.json',report)
-        result=subprocess.run([str(reader),'oracle-replay',str(snapshot/'report.json')],cwd=ROOT,capture_output=True)
-        require(result.returncode in (0,1,2),'stream replay transport failure')
-        # Exit 1 can be a VALID retained semantic failure, or reader rejection.
-        # Only a completed typed replay prints this exact terminal carrier.
-        require(result.stdout==f'P0 oracle/scope replay exit {result.returncode}; schema/bundle handled by public wrapper; no performance verdict\n'.encode() and not result.stderr,'own P0/scope/native transport replay failure: '+result.stderr.decode())
-        return result.returncode
+    for n,r in enumerate(rows):
+        stem=prefix+f"/samples/{r['fixture']}-{r['route']}-{r['phase']}-{r['mode']}-{r['repetition']}"
+        refs={}
+        for key,suffix in (('stdout','.stdout'),('stderr','.stderr'),('log','.log')):
+            name=stem+suffix
+            needed=(key=='log' and r['mode']=='file') or (key in ('stdout','stderr') and r['route'] in ('cli','native-bytes','native-file'))
+            if needed and r['sample'] is not None:
+                data=read(root,name);target=scratch/name;target.parent.mkdir(parents=True,exist_ok=True)
+                # Same-path scratch rewrite only after full byte equality.
+                if not target.exists() or target.read_bytes()!=data:
+                    with target.open('wb') as file:file.write(data)
+                refs[key]=name
+            else:refs[key]=None
+        entries.append({'id':f'sample-{n:06d}','sequence':n,'fixture_elf':'fixtures/'+fixture+'.elf','artifacts':refs,'raw':r})
+    semantic='semantic_failure' if any(r['semantic_status']=='semantic_failure' for r in rows) else ('unavailable' if any(r['semantic_status']=='unavailable' for r in rows) else 'correct')
+    fragment=dict({k:first[k] for k in names},first_repetition=first['repetition'],warmup=role in ('pilot','warmup'),oracle_sha256=workload_identity()['oracle_sha256'])
+    report={'schema':'ruscv-perf/1','policy':{'basic_repetitions':len(rows)},'calibration_fragment':fragment,'records':entries,'semantic_status':semantic}
+    try:
+        proc.stdin.write(canonical(report)+b'\n');proc.stdin.flush()
+        line=proc.stdout.readline()
+    except (BrokenPipeError,OSError) as error:raise Invalid('persistent shared-P0 replay transport failed: '+str(error))
+    require(line.startswith(b'REPLAY '),'persistent shared-P0 replay protocol failure')
+    code=int(line[7:].strip() or -1)
+    require(code in (0,1,2),'stream replay transport failure')
+    return code
 
 
-def inspect_session(root,session,metadata,reader,oracle,plan=None):
+def inspect_session(root,session,metadata,reader,oracle,plan=None,deadline=None):
     """Reconstruct statistics/links from EVERY raw repetition; claims are not proof."""
     require(set(session)=={'id','artifact_prefix','native_before','native_after','vm_before','vm_after','fs_before','fs_after','stream','stderr','exit_code','start','end','summaries'},'session carrier fields')
     prefix=session['artifact_prefix']
@@ -123,10 +164,14 @@ def inspect_session(root,session,metadata,reader,oracle,plan=None):
     def flush():
         nonlocal pending
         if pending:
+            if deadline is not None and time.monotonic_ns()>deadline:
+                raise Unavailable(f'reader/validation budget exhausted before replay of {current} row {state["rows"]}; bounded partial evidence retained')
             code=replay(root,reader,pending,role,prefix,oracle)
             if code:state['unavailable']=True
             pending=[]
     for frame in frames(root,session['stream']):
+        if deadline is not None and time.monotonic_ns()>deadline:
+            raise Unavailable(f'reader/validation budget exhausted in {current} at row {state["rows"] if state else 0}; bounded partial evidence retained')
         require(type(frame) is dict and 'event' in frame,'framed session protocol')
         event=frame['event']
         if event=='session_start':
@@ -280,7 +325,7 @@ def inspect_session(root,session,metadata,reader,oracle,plan=None):
 def qualify(root,sessions):
     """Positive actual native/VM lineage PLUS exact measurement-thread identity."""
     try:
-        require(len(sessions) in (3,4),'three independent sessions and at most one bounded rerun required')
+        require(len(sessions) in (1,2,3,4),'three independent sessions and at most one bounded rerun required')
         native_keys=[];vm_keys=[];pids=[];unknown=set()
         for s in sessions:
             native=[parse_native(loads(read(root,s[k]))) for k in ('native_before','native_after')]
@@ -343,21 +388,24 @@ def validate(path,reader,expected_digest=None,sealed=True):
     require(read(root,'preparation/evidence/source/tools/a10/calibrated-v1.json')==(ROOT/'tools/a10/calibrated-v1.json').read_bytes(),'policy not versioned before measurements')
     oracle=loads(read(root,'preparation/evidence/source/'+ORACLE_PATH))
     statistics_rows=[];plan=None
-    require(len(report['sessions']) in (3,4) and len({s['id'] for s in report['sessions']})==len(report['sessions']),'independent session identities')
-    for s in report['sessions']:
-        rows=inspect_session(root,s,metadata,reader,oracle,plan);statistics_rows.append({'session':s['id'],'cells':rows})
+    require(len(report['sessions']) in (1,2,3,4) and len({s['id'] for s in report['sessions']})==len(report['sessions']),'independent session identities')
+    require(len(report['statistics'])<=len(report['sessions']),'statistics beyond retained sessions')
+    for s,rows in zip(report['sessions'],report['statistics']):
+        inspected=inspect_session(root,s,metadata,reader,oracle,plan)
+        require(rows=={'session':s['id'],'cells':inspected},'statistics/discards/links not reconstructed from all own raw rows')
+        statistics_rows.append(inspected)
         if plan is None:plan=s['end']['plan']
-    require(report['statistics']==statistics_rows,'statistics/discards/links not reconstructed from all own raw rows')
     active=report['selected_sessions'];require(len(active)==3 and len(set(active))==3 and all(type(i) is int and 0<=i<len(report['sessions']) for i in active),'selected independent sessions')
     if len(report['sessions'])==3:require(active==[0,1,2],'no cherry picking')
-    else:
+    elif len(report['sessions'])==4:
         retry=noise_index(statistics_rows[:3])
         require(retry is not None and active==[3 if i==retry else i for i in range(3)],'one predetermined full noise rerun only; originals retained')
     q=qualify(root,report['sessions']);require(report['qualification']==q,'allocation qualification disagreement')
-    cohort=three_sessions([statistics_rows[i] for i in active]);require(report['three_session_calibration']==cohort,'three independent session medians/calibration')
+    cohort=three_sessions([statistics_rows[i] for i in active]) if len(statistics_rows)==3 else []
+    require(report['three_session_calibration']==cohort,'three independent session medians/calibration')
     failed=any(s['exit_code']==1 or s['end']['semantic_failure'] for s in report['sessions'])
     unavailable=any(s['exit_code']==2 or not s['end']['complete'] for s in report['sessions'])
-    usable=not unavailable and q['eligible'] and not report['budget']['exhausted'] and report['budget']['elapsed_ns']<=report['budget']['limit_ns']-report['budget']['publication_reserve_ns'] and all(c['usable'] for i in active for c in statistics_rows[i]['cells']) and all(c['sufficient_noise'] for c in cohort)
+    usable=not unavailable and q['eligible'] and not report['budget']['exhausted'] and report['budget']['elapsed_ns']<=report['budget']['limit_ns']-report['budget']['publication_reserve_ns'] and len(statistics_rows)==len(report['sessions'])==3 and all(c['usable'] for i in active for c in statistics_rows[i]['cells']) and all(c['sufficient_noise'] for c in cohort)
     unavailable=any(s['exit_code']==2 or not s['end']['complete'] for s in report['sessions'])
     require(report['semantic_status']==('semantic_failure' if failed else 'unavailable' if unavailable else 'correct'),'semantic status separate from measurement')
     require(report['comparison_status']==('qualified-informational' if usable and not failed else 'inconclusive'),'calibration status not evidence-backed')
@@ -452,37 +500,33 @@ def worker(out,preparation,budget_ns,plan_path=None):
 
 
 def publication(out,report,tick):
-    """Bulk copy/hash/permission work precedes the actual caller wall endpoint.
+    """Compact versioned views; bounded bulk work; ACTUAL end recorded.
 
-    Only the small final report/manifest/digest writes follow it, with a
-    conservative reserved publication window. Views select actual different
-    executions; copying bytes does not manufacture another execution.
+    Views are small selection documents referencing the ONE independently
+    executed root bundle; no whole-payload multi-view tree walks/copies. If the
+    budget cannot finish the verified report, the sealed outcome stays honest
+    bounded/inconclusive evidence, never success without integrity/oracles.
     """
-    payload=stage(out,excluded=('preparation/cargo',))
-    targets=[]
-    for label,index in zip(('baseline','candidate'),report['selected_sessions'][:2]):
-        target=out/label;target.mkdir()
-        for item in payload:
-            data=read(out,item['path'])
-            require(len(data)==item['bytes'] and digest(data)==item['sha256'],'payload changed during publication')
-            destination=target/item['path'];destination.parent.mkdir(parents=True,exist_ok=True)
-            require(not destination.exists() and not destination.is_symlink(),'view ID overwrite')
-            # Frozen regular payload files may share byte storage; each view
-            # owns regular relative references and its own checked manifest.
-            # This is NOT another execution or a copied-session proof.
-            os.link(out/item['path'],destination);destination.chmod(0o444)
-        targets.append((target,index))
     elapsed=time.monotonic_ns()-tick
     reserve=POLICY['sampling']['publication_reserve_ns'];limit=report['budget']['limit_ns']
-    report['budget'].update(elapsed_ns=elapsed,exhausted=elapsed>limit,publication_reserve_ns=reserve,includes='actual native caller wall including orchestration, setup/build/fixtures, inspections, all measurements, full reader/statistics and bulk copy/hash/permission work; final small metadata writes have a separately reserved bounded window')
+    report['budget'].update(elapsed_ns=elapsed,exhausted=elapsed>limit,publication_reserve_ns=reserve,includes='actual native caller wall including orchestration, setup/build/fixtures, inspections, all measurements, full reader/statistics and bulk seal work; final small metadata writes have a separately reserved bounded window')
     if elapsed>limit-reserve:
         report['comparison_status']='inconclusive';report['diagnostics'].append('public wall budget or conservative final publication reserve insufficient; no ratios')
-    for target,index in [(out,None)]+targets:
-        view=report if index is None else dict(report,selection=index,run=dict(report['run'],id=report['sessions'][index]['id']),bundle={'id':report['sessions'][index]['id'],'manifest':'bundle.json'})
-        json_new(target/'report.json',view)
-        b=read(target,'report.json')
-        entries=payload+[{'path':'report.json','bytes':len(b),'sha256':digest(b)}]
-        seal(target,view['run']['id'],staged=entries)
+    for label,index in zip(('baseline','candidate'),report['selected_sessions'][:2]):
+        view=dict(report,selection=index,run=dict(report['run'],id=report['sessions'][index]['id']),bundle={'id':report['sessions'][index]['id'],'manifest':'bundle.json'})
+        json_new(out/f'{label}-view.json',view)
+    payload=stage(out,excluded=('preparation/cargo',))
+    json_new(out/'report.json',report)
+    if time.monotonic_ns()-tick>limit-reserve and report['comparison_status']!='inconclusive':
+        # Actual end is recorded IN the sealed report before sealing, not prose.
+        report['comparison_status']='inconclusive';report['diagnostics'].append('actual publication end exceeded the wall budget; no ratios')
+        with (out/'report.json').open('wb') as file:file.write(canonical(report)+b'\n')
+    b=read(out,'report.json')
+    entries=payload+[{'path':'report.json','bytes':len(b),'sha256':digest(b)}]
+    seal(out,report['run']['id'],staged=entries)
+    if time.monotonic_ns()-tick>limit and report['comparison_status']!='inconclusive':
+        report['comparison_status']='inconclusive';report['diagnostics'].append('actual publication end exceeded the wall budget after sealing; no ratios')
+        json_new(out/'final-overrun.json',{'comparison_status':'inconclusive','overrun_ns':time.monotonic_ns()-tick,'diagnostic':'actual publication end exceeded the wall budget after sealing; sealed report unmarked; no ratios'})
     require(time.monotonic_ns()-tick<=limit or report['comparison_status']=='inconclusive','publication reporting overrun; no successful return')
     return 1 if report['semantic_status']=='semantic_failure' else 2 if report['comparison_status']=='inconclusive' else 0
 
@@ -519,44 +563,35 @@ def run_collection(argv):
     reader=out/'preparation/cargo'/setup['build']['target']/'release/a10-perf-driver'
     # This reader is an OWN fresh build, not executed from arbitrary bundle JSON.
     require(digest(reader.read_bytes())==metadata['binaries']['driver']['sha256'],'used fresh release driver changed')
-    sessions=[];stats=[];plan=None
-    oracle=loads(read(out,'preparation/evidence/source/'+ORACLE_PATH))
-    for index in range(4):
-        if index==3:
-            json_new(out/'collection-input-3.json',{'sessions':sessions,'start_utc':started,'argv':[str(ROOT/'scripts/perf-test.sh'),'run']+argv,'source_head':head,'limit_ns':limit,'elapsed_before_validation_ns':time.monotonic_ns()-tick})
-            analysed=subprocess.run(['docker','exec',cid,'python3','-B','tools/a10/calibrated.py','finish',str(out),'3'],cwd=ROOT)
-            require(analysed.returncode in (0,1,2),'initial three-session reconstruction failure')
-            draft=loads(read(out,'report-draft-3.json'))
-            retry=noise_index(draft['statistics'])
-            if retry is None or not draft['qualification']['eligible'] or time.monotonic_ns()-tick>=limit-POLICY['sampling']['publication_reserve_ns']:break
-        clean(head)
-        sid=str(uuid.uuid4());prefix='sessions/'+sid;sroot=out/prefix;sroot.mkdir(parents=True)
-        json_new(sroot/'native-before.json',native(cid))
-        json_new(sroot/'fs-before.json',capture(['docker','exec',cid,'df','-PT',str(out/'local-sinks')]))
-        vm=capture(['docker','exec',cid,'python3','-B','tools/a10/allocation.py','probe']);json_new(sroot/'vm-before-command.json',vm)
-        require(vm['code']==0,'VM inspection unavailable');json_new(sroot/'vm-before.json',loads(vm['stdout']))
-        remaining=max(1,limit-(time.monotonic_ns()-tick)-120000000000)
-        command=['docker','exec',cid,'python3','-B','tools/a10/calibrated.py','worker',str(sroot),str(out/'preparation'),str(remaining)]
-        if plan is not None:command.append(str(out/'plan.json'))
-        result=subprocess.run(command,cwd=ROOT)
-        json_new(sroot/'native-after.json',native(cid))
-        json_new(sroot/'fs-after.json',capture(['docker','exec',cid,'df','-PT',str(out/'local-sinks')]))
-        vm=capture(['docker','exec',cid,'python3','-B','tools/a10/allocation.py','probe']);json_new(sroot/'vm-after-command.json',vm)
-        require(vm['code']==0,'VM after inspection unavailable');json_new(sroot/'vm-after.json',loads(vm['stdout']))
-        t=loads(read(out,prefix+'/transport.json'));require(result.returncode==t['exit_code'],'worker/driver transport status')
-        session={k:t[k] for k in ('id','start','end','summaries','exit_code')}
-        session.update(artifact_prefix=prefix,native_before=prefix+'/native-before.json',native_after=prefix+'/native-after.json',vm_before=prefix+'/vm-before.json',vm_after=prefix+'/vm-after.json',fs_before=prefix+'/fs-before.json',fs_after=prefix+'/fs-after.json',stream=prefix+'/driver.jsonl.gz',stderr=prefix+'/driver.stderr')
-        sessions.append(session)
-        if plan is None:plan=t['end']['plan'];json_new(out/'plan.json',plan)
-        clean(head)
-    # Container-built readers cannot execute on Darwin. Run the strict streamed
-    # semantic reconstruction in the SAME inspected VM through a fixed worker.
-    if len(sessions)==4:
-        json_new(out/'collection-input-4.json',{'sessions':sessions,'start_utc':started,'argv':[str(ROOT/'scripts/perf-test.sh'),'run']+argv,'source_head':head,'limit_ns':limit,'elapsed_before_validation_ns':time.monotonic_ns()-tick})
-        result=subprocess.run(['docker','exec',cid,'python3','-B','tools/a10/calibrated.py','finish',str(out),'4'],cwd=ROOT)
-        require(result.returncode in (0,1,2),'bounded rerun reconstruction failed')
+    # Corrected boundary: ONE public invocation executes and fully validates
+    # exactly ONE independent session within its own 30-minute budget. Three
+    # independent invocations at ONE final clean HEAD form the versioned cohort;
+    # a single session NEVER becomes a baseline. The reader/publication reserve
+    # is bounded INSIDE this budget; nothing is postponed past the command.
+    reserve=POLICY['sampling']['publication_reserve_ns'];reader_reserve=POLICY['sampling']['reader_reserve_ns']
     clean(head)
-    report=loads(read(out,f'report-draft-{len(sessions)}.json'))
+    sid=str(uuid.uuid4());prefix='sessions/'+sid;sroot=out/prefix;sroot.mkdir(parents=True)
+    json_new(sroot/'native-before.json',native(cid))
+    json_new(sroot/'fs-before.json',capture(['docker','exec',cid,'df','-PT',str(out/'local-sinks')]))
+    vm=capture(['docker','exec',cid,'python3','-B','tools/a10/allocation.py','probe']);json_new(sroot/'vm-before-command.json',vm)
+    require(vm['code']==0,'VM inspection unavailable');json_new(sroot/'vm-before.json',loads(vm['stdout']))
+    remaining=max(1,limit-(time.monotonic_ns()-tick)-reserve-reader_reserve)
+    result=subprocess.run(['docker','exec',cid,'python3','-B','tools/a10/calibrated.py','worker',str(sroot),str(out/'preparation'),str(remaining)],cwd=ROOT)
+    json_new(sroot/'native-after.json',native(cid))
+    json_new(sroot/'fs-after.json',capture(['docker','exec',cid,'df','-PT',str(out/'local-sinks')]))
+    vm=capture(['docker','exec',cid,'python3','-B','tools/a10/allocation.py','probe']);json_new(sroot/'vm-after-command.json',vm)
+    require(vm['code']==0,'VM after inspection unavailable');json_new(sroot/'vm-after.json',loads(vm['stdout']))
+    t=loads(read(out,prefix+'/transport.json'));require(result.returncode==t['exit_code'],'worker/driver transport status')
+    session={k:t[k] for k in ('id','start','end','summaries','exit_code')}
+    session.update(artifact_prefix=prefix,native_before=prefix+'/native-before.json',native_after=prefix+'/native-after.json',vm_before=prefix+'/vm-before.json',vm_after=prefix+'/vm-after.json',fs_before=prefix+'/fs-before.json',fs_after=prefix+'/fs-after.json',stream=prefix+'/driver.jsonl.gz',stderr=prefix+'/driver.stderr')
+    sessions=[session]
+    json_new(out/'collection-input-1.json',{'sessions':sessions,'start_utc':started,'argv':[str(ROOT/'scripts/perf-test.sh'),'run']+argv,'source_head':head,'limit_ns':limit,'elapsed_before_validation_ns':time.monotonic_ns()-tick})
+    # Strict semantic reconstruction runs in the SAME inspected VM, bounded by
+    # the reader reserve; honest bounded partial evidence on exhaustion.
+    analysed=subprocess.run(['docker','exec',cid,'python3','-B','tools/a10/calibrated.py','finish',str(out),'1'],cwd=ROOT)
+    require(analysed.returncode in (0,1,2),'session reconstruction failure')
+    clean(head)
+    report=loads(read(out,'report-draft-1.json'))
     status=publication(out,report,tick)
     # The allocation remains available for explicit inspection; no destructive
     # cleanup/restart or policy mutation. Its ID/raw lifecycle are retained.
@@ -569,21 +604,29 @@ def finish(out,count):
     reader=out/'preparation/cargo'/metadata['build']['target']/'release/a10-perf-driver'
     require(digest(reader.read_bytes())==metadata['binaries']['driver']['sha256'],'OWN built semantic reader identity')
     oracle=loads(read(out,'preparation/evidence/source/'+ORACLE_PATH))
-    began=time.monotonic_ns();statistics_rows=[];plan=None
-    for s in data['sessions']:
-        cells=inspect_session(out,s,metadata,reader,oracle,plan)
-        statistics_rows.append({'session':s['id'],'cells':cells})
-        if plan is None:plan=s['end']['plan']
+    limit=data['limit_ns'];reserve=POLICY['sampling']['publication_reserve_ns']
+    deadline=time.monotonic_ns()+max(0,limit-data['elapsed_before_validation_ns']-reserve)
+    began=time.monotonic_ns();statistics_rows=[];plan=None;partial=None
+    try:
+        for s in data['sessions']:
+            cells=inspect_session(out,s,metadata,reader,oracle,plan,deadline=deadline)
+            statistics_rows.append({'session':s['id'],'cells':cells})
+            if plan is None:plan=s['end']['plan']
+    except Unavailable as error:
+        partial=str(error)
+    finally:
+        close_replay_servers()
     active=[0,1,2]
-    if count==4:
+    if count==1:active=[0]
+    elif count==4 and len(statistics_rows)==3:
         retry=noise_index(statistics_rows[:3]);require(retry is not None,'unauthorized non-noise retry')
         active=[3 if i==retry else i for i in range(3)]
     q=qualify(out,data['sessions'])
     elapsed=data['elapsed_before_validation_ns']+time.monotonic_ns()-began
     failed=any(s['exit_code']==1 or s['end']['semantic_failure'] for s in data['sessions'])
-    unavailable=any(s['exit_code']==2 or not s['end']['complete'] for s in data['sessions'])
-    cohort=three_sessions([statistics_rows[i] for i in active])
-    usable=not unavailable and q['eligible'] and elapsed<=data['limit_ns'] and all(c['usable'] for i in active for c in statistics_rows[i]['cells']) and all(c['sufficient_noise'] for c in cohort)
+    unavailable=any(s['exit_code']==2 or not s['end']['complete'] for s in data['sessions']) or partial is not None
+    cohort=three_sessions([statistics_rows[i] for i in active]) if len(active)==3 and len(statistics_rows)==len(active) else []
+    usable=not unavailable and q['eligible'] and elapsed<=data['limit_ns'] and len(statistics_rows)==len(data['sessions'])==len(active) and all(c['usable'] for i in active for c in statistics_rows[i]['cells']) and all(c['sufficient_noise'] for c in cohort)
     rid=str(uuid.uuid4())
     report={'schema':'ruscv-perf/1','run':{'id':rid,'start_utc':data['start_utc'],'end_utc':utc(),'argv':data['argv'],'profile':'calibrated'},
             'metadata':{'report':'preparation/report.json','bundle_sha256':read(out,'preparation/bundle.sha256').decode().strip()},
@@ -591,7 +634,7 @@ def finish(out,count):
             'budget':{'limit_ns':data['limit_ns'],'elapsed_ns':elapsed,'includes':'native orchestration + fresh setup/build/fixtures + three serial process sessions + full own-P0/schema reconstruction; 120s validation reserve','exhausted':elapsed>data['limit_ns']},
             'sessions':data['sessions'],'selected_sessions':active,'selection':None,'qualification':q,'statistics':statistics_rows,'three_session_calibration':cohort,
             'semantic_status':'semantic_failure' if failed else 'unavailable' if unavailable else 'correct','comparison_status':'qualified-informational' if usable and not failed else 'inconclusive',
-            'diagnostics':POLICY['compatibility']['limitations']+([] if usable else ['required allocation/sample/warmup/work/clock/noise/budget evidence insufficient; no ratios']),
+            'diagnostics':POLICY['compatibility']['limitations']+([partial] if partial else [])+([] if usable else ['required allocation/sample/warmup/work/clock/noise/budget evidence insufficient; no ratios']),
             'bundle':{'id':rid,'manifest':'bundle.json'}}
     json_new(out/f'report-draft-{count}.json',report)
     return 1 if failed else 0 if usable else 2

@@ -125,12 +125,26 @@ claimed. Raw log/stdout/stderr copies and normal removal of private scratch
 occur after stop/own P0 and before another timer. Complete byte-identical
 captured files may share read-only hard-linked storage only after own byte
 comparison; altered retained bytes or copy failure reject timing. Every raw
-row/reference remains. Frozen baseline/candidate views may similarly share
-regular payload storage; their IDs select actual different executions, never
-manufacture executions by copying. Original smoke sink behavior is unchanged.
-The 30-minute caller budget includes orchestration, build/fixtures, validation,
-inspection and bulk evidence publication; a conservative final small-metadata
-publication window is reserved. Insufficient budget remains inconclusive.
+row/reference remains. Frozen baseline/candidate publications are compact
+versioned selection views referencing the one independently executed root
+bundle; they never copy whole payload trees or manufacture executions.
+Original smoke sink behavior is unchanged.
+
+Boundary correction (policy version 6): an earlier draft overstrictly read
+dev-plan §7 as three sessions inside ONE invocation. Each complete public
+calibrated `run` invocation executes and fully validates exactly ONE
+independent session within its own 30-minute budget, including orchestration,
+build/fixtures, inspection, ALL semantic reconstruction/publication; three
+independent invocations at ONE final clean committed HEAD form the cohort.
+The v5 collection at `58bc9f9` failed at 102.7973 minutes with 180/31/0 usable
+cells and stays failed/inconclusive evidence. Reader/publication work is
+bounded inside the budget: a persistent repository-built shared-P0 replay
+server over VM-local scratch replaces per-fragment subprocesses, retained
+fixture bytes are reused only after one digest-verified read, and exhaustion
+produces honest bounded partial evidence (never success without
+integrity/oracles, and semantic failure still exits 1 first). One successful
+session never becomes a baseline; comparisons require the valid three-session
+cohort plus an independently produced candidate.
 
 ### Qualified affinity and allocation, not physical control
 

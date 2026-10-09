@@ -52,11 +52,58 @@ class CalibratedControls(unittest.TestCase):
             # Force insufficient final publication reserve with deterministic wall.
             tick=time.monotonic_ns()-c.POLICY['sampling']['session_wall_budget_ns']
             self.assertEqual(c.publication(root,report,tick),2)
-            for p in (root,root/'baseline',root/'candidate'):
-                b=retrieve(p,required={'report.json','own-raw.json'})
-                r=loads(read(p,'report.json'));self.assertEqual(r['comparison_status'],'inconclusive')
-                self.assertEqual(r['budget'],report['budget'])
-                self.assertFalse((p/'runtime-overrun.json').exists())
+            for label in ('baseline','candidate'):
+                view=loads(read(root,f'{label}-view.json'))
+                self.assertEqual(view['budget'],report['budget'])
+                self.assertEqual(view['run']['id'],report['sessions'][0 if label=='baseline' else 1]['id'])
+                self.assertEqual(view['comparison_status'],'inconclusive')
+            b=retrieve(root,required={'report.json','own-raw.json','baseline-view.json'} )
+            r=loads(read(root,'report.json'));self.assertEqual(r['comparison_status'],'inconclusive')
+            self.assertEqual(r['budget'],report['budget'])
+            self.assertFalse((root/'runtime-overrun.json').exists())
+    def test_publication_records_actual_end_overrun_as_inconclusive(self):
+        with tempfile.TemporaryDirectory(dir=c.ROOT/'target') as d:
+            root=Path(d);json_new(root/'own-raw.json',{'fixture':'own'})
+            limit=c.POLICY['sampling']['session_wall_budget_ns']
+            report={'run':{'id':'group'},'sessions':[{'id':'one'}],'selected_sessions':[0],
+                    'selection':None,'bundle':{'id':'group','manifest':'bundle.json'},'budget':{'limit_ns':limit},
+                    'semantic_status':'correct','comparison_status':'qualified-informational','diagnostics':[]}
+            class Overrunning:
+                def __init__(self):self.calls=0
+                def monotonic_ns(self):
+                    self.calls+=1
+                    return limit+1 if self.calls>1 else 0
+            real=c.time;fake=Overrunning()
+            try:
+                c.time=fake
+                self.assertEqual(c.publication(root,report,0),2)
+            finally:c.time=real
+            r=loads(read(root,'report.json'))
+            self.assertEqual(r['comparison_status'],'inconclusive')
+            self.assertTrue(any('actual publication end' in d for d in r['diagnostics']))
+    def test_persistent_replay_server_protocol_and_proven_child_termination(self):
+        with tempfile.TemporaryDirectory(dir=c.ROOT/'target') as d:
+            stub=Path(d)/'slow-stub.sh'
+            stub.write_text('#!/bin/sh\nwhile IFS= read -r line; do sleep 0.05; echo REPLAY 2; done\n')
+            stub.chmod(0o755)
+            try:
+                handle=c._server(stub)
+                handle['proc'].stdin.write(b'{}\n');handle['proc'].stdin.flush()
+                self.assertEqual(handle['proc'].stdout.readline().strip(),b'REPLAY 2')
+            finally:c.close_replay_servers()
+            self.assertEqual(c._REPLAY,{})
+            # close_replay_servers proved actual termination before scratch removal.
+        with tempfile.TemporaryDirectory(dir=c.ROOT/'target') as d:
+            bad=Path(d)/'bad-stub.sh'
+            bad.write_text('#!/bin/sh\nwhile IFS= read -r line; do echo NOT_REPLAY; done\n')
+            bad.chmod(0o755)
+            try:
+                handle=c._server(bad)
+                handle['proc'].stdin.write(b'{}\n');handle['proc'].stdin.flush()
+                line=handle['proc'].stdout.readline()
+                with self.assertRaises(c.Invalid):
+                    c.require(line.startswith(b'REPLAY '),'persistent shared-P0 replay protocol failure')
+            finally:c.close_replay_servers()
     def test_publication_semantic_failure_precedes_inconclusive(self):
         with tempfile.TemporaryDirectory(dir=c.ROOT/'target') as d:
             root=Path(d)
