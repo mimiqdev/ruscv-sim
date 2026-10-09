@@ -13,8 +13,10 @@ ROOT = Path(__file__).resolve().parents[2]
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-def audit(out):
-    manifest = json.loads((ROOT / 'tools/a10/public-v1.json').read_text())
+def audit(out, calibration=False):
+    manifest = json.loads((ROOT / ('tools/a10/calibration-oracle-v1.json' if calibration else 'tools/a10/public-v1.json')).read_text())
+    if calibration and (manifest['schema']!='a10-calibration-oracle/1' or manifest['version']!=1):
+        raise ValueError('unknown calibration oracle version')
     if sha(ROOT / 'tools/a10/public-v1.json') != '89a89bfb960484079468d419d51639b60d439561828a4e3516abd0829c627733':
         raise ValueError('P1 must preserve the accepted P0 manifest')
     report = json.loads((out / 'build.json').read_text())
@@ -40,5 +42,5 @@ def audit(out):
     return report
 
 if __name__ == '__main__':
-    audit(Path(sys.argv[1]).absolute())
+    audit(Path(sys.argv[1]).absolute(), calibration=sys.argv[2:]==['--calibration'])
     print('P1 fresh input identity audit: exact P0 sources/linker/ELFs/argv; actual tool hashes checked')

@@ -17,7 +17,7 @@ class CalibratedControls(unittest.TestCase):
             self.assertEqual(c.transport_event(line),event)
         self.assertIsNone(c.transport_event(c.canonical({'event':'row','raw':{'log':'"event":"session_end"'}})))
     def test_exact_matrix(self):
-        matrix=c.inventory(loads((c.ROOT/'tools/a10/public-v1.json').read_bytes()))
+        matrix=c.inventory(loads((c.ROOT/c.ORACLE_PATH).read_bytes()))
         self.assertEqual(len(matrix),504);self.assertEqual(sum(a for _,a in matrix),180)
         self.assertEqual(sum(not a for _,a in matrix),324);self.assertEqual(len({x for x,_ in matrix}),504)
     def rows(self,medians=(10000000,10000000,10000000)):

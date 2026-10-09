@@ -387,7 +387,9 @@ impl RepetitionController for Controller<'_> {
 pub fn session(paths: &Paths, budget: Duration, plan: Option<&Value>) -> Result<i32, String> {
     let policy: Value =
         serde_json::from_str(include_str!("calibrated-v1.json")).map_err(|e| e.to_string())?;
-    let m = manifest();
+    let m = calibration_manifest();
+    let mappings: Value = serde_json::from_str(include_str!("calibration-workloads-v1.json"))
+        .map_err(|e| e.to_string())?;
     let deadline = Instant::now() + budget;
     let before = affinity::caller();
     let mut retention = Retention::new();
@@ -398,9 +400,21 @@ pub fn session(paths: &Paths, budget: Duration, plan: Option<&Value>) -> Result<
     let mut failed = false;
     let mut complete = true;
     let mut plans = serde_json::Map::new();
-    for f in &m.fixtures {
+    for mapping in mappings["mapping"].as_array().ok_or("variant mapping")? {
         for route in m.route_matrix.keys() {
             for phase in ["load_only", "execute_only", "end_to_end"] {
+                let id = mapping[if phase == "load_only" {
+                    "load"
+                } else {
+                    "execution"
+                }]
+                .as_str()
+                .ok_or("variant identity")?;
+                let f = m
+                    .fixtures
+                    .iter()
+                    .find(|f| f.id == id)
+                    .ok_or("mapped fixture missing")?;
                 for mode in if phase == "load_only" {
                     vec!["none"]
                 } else {

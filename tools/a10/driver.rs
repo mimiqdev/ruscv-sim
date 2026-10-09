@@ -89,7 +89,7 @@ fn run() -> Result<i32, String> {
         .arg("tools/a10/audit_fixtures.py")
         .arg(out.join("fixtures"));
     if args[1] == "calibrated-session" {
-        audit_command.stdout(std::io::stderr());
+        audit_command.arg("--calibration").stdout(std::io::stderr());
     }
     let audit = audit_command.status().map_err(|e| e.to_string())?;
     if !audit.success() {

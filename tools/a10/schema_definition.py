@@ -88,6 +88,7 @@ DEFS['calibrated_report'] = obj({
  'schema':{'const':'ruscv-perf/1'},'run':obj({'id':S,'start_utc':S,'end_utc':S,'argv':TEXTS,'profile':{'const':'calibrated'}}),
  'metadata':obj({'report':{'const':'preparation/report.json'},'bundle_sha256':SHA}),
  'source_head':{'type':'string','pattern':'^[0-9a-f]{40}$'},'policy_sha256':SHA,
+ 'workload':obj({'id':{'const':'calibration-workloads/1'},'version':{'const':1},'mapping_sha256':SHA,'oracle_id':{'const':'a10-calibration-oracle/1'},'oracle_version':{'const':1},'oracle_sha256':SHA}),
  'budget':obj({'limit_ns':U,'elapsed_ns':U,'includes':S,'exhausted':B,'publication_reserve_ns':U}),
  'sessions':array(obj({'id':S,'artifact_prefix':PATH,'native_before':PATH,'native_after':PATH,'vm_before':PATH,'vm_after':PATH,'stream':PATH,'stderr':PATH,'exit_code':{'enum':[0,1,2]},'start':nullable({'type':'object'}),'end':nullable({'type':'object'}),'summaries':array({'type':'object'})})),
  'selected_sessions':array(integer(8)),'selection':nullable(integer(8)),

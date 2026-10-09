@@ -912,6 +912,9 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
     let input_sha256 = input.as_ref().ok().map(|bytes| digest::sha256(bytes));
     let setup = (|| -> Result<(), String> {
         let bytes = input.as_ref().map_err(|e| e.to_string())?;
+        if input_sha256.as_deref() != Some(f.elf_sha256.as_str()) {
+            return Err("pinned actual input ELF bytes mismatch".into());
+        }
         if phase == "execute_only" {
             if route == "flat" {
                 meter.event(Op::Construct);
@@ -945,6 +948,12 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
                     .cloned()
                     .unwrap_or_else(|| "prior repetition rejected; no retry/reuse".into()),
             );
+            if input_sha256
+                .as_deref()
+                .is_some_and(|hash| hash != f.elf_sha256)
+            {
+                record.reject("pinned actual input ELF bytes mismatch".into());
+            }
             controller.retain(record);
             continue;
         }

@@ -155,11 +155,23 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
             "bounded calibration fragment rows",
         )?;
     }
-    let m = manifest();
+    let m = if let Some(fragment) = fragment {
+        let expected = phases::digest::sha256(include_bytes!("calibration-oracle-v1.json"));
+        need(
+            fragment["oracle_sha256"].as_str() == Some(expected.as_str()),
+            "unknown/mismatched calibration oracle identity",
+        )?;
+        calibration_manifest()
+    } else {
+        manifest()
+    };
     // Parse/reconstruct each immutable pinned initial image once per read. This
     // caches expected bytes only, never a sample verdict or companion run.
     let mut images = BTreeMap::new();
     for f in &m.fixtures {
+        if fragment.is_some_and(|fragment| fragment["fixture"].as_str() != Some(f.id.as_str())) {
+            continue;
+        }
         let elf = read(root, &Value::String(format!("fixtures/{}.elf", f.id)))?;
         need(
             phases::digest::sha256(&elf) == f.elf_sha256,

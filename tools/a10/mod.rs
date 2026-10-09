@@ -230,8 +230,18 @@ pub fn manifest() -> Manifest {
     manifest_capabilities(&m).expect("supported manifest version and capabilities");
     m
 }
+pub fn calibration_manifest() -> Manifest {
+    let m: Manifest = serde_json::from_str(include_str!("calibration-oracle-v1.json"))
+        .expect("versioned independent calibration oracle");
+    manifest_capabilities(&m).expect("calibration oracle capabilities");
+    m
+}
 pub fn manifest_capabilities(m: &Manifest) -> Check {
-    if m.schema != "a10-oracle/1" || m.version != 1 {
+    if !matches!(
+        m.schema.as_str(),
+        "a10-oracle/1" | "a10-calibration-oracle/1"
+    ) || m.version != 1
+    {
         return Err(Rejection::Semantic("unknown oracle schema/version".into()));
     }
     let expected: BTreeMap<String, Vec<String>> = [
@@ -249,7 +259,14 @@ pub fn manifest_capabilities(m: &Manifest) -> Check {
 }
 pub fn capability(m: &Manifest, f: &Fixture, route: &str, mode: &str) -> Check {
     manifest_capabilities(m)?;
-    if f.native_only != matches!(f.id.as_str(), "hello" | "native_device") {
+    let anchor =
+        f.id.strip_prefix("cal-")
+            .and_then(|id| {
+                id.strip_suffix("-exec")
+                    .or_else(|| id.strip_suffix("-load"))
+            })
+            .unwrap_or(&f.id);
+    if f.native_only != matches!(anchor, "hello" | "native_device") {
         return Err(Rejection::Semantic(
             "fixture native/flat N/A classification".into(),
         ));
@@ -420,13 +437,19 @@ pub fn validate(m: &Manifest, f: &Fixture, s: &Sample) -> Check {
                 &UartState {
                     base_addr: 0x1000_0000,
                     rx_fifo: vec![],
-                    tx_fifo: f.uart.clone(),
+                    tx_fifo: f.uart.iter().copied().take(16).collect(),
                     registers: [
                         0,
                         0,
                         0,
                         0,
-                        if f.uart.is_empty() { 0x60 } else { 0x20 },
+                        if f.uart.is_empty() {
+                            0x60
+                        } else if f.uart.len() < 16 {
+                            0x20
+                        } else {
+                            0
+                        },
                         0,
                         0,
                         0,

@@ -17,6 +17,11 @@ from integrity import canonical, digest, Invalid, json_new, loads, read as artif
 from report_schema import schema_check, validate as validate_smoke
 
 POLICY = loads((ROOT/'tools/a10/calibrated-v1.json').read_bytes())
+WORKLOAD = loads((ROOT/'tools/a10/calibration-workloads-v1.json').read_bytes())
+ORACLE_PATH = 'tools/a10/calibration-oracle-v1.json'
+
+def workload_identity():
+    return {'id':WORKLOAD['schema'],'version':WORKLOAD['version'],'mapping_sha256':digest((ROOT/'tools/a10/calibration-workloads-v1.json').read_bytes()),'oracle_id':'a10-calibration-oracle/1','oracle_version':1,'oracle_sha256':digest((ROOT/ORACLE_PATH).read_bytes())}
 
 class VerifiedRoot:
     def __init__(self,path,bundle):
@@ -35,9 +40,12 @@ def read(root,name):
 
 def inventory(oracle):
     cells=[]
-    for f in oracle['fixtures']:
+    require(oracle['schema']=='a10-calibration-oracle/1' and oracle['version']==1,'new calibrated oracle version required; old anchors are correctness controls')
+    fixtures={f['id']:f for f in oracle['fixtures']}
+    for mapping in WORKLOAD['mapping']:
         for route in sorted(oracle['route_matrix']):
             for phase in ('load_only','execute_only','end_to_end'):
+                f=fixtures[mapping['load' if phase=='load_only' else 'execution']]
                 for mode in ('none',) if phase=='load_only' else ('off','facts','file'):
                     supported=not(f['native_only'] and route in ('flat','machine-flat'))
                     if phase=='load_only':supported &= route.startswith('machine-')
@@ -69,7 +77,8 @@ def replay(root,reader,rows,role,prefix,oracle):
     with tempfile.TemporaryDirectory(dir=parent) as directory:
         snapshot=Path(directory)
         for f in oracle['fixtures']:
-            write_new(snapshot/('fixtures/'+f['id']+'.elf'),read(root,prefix+'/fixtures/'+f['id']+'.elf'))
+            if f['id']==first['fixture']:
+                write_new(snapshot/('fixtures/'+f['id']+'.elf'),read(root,prefix+'/fixtures/'+f['id']+'.elf'))
         for n,r in enumerate(rows):
             stem=prefix+f"/samples/{r['fixture']}-{r['route']}-{r['phase']}-{r['mode']}-{r['repetition']}"
             refs={}
@@ -81,7 +90,7 @@ def replay(root,reader,rows,role,prefix,oracle):
                 else:refs[key]=None
             entries.append({'id':f'sample-{n:06d}','sequence':n,'fixture_elf':'fixtures/'+r['fixture']+'.elf','artifacts':refs,'raw':r})
         semantic='semantic_failure' if any(r['semantic_status']=='semantic_failure' for r in rows) else ('unavailable' if any(r['semantic_status']=='unavailable' for r in rows) else 'correct')
-        fragment=dict({k:first[k] for k in names},first_repetition=first['repetition'],warmup=role in ('pilot','warmup'))
+        fragment=dict({k:first[k] for k in names},first_repetition=first['repetition'],warmup=role in ('pilot','warmup'),oracle_sha256=workload_identity()['oracle_sha256'])
         report={'schema':'ruscv-perf/1','policy':{'basic_repetitions':len(rows)},'calibration_fragment':fragment,'records':entries,'semantic_status':semantic}
         json_new(snapshot/'report.json',report)
         result=subprocess.run([str(reader),'oracle-replay',str(snapshot/'report.json')],cwd=ROOT,capture_output=True)
@@ -307,6 +316,7 @@ def validate(path,reader,expected_digest=None,sealed=True):
     root=path.parent;report=loads(read(root,'report.json'))
     schema=loads((ROOT/'tools/a10/ruscv-perf-1.schema.json').read_bytes());schema_check(report,schema,schema['$defs'])
     require(report['run']['profile']=='calibrated' and report['policy_sha256']==digest((ROOT/'tools/a10/calibrated-v1.json').read_bytes()),'calibrated profile/policy identity')
+    require(report['workload']==workload_identity(),'new actual workload/oracle/mapping versions and digests required')
     if sealed:
         bundle=retrieve(root,expected_digest,required={'report.json','preparation/report.json'})
         require(bundle['id']==report['bundle']['id']==report['run']['id'],'calibrated bundle/run identity conflict')
@@ -318,7 +328,7 @@ def validate(path,reader,expected_digest=None,sealed=True):
     metadata=loads(read(root,'preparation/report.json'))
     require(metadata['source']['head']==report['source_head'],'clean exact source HEAD')
     require(read(root,'preparation/evidence/source/tools/a10/calibrated-v1.json')==(ROOT/'tools/a10/calibrated-v1.json').read_bytes(),'policy not versioned before measurements')
-    oracle=loads(read(root,'preparation/evidence/source/tools/a10/public-v1.json'))
+    oracle=loads(read(root,'preparation/evidence/source/'+ORACLE_PATH))
     statistics_rows=[];plan=None
     require(len(report['sessions']) in (3,4) and len({s['id'] for s in report['sessions']})==len(report['sessions']),'independent session identities')
     for s in report['sessions']:
@@ -387,8 +397,8 @@ def worker(out,preparation,budget_ns,plan_path=None):
     out=Path(out);preparation=Path(preparation)
     setup=loads(read(preparation,'setup.json'));head=clean(setup['source_head'])
     require(out.is_dir() and not (out/'setup.json').exists(),'fresh session setup')
-    subprocess.run(['python3','-B','tools/a10/build_fixtures.py','--out',str(out/'fixtures')],cwd=ROOT,check=True)
-    subprocess.run(['python3','-B','tools/a10/derive_oracles.py',str(out/'fixtures'),'--check'],cwd=ROOT,check=True)
+    subprocess.run(['python3','-B','tools/a10/build_fixtures.py','--calibration','--out',str(out/'fixtures')],cwd=ROOT,check=True)
+    subprocess.run(['python3','-B','tools/a10/variant_specs.py','check','--build',str(out/'fixtures')],cwd=ROOT,check=True)
     json_new(out/'setup.json',dict(setup,run_id=out.name))
     driver=preparation/'cargo'/setup['build']['target']/'release/a10-perf-driver'
     require(digest(driver.read_bytes())==setup['binaries']['driver']['sha256'],'actual fresh built driver changed')
@@ -489,7 +499,7 @@ def run_collection(argv):
     # This reader is an OWN fresh build, not executed from arbitrary bundle JSON.
     require(digest(reader.read_bytes())==metadata['binaries']['driver']['sha256'],'used fresh release driver changed')
     sessions=[];stats=[];plan=None
-    oracle=loads(read(out,'preparation/evidence/source/tools/a10/public-v1.json'))
+    oracle=loads(read(out,'preparation/evidence/source/'+ORACLE_PATH))
     for index in range(4):
         if index==3:
             json_new(out/'collection-input-3.json',{'sessions':sessions,'start_utc':started,'argv':[str(ROOT/'scripts/perf-test.sh'),'run']+argv,'source_head':head,'limit_ns':limit,'elapsed_before_validation_ns':time.monotonic_ns()-tick})
@@ -535,7 +545,7 @@ def finish(out,count):
     out=Path(out);data=loads(read(out,f'collection-input-{count}.json'));metadata=loads(read(out,'preparation/report.json'))
     reader=out/'preparation/cargo'/metadata['build']['target']/'release/a10-perf-driver'
     require(digest(reader.read_bytes())==metadata['binaries']['driver']['sha256'],'OWN built semantic reader identity')
-    oracle=loads(read(out,'preparation/evidence/source/tools/a10/public-v1.json'))
+    oracle=loads(read(out,'preparation/evidence/source/'+ORACLE_PATH))
     began=time.monotonic_ns();statistics_rows=[];plan=None
     for s in data['sessions']:
         cells=inspect_session(out,s,metadata,reader,oracle,plan)
@@ -554,7 +564,7 @@ def finish(out,count):
     rid=str(uuid.uuid4())
     report={'schema':'ruscv-perf/1','run':{'id':rid,'start_utc':data['start_utc'],'end_utc':utc(),'argv':data['argv'],'profile':'calibrated'},
             'metadata':{'report':'preparation/report.json','bundle_sha256':read(out,'preparation/bundle.sha256').decode().strip()},
-            'source_head':data['source_head'],'policy_sha256':digest((ROOT/'tools/a10/calibrated-v1.json').read_bytes()),
+            'source_head':data['source_head'],'policy_sha256':digest((ROOT/'tools/a10/calibrated-v1.json').read_bytes()),'workload':workload_identity(),
             'budget':{'limit_ns':data['limit_ns'],'elapsed_ns':elapsed,'includes':'native orchestration + fresh setup/build/fixtures + three serial process sessions + full own-P0/schema reconstruction; 120s validation reserve','exhausted':elapsed>data['limit_ns']},
             'sessions':data['sessions'],'selected_sessions':active,'selection':None,'qualification':q,'statistics':statistics_rows,'three_session_calibration':cohort,
             'semantic_status':'semantic_failure' if failed else 'unavailable' if unavailable else 'correct','comparison_status':'qualified-informational' if usable and not failed else 'inconclusive',
@@ -573,10 +583,11 @@ def compatibility_key(report,metadata):
     target_dir=env.pop('CARGO_TARGET_DIR',None)
     inputs=dict(build['inputs']);inputs_env=dict(inputs['env']);inputs_env.pop('CARGO_TARGET_DIR',None);inputs['env']=inputs_env
     flags=[f for f in build['codegen']['c_flags'] if not re.fullmatch(r'(metadata=|extra-filename=-)[0-9a-f]+',f)]
-    fixtures=[{k:f[k] for k in ('id','elf_sha256','source_sha256','linker_sha256','metadata','identity_class')} for f in metadata['fixtures']]
+    oracle=loads((ROOT/ORACLE_PATH).read_bytes())
+    fixtures=[{k:f[k] for k in ('id','elf_sha256','source_sha256','linker_sha256','segments','memory_size','tohost','signature_addr')} for f in oracle['fixtures']]
     tools={name:{k:value[k] for k in ('sha256','version')} for name,value in metadata['tools'].items()}
     clocks=sorted({canonical({k:c[k] for k in ('engine','unit','method','monotonic')}).decode() for c in metadata['clocks']})
-    return {'policy':report['policy_sha256'],'identity':metadata['identity'],'fixtures':fixtures,'tools':tools,'target':build['target'],'profile':build['profile'],
+    return {'workload':report['workload'],'policy':report['policy_sha256'],'identity':metadata['identity'],'fixtures':fixtures,'tools':tools,'target':build['target'],'profile':build['profile'],
             'features':build['features'],'lockfile':build['lockfile_sha256'],'env':env,'inputs':inputs,'c_flags':flags,'manifest_profile':build['codegen']['release_manifest'],
             'clock_policy':clocks,'sink_policy':metadata['environment']['sink_policy'],'allocation':report['qualification']['positive_key'],
             'work':report['sessions'][report['selected_sessions'][0]]['end']['plan']}

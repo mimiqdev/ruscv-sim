@@ -80,6 +80,13 @@ one clean committed HEAD. Exported baseline/candidate views select different
 actual processes; copying retained bytes is not another session. Older P2
 smoke remains readable but cannot become a calibrated baseline.
 
+The [new duration-scaled workload series](a10-calibration-workloads.md) maps
+all original anchors to distinct execution and initialized-payload load ELFs;
+original smoke/P0 identities remain correctness controls. Calibrated reports
+require explicit new workload/mapping/oracle versions and digests, and every
+actual repetition is replayed against the compiled new independent oracle.
+Old smoke/short-anchor evidence is not a compatible variant baseline.
+
 [`calibrated-v1.json`](../../tools/a10/calibrated-v1.json) fixes pilots, both
 warmup minima (five correct iterations AND one second of actual timed work),
 20-second warmup cap, final warmed repetition calibration, thirty samples and

@@ -1,7 +1,7 @@
 //! P0 exact public-route correctness, negative controls and lifecycle evidence.
 //! No elapsed times are measured or accepted here.
 #[path = "../tools/a10/mod.rs"]
-mod support;
+pub mod support;
 use ruscv_sim::machine::{Lifecycle, MachineError, PlatformKind};
 use std::path::{Path, PathBuf};
 use std::process::Command;

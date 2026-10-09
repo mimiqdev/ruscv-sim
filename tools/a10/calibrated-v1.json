@@ -1,6 +1,7 @@
 {
   "id": "calibrated-v1",
-  "version": 2,
+  "version": 3,
+  "workload_series": "calibration-workloads/1 and a10-calibration-oracle/1; original public-v1 remains smoke/correctness only; explicit phase-specific anchor mapping and new ELF identities",
   "sampling": {
     "serial": true,
     "raw_encoding": "calibrated-raw/1; complete owned sample/clock values reused only after equality of each independently captured and P0-validated value, never verdict reuse",
