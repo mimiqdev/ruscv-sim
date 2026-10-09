@@ -125,12 +125,17 @@ fn run() -> Result<i32, String> {
     let cli = exe.parent().ok_or("driver directory")?.join("ruscv-sim");
     let fixtures = out.join("fixtures");
     let file_sinks = if args[1] == "calibrated-session" {
-        let expected = out
-            .parent()
-            .and_then(Path::parent)
-            .ok_or("session root")?
-            .join("local-sinks")
-            .join(out.file_name().ok_or("session ID")?);
+        let session_id = out.file_name().ok_or("session ID")?;
+        let expected = match std::env::var_os("RISCV_PERF_CALIBRATION_SINKS_ROOT") {
+            // Continuing-allocation invocations share the inspected mount.
+            Some(root) => std::path::PathBuf::from(root).join(session_id),
+            None => out
+                .parent()
+                .and_then(Path::parent)
+                .ok_or("session root")?
+                .join("local-sinks")
+                .join(session_id),
+        };
         let actual = std::env::var_os("RISCV_PERF_CALIBRATION_SINKS")
             .map(std::path::PathBuf::from)
             .ok_or("required inspected VM-local sinks unavailable")?;
