@@ -234,3 +234,30 @@ The prior P2 head `9587fe94c3a66f19ecb2ec28e9d5464fcca8bde6` passed its exact-he
 The repaired [`replay.rs`](../../tools/a10/replay.rs) compares the complete `Interval` and `ClockEvidence` to the same child's retained `LibraryWire`, and reconstructs/compares the entire native `Sample` using only that result, UART and applicable log. Unsupported native counts/GPR/RAM/MINSTRET and all other non-exported introspection cannot become observed evidence. Known physical-host values now require the full typed host schema; every nested observation validates availability/value/reason/provenance, while genuinely inaccessible whole-host identity is explicitly unavailable.
 
 New actual-route Rust negatives cover both native routes, off/file modes and warmup/basic samples. Full-reader controls couple raw/evidence/clock tables and keep original child stdout unchanged; host controls also couple setup/provenance artifact/digest/aggregate mirrors before removing fields or nested metadata. They must fail the actual reader, not just a mirror-consistency guard. The strict release audit additionally accepts explicit whole-host unavailability without inventing identity. P0/P1 scopes/oracles, production APIs/semantics and P3/P4 exclusions remain unchanged. New committed-head evidence and review are required; historical checkpoint proof cannot be carried forward.
+
+## P3 right-sizing (user-authorized 2026-10-10)
+
+The user authorized cutting payloads and certification, never the framework. The
+delivered framework layer (manifest machinery, fixture pipeline, phase clock scoping,
+route-matrix/N/A semantics, strict reader/bundle sealing, identity capture, exit
+classification) stays as A10's asset; certification (three-session cohort/baseline
+gates, the 504-cell matrix, CI weekly reporting/retention) is deferred, not an
+acceptance requirement. The committed cohort/calibration machinery remains in-repo
+covered by its unit controls; calibrated transport/sink defects are non-blocking
+unless the baseline path shares them.
+
+Historical heavy calibrated development is preserved under `target/` as failed
+records only: the v5 collection at `58bc9f9` ended at 102.7973 minutes with 180/31/0
+usable cells (reader 69.60 minutes dominated by per-fragment subprocess replay; the
+first session's warmups alone totaled 14.8 minutes), and the later wrapper attempt at
+`d3992397` was user-stopped during its first session. None of these are sessions,
+baselines or acceptance evidence, and none were relabeled.
+
+The delivered baseline profile (`baseline`, `a10-baseline-report/1`) measures exactly
+three representative workloads with the per-repetition correctness floor of CLI exit
+plus exact stdout, honest exit-2 INCONCLUSIVE on any failure, median/p05/p95, and
+environment/embedded-build-head identity. Its recorded observation and manual
+re-run/compare-later instructions are in [a10-baseline.md](a10-baseline.md). The
+authenticated exact-HEAD `a10-baseline-run` observation is recorded through worker
+verification before handoff; P4′ closes with the short documentation page and final
+independent review.
