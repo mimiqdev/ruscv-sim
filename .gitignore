@@ -7,3 +7,5 @@ tests/peripheral_proptest.proptest-regressions
 *.log
 /.a5-upstream
 /.a5
+__pycache__/
+*.pyc
