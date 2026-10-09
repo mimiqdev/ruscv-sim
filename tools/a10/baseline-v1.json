@@ -1,0 +1,35 @@
+{
+  "schema": "a10-baseline-workloads/1",
+  "version": 1,
+  "scope": "user-authorized right-sizing 2026-10-10: exactly three representative workloads measured on the existing framework seams; breadth follows feature maturity; certification (cohort/baseline-sealing gates, full matrix, CI) deferred",
+  "correctness_floor": "public CLI child process exit code plus exact expected stdout bytes only",
+  "workloads": [
+    {
+      "id": "alu-branch-loop",
+      "fixture": "control_loop",
+      "source": "tools/a10/fixtures/control_loop.S",
+      "linker": "tools/a10/fixtures/linker.ld",
+      "max_cycles": 200,
+      "expected_exit": 3,
+      "expected_stdout_hex": ""
+    },
+    {
+      "id": "ram-store-load-loop",
+      "fixture": "ram_loop",
+      "source": "tools/a10/fixtures/ram_loop.S",
+      "linker": "tools/a10/fixtures/linker.ld",
+      "max_cycles": 180,
+      "expected_exit": 3,
+      "expected_stdout_hex": ""
+    },
+    {
+      "id": "device-cli-hello",
+      "fixture": "hello",
+      "source": "tests/bare-metal-riscv-test/rv64i/hello.S",
+      "linker": "tests/bare-metal-riscv-test/linker.ld",
+      "max_cycles": 100,
+      "expected_exit": 0,
+      "expected_stdout_hex": "48656c6c6f210a"
+    }
+  ]
+}

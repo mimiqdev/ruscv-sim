@@ -103,6 +103,9 @@ def main(argv):
     if args.suite=='public-v1' and args.profile=='calibrated':
         from calibrated import run_collection
         return run_collection(argv[1:])
+    if args.suite=='public-v1' and args.profile=='baseline':
+        from baseline import run as baseline_run
+        return baseline_run(argv[1:])
     if args.suite != 'public-v1' or args.profile != 'smoke' or not 1 <= args.repetitions <= 16:
         print('INCONCLUSIVE: only public-v1 smoke (1..16 basic repetitions plus one warmup) is implemented',file=sys.stderr)
         return 2
