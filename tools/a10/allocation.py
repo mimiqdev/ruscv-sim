@@ -115,7 +115,7 @@ def parse_native(snapshot):
             'context':values['context'],'endpoint':endpoint,'colima':colima,'daemon':daemon,
             'container':{k:container[k] for k in ('Id','Created','Image','RestartCount')},
             'state':{k:container['State'][k] for k in ('Pid','StartedAt')},
-            'limits':{k:container['HostConfig'][k] for k in ('CpusetCpus','CpusetMems','NanoCpus','CpuPeriod','CpuQuota','CpuShares','Memory','MemorySwap')},
+            'limits':dict({k:container['HostConfig'][k] for k in ('CpusetCpus','CpusetMems','NanoCpus','CpuPeriod','CpuQuota','CpuShares','Memory','MemorySwap')},Tmpfs=container['HostConfig'].get('Tmpfs',{})),
             'mounts':container['Mounts'],
             'image':{k:image[k] for k in ('Id','RepoDigests','Os','Architecture')}}
 

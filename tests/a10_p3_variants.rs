@@ -69,6 +69,7 @@ fn mapped_variants_own_every_applicable_public_oracle_and_reset() {
         cli,
         driver,
         artifacts: &artifacts,
+        file_sinks: None,
     };
     let mut cells = 0;
     for f in m.fixtures.iter().filter(|f| f.id.ends_with("-exec")) {
@@ -185,6 +186,63 @@ fn mapped_variants_own_every_applicable_public_oracle_and_reset() {
             }
         }
     }
+    // Separate file scratch is reporting-only: actual public file bytes and
+    // native wire survive outside timers; a failed exclusive copy rejects time.
+    let f = m.fixtures.iter().find(|f| f.id == "cal-fib-exec").unwrap();
+    let scratch = temp.path().join("owned-scratch");
+    std::fs::create_dir(&scratch).unwrap();
+    let sink_paths = phases::Paths {
+        file_sinks: Some(&scratch),
+        ..paths
+    };
+    let mut clock = phases::HostClock::default();
+    for route in ["machine-native", "cli", "native-bytes", "native-file"] {
+        let phase = if route == "machine-native" {
+            "execute_only"
+        } else {
+            "end_to_end"
+        };
+        let rows = phases::measure_cell(
+            &m,
+            f,
+            phases::Cell {
+                route,
+                phase,
+                mode: "file",
+            },
+            &sink_paths,
+            1,
+            &mut clock,
+        );
+        for row in rows {
+            assert_eq!(row.semantic_status, "correct", "{:?}", row.reason);
+            assert!(row.accepted_ns.is_some());
+            let name = format!("{}-{route}-{phase}-file-{}.log", f.id, row.repetition);
+            assert_eq!(
+                std::fs::read_to_string(artifacts.join(name)).unwrap(),
+                expected_log(f)
+            );
+        }
+        assert_eq!(std::fs::read_dir(&scratch).unwrap().count(), 0);
+    }
+    let collision_paths = phases::Paths {
+        artifacts: &scratch,
+        ..sink_paths
+    };
+    let rows = phases::measure_cell(
+        &m,
+        f,
+        phases::Cell {
+            route: "machine-native",
+            phase: "execute_only",
+            mode: "file",
+        },
+        &collision_paths,
+        1,
+        &mut clock,
+    );
+    assert!(rows.iter().all(|row| row.accepted_ns.is_none()));
+    assert_eq!(rows[0].semantic_status, "semantic_failure");
     // Actual new-variant fragments use the compiled independent oracle, not
     // report-supplied expectations. Original smoke keeps its original oracle.
     let f = m

@@ -114,6 +114,7 @@ fn paths<'a>(build: &'a Build, temp: &'a TempDir) -> Paths<'a> {
         artifacts: temp.path(),
         cli: Path::new(env!("CARGO_BIN_EXE_ruscv-sim")),
         driver: Path::new(env!("CARGO_BIN_EXE_a10-perf-driver")),
+        file_sinks: None,
     }
 }
 fn replay(ops: &[Op], cell: Cell<'_>) -> Result<(), String> {
@@ -447,6 +448,7 @@ fn real_capture_failure_timeout_file_error_and_receipt_lifecycle_reject_timing()
         artifacts: p.artifacts,
         cli: p.cli,
         driver: p.driver,
+        file_sinks: None,
     };
     // Declare these intentionally malformed input bytes so this test reaches
     // the real parse-error clock boundary, not the earlier ELF-identity guard.

@@ -13,7 +13,7 @@ from allocation import compatible, parse_native, parse_probe
 from calibration_stats import distribution, ratio
 from collect import ROOT, utc
 from inheritance import caller, cli, stable
-from integrity import canonical, digest, Invalid, json_new, loads, read as artifact_read, require, retrieve, seal, stage, write_new
+from integrity import canonical, digest, Invalid, Unavailable, json_new, loads, read as artifact_read, require, retrieve, seal, stage, write_new
 from report_schema import schema_check, validate as validate_smoke
 
 POLICY = loads((ROOT/'tools/a10/calibrated-v1.json').read_bytes())
@@ -103,7 +103,7 @@ def replay(root,reader,rows,role,prefix,oracle):
 
 def inspect_session(root,session,metadata,reader,oracle,plan=None):
     """Reconstruct statistics/links from EVERY raw repetition; claims are not proof."""
-    require(set(session)=={'id','artifact_prefix','native_before','native_after','vm_before','vm_after','stream','stderr','exit_code','start','end','summaries'},'session carrier fields')
+    require(set(session)=={'id','artifact_prefix','native_before','native_after','vm_before','vm_after','fs_before','fs_after','stream','stderr','exit_code','start','end','summaries'},'session carrier fields')
     prefix=session['artifact_prefix']
     require(prefix.startswith('sessions/') and session['stream']==prefix+'/driver.jsonl.gz' and session['stderr']==prefix+'/driver.stderr','session owned references')
     preparation=loads(read(root,'preparation/setup.json'))
@@ -159,6 +159,9 @@ def inspect_session(root,session,metadata,reader,oracle,plan=None):
             if r['sample'] is not None and r['route'] in ('cli','native-bytes','native-file'):
                 elf=str(original/prefix/'fixtures'/(r['fixture']+'.elf'))
                 require(elf in r['argv'] and r['argv'][0]==metadata['binaries']['cli' if r['route']=='cli' else 'driver']['path'],'own controlled launch executable/input argv')
+                if r['mode']=='file':
+                    log=str(original/'local-sinks'/session['id']/f"{r['fixture']}-{r['route']}-{r['phase']}-{r['mode']}-{r['repetition']}.log")
+                    require(log in r['argv'],'actual native/CLI file sink is not the declared inspected VM-local location')
             state['rows']+=1
             state['semantic_failure'] |= r['semantic_status']=='semantic_failure'
             newrole=frame['role']
@@ -301,6 +304,16 @@ def qualify(root,sessions):
                 require(all(k in known for k in ('architecture','os','kernel','cpu_model','model','logical_cpus','memory','virtualization','container_detected')),'whole/required physical identity unavailable')
                 n['host_values']=known;n['host_observable']=sorted(known)
             require(native[0]==native[1],'native boot/context/power/container/resources changed')
+            preparation=loads(read(root,'preparation/setup.json'))
+            original=Path(preparation['argv'][preparation['argv'].index('--out')+1]).parent
+            require(native[0]['limits']['Tmpfs']=={str(original/'local-sinks'):'rw,size=128m'},'required inspected 128MiB VM-local tmpfs sink not present; no file-policy equivalence')
+            from allocation import output
+            for k in ('fs_before','fs_after'):
+                item=loads(read(root,s[k]));argv=['docker','exec',native[0]['container']['Id'],'df','-PT',str(original/'local-sinks')]
+                lines=output(item,argv).splitlines()
+                require(len(lines)==2,'file filesystem inspection inventory')
+                columns=lines[1].split()
+                require(len(columns)==7 and columns[1]=='tmpfs' and columns[2]=='131072' and columns[-1]==str(original/'local-sinks'),'actual file sink is not bounded 128MiB tmpfs')
             require(native[0]['daemon']['kernel']==vm[0]['kernel'] and native[0]['daemon']['cpus']==vm[0]['logical_cpus'],'daemon and inspected VM mismatch')
             vm[0]['thread']={k:v for k,v in thread.items() if k not in ('pid','tid')}
             native_keys.append(native[0]);vm_keys.append(vm[0])
@@ -404,7 +417,9 @@ def worker(out,preparation,budget_ns,plan_path=None):
     require(digest(driver.read_bytes())==setup['binaries']['driver']['sha256'],'actual fresh built driver changed')
     argv=[str(driver),'calibrated-session',str(out),str(max(1,budget_ns))]
     if plan_path:argv.append(str(plan_path))
-    env=dict(os.environ,RISCV_PERF_STREAM_ACK='1')
+    sinks=preparation.parent/'local-sinks'/out.name
+    sinks.mkdir()
+    env=dict(os.environ,RISCV_PERF_STREAM_ACK='1',RISCV_PERF_CALIBRATION_SINKS=str(sinks))
     start=None;end=None;summaries=[]
     with (out/'driver.stderr').open('xb') as stderr,(out/'driver.jsonl.gz').open('xb') as raw:
         with gzip.GzipFile(fileobj=raw,mode='wb',mtime=0) as retained:
@@ -450,7 +465,12 @@ def publication(out,report,tick):
         for item in payload:
             data=read(out,item['path'])
             require(len(data)==item['bytes'] and digest(data)==item['sha256'],'payload changed during publication')
-            write_new(target/item['path'],data);(target/item['path']).chmod(0o444)
+            destination=target/item['path'];destination.parent.mkdir(parents=True,exist_ok=True)
+            require(not destination.exists() and not destination.is_symlink(),'view ID overwrite')
+            # Frozen regular payload files may share byte storage; each view
+            # owns regular relative references and its own checked manifest.
+            # This is NOT another execution or a copied-session proof.
+            os.link(out/item['path'],destination);destination.chmod(0o444)
         targets.append((target,index))
     elapsed=time.monotonic_ns()-tick
     reserve=POLICY['sampling']['publication_reserve_ns'];limit=report['budget']['limit_ns']
@@ -476,7 +496,8 @@ def run_collection(argv):
     parser.add_argument('--suite',required=True);parser.add_argument('--profile',required=True);parser.add_argument('--out',required=True)
     args=parser.parse_args(argv)
     require(args.suite=='public-v1' and args.profile=='calibrated','unsupported calibrated suite/profile')
-    require(os.uname().sysname=='Darwin','this policy requires the inspected native local Darwin/Colima launcher')
+    if os.uname().sysname!='Darwin':
+        raise Unavailable('this qualified policy requires the inspected native local Darwin/Colima launcher; no cross-host ratios')
     head=clean();out=fresh_output(args.out);out.mkdir(parents=True)
     started=utc();tick=time.monotonic_ns();limit=POLICY['sampling']['session_wall_budget_ns']
     common=subprocess.check_output(['git','rev-parse','--path-format=absolute','--git-common-dir'],cwd=ROOT,text=True).strip()
@@ -484,7 +505,7 @@ def run_collection(argv):
         '--env','GIT_OPTIONAL_LOCKS=0','--env','GIT_CONFIG_COUNT=1','--env','GIT_CONFIG_KEY_0=safe.directory','--env',f'GIT_CONFIG_VALUE_0={ROOT}',
         '--env','CARGO_BUILD_JOBS=2','--env','PYTHONDONTWRITEBYTECODE=1','--env','RISCV_REQUIRE_RISCV_TOOLCHAIN=1','--env','RISCV_REQUIRE_A10_PINNED_TOOLS=1',
         '--env',f'RISCV_PERF_PHYSICAL_HOST_RECORD={out}/physical-host.json','--env',f'RISCV_PERF_CONTAINER_RECORD={out}/container.json',
-        IMAGE,'sleep','86400'],cwd=ROOT,text=True).strip()
+        '--tmpfs',f'{out}/local-sinks:rw,size=128m',IMAGE,'sleep','86400'],cwd=ROOT,text=True).strip()
     subprocess.run(['docker','start',cid],cwd=ROOT,check=True)
     first=native(cid);json_new(out/'allocation-before.json',first)
     parsed=parse_native(first)
@@ -511,6 +532,7 @@ def run_collection(argv):
         clean(head)
         sid=str(uuid.uuid4());prefix='sessions/'+sid;sroot=out/prefix;sroot.mkdir(parents=True)
         json_new(sroot/'native-before.json',native(cid))
+        json_new(sroot/'fs-before.json',capture(['docker','exec',cid,'df','-PT',str(out/'local-sinks')]))
         vm=capture(['docker','exec',cid,'python3','-B','tools/a10/allocation.py','probe']);json_new(sroot/'vm-before-command.json',vm)
         require(vm['code']==0,'VM inspection unavailable');json_new(sroot/'vm-before.json',loads(vm['stdout']))
         remaining=max(1,limit-(time.monotonic_ns()-tick)-120000000000)
@@ -518,11 +540,12 @@ def run_collection(argv):
         if plan is not None:command.append(str(out/'plan.json'))
         result=subprocess.run(command,cwd=ROOT)
         json_new(sroot/'native-after.json',native(cid))
+        json_new(sroot/'fs-after.json',capture(['docker','exec',cid,'df','-PT',str(out/'local-sinks')]))
         vm=capture(['docker','exec',cid,'python3','-B','tools/a10/allocation.py','probe']);json_new(sroot/'vm-after-command.json',vm)
         require(vm['code']==0,'VM after inspection unavailable');json_new(sroot/'vm-after.json',loads(vm['stdout']))
         t=loads(read(out,prefix+'/transport.json'));require(result.returncode==t['exit_code'],'worker/driver transport status')
         session={k:t[k] for k in ('id','start','end','summaries','exit_code')}
-        session.update(artifact_prefix=prefix,native_before=prefix+'/native-before.json',native_after=prefix+'/native-after.json',vm_before=prefix+'/vm-before.json',vm_after=prefix+'/vm-after.json',stream=prefix+'/driver.jsonl.gz',stderr=prefix+'/driver.stderr')
+        session.update(artifact_prefix=prefix,native_before=prefix+'/native-before.json',native_after=prefix+'/native-after.json',vm_before=prefix+'/vm-before.json',vm_after=prefix+'/vm-after.json',fs_before=prefix+'/fs-before.json',fs_after=prefix+'/fs-after.json',stream=prefix+'/driver.jsonl.gz',stderr=prefix+'/driver.stderr')
         sessions.append(session)
         if plan is None:plan=t['end']['plan'];json_new(out/'plan.json',plan)
         clean(head)

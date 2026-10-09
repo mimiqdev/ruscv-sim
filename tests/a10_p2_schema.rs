@@ -26,7 +26,7 @@ fn actual() -> Option<&'static Actual> {
     std::fs::create_dir_all("target/a10-p2-tests").unwrap();let temp=TempDir::new_in("target/a10-p2-tests").unwrap();let root=temp.path().to_path_buf();let fixtures=root.join("fixtures");let samples=root.join("samples");std::fs::create_dir(&samples).unwrap();
     assert!(Command::new("python3").args(["-B","tools/a10/build_fixtures.py","--out"]).arg(&fixtures).status().unwrap().success());
     assert!(Command::new("python3").args(["-B","tools/a10/audit_fixtures.py"]).arg(&fixtures).status().unwrap().success());
-    let paths=Paths{fixtures:&fixtures,artifacts:&samples,cli:std::path::Path::new(env!("CARGO_BIN_EXE_ruscv-sim")),driver:std::path::Path::new(env!("CARGO_BIN_EXE_a10-perf-driver"))};
+    let paths=Paths{fixtures:&fixtures,artifacts:&samples,file_sinks:None,cli:std::path::Path::new(env!("CARGO_BIN_EXE_ruscv-sim")),driver:std::path::Path::new(env!("CARGO_BIN_EXE_a10-perf-driver"))};
     let m=manifest();let mut clock=HostClock::default();let records=matrix(&m,&paths,1,&mut clock);
     let records:Vec<_>=records.into_iter().enumerate().map(|(i,r)|{let stem=format!("samples/{}-{}-{}-{}-{}",r.fixture,r.route,r.phase,r.mode,r.repetition);let artifacts=json!({"stdout":format!("{stem}.stdout"),"stderr":format!("{stem}.stderr"),"log":format!("{stem}.log")});json!({"id":format!("sample-{i:06}"),"sequence":i,"fixture_elf":format!("fixtures/{}.elf",r.fixture),"artifacts":artifacts,"raw":r})}).collect();
     let report=json!({"schema":"ruscv-perf/1","policy":{"basic_repetitions":1},"semantic_status":"correct","records":records});

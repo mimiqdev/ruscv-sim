@@ -628,6 +628,7 @@ pub struct Paths<'a> {
     pub cli: &'a Path,
     pub driver: &'a Path,
     pub artifacts: &'a Path,
+    pub file_sinks: Option<&'a Path>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -909,6 +910,8 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
     let mut machine = None;
     let mut flat = None;
     let mut image_cache = ImageDigestCache::default();
+    let mut artifact_cache: std::collections::BTreeMap<&str, (Vec<u8>, std::path::PathBuf)> =
+        std::collections::BTreeMap::new();
     let input_sha256 = input.as_ref().ok().map(|bytes| digest::sha256(bytes));
     let setup = (|| -> Result<(), String> {
         let bytes = input.as_ref().map_err(|e| e.to_string())?;
@@ -960,7 +963,8 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
         meter.audit = ScopeAudit::new(phase, route, mode);
         meter.ops.clear();
         let log = paths
-            .artifacts
+            .file_sinks
+            .unwrap_or(paths.artifacts)
             .join(format!("{}-{route}-{phase}-{mode}-{rep}.log", f.id));
         let result = (|| -> Result<(), String> {
             let bytes = input.as_ref().map_err(|e| e.to_string())?;
@@ -1103,6 +1107,51 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
             }
         }
         meter.event(Op::Report);
+        if paths.file_sinks.is_some() {
+            // Public file writes/close remain in their declared scopes. Copies
+            // and removal of this repetition's private scratch are reporting,
+            // strictly after stop/inspection/own P0, before any successor timer.
+            for extension in ["log", "stdout", "stderr"] {
+                let source = log.with_extension(extension);
+                if source.exists() {
+                    let destination = paths.artifacts.join(source.file_name().unwrap());
+                    let copied = (|| -> Result<(), String> {
+                        let bytes = std::fs::read(&source).map_err(|e| e.to_string())?;
+                        if let Some((prior, retained)) = artifact_cache
+                            .get(extension)
+                            .filter(|(prior, _)| prior == &bytes)
+                        {
+                            if std::fs::read(retained).map_err(|e| e.to_string())? != *prior {
+                                return Err("previous immutable raw bytes changed; no alias or favorable timing".into());
+                            }
+                            std::fs::hard_link(retained, &destination)
+                                .map_err(|e| e.to_string())?;
+                        } else {
+                            let mut output = std::fs::OpenOptions::new()
+                                .write(true)
+                                .create_new(true)
+                                .open(&destination)
+                                .map_err(|e| e.to_string())?;
+                            std::io::Write::write_all(&mut output, &bytes)
+                                .map_err(|e| e.to_string())?;
+                            std::io::Write::flush(&mut output).map_err(|e| e.to_string())?;
+                            let mut permissions =
+                                output.metadata().map_err(|e| e.to_string())?.permissions();
+                            permissions.set_readonly(true);
+                            std::fs::set_permissions(&destination, permissions)
+                                .map_err(|e| e.to_string())?;
+                            artifact_cache.insert(extension, (bytes, destination));
+                        }
+                        std::fs::remove_file(&source).map_err(|e| e.to_string())
+                    })();
+                    if let Err(error) = copied {
+                        record.reject(format!(
+                            "owned scratch retention/reporting failure: {error}"
+                        ));
+                    }
+                }
+            }
+        }
         record.ops = meter.ops.clone();
         controller.retain(record);
     }

@@ -117,6 +117,17 @@ P0 validator. No bytes escape the owned buffer between flushes, avoiding
 compression overlapped with guest measurement. Buffering never removes a
 repetition or its own oracle; transport failure retains the available prefix
 and cannot become a usable session.
+Calibrated file sinks use an inspected 128-MiB VM-local tmpfs under the
+collection's `local-sinks/session` path. Docker configuration and actual
+before/after `df -PT` readback must agree. These are real synchronous public
+`File` writes, not an arbitrary in-memory writer API; no durability/fsync is
+claimed. Raw log/stdout/stderr copies and normal removal of private scratch
+occur after stop/own P0 and before another timer. Complete byte-identical
+captured files may share read-only hard-linked storage only after own byte
+comparison; altered retained bytes or copy failure reject timing. Every raw
+row/reference remains. Frozen baseline/candidate views may similarly share
+regular payload storage; their IDs select actual different executions, never
+manufacture executions by copying. Original smoke sink behavior is unchanged.
 The 30-minute caller budget includes orchestration, build/fixtures, validation,
 inspection and bulk evidence publication; a conservative final small-metadata
 publication window is reserved. Insufficient budget remains inconclusive.
