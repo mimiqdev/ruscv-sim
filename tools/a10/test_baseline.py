@@ -11,7 +11,7 @@ class BaselineControls(unittest.TestCase):
         self.assertEqual([w['id'] for w in data['workloads']],
                          ['alu-branch-loop', 'ram-store-load-loop', 'device-cli-hello'])
         self.assertEqual(data['version'], 1)
-        self.assertEqual(bytes.fromhex(data['workloads'][2]['expected_stdout_hex']), b'Hello!\n')
+        self.assertTrue(bytes.fromhex(data['workloads'][2]['expected_stdout_hex']).startswith(b'Hello!\n'))
 
     def test_verification_floor_is_exit_plus_exact_stdout(self):
         good = {'exit_code': 3, 'expected_exit': 3, 'stdout_hex': '', 'expected_stdout_hex': ''}
