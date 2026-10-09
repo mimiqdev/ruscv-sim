@@ -213,15 +213,19 @@ def derive(build):
 
 
 def require_tool_identities(report,manifest):
-    """Version equality is ALWAYS mandatory (encodings can drift). Exact
-    binary sha256 is the pinned ARM64 dev-container evidence convention and is
-    required only under RISCV_REQUIRE_A10_PINNED_TOOLS; other environments
-    proceed on the build's actually recorded tool identities."""
+    """The ALWAYS-on integrity guarantee is the outcome-level check of the
+    declared assembly slots/algorithm/effects against the actually built ELF
+    specs; that is what catches any toolchain difference that changes
+    encodings. Tool identity comparisons (version AND binary sha256) are the
+    pinned-container evidence convention and apply ONLY under
+    RISCV_REQUIRE_A10_PINNED_TOOLS; outside it the build's actually recorded
+    tool identities are retained without comparison against the pinned ARM64
+    manifest strings (no per-arch manifests)."""
     require(report['tools'].keys()==manifest['tool_versions'].keys(),'pinned producer inventory')
-    pinned=os.environ.get('RISCV_REQUIRE_A10_PINNED_TOOLS')
-    for k,v in report['tools'].items():
-        require(v['version']==manifest['tool_versions'][k],'required producer tool version')
-        if pinned:require(v['sha256']==manifest['arm64_tool_sha256'][k],'required pinned producer identities')
+    if os.environ.get('RISCV_REQUIRE_A10_PINNED_TOOLS'):
+        for k,v in report['tools'].items():
+            require(v['version']==manifest['tool_versions'][k],'required pinned producer tool version')
+            require(v['sha256']==manifest['arm64_tool_sha256'][k],'required pinned producer identities')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)

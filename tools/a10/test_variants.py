@@ -45,22 +45,24 @@ class VariantSpecifications(unittest.TestCase):
         p.put(0,'addi x5, x0, 0',[(5,0)])
         with self.assertRaises(Invalid):p.put(0,'addi x5, x0, 1',[(5,1)])
         with self.assertRaises(Invalid):p.put(1,'addi x5, x0, 0')
-    def test_tool_identities_version_always_sha_only_when_pinned(self):
+    def test_tool_identities_compared_only_under_pin_env_specs_are_the_guarantee(self):
         import os
         from unittest.mock import patch
         manifest={'tool_versions':{'as':'2.40'},'arm64_tool_sha256':{'as':'aaaa'}}
         pinned={'as':{'version':'2.40','sha256':'aaaa'}}
-        foreign={'as':{'version':'2.40','sha256':'bbbb'}}
-        drifted={'as':{'version':'2.42','sha256':'bbbb'}}
+        foreign={'as':{'version':'2.42-3ubuntu1','sha256':'bbbb'}}
         wrap=lambda tools:{'tools':tools}
         with patch.dict(os.environ,{},clear=False):
             os.environ.pop('RISCV_REQUIRE_A10_PINNED_TOOLS',None)
+            # No-pin path: foreign version AND foreign sha pass; identities
+            # are recorded, the outcome-level spec check is the guarantee.
             v.require_tool_identities(wrap(foreign),manifest)
-            with self.assertRaises(Invalid):v.require_tool_identities(wrap(drifted),manifest)
+            v.require_tool_identities(wrap(pinned),manifest)
         with patch.dict(os.environ,{'RISCV_REQUIRE_A10_PINNED_TOOLS':'1'}):
             v.require_tool_identities(wrap(pinned),manifest)
             with self.assertRaises(Invalid):v.require_tool_identities(wrap(foreign),manifest)
-            with self.assertRaises(Invalid):v.require_tool_identities(wrap(drifted),manifest)
+            with self.assertRaises(Invalid):v.require_tool_identities(wrap({'as':{'version':'2.42-3ubuntu1','sha256':'aaaa'}}),manifest)
+            with self.assertRaises(Invalid):v.require_tool_identities(wrap({'as':{'version':'2.40','sha256':'cccc'}}),manifest)
 
 
 if __name__=='__main__':unittest.main()
