@@ -1107,7 +1107,9 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
             }
         }
         meter.event(Op::Report);
-        if paths.file_sinks.is_some() {
+        if paths.file_sinks.is_some()
+            && (mode == "file" || route == "cli" || route.starts_with("native-"))
+        {
             // Public file writes/close remain in their declared scopes. Copies
             // and removal of this repetition's private scratch are reporting,
             // strictly after stop/inspection/own P0, before any successor timer.

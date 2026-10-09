@@ -17,11 +17,11 @@ from integrity import canonical, digest, Invalid, Unavailable, json_new, loads, 
 from report_schema import schema_check, validate as validate_smoke
 
 POLICY = loads((ROOT/'tools/a10/calibrated-v1.json').read_bytes())
-WORKLOAD = loads((ROOT/'tools/a10/calibration-workloads-v1.json').read_bytes())
-ORACLE_PATH = 'tools/a10/calibration-oracle-v1.json'
+WORKLOAD = loads((ROOT/'tools/a10/calibration-workloads-v2.json').read_bytes())
+ORACLE_PATH = 'tools/a10/calibration-oracle-v2.json'
 
 def workload_identity():
-    return {'id':WORKLOAD['schema'],'version':WORKLOAD['version'],'mapping_sha256':digest((ROOT/'tools/a10/calibration-workloads-v1.json').read_bytes()),'oracle_id':'a10-calibration-oracle/1','oracle_version':1,'oracle_sha256':digest((ROOT/ORACLE_PATH).read_bytes())}
+    return {'id':WORKLOAD['schema'],'version':WORKLOAD['version'],'mapping_sha256':digest((ROOT/'tools/a10/calibration-workloads-v2.json').read_bytes()),'oracle_id':'a10-calibration-oracle/1','oracle_version':2,'oracle_sha256':digest((ROOT/ORACLE_PATH).read_bytes())}
 
 class VerifiedRoot:
     def __init__(self,path,bundle):
@@ -40,7 +40,7 @@ def read(root,name):
 
 def inventory(oracle):
     cells=[]
-    require(oracle['schema']=='a10-calibration-oracle/1' and oracle['version']==1,'new calibrated oracle version required; old anchors are correctness controls')
+    require(oracle['schema']=='a10-calibration-oracle/1' and oracle['version']==2,'new calibrated oracle version required; old anchors are correctness controls')
     fixtures={f['id']:f for f in oracle['fixtures']}
     for mapping in WORKLOAD['mapping']:
         for route in sorted(oracle['route_matrix']):

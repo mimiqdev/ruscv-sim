@@ -1,8 +1,8 @@
 {
   "id": "calibrated-v1",
-  "version": 4,
+  "version": 5,
   "file_sink": "inspected VM-local tmpfs 128MiB under collection/local-sinks/session; public synchronous unbuffered File writes and declared close/flush in original scopes; raw copies and normal private scratch removal after stop/own P0, before successor timer; no fsync/durability claim; original smoke sinks unchanged",
-  "workload_series": "calibration-workloads/1 and a10-calibration-oracle/1; original public-v1 remains smoke/correctness only; explicit phase-specific anchor mapping and new ELF identities",
+  "workload_series": "calibration-workloads/1 version 2 and a10-calibration-oracle/1 version 2; original public-v1 remains smoke/correctness only; explicit phase-specific anchor mapping and new ELF identities",
   "sampling": {
     "serial": true,
     "raw_encoding": "calibrated-raw/1; complete owned sample/clock values reused only after equality of each independently captured and P0-validated value, never verdict reuse",

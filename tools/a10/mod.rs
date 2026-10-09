@@ -231,16 +231,14 @@ pub fn manifest() -> Manifest {
     m
 }
 pub fn calibration_manifest() -> Manifest {
-    let m: Manifest = serde_json::from_str(include_str!("calibration-oracle-v1.json"))
+    let m: Manifest = serde_json::from_str(include_str!("calibration-oracle-v2.json"))
         .expect("versioned independent calibration oracle");
     manifest_capabilities(&m).expect("calibration oracle capabilities");
     m
 }
 pub fn manifest_capabilities(m: &Manifest) -> Check {
-    if !matches!(
-        m.schema.as_str(),
-        "a10-oracle/1" | "a10-calibration-oracle/1"
-    ) || m.version != 1
+    if !((m.schema == "a10-oracle/1" && m.version == 1)
+        || (m.schema == "a10-calibration-oracle/1" && m.version == 2))
     {
         return Err(Rejection::Semantic("unknown oracle schema/version".into()));
     }
@@ -263,6 +261,7 @@ pub fn capability(m: &Manifest, f: &Fixture, route: &str, mode: &str) -> Check {
         f.id.strip_prefix("cal-")
             .and_then(|id| {
                 id.strip_suffix("-exec")
+                    .or_else(|| id.strip_suffix("-load-v2"))
                     .or_else(|| id.strip_suffix("-load"))
             })
             .unwrap_or(&f.id);

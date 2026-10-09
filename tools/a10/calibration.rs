@@ -388,7 +388,7 @@ pub fn session(paths: &Paths, budget: Duration, plan: Option<&Value>) -> Result<
     let policy: Value =
         serde_json::from_str(include_str!("calibrated-v1.json")).map_err(|e| e.to_string())?;
     let m = calibration_manifest();
-    let mappings: Value = serde_json::from_str(include_str!("calibration-workloads-v1.json"))
+    let mappings: Value = serde_json::from_str(include_str!("calibration-workloads-v2.json"))
         .map_err(|e| e.to_string())?;
     let deadline = Instant::now() + budget;
     let before = affinity::caller();

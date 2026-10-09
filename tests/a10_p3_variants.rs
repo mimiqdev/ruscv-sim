@@ -55,7 +55,7 @@ fn mapped_variants_own_every_applicable_public_oracle_and_reset() {
     let m = calibration_manifest();
     assert_eq!(m.fixtures.len(), 24);
     assert!(manifest_capabilities(&Manifest {
-        version: 2,
+        version: 99,
         ..m.clone()
     })
     .is_err());
@@ -159,7 +159,7 @@ fn mapped_variants_own_every_applicable_public_oracle_and_reset() {
         }
     }
     assert_eq!(cells, 148);
-    for f in m.fixtures.iter().filter(|f| f.id.ends_with("-load")) {
+    for f in m.fixtures.iter().filter(|f| f.id.ends_with("-load-v2")) {
         for route in ["machine-native", "machine-flat"] {
             if capability(&m, f, route, "off").is_err() {
                 continue;
@@ -181,7 +181,7 @@ fn mapped_variants_own_every_applicable_public_oracle_and_reset() {
             for r in rows {
                 assert_eq!(r.semantic_status, "correct", "{} {:?}", f.id, r.reason);
                 assert_eq!(r.load.unwrap().completed_turns, 0);
-                assert_eq!(r.initial.unwrap().checked_bytes, 262144);
+                assert_eq!(r.initial.unwrap().checked_bytes, 1048576);
                 assert!(!r.ops.contains(&phases::Op::Step));
             }
         }
@@ -272,7 +272,7 @@ fn mapped_variants_own_every_applicable_public_oracle_and_reset() {
     ) {
         let report = serde_json::json!({"schema":"ruscv-perf/1", "policy":{"basic_repetitions":1}, "semantic_status":"correct",
             "calibration_fragment":{"fixture":f.id,"route":raw.route,"phase":raw.phase,"mode":raw.mode,"first_repetition":raw.repetition,"warmup":raw.warmup,
-                "oracle_sha256":phases::digest::sha256(include_bytes!("../tools/a10/calibration-oracle-v1.json"))},
+                "oracle_sha256":phases::digest::sha256(include_bytes!("../tools/a10/calibration-oracle-v2.json"))},
             "records":[{"id":"own", "sequence":0, "fixture_elf":format!("fixtures/{}.elf",f.id), "artifacts":{"stdout":null,"stderr":null,"log":null}, "raw":raw}]});
         assert_eq!(replay::validate_report(temp.path(), &report).unwrap(), 0);
         let mut wrong = report.clone();
@@ -286,7 +286,11 @@ fn mapped_variants_own_every_applicable_public_oracle_and_reset() {
         assert!(replay::validate_report(temp.path(), &wrong).is_err());
     }
     // Coupled load payload/BSS metadata cannot bless different actual bytes.
-    let f = m.fixtures.iter().find(|f| f.id == "cal-fib-load").unwrap();
+    let f = m
+        .fixtures
+        .iter()
+        .find(|f| f.id == "cal-fib-load-v2")
+        .unwrap();
     let elf = out.join(format!("{}.elf", f.id));
     let mut corrupted = std::fs::read(&elf).unwrap();
     let index = corrupted

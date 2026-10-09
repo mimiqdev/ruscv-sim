@@ -21,9 +21,9 @@ FAMILIES={'fib':'control','control_loop':'control','sw':'ram','ram_loop':'ram','
           'amo_w':'mixed-w','mixed_w':'mixed-w','amo_d':'mixed-d','mixed_d':'mixed-d','lrsc_loop':'mixed-d','sc_after_store_failure':'mixed-d'}
 ITERATIONS={'control':128,'ram':64,'mixed-w':24,'mixed-d':24,'uart':64}
 SOURCE_DIR='tools/a10/calibration-fixtures'
-ORACLE='tools/a10/calibration-oracle-v1.json'
-WORKLOAD='tools/a10/calibration-workloads-v1.json'
-PAYLOAD_BYTES=131072
+ORACLE='tools/a10/calibration-oracle-v2.json'
+WORKLOAD='tools/a10/calibration-workloads-v2.json'
+PAYLOAD_BYTES=524288
 ZERO_FILL_BYTES=8192
 
 def raw(value,width):return list((value&((1<<(8*width))-1)).to_bytes(width,'little'))
@@ -160,15 +160,15 @@ EXEC_LINKER=LINKER_HEAD+'}\n'
 LOAD_LINKER=LINKER_HEAD+f' . = 0x80004000; .payload : {{ FILL(0xa5a5a5a5); BYTE(0xa5); . += {PAYLOAD_BYTES-1}; }}\n .payload_bss (NOLOAD) : {{ . += {ZERO_FILL_BYTES}; }}\n}}\n'
 
 def mappings():
-    return {'schema':'calibration-workloads/1','version':1,'oracle':'a10-calibration-oracle/1','oracle_version':1,
+    return {'schema':'calibration-workloads/1','version':2,'oracle':'a10-calibration-oracle/1','oracle_version':2,
             'anchor_oracle_sha256':hashlib.sha256((ROOT/'tools/a10/public-v1.json').read_bytes()).hexdigest(),
             'phase_policy':'execution ELF identical across off/facts/file; separate initialized-payload ELF for load_only; zero Hart turns',
             'load_work':{'initialized_payload_bytes':PAYLOAD_BYTES,'payload_byte':165,'zero_fill_bytes':ZERO_FILL_BYTES,'maximum_memory_bytes':1048576},
-            'mapping':[{'anchor':a,'family':FAMILIES[a],'iterations':ITERATIONS[FAMILIES[a]],'execution':'cal-'+a+'-exec','load':'cal-'+a+'-load','source':SOURCE_DIR+'/'+a+'.S','execution_linker':SOURCE_DIR+'/execute.ld','load_linker':SOURCE_DIR+'/load.ld','derivation':specification(a)[1]['formula']} for a in ANCHORS]}
+            'mapping':[{'anchor':a,'family':FAMILIES[a],'iterations':ITERATIONS[FAMILIES[a]],'execution':'cal-'+a+'-exec','load':'cal-'+a+'-load-v2','source':SOURCE_DIR+'/'+a+'.S','execution_linker':SOURCE_DIR+'/execute.ld','load_linker':SOURCE_DIR+'/load-v2.ld','derivation':specification(a)[1]['formula']} for a in ANCHORS]}
 
 def seed():
     old=loads((ROOT/'tools/a10/public-v1.json').read_bytes());header={k:v for k,v in old.items() if k!='fixtures'}
-    header.update(schema='a10-calibration-oracle/1',version=1)
+    header.update(schema='a10-calibration-oracle/1',version=2)
     fixtures=[]
     for mapping in mappings()['mapping']:
         for role in ('execution','load'):
@@ -179,7 +179,7 @@ def derive(build):
     manifest=seed();report=loads((build/'build.json').read_bytes())
     require(set(report['fixtures'])=={f['id'] for f in manifest['fixtures']},'new variant build inventory')
     for f in manifest['fixtures']:
-        anchor=f['id'][4:].rsplit('-',1)[0];p,decl=specification(anchor)
+        anchor=next(m['anchor'] for m in mappings()['mapping'] if f['id'] in (m['execution'],m['load']));p,decl=specification(anchor)
         require((ROOT/f['source']).read_text()==p.source(decl['fixed']),'source differs from declared assembly/algorithm')
         elf=(build/(f['id']+'.elf')).read_bytes()
         opcodes={int(a,16):int(b,16) for a,b in re.findall(r'^\s*([0-9a-f]+):\s+([0-9a-f]{8})\s',(build/(f['id']+'.dis')).read_text(),re.M)}
@@ -196,7 +196,7 @@ def derive(build):
             if names[noff:].split(b'\0')[0]==b'.signature':sigoff=struct.unpack_from('<Q',elf,hdr+24)[0]
         span=max(s['address']+s['file_size']+s['zero_fill'] for s in segments)-BASE;size=max(65536,1<<(span-1).bit_length())
         require(size<=1048576 and sigoff is not None,'RAM/signature bounds')
-        if f['id'].endswith('-load'):
+        if f['id'].endswith('-load-v2'):
             # Offline exact initialized-byte/zero-fill placement, no simulator.
             payload=[i for i,s in enumerate(segments) if s['address']<=BASE+0x4000<s['address']+s['file_size']]
             require(len(payload)==1,'payload load segment')
@@ -218,8 +218,11 @@ if __name__=='__main__':
     if args.operation=='write-sources':
         directory=ROOT/SOURCE_DIR;directory.mkdir(exist_ok=True)
         for a in ANCHORS:
-            p,d=specification(a);(directory/(a+'.S')).write_text(p.source(d['fixed']))
-        (directory/'execute.ld').write_text(EXEC_LINKER);(directory/'load.ld').write_text(LOAD_LINKER)
+            p,d=specification(a);path=directory/(a+'.S');expected=p.source(d['fixed'])
+            if path.exists():require(path.read_text()==expected,'existing execution source identity cannot be silently rewritten')
+            else:path.write_text(expected)
+        require((directory/'execute.ld').read_text()==EXEC_LINKER,'existing execution linker cannot be rewritten')
+        (directory/'load-v2.ld').write_text(LOAD_LINKER)
         (ROOT/WORKLOAD).write_bytes(canonical(mappings())+b'\n')
         (ROOT/ORACLE).write_bytes(canonical(seed())+b'\n')
     else:

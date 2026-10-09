@@ -16,7 +16,7 @@ class VariantSpecifications(unittest.TestCase):
         self.assertEqual(mapping['anchor_oracle_sha256'],'89a89bfb960484079468d419d51639b60d439561828a4e3516abd0829c627733')
     def test_all_declared_slots_own_their_exact_algorithm_oracle(self):
         oracle=loads((v.ROOT/v.ORACLE).read_bytes())
-        self.assertEqual((oracle['schema'],oracle['version']),('a10-calibration-oracle/1',1))
+        self.assertEqual((oracle['schema'],oracle['version']),('a10-calibration-oracle/1',2))
         for m in v.mappings()['mapping']:
             spec,d=v.specification(m['anchor'])
             self.assertEqual((v.ROOT/m['source']).read_text(),spec.source(d['fixed']))
@@ -34,7 +34,7 @@ class VariantSpecifications(unittest.TestCase):
             self.assertEqual(fixtures[0]['trace'],fixtures[1]['trace'])
             self.assertNotEqual(fixtures[0]['elf_sha256'],fixtures[1]['elf_sha256'])
             self.assertEqual(fixtures[0]['memory_size'],65536)
-            self.assertEqual(fixtures[1]['memory_size'],262144)
+            self.assertEqual(fixtures[1]['memory_size'],1048576)
     def test_bounds_overflows_and_static_slot_confusion_fail_closed(self):
         for n in (0,4,129,1<<64):
             with patch.dict(v.ITERATIONS,control=n):

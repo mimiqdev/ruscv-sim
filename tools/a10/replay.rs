@@ -156,7 +156,7 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
         )?;
     }
     let m = if let Some(fragment) = fragment {
-        let expected = phases::digest::sha256(include_bytes!("calibration-oracle-v1.json"));
+        let expected = phases::digest::sha256(include_bytes!("calibration-oracle-v2.json"));
         need(
             fragment["oracle_sha256"].as_str() == Some(expected.as_str()),
             "unknown/mismatched calibration oracle identity",

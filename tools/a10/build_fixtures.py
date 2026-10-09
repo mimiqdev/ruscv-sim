@@ -23,7 +23,7 @@ def run(argv):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', required=True)
-    parser.add_argument('--calibration', action='store_true', help='new calibration-oracle-v1 identities; original P0 unchanged')
+    parser.add_argument('--calibration', action='store_true', help='new calibration-oracle-v2 identities; original P0 unchanged')
     args = parser.parse_args()
     out = Path(args.out).absolute()
     target = ROOT / 'target'
@@ -32,7 +32,7 @@ def main():
     if not out.parent.resolve().is_relative_to(target.resolve()) or '..' in out.parts:
         raise ValueError('output must be below target')
     out.mkdir()
-    manifest = json.loads((ROOT / ('tools/a10/calibration-oracle-v1.json' if args.calibration else 'tools/a10/public-v1.json')).read_text())
+    manifest = json.loads((ROOT / ('tools/a10/calibration-oracle-v2.json' if args.calibration else 'tools/a10/public-v1.json')).read_text())
     prefix = os.environ.get('RISCV_PREFIX', 'riscv64-unknown-elf-')
     tools = {}
     for name in ['as', 'ld', 'objdump', 'nm']:

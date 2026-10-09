@@ -13,10 +13,10 @@ correctness controls. No production source, ISA engine, board, memory map or
 public API is changed. Interrupted short-anchor calibration prefixes are not
 full sessions or baselines.
 
-[`calibration-workloads-v1.json`](../../tools/a10/calibration-workloads-v1.json)
-(`calibration-workloads/1`, version 1) maps all twelve anchors to explicit
-execution and load fixture IDs. [`calibration-oracle-v1.json`](../../tools/a10/calibration-oracle-v1.json)
-(`a10-calibration-oracle/1`, version 1) pins twenty-four linked ELFs, producer
+[`calibration-workloads-v2.json`](../../tools/a10/calibration-workloads-v2.json)
+(`calibration-workloads/1`, version 2) maps all twelve anchors to explicit
+execution and load fixture IDs. [`calibration-oracle-v2.json`](../../tools/a10/calibration-oracle-v2.json)
+(`a10-calibration-oracle/1`, version 2) pins twenty-four linked ELFs, producer
 identities, source/linker hashes, placement, complete instruction/effect order,
 register/RAM/device results and signatures. The calibrated policy records this
 new series; reports identify actual workload/mapping/oracle digests. Old smoke
@@ -73,15 +73,22 @@ fragments; original smoke continues selecting its original oracle.
 ## Load-only work is separate
 
 Execution ELFs retain a 64-KiB installed image. Load-only IDs use a distinct
-linker with a 128-KiB initialized `0xa5` payload and 8-KiB additional zero fill,
-yielding a 256-KiB image within existing RAM composition. Executed instructions
+linker with a 512-KiB initialized `0xa5` payload and 8-KiB additional zero fill,
+yielding a 1-MiB image within existing RAM composition. Executed instructions
 and their effects are unchanged, but ELF/segment/linker identities differ.
 Offline derivation checks every payload byte and declared zero-fill extent.
 
 The timer still contains only pre-read bytes → parse → composition/install.
 Full actual image/BSS bytes, metadata, entry, all registers/counters, cleared
 reservation/signal/device state are checked after stop, before accepting time.
-There are zero Hart turns and no invented exit. An actual input digest mismatch
+There are zero Hart turns and no invented exit. Version 1's 128-KiB payload,
+256-KiB image, manifests and linker remain unchanged for identity provenance.
+Development at `cbd158b020a526517da58ea2a9462fbc9d8a8660` reached only
+996,815,750 and 989,940,373 timed ns in the fib load cells before their 20-second
+caps. Its interrupted prefix is not a full session or baseline. Version 2 uses
+new `-load-v2` IDs and a new linker/oracle/mapping digest; no old result is
+relabelled. Execution ELF bytes/work are unchanged. Both payload choices are
+explicit bounded variants; there is no adaptive until-green rescaling. An actual input digest mismatch
 is rejected before any interval can become usable. Pure image hashes may be
 cached only after complete equality of each newly observed byte array; no
 inspection or verdict is cached. Guest loops do not masquerade as load work.
