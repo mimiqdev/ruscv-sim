@@ -6,21 +6,54 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub fn emit(value: Value) -> Result<(), String> {
-    let mut output = std::io::stdout().lock();
-    serde_json::to_writer(&mut output, &value).map_err(|e| e.to_string())?;
-    output.write_all(b"\n").map_err(|e| e.to_string())?;
-    output.flush().map_err(|e| e.to_string())?;
-    if std::env::var("RISCV_PERF_STREAM_ACK").as_deref() == Ok("1") {
-        let mut acknowledgement = String::new();
-        std::io::stdin()
-            .read_line(&mut acknowledgement)
-            .map_err(|e| e.to_string())?;
-        if acknowledgement != "1\n" {
-            return Err("raw retention acknowledgement failed; no successor interval".into());
+struct Retention {
+    frames: Vec<Vec<u8>>,
+    bytes: usize,
+}
+impl Retention {
+    fn new() -> Self {
+        Self {
+            frames: Vec::new(),
+            bytes: 0,
         }
     }
-    Ok(())
+    fn emit(&mut self, value: Value) -> Result<(), String> {
+        let control = !matches!(value["event"].as_str(), Some("row" | "value"));
+        let mut frame = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
+        frame.push(b'\n');
+        self.bytes += frame.len();
+        self.frames.push(frame);
+        // No bytes escape this process between flush boundaries. Parent
+        // compression cannot overlap guest clocks. All own-oracle rows remain
+        // in a bounded owned buffer, never live owners or reused verdicts.
+        if control || self.frames.len() >= 256 || self.bytes >= 8 * 1024 * 1024 {
+            self.flush()?;
+        }
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<(), String> {
+        let mut output = std::io::stdout().lock();
+        for frame in &self.frames {
+            output.write_all(frame).map_err(|e| e.to_string())?;
+        }
+        output.flush().map_err(|e| e.to_string())?;
+        if std::env::var("RISCV_PERF_STREAM_ACK").as_deref() == Ok("1") {
+            for _ in &self.frames {
+                let mut acknowledgement = String::new();
+                std::io::stdin()
+                    .read_line(&mut acknowledgement)
+                    .map_err(|e| e.to_string())?;
+                if acknowledgement != "1\n" {
+                    return Err(
+                        "raw retention acknowledgement failed; no successor interval".into(),
+                    );
+                }
+            }
+        }
+        self.frames.clear();
+        self.bytes = 0;
+        Ok(())
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Stage {
@@ -30,6 +63,7 @@ enum Stage {
     Done,
 }
 struct Controller<'a> {
+    retention: &'a mut Retention,
     policy: &'a Value,
     deadline: Instant,
     stage: Stage,
@@ -58,8 +92,14 @@ struct Controller<'a> {
     clock_id: u64,
 }
 impl<'a> Controller<'a> {
-    fn new(policy: &'a Value, deadline: Instant, input_plan: Option<usize>) -> Self {
+    fn new(
+        policy: &'a Value,
+        retention: &'a mut Retention,
+        deadline: Instant,
+        input_plan: Option<usize>,
+    ) -> Self {
         Self {
+            retention,
             policy,
             deadline,
             stage: Stage::Pilot,
@@ -103,7 +143,9 @@ impl<'a> Controller<'a> {
         let sample_ref = if let Some(sample) = sample {
             if self.sample_value.as_ref() != Some(&sample) {
                 self.sample_id += 1;
-                emit(json!({"event":"value","field":"sample","id":self.sample_id,"value":sample}))?;
+                self.retention.emit(
+                    json!({"event":"value","field":"sample","id":self.sample_id,"value":sample}),
+                )?;
                 self.sample_value = Some(sample);
             }
             Some(self.sample_id)
@@ -113,7 +155,9 @@ impl<'a> Controller<'a> {
         let clock_ref = if let Some(clock) = clock {
             if self.clock_value.as_ref() != Some(&clock) {
                 self.clock_id += 1;
-                emit(json!({"event":"value","field":"clock","id":self.clock_id,"value":clock}))?;
+                self.retention.emit(
+                    json!({"event":"value","field":"clock","id":self.clock_id,"value":clock}),
+                )?;
                 self.clock_value = Some(clock);
             }
             Some(self.clock_id)
@@ -127,7 +171,8 @@ impl<'a> Controller<'a> {
         if let Some(id) = clock_ref {
             raw["clock"] = json!({"retained_value":id});
         }
-        emit(json!({"event":"row","role":role,"batch":batch,"raw":raw}))
+        self.retention
+            .emit(json!({"event":"row","role":role,"batch":batch,"raw":raw}))
     }
     fn n(&self, key: &str) -> u64 {
         self.policy["sampling"][key]
@@ -196,8 +241,9 @@ impl RepetitionController for Controller<'_> {
         };
         if record.semantic_status == "not_applicable" {
             self.not_applicable = true;
-            if let Err(error) =
-                emit(json!({"event":"row","role":"not_applicable","batch":null,"raw":record}))
+            if let Err(error) = self
+                .retention
+                .emit(json!({"event":"row","role":"not_applicable","batch":null,"raw":record}))
             {
                 self.error = Some(error);
                 self.failed = true;
@@ -260,6 +306,11 @@ impl RepetitionController for Controller<'_> {
                         self.stop("invalid frozen repetition plan");
                         return;
                     }
+                    if let Err(error) = self.retention.flush() {
+                        self.cleanup_error(error);
+                        self.stage = Stage::Done;
+                        return;
+                    }
                     self.stage = Stage::Warmup;
                     self.warmup_start = Some(Instant::now());
                     self.warmup_wall_start = Some(self.created.elapsed().as_nanos());
@@ -279,6 +330,18 @@ impl RepetitionController for Controller<'_> {
                 if self.warmup_ns >= u128::from(self.n("minimum_warmup_ns"))
                     && self.warmup_iterations >= self.n("minimum_warmup_iterations") as usize
                 {
+                    if let Err(error) = self.retention.flush() {
+                        self.cleanup_error(error);
+                        self.stop("warmup raw retention failed; no basic interval");
+                        return;
+                    }
+                    self.warmup_wall_stop = Some(self.created.elapsed().as_nanos());
+                    if self.warmup_start.unwrap().elapsed().as_nanos()
+                        > u128::from(self.n("warmup_wall_cap_ns"))
+                    {
+                        self.stop("warmup raw retention exceeded wall cap; no basic interval");
+                        return;
+                    }
                     let minimum = self.warmup_min_ns.unwrap();
                     if minimum == 0 {
                         self.stop("zero validated warmup interval; unavailable calibration");
@@ -327,7 +390,8 @@ pub fn session(paths: &Paths, budget: Duration, plan: Option<&Value>) -> Result<
     let m = manifest();
     let deadline = Instant::now() + budget;
     let before = affinity::caller();
-    emit(
+    let mut retention = Retention::new();
+    retention.emit(
         json!({"event":"session_start","pid":std::process::id(),"caller":before,"policy":policy,"retention_ack":std::env::var("RISCV_PERF_STREAM_ACK").as_deref()==Ok("1")}),
     )?;
     let mut clock = HostClock::default();
@@ -344,9 +408,10 @@ pub fn session(paths: &Paths, budget: Duration, plan: Option<&Value>) -> Result<
                 } {
                     let key = format!("{}/{route}/{phase}/{mode}", f.id);
                     let applicable = availability(&m, f, route, phase, mode).is_ok();
-                    emit(json!({"event":"cell_start","cell":key,"applicable":applicable}))?;
+                    retention
+                        .emit(json!({"event":"cell_start","cell":key,"applicable":applicable}))?;
                     let input_plan = plan.and_then(|p| p[&key].as_u64()).map(|n| n as usize);
-                    let mut c = Controller::new(&policy, deadline, input_plan);
+                    let mut c = Controller::new(&policy, &mut retention, deadline, input_plan);
                     if failed && applicable {
                         c.stop("prior semantic/reporting failure; successors unstarted, no quarantine bypass");
                     }
@@ -368,12 +433,12 @@ pub fn session(paths: &Paths, budget: Duration, plan: Option<&Value>) -> Result<
                         complete &= summary["completed"] == true;
                         plans.insert(key.clone(), json!(c.repetitions));
                     }
-                    emit(json!({"event":"cell_end","cell":key,"summary":summary}))?;
+                    retention.emit(json!({"event":"cell_end","cell":key,"summary":summary}))?;
                 }
             }
         }
     }
-    emit(
+    retention.emit(
         json!({"event":"session_end","pid":std::process::id(),"caller":affinity::caller(),"plan":plans,"semantic_failure":failed,"complete":complete}),
     )?;
     Ok(if failed {
@@ -400,8 +465,12 @@ mod tests {
         r.accepted_ns = ns;
         c.retain(r);
     }
-    fn warmed<'a>(p: &'a Value, plan: Option<usize>) -> Controller<'a> {
-        let mut c = Controller::new(p, Instant::now() + Duration::from_secs(60), plan);
+    fn warmed<'a>(
+        p: &'a Value,
+        retention: &'a mut Retention,
+        plan: Option<usize>,
+    ) -> Controller<'a> {
+        let mut c = Controller::new(p, retention, Instant::now() + Duration::from_secs(60), plan);
         for _ in 0..5 {
             retain(&mut c, Some(1_000_000), "correct");
         }
@@ -421,9 +490,10 @@ mod tests {
     #[test]
     fn both_warmup_gates_and_frozen_work_plan() {
         let p = policy();
-        let c = warmed(&p, None);
+        let mut retention = Retention::new();
+        let c = warmed(&p, &mut retention, None);
         assert_eq!(c.repetitions, 1, "derive work from warmed own intervals");
-        let mut c = warmed(&p, Some(2));
+        let mut c = warmed(&p, &mut retention, Some(2));
         assert_eq!(c.repetitions, 2, "independent sessions keep base work plan");
         retain(&mut c, Some(6_000_000), "correct");
         assert!(c.samples.is_empty());
@@ -436,7 +506,8 @@ mod tests {
     fn failed_batch_keeps_last_repetition_and_failure_precedence() {
         let p = policy();
         for status in ["semantic_failure", "unavailable", "correct"] {
-            let mut c = warmed(&p, Some(2));
+            let mut retention = Retention::new();
+            let mut c = warmed(&p, &mut retention, Some(2));
             retain(&mut c, Some(6_000_000), "correct");
             retain(&mut c, None, status);
             assert!(c.next().is_none(), "never retry rejected work");
@@ -453,11 +524,12 @@ mod tests {
     #[test]
     fn caps_stop_without_fabricated_samples() {
         let p = policy();
-        let mut c = Controller::new(&p, Instant::now(), None);
+        let mut retention = Retention::new();
+        let mut c = Controller::new(&p, &mut retention, Instant::now(), None);
         assert!(c.next().is_none());
         assert_eq!(c.rep, 0);
         assert_eq!(c.summary()["samples"][0]["status"], "unstarted");
-        let mut c = warmed(&p, None);
+        let mut c = warmed(&p, &mut retention, None);
         c.stage = Stage::Warmup;
         c.warmup_start = Some(Instant::now() - Duration::from_secs(21));
         assert!(c.next().is_none());

@@ -1,10 +1,10 @@
 {
   "id": "calibrated-v1",
-  "version": 1,
+  "version": 2,
   "sampling": {
     "serial": true,
     "raw_encoding": "calibrated-raw/1; complete owned sample/clock values reused only after equality of each independently captured and P0-validated value, never verdict reuse",
-    "retention_scheduling": "VM-local synchronous compressed retention acknowledgement before any successor timer; no overlapped compression/guest measurement",
+    "retention_scheduling": "VM-local synchronous compressed retention; bounded owned driver buffer (256 frames or 8 MiB), acknowledged completely before the next timer after each flush; pilot/warmup/control boundaries flush; no overlapped compression/guest measurement",
     "repetition_calibration": "pilot minimum for bounded planning; final minimum over every accepted warmup/calibration interval after BOTH warmup gates; ceiling of 1.5 times minimum sample work, frozen across independent sessions",
     "pilot_iterations": 5,
     "minimum_sample_ns": 10000000,
@@ -41,7 +41,7 @@
       "known physical host with native before/after boot UUID and boot time",
       "stable observed native identity, power source and low-power settings",
       "local Unix Docker endpoint linked to actual inspected Colima provider/configuration",
-      "same actual daemon, VM boot, live container ID/start/configuration/resources",
+      "same actual daemon, VM boot, live container ID/start/configuration/resources; cgroup-v2 namespace-root inspection only, positive parsed cpu.max/memory.max",
       "actual measurement thread VM affinity; native library children own readback; CLI explicitly derived initial caller-thread affinity inheritance only, no direct/sustained child readback",
       "same substantive build/tool/image/clock/sink/fixture/work policy",
       "all independent-session oracle, sample, warmup, clock, overhead and noise gates"

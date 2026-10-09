@@ -53,6 +53,14 @@ class InheritanceTests(unittest.TestCase):
         p=proof();p['caller_before']['affinity_vcpu_list']='0'
         with self.assertRaises(Invalid):self.check(p)
 
+    def test_equal_malformed_controls_are_not_positive_evidence(self):
+        for key,values in {'cgroup':['','0::/other','bogus'], 'cpu_max':['','max','0 100000','max 0','-1 100000'],
+                           'memory_max':['','0','-1','unobserved'], 'boot_id':['-'*36,'a'*36]}.items():
+            for value in values:
+                p=proof()
+                for position in ('caller_before','caller_after'):
+                    p[position]['files'][key].update(value=value,sha256=digest(value.encode()))
+                with self.assertRaises(Invalid,msg=(key,value)):self.check(p)
     def test_missing_malformed_and_other_process_inspection_reject(self):
         for key in ('status','cgroup','online','cpuset','cpu_max','memory_max','boot_id'):
             p=proof();del p['caller_before']['files'][key]

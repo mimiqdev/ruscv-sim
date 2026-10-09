@@ -25,6 +25,14 @@ def mask(text):
     return result
 
 
+def resources(files):
+    """These fixed /sys paths describe ONLY a cgroup-v2 namespace root."""
+    require(files['cgroup']=='0::/','unsupported/non-root cgroup; root resource paths are not this caller proof')
+    require(re.fullmatch(r'(?:max|[1-9][0-9]*) [1-9][0-9]*',files['cpu_max']) is not None,'malformed positive cpu.max evidence')
+    require(re.fullmatch(r'max|[1-9][0-9]*',files['memory_max']) is not None,'malformed positive memory.max evidence')
+    require(re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}',files['boot_id']) is not None,'malformed VM boot UUID')
+
+
 def caller(value):
     require(type(value) is dict and set(value)=={'method','pid','tid','pid_namespace','utc_unix_ns','affinity_vcpu_list','namespaces','files','injection'},'exact caller-thread carrier')
     require(value['method']=='linux-thread-self-proc/1','not exact calling-thread inspection')
@@ -50,7 +58,7 @@ def caller(value):
     require(cpus is not None and cpus[1].strip()==value['affinity_vcpu_list'],'caller thread mask/source disagreement')
     allowed=mask(value['affinity_vcpu_list'])
     require(set(allowed)<=set(mask(files['online'])) and set(allowed)<=set(mask(files['cpuset'])),'caller mask outside online/cpuset restriction')
-    require(re.fullmatch(r'[0-9a-f-]{36}',files['boot_id']) is not None,'caller VM boot identity')
+    resources(files)
     return {'pid':value['pid'],'tid':value['tid'],'namespace':value['pid_namespace'],'namespaces':value['namespaces'],
             'mask':allowed,'cgroup':files['cgroup'],'cpuset':mask(files['cpuset']),
             'online':mask(files['online']),'cpu_max':files['cpu_max'],'memory_max':files['memory_max'],'boot_id':files['boot_id']}

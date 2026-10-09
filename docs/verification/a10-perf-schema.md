@@ -93,13 +93,18 @@ Three independent session medians receive their own repeatability check.
 One predetermined full noise rerun may replace one session; all original
 records remain, and missing/control/semantic failures are not noise retries.
 
-Raw `calibrated-raw/1` JSONL is compressed after each independently captured
-and P0-validated record. Complete plain owned sample/clock values may share a
+Raw `calibrated-raw/1` JSONL retains every independently captured and
+P0-validated record. Policy version 2 buffers at most 256 frames or 8 MiB
+of plain owned serialized data in the driver; it also flushes at pilot,
+warmup and control boundaries. Compression occurs synchronously only during
+those flushes, with every frame acknowledged before another guest timer. Complete plain owned sample/clock values may share a
 retained-value ID **only after complete equality of each own fresh capture**.
 This does not reuse verdicts, skip execution/inspection or retain live owners.
 The reader expands every row and replays every repetition with the unchanged
-P0 validator. The VM-local collector acknowledges synchronous retention before
-any successor timer, avoiding compression overlapped with guest measurement.
+P0 validator. No bytes escape the owned buffer between flushes, avoiding
+compression overlapped with guest measurement. Buffering never removes a
+repetition or its own oracle; transport failure retains the available prefix
+and cannot become a usable session.
 The 30-minute caller budget includes orchestration, build/fixtures, validation,
 inspection and bulk evidence publication; a conservative final small-metadata
 publication window is reserved. Insufficient budget remains inconclusive.
@@ -121,7 +126,10 @@ For each real CLI launch, [`affinity.rs`](../../tools/a10/affinity.rs) inspects
 **the exact driver thread**, before direct launch and after wait/capture,
 outside both timer boundaries. It records PID/TID, namespace links, allowed
 vCPU list, online CPUs, effective cpuset, own cgroup membership/limits and
-injection-related environment. Executable bytes, actual argv and launcher
+injection-related environment. Fixed resource paths qualify only a cgroup-v2
+namespace root (`0::/`); unsupported membership and malformed or missing
+positive limits/boot IDs cannot qualify even if both carriers agree.
+Executable bytes, actual argv and launcher
 source are bound to retained build/source evidence. No shell, taskset,
 pre-exec inspection or affinity-changing launch attributes are introduced.
 The method is **`linux-caller-affinity-inheritance/1`**, derived initial

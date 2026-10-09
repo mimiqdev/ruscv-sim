@@ -89,8 +89,8 @@ def parse_native(snapshot):
     c = snapshot['commands']
     require(set(c) == set(NATIVE_COMMANDS) | {'container','image'}, 'missing/extra native inspection')
     values = {k:output(c[k],v) for k,v in NATIVE_COMMANDS.items()}
-    require(re.fullmatch(r'[0-9A-Fa-f-]{36}',values['boot_uuid']) is not None, 'native boot UUID')
-    require(re.match(r'^\{ sec = [0-9]+, usec = [0-9]+ \}',values['boot_time']) is not None, 'native boot time')
+    require(re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}',values['boot_uuid'],re.I) is not None, 'native boot UUID')
+    require(re.fullmatch(r'\{ sec = [0-9]+, usec = [0-9]+ \}.*',values['boot_time']) is not None, 'native boot time')
     match = re.search(r"^Now drawing from '([^']+)'$",values['power'],re.M)
     require(match is not None,'power source not observed')
     # Preserve full settings: do not mistake these for frequency/control readback.
@@ -102,7 +102,7 @@ def parse_native(snapshot):
     daemon_lines = values['daemon'].splitlines()
     require(len(daemon_lines)==len(INFO_KEYS),'daemon inspection fields')
     daemon = dict(zip(INFO_KEYS,map(loads,daemon_lines)))
-    require(daemon['id'] and daemon['architecture']=='aarch64' and daemon['cpus']==colima['cpu'] and type(daemon['memory']) is int and daemon['memory']>0,'VM daemon/resources linkage')
+    require(daemon['id'] and daemon['architecture']=='aarch64' and type(daemon['cpus']) is int and daemon['cpus']>0 and daemon['cpus']==colima['cpu'] and type(daemon['memory']) is int and daemon['memory']>0 and str(daemon['cgroup_version'])=='2','VM daemon/resources/cgroup-v2 linkage')
     require(c['container']['argv'][:2]==['docker','inspect'] and len(c['container']['argv'])==3,'container inspection argv')
     containers = loads(output(c['container'],c['container']['argv']))
     images = loads(output(c['image'],['docker','image','inspect',IMAGE]))
@@ -136,16 +136,14 @@ def parse_probe(value):
             require(type(item['value']) is str and item['sha256']==digest(item['value'].encode()) and item['reason'] is None,'VM inspected file digest')
     for field in ('boot_id','status','meminfo','cgroup','cpu_max','memory_max','cpuset'):
         require(files[field]['value'] is not None,'missing positive VM/process/cgroup evidence')
-    require(re.fullmatch(r'[a-f0-9-]{36}',files['boot_id']['value'].strip()) is not None,'VM boot identity')
+    from inheritance import mask, resources
+    resources({k:files[k]['value'].strip() for k in ('cgroup','cpu_max','memory_max','boot_id')})
     status = files['status']['value']
     require(re.search(r'^Pid:\s*'+str(value['pid'])+r'\s*$',status,re.M) is not None,'process/status PID mismatch')
     allowed = re.search(r'^Cpus_allowed_list:\s*([^\n]+)$',status,re.M)
     require(allowed is not None,'process status effective affinity')
-    expanded = []
-    for part in allowed[1].strip().split(','):
-        ends = list(map(int,part.split('-')))
-        expanded.extend(range(ends[0],ends[-1]+1))
-    require(expanded==value['affinity'],'sched_getaffinity/status disagreement')
+    expanded = mask(allowed[1].strip())
+    require(expanded==value['affinity'] and set(expanded)<=set(mask(files['cpuset']['value'].strip())),'sched_getaffinity/status/cpuset disagreement')
     return {'boot_id':files['boot_id']['value'].strip(),'kernel':value['kernel'],'architecture':value['architecture'],
             'logical_cpus':value['logical_cpus'],'affinity':value['affinity'],'namespaces':value['namespaces'],
             'resources':{k:files[k]['value'] for k in ('cpu_max','memory_max','cpuset')},
