@@ -100,6 +100,11 @@ warmup and control boundaries. Compression occurs synchronously only during
 those flushes, with every frame acknowledged before another guest timer. Complete plain owned sample/clock values may share a
 retained-value ID **only after complete equality of each own fresh capture**.
 This does not reuse verdicts, skip execution/inspection or retain live owners.
+The phase driver similarly caches pure SHA-256 results only after complete
+byte equality of each newly read observed image; every initial full-image/BSS,
+register/counter/reservation/device check still runs. The pre-read immutable
+input buffer is hashed once, and the per-repetition on-disk mutation guard
+remains. No cached verdict or companion state replaces an own oracle.
 The reader expands every row and replays every repetition with the unchanged
 P0 validator. No bytes escape the owned buffer between flushes, avoiding
 compression overlapped with guest measurement. Buffering never removes a

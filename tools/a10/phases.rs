@@ -470,7 +470,29 @@ fn kind(route: &str) -> PlatformKind {
         PlatformKind::Flat
     }
 }
-fn initial(owner: &Machine, f: &Fixture) -> Result<(LoadEvidence, InitialEvidence), String> {
+#[derive(Default)]
+struct ImageDigestCache(Option<(Vec<u8>, String)>);
+impl ImageDigestCache {
+    fn observed_hash(&mut self, actual: &[u8]) -> String {
+        // Only cache the pure hash of immutable OWN observed bytes. Every
+        // repetition still reads/checks its entire image/BSS and architectural
+        // initial state. No prior verdict, live owner or expected state becomes
+        // a later sample's observation. Equality establishes identical hashes.
+        if let Some((bytes, hash)) = &self.0 {
+            if bytes == actual {
+                return hash.clone();
+            }
+        }
+        let hash = digest::sha256(actual);
+        self.0 = Some((actual.to_vec(), hash.clone()));
+        hash
+    }
+}
+fn initial(
+    owner: &Machine,
+    f: &Fixture,
+    cache: &mut ImageDigestCache,
+) -> Result<(LoadEvidence, InitialEvidence), String> {
     let i = owner.inspect().map_err(|e| e.to_string())?;
     image_identity(f, &i.image).map_err(|e| format!("{e:?}"))?;
     let minstret = i.hart.csr.read(MINSTRET).map_err(|e| e.to_string())?;
@@ -502,7 +524,7 @@ fn initial(owner: &Machine, f: &Fixture) -> Result<(LoadEvidence, InitialEvidenc
         pc: i.hart.pc,
         minstret,
         regs: i.hart.regs.to_vec(),
-        image_sha256: digest::sha256(&actual),
+        image_sha256: cache.observed_hash(&actual),
         checked_bytes: actual.len(),
         reservation_clear: i.hart.reservation.is_none(),
         signal: [i.tohost.address, *i.tohost.value.as_ref().unwrap()],
@@ -542,6 +564,7 @@ fn initial_flat(
     owner: &RiscVSimulator,
     f: &Fixture,
     bytes: &[u8],
+    cache: &mut ImageDigestCache,
 ) -> Result<InitialEvidence, String> {
     let image = LoadImage::parse(bytes).map_err(|e| e.to_string())?;
     image_identity(f, &image).map_err(|e| format!("{e:?}"))?;
@@ -570,7 +593,7 @@ fn initial_flat(
         return Err("flat initial full image/BSS/selected signal mismatch".into());
     }
     let offset = f.tohost.ok_or("flat RAM signal")? - f.entry;
-    Ok(InitialEvidence{pc:owner.state().pc,minstret:owner.state().csr.read(MINSTRET).map_err(|e|e.to_string())?,regs:owner.state().regs.to_vec(),image_sha256:digest::sha256(&actual),checked_bytes:actual.len(),reservation_clear:owner.state().reservation.is_none(),signal:[offset,u64::from_le_bytes(owner.read_mem(offset,8).map_err(|e|e.to_string())?.try_into().unwrap())],events:None,uart:None,generation:None,previous_generation:None,drain:None,stale_isolated:None,limits:vec!["public flat facade fresh_reset coordinates drain/restoration internally; no public generation/drain/stale-handle/device introspection; no new API".into()]})
+    Ok(InitialEvidence{pc:owner.state().pc,minstret:owner.state().csr.read(MINSTRET).map_err(|e|e.to_string())?,regs:owner.state().regs.to_vec(),image_sha256:cache.observed_hash(&actual),checked_bytes:actual.len(),reservation_clear:owner.state().reservation.is_none(),signal:[offset,u64::from_le_bytes(owner.read_mem(offset,8).map_err(|e|e.to_string())?.try_into().unwrap())],events:None,uart:None,generation:None,previous_generation:None,drain:None,stale_isolated:None,limits:vec!["public flat facade fresh_reset coordinates drain/restoration internally; no public generation/drain/stale-handle/device introspection; no new API".into()]})
 }
 fn install<C: Clock>(
     bytes: &[u8],
@@ -885,6 +908,8 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
     let input = std::fs::read(paths.fixtures.join(format!("{}.elf", f.id)));
     let mut machine = None;
     let mut flat = None;
+    let mut image_cache = ImageDigestCache::default();
+    let input_sha256 = input.as_ref().ok().map(|bytes| digest::sha256(bytes));
     let setup = (|| -> Result<(), String> {
         let bytes = input.as_ref().map_err(|e| e.to_string())?;
         if phase == "execute_only" {
@@ -902,7 +927,7 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
                 install(bytes, config, &mut meter, &mut retained)?;
                 let owner = retained.unwrap();
                 meter.event(Op::Inspect);
-                initial(&owner, f)?;
+                initial(&owner, f, &mut image_cache)?;
                 machine = Some((owner, uart));
             }
         }
@@ -910,7 +935,7 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
     })();
     while let Some((rep, warmup)) = controller.next() {
         let mut record = Record::new(f, route, phase, mode, rep, warmup);
-        record.input_sha256 = input.as_ref().ok().map(|b| digest::sha256(b));
+        record.input_sha256 = input_sha256.clone();
         record.clock = meter.clock.evidence();
         if setup.is_err() || controller.failed() {
             record.reason = Some(
@@ -947,7 +972,7 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
                 }
                 let owner = retained.unwrap();
                 meter.event(Op::Inspect);
-                let checked = initial(&owner, f);
+                let checked = initial(&owner, f, &mut image_cache);
                 drop(uart);
                 let cleanup = teardown(owner, &mut meter);
                 let (loaded, proof) = checked?;
@@ -975,7 +1000,7 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
                 drop(stale);
                 uart.lock().unwrap().clear();
                 meter.event(Op::Inspect);
-                let (_, mut proof) = initial(owner, f)?;
+                let (_, mut proof) = initial(owner, f, &mut image_cache)?;
                 if proof.generation.is_none_or(|g| g <= previous) {
                     return Err("reset generation did not advance".into());
                 }
@@ -1007,7 +1032,7 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
                     meter.event(Op::Reset);
                     owner.fresh_reset().map_err(|e| e.to_string())?;
                     meter.event(Op::Inspect);
-                    record.initial = Some(initial_flat(owner, f, bytes)?);
+                    record.initial = Some(initial_flat(owner, f, bytes, &mut image_cache)?);
                     let start = meter.start();
                     meter.event(Op::FlatRun);
                     let outcome = owner.run(Some(f.turns + 16));
@@ -1110,4 +1135,24 @@ pub fn matrix<C: Clock>(
         }
     }
     records
+}
+
+#[cfg(test)]
+mod image_cache_tests {
+    use super::*;
+    #[test]
+    fn digest_cache_requires_complete_own_byte_equality() {
+        let mut cache = ImageDigestCache::default();
+        let original = vec![0; 65_536];
+        let hash = cache.observed_hash(&original);
+        assert_eq!(hash, digest::sha256(&original));
+        assert_eq!(cache.observed_hash(&original.clone()), hash);
+        for offset in [0, 32_768, 65_535] {
+            let mut changed = original.clone();
+            changed[offset] = 1;
+            assert_ne!(cache.observed_hash(&changed), hash);
+            assert_eq!(cache.observed_hash(&changed), digest::sha256(&changed));
+            assert_eq!(cache.observed_hash(&original), hash);
+        }
+    }
 }
