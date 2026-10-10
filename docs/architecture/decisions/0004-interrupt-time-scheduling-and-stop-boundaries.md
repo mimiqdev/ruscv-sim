@@ -1356,7 +1356,10 @@ version 20250508, ratified](https://github.com/riscv/riscv-isa-manual/releases/t
 Those are the §3.1.9 interrupt rules, §3.1.10 counter rules, §3.2.1 timer
 rules, §3.3.1 synchronous environment-break rules, §3.3.3 WFI/TW rules, and
 the selected profile's synchronous-exception priority table. The same edition
-supplies the unprivileged Zicntr rules for `cycle` and `instret`. It also
+supplies the unprivileged counter rules this profile uses for `cycle` and
+`instret`. The Stage 4 hart does not claim Zicntr, because that extension
+comprises `cycle`, `time`, and `instret` together and this profile has no
+`time`. It also
 consumes the selected debug profile, including [RISC-V External Debug Support
 0.13.2](https://github.com/riscv/riscv-debug-spec/tree/0.13-test-release) §4
 when Debug Mode is implemented. These references
