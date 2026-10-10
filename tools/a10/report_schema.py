@@ -224,6 +224,19 @@ def make_report(out, setup, raw, after):
     report['aggregates'] = aggregates(report)
     return report
 
+def pinned_producer(tool_sha256, tool_versions, platform, tool, sha256, version):
+    """Fail closed unless platform is a pinned string and this tool matches it."""
+    if isinstance(tool_sha256, dict) and isinstance(platform, str):
+        pins = tool_sha256.get(platform)
+    else:
+        pins = None
+    if not isinstance(pins, dict):
+        raise Invalid('fixture build platform')
+    matched = sha256 == pins.get(tool) and version == tool_versions[tool]
+    if not matched:
+        raise Invalid('strict pin not artifact-equivalence on ' + platform)
+
+
 def validate(path, reader, expected_digest=None, sealed=True):
     path = Path(path)
     require(path.name == 'report.json' and not path.is_symlink() and not any(p.is_symlink() for p in path.parents), 'unsafe report/root path')
@@ -315,9 +328,9 @@ def validate(path, reader, expected_digest=None, sealed=True):
         for tool in ('as','ld','nm','objdump'):
             require(fixture_build['tools'][tool]['sha256'] == report['tools'][tool]['sha256'] and fixture_build['tools'][tool]['version'] == report['tools'][tool]['version'].splitlines()[0], 'actual producer executable identity')
             if actual['identity_class'] == 'strict-pinned-tools':
-                platform = fixture_build['platform']
-                pinned = oracle['tool_sha256'].get(platform)
-                require(isinstance(pinned, dict) and report['tools'][tool]['sha256'] == pinned.get(tool) and fixture_build['tools'][tool]['version'] == oracle['tool_versions'][tool], 'strict pin not artifact-equivalence on '+platform)
+                pinned_producer(
+                    oracle['tool_sha256'], oracle['tool_versions'], fixture_build.get('platform'),
+                    tool, report['tools'][tool]['sha256'], fixture_build['tools'][tool]['version'])
     env = report['environment']
     for key in ('physical_host','container','ci','filesystem'):
         obs(env[key])

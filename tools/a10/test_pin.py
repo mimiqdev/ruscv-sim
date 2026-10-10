@@ -1,26 +1,20 @@
 #!/usr/bin/env python3
 """Strict producer pin: host arch accepted, wrong bytes rejected, unknown arch refused."""
+import json
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 
 from audit_fixtures import merge_tool_sha256, producer_pin
+from report_schema import pinned_producer
 
-AMD64 = {
-    'as': '5d693231db1242b89b73e7329117e8f35d29c498e9e765c10b62e2a9429983f9',
-    'ld': '1ed449b500697d187754c10799543d91571fc9a875a3feee5a1eada761c50baa',
-    'nm': '783030bd9b56ab0b6e8dc2a7c20b15dd0e4668748c0e1bd9c10d2dd1e3b0702f',
-    'objdump': '8a9215d2d7ab2d670d741fa14d1e77df6a43e1a66861fe1e5b5c00114c9697d6',
-}
-ARM64 = {
-    'as': '0159aa61f690f3735e20af1d0add8874950de4fca8fd5e264ec3b96ec53826d6',
-    'ld': 'ad20783564aa8facfbc7d494ad219f00c276d03a492627644e3827cbfaa5fb1e',
-    'nm': '08488f3820090751e5260f90d263f7d544f83124454a5d851543be2f6c93221b',
-    'objdump': 'dac962bc0b193be7018d3594dfe891db9a579298f6c0a6fee80422c35ae37566',
-}
-VERSIONS = dict.fromkeys(AMD64, 'GNU binutils 2.40')
-PINS = {'x86_64': AMD64, 'aarch64': ARM64}
+ROOT = Path(__file__).resolve().parents[2]
+MANIFEST = json.loads((ROOT / 'tools/a10/public-v1.json').read_text())
+PINS = MANIFEST['tool_sha256']
+AMD64 = PINS['x86_64']
+ARM64 = PINS['aarch64']
+VERSIONS = MANIFEST['tool_versions']
 
 
 def tools(hashes):
@@ -38,7 +32,8 @@ class ProducerPin(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             producer_pin(PINS, 'x86_64', tools(wrong), VERSIONS)
         self.assertIn('x86_64', str(caught.exception))
-        self.assertNotIn('ARM64', str(caught.exception))
+        self.assertIn('as', str(caught.exception))
+        self.assertNotIn(AMD64['as'], str(caught.exception))
 
     def test_unknown_arch_fails_without_using_another_platforms_hashes(self):
         for platform in ('amd64', 'arm64', 'riscv64'):
@@ -60,6 +55,43 @@ class ProducerPin(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             merge_tool_sha256(saved, 'amd64', built)
         self.assertIn('amd64', str(caught.exception))
+
+    def test_cross_platform_bytes_do_not_satisfy_the_other_pin(self):
+        with self.assertRaises(ValueError) as caught:
+            producer_pin(PINS, 'aarch64', tools(AMD64), VERSIONS)
+        self.assertIn('aarch64', str(caught.exception))
+        with self.assertRaises(ValueError) as other:
+            producer_pin(PINS, 'x86_64', tools(ARM64), VERSIONS)
+        self.assertIn('x86_64', str(other.exception))
+
+    def test_version_mismatch_and_a_pin_missing_a_tool_are_rejected(self):
+        wrong_version = dict(VERSIONS)
+        wrong_version['ld'] = 'GNU binutils 2.41'
+        with self.assertRaises(ValueError) as caught:
+            producer_pin(PINS, 'x86_64', tools(AMD64), wrong_version)
+        self.assertIn('ld', str(caught.exception))
+        incomplete = {key: dict(value) for key, value in PINS.items()}
+        del incomplete['x86_64']['nm']
+        with self.assertRaises(ValueError) as missing:
+            producer_pin(incomplete, 'x86_64', tools(AMD64), VERSIONS)
+        self.assertIn('nm', str(missing.exception))
+
+
+class ReaderPin(unittest.TestCase):
+    def test_reader_accepts_each_platform_and_refuses_the_rest(self):
+        pinned_producer(PINS, VERSIONS, 'x86_64', 'as', AMD64['as'], VERSIONS['as'])
+        pinned_producer(PINS, VERSIONS, 'aarch64', 'as', ARM64['as'], VERSIONS['as'])
+        with self.assertRaises(ValueError) as missing:
+            pinned_producer(PINS, VERSIONS, None, 'as', AMD64['as'], VERSIONS['as'])
+        self.assertIn('platform', str(missing.exception))
+        for platform in ('arm64', 1, ['x86_64']):
+            with self.subTest(platform=platform):
+                with self.assertRaises(ValueError) as caught:
+                    pinned_producer(PINS, VERSIONS, platform, 'as', AMD64['as'], VERSIONS['as'])
+                self.assertIn('platform', str(caught.exception))
+        with self.assertRaises(ValueError) as swapped:
+            pinned_producer(PINS, VERSIONS, 'x86_64', 'as', ARM64['as'], VERSIONS['as'])
+        self.assertIn('x86_64', str(swapped.exception))
 
 
 ROOT = Path(__file__).resolve().parents[2]
