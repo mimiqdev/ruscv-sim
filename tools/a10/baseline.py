@@ -111,7 +111,6 @@ def run(argv):
     rows = []
     for workload in data['workloads']:
         elf = fixtures_out / (workload['fixture'] + '.elf')
-        expected_stdout = bytes.fromhex(workload['expected_stdout_hex'])
         for repetition in range(args.repetitions):
             began = time.perf_counter_ns()
             completed = subprocess.run([str(cli), 'run', str(elf), '--max-cycles', str(workload['max_cycles'])], cwd=ROOT, capture_output=True)
@@ -131,7 +130,7 @@ def run(argv):
     failed = [r for r in rows if not r['verified']]
     status = 'correct' if not failed else 'inconclusive'
     report = {'schema': 'a10-baseline-report/1', 'version': 1,
-              'run': {'id': str(uuid.uuid4()), 'start_utc': started, 'end_utc': utc(), 'argv': [str(ROOT / 'scripts/perf-test.sh')] + argv, 'profile': 'baseline'},
+              'run': {'id': str(uuid.uuid4()), 'start_utc': started, 'end_utc': utc(), 'argv': [str(ROOT / 'scripts/perf-test.sh'), 'run'] + argv, 'profile': 'baseline'},
               'source': source,
               'identity': {'workloads': {'id': data['schema'], 'version': data['version'], 'sha256': digest((ROOT / MANIFEST).read_bytes())},
                            'fixture_audit_sha256': digest(__import__('json').dumps(audit_report, sort_keys=True).encode()),

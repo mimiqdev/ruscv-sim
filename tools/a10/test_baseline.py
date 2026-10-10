@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """Baseline profile controls: scope, floor, classification; not measurements."""
 import unittest
+from pathlib import Path
 import baseline as b
 from report_schema import quantile
 
 
 class BaselineControls(unittest.TestCase):
+    def test_recorded_argv_keeps_the_run_subcommand(self):
+        source = Path(b.__file__).read_text()
+        self.assertIn(
+            "'argv': [str(ROOT / 'scripts/perf-test.sh'), 'run'] + argv",
+            source,
+        )
+
     def test_manifest_scope_is_exactly_three_representative_workloads(self):
         data = b.manifest()
         self.assertEqual([w['id'] for w in data['workloads']],
