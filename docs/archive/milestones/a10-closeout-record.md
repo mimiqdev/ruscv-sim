@@ -1,0 +1,49 @@
+# A10 implementation acceptance and closeout record
+
+**Recorded acceptance:** 2026-10-10 (UTC), bounded technical implementation/evidence under the [§8 user-authorized scope reduction](../../dev-plan.md#8-future-implementation-deliverables-and-falsifiable-acceptance) of 2026-10-10 (P3→P3′ baseline v1, P4→P4′ short docs page).
+
+**Record boundary:** standalone closeout delivery record. The [entire approved A10 contract](../../dev-plan.md) stays as sole Current until the separately approved rotation merges; this record does not archive or replace it. No successor contract is activated by this record; the [Stage 4 draft](../../proposals/stage4-contract-draft.md) is a proposed contract awaiting explicit user decisions, not an approved successor. The independent final PR-head review of this documentation head is **PENDING** and is a remaining acceptance item, not a satisfied one.
+
+## Accepted scope (as amended)
+
+Framework-first public-path performance-test infrastructure, right-sized by the 2026-10-10 amendment: cut payloads and certification, never the framework. Delivered: the versioned workload/oracle manifest machinery and fixture build pipeline (P0), the one-command three-phase measurement driver with route-matrix N/A semantics (P1), the strict `ruscv-perf/1` schema/reader/sealed-bundle evidence layer (P2), and the baseline v1 profile measuring exactly three representative workloads through the real CLI (P3′). Certification (cohort, baseline-sealing/comparison gates, full calibrated matrix, CI weekly reporting, retention) was deferred, not delivered.
+
+## Acceptance criteria → evidence with commit IDs
+
+All implementation work landed as the 41-commit branch of [PR #72](https://github.com/mimiqdev/ruscv-sim/pull/72), squash-merged **2026-10-10T03:06:22Z** as `5d23d337a6732d178a2e14445be9f5c28154f270` (tree `a2920abf949a6d6e8c753b9f05a8ef9f06a41fc9`). Per-criterion evidence:
+
+| Contract criterion (§8) | Status | Evidence |
+| --- | --- | --- |
+| P0 — manifest and oracle: pinned mandatory families, exact ELF/tool/source identities, independently derived counts/signatures/results, mutated-expectation rejection on public routes | Delivered | `tools/a10/public-v1.json` (`a10-oracle/1`, manifest SHA-256 `89a89bfb…733`), `derive_oracles.py` with `--check`/`--check-artifacts`, [`tests/a10_p0_oracles.rs`](../../../tests/a10_p0_oracles.rs): 148 validated fixture/route/mode cells, 9 focused tests incl. negative mutations; implementation commits `56cf5b945343b03545c4cef2ad11c88e9a2dc530`, `02ba43863a00c6e29f482f299d515df6a5905824`; final reviewed P0 revision `5d3a6ce7b32f721316e6688be440ac77d4abf1cf` with [public verification evidence](https://github.com/mimiqdev/ruscv-sim/pull/72#issuecomment-6051979166); P0 checkpoint boundary `29bc58729ade28d611d17c524a26bd3369a64140` with [zero-finding review](https://github.com/mimiqdev/ruscv-sim/pull/72#issuecomment-6052545885) |
+| P1 — driver and phase boundaries: one command, three distinct clock-scoped layers, matrix with explicit N/A, public seams only, scope spies | Delivered | `tools/a10/phases.rs`, `driver.rs`, `command.py`, `scripts/perf-test.sh`; [`tests/a10_p1_phases.rs`](../../../tests/a10_p1_phases.rs): 6 focused tests, 540 correct raw intervals / 180 phase cells / 324 N/A rows at the checkpoint; reviewed P1 head `766c223be36520a4555b6e98e66a95e4d797d22f` with [zero-finding review/evidence](https://github.com/mimiqdev/ruscv-sim/pull/72#issuecomment-6056645684) |
+| P2 — evidence/schema: versioned strict schema, complete identities, sealed bundles, replay through the unchanged P0 validator, negative reader controls | Delivered | `tools/a10/ruscv-perf-1.schema.json`, `report_schema.py`, `replay.rs`, `integrity.py`; [`tests/a10_p2_schema.rs`](../../../tests/a10_p2_schema.rs), `test_schema.py`, `test_bundle.py`; reader-review repairs after independent review at `9587fe94c3a66f19ecb2ec28e9d5464fcca8bde6`; development-head evidence `16f05c1e686c2a289028b971ff27045909a60509` (report SHA-256 `b98c1b79…0b049`, bundle digest `6aa38b95…42ce1`, 50 negative reader controls); schema guide [a10-perf-schema.md](../../verification/a10-perf-schema.md) |
+| P3′ — baseline v1: three representative workloads, one session, ≥15 repetitions, exit+stdout floor, honest exit-2, minutes not hours | Delivered | `tools/a10/baseline.py`, `baseline-v1.json`; original observation in [a10-baseline.md](../../verification/a10-baseline.md) at pre-merge head `5c52533a05db35d5534f71f5af2b7c90858cd661` (Darwin/arm64, 45/45 verified, report SHA-256 `2b99398c5bbce81927c6cc67f0a974cab0aebf34c854ce2a6f40ed813ed3b805`); merged-main re-run at `5d23d337a6732d178a2e14445be9f5c28154f270` (Linux/amd64 under the old ARM64 pin via `DOCKER_DEFAULT_PLATFORM`, 45/45 verified, report SHA-256 `842c4c86d4098402f08c585a673d98e630a35deb475bc1667769cb3c47934be9`); later Linux/x86_64 session at clean `25f3a3d0f10b9949b7624c741fc963b411b06665` after the per-platform pin (15/15 each, report SHA-256 `55e84d64afbf31bf4aa0838a4f10893a5f7ee9faf77ca6c069f523bdae8d9690`). The three sessions are not comparable. |
+| P4′ — baseline documentation + honest progress update | Delivered (this PR) | [a10-baseline.md](../../verification/a10-baseline.md) (original record preserved verbatim + merged-main re-run with machine identity, HEAD, report digest, per-workload pass counts/medians, honest cross-host non-comparability); [a10-stage3-progress.md](../../verification/a10-stage3-progress.md) delivery/deferred status; this record |
+| P4′ — independent final PR-head review | **PENDING** | To be performed by a separate read-only reviewer on this documentation PR head; not claimed here |
+| Full Rust gate at the merged head | Passed (CI) | Exact-merge-head [CI run 38019391250](https://github.com/mimiqdev/ruscv-sim/actions/runs/38019391250), 2026-10-10T03:06:25Z–03:17:02Z: Quality and tests **success**, all 58 `test result:` suites green, **1,861 passed / 0 failed**; guest build/run step green; Coverage skipped by policy |
+
+## Completion date, test evidence, limitations
+
+**Technical acceptance date:** 2026-10-10 UTC (merge of PR #72). A10 closes on baseline delivery **plus** the pending independent review of this documentation head; that review is the only open acceptance item.
+
+**Test evidence summary:** focused suites `a10_p0_oracles` (9 tests / 148 cells), `a10_p1_phases` (6), `a10_p2_schema` (7), Python schema/bundle controls (14 + 197 release reader negatives at the P2 development head), A9 Hart/lifecycle/facade/CLI regressions unchanged and green; full-suite totals at the merged head per CI above. Baseline evidence: two independent single sessions (original + merged-main re-run), each 45/45 repetitions verified against the exit+stdout floor.
+
+**Limitations (recorded, not inherited as successor repair obligations):**
+
+- The baseline profile verifies the correctness floor (CLI exit + exact stdout bytes) only; richer per-route oracles remain the smoke profile's P0 validator domain. No cohort, ratios, thresholds or speed conclusions exist or are implied.
+- The merged-main re-run needed `DOCKER_DEFAULT_PLATFORM=linux/arm64` because the pin was ARM64-only ([a10-baseline.md](../../verification/a10-baseline.md#re-run-environment-note-host-not-tool-difference)). Tony authorized a per-platform pin on 2026-10-10 ([`25f3a3d`](https://github.com/mimiqdev/ruscv-sim/commit/25f3a3d0f10b9949b7624c741fc963b411b06665)). The later x86_64 session used the native platform of the same image digest. That note describes the earlier run, not the current pin.
+- CI weekly public-suite reporting, artifact retention validation and the certification layer are deferred; `bench-scheduled.yml` component controls run unchanged.
+- In-memory serialized-log observation mode remains N/A on every route (no public arbitrary-writer seam); not a deferral, an explicit exclusion.
+
+## Re-evaluated unfinished work (not auto-carried)
+
+Per the rolling workflow, unfinished items were re-evaluated rather than automatically carried into a successor:
+
+- **Certification layer (cohort, sealing gates, calibrated matrix, CI reporting, retention):** deferred with no consumer scheduled. Re-activation requires its own milestone decision; the framework seams (manifest, phases, schema, bundles) are delivered and tested, so payloads can be added without framework surgery. Not carried into Stage 4.
+- **Duration-scaled calibration workload series:** deleted 2026-10-10 (user-authorized); fixture sources retained under `tools/a10/calibration-fixtures/` for future payloads. Not carried.
+- **`compare` subcommand / ratio classification:** intentionally absent; requires a threshold decision that does not exist. Not carried.
+- **Baseline refresh cadence:** no retention clock is running (no CI reporting); when a future consumer needs comparison, it establishes a new same-host series per the comparison policy rather than refreshing expired bytes.
+
+## Successor boundary
+
+The next milestone (post-A7 roadmap Stage 4, virtual memory and protection) is **proposed only** in [stage4-contract-draft.md](../../proposals/stage4-contract-draft.md). D1–D10 in that draft are open. None is decided here. Activation needs explicit answers, a revised contract, and a separate rotation approval, same shape as A9→A10. This record schedules nothing.
