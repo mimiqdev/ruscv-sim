@@ -88,7 +88,7 @@ Roadmap §11 items 1 through 4 were answered by later milestones (A8 atomic prof
 
 **D0. Stage 3 exit and Stage 4 entry.** OPEN DECISION. Does the right-sized A10 (P0 through P2 plus P3′, with certification deferred) satisfy the roadmap Stage 3 exit and the Stage 4 entry gate, or is that gate waived for Stage 4? The roadmap exit ([post-A7 roadmap](post-a7-roadmap.md), Stage 3 items 4 and 5) requires retained revision and PR baseline comparison, scheduled CI publication, and noise calibration. The A10 §8 amendment deferred those for A10 closure only. A10's closeout review is still pending. This draft does not decide the gate.
 
-- Option A. **Recommended default:** treat the right-sized A10 as satisfying the scheduling gate for a Stage 4 contract, and leave comparison, scheduled CI publication, and noise calibration deferred. Record the waiver in the contract that replaces this draft.
+- Option A. **Recommended default:** treat the right-sized A10 as satisfying the scheduling gate for a Stage 4 contract, and leave comparison, scheduled CI publication, and noise calibration deferred. Record that determination in the contract that replaces this draft.
 - Option B. Waive the gate explicitly for Stage 4 without treating A10 as having satisfied it. Same practical effect, different record.
 - Option C. Keep Stage 4 blocked until a later milestone delivers the deferred comparison, CI publication, and calibration.
 
