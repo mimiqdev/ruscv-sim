@@ -1,10 +1,10 @@
 # Stage 4 virtual memory and protection (proposed milestone contract draft)
 
-**Status:** Proposed draft. **Not approved, not active**. This document is a bounded approval candidate modeled on the structure of [docs/dev-plan.md](../dev-plan.md). Activation requires (1) explicit user answers to every open decision in §8, (2) a revision of this draft into the accepted contract, and (3) a separate documentation-only rotation that archives the A10 contract, mirroring the A9→A10 transition (PRs #70/#71). Nothing here is implemented, scheduled or claimed.
+**Status:** Proposed draft. **Not approved, not active**. This document is a bounded approval candidate modeled on the structure of [docs/dev-plan.md](../dev-plan.md). Activation requires (1) explicit user answers to every open decision in §8, (2) a revision of this draft into the accepted contract, and (3) a separate documentation-only rotation that archives the A10 contract, mirroring the A9→A10 transition (closeout #70, rotation #71). Nothing here is implemented, scheduled or claimed.
 
 **Authority if approved:** would become the sole Current normative milestone contract, constrained by accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md) (Hart execution outcome and observation), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md) (physical access transaction and fault), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md) (runner, Machine and platform ownership) and [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md) (interrupt-time scheduling and stop boundaries). Translation and protection are Hart-owned work feeding the existing physical port taxonomy. No new ADR is proposed by this draft; if review finds an ADR gap (e.g. TLB/invalidation ownership), that gap is surfaced before implementation, not patched mid-milestone.
 
-**Planning baseline:** merged A10 head `5d23d337a6732d178a2e14445be9f5c28154f270` (PR #72, 2026-10-10). Follows [post-A7 roadmap Stage 4](post-a7-roadmap.md); the roadmap's Stage-3 entry gate was satisfied by the delivered A10 baseline framework, which is a scheduling gate, not an architectural dependency.
+**Planning baseline:** merged A10 head `5d23d337a6732d178a2e14445be9f5c28154f270` (PR #72, 2026-10-10). Follows [post-A7 roadmap Stage 4](post-a7-roadmap.md). Whether the right-sized A10 satisfies the roadmap Stage 3 exit and Stage 4 entry gate is pending D0. That gate is a scheduling question, not an architectural dependency, and this draft does not answer it.
 
 **Relationship to the deferred certification layer:** the A10 performance framework (baseline profile, smoke profile, schema/bundle machinery) exists and is tested; this draft does **not** add performance payloads or thresholds, and does not require the deferred certification layer.
 
@@ -35,7 +35,7 @@ The list below is the candidate work **if** the matching §8 option is later cho
 - Hart-side translation of instruction fetch, load/store, and AMO effective addresses, only for the `satp` modes D2 accepts. Walk behavior is D3.
 - Architectural page faults that keep the original virtual access kind and address, only under the fault rule D6 chooses. No new trap channel is proposed; delivery would use the existing A6 trap entry.
 - A/D bit updates only under D4. Hardware-set, trap-on-unset, and a per-Machine flag are all still open.
-- SFENCE.VMA decode and dispatch only if D2/D3 include a TLB. Component `flush_tlb` is not public-path support.
+- SFENCE.VMA decode and dispatch only under D8. Component `flush_tlb` is not public-path support.
 - PMP only under D5. Exclusion, 8 entries, and 16 entries are all still open. `MmuConfig::pmp_entries` (default 16) and `MmuError::PmpViolation` exist with no `pmpcfg`/`pmpaddr` CSRs and no enforcement.
 - Misaligned access under translation only under D6.
 - Public compatibility only under D7. Image-base adaptation versus an identity/bare configuration is part of that decision, matching roadmap Stage 4.
@@ -82,9 +82,15 @@ These checks apply only after §8 is answered and this draft is revised into a c
 
 ## 8. Open decisions (none decided)
 
-Every item below is an OPEN DECISION. This draft does not select an option. The line marked **recommended default** is a suggestion for the approval discussion. It is not a decision, and §3 does not implement it. Numbering is D1 through D10.
+Every item below is an OPEN DECISION. This draft does not select an option. The line marked **recommended default** is a suggestion for the approval discussion. It is not a decision, and §3 does not implement it. Numbering is D0, then D1 through D10.
 
-Roadmap §11 items 1, 2, 3, 4, 6, and 7 were answered by later milestones (A8 atomic profile and host-writer policy, A9 Hart/Machine lifecycle, A10 performance facility, and the still-conditional Stage 7 external-integration gate). They are not reopened here. Roadmap §11 item 5 (Hart/profile boundary: privilege, MMU/PMP, interrupt/WFI, counters) is still open for the virtual-memory part. Interrupt/WFI and counters stay with Stage 5 (D10). The other rows are decisions Stage 4 needs that §11 does not list.
+Roadmap §11 items 1 through 4 were answered by later milestones (A8 atomic profile and host-writer policy, A9 Hart/Machine lifecycle, and the earlier public-compatibility choices). They are not reopened here. Roadmap §11 item 6 (external integration) remains conditional, and item 7 (stable runners, retention, CI/PR comparison, and thresholds) is deferred by the A10 §8 amendment. Neither is reopened or answered here. Roadmap §11 item 5 (Hart/profile boundary: privilege, MMU/PMP, interrupt/WFI, counters) is still open for the virtual-memory part. Interrupt/WFI and counters stay with Stage 5 (D10). The other rows are decisions Stage 4 needs that §11 does not list.
+
+**D0. Stage 3 exit and Stage 4 entry.** OPEN DECISION. Does the right-sized A10 (P0 through P2 plus P3′, with certification deferred) satisfy the roadmap Stage 3 exit and the Stage 4 entry gate, or is that gate waived for Stage 4? The roadmap exit ([post-A7 roadmap](post-a7-roadmap.md), Stage 3 items 4 and 5) requires retained revision and PR baseline comparison, scheduled CI publication, and noise calibration. The A10 §8 amendment deferred those for A10 closure only. A10's closeout review is still pending. This draft does not decide the gate.
+
+- Option A. **Recommended default:** treat the right-sized A10 as satisfying the scheduling gate for a Stage 4 contract, and leave comparison, scheduled CI publication, and noise calibration deferred. Record the waiver in the contract that replaces this draft.
+- Option B. Waive the gate explicitly for Stage 4 without treating A10 as having satisfied it. Same practical effect, different record.
+- Option C. Keep Stage 4 blocked until a later milestone delivers the deferred comparison, CI publication, and calibration.
 
 **D1. Privilege levels in v1.** OPEN DECISION. Which privilege modes can a public guest run in and transition between? Roadmap §11 item 5.
 
@@ -150,4 +156,4 @@ Roadmap §11 items 1, 2, 3, 4, 6, and 7 were answered by later milestones (A8 at
 
 Principal risks, if the milestone is later approved: a page-walk fault classified as `unknown`, a stale TLB after an untested flush, bare-guest behavior drifting, and PMP, Sv48, or interrupts entering without a §8 answer. Any A/D policy that can drop a failed PTE write-back is rejected no matter which D4 option is chosen. That rejection is a constraint on the options, not a choice of option.
 
-Activation boundary: this draft becomes a contract only through the rolling workflow. The user answers D1 through D10, the draft is revised to match those answers, and a separate approval lands. A documentation-only rotation PR then archives A10. A10's own closeout still has a pending independent review. This document authorizes no implementation.
+Activation boundary: this draft becomes a contract only through the rolling workflow. The user answers D0 through D10, the draft is revised to match those answers, and a separate approval lands. A documentation-only rotation PR then archives A10. A10's own closeout still has a pending independent review. This document authorizes no implementation.
