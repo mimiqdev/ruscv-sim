@@ -1,8 +1,8 @@
 # A10 duration-scaled calibration workloads
 
-**Status:** Current
+**Status:** Historical
 
-**Authority:** Informational; development implementation, not P3 acceptance.
+**Authority:** Informational; superseded 2026-10-10 by user-authorized simplification — the deferred calibration/certification layer (this workload series, its oracle/manifests and its audit machinery) was deleted from the branch rather than carried. The fixture sources under `tools/a10/calibration-fixtures/` are retained for future payloads; no baseline, ratio or acceptance evidence ever came from this series.
 
 ## Boundary and identities
 

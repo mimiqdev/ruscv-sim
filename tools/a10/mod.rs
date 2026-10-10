@@ -230,16 +230,8 @@ pub fn manifest() -> Manifest {
     manifest_capabilities(&m).expect("supported manifest version and capabilities");
     m
 }
-pub fn calibration_manifest() -> Manifest {
-    let m: Manifest = serde_json::from_str(include_str!("calibration-oracle-v2.json"))
-        .expect("versioned independent calibration oracle");
-    manifest_capabilities(&m).expect("calibration oracle capabilities");
-    m
-}
 pub fn manifest_capabilities(m: &Manifest) -> Check {
-    if !((m.schema == "a10-oracle/1" && m.version == 1)
-        || (m.schema == "a10-calibration-oracle/1" && m.version == 2))
-    {
+    if !(m.schema == "a10-oracle/1" && m.version == 1) {
         return Err(Rejection::Semantic("unknown oracle schema/version".into()));
     }
     let expected: BTreeMap<String, Vec<String>> = [

@@ -146,32 +146,12 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
     let reps = report["policy"]["basic_repetitions"]
         .as_u64()
         .ok_or("repetitions")?;
-    let fragment = report.get("calibration_fragment");
-    if fragment.is_none() {
-        need((1..=16).contains(&reps), "P2 smoke repetitions")?;
-    } else {
-        need(
-            (1..=256).contains(&reps),
-            "bounded calibration fragment rows",
-        )?;
-    }
-    let m = if let Some(fragment) = fragment {
-        let expected = phases::digest::sha256(include_bytes!("calibration-oracle-v2.json"));
-        need(
-            fragment["oracle_sha256"].as_str() == Some(expected.as_str()),
-            "unknown/mismatched calibration oracle identity",
-        )?;
-        calibration_manifest()
-    } else {
-        manifest()
-    };
+    need((1..=16).contains(&reps), "P2 smoke repetitions")?;
+    let m = manifest();
     // Parse/reconstruct each immutable pinned initial image once per read. This
     // caches expected bytes only, never a sample verdict or companion run.
     let mut images = BTreeMap::new();
     for f in &m.fixtures {
-        if fragment.is_some_and(|fragment| fragment["fixture"].as_str() != Some(f.id.as_str())) {
-            continue;
-        }
         let elf = read(root, &Value::String(format!("fixtures/{}.elf", f.id)))?;
         need(
             phases::digest::sha256(&elf) == f.elf_sha256,
@@ -190,60 +170,24 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
         );
     }
     let mut expected = Vec::new();
-    if let Some(fragment) = fragment {
-        let fixture = fragment["fixture"].as_str().ok_or("fragment fixture")?;
-        let f = m
-            .fixtures
-            .iter()
-            .find(|f| f.id == fixture)
-            .ok_or("unknown fragment fixture")?;
-        let route = fragment["route"].as_str().ok_or("fragment route")?;
-        let route = m
-            .route_matrix
-            .keys()
-            .find(|r| r.as_str() == route)
-            .ok_or("unknown fragment route")?;
-        let phase = fragment["phase"].as_str().ok_or("fragment phase")?;
-        let mode = fragment["mode"].as_str().ok_or("fragment mode")?;
-        need(
-            matches!(phase, "load_only" | "execute_only" | "end_to_end"),
-            "fragment phase",
-        )?;
-        need(
-            matches!(mode, "none" | "off" | "facts" | "file"),
-            "fragment mode",
-        )?;
-        let first = fragment["first_repetition"]
-            .as_u64()
-            .ok_or("fragment repetition")?;
-        let applicable = phases::availability(&m, f, route, phase, mode).is_ok();
-        need(
-            applicable || (reps == 1 && first == 0),
-            "N/A fragment count",
-        )?;
-        for rep in first..first.checked_add(reps).ok_or("fragment overflow")? {
-            expected.push((f.id.as_str(), route.as_str(), phase, mode, rep, applicable));
-        }
-    } else {
-        for f in &m.fixtures {
-            for route in m.route_matrix.keys() {
-                for phase in ["load_only", "execute_only", "end_to_end"] {
-                    for mode in if phase == "load_only" {
-                        vec!["none"]
-                    } else {
-                        vec!["off", "facts", "file"]
-                    } {
-                        let applicable = phases::availability(&m, f, route, phase, mode).is_ok();
-                        for rep in 0..=if applicable { reps } else { 0 } {
-                            expected.push((
-                                f.id.as_str(),
-                                route.as_str(),
-                                phase,
-                                mode,
-                                rep,
-                                applicable,
-                            ));
-                        }
+    for f in &m.fixtures {
+        for route in m.route_matrix.keys() {
+            for phase in ["load_only", "execute_only", "end_to_end"] {
+                for mode in if phase == "load_only" {
+                    vec!["none"]
+                } else {
+                    vec!["off", "facts", "file"]
+                } {
+                    let applicable = phases::availability(&m, f, route, phase, mode).is_ok();
+                    for rep in 0..=if applicable { reps } else { 0 } {
+                        expected.push((
+                            f.id.as_str(),
+                            route.as_str(),
+                            phase,
+                            mode,
+                            rep,
+                            applicable,
+                        ));
                     }
                 }
             }
@@ -278,11 +222,7 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
             ) == (fixture, route, phase, mode, rep),
             "cell/repetition identity mismatch",
         )?;
-        let warmup = if let Some(fragment) = fragment {
-            fragment["warmup"].as_bool().ok_or("fragment warmup")?
-        } else {
-            applicable && rep == 0
-        };
+        let warmup = applicable && rep == 0;
         need(r.warmup == warmup, "warmup identity")?;
         let f = m.fixtures.iter().find(|f| f.id == fixture).unwrap();
         need(

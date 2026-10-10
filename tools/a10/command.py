@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Public correctness-first smoke, qualified calibrated collection and informational comparison; P4 deferred."""
+"""Public correctness-first smoke and baseline profiles, strict validation; P4 CI/retention deferred."""
 import argparse
 import os
 from pathlib import Path
@@ -71,28 +71,8 @@ def main(argv):
         code = validate(Path(args.report),reader_binary(),args.bundle_sha256)
         print(f'Strict schema/integrity/own-P0 status {code}; NEVER a speed/regression PASS')
         return code
-    if argv and argv[0]=='compare':
-        if len(argv)==1:
-            print('INCONCLUSIVE: baseline/candidate/out required; no ratios',file=sys.stderr);return 2
-        parser=argparse.ArgumentParser(description='Strict own-P0 calibrated evidence comparison, informational only')
-        parser.add_argument('--baseline');parser.add_argument('--candidate');parser.add_argument('--out',required=True)
-        args=parser.parse_args(argv[1:]);out=fresh_output(args.out)
-        from calibrated import comparison
-        code,result=comparison(args.baseline,args.candidate,reader_binary())
-        out.mkdir(parents=True);json_new(out/'comparison.json',result);(out/'comparison.json').chmod(0o444)
-        print('QUALIFIED INFORMATIONAL; no speed gate' if code==0 else 'INCONCLUSIVE: no ratios' if code==2 else 'SEMANTIC/SCHEMA/REPORTING FAILURE: no ratios')
-        return code
-    if argv and argv[0]=='cohort':
-        parser=argparse.ArgumentParser(description='Bind three independent validated single-session calibrated reports into the sealed usable baseline cohort')
-        parser.add_argument('--reports',nargs=3,required=True)
-        parser.add_argument('--out',required=True)
-        args=parser.parse_args(argv[1:]);out=fresh_output(args.out)
-        from calibrated import cohort as build
-        code,result=build(out,[Path(p) for p in args.reports],reader_binary(),clean())
-        print('USABLE COHORT BASELINE SEALED; informational only, no speed gate' if code==0 else 'INCONCLUSIVE: cohort lacks fully usable/noise-sufficient members; no ratios' if code==2 else 'SEMANTIC/SCHEMA/REPORTING FAILURE: no cohort')
-        return code
     if not argv or argv[0] != 'run':
-        print('INCONCLUSIVE: use public-v1 smoke/calibrated, validate or compare; CI/retention deferred (P4)',file=sys.stderr)
+        print('INCONCLUSIVE: use public-v1 smoke/baseline, validate; compare/CI deferred (P4)',file=sys.stderr)
         return 2
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--suite',required=True)
@@ -100,14 +80,11 @@ def main(argv):
     parser.add_argument('--out',required=True)
     parser.add_argument('--repetitions',type=int,default=2)
     args = parser.parse_args(argv[1:])
-    if args.suite=='public-v1' and args.profile=='calibrated':
-        from calibrated import run_collection
-        return run_collection(argv[1:])
     if args.suite=='public-v1' and args.profile=='baseline':
         from baseline import run as baseline_run
         return baseline_run(argv[1:])
     if args.suite != 'public-v1' or args.profile != 'smoke' or not 1 <= args.repetitions <= 16:
-        print('INCONCLUSIVE: only public-v1 smoke (1..16 basic repetitions plus one warmup) is implemented',file=sys.stderr)
+        print('INCONCLUSIVE: only public-v1 smoke (1..16 basic repetitions plus one warmup) or baseline (15..64) is implemented',file=sys.stderr)
         return 2
     out = fresh_output(args.out)
     started = utc()

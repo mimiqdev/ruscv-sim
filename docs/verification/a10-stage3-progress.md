@@ -235,29 +235,19 @@ The repaired [`replay.rs`](../../tools/a10/replay.rs) compares the complete `Int
 
 New actual-route Rust negatives cover both native routes, off/file modes and warmup/basic samples. Full-reader controls couple raw/evidence/clock tables and keep original child stdout unchanged; host controls also couple setup/provenance artifact/digest/aggregate mirrors before removing fields or nested metadata. They must fail the actual reader, not just a mirror-consistency guard. The strict release audit additionally accepts explicit whole-host unavailability without inventing identity. P0/P1 scopes/oracles, production APIs/semantics and P3/P4 exclusions remain unchanged. New committed-head evidence and review are required; historical checkpoint proof cannot be carried forward.
 
-## P3 right-sizing (user-authorized 2026-10-10)
+## P3 simplification (user-authorized 2026-10-10)
 
-The user authorized cutting payloads and certification, never the framework. The
-delivered framework layer (manifest machinery, fixture pipeline, phase clock scoping,
-route-matrix/N/A semantics, strict reader/bundle sealing, identity capture, exit
-classification) stays as A10's asset; certification (three-session cohort/baseline
-gates, the 504-cell matrix, CI weekly reporting/retention) is deferred, not an
-acceptance requirement. The committed cohort/calibration machinery remains in-repo
-covered by its unit controls; calibrated transport/sink defects are non-blocking
-unless the baseline path shares them.
-
-Historical heavy calibrated development is preserved under `target/` as failed
-records only: the v5 collection at `58bc9f9` ended at 102.7973 minutes with 180/31/0
-usable cells (reader 69.60 minutes dominated by per-fragment subprocess replay; the
-first session's warmups alone totaled 14.8 minutes), and the later wrapper attempt at
-`d3992397` was user-stopped during its first session. None of these are sessions,
-baselines or acceptance evidence, and none were relabeled.
-
-The delivered baseline profile (`baseline`, `a10-baseline-report/1`) measures exactly
-three representative workloads with the per-repetition correctness floor of CLI exit
-plus exact stdout, honest exit-2 INCONCLUSIVE on any failure, median/p05/p95, and
-environment/embedded-build-head identity. Its recorded observation and manual
-re-run/compare-later instructions are in [a10-baseline.md](a10-baseline.md). The
-authenticated exact-HEAD `a10-baseline-run` observation is recorded through worker
-verification before handoff; P4′ closes with the short documentation page and final
-independent review.
+The user authorized radical simplification: the deferred calibration/
+certification layer (calibrated profile, duration-scaled workload series and
+oracles, cohort/baseline/comparison machinery, allocation/inheritance
+qualification, pinned verify_p3 wrapper, and the CI-failing variant matrix)
+was DELETED from this unmerged branch rather than carried. The remaining
+framework asset is the fixture/manifest pipeline, the three-phase clock
+scoping, the strict ruscv-perf reader/bundle machinery, and the delivered
+baseline profile (`a10-baseline-report/1`, exactly three representative
+workloads; floor = CLI exit plus exact stdout bytes). The fixture sources
+under `tools/a10/calibration-fixtures/` are retained for future payloads.
+Earlier heavy calibrated attempts (the failed 102.8-minute v5 collection at
+`58bc9f9` and the stopped wrapper at `d3992397`) remain historical records;
+none ever produced usable sessions, a baseline or ratios. P3′/P4′ closure is
+the baseline observation plus documentation and independent review.

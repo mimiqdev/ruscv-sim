@@ -48,5 +48,6 @@ python3 -c "import json;r=json.load(open('<out>/report.json'));print(r['semantic
   reuse/overwrite, symlinked ancestors and parent escapes.
 - Compare later sessions by reading two reports and comparing per-workload medians
   yourself; the profile intentionally emits no ratios and no classification.
-- `smoke` and `calibrated` profiles are unchanged; calibrated certification remains
-  deferred machinery covered by unit tests.
+- `smoke` remains unchanged; the deferred calibration/certification layer was
+  deleted from the branch (user-authorized 2026-10-10) and never produced
+  baseline, ratio or acceptance evidence.

@@ -1,5 +1,4 @@
 //! Shared public-path driver; untimed raw transport and P0 oracle replay.
-pub mod calibration;
 pub mod phases;
 pub mod replay;
 #[path = "mod.rs"]
@@ -85,9 +84,7 @@ fn run() -> Result<i32, String> {
         );
         return Ok(0);
     }
-    if !((args.len() == 4 && args[1] == "run")
-        || ((args.len() == 4 || args.len() == 5) && args[1] == "calibrated-session"))
-    {
+    if !(args.len() == 4 && args[1] == "run") {
         return Err(
             "usage: a10-perf-driver run PREPARED_OUTPUT REPETITIONS (use scripts/perf-test.sh)"
                 .into(),
@@ -108,14 +105,13 @@ fn run() -> Result<i32, String> {
     {
         return Err("stale source metadata".into());
     }
-    let mut audit_command = Command::new("python3");
-    audit_command
-        .arg("tools/a10/audit_fixtures.py")
-        .arg(out.join("fixtures"));
-    if args[1] == "calibrated-session" {
-        audit_command.arg("--calibration").stdout(std::io::stderr());
-    }
-    let audit = audit_command.status().map_err(|e| e.to_string())?;
+    let audit = Command::new("python3")
+        .args([
+            "tools/a10/audit_fixtures.py",
+            &out.join("fixtures").to_string_lossy(),
+        ])
+        .status()
+        .map_err(|e| e.to_string())?;
     if !audit.success() {
         return Err("fresh fixture identity audit failed".into());
     }
@@ -124,57 +120,16 @@ fn run() -> Result<i32, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let cli = exe.parent().ok_or("driver directory")?.join("ruscv-sim");
     let fixtures = out.join("fixtures");
-    let file_sinks = if args[1] == "calibrated-session" {
-        let session_id = out.file_name().ok_or("session ID")?;
-        let expected = match std::env::var_os("RISCV_PERF_CALIBRATION_SINKS_ROOT") {
-            // Continuing-allocation invocations share the inspected mount.
-            Some(root) => std::path::PathBuf::from(root).join(session_id),
-            None => out
-                .parent()
-                .and_then(Path::parent)
-                .ok_or("session root")?
-                .join("local-sinks")
-                .join(session_id),
-        };
-        let actual = std::env::var_os("RISCV_PERF_CALIBRATION_SINKS")
-            .map(std::path::PathBuf::from)
-            .ok_or("required inspected VM-local sinks unavailable")?;
-        if actual != expected || !actual.is_dir() || actual.is_symlink() {
-            return Err("unsafe/mismatched VM-local sink placement".into());
-        }
-        Some(actual)
-    } else {
-        None
-    };
     let paths = Paths {
         fixtures: &fixtures,
         cli: &cli,
         driver: &exe,
         artifacts: &artifacts,
-        file_sinks: file_sinks.as_deref(),
+        file_sinks: None,
     };
-    if args[1] == "calibrated-session" {
-        let budget: u64 = args[3].parse().map_err(|_| "session budget ns")?;
-        if budget == 0 || budget > 1_800_000_000_000 {
-            return Err("invalid bounded session budget".into());
-        }
-        let plan = args
-            .get(4)
-            .map(|p| {
-                std::fs::read(p)
-                    .map_err(|e| e.to_string())
-                    .and_then(|b| replay::unique_json(&b))
-            })
-            .transpose()?;
-        return calibration::session(
-            &paths,
-            std::time::Duration::from_nanos(budget),
-            plan.as_ref(),
-        );
-    }
     let repetitions: usize = args[3].parse().map_err(|_| "invalid repetitions")?;
     if !(1..=16).contains(&repetitions) {
-        return Err("smoke repetitions must be 1..16; calibrated unavailable".into());
+        return Err("smoke repetitions must be 1..16".into());
     }
     let m = support::manifest();
     let mut clock = HostClock::default();
