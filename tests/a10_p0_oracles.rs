@@ -76,9 +76,7 @@ fn build() -> Option<&'static Build> {
                 .unwrap();
             }
             if std::env::var_os("RISCV_REQUIRE_A10_PINNED_TOOLS").is_some() {
-                if !(cfg!(target_arch = "aarch64") && cfg!(target_os = "linux")) {
-                    panic!("UNAVAILABLE: pinned tool-byte profile requires Linux/aarch64");
-                }
+                let platform = identity["platform"].as_str().expect("build platform");
                 for (tool, version) in &m.tool_versions {
                     assert_eq!(
                         identity["tools"][tool]["version"].as_str(),
@@ -86,7 +84,10 @@ fn build() -> Option<&'static Build> {
                     );
                     assert_eq!(
                         identity["tools"][tool]["sha256"].as_str(),
-                        Some(m.arm64_tool_sha256[tool].as_str())
+                        Some(
+                            pinned_tool_sha256(&m.tool_sha256, platform, tool)
+                                .unwrap_or_else(|error| panic!("{error}"))
+                        )
                     );
                 }
             } else {
@@ -193,6 +194,23 @@ fn versioned_manifest_and_capabilities_fail_closed() {
         serde_json::from_str(include_str!("../tools/a10/public-v1.json")).unwrap();
     unknown["unexpected"] = true.into();
     assert!(serde_json::from_value::<Manifest>(unknown).is_err());
+    let x86_64_as = "5d693231db1242b89b73e7329117e8f35d29c498e9e765c10b62e2a9429983f9";
+    assert_eq!(
+        pinned_tool_sha256(&m.tool_sha256, "x86_64", "as").as_deref(),
+        Ok(x86_64_as)
+    );
+    let mut wrong = m.tool_sha256.clone();
+    wrong
+        .get_mut("x86_64")
+        .unwrap()
+        .insert("as".into(), "0".repeat(64));
+    let observed = pinned_tool_sha256(&m.tool_sha256, "x86_64", "as").unwrap();
+    assert_ne!(observed, wrong["x86_64"]["as"].as_str());
+    for platform in ["amd64", "arm64", "riscv64"] {
+        let error = pinned_tool_sha256(&m.tool_sha256, platform, "as").unwrap_err();
+        assert!(error.contains(platform), "{error}");
+        assert!(!error.contains(x86_64_as), "{error}");
+    }
 }
 
 #[test]

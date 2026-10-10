@@ -21,7 +21,7 @@ pub struct Manifest {
     pub source_baseline: String,
     pub build_flags: Vec<String>,
     pub tool_versions: BTreeMap<String, String>,
-    pub arm64_tool_sha256: BTreeMap<String, String>,
+    pub tool_sha256: BTreeMap<String, BTreeMap<String, String>>,
     pub route_matrix: BTreeMap<String, Vec<String>>,
     pub na: BTreeMap<String, String>,
     pub fixtures: Vec<Fixture>,
@@ -224,6 +224,19 @@ fn required<'a, T>(name: &str, value: &'a Option<T>) -> Result<&'a T, Rejection>
         .as_ref()
         .ok_or_else(|| Rejection::Unavailable(format!("missing {name}")))
 }
+pub fn pinned_tool_sha256<'a>(
+    tool_sha256: &'a BTreeMap<String, BTreeMap<String, String>>,
+    platform: &str,
+    tool: &str,
+) -> Result<&'a str, String> {
+    let pins = tool_sha256
+        .get(platform)
+        .ok_or_else(|| format!("unpinned producer platform {platform}"))?;
+    pins.get(tool)
+        .map(String::as_str)
+        .ok_or_else(|| format!("unpinned producer {tool} on {platform}"))
+}
+
 pub fn manifest() -> Manifest {
     let m: Manifest =
         serde_json::from_str(include_str!("public-v1.json")).expect("versioned oracle manifest");

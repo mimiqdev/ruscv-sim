@@ -12,7 +12,7 @@ import tempfile
 from integrity import canonical, digest, json_new, loads, read, require, retrieve, Invalid
 from collect import ROOT, observation, utc
 
-ORACLE_SHA = '89a89bfb960484079468d419d51639b60d439561828a4e3516abd0829c627733'
+ORACLE_SHA = 'a9dd39078beb2a1bed7278e22c1001a7de55b1a8b57ea29581b0b4bf3281a1a9'
 
 def build_events(stdout):
     """Cargo -vv stdout is mixed; strict JSON objects + retained raw script lines."""
@@ -315,7 +315,9 @@ def validate(path, reader, expected_digest=None, sealed=True):
         for tool in ('as','ld','nm','objdump'):
             require(fixture_build['tools'][tool]['sha256'] == report['tools'][tool]['sha256'] and fixture_build['tools'][tool]['version'] == report['tools'][tool]['version'].splitlines()[0], 'actual producer executable identity')
             if actual['identity_class'] == 'strict-pinned-tools':
-                require(report['tools'][tool]['sha256'] == oracle['arm64_tool_sha256'][tool] and fixture_build['tools'][tool]['version'] == oracle['tool_versions'][tool], 'strict pin not artifact-equivalence')
+                platform = fixture_build['platform']
+                pinned = oracle['tool_sha256'].get(platform)
+                require(isinstance(pinned, dict) and report['tools'][tool]['sha256'] == pinned.get(tool) and fixture_build['tools'][tool]['version'] == oracle['tool_versions'][tool], 'strict pin not artifact-equivalence on '+platform)
     env = report['environment']
     for key in ('physical_host','container','ci','filesystem'):
         obs(env[key])

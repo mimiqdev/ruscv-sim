@@ -13,11 +13,19 @@
     "objdump": "GNU objdump (2.40-2+4+b1) 2.40",
     "nm": "GNU nm (2.40-2+4+b1) 2.40"
   },
-  "arm64_tool_sha256": {
-    "as": "0159aa61f690f3735e20af1d0add8874950de4fca8fd5e264ec3b96ec53826d6",
-    "ld": "ad20783564aa8facfbc7d494ad219f00c276d03a492627644e3827cbfaa5fb1e",
-    "objdump": "dac962bc0b193be7018d3594dfe891db9a579298f6c0a6fee80422c35ae37566",
-    "nm": "08488f3820090751e5260f90d263f7d544f83124454a5d851543be2f6c93221b"
+  "tool_sha256": {
+    "aarch64": {
+      "as": "0159aa61f690f3735e20af1d0add8874950de4fca8fd5e264ec3b96ec53826d6",
+      "ld": "ad20783564aa8facfbc7d494ad219f00c276d03a492627644e3827cbfaa5fb1e",
+      "nm": "08488f3820090751e5260f90d263f7d544f83124454a5d851543be2f6c93221b",
+      "objdump": "dac962bc0b193be7018d3594dfe891db9a579298f6c0a6fee80422c35ae37566"
+    },
+    "x86_64": {
+      "as": "5d693231db1242b89b73e7329117e8f35d29c498e9e765c10b62e2a9429983f9",
+      "ld": "1ed449b500697d187754c10799543d91571fc9a875a3feee5a1eada761c50baa",
+      "objdump": "8a9215d2d7ab2d670d741fa14d1e77df6a43e1a66861fe1e5b5c00114c9697d6",
+      "nm": "783030bd9b56ab0b6e8dc2a7c20b15dd0e4668748c0e1bd9c10d2dd1e3b0702f"
+    }
   },
   "route_matrix": {
     "machine-native": [

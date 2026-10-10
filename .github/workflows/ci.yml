@@ -61,6 +61,9 @@ jobs:
           python3 -m unittest discover -s scripts/a5 -p 'test_*.py'
           bash -n scripts/a5/experiment.sh
 
+      - name: Check A10 producer pin and baseline controls
+        run: python3 -m unittest discover -s tools/a10 -p 'test_*.py'
+
       - name: Run clippy
         run: cargo clippy --all-features --all-targets -- -D warnings
 
@@ -72,7 +75,8 @@ jobs:
 
       - name: Check guest scripts and protected output-path guards
         run: |
-          bash -n scripts/riscv_elf_paths.sh scripts/compile_riscv_tests.sh scripts/run_elf_tests.sh scripts/test_riscv_elf_guards.sh
+          bash -n scripts/riscv_elf_paths.sh scripts/compile_riscv_tests.sh
+          bash -n scripts/run_elf_tests.sh scripts/test_riscv_elf_guards.sh
           bash scripts/test_riscv_elf_guards.sh
 
       # Pull requests already exercise the debug/test build above. Build and run
