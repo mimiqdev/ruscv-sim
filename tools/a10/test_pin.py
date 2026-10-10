@@ -99,7 +99,13 @@ class ReaderPin(unittest.TestCase):
 
 
 class ArtifactModeIgnoresPins(unittest.TestCase):
-    """--check-artifacts must not call merge_tool_sha256. Strict --check still does."""
+    """Local x86_64 fixture check. Not the CI guard.
+
+    CI has no target/a10-baseline-x86_64 tree, so setUp skips this case there.
+    tests/a10_p0_oracles.rs builds a fresh fixture directory and is the guard
+    that runs in CI: --check-artifacts passes and --check refuses an unpinned
+    or missing platform.
+    """
 
     def setUp(self):
         if not (FIXTURES / 'build.json').is_file():
