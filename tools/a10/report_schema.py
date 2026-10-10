@@ -12,7 +12,7 @@ import tempfile
 from integrity import canonical, digest, json_new, loads, read, require, retrieve, Invalid
 from collect import ROOT, observation, utc
 
-ORACLE_SHA = '89a89bfb960484079468d419d51639b60d439561828a4e3516abd0829c627733'
+ORACLE_SHA = 'a9dd39078beb2a1bed7278e22c1001a7de55b1a8b57ea29581b0b4bf3281a1a9'
 
 def build_events(stdout):
     """Cargo -vv stdout is mixed; strict JSON objects + retained raw script lines."""
@@ -224,6 +224,19 @@ def make_report(out, setup, raw, after):
     report['aggregates'] = aggregates(report)
     return report
 
+def pinned_producer(tool_sha256, tool_versions, platform, tool, sha256, version):
+    """Fail closed unless platform is a pinned string and this tool matches it."""
+    if isinstance(tool_sha256, dict) and isinstance(platform, str):
+        pins = tool_sha256.get(platform)
+    else:
+        pins = None
+    if not isinstance(pins, dict):
+        raise Invalid('fixture build platform')
+    matched = sha256 == pins.get(tool) and version == tool_versions[tool]
+    if not matched:
+        raise Invalid('strict pin not artifact-equivalence on ' + platform)
+
+
 def validate(path, reader, expected_digest=None, sealed=True):
     path = Path(path)
     require(path.name == 'report.json' and not path.is_symlink() and not any(p.is_symlink() for p in path.parents), 'unsafe report/root path')
@@ -315,7 +328,9 @@ def validate(path, reader, expected_digest=None, sealed=True):
         for tool in ('as','ld','nm','objdump'):
             require(fixture_build['tools'][tool]['sha256'] == report['tools'][tool]['sha256'] and fixture_build['tools'][tool]['version'] == report['tools'][tool]['version'].splitlines()[0], 'actual producer executable identity')
             if actual['identity_class'] == 'strict-pinned-tools':
-                require(report['tools'][tool]['sha256'] == oracle['arm64_tool_sha256'][tool] and fixture_build['tools'][tool]['version'] == oracle['tool_versions'][tool], 'strict pin not artifact-equivalence')
+                pinned_producer(
+                    oracle['tool_sha256'], oracle['tool_versions'], fixture_build.get('platform'),
+                    tool, report['tools'][tool]['sha256'], fixture_build['tools'][tool]['version'])
     env = report['environment']
     for key in ('physical_host','container','ci','filesystem'):
         obs(env[key])

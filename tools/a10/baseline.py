@@ -145,6 +145,7 @@ def run(argv):
               'workloads': workloads, 'rows': rows,
               'semantic_status': status, 'measurement_status': 'informational-baseline-v1; no speed/regression gate',
               'diagnostics': [f"verification floor failed on {r['workload']} repetition {r['repetition']}" for r in failed]}
+    clean(head)
     json_new(out / 'report.json', report)
     if status != 'correct':
         print('INCONCLUSIVE: baseline verification floor failed; rows retained; no speed/regression PASS', file=sys.stderr)

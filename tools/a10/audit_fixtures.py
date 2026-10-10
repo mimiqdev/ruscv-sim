@@ -13,9 +13,30 @@ ROOT = Path(__file__).resolve().parents[2]
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
+def producer_pin(tool_sha256, platform, tools, tool_versions):
+    """Strict pin for the machine string build.json recorded.
+
+    The key is the container's `uname -m` (`x86_64`, `aarch64`). A missing key
+    fails before any hash compare and does not consult another platform.
+    """
+    pins = tool_sha256.get(platform) if isinstance(tool_sha256, dict) else None
+    if not isinstance(pins, dict):
+        raise ValueError(f'unpinned producer platform {platform}')
+    for tool, info in tools.items():
+        if info['version'] != tool_versions[tool] or info['sha256'] != pins.get(tool):
+            raise ValueError(f'pinned producer mismatch on {platform}: {tool}')
+
+def merge_tool_sha256(saved, platform, tools):
+    """Replace only this build's uname slot. Other platforms stay pinned."""
+    if platform not in saved:
+        raise ValueError(f'unpinned producer platform {platform}')
+    merged = {key: dict(value) for key, value in saved.items()}
+    merged[platform] = {name: info['sha256'] for name, info in tools.items()}
+    return merged
+
 def audit(out):
     manifest = json.loads((ROOT / 'tools/a10/public-v1.json').read_text())
-    if sha(ROOT / 'tools/a10/public-v1.json') != '89a89bfb960484079468d419d51639b60d439561828a4e3516abd0829c627733':
+    if sha(ROOT / 'tools/a10/public-v1.json') != 'a9dd39078beb2a1bed7278e22c1001a7de55b1a8b57ea29581b0b4bf3281a1a9':
         raise ValueError('P1 must preserve the accepted P0 manifest')
     report = json.loads((out / 'build.json').read_text())
     if set(report['fixtures']) != {f['id'] for f in manifest['fixtures']}:
@@ -29,12 +50,13 @@ def audit(out):
             raise ValueError('assembler argv mismatch')
         if actual['argv_ld'][1:] != ['-T' + str(ROOT / f['linker']), str(out / (f['id'] + '.o')), '-o', str(out / (f['id'] + '.elf'))]:
             raise ValueError('linker argv mismatch')
-    for tool, info in report['tools'].items():
+    for info in report['tools'].values():
         if sha(Path(info['path'])) != info['sha256']:
             raise ValueError('actual producer executable mismatch')
-        if os.environ.get('RISCV_REQUIRE_A10_PINNED_TOOLS'):
-            if info['version'] != manifest['tool_versions'][tool] or info['sha256'] != manifest['arm64_tool_sha256'][tool]:
-                raise ValueError('required pinned ARM64 producer mismatch')
+    if os.environ.get('RISCV_REQUIRE_A10_PINNED_TOOLS'):
+        if 'platform' not in report:
+            raise ValueError('build.json lacks producer platform (uname -m); rebuild fixtures')
+        producer_pin(manifest['tool_sha256'], report['platform'], report['tools'], manifest['tool_versions'])
     if set(report['tools']) != {'as', 'ld', 'nm', 'objdump'}:
         raise ValueError('missing producer identities')
     return report

@@ -28,7 +28,7 @@ A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七�
 `RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
 评估约束。
 
-当前合同见 [`docs/dev-plan.md`](docs/dev-plan.md)：A10（独立公共路径性能测试基础设施），详细范围与仅文档的 A9→A10 归档轮换于 2026-10-03 UTC 批准，实际轮换合并时激活。在此之前 main 仍以 A9 为 Current；合并时 A9 正式完成，[完整原合同归档](docs/archive/milestones/a9-hart-facts-safe-n1-machine-lifecycle.md)。PR #69 实现的有界技术验收（2026-10-02）及 PR #70 收尾文档交付（2026-10-03）保持各自精确证据身份。A10 的 P0–P4 实现在轮换落地后的独立任务启动，本次文档不实现性能设施、优化或新功能。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
+当前合同见 [`docs/dev-plan.md`](docs/dev-plan.md)：A10（独立公共路径性能测试基础设施），由 PR #71 于 2026-10-08 激活；PR #72 于 2026-10-10 合并交付 P0–P2 框架与 P3′ 基线（`5d23d33`，含 exact-merge CI 与基线重跑证据）。[实现收尾记录](docs/archive/milestones/a10-closeout-record.md)记录有界技术验收与待完成的独立 PR-head 审查；合同仍在 dev-plan.md，待用户批准后继合同后才轮换归档。[Stage 4 虚拟内存/保护提案草稿](docs/proposals/stage4-contract-draft.md)列出全部开放决策，未激活。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
 
 ## 快速开始
 
@@ -152,7 +152,9 @@ flat Runner 的 tohost 取样与逐字节清除均与公共 `memory()` mutex 的
 身份，另列最终 PR-head 的完整 gate、独立审查，以及 merge-head CI 的 58/58 新编译
 项目 CLI guest 结果；Coverage 为 skipped，不是通过。[阶段记录](docs/verification/a9-stage2-progress.md)
 保留原始缺陷复现；[实现收尾记录](docs/archive/milestones/a9-closeout-record.md)明确技术验收与
-正式滚动轮换的边界。[Stage 3 已批准提案快照](docs/proposals/a10-performance-test-infrastructure.md)
+正式滚动轮换的边界。[A10 基线页](docs/verification/a10-baseline.md)记录三工作负载基线（原 Darwin 观测、merged-main
+重跑，以及 per-platform pin 之后的 Linux/x86_64 会话，跨主机不可比）；[A10 实现收尾记录](docs/archive/milestones/a10-closeout-record.md)记录 P0–P3′ 交付证据与待完成的
+独立 PR-head 审查；[Stage 3 已批准提案快照](docs/proposals/a10-performance-test-infrastructure.md)
 保留原始决策请求措辞作为历史，不是第二份 Current 合同或已实现的性能设施；无新 ACT4／性能结果声明。
 
 ## 仓库结构

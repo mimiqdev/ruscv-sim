@@ -1,10 +1,19 @@
-# A10 infrastructure progress — P0, P1 and P2 checkpoints
+# A10 infrastructure progress — P0, P1, P2 delivered; P3′ baseline recorded; P4′ close-out pending
 
 **Status:** Current
 
 **Authority:** Informational; implementation and verification inventory, not an acceptance contract.
 
-**Scope:** P0 correctness, P1 public-path phases and P2 local versioned evidence/schema. P2 is under new-head verification below; historical P0/P1 approval does not approve it. This is not A10 completion, an ACT4 claim or a performance verdict. P3 calibration/comparison is an unaccepted development prototype documented in [the schema guide](a10-perf-schema.md#p3-qualified-local-calibration-under-development); P4 CI/retention/final acceptance remains unimplemented. No three-session or usable-baseline evidence is claimed.
+**Scope:** P0–P2 landed and verified at their own exact heads (below). P3′
+delivered the right-sized baseline v1; P4′ documentation is delivered by this
+update plus the [baseline page](a10-baseline.md) and the [A10 closeout
+record](../archive/milestones/a10-closeout-record.md). The remaining P4′ item —
+independent final PR-head review of this documentation head — is **PENDING**,
+performed by a separate reviewer after these documents are committed. This is
+not an ACT4 claim or a performance verdict. No three-session cohort,
+ratio-bearing comparison, CI weekly reporting or retention validation is
+claimed; the certification layer remains deferred (see the §8 amendment in the
+[contract](../dev-plan.md#8-future-implementation-deliverables-and-falsifiable-acceptance)).
 
 **Contract references:** [Current A10 contract](../dev-plan.md), accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md) and [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md). [A9 closeout](a9-closeout-assessment.md) remains the historical safety baseline, not performance evidence.
 
@@ -251,3 +260,45 @@ Earlier heavy calibrated attempts (the failed 102.8-minute v5 collection at
 `58bc9f9` and the stopped wrapper at `d3992397`) remain historical records;
 none ever produced usable sessions, a baseline or ratios. P3′/P4′ closure is
 the baseline observation plus documentation and independent review.
+
+## Delivery, merge and close-out status
+
+- **Merge identity:** [PR #72](https://github.com/mimiqdev/ruscv-sim/pull/72)
+  (41 branch commits, squash) merged **2026-10-10T03:06:22Z** as
+  `5d23d337a6732d178a2e14445be9f5c28154f270`, tree
+  `a2920abf949a6d6e8c753b9f05a8ef9f06a41fc9`. Exact-merge-head CI
+  [run 38019391250](https://github.com/mimiqdev/ruscv-sim/actions/runs/38019391250)
+  (2026-10-10T03:06:25Z–03:17:02Z): Quality and tests **success** — all Rust
+  suites green at that head (**1,861 passed / 0 failed**, 58 `test result:`
+  suites; the same job's guest-build step compiled and ran the project ELF
+  tests); Coverage skipped by policy, not passed.
+- **P3′ delivered:** the baseline v1 profile
+  (`./scripts/perf-test.sh run --suite public-v1 --profile baseline`) measured
+  the three representative workloads in one session with ≥15 repetitions each;
+  the original observation (pre-merge head `5c52533…`, Darwin/arm64), the
+  merged-main re-run (`5d23d337`, Linux/amd64, still on the ARM64-only pin),
+  and the later Linux/x86_64 session (clean `25f3a3d`, per-platform pin,
+  15/15 each, report SHA-256 `55e84d64…`) are recorded in
+  [a10-baseline.md](a10-baseline.md). None is a speed or regression verdict.
+  Numbers from different hosts or producer platforms are not comparable.
+- **P4′ delivered by this update:** baseline documentation page (updated with
+  the merged-main re-run), this honest progress update, and the
+  [A10 closeout record](../archive/milestones/a10-closeout-record.md).
+  **PENDING:** the independent final PR-head review, performed by a separate
+  read-only reviewer on the committed documentation head. A10 closes only on
+  baseline delivery **plus** that review.
+
+### Deferred with the certification layer, and why
+
+| Deferred item | Why (user-authorized 2026-10-10 scope reduction) |
+| --- | --- |
+| Three-session calibration cohort | Certification payload, not framework; no ratio or threshold decision exists to calibrate against, and the failed 102.8-minute attempt showed the cost of collecting it before any consumer exists. |
+| Baseline sealing / comparison gates and ratios | No optimization work is scheduled; sealing a comparison gate now would create a threshold without a decision. The baseline page records re-run/compare-later instructions instead. |
+| Full 504-cell calibrated matrix runs | Framework seams exist and are tested (180 phase cells / 324 N/A rows in smoke); running the full calibrated matrix was payload breadth, cut to three representative workloads. |
+| CI weekly public-suite reporting | Requires runner/host stability and retention policy that no current consumer uses; `bench-scheduled.yml` keeps running the seven component controls unchanged. |
+| Artifact download/retention validation (90/30-day) | Depends on the CI reporting layer; nothing produces the bundles to retain. |
+| In-memory serialized-log observation mode | N/A on every route by contract (§5): no public arbitrary-writer seam exists; not a certification deferral, an explicit exclusion. |
+
+All committed machinery remains in-repo and covered by the existing unit tests
+(P0/P1/P2 suites, Python schema/bundle controls); a future certification
+milestone can re-add payloads on these seams without framework surgery.

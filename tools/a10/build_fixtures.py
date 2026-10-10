@@ -57,7 +57,8 @@ def main():
         (out / (name + '.nm')).write_text(symbols)
         records[name] = {'source_sha256': sha(source), 'linker_sha256': sha(linker),
                          'elf_sha256': sha(elf), 'argv_as': argv_as, 'argv_ld': argv_ld}
-    (out / 'build.json').write_text(json.dumps({'tools': tools, 'fixtures': records}, indent=2)+'\n')
+    platform = subprocess.check_output(['uname', '-m'], text=True).strip()
+    (out / 'build.json').write_text(json.dumps({'platform': platform, 'tools': tools, 'fixtures': records}, indent=2)+'\n')
 
 if __name__ == '__main__':
     main()
