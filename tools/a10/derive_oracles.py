@@ -28,12 +28,18 @@ mode = sys.argv[2:]
 if mode not in [[], ['--check'], ['--check-artifacts']]:
     raise ValueError('expected only --check or --check-artifacts')
 build = json.loads((BUILD/'build.json').read_text())
+# Artifact equivalence ignores producer identity. Only write and strict --check
+# replace this platform's pin; an unpinned platform must not be consulted here.
+if mode == ['--check-artifacts']:
+    tool_sha256 = original_tools['tool_sha256']
+else:
+    tool_sha256 = merge_tool_sha256(original_tools['tool_sha256'], build['platform'], build['tools'])
 manifest.update(schema='a10-oracle/1', version=1,
     image='ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c',
     source_baseline='e73b12b8467fd635b398382a5cbc7ce75d842f68',
     build_flags=['-march=rv64ima_zicsr','-mabi=lp64'],
     tool_versions={k:v['version'] for k,v in build['tools'].items()},
-    tool_sha256=merge_tool_sha256(original_tools['tool_sha256'], build['platform'], build['tools']),
+    tool_sha256=tool_sha256,
     route_matrix={'machine-native':['off','facts','file'], 'machine-flat':['off','facts','file'],
         'native-bytes':['off','file'], 'native-file':['off','file'], 'cli':['off','file'], 'flat':['off']},
     na={'native-bytes/facts':'no public arbitrary sink', 'native-file/facts':'no public arbitrary sink',
