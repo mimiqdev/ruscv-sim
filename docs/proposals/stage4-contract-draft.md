@@ -68,7 +68,7 @@ Every fixture below is part of the milestone. The oracle shape follows A10. Each
 | Mapped read and write | D1 and D2. The guest builds Sv39 tables whose PTE PPNs are guest physical page numbers, writes `satp`, then loads and stores. | Exact translated bytes, untouched neighbors, final PC, and retirements. |
 | Permission fault | D6 and D9. A store to a read-only PTE, a fetch from a non-executable PTE, an S-mode load of a U = 1 page with SUM = 0, an S-mode fetch of a U = 1 page, and a load of an X = 1 page with MXR = 0 and again with MXR = 1. | Exact cause, the original virtual address in `mtval`, and no partial store. |
 | Walk fault | D3. A non-canonical virtual address on a fetch and on a load, an invalid PTE, a PTE with a reserved bit 63:54 set, a non-leaf PTE with D, A, or U set, a misaligned superpage, and a walk whose physical read the target rejects. | A page fault for the virtual-address and PTE cases and an access fault of the original kind for the rejected read, each with the original virtual address in `mtval` and no partial RAM effect. A host, protocol, or unknown completion is a `SimulatorFailure`, asserted by a driver test rather than a guest. |
-| A/D observation | D4. A fresh page, read and then written. A second case where the A/D write-back is rejected. | A set after the read, A and D set after the write. The rejected write-back is an access fault of the original kind. Where observation is on, the successful write appears as a memory effect and does not appear inside the `CommitRecord` of an instruction that then faults. |
+| A/D observation | D4. A fresh page, read and then written. A second case where the A/D write-back is rejected. A third case where the write-back succeeds and the following access then faults. | A set after the read, A and D set after the write. The rejected write-back is an access fault of the original kind. Where observation is on, a retired instruction carries the A/D `MemoryEffect` in `CommitRecord.effects.memory`, ordered before the explicit access and marked implicit. A faulting instruction carries that same effect in `TrapRecord.effects.memory` and has no `CommitRecord`. |
 | SFENCE.VMA | D8 and M4. The guest executes all four forms. Both rs1 and rs2 are x0, rs1 is x0 with rs2 not x0, rs1 is not x0 with rs2 x0, and neither is x0. It then uses the mapping it just wrote. One case executes SFENCE.VMA in U-mode, and one case uses a SYSTEM funct3 = 0 encoding that is not SFENCE.VMA. | The new translation is visible after the fence. Because v1 has no translation cache, the new translation is also visible before the fence. That earlier visibility is recorded as a property of this model, not as an architectural requirement. The U-mode case and the other SYSTEM encoding are illegal-instruction traps. |
 | Privilege transition | D1. `mret` to S and to U, SRET from S to U and from M to S, SRET in U, ECALL in U and in S, and an SRET whose SEPC has low bits set. | `mret` and SRET land in the privilege SPP or MPP names, and the CSR file checks later accesses at that privilege. SRET in U is an illegal-instruction trap. ECALL in U is taken in M with cause 8, and ECALL in S is taken in M with cause 9. SRET clears MPRV and sets SPIE to 1. The returned SEPC has bits 1:0 clear. |
 | MPRV | D9. In M, with MPRV set, MPP = S, and SUM = 1, the guest loads and stores through an Sv39 mapping, including a load of a U = 1 page, and fetches without translation. | The load and the store use the S-mode translation, and SUM permits the U = 1 load. The fetch does not use that translation. A second load of the same U = 1 page with SUM = 0 is a page fault. |
@@ -82,7 +82,14 @@ The selected fixtures run on the public routes. Those routes are the real CLI ch
 
 Reuse the A10 route matrix. Translation adds no new route and no new configuration cell. `satp` resets to 0, so every existing fixture stays bare without a new Machine or CLI input (D7). A10 baseline and smoke commands gain no mandatory cell from this contract. Timing of a translated path is not an acceptance criterion.
 
-Observation stays on the existing path. A successful A/D write is a `MemoryEffect` in `ArchitecturalEffects.memory`, and it is not attributed to a faulting instruction's `CommitRecord` (ADR-0001 §2, D4). A faulting instruction produces a `TrapRecord` and no `CommitRecord`. No new observation plane.
+Observation stays on the existing path (D4). A faulting instruction produces a `TrapRecord` and no `CommitRecord` (`src/core/observation.rs:174-190`). ADR-0001 §2 already allows a profile-mandated effect of a faulting attempt to be visible, and line 74 of that ADR says a successful A/D write is not rolled back and is not included as a retired effect.
+
+The profile states where the effect is recorded.
+
+- When the instruction retires, the A/D update is a `MemoryEffect` in `CommitRecord.effects.memory`. It is ordered before the explicit load, store, or AMO, and it is distinguishable from that explicit access as an implicit page-table write.
+- When the A/D write succeeds and the instruction then faults, the same `MemoryEffect` is carried in `TrapRecord.effects.memory`. The instruction has no `CommitRecord`. The bytes in memory stay updated.
+
+No new observation plane.
 
 ## 6. Measurement and evidence policy
 
@@ -94,7 +101,7 @@ These checks apply only after this contract is approved and activated. They are 
 
 1. Every fixture in §4 passes its oracle on every applicable public route. Each negative mutation fails its validator.
 2. A driver test shows that a page-table walk read is a physical data read on the existing port, distinct from the guest's own data access. The same test shows the three D3 outcomes. A target rejection of the walk read is an access fault of the original kind. A host, protocol, or unknown completion is a `SimulatorFailure`. An invalid PTE, a reserved PTE, a misaligned superpage, and a non-canonical virtual address are page faults. Canonicity is a property of the virtual address, not of the PTE.
-3. With `satp` left at 0, the existing A6 through A10 tests and guests stay byte-identical, including the A10 baseline floor.
+3. With `satp` left at 0, the existing A6 through A10 suites and guests stay byte-identical, including the A10 baseline floor. The component and legacy CSR tests named in D7 change with the compatibility record, and this check does not cover them.
 4. The SFENCE.VMA fixture passes on a public route. `Mmu::flush_tlb` unit tests do not satisfy this check. The fixture records pre-fence visibility as a model property.
 5. Every fixture-induced fault carries the original virtual access kind and address. No fault is classified `unknown` by omission. The A9 quarantine and safety regressions stay green.
 6. A guest that writes Sv39 to `satp` observes translated accesses, and a guest that writes an unsupported MODE observes no change to `satp`. No CLI flag and no new public type is added.
@@ -167,7 +174,22 @@ The rows follow the Sv39 walk order. The non-canonical check comes before step 2
 - Option B, rejected as a change. The core already traps every misaligned access the RAM path could see, so there is no second population to add.
 - Option C, rejected. Two alignment policies would contradict the single check the core already has.
 
-**D7. Public compatibility.** DECIDED, option A, without a new configuration input. There is no public API change and no CLI flag. `satp` resets to 0 (`src/csr/mod.rs:171`), so translation is off until the guest writes Sv39, and existing constructors and the CLI default stay bare. The address layering is the part the roadmap actually asks about. Translation runs before image-base adaptation. A virtual address becomes a guest physical address, and the PTE PPN is a guest physical page number. `hart_issued_paddr` (`src/core/mod.rs:463`) then subtracts `base_addr` to reach the storage offset. Walk reads use that same guest-physical path. The compatibility change from the old behavior is recorded here. Previously a `satp` write was stored and had no effect. After this milestone a Sv39 write takes effect at the next instruction, and a write with an unsupported MODE is ignored in full.
+**D7. Public compatibility.** DECIDED, option A, without a new configuration input. There is no public API change and no CLI flag. `satp` resets to 0 (`src/csr/mod.rs:171`), so translation is off until the guest writes Sv39, and existing constructors and the CLI default stay bare. The address layering is the part the roadmap actually asks about. Translation runs before image-base adaptation. A virtual address becomes a guest physical address, and the PTE PPN is a guest physical page number. `hart_issued_paddr` (`src/core/mod.rs:463`) then subtracts `base_addr` to reach the storage offset. Walk reads use that same guest-physical path. The compatibility changes from the old behavior are recorded here. Each one is guest-visible, and none of them except the first depends on `satp`.
+
+| What changes | Before | After |
+| --- | --- | --- |
+| `satp` | A write is stored and ignored. | A Sv39 write takes effect at the next instruction. An unsupported MODE is ignored in full. |
+| `medeleg` and `mideleg` | A write is stored and the handler ignores it. | Both are read-only zero (M1). |
+| `sstatus` | Separate storage (`src/csr/mod.rs:162`). | A view of `mstatus` (M2). |
+| `vs*` CSRs | A write is stored (`src/csr/mod.rs:174-182`). | The addresses are absent, so access raises illegal-instruction (M2). |
+| PMP CSRs | The addresses are absent, so access raises illegal-instruction. | The full RV64 set is read-only zero (D5). |
+| SFENCE.VMA | Every encoding is an illegal-instruction trap (`src/core/mod.rs:1517-1526`). | It executes in M and in S, and it stays illegal in U (D8). |
+| SRET | The public core reports it as an unsupported legal instruction (`src/core/mod.rs:1543`). | It executes in M and in S, and it is illegal in U (D1). |
+| TVM, TSR, and TW | Read-only zero (`src/csr/mod.rs:272`). | Writable, with the traps in D1. |
+| `misa` bit S | Reads 0 (`src/csr/mod.rs:148`). | Reads 1 (M2). |
+| SXL and UXL | SXL reads 0, and UXL is writable and resets to 0. | Both read 2 and ignore writes (M2). |
+
+Three existing tests assert the old behavior and have to change with the implementation. `tests/privilege_transition_test.rs:49-50` writes `0x5678` to `sstatus` and expects to read it back. `tests/csr_basic_test.rs:241-244` does the same for `vsstatus`. `tests/csr_basic_test.rs:172` reads `sstatus` as 0 at reset, which still holds, but the separate-storage assumption behind that suite does not.
 
 - Option A, chosen, minus the new Machine or guest configuration input the earlier wording added. The guest's own `satp` write is the input.
 - Option B, rejected. A `--satp-mode` flag adds a public input the guest can already express.
@@ -211,7 +233,7 @@ The H-extension `vs*` CSRs (`src/csr/mod.rs:174-182`) are not part of this profi
 
 **M4. Translation cache on the public path.** DECIDED. v1 does not cache translations on the public path. Every translated access walks the page table. SFENCE.VMA is still decoded and executed, and with nothing cached it is an ordering no-op. This drops the roadmap Stage 4 deliverable named "TLB integration" for v1, and that deliverable is recorded as deferred, not delivered. The component TLB stays available to its own tests, and the two defects in §2, the missing D update on a hit and the dropped superpage VPN bits, are fixed so those tests no longer record the wrong result.
 
-**A/D observation.** DECIDED with D4. A successful A/D write is a visible memory effect and is not an entry in a faulting instruction's `CommitRecord`.
+**A/D observation.** DECIDED with D4. A successful A/D write is a visible memory effect. On a retired instruction it is a `MemoryEffect` in `CommitRecord.effects.memory`, ordered before the explicit access and marked implicit. On a faulting instruction it is a `MemoryEffect` in `TrapRecord.effects.memory`, and that instruction has no `CommitRecord`. A faulting instruction never has a `CommitRecord` (`src/core/observation.rs:78-93`), so the earlier wording that only excluded the effect from one did not say where it goes.
 
 ## 9. Risks and activation boundary
 
@@ -223,6 +245,7 @@ The risks that follow from the decisions:
 - A `satp` write implemented as a trap would break the WARL rule in D2. The acceptance check writes an unsupported MODE and expects the old value.
 - Translating after `hart_issued_paddr` (`src/core/mod.rs:463`) would make a PTE PPN a storage offset. D7 puts translation first, and the mapped fixture uses guest physical PPNs.
 - A fixture that executes WFI hits the existing unsupported-legal-instruction path. Stage 4 fixtures do not execute WFI, and D10 does not change that path.
-- Bare-guest behavior can drift. The bare fixture and the A6 through A10 suites are the guard.
+- Bare-guest behavior can drift. The bare fixture and the A6 through A10 suites are the guard. The CSR tests named in D7 are expected to change and are not part of that guard.
+- When S-mode is implemented, WFI in U-mode must raise an illegal-instruction exception regardless of TW, unless the instruction completes within an implementation-specific time limit (norm `mstatus_tw_umode_op`). This profile does not do that. D10 leaves WFI as the unsupported legal instruction the public core already reports (`src/core/mod.rs:1543-1544`), and no Stage 4 fixture executes WFI. The S-mode TW = 1 case is covered, because D1 takes that trap immediately. The U-mode case at TW = 0 is a recorded deviation, deferred with the rest of WFI to Stage 5.
 
 Activation boundary. This document becomes the Current contract only through the rolling workflow. It is not activated by the decisions recorded here. A separate approval has to accept this revised contract, and a separate documentation-only rotation then archives A10 and replaces `docs/dev-plan.md`. A10's own closeout still has a pending independent review, and that review is an A10 item. This document authorizes no implementation and no archive.
