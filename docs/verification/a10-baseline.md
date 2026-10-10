@@ -122,7 +122,9 @@ Percentiles below are copied exactly from `workloads[]` in `report.json`. They a
 | ram-store-load-loop | ram_loop | 15/15 | 1550402.0 | 1393219.4 | 2125099.6999999997 |
 | device-cli-hello | hello | 15/15 | 1807604.0 | 1297012.2 | 2259583.6999999997 |
 
-All 45 repetitions passed the exit+stdout floor. These medians are not comparable with the `aarch64-apple-darwin` record or with the merged-main re-run above. Host, toolchain, binary, and producer-platform identity differ. The comparison policy requires a new baseline series for a CPU, OS, or toolchain change.
+All 45 repetitions passed the exit+stdout floor. These medians are not comparable with either earlier session, and this page draws no comparison or ratio. The profile has no cohort and no comparison policy.
+
+Against the original `aarch64-apple-darwin` record, the host, OS, toolchain, and CLI binary all differ (`3b794fc8…` there, `e83a2ba4…` here). Against the merged-main re-run, the host is the same machine (OptiPlex Tower Plus 7020, i9-14900K, Linux `7.2.5-3-omarchy`), the toolchain is the same (rustc 1.98.0 `88d9e12ae`, `mise` SHA-256 `edc9df84…`), the CLI binary SHA-256 is identical (`e83a2ba4…`), and all 12 fixture ELF SHA-256 values in the two `fixtures/build.json` files are identical. Only the source HEAD (`5d23d337…` vs `25f3a3d0…`) and the producer platform and tool bytes differ (re-run ARM64 hashes `as 0159aa61…` with no recorded platform, this session `x86_64` hashes `as 5d693231…`). The CPU, OS, and toolchain rule does not apply to that pair.
 
 ## Re-run and compare later
 
