@@ -1331,17 +1331,38 @@ The following are explicit deferrals, not unresolved semantic choices:
 The selected ISA/profile still owns exact trap causes, interrupt pending and
 eligibility predicates, masking/enables, delegation, architectural priority,
 trap/debug/WFI legality and transitions, and ISA-visible `mcycle`/`minstret`
-behavior. Its timing profile returns the counter deltas for each transition. The
-framework consumes the applicable [RISC-V Privileged Architecture
-Specification, 2024-04-11](https://github.com/riscv/riscv-isa-manual/tree/v20240411-DRAFT)
-§3.1.9 interrupt rules, §3.1.10 counter rules, §3.2.1 timer rules, §3.3.1
-synchronous environment-break rules, §3.3.3 WFI/TW rules, and the selected
-profile's synchronous-exception priority table. It also consumes the selected
-debug profile, including [RISC-V External Debug Support
+behavior. Its timing profile returns the counter deltas for each transition.
+
+Amendment, 2026-10-10, recorded with the Stage 4 contract decision D11. The
+Stage 4 Hart profile implements the supervisor pending and enable bits and
+takes those interrupts into M. `mip` and `mie` use write mask `0x222` (SSIP,
+STIP, SEIP and SSIE, STIE, SEIE). MEIP, MTIP, and MSIP, and the matching
+enables, are read-only 0 because this profile has no CLINT and no PLIC. There
+is no Sstc, so STIP is the software-written bit. `mideleg` is read-only 0, so
+`sip` and `sie` are read-only 0, and a taken interrupt uses M-mode trap entry.
+The hart takes interrupt i when bit i of `mip & mie & ~mideleg` is set and
+either the privilege is below M or the privilege is M with `mstatus.MIE` set.
+It samples at each instruction boundary, and again after xRET and after a
+write to `mip`, `mie`, `mstatus`, or `mideleg`. Among pending causes the order
+is SEI, then SSI, then STI. This is the profile predicate §6.2 already assigns
+to the Hart. It is not Platform source admission, a controller, `mtime`, or a
+Machine idle jump. Roadmap Stage 5 still owns those. Nothing in this ADR
+deferred the profile predicate to Stage 5. The Stage 4 contract is the record
+that selects it.
+
+The
+framework consumes the applicable rules of the [RISC-V ISA Manual, document
+version 20250508, ratified](https://github.com/riscv/riscv-isa-manual/releases/tag/20250508).
+Those are the §3.1.9 interrupt rules, §3.1.10 counter rules, §3.2.1 timer
+rules, §3.3.1 synchronous environment-break rules, §3.3.3 WFI/TW rules, and
+the selected profile's synchronous-exception priority table. The same edition
+supplies the unprivileged counter rules this profile uses for `cycle` and
+`instret`. The Stage 4 hart does not claim Zicntr, because that extension
+comprises `cycle`, `time`, and `instret` together and this profile has no
+`time`. It also
+consumes the selected debug profile, including [RISC-V External Debug Support
 0.13.2](https://github.com/riscv/riscv-debug-spec/tree/0.13-test-release) §4
-when Debug Mode is implemented. The [RISC-V Unprivileged ISA,
-2024-04-11](https://github.com/riscv/riscv-isa-manual/tree/v20240411-DRAFT)
-Zicntr rules supply the applicable `cycle`/`instret` semantics. These references
+when Debug Mode is implemented. These references
 are Hart/profile inputs, not additional framework rules: ADR-0004 does not copy a
 priority table or choose WFI/debug behavior. It fixes the boundary at which
 profile results interact with scheduler accounting and Platform time.
