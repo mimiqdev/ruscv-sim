@@ -815,9 +815,7 @@ fn p0_oracle_audits_and_regressions_are_not_simulator_recordings() {
                 "strict refusal must name {name}: {stderr}"
             ),
             None => assert!(
-                stderr.contains(
-                    "build.json lacks producer platform (uname -m); rebuild fixtures"
-                ),
+                stderr.contains("build.json lacks producer platform (uname -m); rebuild fixtures"),
                 "strict refusal of a missing platform must name the field: {stderr}"
             ),
         }
