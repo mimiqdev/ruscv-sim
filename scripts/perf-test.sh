@@ -1,6 +1,6 @@
 #!/bin/bash
-# Public entry point: smoke/calibrated run, strict validate, cohort baseline
-# binding and informational compare (P4 CI/retention deferred).
+# Public entry point: smoke/baseline run and strict validate. The removed
+# subcommands were deleted 2026-10-10; P4 CI/retention remains deferred.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$ROOT"

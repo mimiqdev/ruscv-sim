@@ -93,28 +93,20 @@ is rejected before any interval can become usable. Pure image hashes may be
 cached only after complete equality of each newly observed byte array; no
 inspection or verdict is cached. Guest loops do not masquerade as load work.
 
-## Reproduction and remaining acceptance
+## Retained payloads, no active machinery
 
-With the approved pinned cross-tools, from the repository:
+The fixture sources under `tools/a10/calibration-fixtures/` are retained as
+future payload sources only. Their deleted audit/oracle machinery
+(`variant_specs.py`, the calibration oracle/workload manifests, the
+`a10_p3_variants` matrix) is gone from the branch, so no command in this
+document can be run anymore; the sections above describe that deleted layer
+historically. The current public surface is exactly:
 
 ```bash
-python3 -B tools/a10/build_fixtures.py --calibration --out target/a10-variants-new
-python3 -B tools/a10/variant_specs.py check --build target/a10-variants-new
-cargo test --all-features --test a10_p3_variants
-python3 -B -m unittest discover -s tools/a10 -p 'test_*.py'
+./scripts/perf-test.sh run --suite public-v1 --profile smoke --out target/perf/smoke
+./scripts/perf-test.sh run --suite public-v1 --profile baseline --out target/perf/baseline
+./scripts/perf-test.sh validate <out>/report.json
 ```
 
-Missing required tools are unavailable, never a passed variant matrix. The Rust
-variant test freshly builds all identities, checks offline derivation, executes
-all 148 applicable public route/mode cells, exercises fresh Machine reruns,
-rejects wrong result/PC/count/signature and fabricated failed-SC writes, and
-checks the 22 actual load-only cells. Offline controls reject changed mapping,
-versions, work sizes, source text, digest/placement and arithmetic bounds.
-
-The stable calibrated/compare command is documented in the
-[schema guide](a10-perf-schema.md#p3-qualified-local-calibration-under-development).
-Integration, full-reader negative controls, empirical sufficiency and exact-head
-three-session/baseline/comparison verification remain required. This document
-claims no usable baseline, speedup, final review, P3 acceptance or P4 delivery.
-Warmup/sample/clock/noise/30-minute budget gates and qualified same-allocation
-limitations are not relaxed by adding these fixtures.
+No calibrated run, variant check or oracle matrix exists; the heavy-run
+history lives in [a10-stage3-progress.md](a10-stage3-progress.md).

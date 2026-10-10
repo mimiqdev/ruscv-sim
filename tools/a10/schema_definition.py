@@ -61,13 +61,14 @@ DEFS = {
  'stat': nullable({'type':'number','minimum':0}),
  'aggregate': obj({'cell': S, 'key': {'type':'object'}, 'sample_ids': TEXTS, 'warmup_count': U, 'basic_count': U, 'correct_count': U, 'discarded': array(obj({'id': S,'reason': S})), 'basic_interval_sum_ns': nullable(integer(128)), 'median_ns': ref('stat'), 'p05_ns': ref('stat'), 'p95_ns': ref('stat'), 'mad_ns': ref('stat'), 'bootstrap_median_ci': OBS, 'ratio': OBS, 'baseline': OBS, 'classification': {'const':'inconclusive'}, 'reasons': TEXTS}),
 }
-# Optional extension keeps retained P2 smoke readable. Calibrated interpretation
-# additionally checks every inheritance carrier and its same-session association.
+# Retained bounded purpose: CLI rows carry derived initial caller-thread
+# affinity provenance (linux-caller-affinity-inheritance/1) for real CLI
+# launches; there is no calibrated interpretation layer.
 DEFS['proc_file'] = obj({'path':S,'value':nullable(S),'sha256':nullable(SHA),'reason':nullable(S)})
 DEFS['caller'] = obj({'method':{'const':'linux-thread-self-proc/1'},'pid':integer(32,1),'tid':integer(32,1),'pid_namespace':S,'utc_unix_ns':integer(128,1),'affinity_vcpu_list':S,'namespaces':obj({k:S for k in ('pid','mnt','user','cgroup','uts','ipc','net','time')}),'files':obj({k:ref('proc_file') for k in ('status','cgroup','online','cpuset','cpu_max','memory_max','boot_id')}),'injection':obj(dict({k:nullable(S) for k in ('LD_PRELOAD','LD_AUDIT','LD_LIBRARY_PATH','LD_ORIGIN_PATH','GLIBC_TUNABLES')},other=array(obj({'name':S,'value':S}))))})
 DEFS['inheritance'] = obj({'kind':{'const':'linux-caller-affinity-inheritance/1'},'caller_before':nullable(ref('caller')),'caller_after':nullable(ref('caller')),'argv':TEXTS,'launcher':S,'launcher_source_sha256':SHA,'cli_sha256':nullable(SHA),'derived_initial_vcpu_mask':nullable(S),'direct_child_readback':obj({'value':{'type':'null'},'reason':S}),'child_pid':obj({'value':{'type':'null'},'reason':S}),'guarantee':S,'sources':TEXTS,'limitations':TEXTS})
 DEFS['raw']['properties']['cli_affinity'] = nullable(ref('inheritance'))
-SCHEMA = dict({'$schema':'https://json-schema.org/draft/2020-12/schema', '$id':'https://github.com/mimiqdev/ruscv-sim/tools/a10/ruscv-perf-1.schema.json', 'title':'ruscv-perf/1 public-path evidence, P2 smoke; not calibrated comparison', '$defs':DEFS}, **obj({
+SCHEMA = dict({'$schema':'https://json-schema.org/draft/2020-12/schema', '$id':'https://github.com/mimiqdev/ruscv-sim/tools/a10/ruscv-perf-1.schema.json', 'title':'ruscv-perf/1 public-path evidence: smoke and baseline profiles; no calibrated comparison (certification layer deleted 2026-10-10)', '$defs':DEFS}, **obj({
  'schema': {'const':'ruscv-perf/1'}, 'run': obj({'id': S,'start_utc':S,'end_utc':S,'argv':TEXTS,'profile':{'const':'smoke'}}),
  'identity': obj({'schema_sha256':SHA,'suite':ref('version'),'oracle':ref('version'),'policy':ref('version'),'harness':obj({'id':{'const':'public-driver/2'},'sha256':SHA,'sources':array(obj({'path':PATH,'sha256':SHA}))})}),
  'source': ref('source'), 'race_checks': obj({'before':ref('source'),'after':ref('source'),'stage':S}),
@@ -81,23 +82,7 @@ SCHEMA = dict({'$schema':'https://json-schema.org/draft/2020-12/schema', '$id':'
  'records': array(ref('record')), 'aggregates': array(ref('aggregate')), 'semantic_status':{'enum':['correct','semantic_failure','unavailable']}, 'comparison_status':{'const':'inconclusive'}, 'diagnostics':TEXTS,
  'bundle': obj({'id':S,'manifest':{'const':'bundle.json'}})
 }))
-# Calibrated collections link to the complete independently validated P2 build /
-# source plane and retain their own streamed rows, not a relabeled smoke baseline.
-DEFS['smoke_report'] = {k:v for k,v in SCHEMA.items() if k not in ('$defs','$schema','$id','title')}
-DEFS['calibrated_report'] = obj({
- 'schema':{'const':'ruscv-perf/1'},'run':obj({'id':S,'start_utc':S,'end_utc':S,'argv':TEXTS,'profile':{'const':'calibrated'}}),
- 'metadata':obj({'report':{'const':'preparation/report.json'},'bundle_sha256':SHA}),
- 'source_head':{'type':'string','pattern':'^[0-9a-f]{40}$'},'policy_sha256':SHA,
- 'workload':obj({'id':{'const':'calibration-workloads/1'},'version':{'const':2},'mapping_sha256':SHA,'oracle_id':{'const':'a10-calibration-oracle/1'},'oracle_version':{'const':2},'oracle_sha256':SHA}),
- 'budget':obj({'limit_ns':U,'elapsed_ns':U,'includes':S,'exhausted':B,'publication_reserve_ns':U}),
- 'sessions':array(obj({'id':S,'artifact_prefix':PATH,'native_before':PATH,'native_after':PATH,'vm_before':PATH,'vm_after':PATH,'fs_before':PATH,'fs_after':PATH,'stream':PATH,'stderr':PATH,'exit_code':{'enum':[0,1,2]},'start':nullable({'type':'object'}),'end':nullable({'type':'object'}),'summaries':array({'type':'object'})})),
- 'selected_sessions':array(integer(8)),'selection':nullable(integer(8)),
- 'qualification':{'type':'object'},'statistics':array({'type':'object'}),'three_session_calibration':array({'type':'object'}),
- 'semantic_status':{'enum':['correct','semantic_failure','unavailable']},
- 'comparison_status':{'enum':['inconclusive','qualified-informational']},'diagnostics':TEXTS,
- 'bundle':obj({'id':S,'manifest':{'const':'bundle.json'}})
-})
-SCHEMA = {'$schema':SCHEMA['$schema'],'$id':SCHEMA['$id'],'title':'ruscv-perf/1: retained P2 smoke and qualified P3 calibrated collections', '$defs':DEFS,'oneOf':[ref('smoke_report'),ref('calibrated_report')]}
+
 if __name__ == '__main__':
     if sys.argv[1:]==['--rewrite-repository-schema']:
         # Code generation for this one tracked source file, not evidence output.
