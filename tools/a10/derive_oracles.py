@@ -32,6 +32,8 @@ build = json.loads((BUILD/'build.json').read_text())
 # replace this platform's pin; an unpinned platform must not be consulted here.
 if mode == ['--check-artifacts']:
     tool_sha256 = original_tools['tool_sha256']
+elif 'platform' not in build:
+    raise ValueError('build.json lacks producer platform (uname -m); rebuild fixtures')
 else:
     tool_sha256 = merge_tool_sha256(original_tools['tool_sha256'], build['platform'], build['tools'])
 manifest.update(schema='a10-oracle/1', version=1,

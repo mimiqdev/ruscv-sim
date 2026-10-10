@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Strict producer pin: host arch accepted, wrong bytes rejected, unknown arch refused."""
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,6 +12,8 @@ from audit_fixtures import merge_tool_sha256, producer_pin
 from report_schema import pinned_producer
 
 ROOT = Path(__file__).resolve().parents[2]
+DERIVE = ROOT / 'tools/a10/derive_oracles.py'
+FIXTURES = ROOT / 'target/a10-baseline-x86_64/fixtures'
 MANIFEST = json.loads((ROOT / 'tools/a10/public-v1.json').read_text())
 PINS = MANIFEST['tool_sha256']
 AMD64 = PINS['x86_64']
@@ -94,21 +98,20 @@ class ReaderPin(unittest.TestCase):
         self.assertIn('x86_64', str(swapped.exception))
 
 
-ROOT = Path(__file__).resolve().parents[2]
-DERIVE = ROOT / 'tools/a10/derive_oracles.py'
-FIXTURES = ROOT / 'target/a10-baseline-x86_64/fixtures'
-
-
 class ArtifactModeIgnoresPins(unittest.TestCase):
-    """--check-artifacts must not call merge_tool_sha256. Strict --check still does."""
+    """Local x86_64 fixture check. Not the CI guard.
+
+    CI has no target/a10-baseline-x86_64 tree, so setUp skips this case there.
+    tests/a10_p0_oracles.rs builds a fresh fixture directory and is the guard
+    that runs in CI: --check-artifacts passes and --check refuses an unpinned
+    or missing platform.
+    """
 
     def setUp(self):
         if not (FIXTURES / 'build.json').is_file():
             self.skipTest('x86_64 baseline fixtures are not in this worktree')
 
     def _build(self, tmp, platform):
-        import json
-        import shutil
         dest = Path(tmp) / 'fixtures'
         shutil.copytree(FIXTURES, dest)
         path = dest / 'build.json'
@@ -123,7 +126,6 @@ class ArtifactModeIgnoresPins(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True)
 
     def test_unpinned_platform_passes_artifact_mode_and_fails_strict_check(self):
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             dest = self._build(tmp, 'arm64')
             artifacts = self._derive(dest, '--check-artifacts')

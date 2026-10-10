@@ -785,6 +785,42 @@ fn p0_oracle_audits_and_regressions_are_not_simulator_recordings() {
         "byte-identical artifacts can be checked without tool-pin claims"
     );
     identity["tools"] = original_tools;
+    let original_platform = identity["platform"].clone();
+    // An unpinned producer (native macOS reports arm64; an older build.json
+    // has no platform) must not stop a portable artifact audit. Strict --check
+    // still refuses both. This does not use a local baseline fixture.
+    for platform in [Some("arm64"), None] {
+        match platform {
+            Some(name) => identity["platform"] = name.into(),
+            None => {
+                identity.as_object_mut().unwrap().remove("platform");
+            }
+        }
+        std::fs::write(&report, serde_json::to_vec(&identity).unwrap()).unwrap();
+        let artifacts = audit("--check-artifacts");
+        assert!(
+            artifacts.status.success(),
+            "unpinned platform {platform:?} still has byte-identical artifacts: {}",
+            String::from_utf8_lossy(&artifacts.stderr)
+        );
+        let strict = audit("--check");
+        assert!(
+            !strict.status.success(),
+            "strict check must refuse unpinned platform {platform:?}"
+        );
+        let stderr = String::from_utf8_lossy(&strict.stderr);
+        match platform {
+            Some(name) => assert!(
+                stderr.contains(&format!("unpinned producer platform {name}")),
+                "strict refusal must name {name}: {stderr}"
+            ),
+            None => assert!(
+                stderr.contains("build.json lacks producer platform (uname -m); rebuild fixtures"),
+                "strict refusal of a missing platform must name the field: {stderr}"
+            ),
+        }
+    }
+    identity["platform"] = original_platform;
     identity["fixtures"]["fib"]["elf_sha256"] = "0".repeat(64).into();
     std::fs::write(&report, serde_json::to_vec(&identity).unwrap()).unwrap();
     assert!(
