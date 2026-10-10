@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Strict producer pin: host arch accepted, wrong bytes rejected, unknown arch refused."""
-from audit_fixtures import merge_tool_sha256, producer_pin
+import subprocess
+import sys
 import unittest
+from pathlib import Path
+
+from audit_fixtures import merge_tool_sha256, producer_pin
 
 AMD64 = {
     'as': '5d693231db1242b89b73e7329117e8f35d29c498e9e765c10b62e2a9429983f9',
@@ -56,6 +60,46 @@ class ProducerPin(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             merge_tool_sha256(saved, 'amd64', built)
         self.assertIn('amd64', str(caught.exception))
+
+
+ROOT = Path(__file__).resolve().parents[2]
+DERIVE = ROOT / 'tools/a10/derive_oracles.py'
+FIXTURES = ROOT / 'target/a10-baseline-x86_64/fixtures'
+
+
+class ArtifactModeIgnoresPins(unittest.TestCase):
+    """--check-artifacts must not call merge_tool_sha256. Strict --check still does."""
+
+    def setUp(self):
+        if not (FIXTURES / 'build.json').is_file():
+            self.skipTest('x86_64 baseline fixtures are not in this worktree')
+
+    def _build(self, tmp, platform):
+        import json
+        import shutil
+        dest = Path(tmp) / 'fixtures'
+        shutil.copytree(FIXTURES, dest)
+        path = dest / 'build.json'
+        build = json.loads(path.read_text())
+        build['platform'] = platform
+        path.write_text(json.dumps(build))
+        return dest
+
+    def _derive(self, dest, flag):
+        return subprocess.run(
+            [sys.executable, str(DERIVE), str(dest), flag],
+            cwd=ROOT, capture_output=True, text=True)
+
+    def test_unpinned_platform_passes_artifact_mode_and_fails_strict_check(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = self._build(tmp, 'arm64')
+            artifacts = self._derive(dest, '--check-artifacts')
+            strict = self._derive(dest, '--check')
+        self.assertEqual(artifacts.returncode, 0, artifacts.stderr)
+        self.assertIn('matches', artifacts.stdout)
+        self.assertNotEqual(strict.returncode, 0)
+        self.assertIn('unpinned producer platform arm64', strict.stderr)
 
 
 if __name__ == '__main__':
