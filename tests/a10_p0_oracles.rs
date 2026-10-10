@@ -785,6 +785,7 @@ fn p0_oracle_audits_and_regressions_are_not_simulator_recordings() {
         "byte-identical artifacts can be checked without tool-pin claims"
     );
     identity["tools"] = original_tools;
+    let original_platform = identity["platform"].clone();
     // An unpinned producer (native macOS reports arm64; an older build.json
     // has no platform) must not stop a portable artifact audit. Strict --check
     // still refuses both. This does not use a local baseline fixture.
@@ -821,7 +822,7 @@ fn p0_oracle_audits_and_regressions_are_not_simulator_recordings() {
             ),
         }
     }
-    identity["platform"] = "x86_64".into();
+    identity["platform"] = original_platform;
     identity["fixtures"]["fib"]["elf_sha256"] = "0".repeat(64).into();
     std::fs::write(&report, serde_json::to_vec(&identity).unwrap()).unwrap();
     assert!(
