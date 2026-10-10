@@ -1,0 +1,194 @@
+//! Shared public-path driver; untimed raw transport and P0 oracle replay.
+pub mod phases;
+pub mod replay;
+#[path = "mod.rs"]
+pub mod support;
+use phases::*;
+use std::{collections::BTreeMap, path::Path, process::Command};
+fn git(args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err("UNAVAILABLE: git identity".into());
+    }
+    Ok(String::from_utf8(output.stdout)
+        .map_err(|e| e.to_string())?
+        .trim()
+        .into())
+}
+fn main() {
+    let code = match run() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("EVIDENCE FAILURE: {e}");
+            1
+        }
+    };
+    std::process::exit(code);
+}
+fn run() -> Result<i32, String> {
+    let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("oracle-replay") {
+        if args.len() != 3 {
+            return Err("oracle-replay REPORT (semantic plane only; public schema command is scripts/perf-test.sh validate)".into());
+        }
+        let path = Path::new(&args[2]);
+        let report = replay::unique_json(&std::fs::read(path).map_err(|e| e.to_string())?)?;
+        let code = replay::validate_report(path.parent().ok_or("report root")?, &report)?;
+        println!("P0 oracle/scope replay exit {code}; schema/bundle handled by public wrapper; no performance verdict");
+        return Ok(code);
+    }
+    if args.get(1).map(String::as_str) == Some("oracle-replay-server") {
+        if args.len() != 3 {
+            return Err("oracle-replay-server ROOT (persistent shared-P0 replay; one validated fragment per canonical stdin line)".into());
+        }
+        let root = Path::new(&args[2]);
+        let mut input = String::new();
+        loop {
+            input.clear();
+            if std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut input)
+                .map_err(|e| e.to_string())?
+                == 0
+            {
+                return Ok(0);
+            }
+            let outcome = replay::unique_json(input.trim().as_bytes())
+                .map_err(|e| e.to_string())
+                .and_then(|report| replay::validate_report(root, &report));
+            match outcome {
+                Ok(code) => println!("REPLAY {code}"),
+                Err(error) => println!("REPLAY_ERR {}", error.replace('\n', " ")),
+            }
+            std::io::Write::flush(&mut std::io::stdout()).map_err(|e| e.to_string())?;
+        }
+    }
+    if args.get(1).map(String::as_str) == Some("probe-library") {
+        if args.len() != 5 && args.len() != 6 {
+            return Err("native transport arguments".into());
+        }
+        if !matches!(args[2].as_str(), "native-bytes" | "native-file") {
+            return Err("unsupported native transport route".into());
+        }
+        let wire = library_probe(
+            &args[2],
+            Path::new(&args[3]),
+            args[4].parse().map_err(|_| "budget")?,
+            args.get(5).map(Path::new),
+        )?;
+        // Real UART precedes this marker. JSON and child exit are untimed.
+        println!(
+            "\nA10_P1_NATIVE {}",
+            serde_json::to_string(&wire).map_err(|e| e.to_string())?
+        );
+        return Ok(0);
+    }
+    if !(args.len() == 4 && args[1] == "run") {
+        return Err(
+            "usage: a10-perf-driver run PREPARED_OUTPUT REPETITIONS (use scripts/perf-test.sh)"
+                .into(),
+        );
+    }
+    let head = git(&["rev-parse", "HEAD"])?;
+    if !git(&["status", "--porcelain"])?.is_empty()
+        || option_env!("RISCV_PERF_BUILD_HEAD") != Some(head.as_str())
+    {
+        return Err("UNAVAILABLE: clean matching committed release driver required".into());
+    }
+    let out = Path::new(&args[2]);
+    let setup: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out.join("setup.json")).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    if setup["source_head"].as_str() != Some(head.as_str())
+        || setup["source_tree"].as_str() != Some(git(&["rev-parse", "HEAD^{tree}"])?.as_str())
+    {
+        return Err("stale source metadata".into());
+    }
+    let audit = Command::new("python3")
+        .args([
+            "tools/a10/audit_fixtures.py",
+            &out.join("fixtures").to_string_lossy(),
+        ])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !audit.success() {
+        return Err("fresh fixture identity audit failed".into());
+    }
+    let artifacts = out.join("samples");
+    std::fs::create_dir(&artifacts).map_err(|e| e.to_string())?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let cli = exe.parent().ok_or("driver directory")?.join("ruscv-sim");
+    let fixtures = out.join("fixtures");
+    let paths = Paths {
+        fixtures: &fixtures,
+        cli: &cli,
+        driver: &exe,
+        artifacts: &artifacts,
+        file_sinks: None,
+    };
+    let repetitions: usize = args[3].parse().map_err(|_| "invalid repetitions")?;
+    if !(1..=16).contains(&repetitions) {
+        return Err("smoke repetitions must be 1..16".into());
+    }
+    let m = support::manifest();
+    let mut clock = HostClock::default();
+    let records = matrix(&m, &paths, repetitions, &mut clock);
+    let mut groups: BTreeMap<String, Vec<Record>> = BTreeMap::new();
+    for r in &records {
+        if r.semantic_status != "not_applicable" {
+            groups
+                .entry(format!(
+                    "{}/{}/{}/{}/{}",
+                    r.fixture, r.route, r.phase, r.mode, r.capture_policy
+                ))
+                .or_default()
+                .push(r.clone());
+        }
+    }
+    let aggregates:Vec<_>=groups.iter().map(|(key,rows)|serde_json::json!({"key":key,"basic_interval_sum_ns":accepted_total(rows),"warmup_count":rows.iter().filter(|r|r.warmup).count(),"basic_count":rows.iter().filter(|r|!r.warmup).count(),"eligibility":if accepted_total(rows).is_some(){"inconclusive-smoke-uncalibrated"}else{"unavailable-or-rejected"}})).collect();
+    let failed = records
+        .iter()
+        .any(|r| r.semantic_status == "semantic_failure");
+    let unavailable = records.iter().any(|r| r.semantic_status == "unavailable");
+    let changed =
+        head != git(&["rev-parse", "HEAD"])? || !git(&["status", "--porcelain"])?.is_empty();
+    let measurement_unavailable = records
+        .iter()
+        .any(|r| r.semantic_status != "not_applicable" && r.accepted_ns.is_none());
+    let measurement = if failed || changed || unavailable || measurement_unavailable {
+        "unavailable-or-rejected"
+    } else {
+        "inconclusive-smoke-uncalibrated"
+    };
+    let semantic = if failed || changed {
+        "semantic_failure"
+    } else if unavailable {
+        "unavailable"
+    } else {
+        "correct"
+    };
+    let report = serde_json::json!({"checkpoint_format":"a10-p1-checkpoint/1","not_full_p2_schema":true,"suite":"public-v1","profile":"smoke","source_head":head,"source_tree":setup["source_tree"],"environment":setup,"clock":"std::time::Instant monotonic ns; child origins are separate","policy":{"warmup_repetitions":1,"basic_repetitions":repetitions,"calibrated":false,"comparison":"unavailable until P2/P3","scope_identity_in_each_record":true},"semantic_status":semantic,"measurement_status":measurement,"records":records,"aggregates":aggregates});
+    // Report assembly/serialization/writes happen only after all phase clocks.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(out.join("raw-report.json"))
+        .map_err(|e| e.to_string())?;
+    std::io::Write::write_all(
+        &mut file,
+        serde_json::to_string_pretty(&report)
+            .map_err(|e| e.to_string())?
+            .as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
+    std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
+    println!("P1 smoke semantics: {semantic}; measurement: {measurement} (no comparison). {} raw rows / {} applicable cells. Report: {}",records.len(),groups.len(),out.join("raw-report.json").display());
+    Ok(if failed || changed {
+        1
+    } else if unavailable || measurement_unavailable {
+        2
+    } else {
+        0
+    })
+}
