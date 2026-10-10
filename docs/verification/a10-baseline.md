@@ -40,7 +40,7 @@ rewritten, re-derived or compared against the merged-main re-run below.
 
 ## Merged-main re-run (2026-10-10, additional evidence)
 
-Re-executed on this machine exactly as the re-run instructions above specify,
+Re-executed on this machine exactly as the re-run instructions below specify,
 at clean committed merged `main`:
 
 ```bash
@@ -97,7 +97,7 @@ Tony authorized a pin change on 2026-10-10: fixture producers are pinned per ima
 The report records a clean tree at source HEAD `25f3a3d0f10b9949b7624c741fc963b411b06665` (tree `ab483eab5a5a65db889a512c50e3def4be25be20`). Output directory: `target/a10-baseline-x86_64`. Command:
 
 ```bash
-./scripts/perf-test.sh --suite public-v1 --profile baseline --out target/a10-baseline-x86_64
+./scripts/perf-test.sh run --suite public-v1 --profile baseline --out target/a10-baseline-x86_64
 ```
 
 | Field | Value |
