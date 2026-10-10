@@ -1351,16 +1351,15 @@ deferred the profile predicate to Stage 5. The Stage 4 contract is the record
 that selects it.
 
 The
-framework consumes the applicable [RISC-V Privileged Architecture
-Specification, 2024-04-11](https://github.com/riscv/riscv-isa-manual/tree/v20240411-DRAFT)
-§3.1.9 interrupt rules, §3.1.10 counter rules, §3.2.1 timer rules, §3.3.1
-synchronous environment-break rules, §3.3.3 WFI/TW rules, and the selected
-profile's synchronous-exception priority table. It also consumes the selected
-debug profile, including [RISC-V External Debug Support
+framework consumes the applicable rules of the [RISC-V ISA Manual, document
+version 20250508, ratified](https://github.com/riscv/riscv-isa-manual/releases/tag/20250508).
+Those are the §3.1.9 interrupt rules, §3.1.10 counter rules, §3.2.1 timer
+rules, §3.3.1 synchronous environment-break rules, §3.3.3 WFI/TW rules, and
+the selected profile's synchronous-exception priority table. The same edition
+supplies the unprivileged Zicntr rules for `cycle` and `instret`. It also
+consumes the selected debug profile, including [RISC-V External Debug Support
 0.13.2](https://github.com/riscv/riscv-debug-spec/tree/0.13-test-release) §4
-when Debug Mode is implemented. The [RISC-V Unprivileged ISA,
-2024-04-11](https://github.com/riscv/riscv-isa-manual/tree/v20240411-DRAFT)
-Zicntr rules supply the applicable `cycle`/`instret` semantics. These references
+when Debug Mode is implemented. These references
 are Hart/profile inputs, not additional framework rules: ADR-0004 does not copy a
 priority table or choose WFI/debug behavior. It fixes the boundary at which
 profile results interact with scheduler accounting and Platform time.
