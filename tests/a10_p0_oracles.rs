@@ -77,19 +77,21 @@ fn build() -> Option<&'static Build> {
             }
             if std::env::var_os("RISCV_REQUIRE_A10_PINNED_TOOLS").is_some() {
                 let platform = identity["platform"].as_str().expect("build platform");
-                for (tool, version) in &m.tool_versions {
-                    assert_eq!(
-                        identity["tools"][tool]["version"].as_str(),
-                        Some(version.as_str())
-                    );
-                    assert_eq!(
-                        identity["tools"][tool]["sha256"].as_str(),
-                        Some(
-                            pinned_tool_sha256(&m.tool_sha256, platform, tool)
-                                .unwrap_or_else(|error| panic!("{error}"))
+                let observed = identity["tools"]
+                    .as_object()
+                    .expect("producer tools")
+                    .iter()
+                    .map(|(tool, info)| {
+                        (
+                            tool.clone(),
+                            (
+                                info["version"].as_str().unwrap_or("").to_string(),
+                                info["sha256"].as_str().unwrap_or("").to_string(),
+                            ),
                         )
-                    );
-                }
+                    })
+                    .collect();
+                check_pinned(&observed, &m, platform).unwrap_or_else(|error| panic!("{error}"));
             } else {
                 // Source/linker/ELF bytes and build flags above remain mandatory.
                 // Other tool identities are recorded, never relabeled as pinned.
@@ -199,15 +201,37 @@ fn versioned_manifest_and_capabilities_fail_closed() {
         pinned_tool_sha256(&m.tool_sha256, "x86_64", "as").as_deref(),
         Ok(x86_64_as)
     );
-    let mut wrong = m.tool_sha256.clone();
-    wrong
-        .get_mut("x86_64")
-        .unwrap()
-        .insert("as".into(), "0".repeat(64));
-    let observed = pinned_tool_sha256(&m.tool_sha256, "x86_64", "as").unwrap();
-    assert_ne!(observed, wrong["x86_64"]["as"].as_str());
+    assert_ne!(
+        pinned_tool_sha256(&m.tool_sha256, "aarch64", "as").unwrap(),
+        pinned_tool_sha256(&m.tool_sha256, "x86_64", "as").unwrap(),
+        "a swapped platform must not select the same pin"
+    );
+    let identity = |platform: &str| {
+        m.tool_versions
+            .iter()
+            .map(|(tool, version)| {
+                (
+                    tool.clone(),
+                    (
+                        version.clone(),
+                        pinned_tool_sha256(&m.tool_sha256, platform, tool)
+                            .unwrap()
+                            .to_string(),
+                    ),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    check_pinned(&identity("x86_64"), &m, "x86_64").unwrap();
+    let mut tampered = identity("x86_64");
+    tampered.get_mut("as").unwrap().1 = "0".repeat(64);
+    let mismatch = check_pinned(&tampered, &m, "x86_64").unwrap_err();
+    assert!(mismatch.contains("x86_64"), "{mismatch}");
+    assert!(mismatch.contains("as"), "{mismatch}");
+    let swapped = check_pinned(&identity("aarch64"), &m, "x86_64").unwrap_err();
+    assert!(swapped.contains("x86_64"), "{swapped}");
     for platform in ["amd64", "arm64", "riscv64"] {
-        let error = pinned_tool_sha256(&m.tool_sha256, platform, "as").unwrap_err();
+        let error = check_pinned(&identity("x86_64"), &m, platform).unwrap_err();
         assert!(error.contains(platform), "{error}");
         assert!(!error.contains(x86_64_as), "{error}");
     }
