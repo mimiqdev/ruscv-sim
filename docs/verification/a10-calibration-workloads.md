@@ -6,7 +6,7 @@
 
 ## Boundary and identities
 
-The [A10 contract §4](../dev-plan.md#4-initial-workload-and-oracle-contract)
+The [A10 contract §4](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md#4-initial-workload-and-oracle-contract)
 authorizes bounded deterministic variants with new source/linker/ELF identities.
 Original `public-v1`, its P0 oracle, historical guests and smoke remain unchanged
 correctness controls. No production source, ISA engine, board, memory map or

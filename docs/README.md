@@ -4,13 +4,13 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-10-10
+**Last reviewed:** 2026-10-11
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
 ## Sources of truth
 
-1. [Milestone plan and activation status](dev-plan.md) — objective, scope boundaries, non-goals, constraints, deliverables, acceptance criteria, and the approved successor's merge-effective activation boundary.
+1. [Milestone plan and activation status](dev-plan.md) — the sole Current contract. On the A10 to Stage 4 rotation merge this is the Stage 4 contract; until that merge main retains A10.
 2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
 3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests, the [A8 assessment](verification/a8-closeout-assessment.md) for the atomic route, and the [A9 acceptance assessment](verification/a9-closeout-assessment.md) for Hart facts/Machine integration, separating historical checkpoint and final PR/merge-head evidence.
 4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
@@ -33,8 +33,9 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Approved A10 contract — sole Current](dev-plan.md) — Independent Public-Path Performance-Test Infrastructure, post-A7 Stage 3, activated by PR #71 on 2026-10-08. Implementation merged 2026-10-10 as PR #72 (`5d23d33`): P0–P2 framework plus the right-sized P3′ baseline (three workloads, exit+stdout floor) under the 2026-10-10 user-authorized scope reduction; certification deferred. The [A10 closeout record](archive/milestones/a10-closeout-record.md) records bounded technical acceptance with the independent final PR-head documentation review pending.
-- [A10 implementation closeout record](archive/milestones/a10-closeout-record.md) — P0–P3′ criterion-by-criterion evidence with commit IDs, merge-head CI, merged-main baseline re-run, limitations and re-evaluated unfinished work; active contract stays in `docs/dev-plan.md` until an approved rotation.
+- [Approved Stage 4 contract — sole Current on rotation merge](dev-plan.md) — Virtual Memory and Protection, post-A7 Stage 4. The decisions were recorded by PR #75, and activation is the owner-authorized activation of 2026-10-11 UTC. Until the rotation merges, main retains A10.
+- [Entire approved A10 contract archive](archive/milestones/a10-independent-public-path-performance-test-infrastructure.md) — Independent Public-Path Performance-Test Infrastructure, activated by PR #71 on 2026-10-08 and implemented by PR #72 (`5d23d33`). The full original body is preserved. Formal completion and archival take effect on the rotation merge.
+- [A10 implementation closeout record](archive/milestones/a10-closeout-record.md) — P0–P3′ criterion-by-criterion evidence with commit IDs, merge-head CI, merged-main baseline re-run, limitations and re-evaluated unfinished work. The independent final PR-head review returned APPROVE for `c4fda56`.
 - [A10 baseline observation](verification/a10-baseline.md) — three-workload baseline v1; original Darwin record kept, plus the merged-main re-run and the Linux/x86_64 session after the per-platform pin; informational, never a speed gate.
 - [A10 infrastructure progress](verification/a10-stage3-progress.md) — P0/P1/P2 exact-head checkpoints, P3′ baseline delivery, P4′ close-out status and deferred-certification rationale.
 - [Entire approved A9 contract archive](archive/milestones/a9-hart-facts-safe-n1-machine-lifecycle.md) — full original activation/tasks/acceptance preserved; A9 formally completed/archived by PR #71 on 2026-10-08. PR #69 implementation accepted 2026-10-02, PR #70 closeout documents 2026-10-03.
@@ -45,7 +46,7 @@ Target architecture is not implementation status. Component presence is not end-
 
 - [Post-A7 short-term technical development roadmap proposal](proposals/post-a7-roadmap.md) — Draft A7-after technical implementation planning; not an overall product roadmap and does not activate a successor contract.
 
-- [Stage 4 virtual-memory/protection proposed contract draft](proposals/stage4-contract-draft.md) — bounded approval candidate listing every open user decision (privilege profile, satp modes, walk behavior, A/D policy, PMP, misalignment, compatibility); not active, not implemented.
+- [Stage 4 approved informational proposal snapshot](proposals/stage4-contract-draft.md) — the complete drafting record of the decided contract. Original proposal wording is historical. Not a second Current contract, and not an implementation.
 
 - [A10 / Stage 3 approved informational proposal snapshot](proposals/a10-performance-test-infrastructure.md) — detailed scope approved 2026-10-03; original decision-request phrasing is historical. Not a second Current contract, not implemented, no performance result. The A7-era roadmap's global-reservation/current-A7/host-writer-choice claims are historical and superseded by A8/A9, not inherited work.
 
@@ -71,7 +72,8 @@ Target architecture is not implementation status. Component presence is not end-
 - [A10 infrastructure progress](verification/a10-stage3-progress.md) — P0/P1/P2 exact-head checkpoints, P3′ baseline delivery, P4′ close-out status and deferred-certification rationale
 - [A10 baseline v1 observation](verification/a10-baseline.md) — three-workload baseline; original Darwin record, merged-main re-run, and Linux/x86_64 session; informational, no speed gate
 - [A10 public-path evidence schema](verification/a10-perf-schema.md) — `ruscv-perf/1` commands/statuses and the deferred calibration/certification boundary
-- [A10 contract-rotation executable audit](verification/a10-contract-rotation.md) — whole-body preservation, approved boundaries, stable links and exact evidence identities; documentation checks only
+- [A10 contract-rotation executable audit](verification/a10-contract-rotation.md) — historical audit of the A9 to A10 rotation; documentation checks only
+- [Stage 4 contract-rotation executable audit](verification/stage4-contract-rotation.md) — whole-body preservation, phrase allowlist, link repairs and docs-only scope for the A10 to Stage 4 rotation
 - [A9 T4 per-case source/tool/artifact evidence](verification/a9-t4-guest-evidence.json) — self-contained checkpoint execution record, not a new ACT4 run
 - [External RISC-V test integration contract](verification/external-riscv-tests.md)
 - [Commit tracing and differential testing](verification/commit-tracing.md)

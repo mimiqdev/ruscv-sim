@@ -4,13 +4,7 @@ This directory contains completed and explicitly superseded milestone plans with
 
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
-[approved A10 contract](../../dev-plan.md), the sole Current contract since PR #71
-activated it on 2026-10-08. A10 implementation merged 2026-10-10 as PR #72
-(`5d23d33`); the [A10 implementation closeout record](a10-closeout-record.md)
-below records bounded technical acceptance with the independent final PR-head
-documentation review still pending — it does not archive the active contract
-or complete the rolling transition. The A9 records below are historical;
-the [Stage 4 proposal draft](../../proposals/stage4-contract-draft.md) is not active.
+[approved Stage 4 contract](../../dev-plan.md), sole Current on the actual rotation merge following the owner-authorized activation of 2026-10-11 UTC. Until that merge main retains A10. On the merge the [entire A10 contract](a10-independent-public-path-performance-test-infrastructure.md) is formally completed and archived. The [Stage 4 snapshot](../../proposals/stage4-contract-draft.md) is informational, not a second Current contract.
 
 ## Rolling process
 
@@ -25,9 +19,11 @@ the [Stage 4 proposal draft](../../proposals/stage4-contract-draft.md) is not ac
 
 ## Records
 
+- [A10: Entire approved independent public-path performance-test infrastructure contract](a10-independent-public-path-performance-test-infrastructure.md)
+  - Activated by PR #71 on 2026-10-08; implementation PR #72 merged 2026-10-10; closeout PR #73 reviewed and merged 2026-10-10. The full original body is preserved. Formal completion and archival take effect on the A10 to Stage 4 rotation merge.
 - [A10: Implementation acceptance and closeout record](a10-closeout-record.md)
-  - Technical acceptance recorded 2026-10-10: PR #72 merge `5d23d337…` with exact-merge-head CI (run 38019391250), P0–P3′ criterion→commit evidence, merged-main baseline re-run, limitations and re-evaluated unfinished work. The active A10 contract stays in `docs/dev-plan.md`; the independent final PR-head documentation review is pending, so the rolling transition is not complete.
-  - [Stage 4 virtual-memory/protection proposed contract draft](../../proposals/stage4-contract-draft.md) is an approval candidate only, with open user decisions; not active or implemented.
+  - Technical acceptance recorded 2026-10-10: PR #72 merge `5d23d337…` with exact-merge-head CI (run 38019391250), P0–P3′ criterion to commit evidence, merged-main baseline re-run, limitations and re-evaluated unfinished work. The independent final PR-head review returned APPROVE for `c4fda56`.
+  - [Stage 4 approved informational snapshot](../../proposals/stage4-contract-draft.md) records the decided contract. It is not a second Current contract, and it is not an implementation.
 
 - [A9: Entire approved Hart facts and safe N=1 lifecycle contract](a9-hart-facts-safe-n1-machine-lifecycle.md)
   - Technical acceptance 2026-10-02; closeout document delivery 2026-10-03; successor/rotation approved 2026-10-03 UTC. Full original body preserved; formally completed/archived by rotation PR #71 on 2026-10-08.

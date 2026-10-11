@@ -8,14 +8,15 @@
 delivered the right-sized baseline v1; P4′ documentation is delivered by this
 update plus the [baseline page](a10-baseline.md) and the [A10 closeout
 record](../archive/milestones/a10-closeout-record.md). The remaining P4′ item —
-independent final PR-head review of this documentation head — is **PENDING**,
-performed by a separate reviewer after these documents are committed. This is
-not an ACT4 claim or a performance verdict. No three-session cohort,
+independent final PR-head review of the documentation head — is recorded in the
+[A10 closeout](../archive/milestones/a10-closeout-record.md): a read-only review of
+`6dd42c2` returned REQUEST CHANGES, and the re-review returned APPROVE for `c4fda56`.
+This is not an ACT4 claim or a performance verdict. No three-session cohort,
 ratio-bearing comparison, CI weekly reporting or retention validation is
 claimed; the certification layer remains deferred (see the §8 amendment in the
-[contract](../dev-plan.md#8-future-implementation-deliverables-and-falsifiable-acceptance)).
+[A10 contract](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md#8-future-implementation-deliverables-and-falsifiable-acceptance)).
 
-**Contract references:** [Current A10 contract](../dev-plan.md), accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md) and [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md). [A9 closeout](a9-closeout-assessment.md) remains the historical safety baseline, not performance evidence.
+**Contract references:** [Preserved A10 contract](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md), accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md) and [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md). [A9 closeout](a9-closeout-assessment.md) remains the historical safety baseline, not performance evidence.
 
 ## Landed milestone activation
 

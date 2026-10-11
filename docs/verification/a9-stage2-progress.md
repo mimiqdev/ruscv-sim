@@ -10,7 +10,7 @@ Final PR-head gate/review and exact merge-head CI success are recorded separatel
 and the [implementation closeout record](../archive/milestones/a9-closeout-record.md).
 The pending CI/review statements below describe their original checkpoints only.
 No checkpoint result is relabeled as final-head execution. Technical implementation/evidence
-is accepted. Detailed A10 successor and documentation-only rotation approved 2026-10-03 UTC; formal A9 completion/archival takes effect on actual rotation merge. Until then main retains A9; on merge [A10](../dev-plan.md) becomes sole Current. PR #70 closeout document delivery and distinct CI identities are in the closeout record; no new runtime evidence is assigned to that document SHA.
+is accepted. Detailed A10 successor and documentation-only rotation approved 2026-10-03 UTC; formal A9 completion/archival takes effect on actual rotation merge. Until then main retains A9; on merge [A10](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md) became sole Current. PR #70 closeout document delivery and distinct CI identities are in the closeout record; no new runtime evidence is assigned to that document SHA.
 
 ## 1. Scope and evidence identity
 

@@ -2,7 +2,7 @@
 
 **Status:** Historical source-inspected A7 inventory; not a current A8/A9 atomic route description.
 
-**Authority:** Informational historical snapshot. Its present-tense legacy AMO/LR/SC and A8-not-started statements describe the A7 inspection date below; for the subsequently implemented native single-Hart atomic route and its precise limits use the [A8 closeout assessment](../verification/a8-closeout-assessment.md), current source/tests, and the [A9 bounded acceptance](../verification/a9-closeout-assessment.md). The [approved A10 plan](../dev-plan.md) activates on actual rotation merge, following approval 2026-10-03 UTC; main retains A9 until then. This historical snapshot is not updated into a current implementation claim.
+**Authority:** Informational historical snapshot. Its present-tense legacy AMO/LR/SC and A8-not-started statements describe the A7 inspection date below; for the subsequently implemented native single-Hart atomic route and its precise limits use the [A8 closeout assessment](../verification/a8-closeout-assessment.md), current source/tests, and the [A9 bounded acceptance](../verification/a9-closeout-assessment.md). The [approved A10 plan](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md) was activated by PR #71 on 2026-10-08. The [Stage 4 contract](../dev-plan.md) becomes sole Current on the later rotation merge, and main retains A10 until then. This historical snapshot is not updated into a current implementation claim.
 
 **Last verified:** 2026-09-19 at A7 implementation evidence head `fb6f51c771f32585f1547422c9633379f7ae370b`;
 A4 evidence updated 2026-09-11;

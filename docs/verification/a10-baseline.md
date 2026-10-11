@@ -8,7 +8,7 @@ representative workloads, one session, ≥15 repetitions each, public-CLI end-to
 Correctness floor per repetition: the CLI child's process exit code plus exact expected
 stdout bytes. No cohort, no ratios, no speed target. Certification
 (cohort/baseline-sealing gates, full matrix, CI/retention) is deferred per the
-[dev-plan amendment](../dev-plan.md#8-future-implementation-deliverables-and-falsifiable-acceptance).
+[dev-plan amendment](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md#8-future-implementation-deliverables-and-falsifiable-acceptance).
 
 ## Recorded run
 
