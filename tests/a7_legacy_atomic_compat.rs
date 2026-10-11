@@ -14,7 +14,7 @@
 mod common;
 
 use common::public_elf as fixture;
-use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome};
+use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome, Trap};
 use ruscv_sim::csr::machine;
 use ruscv_sim::elf::SignatureInfo;
 use ruscv_sim::executor::{dump_signature, RiscVSimulator, SystemBus, SYSTEM_BUS_HTIF_BASE};
@@ -367,7 +367,7 @@ fn ordinary_store_and_fp_store_interleave_with_port_route_lr_sc() {
     assert!(matches!(
         trapped,
         ruscv_sim::core::StepOutcome::TrapEntered(fact)
-            if fact.cause == ruscv_sim::core::ExceptionCause::IllegalInstruction
+            if fact.cause == Trap::Exception(ruscv_sim::core::ExceptionCause::IllegalInstruction)
                 && fact.mtval == fsd as u64
     ));
     assert_eq!(fixture.backing.lock().unwrap().read_dword(0x80).unwrap(), 3);
@@ -461,7 +461,7 @@ fn rejected_write_keeps_reservation_and_faulting_sc_retains_it() {
     assert!(matches!(
         fixture.core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x1000
+            if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && trap.mtval == 0x1000
     ));
     assert_eq!(
         fixture.backing.lock().unwrap().read_dword(0x80).unwrap(),
@@ -500,7 +500,7 @@ fn rejected_write_keeps_reservation_and_faulting_sc_retains_it() {
     assert!(matches!(
         fixture.core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x80
+            if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && trap.mtval == 0x80
     ));
     assert_eq!(fixture.core.state().regs[4], 0);
     fixture.core.state_mut().pc = 4;
@@ -760,7 +760,7 @@ fn htif_atomic_policy_rejects_lr_sc_and_commits_one_rmw_callback() {
     assert!(matches!(
         core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::LoadAccessFault
+            if trap.cause == Trap::Exception(ExceptionCause::LoadAccessFault)
                 && trap.mtval == SYSTEM_BUS_HTIF_BASE
     ));
     assert!(observed.lock().unwrap().is_empty());
@@ -773,7 +773,7 @@ fn htif_atomic_policy_rejects_lr_sc_and_commits_one_rmw_callback() {
     assert!(matches!(
         core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault
+            if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault)
                 && trap.mtval == SYSTEM_BUS_HTIF_BASE
     ));
     assert_eq!(

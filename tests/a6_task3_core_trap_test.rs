@@ -1,7 +1,7 @@
 //! A6 Task 3 regressions for the integrated Hart outcome and trap boundary.
 
 use ruscv_sim::core::{
-    ExceptionCause, PrivilegeMode, RiscvCore, SimulatorFailureKind, StepOutcome,
+    ExceptionCause, PrivilegeMode, RiscvCore, SimulatorFailureKind, StepOutcome, Trap,
 };
 use ruscv_sim::csr::machine;
 use ruscv_sim::executor::RiscVSimulator;
@@ -255,7 +255,7 @@ fn trap_entry_then_handler_and_mret_have_typed_boundaries() {
     let StepOutcome::TrapEntered(entered) = entered else {
         panic!("ECALL must enter a typed trap")
     };
-    assert_eq!(entered.cause, ExceptionCause::EcallM);
+    assert_eq!(entered.cause, Trap::Exception(ExceptionCause::EcallM));
     assert_eq!(entered.vector_pc, MTVEC);
     assert_eq!(entered.mtval, 0);
     assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
@@ -292,13 +292,13 @@ fn recursive_and_heterogeneous_traps_replace_the_saved_record_without_retiring()
 
     let first = core.step_outcome();
     assert!(
-        matches!(first, StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::EcallM)
+        matches!(first, StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::EcallM))
     );
     assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
 
     let second = core.step_outcome();
     assert!(
-        matches!(second, StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::IllegalInstruction)
+        matches!(second, StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::IllegalInstruction))
     );
     assert_eq!(core.state().csr.read(machine::MEPC).unwrap(), MTVEC);
     assert_eq!(core.state().csr.read(machine::MCAUSE).unwrap(), 2);
@@ -308,9 +308,15 @@ fn recursive_and_heterogeneous_traps_replace_the_saved_record_without_retiring()
 #[test]
 fn ecall_cause_tracks_the_privilege_at_the_fault_boundary() {
     for (privilege, expected) in [
-        (PrivilegeMode::User, ExceptionCause::EcallU),
-        (PrivilegeMode::Supervisor, ExceptionCause::EcallS),
-        (PrivilegeMode::Machine, ExceptionCause::EcallM),
+        (PrivilegeMode::User, Trap::Exception(ExceptionCause::EcallU)),
+        (
+            PrivilegeMode::Supervisor,
+            Trap::Exception(ExceptionCause::EcallS),
+        ),
+        (
+            PrivilegeMode::Machine,
+            Trap::Exception(ExceptionCause::EcallM),
+        ),
     ] {
         let (mut core, _) = core_with_program(&[(0, 0x0000_0073)]);
         if privilege != PrivilegeMode::Machine {
@@ -321,7 +327,7 @@ fn ecall_cause_tracks_the_privilege_at_the_fault_boundary() {
         assert!(matches!(outcome, StepOutcome::TrapEntered(fact) if fact.cause == expected));
         assert_eq!(
             core.state().csr.read(machine::MCAUSE).unwrap(),
-            expected.code()
+            expected.cause_code()
         );
         assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
     }
@@ -333,14 +339,14 @@ fn illegal_mret_and_bad_encoding_enter_illegal_instruction_traps() {
     lower.state_mut().privilege = PrivilegeMode::User;
     lower.state_mut().csr.set_privilege(PrivilegeMode::User);
     assert!(
-        matches!(lower.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::IllegalInstruction)
+        matches!(lower.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::IllegalInstruction))
     );
     assert_eq!(lower.state().pc, MTVEC);
     assert_eq!(lower.state().csr.read(machine::MINSTRET).unwrap(), 0);
 
     let (mut malformed, _) = core_with_program(&[(0, 0x3020_00f3)]);
     assert!(
-        matches!(malformed.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::IllegalInstruction)
+        matches!(malformed.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::IllegalInstruction))
     );
     assert_eq!(malformed.state().pc, MTVEC);
 }
@@ -351,27 +357,27 @@ fn fetch_load_store_and_control_alignment_faults_have_no_partial_side_effects() 
     fetch.reset(MEMORY_SIZE as u64, 0);
     fetch.state_mut().csr.write(machine::MTVEC, MTVEC).unwrap();
     assert!(
-        matches!(fetch.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::InstructionAccessFault)
+        matches!(fetch.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::InstructionAccessFault))
     );
 
     let (mut load, _) = core_with_program(&[(0, load_double(5, 0, 1))]);
     load.state_mut().regs[5] = 0xdead_beef;
     assert!(
-        matches!(load.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::LoadAddressMisaligned)
+        matches!(load.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::LoadAddressMisaligned))
     );
     assert_eq!(load.state().regs[5], 0xdead_beef);
 
     let (mut store, memory) = core_with_program(&[(0, store_double(5, 0, 1))]);
     store.state_mut().regs[5] = 0x1122_3344_5566_7788;
     assert!(
-        matches!(store.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::StoreAddressMisaligned)
+        matches!(store.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::StoreAddressMisaligned))
     );
     assert_eq!(memory.lock().unwrap().read_dword(0x08).unwrap(), 0);
 
     let (mut access, memory) = core_with_program(&[(0, load_double(5, 0, 0x200))]);
     access.state_mut().regs[5] = 0xfeed_face;
     assert!(
-        matches!(access.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::LoadAccessFault)
+        matches!(access.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::LoadAccessFault))
     );
     assert_eq!(access.state().regs[5], 0xfeed_face);
     assert_eq!(
@@ -382,7 +388,7 @@ fn fetch_load_store_and_control_alignment_faults_have_no_partial_side_effects() 
     let (mut store_access, memory) = core_with_program(&[(0, store_double(5, 0, 0x200))]);
     store_access.state_mut().regs[5] = 0x8877_6655_4433_2211;
     assert!(
-        matches!(store_access.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::StoreAccessFault)
+        matches!(store_access.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::StoreAccessFault))
     );
     assert_eq!(
         memory.lock().unwrap().read_word(0x00).unwrap(),
@@ -397,14 +403,14 @@ fn fetch_load_store_and_control_alignment_faults_have_no_partial_side_effects() 
         .write(machine::MTVEC, MTVEC)
         .unwrap();
     assert!(
-        matches!(misaligned_pc.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::InstructionAddressMisaligned)
+        matches!(misaligned_pc.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::InstructionAddressMisaligned))
     );
 
     let (mut jump, _) = core_with_program(&[(0, jalr(5, 1, 0))]);
     jump.state_mut().regs[1] = 2;
     jump.state_mut().regs[5] = 0x1234;
     assert!(
-        matches!(jump.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == ExceptionCause::InstructionAddressMisaligned)
+        matches!(jump.step_outcome(), StepOutcome::TrapEntered(fact) if fact.cause == Trap::Exception(ExceptionCause::InstructionAddressMisaligned))
     );
     assert_eq!(jump.state().regs[5], 0x1234);
 }
@@ -427,7 +433,10 @@ fn atomic_misalignment_enters_store_trap_before_any_data_transaction() {
     let StepOutcome::TrapEntered(fact) = outcome else {
         panic!("misaligned AMO must enter a trap")
     };
-    assert_eq!(fact.cause, ExceptionCause::StoreAddressMisaligned);
+    assert_eq!(
+        fact.cause,
+        Trap::Exception(ExceptionCause::StoreAddressMisaligned)
+    );
     assert_eq!(fact.mtval, 1);
     assert_eq!(core.state().pc, MTVEC);
     assert_eq!(core.state().regs[2], 0xfeed_face);
@@ -455,7 +464,10 @@ fn unmapped_atomic_access_enters_store_fault_without_retirement_or_partial_state
     let StepOutcome::TrapEntered(fact) = outcome else {
         panic!("unmapped AMO must enter a trap")
     };
-    assert_eq!(fact.cause, ExceptionCause::StoreAccessFault);
+    assert_eq!(
+        fact.cause,
+        Trap::Exception(ExceptionCause::StoreAccessFault)
+    );
     assert_eq!(fact.mtval, MEMORY_SIZE as u64);
     assert_eq!(core.state().pc, MTVEC);
     assert_eq!(core.state().regs[2], 0xfeed_face);
@@ -476,7 +488,10 @@ fn load_reserved_faults_use_load_causes_and_preserve_state() {
     let StepOutcome::TrapEntered(fact) = outcome else {
         panic!("misaligned LR.W must enter a trap")
     };
-    assert_eq!(fact.cause, ExceptionCause::LoadAddressMisaligned);
+    assert_eq!(
+        fact.cause,
+        Trap::Exception(ExceptionCause::LoadAddressMisaligned)
+    );
     assert_eq!(fact.mtval, 1);
     assert_eq!(misaligned.state().pc, MTVEC);
     assert_eq!(misaligned.state().regs[2], 0xfeed_face);
@@ -491,7 +506,7 @@ fn load_reserved_faults_use_load_causes_and_preserve_state() {
     let StepOutcome::TrapEntered(fact) = outcome else {
         panic!("unmapped LR.W must enter a trap")
     };
-    assert_eq!(fact.cause, ExceptionCause::LoadAccessFault);
+    assert_eq!(fact.cause, Trap::Exception(ExceptionCause::LoadAccessFault));
     assert_eq!(fact.mtval, MEMORY_SIZE as u64);
     assert_eq!(unmapped.state().pc, MTVEC);
     assert_eq!(unmapped.state().regs[2], 0xfeed_face);
@@ -509,7 +524,10 @@ fn reserved_op32_sllw_encoding_traps_while_legal_word_controls_retire() {
     let StepOutcome::TrapEntered(fact) = outcome else {
         panic!("reserved SLLW encoding must enter a trap")
     };
-    assert_eq!(fact.cause, ExceptionCause::IllegalInstruction);
+    assert_eq!(
+        fact.cause,
+        Trap::Exception(ExceptionCause::IllegalInstruction)
+    );
     assert_eq!(fact.mtval, RESERVED_SLLW as u64);
     assert_eq!(reserved.state().pc, MTVEC);
     assert_eq!(reserved.state().regs[1], 0xfeed_face);
@@ -547,7 +565,10 @@ fn reserved_op32_and_misc_mem_encodings_enter_illegal_instruction_traps() {
         let StepOutcome::TrapEntered(fact) = outcome else {
             panic!("reserved encoding {raw:#010x} must enter a trap")
         };
-        assert_eq!(fact.cause, ExceptionCause::IllegalInstruction);
+        assert_eq!(
+            fact.cause,
+            Trap::Exception(ExceptionCause::IllegalInstruction)
+        );
         assert_eq!(fact.mtval, raw as u64);
         assert_eq!(core.state().pc, MTVEC);
         assert_eq!(core.state().csr.read(machine::MCAUSE).unwrap(), 2);
@@ -564,7 +585,10 @@ fn fence_i_enters_illegal_instruction_without_retiring() {
     let StepOutcome::TrapEntered(fact) = outcome else {
         panic!("FENCE.I must enter a trap")
     };
-    assert_eq!(fact.cause, ExceptionCause::IllegalInstruction);
+    assert_eq!(
+        fact.cause,
+        Trap::Exception(ExceptionCause::IllegalInstruction)
+    );
     assert_eq!(fact.mtval, raw as u64);
     assert_eq!(core.state().pc, MTVEC);
     assert_eq!(core.state().csr.read(machine::MCAUSE).unwrap(), 2);

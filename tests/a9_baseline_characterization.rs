@@ -5,7 +5,7 @@
 mod common;
 
 use common::public_elf as elf;
-use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome};
+use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome, Trap};
 use ruscv_sim::csr::machine;
 use ruscv_sim::executor::{load_and_run, reset_core, step_once, RiscVSimulator, SystemBus};
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
@@ -207,7 +207,7 @@ fn failed_sc_retires_but_faulting_sc_does_not_write_rd_or_retire() {
             let outcome = core.step_outcome();
             if invalid_target {
                 assert!(matches!(outcome, StepOutcome::TrapEntered(trap)
-                    if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x2000));
+                    if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && trap.mtval == 0x2000));
                 assert_eq!(core.state().regs[3], 0xbeef);
                 assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
             } else {

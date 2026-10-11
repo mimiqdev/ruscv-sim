@@ -23,7 +23,7 @@
 //! rows, which pin its documented non-conformance (no committed-write
 //! visibility).
 
-use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome};
+use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome, Trap};
 use ruscv_sim::csr::machine;
 use ruscv_sim::executor::RiscVSimulator;
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
@@ -574,7 +574,7 @@ fn hart_side_rejections_issue_zero_requests() {
             matches!(
                 outcome,
                 StepOutcome::TrapEntered(trap)
-                    if trap.cause == ExceptionCause::IllegalInstruction
+                    if trap.cause == Trap::Exception(ExceptionCause::IllegalInstruction)
             ),
             "funct5={funct5:05b} must trap illegal-instruction"
         );
@@ -593,7 +593,7 @@ fn hart_side_rejections_issue_zero_requests() {
     set_mtvec(&mut core, 0x40);
     assert!(matches!(
         core.step_outcome(),
-        StepOutcome::TrapEntered(trap) if trap.cause == ExceptionCause::IllegalInstruction
+        StepOutcome::TrapEntered(trap) if trap.cause == Trap::Exception(ExceptionCause::IllegalInstruction)
     ));
     assert_eq!(spy.atomic_count(), 0);
 
@@ -603,7 +603,7 @@ fn hart_side_rejections_issue_zero_requests() {
     set_mtvec(&mut core, 0x40);
     assert!(matches!(
         core.step_outcome(),
-        StepOutcome::TrapEntered(trap) if trap.cause == ExceptionCause::IllegalInstruction
+        StepOutcome::TrapEntered(trap) if trap.cause == Trap::Exception(ExceptionCause::IllegalInstruction)
     ));
     assert_eq!(spy.atomic_count(), 0);
 
@@ -871,7 +871,7 @@ fn reservation_record_lifecycle_is_hart_owned() {
     core.state_mut().pc = 8;
     assert!(matches!(
         core.step_outcome(),
-        StepOutcome::TrapEntered(trap) if trap.cause == ExceptionCause::LoadAccessFault
+        StepOutcome::TrapEntered(trap) if trap.cause == Trap::Exception(ExceptionCause::LoadAccessFault)
     ));
     let record = core
         .state()
@@ -1052,7 +1052,7 @@ fn illegal_fp_store_does_not_invalidate_sc() {
     assert!(matches!(
         trapped,
         StepOutcome::TrapEntered(fact)
-            if fact.cause == ExceptionCause::IllegalInstruction && fact.mtval == fsd_word as u64
+            if fact.cause == Trap::Exception(ExceptionCause::IllegalInstruction) && fact.mtval == fsd_word as u64
     ));
     assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 1);
     assert!(core.state().reservation.is_some());
@@ -1122,7 +1122,7 @@ fn rejected_store_does_not_invalidate_the_reservation() {
     assert!(matches!(
         core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x1000
+            if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && trap.mtval == 0x1000
     ));
     core.state_mut().pc = 8;
     retired(&mut core);
@@ -1470,7 +1470,7 @@ fn unreserved_sc_below_flat_base_faults_during_address_conversion() {
             matches!(
                 outcome,
                 StepOutcome::TrapEntered(trap)
-                    if trap.cause == ExceptionCause::StoreAccessFault
+                    if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault)
                         && trap.mtval == BASE - 8
             ),
             "an unreserved SC.D below the image base must fault at the original guest address, got {outcome:?}"
@@ -1525,7 +1525,7 @@ fn unreserved_sc_odd_flat_offset_faults_before_backend_dispatch() {
     assert!(matches!(
         core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault
+            if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault)
                 && trap.mtval == ODD_BASE + 0x7c
     ));
     assert_eq!(
@@ -1588,7 +1588,7 @@ fn sc_conversion_rejection_faults_and_retains_the_reservation() {
         matches!(
             outcome,
             StepOutcome::TrapEntered(trap)
-                if trap.cause == ExceptionCause::StoreAccessFault
+                if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault)
                     && trap.mtval == BASE - 8
         ),
         "conversion rejection must trap cause 7 with the guest address: {outcome:?}"
@@ -1651,7 +1651,7 @@ fn sc_conversion_rejection_faults_and_retains_the_reservation() {
     assert!(matches!(
         outcome,
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == ODD_BASE + 0x7c
+            if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && trap.mtval == ODD_BASE + 0x7c
     ));
     assert_eq!(spy.atomic_count(), 1);
 
@@ -1734,7 +1734,7 @@ fn target_rejections_map_to_access_faults_with_guest_mtval() {
     assert!(matches!(
         core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::LoadAccessFault && trap.mtval == 0x400
+            if trap.cause == Trap::Exception(ExceptionCause::LoadAccessFault) && trap.mtval == 0x400
     ));
 
     // AMO at an unmapped span → store/AMO access fault (cause 7).
@@ -1745,7 +1745,7 @@ fn target_rejections_map_to_access_faults_with_guest_mtval() {
     assert!(matches!(
         core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x400
+            if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && trap.mtval == 0x400
     ));
 
     // Even without a reservation, a legal SC to an unmapped target must
@@ -1757,7 +1757,7 @@ fn target_rejections_map_to_access_faults_with_guest_mtval() {
     assert!(matches!(
         unreserved.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x400
+            if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && trap.mtval == 0x400
     ));
     assert_eq!(unreserved_spy.atomic_count(), 1);
     assert_eq!(
@@ -1780,13 +1780,13 @@ fn target_rejections_map_to_access_faults_with_guest_mtval() {
     assert!(matches!(
         core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x80
+            if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && trap.mtval == 0x80
     ));
     core.state_mut().pc = 8;
     assert!(matches!(
         core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ExceptionCause::StoreAccessFault && trap.mtval == 0x80
+            if trap.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && trap.mtval == 0x80
     ));
 }
 

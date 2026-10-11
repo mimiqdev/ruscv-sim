@@ -786,7 +786,7 @@ fn assert_fault(
     let StepOutcome::TrapEntered(fact) = outcome else {
         panic!("expected {:?} trap, got {outcome:?}", expected_cause);
     };
-    assert_eq!(fact.cause, expected_cause);
+    assert_eq!(fact.cause, Trap::Exception(expected_cause));
     assert_eq!(fact.faulting_pc, expected_pc);
     assert_eq!(fact.mtval, expected_tval);
     assert_eq!(core.state().pc, 0x20);
@@ -825,7 +825,10 @@ fn task4_induced_faults_preserve_boundary_state_and_physical_transactions() {
     let StepOutcome::TrapEntered(fetch_fact) = fetch_outcome else {
         panic!("unmapped fetch must enter an instruction access fault");
     };
-    assert_eq!(fetch_fact.cause, ExceptionCause::InstructionAccessFault);
+    assert_eq!(
+        fetch_fact.cause,
+        Trap::Exception(ExceptionCause::InstructionAccessFault)
+    );
     assert_eq!(fetch_fact.faulting_pc, 0x40);
     assert_eq!(fetch_fact.mtval, 0x40);
     assert_eq!(fetch.state().csr.read(machine::MEPC).unwrap(), 0x40);

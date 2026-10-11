@@ -396,6 +396,18 @@ impl CsrFile {
         self.stored(machine::MSTATUS)
     }
 
+    /// The whole `mip` register, independent of the current privilege.
+    ///
+    /// Interrupt sampling runs in S and U, which cannot read `mip`.
+    pub(crate) fn mip(&self) -> u64 {
+        self.stored(machine::MIP)
+    }
+
+    /// The whole `mie` register, independent of the current privilege.
+    pub(crate) fn mie(&self) -> u64 {
+        self.stored(machine::MIE)
+    }
+
     /// Write `mstatus` as a Hart-owned transition (trap entry or return),
     /// applying the field rules but not the current privilege view.
     pub(crate) fn set_mstatus(&mut self, value: u64) {

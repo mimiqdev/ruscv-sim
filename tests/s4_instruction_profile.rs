@@ -1,5 +1,5 @@
 use ruscv_sim::core::observation::Observation;
-use ruscv_sim::core::{CoreState, PrivilegeMode, RiscvCore, StepOutcome};
+use ruscv_sim::core::{CoreState, ExceptionCause, PrivilegeMode, RiscvCore, StepOutcome, Trap};
 use ruscv_sim::csr::{machine, mstatus, supervisor};
 use ruscv_sim::decode::InstructionDecoder;
 use ruscv_sim::execute::{ExecuteError, Executor};
@@ -70,7 +70,10 @@ fn check(raw: u32, mode: PrivilegeMode, status: u64, legal: bool) -> CoreState {
         let StepOutcome::TrapEntered(trap) = observed.outcome else {
             panic!("expected trap")
         };
-        assert_eq!(trap.cause as u64, 2);
+        assert_eq!(
+            trap.cause,
+            Trap::Exception(ExceptionCause::IllegalInstruction)
+        );
         assert_eq!(trap.mtval, raw as u64);
         assert_eq!(on.state().pc, 0x80);
         assert_eq!(on.state().csr.read(machine::MEPC).unwrap(), 0);
