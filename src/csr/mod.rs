@@ -42,6 +42,7 @@ pub mod machine {
     pub const MENVCFG: u16 = 0x30A;
 
     // Machine Counters
+    pub const MCYCLE: u16 = 0xB00;
     pub const MINSTRET: u16 = 0xB02;
 
     // Machine Trap Handling
@@ -76,6 +77,15 @@ pub mod supervisor {
 
     // Supervisor Protection and Translation
     pub const SATP: u16 = 0x180;
+}
+
+/// Unprivileged counter addresses.  `cycle` and `instret` are read-only
+/// shadows of `mcycle` and `minstret`.  `time` is absent because this
+/// profile has no `mtime`.
+pub mod unprivileged {
+    pub const CYCLE: u16 = 0xC00;
+    pub const TIME: u16 = 0xC01;
+    pub const INSTRET: u16 = 0xC02;
 }
 
 /// Hypervisor (VS) CSR address constants.
@@ -209,6 +219,7 @@ impl CsrFile {
         csrs.insert(machine::MTVEC, 0);
         csrs.insert(machine::MCOUNTEREN, 0);
         csrs.insert(machine::MENVCFG, 0);
+        csrs.insert(machine::MCYCLE, 0);
         csrs.insert(machine::MINSTRET, 0);
         csrs.insert(machine::MSCRATCH, 0);
         csrs.insert(machine::MEPC, 0);
@@ -263,6 +274,8 @@ impl CsrFile {
             supervisor::SSTATUS => Some(self.stored(machine::MSTATUS) & mstatus::SSTATUS_VIEW),
             supervisor::SIE => Some(self.stored(machine::MIE) & self.stored(machine::MIDELEG)),
             supervisor::SIP => Some(self.stored(machine::MIP) & self.stored(machine::MIDELEG)),
+            unprivileged::CYCLE => Some(self.stored(machine::MCYCLE)),
+            unprivileged::INSTRET => Some(self.stored(machine::MINSTRET)),
             _ if Self::is_read_only_zero(addr) => Some(0),
             _ => self.csrs.get(&addr).copied(),
         }
@@ -355,6 +368,14 @@ impl CsrFile {
     fn check_privilege(&self, addr: u16) -> Result<(), CsrError> {
         let required = Self::get_required_privilege(addr);
         if (self.privilege as u8) < (required as u8) {
+            return Err(CsrError::PrivilegeViolation(addr));
+        }
+        // mcounteren is read-only zero, so CY and IR stay clear.  A read of
+        // either shadow from S or U is therefore illegal.  Machine mode is
+        // not gated by mcounteren.
+        if self.privilege != PrivilegeMode::Machine
+            && matches!(addr, unprivileged::CYCLE | unprivileged::INSTRET)
+        {
             return Err(CsrError::PrivilegeViolation(addr));
         }
         // TVM = 1 makes an S-mode access to satp illegal.
@@ -456,24 +477,34 @@ impl CsrFile {
     /// the core uses this narrow internal inspection path rather than changing
     /// the CSR privilege view around a retirement update.
     pub(crate) fn minstret_value(&self) -> u64 {
-        self.csrs.get(&machine::MINSTRET).copied().unwrap_or(0)
+        self.stored(machine::MINSTRET)
     }
 
-    /// Increment the single authoritative `minstret` storage for one retired
-    /// instruction.
-    pub(crate) fn increment_minstret(&mut self) -> u64 {
-        let value = self.csrs.entry(machine::MINSTRET).or_insert(0);
+    /// Increment one Machine counter by one, wrapping at 64 bits.
+    fn increment_stored(&mut self, addr: u16) -> u64 {
+        let value = self.csrs.entry(addr).or_insert(0);
         let old_value = *value;
         *value = value.wrapping_add(1);
         if let Some(writes) = &mut self.observed_writes {
             writes.push(CsrAccess {
-                addr: machine::MINSTRET,
+                addr,
                 old_value,
                 new_value: *value,
                 wrote: true,
             });
         }
         *value
+    }
+
+    /// Increment `mcycle` for one completed Hart turn.
+    pub(crate) fn increment_mcycle(&mut self) -> u64 {
+        self.increment_stored(machine::MCYCLE)
+    }
+
+    /// Increment the single authoritative `minstret` storage for one retired
+    /// instruction.
+    pub(crate) fn increment_minstret(&mut self) -> u64 {
+        self.increment_stored(machine::MINSTRET)
     }
 
     /// Write a CSR and return the old/new values plus explicit-write fact.

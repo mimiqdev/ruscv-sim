@@ -150,7 +150,11 @@ Stage 4 指令配置把 FENCE.I 改为非法指令异常。WFI 在 M 模式及 T
 即使 host 修复锁并修改内存，后续 run／step 仍须等待 fresh reset。未知完成的恢复限制不变。
 
 这些是 Stage 4 的基础变更，尚不代表完整里程碑验收。`satp` 的 CSR 字段策略接受 Bare 和 Sv39，
-但公开路径的页表翻译及 A/D 效果验证仍待完成。`mcycle` 和主管中断交付也尚待实现。
+`mcycle` 计完成的 Hart turn，包括陷入但不退休的指令。`minstret` 仍只计退休的指令。
+显式写入其中一个计数器会替代该指令对同一计数器的隐式增量，包括写入与旧值相同的值。
+`cycle` 和 `instret` 是只读影子。`mcounteren` 保持 0，所以 S 模式和 U 模式读任一影子都触发非法指令异常。
+`time` 不存在，因为这个配置没有 `mtime`，也不声称 Zicntr。失败的 turn 不增加任一计数器。
+公开路径的页表翻译、A/D 效果和主管中断交付仍待完成。
 完整交付边界以当前合同和对应实现测试为准。
 
 返回的 `MachineTurn` 保持已接受的边界/观察工作存活；保留 receipt 或正在执行 callback/sink
