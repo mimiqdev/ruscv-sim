@@ -126,7 +126,7 @@ fn test_sv39_1gb_gigapage() {
     let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
 
     let root_ppn = 0x80000;
-    let data_ppn = 0x90000; // Gigapage at 0x9000_0000
+    let data_ppn = 0x80000; // Gigapage at 0x8000_0000
 
     // Level 2 (root) - leaf entry for 1GB gigapage
     // VPN[2] = 2
@@ -239,7 +239,7 @@ fn test_sv39_permission_check_read() {
     let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
 
     let root_ppn = 0x80000;
-    let data_ppn = 0x90000;
+    let data_ppn = 0x80000;
 
     // Create read-only page
     let root_pte = PageTableEntry::new_leaf(data_ppn, PagePermissions::rx(), false);
@@ -266,7 +266,7 @@ fn test_sv39_permission_check_user() {
     let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
 
     let root_ppn = 0x80000;
-    let data_ppn = 0x90000;
+    let data_ppn = 0x80000;
 
     // Create supervisor-only page
     let root_pte = PageTableEntry::new_leaf(data_ppn, PagePermissions::rwx(), false);
@@ -296,7 +296,7 @@ fn test_sv39_user_page() {
     let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
 
     let root_ppn = 0x80000;
-    let data_ppn = 0x90000;
+    let data_ppn = 0x80000;
 
     // Create user-accessible page
     let root_pte = PageTableEntry::new_leaf(data_ppn, PagePermissions::user_rw(), false);

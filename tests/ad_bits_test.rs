@@ -336,7 +336,7 @@ fn test_ad_bits_1gb_gigapage() {
     // Memory for root + data
     let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
     let root_ppn = 0x80000;
-    let data_ppn = 0x90000;
+    let data_ppn = 0x80000;
 
     let root_pte_addr =
         setup_1gb_page_table(&mut memory, root_ppn, data_ppn, PagePermissions::rw());
@@ -560,7 +560,7 @@ fn test_ad_bits_all_page_sizes_consistency() {
     memory.write_dword(pte_2m_addr, level1_pte.bits()).unwrap();
 
     // 1GB gigapage at VA 0x8000_0000 (VPN[2]=2)
-    let data_ppn_1g = 0xB0000;
+    let data_ppn_1g = 0xC0000;
     let pte_1g_addr = (root_ppn << 12) + 16;
     let root_pte_giga = PageTableEntry::new_leaf(data_ppn_1g, PagePermissions::rw(), false);
     memory

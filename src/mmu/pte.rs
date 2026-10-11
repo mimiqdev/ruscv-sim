@@ -11,7 +11,7 @@
 //! ├─────────────────────────────────────────────────────────────────────────────┤
 //! │ 63 │ 62-54 │ 53-28 │ 27-19 │ 18-10 │ 9 │ 8 │ 7 │ 6 │ 5 │ 4 │ 3 │ 2 │ 1 │ 0 │
 //! ├────┼───────┼───────┼───────┼───────┼───┼───┼───┼───┼───┼───┼───┼───┼───┼───┤
-//! │ N  │  RSW  │  PPN2 │  PPN1 │  PPN0 │RSW│ D │ A │ G │ U │ X │ W │ R │ V │
+//! │ Reserved  │  PPN2 │  PPN1 │  PPN0 │ RSW  │ D │ A │ G │ U │ X │ W │ R │ V │
 //! └────┴───────┴───────┴───────┴───────┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┘
 //!
 //! Bit definitions:
@@ -25,6 +25,7 @@
 //! - D (7): Dirty - page has been written
 //! - RSW (8-9): Reserved for Software
 //! - PPN[2:0] (10-53): Physical Page Number
+//! - Bits 54-63: Reserved in the supported Sv39 profile
 //! ```
 
 /// Page Table Entry (64-bit)
@@ -300,6 +301,17 @@ impl PageTableEntry {
     /// RISC-V spec: W=1, R=0 is a reserved combination
     pub const fn has_valid_permissions(&self) -> bool {
         !(self.0 & flags::W != 0 && self.0 & flags::R == 0)
+    }
+
+    pub(crate) fn valid_sv39_at_level(&self, level: usize) -> bool {
+        self.is_valid()
+            && self.0 >> 54 == 0
+            && self.has_valid_permissions()
+            && if self.is_leaf() {
+                self.ppn() & ((1 << (9 * level)) - 1) == 0
+            } else {
+                level != 0 && self.0 & (flags::D | flags::A | flags::U) == 0
+            }
     }
 
     /// Check if this PTE allows read access
