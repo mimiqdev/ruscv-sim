@@ -880,12 +880,13 @@ fn per_hart_reservation_transcript_in_process() {
     );
     transcript.push("lr->sd->sc=rd=1/committed-write".to_string());
 
-    // A committed overlapping FP store invalidates identically.
+    // FSD traps before it stores, so the reservation survives and SC writes.
     let address = 0xd0;
+    let fsd_word = fsd(2, 1, 0);
     let (mut floating, floating_memory) = port_core_for_words(
         &[
             (0, lr_encoding(3, 1, 0b010)),
-            (4, fsd(2, 1, 0)),
+            (4, fsd_word),
             (8, sc_encoding(4, 1, 2, 0b010)),
         ],
         0x200,
@@ -902,18 +903,24 @@ fn per_hart_reservation_transcript_in_process() {
         .write(2, ruscv_sim::Fpr::from_bits(4u64));
     floating.state_mut().regs[2] = 5;
     retired(&mut floating);
-    retired(&mut floating);
+    let trapped = floating.step_outcome();
+    assert!(matches!(
+        trapped,
+        StepOutcome::TrapEntered(fact)
+            if fact.cause == ExceptionCause::IllegalInstruction && fact.mtval == fsd_word as u64
+    ));
     assert_eq!(
         floating_memory.lock().unwrap().read_dword(address).unwrap(),
-        4
+        3
     );
+    floating.state_mut().pc = 8;
     retired(&mut floating);
-    assert_eq!(floating.state().regs[4], 1);
+    assert_eq!(floating.state().regs[4], 0);
     assert_eq!(
         floating_memory.lock().unwrap().read_dword(address).unwrap(),
-        4
+        5
     );
-    transcript.push("lr->fsd->sc=rd=1/committed-write".to_string());
+    transcript.push("lr->fsd=trap/no-store->sc=rd=0".to_string());
 
     // A committed overlapping host write_mem invalidates (P2a-precise:
     // committed bytes, not helper shape).
@@ -1100,7 +1107,7 @@ fn per_hart_reservation_transcript_in_process() {
          ;lr->reset->sc=rd=1/reservation-cleared/one-envelope\
          ;lr@b0->sc@b8=retired/rd=1/span/one-envelope\
          ;lr->sd->sc=rd=1/committed-write\
-         ;lr->fsd->sc=rd=1/committed-write\
+         ;lr->fsd=trap/no-store->sc=rd=0\
          ;lr->host-write_mem->sc=rd=1/committed-write\
          ;lr->failed-sd->sc=success/no-commit\
          ;sc.write-fault=trap/store-fault/retained-per-hart\

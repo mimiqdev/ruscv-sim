@@ -285,32 +285,36 @@ fn ordinary_load_store_all_widths_are_response_bytes_not_register_guesses() {
 }
 
 #[test]
-fn fp_load_store_and_equal_value_fpr_writes_are_observed_without_gpr_aliases() {
+fn fp_load_and_store_trap_with_no_fpr_memory_or_fcsr_effect() {
     for width in [PhysicalWidth::Word, PhysicalWidth::Doubleword] {
         let funct3 = if width == PhysicalWidth::Word { 2 } else { 3 };
         let load = (1 << 15) | (funct3 << 12) | (3 << 7) | 0x07;
         let store = (3 << 20) | (1 << 15) | (funct3 << 12) | 0x27;
-        let mut h = harness(&[load, load, store], false);
-        let first = h.core.step_transition(true);
-        assert_eq!(commit(&first).effects.fpr[0].index, 3);
-        assert!(commit(&first).effects.gpr.is_empty());
-        let equal = h.core.step_transition(true);
-        let fpr = &commit(&equal).effects.fpr[0];
-        assert_eq!(fpr.before, fpr.after);
-        assert_eq!(commit(&equal).effects.memory[0].width, width);
-        let stored = h.core.step_transition(true);
-        assert!(commit(&stored).effects.fpr.is_empty());
-        assert_eq!(
-            commit(&stored).effects.memory[0].write.unwrap(),
-            commit(&first).effects.memory[0].read.unwrap()
-        );
-        let spy = h.spy.lock().unwrap();
-        assert_eq!((spy.fetches, spy.reads, spy.writes), (3, 2, 1));
+        for raw in [load, store] {
+            let mut h = harness(&[raw], false);
+            let before = h.memory.lock().unwrap().read_dword(TARGET).unwrap();
+            let turn = h.core.step_transition(true);
+            let record = trap(&turn);
+            assert_eq!(record.trap.cause, ExceptionCause::IllegalInstruction);
+            assert_eq!(record.trap.mtval, raw as u64);
+            assert!(record.effects.fpr.is_empty());
+            assert!(record.effects.gpr.is_empty());
+            assert!(record.effects.memory.is_empty());
+            assert!(record.effects.fcsr.is_none());
+            assert_eq!(
+                h.core.state().fpr.read(3).bits(),
+                ruscv_sim::Fpr::default().bits()
+            );
+            assert_eq!(h.core.state().fcsr.read(), 0);
+            assert_eq!(h.memory.lock().unwrap().read_dword(TARGET).unwrap(), before);
+            let spy = h.spy.lock().unwrap();
+            assert_eq!((spy.fetches, spy.reads, spy.writes), (1, 0, 0));
+        }
     }
 }
 
 #[test]
-fn fp_flags_are_changes_of_the_completed_transition_and_off_state_is_identical() {
+fn fp_arithmetic_traps_without_changing_fpr_or_fcsr() {
     let fadd = (2 << 20) | (1 << 15) | (3 << 7) | 0x53;
     let mut on = harness(&[fadd], false);
     let mut off = harness(&[fadd], false);
@@ -327,16 +331,17 @@ fn fp_flags_are_changes_of_the_completed_transition_and_off_state_is_identical()
     let recorded = on.core.step_transition(true);
     let plain = off.core.step_transition(false);
     assert_eq!(recorded.control, plain.control);
-    let effects = &commit(&recorded).effects;
-    assert_eq!(effects.fpr[0].index, 3);
-    assert!(effects.gpr.is_empty() && effects.memory.is_empty());
-    assert_eq!(effects.fcsr, Some((0, on.core.state().fcsr.read())));
-    assert_ne!(on.core.state().fcsr.read(), 0);
-    assert_eq!(on.core.state().fcsr.read(), off.core.state().fcsr.read());
+    assert!(!recorded.control.retired);
+    let effects = &trap(&recorded).effects;
+    assert!(effects.fpr.is_empty() && effects.gpr.is_empty() && effects.memory.is_empty());
+    assert!(effects.fcsr.is_none());
+    assert_eq!(on.core.state().fcsr.read(), 0);
+    assert_eq!(off.core.state().fcsr.read(), 0);
     assert_eq!(
         on.core.state().fpr.read(3).bits(),
         off.core.state().fpr.read(3).bits()
     );
+    assert_eq!(trap(&recorded).trap.mtval, fadd as u64);
 }
 
 #[test]

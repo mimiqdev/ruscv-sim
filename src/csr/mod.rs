@@ -357,7 +357,38 @@ impl CsrFile {
         if (self.privilege as u8) < (required as u8) {
             return Err(CsrError::PrivilegeViolation(addr));
         }
+        // TVM = 1 makes an S-mode access to satp illegal.
+        if addr == supervisor::SATP
+            && self.privilege == PrivilegeMode::Supervisor
+            && self.mstatus() & mstatus::TVM != 0
+        {
+            return Err(CsrError::PrivilegeViolation(addr));
+        }
         Ok(())
+    }
+
+    /// The whole `mstatus` register, independent of the current privilege.
+    ///
+    /// The Hart reads TVM, TSR, TW, and the trap-return fields through this
+    /// path because those checks apply in modes that cannot read `mstatus`.
+    pub(crate) fn mstatus(&self) -> u64 {
+        self.stored(machine::MSTATUS)
+    }
+
+    /// Write `mstatus` as a Hart-owned transition (trap entry or return),
+    /// applying the field rules but not the current privilege view.
+    pub(crate) fn set_mstatus(&mut self, value: u64) {
+        let old_value = self.stored(machine::MSTATUS);
+        let new_value = Self::legal_mstatus(old_value, value);
+        self.csrs.insert(machine::MSTATUS, new_value);
+        if let Some(writes) = &mut self.observed_writes {
+            writes.push(CsrAccess {
+                addr: machine::MSTATUS,
+                old_value,
+                new_value,
+                wrote: true,
+            });
+        }
     }
 
     /// Read CSR value

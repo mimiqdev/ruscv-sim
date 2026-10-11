@@ -7,7 +7,7 @@
 //! - Trap returns: MRET, SRET, URET
 
 use crate::core::{CoreState, PrivilegeMode};
-use crate::csr::{machine, supervisor, CsrAccess};
+use crate::csr::{machine, mstatus, supervisor, CsrAccess};
 use crate::decode::DecodedInstruction;
 use crate::execute::ExecuteError;
 
@@ -34,9 +34,9 @@ pub fn exec_system(
 /// Execute a SYSTEM instruction and expose the CSR write classification.
 ///
 /// The existing [`exec_system`] API remains the compatibility entry point.
-/// Task 3 can use this companion result to distinguish a read-only CSRRS/CSRRC
-/// from an explicit write to `minstret` without making this helper perform any
-/// retirement accounting itself.
+/// The companion result distinguishes a read-only CSRRS/CSRRC from an
+/// explicit write to `minstret` without this helper doing the retirement
+/// accounting.
 pub fn exec_system_with_csr_access(
     instr: &DecodedInstruction,
     state: &mut CoreState,
@@ -53,12 +53,18 @@ pub fn exec_system_with_csr_access(
 
     match funct3 {
         0b000 => {
-            // ECALL/EBREAK (I-type with funct3=0)
+            let fixed = matches!(
+                instr.raw,
+                0x0000_0073 | 0x0010_0073 | 0x3020_0073 | 0x1020_0073 | 0x1050_0073
+            );
+            let sfence = instr.raw & 0xfe00_7fff == 0x1200_0073;
+            if !fixed && !sfence {
+                return Err(ExecuteError::IllegalInstruction);
+            }
             match imm {
                 0 => Err(ExecuteError::Ecall),
                 1 => Err(ExecuteError::Ebreak),
                 0x302 => {
-                    // MRET (Task 2 owns its privilege conformance.)
                     let target = exec_mret(instr, state, mem)?;
                     state.pc = target;
                     state.branch_taken = true;
@@ -70,6 +76,30 @@ pub fn exec_system_with_csr_access(
                     state.pc = target;
                     state.branch_taken = true;
                     Ok(None)
+                }
+                0x105 => {
+                    // WFI retires as a NOP in M, and in S with TW = 0.  It
+                    // raises illegal-instruction in S with TW = 1 and in U
+                    // at either TW value (S-mode is implemented).
+                    match state.privilege {
+                        PrivilegeMode::User => Err(ExecuteError::IllegalInstruction),
+                        PrivilegeMode::Supervisor if state.csr.mstatus() & mstatus::TW != 0 => {
+                            Err(ExecuteError::IllegalInstruction)
+                        }
+                        _ => Ok(None),
+                    }
+                }
+                imm if imm >> 5 == 0b000_1001 => {
+                    // SFENCE.VMA.  No translation is cached on the public
+                    // path, so every form is an ordering no-op.  Illegal in
+                    // U, and in S when TVM = 1.
+                    match state.privilege {
+                        PrivilegeMode::User => Err(ExecuteError::IllegalInstruction),
+                        PrivilegeMode::Supervisor if state.csr.mstatus() & mstatus::TVM != 0 => {
+                            Err(ExecuteError::IllegalInstruction)
+                        }
+                        _ => Ok(None),
+                    }
                 }
                 _ => Err(ExecuteError::InvalidOperation),
             }
@@ -310,8 +340,10 @@ pub fn exec_mret(
 
 /// SRET - Return from Supervisor mode trap
 ///
-/// Reads the saved PC from SEPC, restores SIE from SPIE,
-/// and restores the previous privilege mode from SPP.
+/// Legal in M and in S; illegal in U, and illegal in S when `mstatus.TSR`
+/// is 1.  Restores SIE from SPIE, sets SPIE to 1, returns to the privilege
+/// in SPP, clears SPP, and clears MPRV because SPP always names a mode below
+/// M.  The returned SEPC has bits 1:0 clear (IALIGN is 32).
 ///
 /// # Returns
 /// The new PC value (SEPC)
@@ -321,47 +353,37 @@ pub fn exec_sret(
     state: &mut CoreState,
     _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<u64, ExecuteError> {
-    // Check if we can execute sret (requires S-mode or M-mode)
-    if state.privilege == PrivilegeMode::User {
-        return Err(ExecuteError::InvalidOperation);
+    let status = state.csr.mstatus();
+    match state.privilege {
+        PrivilegeMode::User => return Err(ExecuteError::IllegalInstruction),
+        PrivilegeMode::Supervisor if status & mstatus::TSR != 0 => {
+            return Err(ExecuteError::IllegalInstruction)
+        }
+        _ => {}
     }
 
-    // Read current sstatus
-    let sstatus = state
-        .csr
-        .read(supervisor::SSTATUS)
-        .map_err(ExecuteError::CsrError)?;
-
-    // Extract SPIE (bit 5) and SPP (bit 8)
-    let spie = (sstatus >> 5) & 1;
-    let spp = (sstatus >> 8) & 1;
-
-    // Read SEPC for the return address
     let sepc = state
         .csr
         .read(supervisor::SEPC)
         .map_err(ExecuteError::CsrError)?;
 
-    // Restore SIE from SPIE
-    let new_sstatus = (sstatus & !0x2) | (spie << 1);
-
-    // Clear SPP bit
-    let new_sstatus = new_sstatus & !(1 << 8);
-
-    // Write back the new sstatus
-    state
-        .csr
-        .write(supervisor::SSTATUS, new_sstatus)
-        .map_err(ExecuteError::CsrError)?;
-
-    // Set privilege mode based on SPP
-    state.privilege = if spp == 1 {
+    let spie = (status & mstatus::SPIE) != 0;
+    let return_privilege = if status & mstatus::SPP != 0 {
         PrivilegeMode::Supervisor
     } else {
         PrivilegeMode::User
     };
 
-    Ok(sepc)
+    let mut next = status & !(mstatus::SIE | mstatus::SPP | mstatus::MPRV);
+    if spie {
+        next |= mstatus::SIE;
+    }
+    next |= mstatus::SPIE;
+    state.csr.set_mstatus(next);
+
+    state.privilege = return_privilege;
+    state.csr.set_privilege(return_privilege);
+    Ok(sepc & !0b11)
 }
 
 /// URET - Return from User mode trap
@@ -385,7 +407,7 @@ mod tests {
 
     fn create_test_instr(imm: u32) -> DecodedInstruction {
         DecodedInstruction {
-            raw: 0,
+            raw: (imm << 20) | 0x73,
             format: InstructionFormat::IType,
             opcode: Opcode::System,
             funct3: None,
@@ -563,8 +585,9 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0x1000);
 
-        let sstatus = state.csr.read(supervisor::SSTATUS).unwrap();
-        assert_eq!((sstatus >> 1) & 1, 1);
+        // SPP = 0 returns to U; SIE receives SPIE.
+        assert_eq!(state.privilege, PrivilegeMode::User);
+        assert_eq!((state.csr.mstatus() >> 1) & 1, 1);
     }
 
     #[test]
@@ -591,6 +614,44 @@ mod tests {
 
         let result = exec_sret(&instr, &mut state, &mut mem);
 
-        assert!(matches!(result, Err(ExecuteError::InvalidOperation)));
+        assert!(matches!(result, Err(ExecuteError::IllegalInstruction)));
+    }
+
+    #[test]
+    fn test_sret_sets_spie_clears_mprv_masks_sepc_and_honors_tsr() {
+        let mut state = CoreState::default();
+        // SPP = S, SPIE = 0, MPRV = 1; SEPC with low bits set.
+        state
+            .csr
+            .write(machine::MSTATUS, mstatus::SPP | mstatus::MPRV)
+            .unwrap();
+        state.csr.write(supervisor::SEPC, 0x2000).unwrap();
+        state.privilege = PrivilegeMode::Supervisor;
+        state.csr.set_privilege(PrivilegeMode::Supervisor);
+        let mut mem = SimpleMemory::new(0x10);
+        let instr = DecodedInstruction::new(0x1020_0073);
+
+        let target = exec_sret(&instr, &mut state, &mut mem).unwrap();
+        assert_eq!(target, 0x2000);
+        assert_eq!(state.privilege, PrivilegeMode::Supervisor);
+        assert_eq!(state.csr.get_privilege(), PrivilegeMode::Supervisor);
+        let status = state.csr.mstatus();
+        assert_eq!(status & mstatus::SPIE, mstatus::SPIE);
+        assert_eq!(status & (mstatus::SIE | mstatus::SPP | mstatus::MPRV), 0);
+
+        // TSR = 1 makes S-mode SRET illegal without side effects.
+        state.csr.set_mstatus(status | mstatus::TSR);
+        let before = state.csr.mstatus();
+        assert!(matches!(
+            exec_sret(&instr, &mut state, &mut mem),
+            Err(ExecuteError::IllegalInstruction)
+        ));
+        assert_eq!(state.csr.mstatus(), before);
+
+        // TSR does not affect M-mode; SPP = 0 returns to U.
+        state.privilege = PrivilegeMode::Machine;
+        state.csr.set_privilege(PrivilegeMode::Machine);
+        exec_sret(&instr, &mut state, &mut mem).unwrap();
+        assert_eq!(state.privilege, PrivilegeMode::User);
     }
 }

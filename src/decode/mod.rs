@@ -246,16 +246,12 @@ impl InstructionDecoder {
                 decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
             }
             Opcode::MiscMem => {
-                // Base-I FENCE is funct3 = 0b000. FENCE.I (0b001,
-                // Zifencei) is a legal instruction that this executor does
-                // not implement. Other MISC-MEM funct3 values are reserved
-                // for the active profile, rather than legal unsupported
-                // operations.
+                // Base-I FENCE is funct3 = 0b000.  FENCE.I (0b001) decodes
+                // so the Hart can reject it: the profile does not claim
+                // Zifencei, so every FENCE.I encoding is an illegal
+                // instruction.  Other MISC-MEM funct3 values are reserved.
                 let funct3_val = ((instruction >> 12) & 0x7) as u8;
-                if funct3_val == 1 {
-                    return Err(DecodeError::UnimplementedInstruction);
-                }
-                if funct3_val != 0 {
+                if funct3_val > 1 {
                     return Err(DecodeError::ReservedInstruction);
                 }
 

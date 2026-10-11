@@ -7,8 +7,8 @@ use common::public_elf as fixture;
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 
 #[test]
-fn failed_first_instruction_does_not_consume_a_pending_ram_exit() {
-    let mut elf = fixture::elf_with_code(&[0x0000_100f], 0, true, false, 0); // unsupported legal FENCE.I
+fn trapping_first_instruction_does_not_consume_a_pending_ram_exit() {
+    let mut elf = fixture::elf_with_code(&[0x0000_100f], 0, true, false, 0); // illegal FENCE.I
     let signal = fixture::LOAD_OFFSET + fixture::TOHOST_SEGMENT_OFFSET as usize;
     elf[signal..signal + 8].copy_from_slice(&85u64.to_le_bytes());
 
@@ -17,15 +17,11 @@ fn failed_first_instruction_does_not_consume_a_pending_ram_exit() {
     simulator.load_elf(&elf).unwrap();
     let flat = simulator.run(Some(1)).unwrap();
     for result in [&cli, &flat] {
-        assert_eq!(result.cycles, 0);
+        assert_eq!(result.cycles, 1);
         assert_eq!(result.exit_code, 1);
-        assert_eq!(result.final_pc, fixture::BASE);
-        assert!(!result.timed_out);
-        assert!(result
-            .error
-            .as_ref()
-            .unwrap()
-            .starts_with("Execution error"));
+        assert_eq!(result.final_pc, 0); // reset mtvec
+        assert!(result.timed_out);
+        assert_eq!(result.error.as_deref(), Some("Timeout after 1 cycles"));
     }
     assert_eq!(
         simulator

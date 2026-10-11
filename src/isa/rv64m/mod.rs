@@ -16,12 +16,19 @@
 //! - `DIVU`: Divide Unsigned
 //! - `REM`: Remainder Signed
 //! - `REMU`: Remainder Unsigned
+//!
+//! ### Word operations
+//! - `MULW`, `DIVW`, `DIVUW`, `REMW`, `REMUW`
 
 pub mod div;
 pub mod mul;
+pub mod word;
 
 // Re-export all multiplication functions
 pub use mul::{exec_mul, exec_mulh, exec_mulhsu, exec_mulhu};
 
 // Re-export all division functions
 pub use div::{exec_div, exec_divu, exec_rem, exec_remu};
+
+// Re-export the word operations
+pub use word::{exec_divuw, exec_divw, exec_mulw, exec_remuw, exec_remw};

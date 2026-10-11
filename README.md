@@ -23,7 +23,10 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七个项目原子 guest，
 项目自建用例现为 58 个，ACT4 冻结选择仍是独立的 51 个 RV64I 非陷阱用例。
 它们不代表完整 ISA、原子扩展认证、特权/MMU、中断或 OS 支持。A7 的普通取指和
-整数/浮点 load/store 已接入验证过的 raw physical boundary；A8 之后 AMO/LR/SC
+整数/浮点 load/store 当时已接入验证过的 raw physical boundary。
+Stage 4 的指令配置变更后，公开 Hart 上的所有浮点指令均触发非法指令异常，
+不产生数据访问或 FPR/FCSR 效果。浮点 helper 和测试仍是独立组件，不代表 IEEE 754 支持。
+A8 之后 AMO/LR/SC
 在标准路径上通过同一验证数据端口发送原子 envelope（每指令恰好一个），旧
 `RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
 评估约束。
@@ -140,8 +143,15 @@ flat Runner 的 tohost 取样与逐字节清除均与公共 `memory()` mutex 的
 等待公共 mutex 时不持有准入 gate，guard 持有者仍能完成其剩余 host 写入。
 不存在／零长度签名不访问目标或等待该 mutex，native 签名检查行为不变。
 
-未实现的合法指令仍是失败的 started slot，不退休、不退出；该兼容 facade 允许 host
-修补和下一次独立 run／step 请求（不重试同一 run 的失败 slot），不适用于 host／未知完成。
+Stage 4 指令配置把 FENCE.I 改为非法指令异常。WFI 在 M 模式及 TW=0 的 S 模式退休为空操作，
+在 TW=1 的 S 模式及 U 模式则触发非法指令异常。SRET 和四种 SFENCE.VMA 形式遵守权限检查，
+五条 RV64M word 指令执行并将 32 位结果符号扩展至 64 位。
+此时没有客户指令产生 `UnsupportedLegalInstruction`。host backend 失败不退休、不退出；
+即使 host 修复锁并修改内存，后续 run／step 仍须等待 fresh reset。未知完成的恢复限制不变。
+
+这些是 Stage 4 的基础变更，尚不代表完整里程碑验收。`satp` 的 CSR 字段策略接受 Bare 和 Sv39，
+但公开路径的页表翻译及 A/D 效果验证仍待完成。`mcycle` 和主管中断交付也尚待实现。
+完整交付边界以当前合同和对应实现测试为准。
 
 返回的 `MachineTurn` 保持已接受的边界/观察工作存活；保留 receipt 或正在执行 callback/sink
 时不能完成 drain 或重置。未知完成始终拒绝重用、reset 和 teardown；目前没有 adapter

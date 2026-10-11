@@ -1466,8 +1466,9 @@ fn run_native_inner(
             htif_exit
         };
         let mut observe_ram = |cycles: u64| {
-            // Check for tohost write (exit signal) after EVERY instruction
-            // This ensures we detect the write immediately
+            if !turn.hart().control.retired {
+                return None;
+            }
             {
                 machine.observe_tohost(&mut turn, tohost_pa);
                 match &turn.tohost().expect("requested signal fact").value {
@@ -1905,8 +1906,9 @@ impl RiscVSimulator {
             };
 
             let mut observe_ram = |cycles: u64| {
-                // Check for tohost write AFTER executing instruction
-                // This ensures we detect the write immediately
+                if !turn.hart().control.retired {
+                    return None;
+                }
                 self.machine.observe_tohost(&mut turn, tohost);
                 let observed = &turn.tohost().expect("requested signal fact").value;
                 match observed {

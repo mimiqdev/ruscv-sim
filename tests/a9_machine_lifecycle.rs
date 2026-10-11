@@ -39,6 +39,14 @@ fn edit(owner: &Machine, edit: impl FnOnce(&mut CoreState)) {
 fn atomic(kind: u32, rd: u32, rs2: u32) -> u32 {
     (kind << 27) | (rs2 << 20) | (1 << 15) | (3 << 12) | (rd << 7) | 0x2f
 }
+fn poison_memory(memory: &Arc<Mutex<dyn ruscv_sim::MemoryInterface + Send + Sync>>) {
+    let memory = memory.clone();
+    let poisoned = thread::spawn(move || {
+        let _guard = memory.lock().unwrap();
+        panic!("poison the host backend for the next slot");
+    });
+    assert!(poisoned.join().is_err());
+}
 fn drained(owner: &Machine) {
     owner.request_quiesce().unwrap();
     assert_eq!(
@@ -609,13 +617,19 @@ fn native_dynamic_uart_state_and_callback_connections_are_restored() {
 
 #[test]
 fn known_failure_can_drain_but_requires_restoration_not_flag_clearing_or_retry() {
-    let owner = owner(PlatformKind::Flat, image(&[0x0000_100f])); // unsupported legal FENCE.I
+    // FENCE.I is an illegal instruction, so it is not a failed slot. A
+    // poisoned memory lock is the host failure that sets the flag.
+    let owner = owner(PlatformKind::Flat, image(&[elf::nop()]));
+    poison_memory(&owner.memory().unwrap());
     owner.resume().unwrap();
     let turn = owner.step(true).unwrap();
-    assert!(matches!(
-        turn.hart().outcome,
-        StepOutcome::SimulatorFailure(_)
-    ));
+    let StepOutcome::SimulatorFailure(failure) = &turn.hart().outcome else {
+        panic!("poisoned memory must fail the slot")
+    };
+    assert_eq!(
+        failure.kind,
+        ruscv_sim::core::SimulatorFailureKind::HostBackend
+    );
     assert!(turn.hart().observation.is_none());
     assert!(turn.tohost().is_none());
     drop(turn);

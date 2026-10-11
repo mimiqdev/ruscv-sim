@@ -255,7 +255,100 @@ fn assert_access_trap(outcome: StepOutcome, cause: ExceptionCause, mtval: u64, c
 }
 
 #[test]
-fn real_fetch_integer_and_fp_accesses_use_raw_ports_and_one_ram() {
+fn fp_major_opcodes_trap_before_any_data_request() {
+    use ruscv_sim::core::observation::Observation;
+    for mode in [
+        PrivilegeMode::Machine,
+        PrivilegeMode::Supervisor,
+        PrivilegeMode::User,
+    ] {
+        for field in 0..8 {
+            for raw in [
+                load_fp(3, 1, field, 1),
+                store_fp(3, 1, field, 1),
+                0x0020_81d3 | (u32::from(field) << 12),
+                0x0220_81d3 | (u32::from(field) << 12),
+                0x0020_81c3 | (u32::from(field) << 12),
+                0x0020_81c7 | (u32::from(field) << 12),
+                0x0020_81cb | (u32::from(field) << 12),
+                0x0020_81cf | (u32::from(field) << 12),
+            ] {
+                let mut results = Vec::new();
+                for observed in [false, true] {
+                    let memory = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
+                    memory.lock().unwrap().write_word(0, raw).unwrap();
+                    memory
+                        .lock()
+                        .unwrap()
+                        .write_dword(0x80, 0x1234_5678)
+                        .unwrap();
+                    let calls = Arc::new(Mutex::new(Vec::new()));
+                    let mut core = traced_core(memory.clone(), 0x100, calls.clone());
+                    mtvec(&mut core);
+                    core.state_mut().regs[1] = 0x80;
+                    core.state_mut().privilege = mode;
+                    core.state_mut().csr.set_privilege(mode);
+                    let before_fpr = core.state().fpr.clone();
+                    let before_fcsr = core.state().fcsr.read();
+                    let turn = core.step_transition(observed);
+                    assert!(matches!(&turn.outcome, StepOutcome::TrapEntered(trap)
+                        if trap.cause == ExceptionCause::IllegalInstruction && trap.mtval == raw as u64));
+                    for index in 0..32 {
+                        assert_eq!(
+                            core.state().fpr.read(index).bits(),
+                            before_fpr.read(index).bits()
+                        );
+                    }
+                    assert_eq!(core.state().fcsr.read(), before_fcsr);
+                    assert_eq!(
+                        memory.lock().unwrap().read_dword(0x80).unwrap(),
+                        0x1234_5678
+                    );
+                    let requests = calls.lock().unwrap();
+                    assert_eq!(requests.len(), 1);
+                    assert_eq!(requests[0].descriptor.category, AccessCategory::Fetch);
+                    if observed {
+                        let Some(Observation::Trap(record)) = turn.observation else {
+                            panic!("expected trap")
+                        };
+                        assert!(record.effects.memory.is_empty());
+                        assert!(record.effects.fpr.is_empty());
+                        assert!(record.effects.fcsr.is_none());
+                    } else {
+                        assert!(turn.observation.is_none());
+                    }
+                    let state = core.state();
+                    let csrs: Vec<_> = [
+                        machine::MSTATUS,
+                        machine::MEPC,
+                        machine::MCAUSE,
+                        machine::MTVAL,
+                        machine::MINSTRET,
+                    ]
+                    .map(|addr| state.csr.read(addr).unwrap())
+                    .into();
+                    results.push((
+                        turn.control,
+                        turn.outcome,
+                        state.regs,
+                        (0..32)
+                            .map(|index| state.fpr.read(index).bits())
+                            .collect::<Vec<_>>(),
+                        state.fcsr.read(),
+                        state.pc,
+                        state.privilege,
+                        state.csr.get_privilege(),
+                        csrs,
+                    ));
+                }
+                assert_eq!(results[0], results[1]);
+            }
+        }
+    }
+}
+
+#[test]
+fn real_fetch_and_integer_accesses_use_raw_ports_and_one_ram() {
     let size = 0x100;
     let memory = Arc::new(Mutex::new(SimpleMemory::new(size)));
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -268,11 +361,11 @@ fn real_fetch_integer_and_fp_accesses_use_raw_ports_and_one_ram() {
             load(3, 1, 0, 0),  // LB
             load(4, 1, 4, 0),  // LBU
             addi(1, 1, 4),
-            load_fp(1, 1, 2, 0),  // FLW
-            store_fp(1, 1, 2, 4), // FSW
+            load(5, 1, 2, 0),  // LW of the seeded single
+            store(5, 1, 2, 4), // SW
             addi(1, 1, 4),
-            load_fp(2, 1, 3, 8),  // FLD
-            store_fp(2, 1, 3, 0), // FSD
+            load(6, 1, 3, 8),  // LD of the seeded double
+            store(6, 1, 3, 0), // SD
         ];
         for (index, instruction) in program.into_iter().enumerate() {
             ram.write_word(index as u64 * 4, instruction).unwrap();
@@ -292,12 +385,17 @@ fn real_fetch_integer_and_fp_accesses_use_raw_ports_and_one_ram() {
 
     assert_eq!(core.state().regs[3], u64::MAX - 127, "LB sign extension");
     assert_eq!(core.state().regs[4], 0x80, "LBU zero extension");
-    assert_eq!(core.state().fpr.read(1).get().to_bits(), 0x3fc0_0000);
+    assert_eq!(core.state().regs[5], 0x3fc0_0000);
     assert_eq!(
-        core.state().fpr.read(2).bits(),
+        core.state().regs[6],
         0x4009_21fb_5444_2d18,
-        "FLD preserves raw FP bits"
+        "LD preserves the seeded double"
     );
+    assert_eq!(
+        core.state().fpr.read(1).bits(),
+        ruscv_sim::Fpr::default().bits()
+    );
+    assert_eq!(core.state().fcsr.read(), 0);
 
     let calls = calls.lock().unwrap();
     assert_eq!(
@@ -347,6 +445,63 @@ fn real_fetch_integer_and_fp_accesses_use_raw_ports_and_one_ram() {
             .payload,
         Some(0x4009_21fb_5444_2d18u64.to_le_bytes().to_vec())
     );
+}
+
+#[test]
+fn fp_load_and_store_trap_before_any_data_request() {
+    let size = 0x100;
+    let program = [
+        load_fp(1, 1, 2, 0),  // FLW
+        store_fp(1, 1, 2, 4), // FSW
+        load_fp(2, 1, 3, 8),  // FLD
+        store_fp(2, 1, 3, 0), // FSD
+    ];
+    let memory = Arc::new(Mutex::new(SimpleMemory::new(size)));
+    {
+        let mut ram = memory.lock().unwrap();
+        for (index, instruction) in program.into_iter().enumerate() {
+            ram.write_word(index as u64 * 4, instruction).unwrap();
+        }
+        ram.write_word(0x80, 0x3fc0_0000).unwrap();
+        ram.write_dword(0x88, 0x4009_21fb_5444_2d18).unwrap();
+    }
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut core = traced_core(memory.clone(), size, calls.clone());
+    core.reset(0, 0);
+    mtvec(&mut core);
+    core.state_mut().regs[1] = 0x80;
+    core.state_mut()
+        .fpr
+        .write(1, ruscv_sim::Fpr::from_bits(0x3fc0_0000));
+    core.state_mut()
+        .fpr
+        .write(2, ruscv_sim::Fpr::from_bits(0x4009_21fb_5444_2d18));
+
+    for (index, raw) in program.into_iter().enumerate() {
+        core.state_mut().pc = index as u64 * 4;
+        calls.lock().unwrap().clear();
+        let outcome = core.step_outcome();
+        assert_access_trap(
+            outcome,
+            ExceptionCause::IllegalInstruction,
+            raw as u64,
+            &core,
+        );
+        assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
+        assert_eq!(calls.lock().unwrap().len(), 1);
+        assert_eq!(
+            calls.lock().unwrap()[0].descriptor.category,
+            AccessCategory::Fetch
+        );
+    }
+    assert_eq!(memory.lock().unwrap().read_word(0x80).unwrap(), 0x3fc0_0000);
+    assert_eq!(
+        memory.lock().unwrap().read_dword(0x88).unwrap(),
+        0x4009_21fb_5444_2d18
+    );
+    assert_eq!(core.state().fpr.read(1).bits(), 0x3fc0_0000);
+    assert_eq!(core.state().fpr.read(2).bits(), 0x4009_21fb_5444_2d18);
+    assert_eq!(core.state().fcsr.read(), 0);
 }
 
 #[test]

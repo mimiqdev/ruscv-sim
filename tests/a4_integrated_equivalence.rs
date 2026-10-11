@@ -25,7 +25,7 @@ fn data_workflow_elf(entry_offset: usize, increment: i32, fail_at_exit: bool) ->
         fixture::auipc(4, 1),
         fixture::addi(4, 4, -entry - 32), // x4 = guest tohost address
         if fail_at_exit {
-            0x0000_100f // legal FENCE.I, intentionally unsupported after data effects
+            0x0000_100f // illegal FENCE.I, traps after the data effects
         } else {
             fixture::sd(7, 4, 0)
         },
@@ -43,7 +43,7 @@ fn nonzero_entry_data_workflow_agrees_at_run_control_boundaries() {
         (10, false, 10, 1, true),
         (11, false, EXIT_CYCLES, 42, false),
         (12, false, EXIT_CYCLES, 42, false),
-        (11, true, 10, 1, false),
+        (11, true, 11, 1, true),
     ] {
         let elf = data_workflow_elf(ENTRY_OFFSET, 25, fail_at_exit);
         let cli = load_and_run(&elf, Some(budget), None, None, false).unwrap();
@@ -61,7 +61,8 @@ fn nonzero_entry_data_workflow_agrees_at_run_control_boundaries() {
         for result in [&cli, &flat] {
             assert_eq!(result.cycles, cycles, "{result:?}");
             assert_eq!(result.exit_code, exit_code, "{result:?}");
-            assert_eq!(result.final_pc, entry + cycles * 4, "{result:?}");
+            let expected_pc = if fail_at_exit { 0 } else { entry + cycles * 4 };
+            assert_eq!(result.final_pc, expected_pc, "{result:?}");
             assert_eq!(result.timed_out, timed_out, "{result:?}");
             assert_eq!(result.signature_addr, Some(fixture::SIGNATURE));
             assert_eq!(result.signature_data.as_deref(), Some(&expected_bytes[..]));
@@ -70,20 +71,9 @@ fn nonzero_entry_data_workflow_agrees_at_run_control_boundaries() {
                     result.error.as_deref(),
                     Some(format!("Timeout after {budget} cycles").as_str())
                 );
-            } else if fail_at_exit {
-                assert!(result
-                    .error
-                    .as_ref()
-                    .unwrap()
-                    .starts_with("Execution error"));
             } else {
                 assert!(result.error.is_none(), "{result:?}");
             }
-        }
-        if fail_at_exit {
-            // Retain the documented diagnostic difference; final_pc is shared.
-            assert!(cli.error.as_ref().unwrap().contains(" at PC "));
-            assert!(!flat.error.as_ref().unwrap().contains(" at PC "));
         }
         assert_eq!(simulator.state().regs[0], 0);
         assert_eq!(simulator.state().regs[7], if budget == 0 { 0 } else { 85 });
