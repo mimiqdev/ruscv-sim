@@ -1105,11 +1105,17 @@ impl RiscvCore {
         let explicit_minstret_write = csr_access
             .as_ref()
             .is_some_and(|access| access.addr == machine::MINSTRET && access.wrote);
+        let explicit_mcycle_write = csr_access
+            .as_ref()
+            .is_some_and(|access| access.addr == machine::MCYCLE && access.wrote);
         let minstret = if explicit_minstret_write {
             staged.csr.minstret_value()
         } else {
             staged.csr.increment_minstret()
         };
+        if !explicit_mcycle_write {
+            staged.csr.increment_mcycle();
+        }
         self.gpr_destination = destination;
         let privilege = self.state.privilege;
         let next_privilege = staged.privilege;
@@ -1200,6 +1206,7 @@ impl RiscvCore {
                 )
             }
         };
+        staged.csr.increment_mcycle();
         let handler_privilege = staged.privilege;
         self.state = staged;
         StepOutcome::TrapEntered(TrapEntered {

@@ -217,8 +217,8 @@ fn gpr_csr_counter_write_intent_and_branch_identity_are_hart_owned() {
         if index == 3 {
             assert_eq!(
                 record.effects.csr.len(),
-                1,
-                "CSR read has only retirement counter effect"
+                2,
+                "a retired CSR read records mcycle and minstret"
             );
         }
         if index == 4 {
@@ -232,9 +232,14 @@ fn gpr_csr_counter_write_intent_and_branch_identity_are_hart_owned() {
         }
         if index == 5 {
             assert!(record.retired.explicit_minstret_write);
-            assert_eq!(record.effects.csr.len(), 1);
-            assert_eq!(record.effects.csr[0].old_value, 5);
-            assert_eq!(record.effects.csr[0].new_value, 5);
+            assert_eq!(record.effects.csr.len(), 2);
+            let minstret = record
+                .effects
+                .csr
+                .iter()
+                .find(|access| access.addr == machine::MINSTRET)
+                .expect("explicit minstret write");
+            assert_eq!((minstret.old_value, minstret.new_value), (5, 5));
             assert_eq!(turn.control.minstret_before, turn.control.minstret_after);
         }
         if index == 6 {
@@ -461,7 +466,8 @@ fn completed_trap_and_mret_include_precise_entry_return_effects() {
             machine::MEPC,
             machine::MCAUSE,
             machine::MTVAL,
-            machine::MSTATUS
+            machine::MSTATUS,
+            machine::MCYCLE
         ]
     );
     assert!(record.effects.gpr.is_empty() && record.effects.memory.is_empty());
@@ -474,6 +480,7 @@ fn completed_trap_and_mret_include_precise_entry_return_effects() {
     assert_eq!(record.retired.next_privilege, PrivilegeMode::User);
     assert_eq!(record.effects.csr[0].addr, machine::MSTATUS);
     assert_eq!(record.effects.csr[1].addr, machine::MINSTRET);
+    assert_eq!(record.effects.csr[2].addr, machine::MCYCLE);
     assert!(record.effects.gpr.is_empty());
     // The first owned record did not borrow mutable core/CSR storage.
     assert_eq!(trap(&entry).trap.vector_pc, 4);
@@ -661,6 +668,7 @@ fn observation_off_has_state_control_physical_parity_and_no_sink_calls() {
         assert_eq!(on.core.state().privilege, off.core.state().privilege);
         assert_eq!(on.core.state().reservation, off.core.state().reservation);
         for addr in [
+            machine::MCYCLE,
             machine::MINSTRET,
             machine::MSCRATCH,
             machine::MSTATUS,

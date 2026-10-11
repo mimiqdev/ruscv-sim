@@ -2,7 +2,7 @@
 //! P1 must pass every independently captured repetition to `validate`.
 use ruscv_sim::core::commits::CommitLogger;
 use ruscv_sim::core::observation::{Observation, ObservationSink};
-use ruscv_sim::csr::machine::MINSTRET;
+use ruscv_sim::csr::machine::{MCYCLE, MINSTRET};
 use ruscv_sim::elf::LoadImage;
 use ruscv_sim::executor::ExecutionResult;
 use ruscv_sim::machine::{Machine, MachineConfig, PlatformEvent, PlatformKind};
@@ -560,12 +560,20 @@ fn capture_fact(
         || !c.effects.fpr.is_empty()
         || c.effects.fcsr.is_some()
         || c.effects.csr
-            != [ruscv_sim::csr::CsrAccess {
-                addr: MINSTRET,
-                old_value: index as u64,
-                new_value: index as u64 + 1,
-                wrote: true,
-            }]
+            != [
+                ruscv_sim::csr::CsrAccess {
+                    addr: MINSTRET,
+                    old_value: index as u64,
+                    new_value: index as u64 + 1,
+                    wrote: true,
+                },
+                ruscv_sim::csr::CsrAccess {
+                    addr: MCYCLE,
+                    old_value: index as u64,
+                    new_value: index as u64 + 1,
+                    wrote: true,
+                },
+            ]
     {
         return Err("Hart identity/privilege/CSR/counter or unexpected FPR/FCSR effects".into());
     }
