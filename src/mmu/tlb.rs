@@ -4,6 +4,10 @@
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TlbEntry {
     pub vpn: u64,
+    /// Resolved 4 KiB physical page number.
+    ///
+    /// For a superpage this is `paddr >> 12` after the walk folds the lower
+    /// VPN fields into the physical address, not the raw leaf PTE PPN.
     pub ppn: u64,
     pub asid: u16,
     pub global: bool,
