@@ -14,7 +14,7 @@ Read-only GitHub checks verify identity. They do not execute runtime tests, and 
 
 ## Phrase allowlist
 
-The promoted Stage 4 sections §1 through §9 equal the baseline proposal after link relocation and exactly these substitutions. Nothing else in those sections changes.
+The promoted Stage 4 sections §1 through §9 equal the baseline proposal after link relocation and exactly these seven substitutions. Nothing else in those sections changes. The audit asserts that this table has exactly seven rows, and that the unified diff (`difflib`, zero context) of the relocated baseline proposal from `## 1. ` through EOF against `docs/dev-plan.md` from `## 1. ` through EOF has exactly 8 removed and 8 added lines (the seven rows plus one blank line that `difflib` groups into the first hunk), with exactly seven changed lines, one per row, so any extra edit fails.
 
 | Proposal text | Promoted text |
 | --- | --- |
@@ -51,7 +51,7 @@ An assertion failure is a verification blocker, not a pass.
 
 ```python
 from pathlib import Path
-import hashlib, posixpath, re, subprocess, unicodedata
+import difflib, hashlib, posixpath, re, subprocess, unicodedata
 BASE = '9d6fe7f94e2fa33edb8c5213f5f4831f4ffa315f'
 ARCHIVE = 'docs/archive/milestones/a10-independent-public-path-performance-test-infrastructure.md'
 PROPOSAL = 'docs/proposals/stage4-contract-draft.md'
@@ -81,6 +81,7 @@ assert preserved == expected
 print('PASS complete Stage 4 proposal snapshot; two A10-contract links repaired')
 source = relocate(old(PROPOSAL), 'docs/proposals', 'docs')
 source = source[source.index('## 1. '):]
+unchanged = source
 changes = {
     '## 1. Proposed objective and architecture': '## 1. Approved objective and architecture',
     'The objective, if later approved, is to connect': 'The objective is to connect',
@@ -89,6 +90,8 @@ changes = {
     "A10's own independent final review is still pending and remains an A10 acceptance item. It is not a Stage 4 deliverable, and Stage 4 is not activated by this document.": "A10's own independent final review is recorded in the A10 closeout and is not a Stage 4 deliverable.",
     '## 9. Risks and activation boundary': '## 9. Risks and rotation boundary',
 }
+table = text('docs/verification/stage4-contract-rotation.md').split('## Phrase allowlist\n', 1)[1].split('## Link repairs\n', 1)[0]
+assert len(changes) + 1 == 7 and len(re.findall(r'^\| (?!Proposal text|---)', table, re.M)) == 7
 for before, after in changes.items():
     assert source.count(before) == 1, before
     source = source.replace(before, after)
@@ -98,8 +101,12 @@ assert source.endswith(closing)
 source = source[:-len(closing)] + replacement
 plan = text('docs/dev-plan.md')
 assert plan[plan.index('## 1. '):] == source
+a, b = unchanged.splitlines(), source.splitlines()
+delta = [l for l in difflib.unified_diff(a, b, lineterm='', n=0) if l[:1] in '+-' and l[:3] not in ('---', '+++')]
+assert sum(l[0] == '-' for l in delta) == 8 and sum(l[0] == '+' for l in delta) == 8, delta
+assert len(a) == len(b) and sum(x != y for x, y in zip(a, b)) == 7
 assert len(re.findall(r'^\*\*Current milestone', plan, re.M)) == 1
-print('PASS Stage 4 sections 1-9 equal the proposal after relocation and the allowlist')
+print('PASS Stage 4 sections 1-9 equal the proposal after relocation and the seven-entry allowlist; unified diff 8 removed / 8 added, 7 changed lines')
 baseline = old('docs/verification/a10-baseline.md')
 current = text('docs/verification/a10-baseline.md')
 assert current == baseline.replace('../dev-plan.md#8-future-implementation-deliverables-and-falsifiable-acceptance', '../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md#8-future-implementation-deliverables-and-falsifiable-acceptance')

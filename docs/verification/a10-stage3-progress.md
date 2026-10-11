@@ -1,4 +1,4 @@
-# A10 infrastructure progress — P0, P1, P2 delivered; P3′ baseline recorded; P4′ close-out pending
+# A10 infrastructure progress — P0, P1, P2 delivered; P3′ baseline recorded; P4′ close-out delivered and re-reviewed (APPROVE at `c4fda56`)
 
 **Status:** Current
 
@@ -285,9 +285,13 @@ the baseline observation plus documentation and independent review.
 - **P4′ delivered by this update:** baseline documentation page (updated with
   the merged-main re-run), this honest progress update, and the
   [A10 closeout record](../archive/milestones/a10-closeout-record.md).
-  **PENDING:** the independent final PR-head review, performed by a separate
-  read-only reviewer on the committed documentation head. A10 closes only on
-  baseline delivery **plus** that review.
+  The independent final PR-head review is recorded in the
+  [A10 closeout](../archive/milestones/a10-closeout-record.md#closeout-document-delivery-and-rolling-boundary):
+  the read-only review of `6dd42c2` returned REQUEST CHANGES, and the re-review
+  returned **APPROVE** for `c4fda56c350a8b5a4e8ba1cecc18f5233ebc185c`
+  ([issue comment 6096048045](https://github.com/mimiqdev/ruscv-sim/pull/73#issuecomment-6096048045));
+  [CI run 38040125221](https://github.com/mimiqdev/ruscv-sim/actions/runs/38040125221)
+  at that head passed Quality and tests, with Coverage skipped.
 
 ### Deferred with the certification layer, and why
 
