@@ -23,7 +23,11 @@ pub enum CsrError {
 /// CSR address constants (Machine Mode)
 pub mod machine {
     // Machine Information Registers
+    pub const MVENDORID: u16 = 0xF11;
+    pub const MARCHID: u16 = 0xF12;
+    pub const MIMPID: u16 = 0xF13;
     pub const MHARTID: u16 = 0xF14;
+    pub const MCONFIGPTR: u16 = 0xF15;
 
     // Machine Trap Setup
     pub const MSTATUS: u16 = 0x300;
@@ -34,6 +38,9 @@ pub mod machine {
     pub const MTVEC: u16 = 0x305;
     pub const MCOUNTEREN: u16 = 0x306;
 
+    // Machine Configuration
+    pub const MENVCFG: u16 = 0x30A;
+
     // Machine Counters
     pub const MINSTRET: u16 = 0xB02;
 
@@ -43,6 +50,10 @@ pub mod machine {
     pub const MCAUSE: u16 = 0x342;
     pub const MTVAL: u16 = 0x343;
     pub const MIP: u16 = 0x344;
+
+    // Machine Memory Protection
+    pub const PMPCFG0: u16 = 0x3A0;
+    pub const PMPADDR0: u16 = 0x3B0;
 }
 
 /// CSR address constants (Supervisor Mode)
@@ -52,6 +63,9 @@ pub mod supervisor {
     pub const SIE: u16 = 0x104;
     pub const STVEC: u16 = 0x105;
     pub const SCOUNTEREN: u16 = 0x106;
+
+    // Supervisor Configuration
+    pub const SENVCFG: u16 = 0x10A;
 
     // Supervisor Trap Handling
     pub const SSCRATCH: u16 = 0x140;
@@ -64,7 +78,10 @@ pub mod supervisor {
     pub const SATP: u16 = 0x180;
 }
 
-/// CSR address constants (Virtualization)
+/// Hypervisor (VS) CSR address constants.
+///
+/// The H extension is not part of this profile, so none of these addresses
+/// exists in [`CsrFile`]; every access is `CsrError::InvalidAddress`.
 pub mod virtualization {
     pub const VSSTATUS: u16 = 0x200;
     pub const VSIE: u16 = 0x204;
@@ -76,6 +93,48 @@ pub mod virtualization {
     pub const VSIP: u16 = 0x244;
     pub const VSATP: u16 = 0x280;
 }
+
+/// `mstatus` field masks for the Stage 4 RV64 M/S/U profile.
+pub mod mstatus {
+    pub const SIE: u64 = 1 << 1;
+    pub const MIE: u64 = 1 << 3;
+    pub const SPIE: u64 = 1 << 5;
+    pub const MPIE: u64 = 1 << 7;
+    pub const SPP: u64 = 1 << 8;
+    pub const MPP: u64 = 0b11 << 11;
+    pub const MPP_SHIFT: u32 = 11;
+    pub const MPRV: u64 = 1 << 17;
+    pub const SUM: u64 = 1 << 18;
+    pub const MXR: u64 = 1 << 19;
+    pub const TVM: u64 = 1 << 20;
+    pub const TW: u64 = 1 << 21;
+    pub const TSR: u64 = 1 << 22;
+    /// UXL = 2 (bits 33:32) and SXL = 2 (bits 35:34), both read-only.
+    pub const XLEN_FIELDS: u64 = 0x0000_000A_0000_0000;
+    /// Every field software can change through the `mstatus` address.
+    pub const WRITABLE: u64 =
+        SIE | MIE | SPIE | MPIE | SPP | MPP | MPRV | SUM | MXR | TVM | TW | TSR;
+    /// Fields of the SXLEN-64 `sstatus` layout: SIE, SPIE, UBE, SPP, VS, FS,
+    /// XS, SUM, MXR, UXL, and SD.
+    pub const SSTATUS_VIEW: u64 = 0x8000_0003_000D_E762;
+    /// `sstatus` fields that are writable in this profile.
+    pub const SSTATUS_WRITABLE: u64 = SIE | SPIE | SPP | SUM | MXR;
+    /// Reset value: everything 0 except the read-only SXL and UXL.
+    pub const RESET: u64 = XLEN_FIELDS;
+}
+
+/// `misa` for RV64IMA plus S and U.  No bit is writable.
+pub const MISA_VALUE: u64 = 0x8000_0000_0014_1101;
+
+/// Writable bits of `mip` and `mie`: SSIP/SSIE, STIP/STIE, SEIP/SEIE.
+pub const SUPERVISOR_INTERRUPTS: u64 = 0x222;
+
+/// `satp` MODE encodings this profile implements.
+pub const SATP_MODE_BARE: u64 = 0;
+/// `satp` MODE encoding for Sv39.
+pub const SATP_MODE_SV39: u64 = 8;
+/// `satp` ASID field (bits 59:44), read-only zero because ASIDLEN is 0.
+const SATP_ASID_MASK: u64 = 0xFFFF << 44;
 
 /// CSR access permission based on address encoding
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,47 +198,32 @@ impl CsrFile {
     pub fn new(hart_id: u64) -> Self {
         let mut csrs = HashMap::new();
 
-        // Initialize Machine Mode CSRs with default values
+        // Stored registers.  Views (`sstatus`, `sie`, `sip`) and the
+        // read-only-zero sets (PMP, identity, HPM) have no storage entry.
         csrs.insert(machine::MHARTID, hart_id);
-        csrs.insert(machine::MSTATUS, 0x0000_0000);
-        // RV64IU reset profile: C is fixed at 0, so public fetch remains
-        // 32-bit (IALIGN=32).  M/A/F/D dispatch remains available in the
-        // component executor; this value is only the architectural MISA reset.
-        csrs.insert(machine::MISA, 0x8000_0000_0010_0100);
-        csrs.insert(machine::MEDELEG, 0x0000_0000);
-        csrs.insert(machine::MIDELEG, 0x0000_0000);
-        csrs.insert(machine::MIE, 0x0000_0000);
-        csrs.insert(machine::MTVEC, 0x0000_0000);
-        csrs.insert(machine::MCOUNTEREN, 0x0000_0000);
-        csrs.insert(machine::MINSTRET, 0x0000_0000);
-        csrs.insert(machine::MSCRATCH, 0x0000_0000);
-        csrs.insert(machine::MEPC, 0x0000_0000);
-        csrs.insert(machine::MCAUSE, 0x0000_0000);
-        csrs.insert(machine::MTVAL, 0x0000_0000);
-        csrs.insert(machine::MIP, 0x0000_0000);
+        csrs.insert(machine::MSTATUS, mstatus::RESET);
+        csrs.insert(machine::MISA, MISA_VALUE);
+        csrs.insert(machine::MEDELEG, 0);
+        csrs.insert(machine::MIDELEG, 0);
+        csrs.insert(machine::MIE, 0);
+        csrs.insert(machine::MTVEC, 0);
+        csrs.insert(machine::MCOUNTEREN, 0);
+        csrs.insert(machine::MENVCFG, 0);
+        csrs.insert(machine::MINSTRET, 0);
+        csrs.insert(machine::MSCRATCH, 0);
+        csrs.insert(machine::MEPC, 0);
+        csrs.insert(machine::MCAUSE, 0);
+        csrs.insert(machine::MTVAL, 0);
+        csrs.insert(machine::MIP, 0);
 
-        // Initialize Supervisor Mode CSRs
-        csrs.insert(supervisor::SSTATUS, 0x0000_0000);
-        csrs.insert(supervisor::SIE, 0x0000_0000);
-        csrs.insert(supervisor::STVEC, 0x0000_0000);
-        csrs.insert(supervisor::SCOUNTEREN, 0x0000_0000);
-        csrs.insert(supervisor::SSCRATCH, 0x0000_0000);
-        csrs.insert(supervisor::SEPC, 0x0000_0000);
-        csrs.insert(supervisor::SCAUSE, 0x0000_0000);
-        csrs.insert(supervisor::STVAL, 0x0000_0000);
-        csrs.insert(supervisor::SIP, 0x0000_0000);
-        csrs.insert(supervisor::SATP, 0x0000_0000);
-
-        // Initialize Virtualization CSRs
-        csrs.insert(virtualization::VSSTATUS, 0x0000_0000);
-        csrs.insert(virtualization::VSIE, 0x0000_0000);
-        csrs.insert(virtualization::VSTVEC, 0x0000_0000);
-        csrs.insert(virtualization::VSSCRATCH, 0x0000_0000);
-        csrs.insert(virtualization::VSEPC, 0x0000_0000);
-        csrs.insert(virtualization::VSCAUSE, 0x0000_0000);
-        csrs.insert(virtualization::VSTVAL, 0x0000_0000);
-        csrs.insert(virtualization::VSIP, 0x0000_0000);
-        csrs.insert(virtualization::VSATP, 0x0000_0000);
+        csrs.insert(supervisor::STVEC, 0);
+        csrs.insert(supervisor::SCOUNTEREN, 0);
+        csrs.insert(supervisor::SENVCFG, 0);
+        csrs.insert(supervisor::SSCRATCH, 0);
+        csrs.insert(supervisor::SEPC, 0);
+        csrs.insert(supervisor::SCAUSE, 0);
+        csrs.insert(supervisor::STVAL, 0);
+        csrs.insert(supervisor::SATP, 0);
 
         Self {
             csrs,
@@ -187,6 +231,104 @@ impl CsrFile {
             privilege: PrivilegeMode::Machine,
             hart_id,
         }
+    }
+
+    /// Return whether `addr` is a register that always reads zero and
+    /// ignores writes in this profile.
+    fn is_read_only_zero(addr: u16) -> bool {
+        matches!(addr,
+            // Even pmpcfg0..pmpcfg14; odd numbers do not exist on RV64.
+            0x3A0..=0x3AF if addr.is_multiple_of(2))
+            || matches!(addr,
+                // pmpaddr0..pmpaddr63
+                0x3B0..=0x3EF
+                // mhpmcounter3..mhpmcounter31
+                | 0xB03..=0xB1F
+                // mhpmevent3..mhpmevent31
+                | 0x323..=0x33F
+                | machine::MVENDORID
+                | machine::MARCHID
+                | machine::MIMPID
+                | machine::MCONFIGPTR)
+    }
+
+    fn stored(&self, addr: u16) -> u64 {
+        self.csrs.get(&addr).copied().unwrap_or(0)
+    }
+
+    /// Architectural value at `addr`, or `None` when the address does not
+    /// exist.  This applies no privilege check.
+    fn view(&self, addr: u16) -> Option<u64> {
+        match addr {
+            supervisor::SSTATUS => Some(self.stored(machine::MSTATUS) & mstatus::SSTATUS_VIEW),
+            supervisor::SIE => Some(self.stored(machine::MIE) & self.stored(machine::MIDELEG)),
+            supervisor::SIP => Some(self.stored(machine::MIP) & self.stored(machine::MIDELEG)),
+            _ if Self::is_read_only_zero(addr) => Some(0),
+            _ => self.csrs.get(&addr).copied(),
+        }
+    }
+
+    /// Legalize a write of `value` through `addr`.  Returns the backing
+    /// register and the value it holds after the write.
+    fn legalize(&self, addr: u16, value: u64) -> (u16, u64) {
+        let old = self.stored(addr);
+        match addr {
+            machine::MSTATUS => (machine::MSTATUS, Self::legal_mstatus(old, value)),
+            supervisor::SSTATUS => {
+                let current = self.stored(machine::MSTATUS);
+                let merged =
+                    (current & !mstatus::SSTATUS_WRITABLE) | (value & mstatus::SSTATUS_WRITABLE);
+                (machine::MSTATUS, Self::legal_mstatus(current, merged))
+            }
+            // No extension can be disabled, and none can be enabled.
+            machine::MISA => (addr, MISA_VALUE),
+            // No trap delegation (M1), and both counter-enable registers are
+            // read-only zero in this profile.
+            machine::MEDELEG | machine::MIDELEG | machine::MCOUNTEREN | supervisor::SCOUNTEREN => {
+                (addr, old)
+            }
+            machine::MIE | machine::MIP => (addr, value & SUPERVISOR_INTERRUPTS),
+            supervisor::SIE | supervisor::SIP => {
+                let target = if addr == supervisor::SIE {
+                    machine::MIE
+                } else {
+                    machine::MIP
+                };
+                let delegated = self.stored(machine::MIDELEG) & SUPERVISOR_INTERRUPTS;
+                let current = self.stored(target);
+                (target, (current & !delegated) | (value & delegated))
+            }
+            // IALIGN is fixed at 32, so bits 1:0 of both EPCs read zero.
+            machine::MEPC | supervisor::SEPC => (addr, value & !0b11),
+            machine::MTVEC | supervisor::STVEC => {
+                // MODE is WARL over Direct (0) and Vectored (1).
+                let mode = if value & 0b11 <= 1 {
+                    value & 0b11
+                } else {
+                    old & 0b11
+                };
+                (addr, (value & !0b11) | mode)
+            }
+            supervisor::SATP => match value >> 60 {
+                SATP_MODE_BARE | SATP_MODE_SV39 => (addr, value & !SATP_ASID_MASK),
+                // An unsupported MODE leaves the whole register unchanged.
+                _ => (addr, old),
+            },
+            // Only FIOM (bit 0) is implemented in either register.
+            machine::MENVCFG | supervisor::SENVCFG => (addr, value & 1),
+            _ => (addr, value),
+        }
+    }
+
+    /// Apply the `mstatus` WARL rules to a candidate value.
+    fn legal_mstatus(old: u64, value: u64) -> u64 {
+        let mut next = value & mstatus::WRITABLE;
+        // MPP holds U (0), S (1), or M (3); 2 is reserved and keeps the
+        // previous legal value.
+        if (value & mstatus::MPP) >> mstatus::MPP_SHIFT == 2 {
+            next = (next & !mstatus::MPP) | (old & mstatus::MPP);
+        }
+        next | mstatus::XLEN_FIELDS
     }
 
     /// Get current privilege mode
@@ -221,11 +363,7 @@ impl CsrFile {
     /// Read CSR value
     pub fn read(&self, addr: u16) -> Result<u64, CsrError> {
         self.check_privilege(addr)?;
-
-        self.csrs
-            .get(&addr)
-            .copied()
-            .ok_or(CsrError::InvalidAddress(addr))
+        self.view(addr).ok_or(CsrError::InvalidAddress(addr))
     }
 
     /// Write CSR value
@@ -241,48 +379,21 @@ impl CsrFile {
         // Unknown writable addresses must fail without creating a new storage
         // entry.  In particular, a failed CSR instruction must not have a
         // hidden side effect in the backing map.
-        if !self.csrs.contains_key(&addr) {
+        let Some(old_value) = self.view(addr) else {
             return Err(CsrError::InvalidAddress(addr));
+        };
+
+        if !Self::is_read_only_zero(addr) {
+            let (target, legal) = self.legalize(addr, value);
+            self.csrs.insert(target, legal);
         }
 
-        let old_value = self.csrs[&addr];
-        // Special handling for certain CSRs
-        match addr {
-            machine::MHARTID => {
-                // MHARTID is read-only
-                return Err(CsrError::ReadOnly(addr));
-            }
-            machine::MISA => {
-                // C is WARL-fixed to zero while the public execution path has
-                // fixed IALIGN=32.  Do not mask any other extension bits here:
-                // the component M/A/F/D dispatch remains available.
-                self.csrs.insert(addr, value & !(1u64 << 2));
-            }
-            machine::MEPC => {
-                // With C disabled, IALIGN is 32 and MEPC[1:0] are hardwired
-                // to zero for every direct or CSR-mediated write.
-                self.csrs.insert(addr, value & !0b11);
-            }
-            machine::MSTATUS => {
-                // MSTATUS mask for RV64 - RISC-V Privileged Spec Section 3.1.6
-                //
-                // The established Task 1 compatibility mask is retained; bit
-                // 17 is included so Task 2 can preserve and clear MPRV during
-                // MRET state restoration.
-                const MSTATUS_MASK_RV64: u64 = 0x8000_0003_000F_FFEA;
-                let masked = value & MSTATUS_MASK_RV64;
-                self.csrs.insert(addr, masked);
-            }
-            _ => {
-                self.csrs.insert(addr, value);
-            }
-        }
-
+        let new_value = self.view(addr).unwrap_or(0);
         if let Some(writes) = &mut self.observed_writes {
             writes.push(CsrAccess {
                 addr,
                 old_value,
-                new_value: self.csrs[&addr],
+                new_value,
                 wrote: true,
             });
         }
@@ -302,7 +413,7 @@ impl CsrFile {
     }
 
     pub(crate) fn architectural_value(&self, addr: u16) -> u64 {
-        self.csrs.get(&addr).copied().unwrap_or(0)
+        self.view(addr).unwrap_or(0)
     }
 
     /// Return the authoritative Machine-mode retirement counter without
@@ -459,9 +570,10 @@ mod tests {
         let mut csr = CsrFile::new(0);
         csr.write(machine::MSTATUS, 0x1234_5678).unwrap();
         let value = csr.read(machine::MSTATUS).unwrap();
-        // Check that reserved bits are masked (RV64 mstatus mask includes MPP)
-        let rv64_mstatus_mask = 0x8000_0003_000F_FFEA_u64;
-        assert_eq!(value, 0x1234_5678 & rv64_mstatus_mask);
+        // 0x1234_5678 sets MIE, SPIE, MPP = 2 (reserved, so MPP stays 0),
+        // SUM, TVM, TW, and bits outside the writable set.  SXL and UXL
+        // read 2.
+        assert_eq!(value, 0x0000_000A_0034_0028);
     }
 
     #[test]
@@ -525,9 +637,11 @@ mod tests {
         csr.set_privilege(PrivilegeMode::Supervisor);
 
         // Supervisor can access supervisor CSRs
+        // Bits 2, 4, 12 are not sstatus fields and VS is read-only 0; SPIE
+        // sticks and UXL reads 2.
         csr.write(supervisor::SSTATUS, 0x1234).unwrap();
         let value = csr.read(supervisor::SSTATUS).unwrap();
-        assert_eq!(value, 0x1234);
+        assert_eq!(value, 0x0000_0002_0000_0020);
 
         // But not machine CSRs
         let result = csr.read(machine::MSTATUS);

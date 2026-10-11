@@ -34,11 +34,10 @@ fn test_machine_mode_access_machine_csr() {
     let mut csr = CsrFile::new(0);
     csr.set_privilege(PrivilegeMode::Machine);
 
-    // Use a value that only sets writable bits in MSTATUS
-    // The compatibility mask includes MPRV for Task 2 MRET restoration.
-    // 0x1220 sets MIE(3) and MPIE(7) bits
+    // 0x1220 sets SPIE (5), VS bit 9, and MPP = 2.  VS is read-only 0, the
+    // reserved MPP = 2 keeps the old MPP, and SXL and UXL read 2.
     csr.write(machine::MSTATUS, 0x1220).unwrap();
-    assert_eq!(csr.read(machine::MSTATUS).unwrap(), 0x1220);
+    assert_eq!(csr.read(machine::MSTATUS).unwrap(), 0x0000_000A_0000_0020);
 }
 
 #[test]
@@ -46,8 +45,12 @@ fn test_machine_mode_access_supervisor_csr() {
     let mut csr = CsrFile::new(0);
     csr.set_privilege(PrivilegeMode::Machine);
 
+    // Only SPIE (5) of 0x5678 is a writable sstatus field; UXL reads 2.
     csr.write(supervisor::SSTATUS, 0x5678).unwrap();
-    assert_eq!(csr.read(supervisor::SSTATUS).unwrap(), 0x5678);
+    assert_eq!(
+        csr.read(supervisor::SSTATUS).unwrap(),
+        0x0000_0002_0000_0020
+    );
 }
 
 // Supervisor mode can access supervisor CSRs but not machine CSRs
@@ -57,8 +60,12 @@ fn test_supervisor_mode_access_supervisor_csr() {
     let mut csr = CsrFile::new(0);
     csr.set_privilege(PrivilegeMode::Supervisor);
 
+    // Only SPP (8) of 0xABCD is a writable sstatus field; UXL reads 2.
     csr.write(supervisor::SSTATUS, 0xABCD).unwrap();
-    assert_eq!(csr.read(supervisor::SSTATUS).unwrap(), 0xABCD);
+    assert_eq!(
+        csr.read(supervisor::SSTATUS).unwrap(),
+        0x0000_0002_0000_0100
+    );
 }
 
 #[test]
@@ -151,23 +158,22 @@ fn test_escalate_from_supervisor_to_machine() {
 fn test_medeleg_delegation_register() {
     let mut csr = CsrFile::new(0);
 
-    // Set exception delegation bits
+    // No trap delegation in this profile: medeleg is read-only zero, and
+    // writing ones then reading back is how software discovers that.
     csr.write(machine::MEDELEG, 0x0000_B1FF).unwrap();
-    assert_eq!(csr.read(machine::MEDELEG).unwrap(), 0x0000_B1FF);
+    assert_eq!(csr.read(machine::MEDELEG).unwrap(), 0);
 
-    // Clear some bits
-    let old = csr.read_clear(machine::MEDELEG, 0x00FF).unwrap();
-    assert_eq!(old, 0x0000_B1FF);
-    assert_eq!(csr.read(machine::MEDELEG).unwrap(), 0x0000_B100);
+    let old = csr.read_set(machine::MEDELEG, 0x00FF).unwrap();
+    assert_eq!(old, 0);
+    assert_eq!(csr.read(machine::MEDELEG).unwrap(), 0);
 }
 
 #[test]
 fn test_mideleg_delegation_register() {
     let mut csr = CsrFile::new(0);
 
-    // Set interrupt delegation bits
     csr.write(machine::MIDELEG, 0x0222).unwrap();
-    assert_eq!(csr.read(machine::MIDELEG).unwrap(), 0x0222);
+    assert_eq!(csr.read(machine::MIDELEG).unwrap(), 0);
 }
 
 // Counter enable tests
@@ -176,8 +182,9 @@ fn test_mideleg_delegation_register() {
 fn test_mcounteren() {
     let mut csr = CsrFile::new(0);
 
-    csr.write(machine::MCOUNTEREN, 0x7).unwrap(); // Enable CY, TM, IR
-    assert_eq!(csr.read(machine::MCOUNTEREN).unwrap(), 0x7);
+    // Read-only zero in this profile.
+    csr.write(machine::MCOUNTEREN, 0x7).unwrap();
+    assert_eq!(csr.read(machine::MCOUNTEREN).unwrap(), 0);
 }
 
 #[test]
@@ -185,7 +192,7 @@ fn test_scounteren() {
     let mut csr = CsrFile::new(0);
 
     csr.write(supervisor::SCOUNTEREN, 0x7).unwrap();
-    assert_eq!(csr.read(supervisor::SCOUNTEREN).unwrap(), 0x7);
+    assert_eq!(csr.read(supervisor::SCOUNTEREN).unwrap(), 0);
 }
 
 // Trap vector tests

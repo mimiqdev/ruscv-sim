@@ -472,8 +472,12 @@ mod tests {
         let result = exec_system(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
 
-        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), 0x0088);
-        assert_eq!(state.regs[10], 0x0080);
+        // SXL and UXL read 2 (0x0000_000A_0000_0000).
+        assert_eq!(
+            state.csr.read(machine::MSTATUS).unwrap(),
+            0x0000_000A_0000_0088
+        );
+        assert_eq!(state.regs[10], 0x0000_000A_0000_0080);
     }
 
     #[test]
@@ -488,8 +492,11 @@ mod tests {
         let result = exec_system(&instr, &mut state, &mut mem);
         assert!(result.is_ok());
 
-        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), 0x0080);
-        assert_eq!(state.regs[10], 0x0088);
+        assert_eq!(
+            state.csr.read(machine::MSTATUS).unwrap(),
+            0x0000_000A_0000_0080
+        );
+        assert_eq!(state.regs[10], 0x0000_000A_0000_0088);
     }
 
     #[test]
