@@ -1,6 +1,16 @@
+# Stage 4 — approved informational proposal snapshot
+
+**Status:** Current approved snapshot — Stage 4 contract approved for activation 2026-10-11 UTC; not a second Current milestone contract.
+
+**Authority:** Informational drafting record. [docs/dev-plan.md](../dev-plan.md) holds the promoted normative Stage 4 contract, approved for activation on actual rotation merge. Until that merge main retains A10. On merge A10 is formally completed and its entire contract is archived. No Stage 4 implementation is part of this documentation rotation.
+
+**Snapshot boundary:** The complete proposal from baseline `9d6fe7f94e2fa33edb8c5213f5f4831f4ffa315f` follows. Its original "Proposed contract / Not approved, not active" wording is historical drafting language, not a new approval request or present authority. The two links that named the A10 contract now target the A10 archive. Git and PR history record the rotation delivery.
+
+## Preserved approved proposal
+
 # Stage 4 virtual memory and protection (proposed milestone contract)
 
-**Status:** Proposed contract. **Not approved, not active**. This document records the owner's decisions of 2026-10-10 and is the approval candidate for the next milestone. Activation still requires a separate approval of this contract, and then a separate documentation-only rotation that archives the A10 contract, mirroring the A9 to A10 transition (closeout #70, rotation #71). This document does not archive A10 and does not replace [docs/dev-plan.md](../dev-plan.md). Nothing here is implemented, scheduled, or claimed.
+**Status:** Proposed contract. **Not approved, not active**. This document records the owner's decisions of 2026-10-10 and is the approval candidate for the next milestone. Activation still requires a separate approval of this contract, and then a separate documentation-only rotation that archives the A10 contract, mirroring the A9 to A10 transition (closeout #70, rotation #71). This document does not archive A10 and does not replace [docs/dev-plan.md](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md). Nothing here is implemented, scheduled, or claimed.
 
 **Authority if approved:** would become the sole Current normative milestone contract, constrained by accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md) (Hart execution outcome and observation), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md) (physical access transaction and fault), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md) (runner, Machine, and platform ownership), and [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md) (interrupt-time scheduling and stop boundaries). Translation and protection are Hart-owned work feeding the existing physical port taxonomy. No new ADR is proposed. If review finds an ADR gap, that gap is surfaced before implementation, not patched mid-milestone.
 
@@ -445,4 +455,4 @@ A later milestone implements IEEE-754 RV64F and RV64D. That milestone is a new f
 - Acceptance is riscv-arch-test F and D, riscv-tests rv64uf and rv64ud, TestFloat vectors for each operation and rounding mode with bit-exact flags, and Spike lock-step on random floating-point programs.
 - That milestone replaces or retires `src/isa/rv64f`, `src/isa/rv64d`, and the `f_*` and `d_*` component tests. Until then those tests stay labeled as component tests that do not implement IEEE 754 and are not on the public path.
 
-Activation boundary. This document becomes the Current contract only through the rolling workflow. It is not activated by the decisions recorded here. A separate approval has to accept this revised contract, and a separate documentation-only rotation then archives A10 and replaces `docs/dev-plan.md`. A10's own closeout still has a pending independent review, and that review is an A10 item. This document authorizes no implementation and no archive.
+Activation boundary. This document becomes the Current contract only through the rolling workflow. It is not activated by the decisions recorded here. A separate approval has to accept this revised contract, and a separate documentation-only rotation then archives A10 and replaces the A10 contract. A10's own closeout still has a pending independent review, and that review is an A10 item. This document authorizes no implementation and no archive.
