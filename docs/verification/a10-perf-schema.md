@@ -3,7 +3,7 @@
 - Status: Current
 - Authority: Informational
 - Scope: approved P2 local smoke/evidence and P3 implementation under development; not P3 acceptance or P4 retention
-- Contract: [current contract](../dev-plan.md), [ADRs](../architecture/decisions/README.md)
+- Contract: [preserved A10 contract](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md), [ADRs](../architecture/decisions/README.md)
 - Implementation: [`report_schema.py`](../../tools/a10/report_schema.py), [`replay.rs`](../../tools/a10/replay.rs)
 - Machine-readable definition: [`ruscv-perf-1.schema.json`](../../tools/a10/ruscv-perf-1.schema.json) (Draft 2020-12)
 

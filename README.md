@@ -28,7 +28,7 @@ A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七�
 `RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
 评估约束。
 
-当前合同见 [`docs/dev-plan.md`](docs/dev-plan.md)：A10（独立公共路径性能测试基础设施），由 PR #71 于 2026-10-08 激活；PR #72 于 2026-10-10 合并交付 P0–P2 框架与 P3′ 基线（`5d23d33`，含 exact-merge CI 与基线重跑证据）。[实现收尾记录](docs/archive/milestones/a10-closeout-record.md)记录有界技术验收与待完成的独立 PR-head 审查；合同仍在 dev-plan.md，待用户批准后继合同后才轮换归档。[Stage 4 虚拟内存/保护提案草稿](docs/proposals/stage4-contract-draft.md)列出全部开放决策，未激活。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
+当前合同见 [`docs/dev-plan.md`](docs/dev-plan.md)：Stage 4（虚拟内存与保护），于实际轮换合并时成为唯一 Current 合同；合并前 main 仍保留 A10。A10 由 PR #71 于 2026-10-08 激活，PR #72 于 2026-10-10 交付，其[完整合同归档](docs/archive/milestones/a10-independent-public-path-performance-test-infrastructure.md)与[实现收尾记录](docs/archive/milestones/a10-closeout-record.md)保留全部范围与证据。Stage 4 决策由 PR #75 记录，激活为 2026-10-11 UTC 的所有者授权；[提案快照](docs/proposals/stage4-contract-draft.md)不是第二份当前合同。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
 
 ## 快速开始
 

@@ -2,7 +2,7 @@
 
 **Status:** Historical completed contract; archival and formal rolling completion take effect on the actual A9→A10 rotation merge, not this branch's document HEAD. Until that merge, A9 remains Current on `main`.
 
-**Authority:** Informational archive. The full approved contract below retains its original activation, task and acceptance wording, including now-historical pending-successor language; only relative links have been relocated. The sole successor authority is [the approved A10 contract](../../dev-plan.md), effective on rotation merge.
+**Authority:** Informational archive. The full approved contract below retains its original activation, task and acceptance wording, including now-historical pending-successor language; only relative links have been relocated. The sole successor authority is [the approved A10 contract](a10-independent-public-path-performance-test-infrastructure.md), activated by PR #71 and preserved in that archive. On the later rotation merge, [the Stage 4 contract](../../dev-plan.md) becomes sole Current.
 
 **Dates (UTC):** technical acceptance 2026-10-02; closeout document delivery 2026-10-03; detailed A10 successor and documentation-only archival/rotation approved 2026-10-03. Archival is effective on actual rotation merge; its date/SHA/PR belongs in Git/PR provenance and is not invented here.
 

@@ -4,7 +4,7 @@
 
 **Authority:** Normative for test-layer ownership; individual tool integrations require their own verified setup
 
-**Last reviewed:** 2026-10-10
+**Last reviewed:** 2026-10-11
 
 ## Test layers
 
@@ -70,14 +70,16 @@ Test language follows the layer rather than the simulator implementation languag
 - [A9 T0–T3 checkpoints and local T4 progress](a9-stage2-progress.md) — frozen route inventory, Hart facts, direct-owner lifecycle, public-facade migration and R1–R4 reproductions
 - [A9 bounded acceptance assessment](a9-closeout-assessment.md) — cumulative audit, preserved checkpoint, separate final PR-head gate/review and exact merged-main CI; 58 fresh project CLI guests, Coverage skipped
 - [A9 implementation closeout record](../archive/milestones/a9-closeout-record.md) — technical acceptance 2026-10-02, closeout documents delivered 2026-10-03, approved rotation; formal completion effective on actual merge
-- [Approved A10 contract](../dev-plan.md) — sole Current since PR #71 2026-10-08; implementation merged as PR #72 `5d23d33`, closeout review pending
+- [Approved Stage 4 contract](../dev-plan.md) — sole Current on the A10 to Stage 4 rotation merge; decisions recorded by PR #75, owner-authorized activation 2026-10-11 UTC. Until that merge main retains A10.
+- [Entire approved A10 contract archive](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md) — activated by PR #71 on 2026-10-08, implemented by PR #72 `5d23d33`; full body preserved, formal completion on the rotation merge
 - [A10 approved informational snapshot](../proposals/a10-performance-test-infrastructure.md) — full drafting history, original approval-request wording is historical; not a second contract or implemented facility
 - [A10 infrastructure progress](a10-stage3-progress.md) — P0/P1/P2 exact-head checkpoints and reviews, P3′ baseline delivery, P4′ close-out status and the deferred-certification rationale with reasons
 - [A10 baseline v1 observation](a10-baseline.md) — exactly three representative workloads; original Darwin record kept, plus the merged-main re-run and the Linux/x86_64 session after the per-platform pin; informational host-cost observations, never a speed/regression gate
 - [A10 public-path evidence schema](a10-perf-schema.md) — `ruscv-perf/1` format, command statuses and the deferred certification boundary (calibration series deleted 2026-10-10)
 - [A10 duration-scaled calibration workloads](a10-calibration-workloads.md) — historical; series deleted 2026-10-10, fixture sources retained
-- [A10 implementation closeout record](../archive/milestones/a10-closeout-record.md) — bounded technical acceptance 2026-10-10; criterion→commit evidence, merged-main baseline re-run, limitations and re-evaluated unfinished work; independent final PR-head documentation review pending
-- [A10 documentation-rotation audit](a10-contract-rotation.md) — executable whole-contract preservation/link/scope/status/evidence audit; no runtime/performance claims
+- [A10 implementation closeout record](../archive/milestones/a10-closeout-record.md) — bounded technical acceptance 2026-10-10; criterion to commit evidence, merged-main baseline re-run, limitations and re-evaluated unfinished work. The independent final PR-head review returned APPROVE for `c4fda56`.
+- [A10 documentation-rotation audit](a10-contract-rotation.md) — historical audit of the A9 to A10 rotation; no runtime or performance claims
+- [Stage 4 documentation-rotation audit](stage4-contract-rotation.md) — whole-contract preservation, phrase allowlist and link audit for the A10 to Stage 4 rotation; no runtime or performance claims
 - [A9 T4 source/tool/artifact and per-case evidence](a9-t4-guest-evidence.json) — self-contained checkpoint execution record; not ACT4 or milestone certification
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)
@@ -85,7 +87,7 @@ Test language follows the layer rather than the simulator implementation languag
 The A1 matrix and gap register are current as-of evidence records, not an A1
 closeout and not a claim that component tests or old CI/reference logs prove
 public-path support. The A7 and A8 closeout records are bounded evidence; neither
-certifies unrelated components. PR #69 delivered A9 on 2026-10-02 with final PR-head verification/review and separate successful merge-head CI. PR #70 delivered closeout documents on 2026-10-03 with document-head checks/static review and distinct synthetic PR-checkout CI, not new direct-head runtime evidence. Detailed A10 successor and docs-only rotation approved 2026-10-03 UTC. On actual rotation merge A9 is formally completed and [its entire contract archived](../archive/milestones/a9-hart-facts-safe-n1-machine-lifecycle.md); [A10](../dev-plan.md) becomes sole Current. Until then main retains A9. P0–P4 implementation is subsequent scoped work, not part of this rotation.
+certifies unrelated components. PR #69 delivered A9 on 2026-10-02 with final PR-head verification/review and separate successful merge-head CI. PR #70 delivered closeout documents on 2026-10-03 with document-head checks/static review and distinct synthetic PR-checkout CI, not new direct-head runtime evidence. A9 was formally completed by PR #71 and [its entire contract is archived](../archive/milestones/a9-hart-facts-safe-n1-machine-lifecycle.md). A10 was activated by that same PR. The Stage 4 decisions were recorded by PR #75, and activation is the owner-authorized activation of 2026-10-11 UTC. On the actual rotation merge A10 is formally completed and [its entire contract is archived](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md), and [Stage 4](../dev-plan.md) becomes sole Current. Until then main retains A10. Stage 4 implementation is subsequent scoped work, not part of this rotation.
 Checkpoint JSON is not relabeled as final-head execution; no new ACT4 or performance result.
 The matrix records the exact revision, the initial host
 limitation, and the successful Docker-based guest evidence for its batch.

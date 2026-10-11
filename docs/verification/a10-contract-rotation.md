@@ -1,8 +1,8 @@
 # A9→A10 documentation contract-rotation audit
 
-**Status:** Current rotation-verification procedure; not A10 implementation or performance evidence.
+**Status:** Historical rotation audit for the A9 to A10 range. Its `docs/dev-plan.md` references now resolve to the [preserved A10 contract](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md). The audit body and script below are unchanged and still describe the A9 to A10 rotation. Not A10 implementation or performance evidence.
 
-**Authority:** Informational reproducible audit, constrained by [the sole approved A10 contract](../dev-plan.md), [documentation policy](../documentation-policy.md) and accepted ADR-0001–0004. Applies to this docs-only rotation range, not later implementation ranges.
+**Authority:** Informational reproducible audit, constrained by [the preserved A10 contract](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md), [documentation policy](../documentation-policy.md) and accepted ADR-0001–0004. Applies to the A9 to A10 docs-only rotation range, not later ranges.
 
 **Approval boundary (2026-10-03 UTC):** The maintainer explicitly approved “合并，然后推进后续。我批准做合同归档和轮换”, then “继续”, after the status named the detailed A10 / post-A7 Stage 3 performance-test infrastructure successor. This approves that bounded detailed successor and A9 archival/rotation, not a new board/feature, optimization, threshold, release or cleanup. The [approved informational snapshot](../proposals/a10-performance-test-infrastructure.md) preserves the entire drafting body. A10 activates and A9 is formally completed/archived on actual rotation merge; until then main retains A9. Implementation P0–P4 begins in its subsequent scoped task only after landed rotation.
 
