@@ -1,6 +1,6 @@
 //! Stage 4 translated guest-ELF integration (dev-plan §4, D2/D3/D4/D8/D9).
 //!
-//! This test deliberately assembles and links the two Sv39 guests into a
+//! This test deliberately assembles and links the Sv39 guests into a
 //! temporary directory for every invocation, exactly like the A6 trap
 //! guests, and runs each through the three public routes: the `ruscv-sim
 //! run` CLI child, the native library entry (`load_and_run`), and the flat
@@ -26,6 +26,12 @@
 //! when SUM=0, a store lands at the translated address with the neighbor
 //! untouched, and instruction fetch never uses the translation (the whole
 //! program runs at its bare physical address).
+//!
+//! `s4_ad_observation` proves the two A/D cases a guest can raise (D4): a
+//! fresh page sets A after a read and A and D after a write, and a leaf
+//! whose PPN sits below RAM commits that A/D write and then takes the load
+//! access fault. The rejected write-back is a driver case, because no
+//! public target serves a PTE and then refuses the conditional store.
 
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 use std::env;
@@ -33,11 +39,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-const GUESTS: [&str; 4] = [
+const GUESTS: [&str; 5] = [
     "s4_mapped_rw",
     "s4_permission_fault",
     "s4_mprv",
     "s4_walk_fault",
+    "s4_ad_observation",
 ];
 const LINKER_SCRIPT: &str = "linker-s4.ld";
 const MAX_CYCLES: u64 = 100_000;
