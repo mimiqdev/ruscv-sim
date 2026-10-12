@@ -173,9 +173,14 @@ physical context for diagnosis.
    response it accepts. A faulting instruction does not gain a destination register or
    a committed store merely because a backend began processing it.
 
-MMU Accessed/Dirty-bit writeback is an **ordinary separate physical transaction** on
-the same port. It is not bundled into the later fetch/load/store transaction and is
-not part of that transaction's rollback unit. Its Hart-level visibility follows the
+MMU Accessed/Dirty-bit writeback is a **separate physical transaction** on the same
+port, performed as an atomic conditional update of the whole PTE as required by the
+selected profile (Privileged ISA 20250508 §12.3.2 step 9). It may be implemented with
+a walk-private load-reserved/store-conditional or compare-and-swap envelope; that
+envelope's reservation is not the Hart's architectural reservation. It is not bundled
+into the later fetch/load/store transaction and is not part of that transaction's
+rollback unit. A failed conditional update performs no write and causes the walk to
+resume at step 2. Its Hart-level visibility follows the
 selected RISC-V profile and the architectural outcome rules owned by [ADR-0001](0001-hart-execution-outcome-and-observation.md); this ADR
 does not invent a second A/D update scheme.
 
