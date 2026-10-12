@@ -169,6 +169,11 @@ fn interrupt_precedes_misaligned_pc_and_pending_reenters_after_mret() {
     program[MTVEC as usize / 4] = MRET;
     let mut core = direct_core(&program);
     arm(&mut core, PrivilegeMode::Machine, SSIP, SSIE, true);
+    // PC = 2 is injected state. With IALIGN=32, no spec-defined path can
+    // misalign the PC: a misaligned branch or jump target raises the
+    // exception on that instruction, and neither the PC nor rd is updated.
+    // Privileged spec 20250508 §3.1.14 (and §12.1.7 for sepc) says the two
+    // low bits of mepc are always zero, including the write at trap entry.
     core.state_mut().pc = 2;
     let first = core.step_transition(true);
     assert!(!first.control.instruction_attempted);
