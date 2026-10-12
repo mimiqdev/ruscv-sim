@@ -32,6 +32,11 @@
 //! whose PPN sits below RAM commits that A/D write and then takes the load
 //! access fault. The rejected write-back is a driver case, because no
 //! public target serves a PTE and then refuses the conditional store.
+//!
+//! `s4_sret_vectored` proves two interactions. A load page fault taken
+//! with vectored mtvec enters at BASE, and the slots at BASE + 4*cause are
+//! failure paths. SRET from S returns to U with MPRV clear, SPIE set, and
+//! SEPC bits 1:0 clear, and the same instruction in U is illegal.
 
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 use std::env;
@@ -39,12 +44,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-const GUESTS: [&str; 5] = [
+const GUESTS: [&str; 6] = [
     "s4_mapped_rw",
     "s4_permission_fault",
     "s4_mprv",
     "s4_walk_fault",
     "s4_ad_observation",
+    "s4_sret_vectored",
 ];
 const LINKER_SCRIPT: &str = "linker-s4.ld";
 const MAX_CYCLES: u64 = 100_000;
