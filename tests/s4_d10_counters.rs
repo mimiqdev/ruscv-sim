@@ -2,7 +2,7 @@
 
 use ruscv_sim::core::observation::Observation;
 use ruscv_sim::core::trap::ExceptionCause;
-use ruscv_sim::core::{PrivilegeMode, RiscvCore, StepOutcome};
+use ruscv_sim::core::{PrivilegeMode, RiscvCore, StepOutcome, Trap};
 use ruscv_sim::csr::{machine, unprivileged, CsrError, CsrFile};
 use ruscv_sim::elf::LoadImage;
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
@@ -171,7 +171,10 @@ fn shadow_guest_reads_observe_old_values_and_writes_trap() {
                 let StepOutcome::TrapEntered(trap) = turn.outcome else {
                     panic!("shadow write retired");
                 };
-                assert_eq!(trap.cause, ExceptionCause::IllegalInstruction);
+                assert_eq!(
+                    trap.cause,
+                    Trap::Exception(ExceptionCause::IllegalInstruction)
+                );
                 assert_eq!(trap.mtval, u64::from(instruction));
                 assert_eq!(core.state().regs[1], 0x5555);
                 assert_eq!(counters(&core), (41, 40));
@@ -197,7 +200,10 @@ fn lower_mode_shadow_reads_trap_without_destination_or_retirement() {
                 let StepOutcome::TrapEntered(trap) = turn.outcome else {
                     panic!("lower-mode shadow read retired");
                 };
-                assert_eq!(trap.cause, ExceptionCause::IllegalInstruction);
+                assert_eq!(
+                    trap.cause,
+                    Trap::Exception(ExceptionCause::IllegalInstruction)
+                );
                 assert_eq!(trap.mtval, u64::from(instruction));
                 assert_eq!(trap.source_privilege, mode);
                 assert_eq!(core.state().regs[1], 0x5555);

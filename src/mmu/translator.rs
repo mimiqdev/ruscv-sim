@@ -107,11 +107,10 @@ impl AddressTranslator {
             WalkResult::Success {
                 paddr,
                 pte,
-                level,
+                level: _,
                 pte_addr: _,
             } => {
-                // Insert into TLB for future accesses
-                let tlb_entry = self.create_tlb_entry(vpn, &pte, satp.asid(), level);
+                let tlb_entry = self.create_tlb_entry(vpn, &pte, satp.asid(), paddr);
                 tlb.insert(vpn, tlb_entry);
 
                 Ok(paddr)
@@ -147,15 +146,14 @@ impl AddressTranslator {
         }
     }
 
-    /// Create TLB entry from PTE
     fn create_tlb_entry(
         &self,
         vpn: u64,
         pte: &super::pte::PageTableEntry,
         asid: u16,
-        _level: usize,
+        paddr: u64,
     ) -> TlbEntry {
-        let ppn = pte.ppn();
+        let ppn = paddr >> 12;
         let perms = pte.permissions();
 
         TlbEntry {

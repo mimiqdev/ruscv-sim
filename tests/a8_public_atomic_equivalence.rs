@@ -10,7 +10,7 @@
 mod common;
 
 use common::public_elf as fixture;
-use ruscv_sim::core::{RiscvCore, StepOutcome};
+use ruscv_sim::core::{RiscvCore, StepOutcome, Trap};
 use ruscv_sim::csr::machine;
 use ruscv_sim::executor::{load_and_run, ExecutionResult, RiscVSimulator, SystemBus};
 use ruscv_sim::isa::rv64a::ReservationSet;
@@ -1054,7 +1054,7 @@ fn native_htif_valid_sc_faults_without_callback_and_amo_calls_callback_once() {
     assert!(matches!(
         lr_core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ruscv_sim::core::ExceptionCause::LoadAccessFault
+            if trap.cause == Trap::Exception(ruscv_sim::core::ExceptionCause::LoadAccessFault)
                 && trap.mtval == HTIF_TOHOST
     ));
     assert_eq!(lr_callbacks.load(Ordering::SeqCst), 0);
@@ -1070,7 +1070,7 @@ fn native_htif_valid_sc_faults_without_callback_and_amo_calls_callback_once() {
     assert!(matches!(
         no_reservation_sc.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ruscv_sim::core::ExceptionCause::StoreAccessFault
+            if trap.cause == Trap::Exception(ruscv_sim::core::ExceptionCause::StoreAccessFault)
                 && trap.mtval == HTIF_TOHOST
     ));
     assert_eq!(
@@ -1093,7 +1093,7 @@ fn native_htif_valid_sc_faults_without_callback_and_amo_calls_callback_once() {
         matches!(
             sc_outcome,
             StepOutcome::TrapEntered(trap)
-                if trap.cause == ruscv_sim::core::ExceptionCause::StoreAccessFault
+                if trap.cause == Trap::Exception(ruscv_sim::core::ExceptionCause::StoreAccessFault)
                     && trap.mtval == HTIF_TOHOST
         ),
         "D-c HTIF SC outcome: {sc_outcome:?}"
@@ -1121,7 +1121,7 @@ fn native_htif_valid_sc_faults_without_callback_and_amo_calls_callback_once() {
     assert!(matches!(
         uncovered_core.step_outcome(),
         StepOutcome::TrapEntered(trap)
-            if trap.cause == ruscv_sim::core::ExceptionCause::StoreAccessFault
+            if trap.cause == Trap::Exception(ruscv_sim::core::ExceptionCause::StoreAccessFault)
                 && trap.mtval == HTIF_TOHOST
     ));
     assert!(uncovered_core.state().reservation.is_some());

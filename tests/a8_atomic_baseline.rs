@@ -25,7 +25,9 @@
 mod common;
 
 use common::public_elf as fixture;
-use ruscv_sim::core::{ExceptionCause, InstructionRetired, RiscvCore, StepOutcome, TrapEntered};
+use ruscv_sim::core::{
+    ExceptionCause, InstructionRetired, RiscvCore, StepOutcome, Trap, TrapEntered,
+};
 use ruscv_sim::csr::machine;
 use ruscv_sim::executor::{RiscVSimulator, SystemBus, SYSTEM_BUS_HTIF_BASE};
 use ruscv_sim::memory::{MemoryError, MemoryInterface, SimpleMemory};
@@ -462,7 +464,7 @@ fn dispatch_matrix_pins_all_32_funct5_values() {
                     let trap = trapped(&mut core);
                     assert_eq!(
                         trap.cause,
-                        ExceptionCause::IllegalInstruction,
+                        Trap::Exception(ExceptionCause::IllegalInstruction),
                         "funct5={funct5:05b}/{funct3:03b}: reserved encodings are \
                          illegal-instruction traps, not simulator failures"
                     );
@@ -598,7 +600,10 @@ fn amo_funct3_outside_w_d_is_an_illegal_instruction_trap() {
     set_mtvec(&mut core, 0x40);
 
     let trap = trapped(&mut core);
-    assert_eq!(trap.cause, ExceptionCause::IllegalInstruction);
+    assert_eq!(
+        trap.cause,
+        Trap::Exception(ExceptionCause::IllegalInstruction)
+    );
     assert_eq!(trap.mtval, encoding as u64);
 }
 
@@ -616,7 +621,10 @@ fn lr_with_nonzero_rs2_is_an_illegal_instruction_trap() {
         retired(&mut core);
         set_mtvec(&mut core, 0x40);
         let trap = trapped(&mut core);
-        assert_eq!(trap.cause, ExceptionCause::IllegalInstruction);
+        assert_eq!(
+            trap.cause,
+            Trap::Exception(ExceptionCause::IllegalInstruction)
+        );
         assert_eq!(trap.mtval, encoding as u64);
         assert_eq!(
             memory.lock().unwrap().read_dword(0x80).unwrap(),
@@ -987,7 +995,10 @@ fn write_faulting_sc_retains_the_reservation_for_a_later_sc() {
 
     data.lock().unwrap().fail_writes = true;
     let trap = trapped(&mut core);
-    assert_eq!(trap.cause, ExceptionCause::StoreAccessFault);
+    assert_eq!(
+        trap.cause,
+        Trap::Exception(ExceptionCause::StoreAccessFault)
+    );
     assert_eq!(trap.mtval, P);
 
     // The trap discarded the staged state, retaining the reservation: the
@@ -1034,7 +1045,7 @@ fn htif_lr_is_a_target_rejection_at_base_and_interior() {
         let trap = trapped(&mut core);
         assert_eq!(
             trap.cause,
-            ExceptionCause::LoadAccessFault,
+            Trap::Exception(ExceptionCause::LoadAccessFault),
             "LR funct3={funct3:03b} at {guest:#x}"
         );
         assert_eq!(trap.mtval, guest);
@@ -1057,10 +1068,13 @@ fn htif_lr_is_a_target_rejection_at_base_and_interior() {
     core.state_mut().regs[2] = 0x1234_5678_9abc_def0;
     set_mtvec(&mut core, 0x40);
     let trap = trapped(&mut core);
-    assert_eq!(trap.cause, ExceptionCause::LoadAccessFault);
+    assert_eq!(trap.cause, Trap::Exception(ExceptionCause::LoadAccessFault));
     core.state_mut().pc = 4;
     let sc_trap = trapped(&mut core);
-    assert_eq!(sc_trap.cause, ExceptionCause::StoreAccessFault);
+    assert_eq!(
+        sc_trap.cause,
+        Trap::Exception(ExceptionCause::StoreAccessFault)
+    );
     assert_eq!(sc_trap.mtval, base);
     assert_eq!(core.state().regs[4], 0, "faulting SC does not write rd");
     assert_eq!(
@@ -1084,7 +1098,10 @@ fn htif_sc_target_validation_precedes_unreserved_failure() {
     core.state_mut().regs[2] = 0x1234_5678_9abc_def0;
     set_mtvec(&mut core, 0x40);
     let trap = trapped(&mut core);
-    assert_eq!(trap.cause, ExceptionCause::StoreAccessFault);
+    assert_eq!(
+        trap.cause,
+        Trap::Exception(ExceptionCause::StoreAccessFault)
+    );
     assert_eq!(trap.mtval, base);
     assert_eq!(core.state().regs[4], 0, "faulting SC does not write rd");
     assert_eq!(atomic_calls.lock().unwrap().len(), 1);
@@ -1099,7 +1116,10 @@ fn htif_sc_target_validation_precedes_unreserved_failure() {
     core.state_mut().regs[2] = 0x1234_5678_9abc_def0;
     set_mtvec(&mut core, 0x40);
     let trap = trapped(&mut core);
-    assert_eq!(trap.cause, ExceptionCause::StoreAddressMisaligned);
+    assert_eq!(
+        trap.cause,
+        Trap::Exception(ExceptionCause::StoreAddressMisaligned)
+    );
     assert_eq!(trap.mtval, interior);
     assert!(atomic_calls.lock().unwrap().is_empty());
     assert!(callbacks.lock().unwrap().is_empty());
@@ -1109,7 +1129,10 @@ fn htif_sc_target_validation_precedes_unreserved_failure() {
     core.state_mut().regs[1] = interior;
     set_mtvec(&mut core, 0x40);
     let trap = trapped(&mut core);
-    assert_eq!(trap.cause, ExceptionCause::LoadAddressMisaligned);
+    assert_eq!(
+        trap.cause,
+        Trap::Exception(ExceptionCause::LoadAddressMisaligned)
+    );
     assert_eq!(trap.mtval, interior);
     assert!(atomic_calls.lock().unwrap().is_empty());
     assert!(callbacks.lock().unwrap().is_empty());
@@ -1143,7 +1166,10 @@ fn htif_rmw_envelope_commits_once_and_word_width_is_rejected() {
     core.state_mut().regs[2] = 5;
     set_mtvec(&mut core, 0x40);
     let trap = trapped(&mut core);
-    assert_eq!(trap.cause, ExceptionCause::StoreAccessFault);
+    assert_eq!(
+        trap.cause,
+        Trap::Exception(ExceptionCause::StoreAccessFault)
+    );
     assert_eq!(trap.mtval, base);
     assert_eq!(atomic_calls.lock().unwrap().len(), 1);
     assert!(callbacks.lock().unwrap().is_empty());
@@ -1165,7 +1191,7 @@ fn htif_legal_ops_fault_at_endpoint_and_reserved_trap_illegal() {
         let trap = trapped(&mut core);
         assert_eq!(
             trap.cause,
-            ExceptionCause::StoreAccessFault,
+            Trap::Exception(ExceptionCause::StoreAccessFault),
             "funct5={funct5:05b}: a legal word-width RMW is a target rejection"
         );
         assert_eq!(trap.mtval, base);
@@ -1188,7 +1214,7 @@ fn htif_legal_ops_fault_at_endpoint_and_reserved_trap_illegal() {
         let trap = trapped(&mut core);
         assert_eq!(
             trap.cause,
-            ExceptionCause::IllegalInstruction,
+            Trap::Exception(ExceptionCause::IllegalInstruction),
             "funct5={funct5:05b}: reserved encodings are illegal-instruction traps"
         );
         assert!(
@@ -1235,7 +1261,11 @@ fn lr_and_sc_amo_class_faults_keep_their_cause_mapping() {
         core.state_mut().regs[2] = 1;
         set_mtvec(&mut core, 0x40);
         let trap = trapped(&mut core);
-        assert_eq!(trap.cause, expected_cause, "encoding {encoding:#010x}");
+        assert_eq!(
+            trap.cause,
+            Trap::Exception(expected_cause),
+            "encoding {encoding:#010x}"
+        );
         assert_eq!(trap.mtval, GUEST);
     }
 
@@ -1249,7 +1279,7 @@ fn lr_and_sc_amo_class_faults_keep_their_cause_mapping() {
     set_mtvec(&mut core, 0x20);
     core.state_mut().regs[1] = DATA_GUEST;
     let trap = trapped(&mut core);
-    assert_eq!(trap.cause, ExceptionCause::LoadAccessFault);
+    assert_eq!(trap.cause, Trap::Exception(ExceptionCause::LoadAccessFault));
     assert_eq!(trap.mtval, DATA_GUEST);
     drop(memory);
 }

@@ -61,12 +61,12 @@ pub struct InstructionRetired {
     pub explicit_minstret_write: bool,
 }
 
-/// Facts for one completed synchronous trap entry.
+/// Facts for one completed trap entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrapEntered {
-    /// Architectural synchronous exception cause.
-    pub cause: ExceptionCause,
-    /// PC of the faulting instruction or fetch.
+    /// Architectural exception or interrupt cause.
+    pub cause: Trap,
+    /// PC of the faulting or interrupted instruction, or the faulting fetch.
     pub faulting_pc: u64,
     /// Diagnostic value committed to `mtval`.
     pub mtval: u64,
@@ -818,11 +818,10 @@ impl RiscvCore {
         let before_pc = self.state.pc;
         let before_privilege = self.state.privilege;
         let minstret_before = self.state.csr.minstret_value();
-        let instruction_attempted = self.unresolved_physical_access.is_none();
         self.observation_demand = observe;
         self.memory_journal = observe.then(|| RefCell::new(Vec::new()));
         self.gpr_destination = None;
-        let outcome = self.execute_turn();
+        let (outcome, instruction_attempted) = self.execute_turn();
         let control = ControlFacts {
             before_pc,
             after_pc: self.state.pc,
@@ -855,9 +854,10 @@ impl RiscvCore {
         }
     }
 
-    fn execute_turn(&mut self) -> StepOutcome {
+    /// Return the outcome and whether an instruction attempt began.
+    fn execute_turn(&mut self) -> (StepOutcome, bool) {
         if let Some(failure) = &self.unresolved_physical_access {
-            return StepOutcome::SimulatorFailure(failure.clone());
+            return (StepOutcome::SimulatorFailure(failure.clone()), false);
         }
 
         // CoreState is the architectural mode authority at this boundary.
@@ -866,13 +866,44 @@ impl RiscvCore {
         if self.state.csr.get_privilege() != self.state.privilege {
             self.state.csr.set_privilege(self.state.privilege);
         }
+
+        if let Some(cause) = self.accepted_supervisor_interrupt() {
+            return (
+                self.enter_trap(Trap::Interrupt(cause), self.state.pc, 0, None),
+                false,
+            );
+        }
+
+        (self.execute_instruction(), true)
+    }
+
+    fn accepted_supervisor_interrupt(&self) -> Option<InterruptCause> {
+        let enabled = self.state.privilege != PrivilegeMode::Machine
+            || self.state.csr.mstatus() & crate::csr::mstatus::MIE != 0;
+        if !enabled {
+            return None;
+        }
+        let pending =
+            self.state.csr.mip() & self.state.csr.mie() & crate::csr::SUPERVISOR_INTERRUPTS;
+        if pending & (1 << 9) != 0 {
+            Some(InterruptCause::SupervisorExternal)
+        } else if pending & (1 << 1) != 0 {
+            Some(InterruptCause::SupervisorSoftware)
+        } else if pending & (1 << 5) != 0 {
+            Some(InterruptCause::SupervisorTimer)
+        } else {
+            None
+        }
+    }
+
+    fn execute_instruction(&mut self) -> StepOutcome {
         let pc_before = self.state.pc;
         self.state.branch_taken = false;
 
         // Fixed IALIGN=32 is checked before the instruction-memory transaction.
         if pc_before & 0b11 != 0 {
             return self.enter_trap(
-                ExceptionCause::InstructionAddressMisaligned,
+                Trap::Exception(ExceptionCause::InstructionAddressMisaligned),
                 pc_before,
                 pc_before,
                 None,
@@ -901,7 +932,7 @@ impl RiscvCore {
                 Some(address) => address,
                 None => {
                     return self.enter_trap(
-                        ExceptionCause::InstructionAccessFault,
+                        Trap::Exception(ExceptionCause::InstructionAccessFault),
                         pc_before,
                         pc_before,
                         None,
@@ -927,7 +958,7 @@ impl RiscvCore {
                     MemoryError::InvalidAddress(_)
                     | MemoryError::Misaligned(_, _)
                     | MemoryError::OutOfBounds => self.enter_trap(
-                        ExceptionCause::InstructionAccessFault,
+                        Trap::Exception(ExceptionCause::InstructionAccessFault),
                         pc_before,
                         pc_before,
                         None,
@@ -947,7 +978,7 @@ impl RiscvCore {
                 return match error {
                     DecodeError::InvalidInstruction(_) | DecodeError::ReservedInstruction => self
                         .enter_trap(
-                            ExceptionCause::IllegalInstruction,
+                            Trap::Exception(ExceptionCause::IllegalInstruction),
                             pc_before,
                             instruction as u64,
                             Some(instruction),
@@ -963,7 +994,7 @@ impl RiscvCore {
 
         if Self::is_illegal_encoding(&decoded) {
             return self.enter_trap(
-                ExceptionCause::IllegalInstruction,
+                Trap::Exception(ExceptionCause::IllegalInstruction),
                 pc_before,
                 instruction as u64,
                 Some(instruction),
@@ -976,11 +1007,11 @@ impl RiscvCore {
         if let Some((is_store, address, width)) = Self::data_access(&decoded, &self.state) {
             if address % width != 0 {
                 return self.enter_trap(
-                    if is_store {
+                    Trap::Exception(if is_store {
                         ExceptionCause::StoreAddressMisaligned
                     } else {
                         ExceptionCause::LoadAddressMisaligned
-                    },
+                    }),
                     pc_before,
                     address,
                     Some(instruction),
@@ -994,7 +1025,7 @@ impl RiscvCore {
         if let Some(target) = Self::control_target(&decoded, &self.state) {
             if target & 0b11 != 0 {
                 return self.enter_trap(
-                    ExceptionCause::InstructionAddressMisaligned,
+                    Trap::Exception(ExceptionCause::InstructionAddressMisaligned),
                     pc_before,
                     target,
                     Some(instruction),
@@ -1181,7 +1212,7 @@ impl RiscvCore {
 
     fn enter_trap(
         &mut self,
-        cause: ExceptionCause,
+        trap: Trap,
         faulting_pc: u64,
         tval: u64,
         instruction: Option<u32>,
@@ -1191,28 +1222,31 @@ impl RiscvCore {
         staged.csr.begin_observation(self.observation_demand);
         staged.fpr.begin_observation(self.observation_demand);
         staged.branch_taken = false;
-        let vector_pc = match self.trap_handler.handle_trap_checked(
-            Trap::Exception(cause),
-            faulting_pc,
-            tval,
-            &mut staged,
-        ) {
-            Ok(vector_pc) => vector_pc,
-            Err(error) => {
-                return self.simulator_failure(
-                    faulting_pc,
-                    SimulatorFailureKind::Invariant,
-                    error.to_string(),
-                )
-            }
+        let mtval = match trap {
+            Trap::Exception(cause) => cause.mtval(tval),
+            Trap::Interrupt(_) => 0,
         };
+        let vector_pc =
+            match self
+                .trap_handler
+                .handle_trap_checked(trap, faulting_pc, mtval, &mut staged)
+            {
+                Ok(vector_pc) => vector_pc,
+                Err(error) => {
+                    return self.simulator_failure(
+                        faulting_pc,
+                        SimulatorFailureKind::Invariant,
+                        error.to_string(),
+                    )
+                }
+            };
         staged.csr.increment_mcycle();
         let handler_privilege = staged.privilege;
         self.state = staged;
         StepOutcome::TrapEntered(TrapEntered {
-            cause,
+            cause: trap,
             faulting_pc,
-            mtval: cause.mtval(tval),
+            mtval,
             vector_pc,
             source_privilege,
             handler_privilege,
@@ -1230,18 +1264,23 @@ impl RiscvCore {
     ) -> StepOutcome {
         match error {
             ExecuteError::Ecall => self.enter_trap(
-                match self.state.privilege {
+                Trap::Exception(match self.state.privilege {
                     PrivilegeMode::User => ExceptionCause::EcallU,
                     PrivilegeMode::Supervisor => ExceptionCause::EcallS,
                     PrivilegeMode::Machine => ExceptionCause::EcallM,
-                },
+                }),
                 pc,
                 0,
                 Some(raw),
             ),
-            ExecuteError::Ebreak => self.enter_trap(ExceptionCause::Breakpoint, pc, 0, Some(raw)),
+            ExecuteError::Ebreak => self.enter_trap(
+                Trap::Exception(ExceptionCause::Breakpoint),
+                pc,
+                0,
+                Some(raw),
+            ),
             ExecuteError::IllegalInstruction | ExecuteError::CsrError(_) => self.enter_trap(
-                ExceptionCause::IllegalInstruction,
+                Trap::Exception(ExceptionCause::IllegalInstruction),
                 pc,
                 raw as u64,
                 Some(raw),
@@ -1259,7 +1298,7 @@ impl RiscvCore {
                 } else {
                     ExceptionCause::LoadAddressMisaligned
                 };
-                self.enter_trap(cause, pc, address, Some(raw))
+                self.enter_trap(Trap::Exception(cause), pc, address, Some(raw))
             }
             ExecuteError::MemoryError(error) => {
                 match error {
@@ -1282,11 +1321,11 @@ impl RiscvCore {
                         // Use the Hart's original address for mtval; the
                         // backend address remains diagnostic-only.
                         self.enter_trap(
-                            if is_store {
+                            Trap::Exception(if is_store {
                                 ExceptionCause::StoreAccessFault
                             } else {
                                 ExceptionCause::LoadAccessFault
-                            },
+                            }),
                             pc,
                             effective_address,
                             Some(raw),

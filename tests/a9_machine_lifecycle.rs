@@ -672,7 +672,9 @@ fn failed_and_faulting_sc_keep_the_t1_fact_and_a8_target_boundaries() {
                 };
                 assert_eq!(
                     record.trap.cause,
-                    ruscv_sim::core::ExceptionCause::StoreAccessFault
+                    ruscv_sim::core::Trap::Exception(
+                        ruscv_sim::core::ExceptionCause::StoreAccessFault
+                    )
                 );
                 assert_eq!(record.trap.mtval, target);
                 assert_eq!(turn.hart().control.minstret_after, 0);

@@ -5,7 +5,7 @@
 //! adapter owns endian conversion, load extension, and FP interpretation.
 
 use ruscv_sim::core::{
-    ExceptionCause, PrivilegeMode, RiscvCore, SimulatorFailureKind, StepOutcome,
+    ExceptionCause, PrivilegeMode, RiscvCore, SimulatorFailureKind, StepOutcome, Trap,
 };
 use ruscv_sim::csr::machine;
 use ruscv_sim::executor::{SystemBus, SYSTEM_BUS_UART_BASE};
@@ -248,7 +248,7 @@ fn assert_access_trap(outcome: StepOutcome, cause: ExceptionCause, mtval: u64, c
     let StepOutcome::TrapEntered(trap) = outcome else {
         panic!("expected architectural access trap")
     };
-    assert_eq!(trap.cause, cause);
+    assert_eq!(trap.cause, Trap::Exception(cause));
     assert_eq!(trap.mtval, mtval);
     assert_eq!(core.state().pc, 0x40);
     assert_eq!(core.state().privilege, PrivilegeMode::Machine);
@@ -292,7 +292,7 @@ fn fp_major_opcodes_trap_before_any_data_request() {
                     let before_fcsr = core.state().fcsr.read();
                     let turn = core.step_transition(observed);
                     assert!(matches!(&turn.outcome, StepOutcome::TrapEntered(trap)
-                        if trap.cause == ExceptionCause::IllegalInstruction && trap.mtval == raw as u64));
+                        if trap.cause == Trap::Exception(ExceptionCause::IllegalInstruction) && trap.mtval == raw as u64));
                     for index in 0..32 {
                         assert_eq!(
                             core.state().fpr.read(index).bits(),

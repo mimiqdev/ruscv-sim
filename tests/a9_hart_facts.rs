@@ -1,6 +1,6 @@
 //! A9 T1: subscribed completed Hart facts, independent of Runner policy.
 use ruscv_sim::core::observation::{HartTransition, Observation, ObservationSink};
-use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome};
+use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome, Trap};
 use ruscv_sim::csr::machine;
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 use ruscv_sim::physical::{
@@ -300,7 +300,10 @@ fn fp_load_and_store_trap_with_no_fpr_memory_or_fcsr_effect() {
             let before = h.memory.lock().unwrap().read_dword(TARGET).unwrap();
             let turn = h.core.step_transition(true);
             let record = trap(&turn);
-            assert_eq!(record.trap.cause, ExceptionCause::IllegalInstruction);
+            assert_eq!(
+                record.trap.cause,
+                Trap::Exception(ExceptionCause::IllegalInstruction)
+            );
             assert_eq!(record.trap.mtval, raw as u64);
             assert!(record.effects.fpr.is_empty());
             assert!(record.effects.gpr.is_empty());
@@ -448,7 +451,7 @@ fn completed_trap_and_mret_include_precise_entry_return_effects() {
     h.core.state_mut().csr.write(machine::MTVEC, 4).unwrap();
     let entry = h.core.step_transition(true);
     let record = trap(&entry);
-    assert_eq!(record.trap.cause, ExceptionCause::EcallU);
+    assert_eq!(record.trap.cause, Trap::Exception(ExceptionCause::EcallU));
     assert_eq!(record.trap.source_privilege, PrivilegeMode::User);
     assert_eq!(record.trap.handler_privilege, PrivilegeMode::Machine);
     assert_eq!(record.saved_pc, 0);
@@ -503,7 +506,10 @@ fn fetch_alignment_and_data_fault_traps_have_no_fabricated_destinations() {
         h.spy.lock().unwrap().failure = Some(Failure::Target);
         let turn = h.core.step_transition(true);
         let record = trap(&turn);
-        assert_eq!(record.trap.cause, ExceptionCause::StoreAccessFault);
+        assert_eq!(
+            record.trap.cause,
+            Trap::Exception(ExceptionCause::StoreAccessFault)
+        );
         assert_eq!(record.trap.mtval, TARGET);
         assert_eq!(record.saved_pc, 4);
         assert!(record.effects.gpr.is_empty() && record.effects.memory.is_empty());
@@ -575,13 +581,20 @@ fn backend_protocol_and_unknown_failures_have_no_observation_or_guest_trap() {
         assert!(matches!(turn.outcome, StepOutcome::SimulatorFailure(_)));
         assert!(turn.observation.is_none());
         assert!(!turn.control.retired && !turn.control.trap_entered);
+        assert!(turn.control.instruction_attempted);
         assert_eq!(turn.control.minstret_after, 0);
         assert_eq!(h.core.state().pc, 0);
         assert_eq!(h.core.state().csr.read(machine::MCAUSE).unwrap(), 0);
         if matches!(mode, Failure::UnknownAfterWrite) {
             assert_eq!(h.memory.lock().unwrap().read_dword(TARGET).unwrap(), 5);
+            h.core.state_mut().csr.write(machine::MIP, 2).unwrap();
+            h.core.state_mut().csr.write(machine::MIE, 2).unwrap();
+            h.core.state_mut().csr.write(machine::MSTATUS, 8).unwrap();
             let repeated = h.core.step_transition(true);
             assert_eq!(repeated.outcome, turn.outcome);
+            assert_eq!(h.core.state().csr.read(machine::MCYCLE).unwrap(), 0);
+            assert_eq!(h.core.state().csr.read(machine::MCAUSE).unwrap(), 0);
+            assert_eq!(h.core.state().csr.read(machine::MIP).unwrap(), 2);
             assert!(repeated.observation.is_none());
             assert!(!repeated.control.instruction_attempted);
             assert_eq!(

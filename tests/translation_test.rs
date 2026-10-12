@@ -628,6 +628,149 @@ fn test_translation_large_address() {
 }
 
 #[test]
+fn test_tlb_superpage_hit_keeps_lower_vpn() {
+    let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
+    let root_ppn = 0x80000;
+    let level1_ppn = root_ppn + 1;
+    let level0_ppn = root_ppn + 2;
+
+    // 2 MiB leaf at VPN[2]=0, VPN[1]=1. PPN[0] is zero, so the leaf is aligned.
+    let mega_ppn = 0x90000;
+    let root_to_l1 = PageTableEntry::new_pointer(level1_ppn);
+    memory
+        .write_dword(root_ppn << 12, root_to_l1.bits())
+        .unwrap();
+    let mega = PageTableEntry::new_leaf(mega_ppn, PagePermissions::rw(), false);
+    memory
+        .write_dword((level1_ppn << 12) + 8, mega.bits())
+        .unwrap();
+
+    // 1 GiB leaf at VPN[2]=1. PPN[1:0] are zero, so the leaf is aligned.
+    let giga_ppn = 0x80000;
+    let giga = PageTableEntry::new_leaf(giga_ppn, PagePermissions::rw(), false);
+    memory
+        .write_dword((root_ppn << 12) + 8, giga.bits())
+        .unwrap();
+
+    let page_ppn = 0xA0000;
+    let l1_to_l0 = PageTableEntry::new_pointer(level0_ppn);
+    memory
+        .write_dword((level1_ppn << 12) + 16, l1_to_l0.bits())
+        .unwrap();
+    let page = PageTableEntry::new_leaf(page_ppn, PagePermissions::rw(), false);
+    memory
+        .write_dword((level0_ppn << 12) + 24, page.bits())
+        .unwrap();
+
+    let translator = AddressTranslator::new(MmuConfig::default());
+    let mut tlb = Tlb::new(64, 4);
+    let satp = (8u64 << 60) | root_ppn;
+
+    let translate = |tlb: &mut Tlb, memory: &mut PhysicalMemory, vaddr: u64| {
+        translator.translate_with_tlb(
+            TranslationRequest {
+                vaddr,
+                access_type: AccessType::Read,
+                privilege: PrivilegeMode::Supervisor,
+                satp,
+                mstatus: 0,
+            },
+            tlb,
+            memory,
+        )
+    };
+
+    let mega_a = (1u64 << 21) | (3 << 12) | 0x100;
+    let mega_b = (1u64 << 21) | (3 << 12) | 0x200;
+    let mega_pa = (mega_ppn << 12) | (3 << 12);
+    assert_eq!(
+        translate(&mut tlb, &mut memory, mega_a).unwrap(),
+        mega_pa | 0x100
+    );
+    let after_mega_miss = tlb.stats();
+    assert_eq!(after_mega_miss.accesses, 1);
+    assert_eq!(after_mega_miss.misses, 1);
+    assert_eq!(after_mega_miss.hits, 0);
+    assert_eq!(
+        translate(&mut tlb, &mut memory, mega_b).unwrap(),
+        mega_pa | 0x200
+    );
+    let after_mega_hit = tlb.stats();
+    assert_eq!(after_mega_hit.accesses, 2);
+    assert_eq!(after_mega_hit.misses, 1);
+    assert_eq!(after_mega_hit.hits, 1);
+
+    let mega_neighbor = (1u64 << 21) | (4 << 12) | 0x100;
+    let mega_neighbor_pa = (mega_ppn << 12) | (4 << 12) | 0x100;
+    assert_eq!(
+        translate(&mut tlb, &mut memory, mega_neighbor).unwrap(),
+        mega_neighbor_pa
+    );
+    let after_mega_neighbor = tlb.stats();
+    assert_eq!(after_mega_neighbor.accesses, 3);
+    assert_eq!(after_mega_neighbor.misses, 2);
+    assert_eq!(after_mega_neighbor.hits, 1);
+
+    let giga_a = (1u64 << 30) | (5 << 21) | (3 << 12) | 0x100;
+    let giga_b = (1u64 << 30) | (5 << 21) | (3 << 12) | 0x200;
+    let giga_pa = (giga_ppn << 12) | (5 << 21) | (3 << 12);
+    assert_eq!(
+        translate(&mut tlb, &mut memory, giga_a).unwrap(),
+        giga_pa | 0x100
+    );
+    let after_giga_miss = tlb.stats();
+    assert_eq!(after_giga_miss.accesses, 4);
+    assert_eq!(after_giga_miss.misses, 3);
+    assert_eq!(after_giga_miss.hits, 1);
+    assert_eq!(
+        translate(&mut tlb, &mut memory, giga_b).unwrap(),
+        giga_pa | 0x200
+    );
+    let after_giga_hit = tlb.stats();
+    assert_eq!(after_giga_hit.accesses, 5);
+    assert_eq!(after_giga_hit.misses, 3);
+    assert_eq!(after_giga_hit.hits, 2);
+
+    let giga_neighbor = (1u64 << 30) | (5 << 21) | (4 << 12) | 0x100;
+    let giga_neighbor_pa = (giga_ppn << 12) | (5 << 21) | (4 << 12) | 0x100;
+    assert_eq!(
+        translate(&mut tlb, &mut memory, giga_neighbor).unwrap(),
+        giga_neighbor_pa
+    );
+    let after_giga_neighbor = tlb.stats();
+    assert_eq!(after_giga_neighbor.accesses, 6);
+    assert_eq!(after_giga_neighbor.misses, 4);
+    assert_eq!(after_giga_neighbor.hits, 2);
+
+    let page_a = (2u64 << 21) | (3 << 12) | 0x100;
+    let page_b = (2u64 << 21) | (3 << 12) | 0x200;
+    let page_pa = page_ppn << 12;
+    assert_eq!(
+        translate(&mut tlb, &mut memory, page_a).unwrap(),
+        page_pa | 0x100
+    );
+    let after_page_miss = tlb.stats();
+    assert_eq!(after_page_miss.accesses, 7);
+    assert_eq!(after_page_miss.misses, 5);
+    assert_eq!(after_page_miss.hits, 2);
+    assert_eq!(
+        translate(&mut tlb, &mut memory, page_b).unwrap(),
+        page_pa | 0x200
+    );
+    let after_page_hit = tlb.stats();
+    assert_eq!(after_page_hit.accesses, 8);
+    assert_eq!(after_page_hit.misses, 5);
+    assert_eq!(after_page_hit.hits, 3);
+
+    let page_neighbor = (2u64 << 21) | (4 << 12) | 0x100;
+    assert!(translate(&mut tlb, &mut memory, page_neighbor).is_err());
+    let after_page_neighbor = tlb.stats();
+    assert_eq!(after_page_neighbor.accesses, 9);
+    assert_eq!(after_page_neighbor.misses, 6);
+    assert_eq!(after_page_neighbor.hits, 3);
+}
+
+#[test]
 fn test_mmu_config_default() {
     let config = MmuConfig::default();
     assert_eq!(config.tlb_size, 64);

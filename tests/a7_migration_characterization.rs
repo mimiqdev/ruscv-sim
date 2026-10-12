@@ -10,7 +10,7 @@
 mod common;
 
 use common::public_elf as fixture;
-use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome};
+use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome, Trap};
 use ruscv_sim::csr::machine;
 use ruscv_sim::executor::{RiscVSimulator, SystemBus};
 use ruscv_sim::memory::{MemoryError, MemoryInterface, SimpleMemory};
@@ -434,7 +434,10 @@ fn guest_aligned_access_to_misaligned_flat_offset_is_an_access_fault() {
     let StepOutcome::TrapEntered(load_trap) = load_outcome else {
         panic!("guest-aligned load must enter an access fault at the backend");
     };
-    assert_eq!(load_trap.cause, ExceptionCause::LoadAccessFault);
+    assert_eq!(
+        load_trap.cause,
+        Trap::Exception(ExceptionCause::LoadAccessFault)
+    );
     assert_eq!(load_trap.mtval, DATA_GUEST_ADDRESS);
     assert_eq!(load.state().regs[5], 0xfeed_face_cafe_babe);
     assert_eq!(load.state().pc, 0x20);
@@ -452,7 +455,10 @@ fn guest_aligned_access_to_misaligned_flat_offset_is_an_access_fault() {
     let StepOutcome::TrapEntered(store_trap) = store_outcome else {
         panic!("guest-aligned store must enter an access fault at the backend");
     };
-    assert_eq!(store_trap.cause, ExceptionCause::StoreAccessFault);
+    assert_eq!(
+        store_trap.cause,
+        Trap::Exception(ExceptionCause::StoreAccessFault)
+    );
     assert_eq!(store_trap.mtval, DATA_GUEST_ADDRESS);
     assert_eq!(store.state().regs[2], 0x1122_3344_5566_7788);
     assert_eq!(store.state().pc, 0x20);
@@ -480,7 +486,10 @@ fn core_below_base_fetch_is_rejected_before_backend_access() {
     let StepOutcome::TrapEntered(trap) = outcome else {
         panic!("a PC below the image base must enter an instruction access fault");
     };
-    assert_eq!(trap.cause, ExceptionCause::InstructionAccessFault);
+    assert_eq!(
+        trap.cause,
+        Trap::Exception(ExceptionCause::InstructionAccessFault)
+    );
     assert_eq!(trap.mtval, 0x100);
     assert!(fetch_calls.lock().unwrap().is_empty());
     assert!(data_calls.lock().unwrap().is_empty());
@@ -907,7 +916,7 @@ fn per_hart_reservation_transcript_in_process() {
     assert!(matches!(
         trapped,
         StepOutcome::TrapEntered(fact)
-            if fact.cause == ExceptionCause::IllegalInstruction && fact.mtval == fsd_word as u64
+            if fact.cause == Trap::Exception(ExceptionCause::IllegalInstruction) && fact.mtval == fsd_word as u64
     ));
     assert_eq!(
         floating_memory.lock().unwrap().read_dword(address).unwrap(),
@@ -967,7 +976,7 @@ fn per_hart_reservation_transcript_in_process() {
     assert!(matches!(
         failed,
         StepOutcome::TrapEntered(fact)
-            if fact.cause == ExceptionCause::StoreAccessFault && fact.mtval == 0x1000
+            if fact.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && fact.mtval == 0x1000
     ));
     failed_store.state_mut().pc = 8;
     retired(&mut failed_store);
@@ -1002,7 +1011,7 @@ fn per_hart_reservation_transcript_in_process() {
     assert!(matches!(
         fault,
         StepOutcome::TrapEntered(fact)
-            if fact.cause == ExceptionCause::StoreAccessFault && fact.mtval == address
+            if fact.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && fact.mtval == address
     ));
     faulting.state_mut().pc = 4;
     retired(&mut faulting);
@@ -1077,7 +1086,7 @@ fn per_hart_reservation_transcript_in_process() {
     assert!(matches!(
         outcome,
         StepOutcome::TrapEntered(fact)
-            if fact.cause == ExceptionCause::LoadAccessFault && fact.mtval == HTIF_BASE
+            if fact.cause == Trap::Exception(ExceptionCause::LoadAccessFault) && fact.mtval == HTIF_BASE
     ));
     assert!(callbacks.lock().unwrap().is_empty());
     core.state_mut().pc = 4;
@@ -1085,7 +1094,7 @@ fn per_hart_reservation_transcript_in_process() {
     assert!(matches!(
         core.step_outcome(),
         StepOutcome::TrapEntered(fact)
-            if fact.cause == ExceptionCause::StoreAccessFault && fact.mtval == HTIF_BASE
+            if fact.cause == Trap::Exception(ExceptionCause::StoreAccessFault) && fact.mtval == HTIF_BASE
     ));
     assert_eq!(
         core.state().regs[4],
