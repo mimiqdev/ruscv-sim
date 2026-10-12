@@ -5,6 +5,7 @@
 pub mod commits;
 pub mod observation;
 mod observed_memory;
+mod translation;
 pub mod trap;
 use crate::csr::{machine, CsrFile};
 use crate::decode::{DecodeError, DecodedInstruction, InstructionDecoder, Opcode};
@@ -341,6 +342,10 @@ pub struct PhysicalMemoryAdapter<'a> {
     /// offset.  Outside this range, the generic physical address alignment
     /// rule remains in force without imposing RAM semantics on devices.
     storage_alignment: Option<(u64, usize)>,
+    /// Page delta (translated - virtual) applied to the guest base before
+    /// the guest-to-issued conversion while Sv39 translation is active.
+    /// The register file stays architectural; only the address path moves.
+    translation_delta: Option<u64>,
 }
 
 impl<'a> PhysicalMemoryAdapter<'a> {
@@ -350,6 +355,25 @@ impl<'a> PhysicalMemoryAdapter<'a> {
             port: RefCell::new(port),
             base_addr,
             storage_alignment: None,
+            translation_delta: None,
+        }
+    }
+
+    /// Creates a translated view: every guest address is shifted by
+    /// `translation_delta` before the usual base conversion, so the helper's
+    /// architectural effective address issues at the translated
+    /// guest-physical address.
+    pub fn new_translated(
+        port: &'a mut dyn PhysicalAccess,
+        base_addr: u64,
+        storage_alignment: Option<(u64, usize)>,
+        translation_delta: u64,
+    ) -> Self {
+        Self {
+            port: RefCell::new(port),
+            base_addr,
+            storage_alignment,
+            translation_delta: Some(translation_delta),
         }
     }
 
@@ -366,6 +390,7 @@ impl<'a> PhysicalMemoryAdapter<'a> {
             port: RefCell::new(port),
             base_addr,
             storage_alignment: Some((storage_base, storage_size)),
+            translation_delta: None,
         }
     }
 
@@ -373,9 +398,13 @@ impl<'a> PhysicalMemoryAdapter<'a> {
     /// after the one guest-to-storage conversion.  This is a target/storage
     /// rejection, not a new Hart alignment check; the Hart has already checked
     /// the guest address before this adapter is entered.  The conversion is
-    /// shared with the atomic view through [`hart_issued_paddr`].
+    /// shared with the atomic view through [`hart_issued_paddr`]; a staged
+    /// Sv39 translation delta shifts the guest base first.
     fn checked_paddr(&self, va: u64, width: PhysicalWidth) -> Result<u64, MemoryError> {
-        hart_issued_paddr(va, self.base_addr, self.storage_alignment, width)
+        let guest = self
+            .translation_delta
+            .map_or(va, |delta| va.wrapping_add(delta));
+        hart_issued_paddr(guest, self.base_addr, self.storage_alignment, width)
     }
 
     fn map_error(error: PhysicalAccessError) -> MemoryError {
@@ -496,6 +525,9 @@ pub struct PhysicalAtomicAdapter<'a> {
     /// view preserves, so an atomic envelope hits the identical target
     /// rejection an ordinary wide access would at a misaligned flat offset.
     storage_alignment: Option<(u64, usize)>,
+    /// Page delta (translated - virtual) applied to the guest base before
+    /// the guest-to-issued conversion while Sv39 translation is active.
+    translation_delta: Option<u64>,
 }
 
 impl<'a> PhysicalAtomicAdapter<'a> {
@@ -510,6 +542,26 @@ impl<'a> PhysicalAtomicAdapter<'a> {
             journal: None,
             base_addr,
             storage_alignment,
+            translation_delta: None,
+        }
+    }
+
+    /// Creates a translated atomic view: every guest effective address is
+    /// shifted by `translation_delta` before the base conversion, so the
+    /// envelope is issued at the translated guest-physical address while
+    /// the register file stays architectural.
+    pub fn new_translated(
+        port: &'a mut (dyn PhysicalDataAccess + Send),
+        base_addr: u64,
+        storage_alignment: Option<(u64, usize)>,
+        translation_delta: u64,
+    ) -> Self {
+        Self {
+            port,
+            journal: None,
+            base_addr,
+            storage_alignment,
+            translation_delta: Some(translation_delta),
         }
     }
 
@@ -521,9 +573,13 @@ impl<'a> PhysicalAtomicAdapter<'a> {
     /// address. SC performs this conversion regardless of reservation state,
     /// before its one envelope lets the target validate store access and
     /// atomic capability. A rejected address faults and any live reservation
-    /// is retained by staged-state discard (C15).
+    /// is retained by staged-state discard (C15). A staged Sv39 translation
+    /// delta shifts the guest base first.
     pub fn issued_addr(&self, ea: u64, width: PhysicalWidth) -> Result<u64, MemoryError> {
-        hart_issued_paddr(ea, self.base_addr, self.storage_alignment, width)
+        let guest = self
+            .translation_delta
+            .map_or(ea, |delta| ea.wrapping_add(delta));
+        hart_issued_paddr(guest, self.base_addr, self.storage_alignment, width)
     }
 
     /// Submits one atomic envelope and maps the typed error taxonomy onto
@@ -571,7 +627,10 @@ impl<'a> PhysicalAtomicAdapter<'a> {
                 _ => None,
             };
             journal.borrow_mut().push(MemoryEffect {
-                guest_address: request.paddr() + self.base_addr,
+                guest_address: request
+                    .paddr()
+                    .wrapping_add(self.base_addr)
+                    .wrapping_sub(self.translation_delta.unwrap_or(0)),
                 issued_address: Some(request.paddr()),
                 width: request.width(),
                 read,
@@ -582,6 +641,7 @@ impl<'a> PhysicalAtomicAdapter<'a> {
                     conditional: response.conditional_status(),
                     indivisible: true,
                 }),
+                implicit: false,
             });
         }
         Ok(response)
@@ -910,6 +970,21 @@ impl RiscvCore {
             );
         }
 
+        // Instruction fetch translation. Sv39 translates the fetch effective
+        // address through the data port walk before the instruction port
+        // sees the resulting guest-physical address (D2, D3). The walk
+        // itself runs on the data port; the instruction-memory transaction
+        // keeps its Fetch category.
+        let fetch_paddr = match self.translate_address(
+            pc_before,
+            translation::AccessKind::Fetch,
+            pc_before,
+            None,
+        ) {
+            Ok(paddr) => paddr,
+            Err(outcome) => return outcome,
+        };
+
         // Fetch keeps the guest PC in the architectural address space.  A
         // migrated core submits one raw Fetch request; the typed view performs
         // the single configured base conversion.  Compatibility callers keep
@@ -925,8 +1000,8 @@ impl RiscvCore {
                     )
                 }
             };
-            let adapter = self.physical_adapter(&mut *port);
-            adapter.fetch_word(pc_before)
+            let adapter = self.physical_adapter(&mut *port, None);
+            adapter.fetch_word(fetch_paddr)
         } else {
             let instruction_addr = match pc_before.checked_sub(self.base_addr) {
                 Some(address) => address,
@@ -1001,9 +1076,11 @@ impl RiscvCore {
             );
         }
 
-        // Architectural alignment is a Hart check.  It runs before the memory
-        // adapter is called, so a misaligned load/store/AMO produces no physical
-        // transaction and cannot leak a destination or store side effect.
+        // Architectural alignment is a Hart check on the virtual effective
+        // address.  It runs before translation and before the memory adapter
+        // is called (D6), so a misaligned load/store/AMO produces no physical
+        // transaction, no walk, and no leaked destination or store side
+        // effect.
         if let Some((is_store, address, width)) = Self::data_access(&decoded, &self.state) {
             if address % width != 0 {
                 return self.enter_trap(
@@ -1016,6 +1093,33 @@ impl RiscvCore {
                     address,
                     Some(instruction),
                 );
+            }
+        }
+
+        // Data translation (D2, D3, D6, D9). The Sv39 walk runs on the data
+        // port for every load, store, and AMO effective address before the
+        // executor issues its own access. A translated access keeps the
+        // same page offset (the alignment check above keeps the access
+        // within one page), so shifting the guest-to-issued base conversion
+        // by the page delta between virtual and guest-physical base makes
+        // every executor helper issue at the translated address while the
+        // register file stays purely architectural: rs1 keeps the virtual
+        // base, and rs2 keeps the architectural store/AMO operand even when
+        // rs2 == rs1.
+        let mut translation_delta: Option<u64> = None;
+        if let Some((is_store, address, _)) = Self::data_access(&decoded, &self.state) {
+            let kind = if is_store {
+                translation::AccessKind::Store
+            } else {
+                translation::AccessKind::Load
+            };
+            match self.translate_address(address, kind, pc_before, Some(instruction)) {
+                Err(outcome) => return outcome,
+                Ok(paddr) => {
+                    // A data access exists only for a decoded instruction
+                    // with an rs1 field; `Self::data_access` already read it.
+                    translation_delta = Some(paddr.wrapping_sub(address));
+                }
             }
         }
 
@@ -1062,7 +1166,7 @@ impl RiscvCore {
                     )
                 }
             };
-            let mut atomic_view = self.physical_atomic_adapter(&mut *port);
+            let mut atomic_view = self.physical_atomic_adapter(&mut *port, translation_delta);
             crate::isa::rv64a::execute_amo_port(&decoded, &mut staged, &mut atomic_view)
                 .map(|()| (None, decoded.rd))
         } else {
@@ -1078,11 +1182,12 @@ impl RiscvCore {
                             )
                         }
                     };
-                    let mut physical_view = self.physical_adapter(&mut *port);
+                    let mut physical_view = self.physical_adapter(&mut *port, translation_delta);
                     let mut memory = ObservedMemory::new(
                         &mut physical_view,
                         self.memory_journal.as_ref(),
                         self.base_addr,
+                        translation_delta.unwrap_or(0),
                     );
                     self.executor
                         .execute_transition(&decoded, &mut staged, &mut memory)
@@ -1092,6 +1197,8 @@ impl RiscvCore {
                     // ports: hold the outer data-memory lock for the complete
                     // Executor/helper call. This is the labeled non-conforming
                     // compatibility adapter, not a standard-facade route.
+                    // Translation never activates here (the Sv39 walk requires
+                    // the data port), so no translation delta applies.
                     let mut mem = match self.data_mem.lock() {
                         Ok(mem) => mem,
                         Err(_) => {
@@ -1107,6 +1214,7 @@ impl RiscvCore {
                         &mut legacy_view,
                         self.memory_journal.as_ref(),
                         self.base_addr,
+                        0,
                     );
                     self.executor
                         .execute_transition(&decoded, &mut staged, &mut memory)
@@ -1116,7 +1224,10 @@ impl RiscvCore {
         let (csr_access, destination) = match execution_result {
             Ok(access) => access,
             Err(error) => {
-                return self.classify_execute_error(error, &decoded, pc_before, instruction)
+                // The staged state is discarded on a failed execution; the
+                // trap is classified from the untranslated architectural
+                // state and mtval already holds the virtual address.
+                return self.classify_execute_error(error, &decoded, pc_before, instruction);
             }
         };
 
@@ -1359,27 +1470,50 @@ impl RiscvCore {
             && instruction.rs2 == Some(0)
     }
 
-    fn physical_adapter<'a>(&self, port: &'a mut dyn PhysicalAccess) -> PhysicalMemoryAdapter<'a> {
-        match self.physical_storage_alignment {
-            Some((base, size)) => {
+    fn physical_adapter<'a>(
+        &self,
+        port: &'a mut dyn PhysicalAccess,
+        translation_delta: Option<u64>,
+    ) -> PhysicalMemoryAdapter<'a> {
+        match (self.physical_storage_alignment, translation_delta) {
+            (Some((base, size)), Some(delta)) => PhysicalMemoryAdapter::new_translated(
+                port,
+                self.base_addr,
+                Some((base, size)),
+                delta,
+            ),
+            (Some((base, size)), None) => {
                 PhysicalMemoryAdapter::new_with_storage_alignment(port, self.base_addr, base, size)
             }
-            None => PhysicalMemoryAdapter::new(port, self.base_addr),
+            (None, Some(delta)) => {
+                PhysicalMemoryAdapter::new_translated(port, self.base_addr, None, delta)
+            }
+            (None, None) => PhysicalMemoryAdapter::new(port, self.base_addr),
         }
     }
 
     /// Builds the Hart atomic view over the already-locked data port.
     ///
-    /// The view shares the same base conversion and storage-offset rejection
-    /// as [`Self::physical_adapter`]; it exists only inside the data port's
-    /// mutex lifetime, so the complete AMO/LR/SC operation runs inside the
-    /// backend's single critical section.
+    /// The view shares the same base conversion, storage-offset rejection,
+    /// and translation delta as [`Self::physical_adapter`]; it exists only
+    /// inside the data port's mutex lifetime, so the complete AMO/LR/SC
+    /// operation runs inside the backend's single critical section.
     fn physical_atomic_adapter<'a>(
         &'a self,
         port: &'a mut (dyn PhysicalDataAccess + Send),
+        translation_delta: Option<u64>,
     ) -> PhysicalAtomicAdapter<'a> {
-        let mut adapter =
-            PhysicalAtomicAdapter::new(port, self.base_addr, self.physical_storage_alignment);
+        let mut adapter = match translation_delta {
+            Some(delta) => PhysicalAtomicAdapter::new_translated(
+                port,
+                self.base_addr,
+                self.physical_storage_alignment,
+                delta,
+            ),
+            None => {
+                PhysicalAtomicAdapter::new(port, self.base_addr, self.physical_storage_alignment)
+            }
+        };
         adapter.journal = self.memory_journal.as_ref();
         adapter
     }

@@ -27,6 +27,9 @@ pub struct MemoryEffect {
     /// None for ordinary accesses. Typed compatibility effects remain separate
     /// read/write operations, not falsely advertised indivisible envelopes.
     pub atomic: Option<AtomicEffect>,
+    /// True only for the implicit page-table write that sets A or D during a
+    /// translation (dev-plan D4). False for every explicit guest access.
+    pub implicit: bool,
 }
 
 /// Atomic operation identity and conditional completion, not ISA arithmetic.
@@ -234,6 +237,7 @@ pub(crate) fn typed_atomic(
             ),
             indivisible: false,
         }),
+        implicit: false,
     });
 }
 
