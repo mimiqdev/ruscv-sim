@@ -5,6 +5,7 @@
 pub mod commits;
 pub mod observation;
 mod observed_memory;
+mod translation;
 pub mod trap;
 use crate::csr::{machine, CsrFile};
 use crate::decode::{DecodeError, DecodedInstruction, InstructionDecoder, Opcode};
@@ -911,6 +912,21 @@ impl RiscvCore {
             );
         }
 
+        // Instruction fetch translation. Sv39 translates the fetch effective
+        // address through the data port walk before the instruction port
+        // sees the resulting guest-physical address (D2, D3). The walk
+        // itself runs on the data port; the instruction-memory transaction
+        // keeps its Fetch category.
+        let fetch_paddr = match self.translate_address(
+            pc_before,
+            translation::AccessKind::Fetch,
+            pc_before,
+            None,
+        ) {
+            Ok(paddr) => paddr,
+            Err(outcome) => return outcome,
+        };
+
         // Fetch keeps the guest PC in the architectural address space.  A
         // migrated core submits one raw Fetch request; the typed view performs
         // the single configured base conversion.  Compatibility callers keep
@@ -927,7 +943,7 @@ impl RiscvCore {
                 }
             };
             let adapter = self.physical_adapter(&mut *port);
-            adapter.fetch_word(pc_before)
+            adapter.fetch_word(fetch_paddr)
         } else {
             let instruction_addr = match pc_before.checked_sub(self.base_addr) {
                 Some(address) => address,
@@ -1002,9 +1018,11 @@ impl RiscvCore {
             );
         }
 
-        // Architectural alignment is a Hart check.  It runs before the memory
-        // adapter is called, so a misaligned load/store/AMO produces no physical
-        // transaction and cannot leak a destination or store side effect.
+        // Architectural alignment is a Hart check on the virtual effective
+        // address.  It runs before translation and before the memory adapter
+        // is called (D6), so a misaligned load/store/AMO produces no physical
+        // transaction, no walk, and no leaked destination or store side
+        // effect.
         if let Some((is_store, address, width)) = Self::data_access(&decoded, &self.state) {
             if address % width != 0 {
                 return self.enter_trap(
@@ -1017,6 +1035,38 @@ impl RiscvCore {
                     address,
                     Some(instruction),
                 );
+            }
+        }
+
+        // Data translation (D2, D3, D6, D9). The Sv39 walk runs on the data
+        // port for every load, store, and AMO effective address before the
+        // executor issues its own access. A translated access keeps the
+        // same page offset (the alignment check above keeps the access
+        // within one page), so replacing the base register with the page
+        // delta between virtual and guest-physical base reproduces the
+        // translated effective address in every executor helper without a
+        // second address computation path.
+        let mut translation_delta: Option<(u8, u64)> = None;
+        if let Some((is_store, address, _)) = Self::data_access(&decoded, &self.state) {
+            let kind = if is_store {
+                translation::AccessKind::Store
+            } else {
+                translation::AccessKind::Load
+            };
+            match self.translate_address(address, kind, pc_before, Some(instruction)) {
+                Err(outcome) => return outcome,
+                Ok(paddr) => {
+                    // `Self::data_access` returned Some only for a decoded
+                    // instruction with an rs1 field.
+                    let Some(rs1) = decoded.rs1 else {
+                        return self.simulator_failure(
+                            pc_before,
+                            SimulatorFailureKind::Invariant,
+                            "data access instruction encodes no rs1",
+                        );
+                    };
+                    translation_delta = Some((rs1, paddr.wrapping_sub(address)));
+                }
             }
         }
 
@@ -1043,6 +1093,14 @@ impl RiscvCore {
         let mut staged = self.state.clone();
         staged.csr.begin_observation(self.observation_demand);
         staged.fpr.begin_observation(self.observation_demand);
+        // Apply the translation delta to the staged base register so every
+        // executor helper computes the translated guest-physical effective
+        // address. The architectural register is restored from this staged
+        // copy only on retirement paths that write it; loads and stores
+        // never write rs1, so the delta is invisible architecturally.
+        if let Some((rs1, delta)) = translation_delta {
+            staged.regs[rs1 as usize] = staged.regs[rs1 as usize].wrapping_add(delta);
+        }
         let physical_access = self.data_access.clone();
         let execution_result = if let (Opcode::Amo, Some(access)) =
             (decoded.opcode, &physical_access)
@@ -1117,9 +1175,23 @@ impl RiscvCore {
         let (csr_access, destination) = match execution_result {
             Ok(access) => access,
             Err(error) => {
-                return self.classify_execute_error(error, &decoded, pc_before, instruction)
+                // The staged state is discarded on a failed execution; the
+                // trap is classified from the untranslated architectural
+                // state and mtval already holds the virtual address.
+                return self.classify_execute_error(error, &decoded, pc_before, instruction);
             }
         };
+
+        // Remove the staged translation delta from the base register. Loads,
+        // stores, and AMOs never read rs1 after computing the effective
+        // address, and when rd == rs1 the destination write below replaces
+        // the delta with the architectural result. `destination` is None for
+        // stores, which never write a register.
+        if let Some((rs1, _)) = translation_delta {
+            if destination != Some(rs1) {
+                staged.regs[rs1 as usize] = self.state.regs[rs1 as usize];
+            }
+        }
 
         if decoded.opcode == Opcode::Amo && self.data_access.is_none() {
             if let Some(journal) = &self.memory_journal {
