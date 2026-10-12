@@ -85,7 +85,7 @@ pub struct CommitRecord {
     pub effects: ArchitecturalEffects,
 }
 
-/// Exactly one completed synchronous trap entry, with no instruction retirement.
+/// Exactly one completed trap entry, with no instruction retirement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrapRecord {
     pub hart_id: u64,
