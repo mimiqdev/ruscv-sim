@@ -258,6 +258,8 @@ pub enum MmuError {
     WalkProtocolFault(u64),
     #[error("Walk unknown fault: address 0x{0:016x}")]
     WalkUnknownFault(u64),
+    #[error("Walk A/D update retry limit: address 0x{0:016x}")]
+    WalkAdRetryLimit(u64),
     #[error("PMP violation: address 0x{0:016x}")]
     PmpViolation(u64),
     #[error("Translation mode not supported: {0:?}")]
