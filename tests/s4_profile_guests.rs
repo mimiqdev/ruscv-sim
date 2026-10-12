@@ -1,10 +1,12 @@
 //! Stage 4 privilege-profile guests on the three public routes.
 //!
-//! Fresh assembly per invocation, like the A6 trap guests and the Sv39
-//! guests.  `s4_tvm_tsr_tw` is the §4 "TVM, TSR, and TW" row: TVM and TSR
-//! trap the named S-mode operations and leave the same operations legal in
-//! M, TW traps S-mode WFI, U-mode WFI traps at both TW values with the WFI
-//! encoding in mtval, and M-mode WFI retires with TW set.
+//! `s4_pmp_csr` is the §4 "PMP CSR access" row: even pmpcfg and pmpaddr
+//! reads return 0 after a write, and odd pmpcfg access raises
+//! illegal-instruction.  `s4_delegation` is the §4 "Delegation" row:
+//! medeleg and mideleg read 0 after a write of ones, and a page fault is
+//! taken in M with the original virtual address in mtval.  `s4_envcfg` is
+//! the §4 "Environment configuration" row: menvcfg and senvcfg keep only
+//! FIOM, and FENCE retires in M, S, and U with FIOM set and clear.
 
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 use std::env;
@@ -12,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-const GUESTS: [&str; 1] = ["s4_tvm_tsr_tw"];
+const GUESTS: [&str; 4] = ["s4_tvm_tsr_tw", "s4_pmp_csr", "s4_delegation", "s4_envcfg"];
 const LINKER_SCRIPT: &str = "linker-s4.ld";
 const MAX_CYCLES: u64 = 100_000;
 
