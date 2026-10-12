@@ -196,6 +196,32 @@ fn jalr(rd: u8, rs1: u8, immediate: i32) -> u32 {
     (((immediate as u32) & 0xfff) << 20) | ((rs1 as u32) << 15) | ((rd as u32) << 7) | 0x67
 }
 
+fn jal(rd: u8, offset: i32) -> u32 {
+    let imm = offset as u32;
+    let imm20 = (imm >> 20) & 1;
+    let imm19_12 = (imm >> 12) & 0xff;
+    let imm11 = (imm >> 11) & 1;
+    let imm10_1 = (imm >> 1) & 0x3ff;
+    (imm20 << 31) | (imm10_1 << 21) | (imm11 << 20) | (imm19_12 << 12) | ((rd as u32) << 7) | 0x6f
+}
+
+fn beq(rs1: u8, rs2: u8, offset: i32) -> u32 {
+    let imm = offset as u32;
+    let imm12 = (imm >> 12) & 1;
+    let imm11 = (imm >> 11) & 1;
+    let imm10_5 = (imm >> 5) & 0x3f;
+    let imm4_1 = (imm >> 1) & 0xf;
+    (imm12 << 31)
+        | (imm10_5 << 25)
+        | ((rs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | (imm4_1 << 8)
+        | (imm11 << 7)
+        | 0x63
+}
+
+const MRET: u32 = 0x3020_0073;
+
 fn csrrs(rd: u8, csr: u16, rs1: u8) -> u32 {
     ((csr as u32) << 20) | ((rs1 as u32) << 15) | (0b010 << 12) | ((rd as u32) << 7) | 0x73
 }
@@ -698,4 +724,120 @@ fn host_backend_failure_is_not_inferred_from_guest_trap_text() {
     ));
     assert_eq!(core.state().pc, 0);
     assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
+}
+
+fn assert_instruction_misaligned(core: &mut RiscvCore, faulting_pc: u64, target: u64) {
+    let outcome = core.step_outcome();
+    let StepOutcome::TrapEntered(fact) = outcome else {
+        panic!("expected instruction-address-misaligned, got {outcome:?}");
+    };
+    assert_eq!(
+        fact.cause,
+        Trap::Exception(ExceptionCause::InstructionAddressMisaligned)
+    );
+    assert_eq!(fact.faulting_pc, faulting_pc);
+    assert_eq!(fact.mtval, target);
+    assert_eq!(core.state().csr.read(machine::MCAUSE).unwrap(), 0);
+    assert_eq!(core.state().csr.read(machine::MEPC).unwrap(), faulting_pc);
+    assert_eq!(core.state().csr.read(machine::MTVAL).unwrap(), target);
+    assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
+}
+
+#[test]
+fn jal_to_halfword_target_traps_without_writing_the_link() {
+    // jal x1, +2 at 0x100. The target 0x102 is not IALIGN=32 aligned, so the
+    // jump traps and x1 stays unchanged.
+    let (mut core, _) = core_with_program(&[(0x100, jal(1, 2))]);
+    core.state_mut().pc = 0x100;
+    core.state_mut().regs[1] = 0x1111;
+    assert_instruction_misaligned(&mut core, 0x100, 0x102);
+    assert_eq!(core.state().regs[1], 0x1111);
+    assert_eq!(core.state().pc, MTVEC);
+}
+
+#[test]
+fn jalr_clears_bit0_before_the_ialign_check() {
+    // 0x103 has bit 0 cleared first, leaving 0x102, which is still misaligned.
+    let (mut odd, _) = core_with_program(&[(0, jalr(1, 2, 0))]);
+    odd.state_mut().regs[1] = 0x2222;
+    odd.state_mut().regs[2] = 0x103;
+    assert_instruction_misaligned(&mut odd, 0, 0x102);
+    assert_eq!(odd.state().regs[1], 0x2222);
+
+    // 0x101 clears to 0x100, which is a legal target and does not trap.
+    let (mut aligned, _) = core_with_program(&[(0, jalr(1, 2, 0)), (0x100, addi(3, 0, 7))]);
+    aligned.state_mut().regs[1] = 0x3333;
+    aligned.state_mut().regs[2] = 0x101;
+    let outcome = aligned.step_outcome();
+    assert!(
+        matches!(outcome, StepOutcome::InstructionRetired(fact) if fact.next_pc == 0x100),
+        "jalr to 0x101 must land at 0x100, got {outcome:?}"
+    );
+    assert_eq!(aligned.state().pc, 0x100);
+    assert_eq!(aligned.state().regs[1], 4);
+    assert_eq!(aligned.state().csr.read(machine::MCAUSE).unwrap(), 0);
+}
+
+#[test]
+fn taken_branch_to_misaligned_target_traps_and_untaken_falls_through() {
+    let (mut taken, _) = core_with_program(&[(0x100, beq(1, 2, 2))]);
+    taken.state_mut().pc = 0x100;
+    taken.state_mut().regs[1] = 5;
+    taken.state_mut().regs[2] = 5;
+    assert_instruction_misaligned(&mut taken, 0x100, 0x102);
+    assert_eq!(taken.state().pc, MTVEC);
+
+    let (mut fall_through, _) = core_with_program(&[(0x100, beq(1, 2, 2)), (0x104, addi(3, 0, 1))]);
+    fall_through.state_mut().pc = 0x100;
+    fall_through.state_mut().regs[1] = 5;
+    fall_through.state_mut().regs[2] = 6;
+    let outcome = fall_through.step_outcome();
+    assert!(
+        matches!(outcome, StepOutcome::InstructionRetired(fact) if fact.next_pc == 0x104),
+        "untaken branch must fall through, got {outcome:?}"
+    );
+    assert_eq!(fall_through.state().pc, 0x104);
+    assert_eq!(fall_through.state().csr.read(machine::MCAUSE).unwrap(), 0);
+    assert_eq!(fall_through.state().csr.read(machine::MTVAL).unwrap(), 0);
+}
+
+#[test]
+fn mepc_warl_write_of_0x1003_reads_back_0x1000_and_mret_uses_it() {
+    // The shared helper's memory ends at 0x200, short of the MRET target.
+    let memory = Arc::new(Mutex::new(SimpleMemory::new(0x1100)));
+    for (address, instruction) in [
+        (0usize, csrrw(0, machine::MEPC, 1)),
+        (4, csrrs(2, machine::MEPC, 0)),
+        (8, MRET),
+        (0x1000, addi(3, 0, 1)),
+    ] {
+        memory
+            .lock()
+            .unwrap()
+            .write_word(address as u64, instruction)
+            .unwrap();
+    }
+    let mut core = RiscvCore::new(memory.clone(), memory);
+    core.reset(0, 0);
+    core.state_mut().csr.write(machine::MTVEC, MTVEC).unwrap();
+    core.state_mut().regs[1] = 0x1003;
+
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(core.state().csr.read(machine::MEPC).unwrap(), 0x1000);
+
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(core.state().regs[2], 0x1000);
+
+    let outcome = core.step_outcome();
+    assert!(
+        matches!(outcome, StepOutcome::InstructionRetired(fact) if fact.next_pc == 0x1000),
+        "MRET must go to the aligned mepc, got {outcome:?}"
+    );
+    assert_eq!(core.state().pc, 0x1000);
 }
