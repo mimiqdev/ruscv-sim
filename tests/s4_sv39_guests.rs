@@ -19,6 +19,13 @@
 //! raise the page fault of the original kind with the original virtual
 //! address in mtval, checked exactly by the M-mode handler, and the same
 //! execute-only load with MXR=1 retires with the right value.
+//!
+//! `s4_mprv` proves the MPRV family (D9): with MPRV=1 and MPP=S in M mode,
+//! a load of a U=1 page succeeds when SUM=1 (SUM applies under MPRV), the
+//! same load takes the load page fault with the virtual address in mtval
+//! when SUM=0, a store lands at the translated address with the neighbor
+//! untouched, and instruction fetch never uses the translation (the whole
+//! program runs at its bare physical address).
 
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 use std::env;
@@ -26,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-const GUESTS: [&str; 2] = ["s4_mapped_rw", "s4_permission_fault"];
+const GUESTS: [&str; 3] = ["s4_mapped_rw", "s4_permission_fault", "s4_mprv"];
 const LINKER_SCRIPT: &str = "linker-s4.ld";
 const MAX_CYCLES: u64 = 100_000;
 
