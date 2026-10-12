@@ -426,8 +426,9 @@ fn mapped_load_and_store_translate_with_ad_bits_and_observations() {
     assert_eq!(effects[0].guest_address, prog_leaf);
     assert_eq!(effects[1].guest_address, leaf_addr);
     // The A/D effect records the guest-physical PTE address in both
-    // address fields, the same address the walk handed the port before
-    // the base conversion.
+    // address fields. The walk subtracts the image base before it hands
+    // the address to the port, so this is not the port-issued address;
+    // the explicit effect below records that one.
     assert_eq!(effects[0].issued_address, Some(prog_leaf));
     assert_eq!(effects[1].issued_address, Some(leaf_addr));
     assert_eq!(effects[2].guest_address, VA_DATA);

@@ -117,11 +117,17 @@ after_illegal_sret:
     andi    t1, t1, 1
     bnez    t1, prog_fail
 
-    # The first SRET set SPIE and cleared SIE and SPP in mstatus; the
-    # illegal SRET must have left all three alone.
-    li      t2, 0x20                    # SPIE set
+    # The first SRET cleared SIE and SPP and set SPIE, and the illegal
+    # SRET left all three alone. SPIE is read from this trap-entry
+    # snapshot rather than from sstatus: the handler's mret overwrites
+    # mstatus before this code runs. The snapshot's SPIE is the SRET's
+    # because the M-mode trap entry never writes that bit, and s4 shows it
+    # was clear before the SRET.
     andi    t1, s3, 0x122               # SIE | SPP | SPIE
+    li      t2, 0x20                    # SPIE set, SIE and SPP clear
     bne     t1, t2, prog_fail
+    andi    t1, s4, 0x20                # SPIE was clear before the SRET
+    bnez    t1, prog_fail
 
     # The trap that brought us here came from U, so MPP records U.
     srli    t1, s3, 11
@@ -157,8 +163,10 @@ trap_body:
     csrr    t1, mtval
     bne     t0, s5, trap_mismatch
     bne     t1, s6, trap_mismatch
-    # Record MPRV before the return overwrites mstatus. The resumed code
-    # is in S and cannot read that bit itself.
+    # Snapshot mstatus at trap entry, before the return overwrites it.
+    # The resumed code runs in S and cannot read MPRV itself, and the
+    # snapshot has to be taken here: the later mret would have overwritten
+    # the live value. Each case copies s3 aside before the next trap.
     csrr    s3, mstatus
     csrw    mepc, s7
     mv      t4, s8                      # return privilege, set by the case
@@ -211,8 +219,13 @@ s_page:
     j       prog_fail
 case2_arm:
     # Case 2: SRET from S to U. MPRV was set in M mode before the return
-    # to S, and SRET must clear it. SPIE must become 1, and the low bits
-    # of SEPC must not survive the return.
+    # to S, and SRET must clear it. The low bits of SEPC must not survive
+    # the return. s3 holds the trap-entry mstatus of the case 1 fault. That
+    # entry was taken in M, and the M-mode entry writes MPIE, MIE, and MPP
+    # only, so the SPIE it shows was set by this code, not by the entry.
+    andi    t1, s3, 0x20                # SPIE clear before the SRET
+    bnez    t1, prog_fail
+    mv      s4, s3                      # keep it; the next trap reuses s3
     li      t0, 0x22                    # SIE | SPIE, both clear
     csrc    sstatus, t0
     li      t0, 3
