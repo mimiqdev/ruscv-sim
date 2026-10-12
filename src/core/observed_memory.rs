@@ -34,6 +34,7 @@ impl<'a> ObservedMemory<'a> {
                 read: (!write).then_some(bytes),
                 write: write.then_some(bytes),
                 atomic: None,
+                implicit: false,
             });
         }
     }

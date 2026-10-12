@@ -582,6 +582,7 @@ impl<'a> PhysicalAtomicAdapter<'a> {
                     conditional: response.conditional_status(),
                     indivisible: true,
                 }),
+                implicit: false,
             });
         }
         Ok(response)
