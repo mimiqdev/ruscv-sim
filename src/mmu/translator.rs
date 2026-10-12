@@ -131,7 +131,10 @@ impl AddressTranslator {
                     vaddr,
                 }))
             }
-            WalkResult::AccessFault { level: _ } => Err(MmuError::AccessFault(vaddr)),
+            WalkResult::AccessFault { .. } => Err(MmuError::AccessFault(vaddr)),
+            WalkResult::HostFault { .. } => Err(MmuError::WalkHostFault(vaddr)),
+            WalkResult::ProtocolFault { .. } => Err(MmuError::WalkProtocolFault(vaddr)),
+            WalkResult::UnknownFault { .. } => Err(MmuError::WalkUnknownFault(vaddr)),
         }
     }
 
@@ -235,6 +238,9 @@ impl AddressTranslator {
                 }))
             }
             WalkResult::AccessFault { .. } => Err(MmuError::AccessFault(vaddr)),
+            WalkResult::HostFault { .. } => Err(MmuError::WalkHostFault(vaddr)),
+            WalkResult::ProtocolFault { .. } => Err(MmuError::WalkProtocolFault(vaddr)),
+            WalkResult::UnknownFault { .. } => Err(MmuError::WalkUnknownFault(vaddr)),
         }
     }
 

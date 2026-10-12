@@ -28,6 +28,7 @@
 
 use super::pte::PageTableEntry;
 use super::MmuError;
+use crate::memory::MemoryError;
 
 /// Sv39 virtual address
 #[derive(Debug, Clone, Copy)]
@@ -155,11 +156,37 @@ pub enum WalkResult {
         /// Level where the fault occurred
         level: usize,
     },
-    /// Access fault during walk
+    /// A target rejected a walk read, or the legacy A/D write-back failed.
     AccessFault {
         /// Level where the fault occurred
         level: usize,
     },
+    /// The host adapter could not complete a walk read.
+    HostFault {
+        /// Level where the fault occurred
+        level: usize,
+    },
+    /// The physical adapter broke its protocol during a walk read.
+    ProtocolFault {
+        /// Level where the fault occurred
+        level: usize,
+    },
+    /// The adapter cannot establish whether the walk read completed.
+    UnknownFault {
+        /// Level where the fault occurred
+        level: usize,
+    },
+}
+
+fn classify_walk_read(error: MemoryError, level: usize) -> WalkResult {
+    match error {
+        MemoryError::InvalidAddress(_)
+        | MemoryError::OutOfBounds
+        | MemoryError::Misaligned(_, _) => WalkResult::AccessFault { level },
+        MemoryError::Backend(_) => WalkResult::HostFault { level },
+        MemoryError::Protocol(_) => WalkResult::ProtocolFault { level },
+        MemoryError::Unknown(_) => WalkResult::UnknownFault { level },
+    }
 }
 
 /// Sv39 page table operations
@@ -319,14 +346,13 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
                     );
                     val
                 }
-                Err(e) => {
+                Err(error) => {
                     #[cfg(test)]
                     eprintln!(
-                        "AccessFault at level {}: addr={:016x}, error={:?}",
-                        level, pte_addr, e
+                        "walk read failed at level {}: addr={:016x}, error={:?}",
+                        level, pte_addr, error
                     );
-                    let _ = e; // Suppress unused warning in non-test builds
-                    return WalkResult::AccessFault { level };
+                    return classify_walk_read(error, level);
                 }
             };
 
