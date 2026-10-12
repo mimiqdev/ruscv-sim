@@ -39,6 +39,16 @@ impl AddressTranslator {
         Self { _config: config }
     }
 
+    fn canonical_sv39(vaddr: u64, access_type: AccessType) -> Result<VirtualAddress, MmuError> {
+        match VirtualAddress::new(vaddr) {
+            Ok(va) => Ok(va),
+            Err(MmuError::InvalidVirtualAddress(_)) => Err(MmuError::PageFault(
+                super::PageFaultReason::NonCanonicalAddress { access_type, vaddr },
+            )),
+            Err(other) => Err(other),
+        }
+    }
+
     /// Translate a virtual address to physical address with full TLB support
     ///
     /// This is the main translation entry point that:
@@ -77,7 +87,8 @@ impl AddressTranslator {
         memory: &mut M,
     ) -> Result<u64, MmuError> {
         let vaddr = request.vaddr;
-        let vpn = vaddr >> 12;
+        let va = Self::canonical_sv39(vaddr, request.access_type)?;
+        let vpn = va.vpn_all();
 
         // Check TLB first
         if let Some(entry) = tlb.lookup(vpn, satp.asid()) {
@@ -97,7 +108,6 @@ impl AddressTranslator {
         }
 
         // TLB miss - perform page table walk
-        let va = VirtualAddress::new(vaddr)?;
         let mut walker = PageTableWalker::new(memory, satp.ppn());
 
         let is_user = matches!(request.privilege, PrivilegeMode::User);
@@ -183,7 +193,7 @@ impl AddressTranslator {
             Some(TranslationMode::Bare) => Ok(request.vaddr),
             Some(TranslationMode::Sv39) => {
                 // Without memory access, we can only validate the address format
-                let _va = VirtualAddress::new(request.vaddr)?;
+                Self::canonical_sv39(request.vaddr, request.access_type)?;
                 // Return passthrough - actual translation requires page table walk
                 Ok(request.vaddr)
             }
@@ -212,7 +222,7 @@ impl AddressTranslator {
             return Err(MmuError::UnsupportedMode(TranslationMode::Sv39));
         }
 
-        let va = VirtualAddress::new(vaddr)?;
+        let va = Self::canonical_sv39(vaddr, access_type)?;
         let mut walker = PageTableWalker::new(memory, satp.ppn());
         let is_user = matches!(privilege, PrivilegeMode::User);
 

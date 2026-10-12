@@ -566,11 +566,15 @@ fn test_translation_invalid_virtual_address() {
     };
 
     let result = translator.translate_with_tlb(request, &mut tlb, &mut memory);
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        MmuError::InvalidVirtualAddress(_)
-    ));
+    assert_eq!(
+        result,
+        Err(MmuError::PageFault(
+            ruscv_sim::mmu::PageFaultReason::NonCanonicalAddress {
+                access_type: AccessType::Read,
+                vaddr: 0x0000_0080_0000_0000,
+            }
+        ))
+    );
 }
 
 #[test]

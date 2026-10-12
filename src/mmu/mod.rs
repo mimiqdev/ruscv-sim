@@ -194,6 +194,8 @@ pub enum PageFaultReason {
     NotAccessed { vaddr: u64 },
     /// Write to non-dirty page (D bit not set for write)
     NotDirty { vaddr: u64 },
+    /// Sv39 bits 63:39 are not all equal to bit 38
+    NonCanonicalAddress { access_type: AccessType, vaddr: u64 },
 }
 
 impl core::fmt::Display for PageFaultReason {
@@ -228,6 +230,13 @@ impl core::fmt::Display for PageFaultReason {
                     f,
                     "Page not dirty (D=0) for write at address 0x{:016x}",
                     vaddr
+                )
+            }
+            PageFaultReason::NonCanonicalAddress { access_type, vaddr } => {
+                write!(
+                    f,
+                    "Non-canonical address for access {:?} at address 0x{:016x}",
+                    access_type, vaddr
                 )
             }
         }
