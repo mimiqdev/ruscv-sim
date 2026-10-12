@@ -384,7 +384,7 @@ mod tests {
 
         // Setup simple page table with read-only page (gigapage)
         let root_ppn = 0x80000; // Root at 0x8000_0000
-        let data_ppn = 0x90000; // Data at 0x9000_0000
+        let data_ppn = 0x80000; // Gigapage aligned at 0x8000_0000
 
         // Leaf entry at root level (gigapage) - read/execute only
         let root_pte = PageTableEntry::new_leaf(data_ppn, PagePermissions::rx(), false);

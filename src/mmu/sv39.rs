@@ -341,10 +341,9 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
                 pte.bits()
             );
 
-            // Check if valid
-            if !pte.is_valid() {
+            if !pte.valid_sv39_at_level(level) {
                 #[cfg(test)]
-                eprintln!("PageFault: PTE not valid");
+                eprintln!("PageFault: invalid Sv39 PTE at level {}", level);
                 return WalkResult::PageFault { level };
             }
 
@@ -352,11 +351,6 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
             if pte.is_leaf() {
                 #[cfg(test)]
                 eprintln!("Found leaf at level {}", level);
-                // Check for reserved permission combination (W=1, R=0)
-                if !pte.has_valid_permissions() {
-                    return WalkResult::PageFault { level };
-                }
-
                 // Build physical address
                 let paddr = Sv39::build_physical_address(&pte, vaddr, level);
 
@@ -694,8 +688,8 @@ mod tests {
         let root_ppn = 0x80000u64;
 
         // Create a level 2 entry pointing to a 1GB page
-        // PTE: Valid, Readable, Writable, PPN = 0x90000
-        let pte = PageTableEntry::new_leaf(0x90000, PagePermissions::rw(), false);
+        // PTE: Valid, Readable, Writable, PPN = 0x80000
+        let pte = PageTableEntry::new_leaf(0x80000, PagePermissions::rw(), false);
         let pte_bytes = pte.bits().to_le_bytes();
 
         // Write PTE at index 0 (VPN2 = 0)
@@ -709,8 +703,7 @@ mod tests {
         let va = VirtualAddress::new(0).unwrap();
         match walker.walk(va) {
             WalkResult::Success { paddr, level, .. } => {
-                // For 1GB page at PPN 0x90000, VA 0 -> PA 0x9000_0000
-                assert_eq!(paddr, 0x9000_0000);
+                assert_eq!(paddr, 0x8000_0000);
                 assert_eq!(level, 2);
             }
             other => panic!("Expected Success, got {:?}", other),
@@ -720,7 +713,7 @@ mod tests {
         let va = VirtualAddress::new(0x1234).unwrap();
         match walker.walk(va) {
             WalkResult::Success { paddr, .. } => {
-                assert_eq!(paddr, 0x9000_1234);
+                assert_eq!(paddr, 0x8000_1234);
             }
             other => panic!("Expected Success, got {:?}", other),
         }
@@ -789,7 +782,7 @@ mod tests {
         let root_ppn = 0x80000; // Root at 0x8000_0000
 
         // Create a user-mode executable page (gigapage)
-        let pte = PageTableEntry::new_leaf(0x90000, PagePermissions::user_rx(), false);
+        let pte = PageTableEntry::new_leaf(0x80000, PagePermissions::user_rx(), false);
         mem.write_dword(root_ppn << 12, pte.bits()).unwrap();
 
         let walker = PageTableWalker::new(&mut mem as &mut dyn PhysicalMemoryInterface, root_ppn);
