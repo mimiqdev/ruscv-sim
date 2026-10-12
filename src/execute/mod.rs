@@ -159,6 +159,16 @@ impl Executor {
                     Err(ExecuteError::InvalidOperation)
                 }
             }
+            Opcode::Op32 if instr.funct7 == Some(0b000_0001) => {
+                match instr.funct3.map(|f| f as u8) {
+                    Some(0b000) => crate::isa::rv64m::exec_mulw(instr, state, mem),
+                    Some(0b100) => crate::isa::rv64m::exec_divw(instr, state, mem),
+                    Some(0b101) => crate::isa::rv64m::exec_divuw(instr, state, mem),
+                    Some(0b110) => crate::isa::rv64m::exec_remw(instr, state, mem),
+                    Some(0b111) => crate::isa::rv64m::exec_remuw(instr, state, mem),
+                    _ => Err(ExecuteError::InvalidOperation),
+                }
+            }
             Opcode::Op32 => {
                 if let Some(funct3) = instr.funct3 {
                     match funct3 {

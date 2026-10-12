@@ -108,6 +108,17 @@ fn load_fp(rd: u8, rs1: u8, funct3: u8, immediate: i32) -> u32 {
         | 0x07
 }
 
+fn store_word(rs2: u8, rs1: u8, immediate: i32) -> u32 {
+    assert!((-2048..=2047).contains(&immediate));
+    let immediate = immediate as u32 & 0xfff;
+    ((immediate >> 5) << 25)
+        | ((rs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | (0b010 << 12)
+        | ((immediate & 0x1f) << 7)
+        | 0x23
+}
+
 fn store_fp(rs2: u8, rs1: u8, funct3: u8, immediate: i32) -> u32 {
     assert!((-2048..=2047).contains(&immediate));
     let immediate = immediate as u32 & 0xfff;
@@ -224,13 +235,12 @@ fn workflow_fixture(
     push(&mut code, &mut pc, fixture::ld(9, 1, 0));
     push_check_branch(&mut code, &mut pc, &mut failure_branches, 9, 18);
 
-    // Exercise both FP widths through the same ordinary raw data route.  The
-    // ELF patch below seeds a nonzero single and a distinct nonzero double,
-    // while both destinations begin with sentinels.  Integer loads after the
-    // stores make the FP effects part of the native/CLI exit oracle too.
+    // F and D are not implemented, so the width check uses integer loads and
+    // stores over the same seeded bytes. An FP encoding traps instead, and
+    // the Hart tests below cover that trap.
     append_address(&mut code, &mut pc, 4, FP_OFFSET);
-    push(&mut code, &mut pc, load_fp(1, 4, 0b010, 0)); // FLW
-    push(&mut code, &mut pc, store_fp(1, 4, 0b010, 4)); // FSW
+    push(&mut code, &mut pc, load_word_unsigned(19, 4, 0));
+    push(&mut code, &mut pc, store_word(19, 4, 4));
     push(&mut code, &mut pc, load_word_unsigned(19, 4, 4));
     push(&mut code, &mut pc, fixture::lui(20, FP_SINGLE_BITS >> 12));
     push(
@@ -239,8 +249,8 @@ fn workflow_fixture(
         fixture::ori(20, 20, (FP_SINGLE_BITS & 0xfff) as i32),
     );
     push_check_branch(&mut code, &mut pc, &mut failure_branches, 19, 20);
-    push(&mut code, &mut pc, load_fp(2, 4, 0b011, 8)); // FLD
-    push(&mut code, &mut pc, store_fp(2, 4, 0b011, 16)); // FSD
+    push(&mut code, &mut pc, fixture::ld(21, 4, 8));
+    push(&mut code, &mut pc, fixture::sd(21, 4, 16));
     push(&mut code, &mut pc, load_word_unsigned(21, 4, 16));
     push(
         &mut code,
@@ -378,6 +388,81 @@ fn mutate_workflow_double_low_word(elf: &[u8]) -> Vec<u8> {
     mutated
 }
 
+#[test]
+fn fp_illegal_instructions_agree_on_cli_native_and_flat_routes() {
+    let temp = TempDir::new().unwrap();
+    for raw in [
+        load_fp(3, 1, 2, 1),
+        load_fp(3, 1, 3, 1),
+        load_fp(3, 1, 0, 1),
+        store_fp(3, 1, 2, 1),
+        store_fp(3, 1, 3, 1),
+        0x0020_f1d3,
+        0x0220_81d3,
+        0x0020_81c3,
+        0x0020_81c7,
+        0x0020_81cb,
+        0x0020_81cf,
+    ] {
+        let code = [
+            fixture::auipc(1, 0),
+            fixture::addi(1, 1, 20),
+            csrrw(0, machine::MTVEC, 1),
+            raw,
+            fixture::nop(),
+            fixture::auipc(1, 1),
+            fixture::addi(1, 1, -20),
+            fixture::addi(2, 0, 1),
+            fixture::sd(2, 1, 0),
+        ];
+        let image = fixture::elf_with_code(&code, 0, true, true, 0x4000);
+        let native = load_and_run(&image, Some(8), None, None, false).unwrap();
+        let log = temp.path().join(format!("{raw:x}.log"));
+        let logged = load_and_run(&image, Some(8), None, Some(&log), false).unwrap();
+        assert_same_result(&native, &logged);
+        let mut flat = RiscVSimulator::new(1);
+        flat.load_elf(&image).unwrap();
+        let result = flat.run(Some(8)).unwrap();
+        assert_same_result(&native, &result);
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.cycles, 8);
+        assert!(!result.timed_out);
+        assert!(result.error.is_none());
+        assert_eq!(flat.state().csr.read(machine::MCAUSE).unwrap(), 2);
+        assert_eq!(flat.state().csr.read(machine::MTVAL).unwrap(), raw as u64);
+        assert_eq!(
+            flat.state().csr.read(machine::MEPC).unwrap(),
+            fixture::BASE + 12
+        );
+        assert_eq!(flat.state().csr.read(machine::MINSTRET).unwrap(), 7);
+        assert_eq!(
+            flat.state().fpr.read(3).bits(),
+            ruscv_sim::Fpr::default().bits()
+        );
+        assert_eq!(flat.state().fcsr.read(), 0);
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(text.lines().count(), 7);
+        assert!(!text.contains(&format!("({raw:#010x})")));
+        for observed in [false, true] {
+            let output = run_cli(
+                &temp,
+                &format!("fp-{raw:x}-{observed}"),
+                &image,
+                8,
+                observed.then_some(log.as_path()),
+                false,
+            );
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout.contains("Cycles:     8"), "{stdout}");
+            assert!(
+                stdout.contains(&format!("Final PC:   0x{:016x}", fixture::BASE + 36)),
+                "{stdout}"
+            );
+        }
+    }
+}
+
 fn assert_same_result(left: &ExecutionResult, right: &ExecutionResult) {
     assert_eq!(left.exit_code, right.exit_code);
     assert_eq!(left.cycles, right.cycles);
@@ -484,8 +569,9 @@ fn assert_flat_intermediate_state(
         "handler advanced MEPC over ECALL"
     );
     assert_eq!(state.csr.read(machine::MINSTRET).unwrap(), fixture.minstret);
-    assert_eq!(state.fpr.read(1).lower(), FP_SINGLE_BITS);
-    assert_eq!(state.fpr.read(2).bits(), FP_DOUBLE_BITS);
+    assert_eq!(state.fpr.read(1).bits(), ruscv_sim::Fpr::default().bits());
+    assert_eq!(state.fpr.read(2).bits(), ruscv_sim::Fpr::default().bits());
+    assert_eq!(state.fcsr.read(), 0);
 
     assert_eq!(
         simulator.read_mem(fixture.integer_offset, 8).unwrap(),

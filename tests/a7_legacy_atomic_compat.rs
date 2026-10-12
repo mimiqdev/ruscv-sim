@@ -348,19 +348,12 @@ fn ordinary_store_and_fp_store_interleave_with_port_route_lr_sc() {
         "LR and the executed SC each issue exactly one envelope"
     );
 
-    // An FP store follows the same ordinary raw route and also commits, so
-    // it likewise breaks a reservation taken across it.
+    // FSD is illegal, so it traps before any data write and the reservation
+    // survives. The following SC still succeeds.
+    let fsd = (2u32 << 20) | (1u32 << 15) | (0b011 << 12) | 0x27;
     let backing = Arc::new(Mutex::new(SimpleMemory::new(0x200)));
     backing.lock().unwrap().write_dword(0x80, 3).unwrap();
-    let mut fixture = legacy_core(
-        backing,
-        &[
-            lr(3, 1),
-            // FSD f2, 0(x1)
-            (2u32 << 20) | (1u32 << 15) | (0b011 << 12) | 0x27,
-            sc(4, 1, 2),
-        ],
-    );
+    let mut fixture = legacy_core(backing, &[lr(3, 1), fsd, sc(4, 1, 2)]);
     fixture.core.reset(0, 0);
     fixture.core.state_mut().regs[1] = 0x80;
     fixture
@@ -370,14 +363,19 @@ fn ordinary_store_and_fp_store_interleave_with_port_route_lr_sc() {
         .write(2, ruscv_sim::Fpr::from_bits(5));
     fixture.core.state_mut().regs[2] = 5;
     retired(&mut fixture.core);
+    let trapped = fixture.core.step_outcome();
+    assert!(matches!(
+        trapped,
+        ruscv_sim::core::StepOutcome::TrapEntered(fact)
+            if fact.cause == ruscv_sim::core::ExceptionCause::IllegalInstruction
+                && fact.mtval == fsd as u64
+    ));
+    assert_eq!(fixture.backing.lock().unwrap().read_dword(0x80).unwrap(), 3);
+    assert!(fixture.core.state().reservation.is_some());
+    fixture.core.state_mut().pc = 8;
     retired(&mut fixture.core);
+    assert_eq!(fixture.core.state().regs[4], 0);
     assert_eq!(fixture.backing.lock().unwrap().read_dword(0x80).unwrap(), 5);
-    retired(&mut fixture.core);
-    assert_eq!(
-        fixture.core.state().regs[4],
-        1,
-        "a committed overlapping FP store fails the conditional SC"
-    );
     assert_eq!(
         fixture
             .raw_calls
@@ -386,8 +384,8 @@ fn ordinary_store_and_fp_store_interleave_with_port_route_lr_sc() {
             .iter()
             .filter(|call| call.0 == AccessCategory::DataWrite)
             .count(),
-        1,
-        "FSD is ordinary raw DataWrite, not an atomic envelope"
+        0,
+        "the illegal FSD issues no data write"
     );
 }
 

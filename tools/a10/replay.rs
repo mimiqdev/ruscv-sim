@@ -443,7 +443,11 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
                             && d.next_privilege == 3
                             && d.minstret == i as u64 + 1
                             && !d.explicit_minstret_write
-                            && d.csr == vec![[0xb02, i as u64, i as u64 + 1, 1]]
+                            && d.csr
+                                == vec![
+                                    [0xb02, i as u64, i as u64 + 1, 1],
+                                    [0xb00, i as u64, i as u64 + 1, 1],
+                                ]
                             && d.fpr.is_empty()
                             && d.fcsr.is_none(),
                         "direct Hart/CSR/FPR details",

@@ -1033,15 +1033,14 @@ fn committed_guest_store_overlap_fails_sc_and_non_overlap_succeeds() {
     assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 0x66);
 }
 
-/// A committed overlapping FSD invalidates identically (C17: guest ordinary
-/// writes, integer or FP).
+/// FSD traps before it stores, so a reservation taken across it survives
+/// and the following SC commits.
 #[test]
-fn committed_fp_store_overlap_fails_sc() {
+fn illegal_fp_store_does_not_invalidate_sc() {
     const P: u64 = 0x80;
-    let (mut core, memory, _spy) = spy_core(
-        &[(0, lr_d(3, 1)), (4, fsd(2, 1, 0)), (8, sc_d(4, 1, 2))],
-        0x100,
-    );
+    let fsd_word = fsd(2, 1, 0);
+    let (mut core, memory, spy) =
+        spy_core(&[(0, lr_d(3, 1)), (4, fsd_word), (8, sc_d(4, 1, 2))], 0x100);
     memory.lock().unwrap().write_dword(P, 1).unwrap();
     core.state_mut().regs[1] = P;
     core.state_mut().regs[2] = 9;
@@ -1049,11 +1048,26 @@ fn committed_fp_store_overlap_fails_sc() {
         .fpr
         .write(2, ruscv_sim::Fpr::from_bits(0x44));
     retired(&mut core);
+    let trapped = core.step_outcome();
+    assert!(matches!(
+        trapped,
+        StepOutcome::TrapEntered(fact)
+            if fact.cause == ExceptionCause::IllegalInstruction && fact.mtval == fsd_word as u64
+    ));
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 1);
+    assert!(core.state().reservation.is_some());
+    assert_eq!(core.state().fpr.read(2).bits(), 0x44);
+    core.state_mut().pc = 8;
     retired(&mut core);
-    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 0x44);
-    retired(&mut core);
-    assert_eq!(core.state().regs[4], 1);
-    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 0x44);
+    assert_eq!(core.state().regs[4], 0);
+    assert_eq!(memory.lock().unwrap().read_dword(P).unwrap(), 9);
+    assert_eq!(
+        spy.atomic_kinds(),
+        [
+            AtomicAccessKind::LoadReserved,
+            AtomicAccessKind::StoreConditional
+        ]
+    );
 }
 
 /// An AMO whose write side overlaps the reserved span invalidates — the

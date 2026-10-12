@@ -969,13 +969,6 @@ impl RiscvCore {
                 Some(instruction),
             );
         }
-        if Self::is_unsupported_encoding(&decoded) {
-            return self.simulator_failure(
-                pc_before,
-                SimulatorFailureKind::UnsupportedLegalInstruction,
-                "decoded legal instruction is not implemented",
-            );
-        }
 
         // Architectural alignment is a Hart check.  It runs before the memory
         // adapter is called, so a misaligned load/store/AMO produces no physical
@@ -1112,11 +1105,17 @@ impl RiscvCore {
         let explicit_minstret_write = csr_access
             .as_ref()
             .is_some_and(|access| access.addr == machine::MINSTRET && access.wrote);
+        let explicit_mcycle_write = csr_access
+            .as_ref()
+            .is_some_and(|access| access.addr == machine::MCYCLE && access.wrote);
         let minstret = if explicit_minstret_write {
             staged.csr.minstret_value()
         } else {
             staged.csr.increment_minstret()
         };
+        if !explicit_mcycle_write {
+            staged.csr.increment_mcycle();
+        }
         self.gpr_destination = destination;
         let privilege = self.state.privilege;
         let next_privilege = staged.privilege;
@@ -1207,6 +1206,7 @@ impl RiscvCore {
                 )
             }
         };
+        staged.csr.increment_mcycle();
         let handler_privilege = staged.privilege;
         self.state = staged;
         StepOutcome::TrapEntered(TrapEntered {
@@ -1294,24 +1294,14 @@ impl RiscvCore {
                     }
                 }
             }
-            ExecuteError::InvalidOperation => {
-                if matches!(
-                    instruction.opcode,
-                    Opcode::LoadFp | Opcode::StoreFp | Opcode::OpFp | Opcode::Amo | Opcode::Op32
-                ) {
-                    self.simulator_failure(
-                        pc,
-                        SimulatorFailureKind::UnsupportedLegalInstruction,
-                        "legal extension instruction is not implemented",
-                    )
-                } else {
-                    self.simulator_failure(
-                        pc,
-                        SimulatorFailureKind::Invariant,
-                        "executor rejected an encoding validated by the Hart",
-                    )
-                }
-            }
+            // Every encoding the Hart admits is implemented, so an executor
+            // rejection is an internal invariant failure, never a guest
+            // result.
+            ExecuteError::InvalidOperation => self.simulator_failure(
+                pc,
+                SimulatorFailureKind::Invariant,
+                "executor rejected an encoding validated by the Hart",
+            ),
             ExecuteError::InvalidRegister(register) => self.simulator_failure(
                 pc,
                 SimulatorFailureKind::Invariant,
@@ -1459,6 +1449,12 @@ impl RiscvCore {
         }
     }
 
+    /// SFENCE.VMA: SYSTEM, funct3 = 0, funct7 = 0b0001001, rd = 0.  Every
+    /// rs1 and rs2 value is legal.
+    fn is_sfence_vma(raw: u32) -> bool {
+        raw & 0xFE00_7FFF == 0x1200_0073
+    }
+
     fn is_illegal_encoding(instruction: &DecodedInstruction) -> bool {
         let funct3 = instruction.funct3.map(|value| value as u8);
         let funct7 = instruction.funct7;
@@ -1486,8 +1482,6 @@ impl RiscvCore {
                 let Some(funct3) = funct3 else { return true };
                 let Some(funct7) = funct7 else { return true };
                 if funct7 == 1 {
-                    // RV64M encodings are architecturally legal even where
-                    // the active executor does not implement every operation.
                     return false;
                 }
                 match funct3 {
@@ -1507,26 +1501,32 @@ impl RiscvCore {
                     (1, 0) => false,
                     // RV64I SRLW/SRAW: funct7 selects logical/arithmetic.
                     (5, 0 | 0x20) => false,
-                    // RV64M MULW/DIVW/DIVUW/REMW/REMUW.  These are legal
-                    // encodings even though the active Op32 dispatcher does
-                    // not implement them yet.
+                    // RV64M MULW/DIVW/DIVUW/REMW/REMUW.
                     (0 | 4 | 5 | 6 | 7, 1) => false,
                     _ => true,
                 }
             }
             Opcode::System => match funct3 {
-                Some(0) => !matches!(
-                    instruction.raw,
-                    0x0000_0073 // ECALL
+                Some(0) => {
+                    !(matches!(
+                        instruction.raw,
+                        0x0000_0073 // ECALL
                         | 0x0010_0073 // EBREAK
-                        | 0x1020_0073 // SRET (recognized, but out of scope)
+                        | 0x1020_0073 // SRET
                         | 0x3020_0073 // MRET
-                        | 0x1050_0073 // WFI (recognized, but unsupported)
-                ),
+                        | 0x1050_0073 // WFI
+                    ) || Self::is_sfence_vma(instruction.raw))
+                }
                 Some(1 | 2 | 3 | 5 | 6 | 7) => false,
                 _ => true,
             },
-            Opcode::LoadFp | Opcode::StoreFp => !matches!(funct3, Some(2 | 3)),
+            // F and D are not implemented (misa F = D = 0).  Every LOAD-FP,
+            // STORE-FP, and OP-FP encoding is illegal, and this check runs
+            // before alignment, translation, and any data request.
+            Opcode::LoadFp | Opcode::StoreFp | Opcode::OpFp => true,
+            // Only base FENCE; FENCE.I is illegal because Zifencei is not
+            // claimed.
+            Opcode::MiscMem => funct3 != Some(0),
             // AMO/LR/SC legality is the approved §2 table: `funct5` selects
             // the operation (AMOSWAP included), `funct3` selects W or D, and
             // every reserved `funct5` value plus LR with `rs2 != 0` is an
@@ -1535,14 +1535,6 @@ impl RiscvCore {
             Opcode::Amo => !crate::isa::rv64a::amo_encoding_is_legal(instruction),
             _ => false,
         }
-    }
-
-    fn is_unsupported_encoding(instruction: &DecodedInstruction) -> bool {
-        matches!(
-            instruction.raw,
-            0x1020_0073 // SRET is outside this Task 3 integration.
-                | 0x1050_0073 // WFI is legal but not implemented.
-        )
     }
 
     /// Reset core

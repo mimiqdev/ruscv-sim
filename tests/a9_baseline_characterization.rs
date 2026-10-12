@@ -26,6 +26,15 @@ fn atomic(funct5: u32, rd: u32, rs2: u32) -> u32 {
     (funct5 << 27) | (rs2 << 20) | (1 << 15) | (3 << 12) | (rd << 7) | 0x2f
 }
 
+fn poison_memory(memory: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>) {
+    let memory = memory.clone();
+    let poisoned = thread::spawn(move || {
+        let _guard = memory.lock().unwrap();
+        panic!("poison the host backend for the next slot");
+    });
+    assert!(poisoned.join().is_err());
+}
+
 fn native_core(code: &[u32]) -> (RiscvCore, Arc<Mutex<SimpleMemory>>) {
     let ram = Arc::new(Mutex::new(SimpleMemory::new(0x1000)));
     {
@@ -58,7 +67,6 @@ fn retire(core: &mut RiscvCore) {
 #[test]
 fn snapshot_log_omits_real_memory_atomic_csr_fpr_and_same_value_writes() {
     let csr_write = (u32::from(machine::MSCRATCH) << 20) | (2 << 15) | (1 << 12) | 0x73;
-    let fld = (1 << 15) | (3 << 12) | (1 << 7) | 0x07;
     let code = [
         elf::auipc(1, 0),
         elf::addi(1, 1, TARGET as i32),
@@ -70,7 +78,6 @@ fn snapshot_log_omits_real_memory_atomic_csr_fpr_and_same_value_writes() {
         atomic(3, 6, 2), // failed SC.D: rd = 1, no memory write
         atomic(3, 0, 2), // failed SC.D x0: retires, no register/memory write
         csr_write,
-        fld,
         elf::addi(2, 0, 5), // architectural destination write with equal value
     ];
     let image = elf::elf_with_code(&code, 0, false, false, 0x4000);
@@ -92,7 +99,6 @@ fn snapshot_log_omits_real_memory_atomic_csr_fpr_and_same_value_writes() {
         code.len() as u64
     );
     assert_eq!(flat.state().csr.read(machine::MSCRATCH).unwrap(), 5);
-    assert_eq!(flat.state().fpr.read(1).bits(), 5);
     assert_eq!(flat.state().regs[3], 5);
     assert_eq!(flat.state().regs[4], 10);
     assert_eq!(flat.state().regs[5], 0);
@@ -113,7 +119,7 @@ fn snapshot_log_omits_real_memory_atomic_csr_fpr_and_same_value_writes() {
     assert!(lines[4].contains(" x3  0x0000000000000005"));
     assert!(lines[7].contains(" x6  0x0000000000000001"));
     // These lines contain only identity, despite real effects/retirement.
-    for index in [3, 6, 8, 9, 10, 11] {
+    for index in [3, 6, 8, 9, 10] {
         assert_eq!(
             lines[index],
             format!(
@@ -123,6 +129,42 @@ fn snapshot_log_omits_real_memory_atomic_csr_fpr_and_same_value_writes() {
             )
         );
     }
+}
+
+#[test]
+fn fld_trap_writes_no_commit_line_and_changes_no_state() {
+    let fld = (1 << 15) | (3 << 12) | (1 << 7) | 0x07;
+    let mut image = elf::elf_with_code(&[elf::nop(), fld], 0, false, false, 0x4000);
+    image[elf::LOAD_OFFSET + TARGET as usize..elf::LOAD_OFFSET + TARGET as usize + 8]
+        .copy_from_slice(&SEED.to_le_bytes());
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("fld.log");
+    let logged = load_and_run(&image, Some(2), None, Some(&path), false).unwrap();
+    assert_eq!(logged.cycles, 2);
+    assert!(logged.timed_out);
+    let mut flat = RiscVSimulator::new(1);
+    flat.load_elf(&image).unwrap();
+    let result = flat.run(Some(2)).unwrap();
+    assert_eq!(result.cycles, 2);
+    assert_eq!(flat.state().csr.read(machine::MINSTRET).unwrap(), 1);
+    assert_eq!(flat.state().csr.read(machine::MCAUSE).unwrap(), 2);
+    assert_eq!(flat.state().csr.read(machine::MTVAL).unwrap(), fld as u64);
+    assert_eq!(
+        flat.state().fpr.read(1).bits(),
+        ruscv_sim::Fpr::default().bits()
+    );
+    assert_eq!(flat.state().fcsr.read(), 0);
+    assert_eq!(flat.read_mem(TARGET, 8).unwrap(), SEED.to_le_bytes());
+    let lines: Vec<_> = std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains(&format!("({:#010x})", elf::nop())));
+    assert!(!lines
+        .iter()
+        .any(|line| line.contains(&format!("{fld:#010x}"))));
 }
 
 #[test]
@@ -213,41 +255,47 @@ fn completed_exit_wins_final_budget_and_step_does_not_poll_or_clear() {
 }
 
 #[test]
-fn failed_last_slot_does_not_present_pending_exit_or_timeout_and_facade_can_reuse() {
-    let unsupported = 0x0000_100f; // legal but unimplemented FENCE.I
-    let mut image = elf::elf_with_code(&[unsupported, elf::nop()], 0, true, false, 0x4000);
+fn host_backend_failure_repeats_until_fresh_reset() {
+    // No guest instruction produces UnsupportedLegalInstruction. A poisoned
+    // memory lock is a host failure, and the facade repeats that stored
+    // failure until a fresh reset.
+    let mut image = elf::elf_with_code(&[elf::nop()], 0, true, false, 0x4000);
     image[elf::LOAD_OFFSET + 0x1000..elf::LOAD_OFFSET + 0x1008]
         .copy_from_slice(&7u64.to_le_bytes());
-    let native = load_and_run(&image, Some(1), None, None, false).unwrap();
-    assert_eq!(native.cycles, 0);
-    assert_eq!(native.exit_code, 1);
-    assert!(!native.timed_out);
-    assert!(native
-        .error
-        .as_deref()
-        .unwrap()
-        .contains("UnsupportedLegalInstruction"));
     let mut flat = RiscVSimulator::new(1);
     flat.load_elf(&image).unwrap();
+    poison_memory(flat.memory());
     let failed = flat.run(Some(1)).unwrap();
     assert_eq!(failed.cycles, 0);
+    assert_eq!(failed.exit_code, 1);
     assert!(!failed.timed_out);
-    assert!(failed
-        .error
-        .as_deref()
-        .unwrap()
-        .contains("UnsupportedLegalInstruction"));
+    assert_eq!(
+        failed.error.as_deref(),
+        Some("Execution error: HostBackend: poisoned host memory capability")
+    );
     assert_eq!(flat.state().pc, elf::BASE);
     assert_eq!(flat.state().csr.read(machine::MINSTRET).unwrap(), 0);
+    flat.memory().clear_poison();
     assert_eq!(flat.read_mem(0x1000, 8).unwrap(), 7u64.to_le_bytes());
-    // Ordinary failure is not an unresolved physical completion. Existing
-    // state mutation and resumability remain available (not a drain proof).
-    flat.state_mut().pc += 4;
+
+    // Clearing the poison does not clear the failure flag. The follow-up
+    // retires nothing and repeats the stored failure, not NeedsFreshReset.
     let reused = flat.run(Some(1)).unwrap();
-    assert_eq!(reused.exit_code, 3);
-    assert_eq!(reused.cycles, 1);
-    assert!(!reused.timed_out);
+    assert_eq!(reused.cycles, 0);
+    assert_eq!(
+        reused.error.as_deref(),
+        Some("Execution error: HostBackend: poisoned host memory capability")
+    );
+    assert!(!reused.error.as_deref().unwrap().contains("NeedsFreshReset"));
+
+    flat.fresh_reset().unwrap();
+    let resumed = flat.run(Some(1)).unwrap();
+    assert_eq!(resumed.cycles, 1);
+    assert_eq!(resumed.exit_code, 3);
+    assert!(!resumed.timed_out);
+    assert!(resumed.error.is_none());
     assert_eq!(flat.read_mem(0x1000, 8).unwrap(), [0; 8]);
+    assert_eq!(flat.state().csr.read(machine::MINSTRET).unwrap(), 1);
 }
 
 #[test]

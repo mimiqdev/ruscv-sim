@@ -557,15 +557,18 @@ fn reserved_op32_and_misc_mem_encodings_enter_illegal_instruction_traps() {
 }
 
 #[test]
-fn legal_but_unsupported_fence_i_remains_a_simulator_failure() {
-    let (mut core, _) = core_with_program(&[(0, 0x0000_100f)]);
+fn fence_i_enters_illegal_instruction_without_retiring() {
+    let raw = 0x0000_100f;
+    let (mut core, _) = core_with_program(&[(0, raw)]);
     let outcome = core.step_outcome();
-    assert!(matches!(
-        outcome,
-        StepOutcome::SimulatorFailure(failure)
-            if failure.kind == SimulatorFailureKind::UnsupportedLegalInstruction
-    ));
-    assert_eq!(core.state().pc, 0);
+    let StepOutcome::TrapEntered(fact) = outcome else {
+        panic!("FENCE.I must enter a trap")
+    };
+    assert_eq!(fact.cause, ExceptionCause::IllegalInstruction);
+    assert_eq!(fact.mtval, raw as u64);
+    assert_eq!(core.state().pc, MTVEC);
+    assert_eq!(core.state().csr.read(machine::MCAUSE).unwrap(), 2);
+    assert_eq!(core.state().csr.read(machine::MTVAL).unwrap(), raw as u64);
     assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
 }
 
@@ -652,13 +655,23 @@ fn last_slot_host_failure_consumes_the_slot_without_a_completed_turn() {
 }
 
 #[test]
-fn unsupported_legal_instruction_is_not_inferred_from_guest_trap_text() {
-    let (mut core, _) = core_with_program(&[(0, 0x1050_0073)]); // WFI
+fn host_backend_failure_is_not_inferred_from_guest_trap_text() {
+    // No guest instruction produces UnsupportedLegalInstruction. A poisoned
+    // memory lock is a host failure, and this core has no Machine flag.
+    let (mut core, memory) = core_with_program(&[(0, addi(1, 0, 1))]);
+    let poisoned = std::thread::spawn(move || {
+        let _guard = memory.lock().unwrap();
+        panic!("poison the host backend for the next slot");
+    });
+    assert!(poisoned.join().is_err());
+
     let outcome = core.step_outcome();
     assert!(matches!(
         outcome,
         StepOutcome::SimulatorFailure(failure)
-            if failure.kind == SimulatorFailureKind::UnsupportedLegalInstruction
+            if failure.kind == SimulatorFailureKind::HostBackend
+                && failure.message.contains("failed to lock instruction memory")
     ));
     assert_eq!(core.state().pc, 0);
+    assert_eq!(core.state().csr.read(machine::MINSTRET).unwrap(), 0);
 }

@@ -7,6 +7,16 @@ use ruscv_sim::csr::machine;
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 use ruscv_sim::memory::MemoryInterface;
 use std::sync::{Arc, Mutex};
+use std::thread;
+
+fn poison_memory(memory: &Arc<Mutex<dyn MemoryInterface + Send + Sync>>) {
+    let memory = memory.clone();
+    let poisoned = thread::spawn(move || {
+        let _guard = memory.lock().unwrap();
+        panic!("poison the host backend for the next slot");
+    });
+    assert!(poisoned.join().is_err());
+}
 
 #[test]
 fn constructor_and_state_memory_apis_remain_actual_borrowed_references() {
@@ -158,22 +168,42 @@ fn source_audit_standard_facades_have_no_core_composition_invocation_or_effect_r
 }
 
 #[test]
-fn unsupported_legal_failure_still_allows_real_host_patch_and_separate_resumed_request() {
-    let bytes = elf::elf_with_code(&[0x0000_100f, elf::nop()], 0, true, false, 0x4000);
+fn host_backend_failure_repeats_after_repair_until_fresh_reset() {
+    // No guest instruction produces UnsupportedLegalInstruction, so the
+    // legacy patch-and-resume rule has no guest trigger. A poisoned memory
+    // lock stores HostBackend, and repairing the lock does not clear it.
+    let bytes = elf::elf_with_code(&[elf::nop()], 0, true, false, 0x4000);
     let mut sim = RiscVSimulator::new(1);
     sim.load_elf(&bytes).unwrap();
-    let clone = sim.memory().clone();
+    poison_memory(sim.memory());
     let failed = sim.run(Some(1)).unwrap();
     assert_eq!(failed.cycles, 0);
     assert!(!failed.timed_out);
-    assert!(failed
-        .error
-        .unwrap()
-        .contains("UnsupportedLegalInstruction"));
-    clone.lock().unwrap().write_word(0, elf::nop()).unwrap();
+    assert_eq!(
+        failed.error.as_deref(),
+        Some("Execution error: HostBackend: poisoned host memory capability")
+    );
+
+    sim.memory().clear_poison();
     let resumed = sim.run(Some(1)).unwrap();
-    assert!(resumed.timed_out);
-    assert_eq!(resumed.cycles, 1);
+    assert_eq!(resumed.cycles, 0);
+    assert_eq!(
+        resumed.error.as_deref(),
+        Some("Execution error: HostBackend: poisoned host memory capability")
+    );
+    assert!(!resumed.error.unwrap().contains("NeedsFreshReset"));
+
+    let stepped = sim.step();
+    assert!(stepped
+        .unwrap_err()
+        .to_string()
+        .contains("HostBackend: poisoned host memory capability"));
+
+    sim.fresh_reset().unwrap();
+    let recovered = sim.run(Some(1)).unwrap();
+    assert!(recovered.timed_out);
+    assert_eq!(recovered.cycles, 1);
+    assert_eq!(recovered.error.as_deref(), Some("Timeout after 1 cycles"));
     assert_eq!(sim.state().pc, elf::BASE + 4);
     assert_eq!(sim.state().csr.read(machine::MINSTRET).unwrap(), 1);
 }

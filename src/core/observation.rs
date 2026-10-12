@@ -320,15 +320,40 @@ mod tests {
         core.state_mut().pc = 0;
         assert!(core.step_transition(true).observation.is_some());
         assert_eq!(BUILDS.with(std::cell::Cell::get), 1);
+        // FENCE.I is an illegal instruction in this profile, so the turn
+        // completes as a trap and builds exactly one trap record.
         ram.lock().unwrap().write_word(0, 0x0000_100f).unwrap();
         core.state_mut().pc = 0;
-        assert!(core.step_transition(true).observation.is_none());
-        assert_eq!(BUILDS.with(std::cell::Cell::get), 1);
-        ram.lock().unwrap().write_word(0, 0xffff_ffff).unwrap();
         assert!(matches!(
             core.step_transition(true).observation,
             Some(Observation::Trap(_))
         ));
         assert_eq!(BUILDS.with(std::cell::Cell::get), 2);
+        ram.lock().unwrap().write_word(0, 0xffff_ffff).unwrap();
+        core.state_mut().pc = 0;
+        assert!(matches!(
+            core.step_transition(true).observation,
+            Some(Observation::Trap(_))
+        ));
+        assert_eq!(BUILDS.with(std::cell::Cell::get), 3);
+
+        // A host failure is not a completed turn, so it builds no record.
+        // This core has no physical port, so the poisoned lock fails the
+        // typed instruction fetch.
+        let ram = ram.clone();
+        let poisoned = std::thread::spawn(move || {
+            let _guard = ram.lock().unwrap();
+            panic!("poison the host backend for the next slot");
+        });
+        assert!(poisoned.join().is_err());
+        core.state_mut().pc = 0;
+        let failed = core.step_transition(true);
+        assert!(failed.observation.is_none());
+        assert!(matches!(
+            failed.outcome,
+            crate::core::StepOutcome::SimulatorFailure(failure)
+                if failure.kind == crate::core::SimulatorFailureKind::HostBackend
+        ));
+        assert_eq!(BUILDS.with(std::cell::Cell::get), 3);
     }
 }

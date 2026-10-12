@@ -2,11 +2,11 @@
 //!
 //! This module implements the base-I `FENCE` instruction: MISC-MEM
 //! (`opcode = 0b000_1111`) with `funct3 = 0b000`. `FENCE.I` (Zifencei,
-//! `funct3 = 0b001`) is a legal but unsupported extension instruction; other
+//! `funct3 = 0b001`) is not claimed by the profile: it decodes, and the Hart
+//! raises illegal-instruction before execution reaches this module. Other
 //! MISC-MEM `funct3` values (e.g. `0b010` for Zicbo cache-block operations)
-//! are reserved for the active profile. The decoder rejects FENCE.I with
-//! `DecodeError::UnimplementedInstruction` and reserved values with
-//! `DecodeError::ReservedInstruction` before execution reaches this module.
+//! are reserved, and the decoder rejects them with
+//! `DecodeError::ReservedInstruction`.
 //!
 //! ## Memory model and why FENCE is a no-op here
 //!
@@ -179,14 +179,31 @@ mod tests {
     }
 
     #[test]
-    fn fence_i_is_not_base_i_and_stays_rejected() {
-        // FENCE.I (Zifencei, funct3 = 0b001) must remain unimplemented: base-I
-        // FENCE support must not silently widen to cover it.
+    fn fence_i_is_not_base_i_and_is_an_illegal_instruction() {
+        // FENCE.I (Zifencei, funct3 = 0b001) decodes, and the Hart raises
+        // illegal-instruction because the profile does not claim Zifencei.
         const FENCE_I: u32 = 0x0000_100f;
-        let err = InstructionDecoder::new().decode(FENCE_I).unwrap_err();
+        let decoded = InstructionDecoder::new().decode(FENCE_I).unwrap();
+        assert_eq!(decoded.opcode, Opcode::MiscMem);
+
+        let mem = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
+        mem.lock().unwrap().write_word(0, FENCE_I).unwrap();
+        let mut core = RiscvCore::new(mem.clone(), mem);
+        core.state_mut()
+            .csr
+            .write(crate::csr::machine::MTVEC, 0x40)
+            .unwrap();
         assert!(matches!(
-            err,
-            crate::decode::DecodeError::UnimplementedInstruction
+            core.step_outcome(),
+            crate::core::StepOutcome::TrapEntered(_)
         ));
+        let csr = &core.state().csr;
+        assert_eq!(csr.read(crate::csr::machine::MCAUSE).unwrap(), 2);
+        assert_eq!(
+            csr.read(crate::csr::machine::MTVAL).unwrap(),
+            FENCE_I as u64
+        );
+        assert_eq!(csr.read(crate::csr::machine::MINSTRET).unwrap(), 0);
+        assert_eq!(core.state().pc, 0x40);
     }
 }

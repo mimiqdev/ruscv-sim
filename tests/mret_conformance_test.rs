@@ -67,7 +67,9 @@ fn mret_restores_all_mie_mpie_combinations_and_privilege_modes() {
                     let actual_status = state.csr.read(machine::MSTATUS).unwrap();
                     state.csr.set_privilege(return_mode);
 
-                    let mut expected_status = (initial_status & !(1 << 3)) | (mpie << 3);
+                    // SXL and UXL are read-only 2 (0x0000_000A_0000_0000).
+                    let mut expected_status =
+                        (initial_status & !(1 << 3)) | (mpie << 3) | 0x0000_000A_0000_0000;
                     expected_status = (expected_status | (1 << 7)) & !(0b11 << 11);
                     if return_mode != PrivilegeMode::Machine {
                         expected_status &= !(1 << 17);
@@ -104,7 +106,11 @@ fn mret_from_user_or_supervisor_is_typed_illegal_instruction_without_side_effect
         assert_eq!(state.csr.get_privilege(), source_mode);
 
         state.csr.set_privilege(PrivilegeMode::Machine);
-        assert_eq!(state.csr.read(machine::MSTATUS).unwrap(), initial_status);
+        // SXL and UXL are read-only 2; the illegal MRET changed nothing.
+        assert_eq!(
+            state.csr.read(machine::MSTATUS).unwrap(),
+            initial_status | 0x0000_000A_0000_0000
+        );
         assert_eq!(
             state.csr.read(machine::MEPC).unwrap(),
             0x1111_2222_3333_4444
