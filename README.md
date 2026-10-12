@@ -167,7 +167,14 @@ Stage 4 指令配置把 FENCE.I 改为非法指令异常。WFI 在 M 模式及 T
 `WalkProtocolFault` 和 `WalkUnknownFault`，保留原始虚拟地址。原始访问类型仍由调用方持有。
 `WalkResult` 与 `MmuError` 的新增分支也要求下游更新穷尽匹配；现有方法签名、
 `WalkResult` 的 `Copy`／`Clone` 和 `MmuError` 的 `PartialEq` 保持不变。
-组件错误不保留 backend 文本。A/D 写回失败的旧分类及 D=0 的 TLB 命中问题仍待修复。
+组件错误不保留 backend 文本。
+组件 walker 按特权规范 §12.3.2 第 9 步设置 A/D：只有 A（或写访问的 D）为 0 时，
+才对整个叶 PTE 发出 walk 私有的 load-reserved/store-conditional，并与第 2 步检查过的值比较。
+该 reservation 不是 Hart 的架构 reservation。比较或 SC 失败时不写入，并以同一页表和层级回到第 2 步。
+LR/SC 失败按页表读取的同一四类分类；不支持原子能力的内存返回 `AccessFault`。
+重试达到诊断上限时返回新增的 `WalkResult::AdUpdateRetryLimit`／`MmuError::WalkAdRetryLimit`，
+它是模拟器诊断，不是页错误。`PhysicalMemoryInterface` 新增带默认实现的 `access_atomic`，
+`PhysicalMemory` 改用 `SimpleMemory` 存储以共享已提交写记账。写访问命中 D=0 的 TLB 项时丢弃该项并重新遍历内存。
 这些组件修复不表示公开 ELF 路径已启用地址翻译或已接入 walk 的 `SimulatorFailure` 分类。
 
 返回的 `MachineTurn` 保持已接受的边界/观察工作存活；保留 receipt 或正在执行 callback/sink

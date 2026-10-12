@@ -102,9 +102,13 @@ impl AddressTranslator {
                 ));
             }
 
-            // Build physical address from TLB entry
-            let paddr = (entry.ppn << 12) | (vaddr & 0xFFF);
-            return Ok(paddr);
+            // A/D may only be set in memory (step 9), so a write through a
+            // clean entry drops it and walks.
+            if request.access_type != AccessType::Write || entry.dirty {
+                let paddr = (entry.ppn << 12) | (vaddr & 0xFFF);
+                return Ok(paddr);
+            }
+            tlb.flush_asid_va(satp.asid(), vpn);
         }
 
         // TLB miss - perform page table walk
@@ -135,6 +139,7 @@ impl AddressTranslator {
             WalkResult::HostFault { .. } => Err(MmuError::WalkHostFault(vaddr)),
             WalkResult::ProtocolFault { .. } => Err(MmuError::WalkProtocolFault(vaddr)),
             WalkResult::UnknownFault { .. } => Err(MmuError::WalkUnknownFault(vaddr)),
+            WalkResult::AdUpdateRetryLimit { .. } => Err(MmuError::WalkAdRetryLimit(vaddr)),
         }
     }
 
@@ -241,6 +246,7 @@ impl AddressTranslator {
             WalkResult::HostFault { .. } => Err(MmuError::WalkHostFault(vaddr)),
             WalkResult::ProtocolFault { .. } => Err(MmuError::WalkProtocolFault(vaddr)),
             WalkResult::UnknownFault { .. } => Err(MmuError::WalkUnknownFault(vaddr)),
+            WalkResult::AdUpdateRetryLimit { .. } => Err(MmuError::WalkAdRetryLimit(vaddr)),
         }
     }
 

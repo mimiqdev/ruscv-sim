@@ -29,6 +29,16 @@
 use super::pte::PageTableEntry;
 use super::MmuError;
 use crate::memory::MemoryError;
+use crate::physical::{
+    AtomicAccessError, AtomicOrdering, AtomicRequest, AtomicReservationContext, ConditionalStatus,
+    PhysicalWidth,
+};
+
+/// Step-9 attempts before the walker reports a simulator diagnostic.
+///
+/// The spec bounds neither retries nor progress, so exhausting this limit is
+/// never a guest-visible fault.
+const MAX_AD_UPDATE_ATTEMPTS: usize = 64;
 
 /// Sv39 virtual address
 #[derive(Debug, Clone, Copy)]
@@ -156,26 +166,41 @@ pub enum WalkResult {
         /// Level where the fault occurred
         level: usize,
     },
-    /// A target rejected a walk read, or the legacy A/D write-back failed.
+    /// A target rejected a walk read or the atomic A/D update of the leaf PTE.
     AccessFault {
         /// Level where the fault occurred
         level: usize,
     },
-    /// The host adapter could not complete a walk read.
+    /// The host adapter could not complete a walk read or A/D update.
     HostFault {
         /// Level where the fault occurred
         level: usize,
     },
-    /// The physical adapter broke its protocol during a walk read.
+    /// The physical adapter broke its protocol during a walk read or A/D update.
     ProtocolFault {
         /// Level where the fault occurred
         level: usize,
     },
-    /// The adapter cannot establish whether the walk read completed.
+    /// The adapter cannot establish whether a walk read or A/D update completed.
     UnknownFault {
         /// Level where the fault occurred
         level: usize,
     },
+    /// The leaf PTE kept changing during every allowed A/D update attempt.
+    AdUpdateRetryLimit {
+        /// Level of the last leaf PTE
+        level: usize,
+    },
+}
+
+/// Classifies a failed A/D load-reserved or store-conditional like a walk read.
+fn classify_ad_update(error: AtomicAccessError, level: usize) -> WalkResult {
+    match error {
+        AtomicAccessError::TargetRejected(_) => WalkResult::AccessFault { level },
+        AtomicAccessError::BackendFailure(_) => WalkResult::HostFault { level },
+        AtomicAccessError::Protocol(_) => WalkResult::ProtocolFault { level },
+        AtomicAccessError::UnknownCompletion(_) => WalkResult::UnknownFault { level },
+    }
 }
 
 fn classify_walk_read(error: MemoryError, level: usize) -> WalkResult {
@@ -323,11 +348,14 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
     /// # Returns
     /// WalkResult indicating success or type of fault
     pub fn walk(&self, vaddr: VirtualAddress) -> WalkResult {
-        let vpns = vaddr.vpns();
-        let mut ppn = self.root_ppn;
+        self.walk_from(vaddr, self.root_ppn, VirtualAddress::LEVELS - 1)
+    }
 
-        // Walk from level 2 down to level 0
-        for level in (0..VirtualAddress::LEVELS).rev() {
+    /// Runs the walk from step 2 with table `ppn` at `start_level`.
+    fn walk_from(&self, vaddr: VirtualAddress, mut ppn: u64, start_level: usize) -> WalkResult {
+        let vpns = vaddr.vpns();
+
+        for level in (0..=start_level).rev() {
             let pte_addr = Sv39::pte_address(ppn, vpns[level]);
 
             #[cfg(test)]
@@ -415,49 +443,18 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
         access_type: super::AccessType,
         is_user: bool,
     ) -> WalkResult {
-        match self.walk(vaddr) {
-            WalkResult::Success {
-                paddr,
-                pte,
-                level,
-                pte_addr,
-            } => {
-                let perms = pte.permissions();
-
-                // Check user permission: user mode can only access user pages (U=1)
-                // Supervisor mode can access all pages (both U=0 and U=1)
-                if is_user && !perms.user {
-                    return WalkResult::PageFault { level };
-                }
-
-                // Check access type permission
-                let allowed = match access_type {
-                    super::AccessType::Read => perms.read,
-                    super::AccessType::Write => perms.write,
-                    super::AccessType::InstructionFetch => perms.execute,
-                };
-
-                if !allowed {
-                    return WalkResult::PageFault { level };
-                }
-
-                WalkResult::Success {
-                    paddr,
-                    pte,
-                    level,
-                    pte_addr,
-                }
-            }
-            other => other,
-        }
+        check_leaf_permissions(self.walk(vaddr), access_type, is_user)
     }
 
     /// Walk the page table, check permissions, and update Accessed/Dirty bits
     ///
     /// This method performs the same permission checks as walk_check_permissions,
-    /// but also updates the A/D bits in the PTE according to RISC-V spec:
-    /// - Sets A (Accessed) bit on any access (read/write/execute)
-    /// - Sets D (Dirty) bit on write access
+    /// then performs Privileged ISA 20250508 §12.3.2 step 9 when A, or D for a
+    /// write, is clear: a walk-private load-reserved/store-conditional on the
+    /// whole leaf PTE that writes only if the PTE still equals the checked
+    /// value. A mismatch or failed store-conditional writes nothing and
+    /// resumes at step 2 with the same table and level. A leaf with the needed
+    /// bits already set issues no atomic access.
     ///
     /// # Arguments
     /// * `vaddr` - Virtual address to translate
@@ -473,63 +470,129 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
         access_type: super::AccessType,
         is_user: bool,
     ) -> WalkResult {
-        match self.walk(vaddr) {
-            WalkResult::Success {
+        let mut result = self.walk(vaddr);
+        let mut last_level = VirtualAddress::LEVELS - 1;
+        for _ in 0..MAX_AD_UPDATE_ATTEMPTS {
+            let checked = check_leaf_permissions(result, access_type, is_user);
+            let WalkResult::Success {
                 paddr,
                 pte,
                 level,
                 pte_addr,
-            } => {
-                let perms = pte.permissions();
+            } = checked
+            else {
+                return checked;
+            };
 
-                // Check user permission: user mode can only access user pages (U=1)
-                if is_user && !perms.user {
-                    return WalkResult::PageFault { level };
-                }
+            let mut updated_pte = pte;
+            updated_pte.set_accessed();
+            if access_type == super::AccessType::Write {
+                updated_pte.set_dirty();
+            }
+            if updated_pte.bits() == pte.bits() {
+                return checked;
+            }
 
-                // Check access type permission
-                let allowed = match access_type {
-                    super::AccessType::Read => perms.read,
-                    super::AccessType::Write => perms.write,
-                    super::AccessType::InstructionFetch => perms.execute,
-                };
-
-                if !allowed {
-                    return WalkResult::PageFault { level };
-                }
-
-                // Update Accessed/Dirty bits according to RISC-V spec
-                let mut updated_pte = pte;
-                let mut needs_update = false;
-
-                // Set A bit on any access (read/write/execute)
-                if !pte.is_accessed() {
-                    updated_pte.set_accessed();
-                    needs_update = true;
-                }
-
-                // Set D bit on write access
-                if access_type == super::AccessType::Write && !pte.is_dirty() {
-                    updated_pte.set_dirty();
-                    needs_update = true;
-                }
-
-                // Write back updated PTE if needed
-                if needs_update {
-                    if let Err(_e) = self.memory.write_dword(pte_addr, updated_pte.bits()) {
-                        return WalkResult::AccessFault { level };
+            match self.update_leaf_ad(pte_addr, pte, updated_pte, level) {
+                Ok(true) => {
+                    return WalkResult::Success {
+                        paddr,
+                        pte: updated_pte,
+                        level,
+                        pte_addr,
                     }
                 }
-
-                WalkResult::Success {
-                    paddr,
-                    pte: updated_pte,
-                    level,
-                    pte_addr,
-                }
+                Ok(false) => {}
+                Err(fault) => return fault,
             }
-            other => other,
+
+            // Step 2 again with the same table and level. The PTE index lies
+            // within the table page, so the table PPN is `pte_addr >> 12`.
+            last_level = level;
+            result = self.walk_from(vaddr, pte_addr >> 12, level);
         }
+        WalkResult::AdUpdateRetryLimit { level: last_level }
+    }
+
+    /// Performs the step-9 compare and conditional update of one leaf PTE.
+    ///
+    /// The load-reserved/store-conditional pair is private to this walk: its
+    /// reservation is a local value, never the Hart's architectural
+    /// reservation. `Ok(false)` means the PTE no longer equals `checked` or
+    /// another write committed between the pair; nothing was written.
+    fn update_leaf_ad(
+        &mut self,
+        pte_addr: u64,
+        checked: PageTableEntry,
+        updated: PageTableEntry,
+        level: usize,
+    ) -> Result<bool, WalkResult> {
+        let protocol = |_| WalkResult::ProtocolFault { level };
+        let lr = AtomicRequest::load_reserved(
+            pte_addr,
+            PhysicalWidth::Doubleword,
+            AtomicOrdering::default(),
+        )
+        .map_err(protocol)?;
+        let reserved = lr.span();
+        let loaded = self
+            .memory
+            .access_atomic(lr)
+            .map_err(|error| classify_ad_update(error, level))?;
+        let (Some(bytes), Some(snapshot)) = (loaded.old_bytes(), loaded.snapshot()) else {
+            return Err(WalkResult::ProtocolFault { level });
+        };
+        let current = <[u8; 8]>::try_from(bytes)
+            .map(u64::from_le_bytes)
+            .map_err(|_| WalkResult::ProtocolFault { level })?;
+        if current != checked.bits() {
+            return Ok(false);
+        }
+
+        let payload = updated.bits().to_le_bytes();
+        let sc = AtomicRequest::store_conditional(
+            pte_addr,
+            PhysicalWidth::Doubleword,
+            AtomicOrdering::default(),
+            &payload,
+            AtomicReservationContext { reserved, snapshot },
+        )
+        .map_err(protocol)?;
+        let stored = self
+            .memory
+            .access_atomic(sc)
+            .map_err(|error| classify_ad_update(error, level))?;
+        match stored.conditional_status() {
+            Some(ConditionalStatus::Success) => Ok(true),
+            Some(ConditionalStatus::Failure) => Ok(false),
+            None => Err(WalkResult::ProtocolFault { level }),
+        }
+    }
+}
+
+/// Applies the leaf U and R/W/X checks to a successful walk.
+fn check_leaf_permissions(
+    result: WalkResult,
+    access_type: super::AccessType,
+    is_user: bool,
+) -> WalkResult {
+    let WalkResult::Success { pte, level, .. } = result else {
+        return result;
+    };
+    let perms = pte.permissions();
+
+    // User mode can only access user pages (U=1); supervisor mode can access
+    // all pages.
+    let allowed = (!is_user || perms.user)
+        && match access_type {
+            super::AccessType::Read => perms.read,
+            super::AccessType::Write => perms.write,
+            super::AccessType::InstructionFetch => perms.execute,
+        };
+    if allowed {
+        result
+    } else {
+        WalkResult::PageFault { level }
     }
 }
 

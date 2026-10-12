@@ -3,7 +3,12 @@
 //! Provides physical memory emulation for the RISC-V MMU subsystem.
 //! Supports RAM allocation with read/write operations and alignment checking.
 
-use crate::memory::MemoryError;
+use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
+use crate::physical::{
+    AtomicAccessError, AtomicAccessResult, AtomicRequest, AtomicTargetRejection, NativeRamBackend,
+    PhysicalTargetRejectionReason, ValidatedAtomicAccess,
+};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Memory region type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +60,17 @@ pub trait PhysicalMemoryInterface: Send + Sync {
     fn read_dword(&self, paddr: u64) -> Result<u64, MemoryError>;
     /// Write a doubleword (8 bytes) to physical memory
     fn write_dword(&mut self, paddr: u64, value: u64) -> Result<(), MemoryError>;
+
+    /// Submit a validated atomic envelope, or explicitly reject missing capability.
+    fn access_atomic(&mut self, request: AtomicRequest<'_>) -> AtomicAccessResult {
+        Err(AtomicAccessError::TargetRejected(
+            AtomicTargetRejection::new(
+                request.descriptor(),
+                PhysicalTargetRejectionReason::UnsupportedCategory,
+                "component memory has no atomic capability",
+            ),
+        ))
+    }
 }
 
 /// Physical memory manager
@@ -62,7 +78,8 @@ pub trait PhysicalMemoryInterface: Send + Sync {
 /// Manages physical RAM and provides access methods with alignment checking.
 pub struct PhysicalMemory {
     regions: Vec<MemoryRegion>,
-    ram: Vec<u8>,
+    ram: Arc<Mutex<SimpleMemory>>,
+    ram_size: usize,
     ram_base: u64,
 }
 
@@ -92,7 +109,8 @@ impl PhysicalMemory {
 
         Self {
             regions,
-            ram: vec![0u8; ram_size],
+            ram: Arc::new(Mutex::new(SimpleMemory::new(ram_size))),
+            ram_size,
             ram_base,
         }
     }
@@ -111,7 +129,13 @@ impl PhysicalMemory {
 
     /// Check if address is within RAM
     pub fn is_ram(&self, paddr: u64) -> bool {
-        paddr >= self.ram_base && paddr < self.ram_base + self.ram.len() as u64
+        paddr >= self.ram_base && paddr < self.ram_base + self.ram_size as u64
+    }
+
+    fn ram(&self) -> Result<MutexGuard<'_, SimpleMemory>, MemoryError> {
+        self.ram
+            .lock()
+            .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))
     }
 
     /// Calculate offset into RAM buffer
@@ -131,7 +155,7 @@ impl PhysicalMemory {
     /// The byte value at the specified address
     pub fn read_byte(&self, paddr: u64) -> Result<u8, MemoryError> {
         let offset = self.ram_offset(paddr)?;
-        Ok(self.ram[offset])
+        self.ram()?.read_byte(offset as u64)
     }
 
     /// Write a byte to physical memory
@@ -141,8 +165,7 @@ impl PhysicalMemory {
     /// * `value` - Byte value to write
     pub fn write_byte(&mut self, paddr: u64, value: u8) -> Result<(), MemoryError> {
         let offset = self.ram_offset(paddr)?;
-        self.ram[offset] = value;
-        Ok(())
+        self.ram()?.write_byte(offset as u64, value)
     }
 
     /// Read a halfword (2 bytes) from physical memory
@@ -160,7 +183,7 @@ impl PhysicalMemory {
             return Err(MemoryError::Misaligned(paddr, 2));
         }
         let offset = self.ram_offset(paddr)?;
-        Ok(u16::from_le_bytes([self.ram[offset], self.ram[offset + 1]]))
+        self.ram()?.read_half(offset as u64)
     }
 
     /// Write a halfword (2 bytes) to physical memory
@@ -176,10 +199,7 @@ impl PhysicalMemory {
             return Err(MemoryError::Misaligned(paddr, 2));
         }
         let offset = self.ram_offset(paddr)?;
-        let bytes = value.to_le_bytes();
-        self.ram[offset] = bytes[0];
-        self.ram[offset + 1] = bytes[1];
-        Ok(())
+        self.ram()?.write_half(offset as u64, value)
     }
 
     /// Read a word (4 bytes) from physical memory
@@ -197,12 +217,7 @@ impl PhysicalMemory {
             return Err(MemoryError::Misaligned(paddr, 4));
         }
         let offset = self.ram_offset(paddr)?;
-        Ok(u32::from_le_bytes([
-            self.ram[offset],
-            self.ram[offset + 1],
-            self.ram[offset + 2],
-            self.ram[offset + 3],
-        ]))
+        self.ram()?.read_word(offset as u64)
     }
 
     /// Write a word (4 bytes) to physical memory
@@ -218,12 +233,7 @@ impl PhysicalMemory {
             return Err(MemoryError::Misaligned(paddr, 4));
         }
         let offset = self.ram_offset(paddr)?;
-        let bytes = value.to_le_bytes();
-        self.ram[offset] = bytes[0];
-        self.ram[offset + 1] = bytes[1];
-        self.ram[offset + 2] = bytes[2];
-        self.ram[offset + 3] = bytes[3];
-        Ok(())
+        self.ram()?.write_word(offset as u64, value)
     }
 
     /// Read a doubleword (8 bytes) from physical memory
@@ -241,16 +251,7 @@ impl PhysicalMemory {
             return Err(MemoryError::Misaligned(paddr, 8));
         }
         let offset = self.ram_offset(paddr)?;
-        Ok(u64::from_le_bytes([
-            self.ram[offset],
-            self.ram[offset + 1],
-            self.ram[offset + 2],
-            self.ram[offset + 3],
-            self.ram[offset + 4],
-            self.ram[offset + 5],
-            self.ram[offset + 6],
-            self.ram[offset + 7],
-        ]))
+        self.ram()?.read_dword(offset as u64)
     }
 
     /// Write a doubleword (8 bytes) to physical memory
@@ -266,21 +267,12 @@ impl PhysicalMemory {
             return Err(MemoryError::Misaligned(paddr, 8));
         }
         let offset = self.ram_offset(paddr)?;
-        let bytes = value.to_le_bytes();
-        self.ram[offset] = bytes[0];
-        self.ram[offset + 1] = bytes[1];
-        self.ram[offset + 2] = bytes[2];
-        self.ram[offset + 3] = bytes[3];
-        self.ram[offset + 4] = bytes[4];
-        self.ram[offset + 5] = bytes[5];
-        self.ram[offset + 6] = bytes[6];
-        self.ram[offset + 7] = bytes[7];
-        Ok(())
+        self.ram()?.write_dword(offset as u64, value)
     }
 
     /// Get the size of RAM
     pub fn ram_size(&self) -> usize {
-        self.ram.len()
+        self.ram_size
     }
 
     /// Get the base address of RAM
@@ -297,11 +289,16 @@ impl PhysicalMemory {
     /// # Errors
     /// Returns `MemoryError::OutOfBounds` if data would exceed RAM bounds
     pub fn load_data(&mut self, offset: usize, data: &[u8]) -> Result<(), MemoryError> {
-        if offset + data.len() > self.ram.len() {
+        if offset
+            .checked_add(data.len())
+            .is_none_or(|end| end > self.ram_size)
+        {
             return Err(MemoryError::OutOfBounds);
         }
-        self.ram[offset..offset + data.len()].copy_from_slice(data);
-        Ok(())
+        if data.is_empty() {
+            return Ok(());
+        }
+        self.ram()?.write_bytes(offset as u64, data)
     }
 
     /// Read a slice from RAM
@@ -314,10 +311,16 @@ impl PhysicalMemory {
     /// A copy of the bytes at the specified address
     pub fn read_bytes(&self, paddr: u64, len: usize) -> Result<Vec<u8>, MemoryError> {
         let offset = self.ram_offset(paddr)?;
-        if offset + len > self.ram.len() {
+        if offset
+            .checked_add(len)
+            .is_none_or(|end| end > self.ram_size)
+        {
             return Err(MemoryError::OutOfBounds);
         }
-        Ok(self.ram[offset..offset + len].to_vec())
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        self.ram()?.read_bytes(offset as u64, len)
     }
 
     /// Write a slice to RAM
@@ -327,62 +330,34 @@ impl PhysicalMemory {
     /// * `data` - Data to write
     pub fn write_bytes(&mut self, paddr: u64, data: &[u8]) -> Result<(), MemoryError> {
         let offset = self.ram_offset(paddr)?;
-        if offset + data.len() > self.ram.len() {
-            return Err(MemoryError::OutOfBounds);
-        }
-        self.ram[offset..offset + data.len()].copy_from_slice(data);
-        Ok(())
+        self.load_data(offset, data)
     }
 }
 
 impl PhysicalMemoryInterface for PhysicalMemory {
     fn read_byte(&self, paddr: u64) -> Result<u8, MemoryError> {
-        // Direct implementation to avoid recursion
-        let offset = self.ram_offset(paddr)?;
-        Ok(self.ram[offset])
+        self.read_byte(paddr)
     }
 
     fn write_byte(&mut self, paddr: u64, value: u8) -> Result<(), MemoryError> {
-        // Direct implementation to avoid recursion
-        let offset = self.ram_offset(paddr)?;
-        self.ram[offset] = value;
-        Ok(())
+        self.write_byte(paddr, value)
     }
 
     fn read_dword(&self, paddr: u64) -> Result<u64, MemoryError> {
-        // Direct implementation to avoid recursion
-        if paddr & 0x7 != 0 {
-            return Err(MemoryError::Misaligned(paddr, 8));
-        }
-        let offset = self.ram_offset(paddr)?;
-        Ok(u64::from_le_bytes([
-            self.ram[offset],
-            self.ram[offset + 1],
-            self.ram[offset + 2],
-            self.ram[offset + 3],
-            self.ram[offset + 4],
-            self.ram[offset + 5],
-            self.ram[offset + 6],
-            self.ram[offset + 7],
-        ]))
+        self.read_dword(paddr)
     }
 
     fn write_dword(&mut self, paddr: u64, value: u64) -> Result<(), MemoryError> {
-        // Direct implementation to avoid recursion
-        if paddr & 0x7 != 0 {
-            return Err(MemoryError::Misaligned(paddr, 8));
-        }
-        let offset = self.ram_offset(paddr)?;
-        let bytes = value.to_le_bytes();
-        self.ram[offset] = bytes[0];
-        self.ram[offset + 1] = bytes[1];
-        self.ram[offset + 2] = bytes[2];
-        self.ram[offset + 3] = bytes[3];
-        self.ram[offset + 4] = bytes[4];
-        self.ram[offset + 5] = bytes[5];
-        self.ram[offset + 6] = bytes[6];
-        self.ram[offset + 7] = bytes[7];
-        Ok(())
+        self.write_dword(paddr, value)
+    }
+
+    fn access_atomic(&mut self, request: AtomicRequest<'_>) -> AtomicAccessResult {
+        ValidatedAtomicAccess::new(NativeRamBackend::new(
+            Arc::clone(&self.ram),
+            self.ram_base,
+            self.ram_size,
+        ))
+        .access_atomic(request)
     }
 }
 
