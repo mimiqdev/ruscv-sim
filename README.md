@@ -157,6 +157,19 @@ Stage 4 指令配置把 FENCE.I 改为非法指令异常。WFI 在 M 模式及 T
 公开路径的页表翻译和 A/D 效果仍待完成。已启用的 SSIP、STIP 和 SEIP 在取指前进入 M 模式陷阱，不取指也不退休。`mcause` 保留中断位。S 模式下 `sip` 和 `sie` 仍读 0。
 完整交付边界以当前合同和对应实现测试为准。
 
+独立 MMU 组件的 Sv39 翻译入口在 TLB 查询和页表读取之前检查地址是否为规范地址。
+不符合符号扩展规则的地址返回 `MmuError::PageFault`，其中
+`PageFaultReason::NonCanonicalAddress` 保留原始访问类型和虚拟地址。
+直接调用 `VirtualAddress::new` 仍返回原有的 `InvalidVirtualAddress` 解析错误。
+新增错误枚举分支会使下游穷尽匹配需要更新；现有方法签名不变。
+组件页表读取错误按类型保留 target、host、protocol 和 unknown 四种类别。
+只有 target 拒绝返回 `AccessFault`；其余分别返回 `WalkHostFault`、
+`WalkProtocolFault` 和 `WalkUnknownFault`，保留原始虚拟地址。原始访问类型仍由调用方持有。
+`WalkResult` 与 `MmuError` 的新增分支也要求下游更新穷尽匹配；现有方法签名、
+`WalkResult` 的 `Copy`／`Clone` 和 `MmuError` 的 `PartialEq` 保持不变。
+组件错误不保留 backend 文本。A/D 写回失败的旧分类及 D=0 的 TLB 命中问题仍待修复。
+这些组件修复不表示公开 ELF 路径已启用地址翻译或已接入 walk 的 `SimulatorFailure` 分类。
+
 返回的 `MachineTurn` 保持已接受的边界/观察工作存活；保留 receipt 或正在执行 callback/sink
 时不能完成 drain 或重置。未知完成始终拒绝重用、reset 和 teardown；目前没有 adapter
 终止证明/恢复接口。若调用者丢弃未知或无法证明安全的 owner，其失败 domain 会被保留到

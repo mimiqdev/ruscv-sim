@@ -194,6 +194,8 @@ pub enum PageFaultReason {
     NotAccessed { vaddr: u64 },
     /// Write to non-dirty page (D bit not set for write)
     NotDirty { vaddr: u64 },
+    /// Sv39 bits 63:39 are not all equal to bit 38
+    NonCanonicalAddress { access_type: AccessType, vaddr: u64 },
 }
 
 impl core::fmt::Display for PageFaultReason {
@@ -230,6 +232,13 @@ impl core::fmt::Display for PageFaultReason {
                     vaddr
                 )
             }
+            PageFaultReason::NonCanonicalAddress { access_type, vaddr } => {
+                write!(
+                    f,
+                    "Non-canonical address for access {:?} at address 0x{:016x}",
+                    access_type, vaddr
+                )
+            }
         }
     }
 }
@@ -243,6 +252,12 @@ pub enum MmuError {
     PageFault(PageFaultReason),
     #[error("Access fault: address 0x{0:016x}")]
     AccessFault(u64),
+    #[error("Walk host fault: address 0x{0:016x}")]
+    WalkHostFault(u64),
+    #[error("Walk protocol fault: address 0x{0:016x}")]
+    WalkProtocolFault(u64),
+    #[error("Walk unknown fault: address 0x{0:016x}")]
+    WalkUnknownFault(u64),
     #[error("PMP violation: address 0x{0:016x}")]
     PmpViolation(u64),
     #[error("Translation mode not supported: {0:?}")]
