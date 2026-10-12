@@ -218,6 +218,83 @@ fn trap_of(outcome: &StepOutcome) -> ruscv_sim::core::TrapEntered {
     }
 }
 
+/// Which completion an injected backend returns for one chosen address.
+#[derive(Clone, Copy, Debug)]
+enum Injected {
+    /// The target rejects the request. A guest sees an access fault.
+    Target,
+    /// The host cannot complete it. The Hart reports a simulator failure.
+    Host,
+    /// The backend reports a protocol violation.
+    Protocol,
+    /// The backend cannot say whether the access happened.
+    Unknown,
+}
+
+/// RAM that fails one physical address and serves everything else.
+///
+/// The address is the port offset, which is the guest-physical address
+/// minus the RAM base. Failing by address rather than by call count keeps
+/// the test pointed at one PTE even when the walk adds an A/D update.
+struct InjectedBackend {
+    inner: NativeRamBackend,
+    fail_at: u64,
+    injected: Injected,
+}
+
+impl ruscv_sim::physical::PhysicalBackend for InjectedBackend {
+    fn transact(
+        &mut self,
+        request: &ruscv_sim::physical::PhysicalRequest<'_>,
+    ) -> ruscv_sim::physical::PhysicalBackendResult {
+        if request.paddr() == self.fail_at {
+            return Err(injected_error(self.injected));
+        }
+        self.inner.transact(request)
+    }
+}
+
+impl ruscv_sim::physical::AtomicBackend for InjectedBackend {
+    fn transact_atomic(
+        &mut self,
+        request: &ruscv_sim::physical::AtomicRequest<'_>,
+    ) -> ruscv_sim::physical::AtomicBackendResult {
+        if request.paddr() == self.fail_at {
+            return Err(injected_error(self.injected));
+        }
+        self.inner.transact_atomic(request)
+    }
+}
+
+fn injected_error(injected: Injected) -> ruscv_sim::physical::PhysicalBackendError {
+    use ruscv_sim::physical::{PhysicalBackendError, PhysicalTargetRejectionReason};
+    match injected {
+        Injected::Target => {
+            PhysicalBackendError::target(PhysicalTargetRejectionReason::Unmapped, "injected")
+        }
+        Injected::Host => PhysicalBackendError::host("injected host"),
+        Injected::Protocol => PhysicalBackendError::protocol("injected protocol"),
+        Injected::Unknown => PhysicalBackendError::unknown("injected unknown"),
+    }
+}
+
+fn core_with_injected(fail_at: u64, injected: Injected) -> (RiscvCore, Arc<Mutex<SimpleMemory>>) {
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(RAM_SIZE)));
+    let typed: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = ram.clone();
+    let fetch = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeRamBackend::new(ram.clone(), 0, RAM_SIZE),
+    )));
+    let data = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(InjectedBackend {
+        inner: NativeRamBackend::new(ram.clone(), 0, RAM_SIZE),
+        fail_at,
+        injected,
+    })));
+    let mut core = RiscvCore::new_with_physical_ports(typed.clone(), typed, fetch, data);
+    core.reset(0, BASE);
+    core.state_mut().csr.write(machine::MTVEC, MTVEC).unwrap();
+    (core, ram)
+}
+
 #[test]
 fn walk_reads_are_data_reads_on_the_data_port_distinct_from_the_access() {
     let (mut core, ram, calls) = core_with_traced_ram();
@@ -530,6 +607,79 @@ fn walk_read_target_rejection_is_an_access_fault_of_the_original_kind() {
         Trap::Exception(ExceptionCause::InstructionAccessFault)
     );
     assert_eq!(trap.mtval, VA);
+}
+
+#[test]
+fn port_rejected_walk_read_is_an_access_fault_of_the_original_kind() {
+    // The data leaf's PTE sits inside RAM, and the port rejects that one
+    // address. The fetch walk never touches it, so the fault comes from the
+    // load's walk read and keeps the load's cause and virtual address.
+    let leaf_issued = (ROOT_PPN + 2) * PAGE + ((VA_DATA >> 12) & 0x1ff) * 8 - BASE;
+    let (mut core, ram) = core_with_injected(leaf_issued, Injected::Target);
+    install_leaf(&ram, VA, 0x80005, 0x0e);
+    install_leaf(&ram, VA_DATA, 0x80004, 0x06);
+    store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
+    core.state_mut().regs[1] = VA_DATA;
+    enable_sv39(&mut core, PrivilegeMode::Supervisor);
+
+    let trap = trap_of(&core.step_outcome());
+    assert_eq!(trap.cause, Trap::Exception(ExceptionCause::LoadAccessFault));
+    assert_eq!(trap.mtval, VA_DATA);
+}
+
+#[test]
+fn walk_read_host_protocol_and_unknown_are_simulator_failures() {
+    // D3: a host, protocol, or unknown completion of a walk read is a
+    // SimulatorFailure, never an access fault and never a page fault.
+    let leaf_issued = (ROOT_PPN + 2) * PAGE + ((VA_DATA >> 12) & 0x1ff) * 8 - BASE;
+    for (injected, expected) in [
+        (
+            Injected::Host,
+            ruscv_sim::core::SimulatorFailureKind::HostBackend,
+        ),
+        (
+            Injected::Protocol,
+            ruscv_sim::core::SimulatorFailureKind::Invariant,
+        ),
+        (
+            Injected::Unknown,
+            ruscv_sim::core::SimulatorFailureKind::HostBackend,
+        ),
+    ] {
+        let (mut core, ram) = core_with_injected(leaf_issued, injected);
+        install_leaf(&ram, VA, 0x80005, 0x0e);
+        install_leaf(&ram, VA_DATA, 0x80004, 0x06);
+        store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
+        core.state_mut().regs[1] = VA_DATA;
+        enable_sv39(&mut core, PrivilegeMode::Supervisor);
+
+        let StepOutcome::SimulatorFailure(failure) = core.step_outcome() else {
+            panic!("{injected:?} must be a SimulatorFailure")
+        };
+        assert_eq!(failure.kind, expected);
+    }
+}
+
+#[test]
+fn rejected_ad_writeback_is_an_access_fault_of_the_original_kind() {
+    // The leaf is readable and its A bit is clear, so the walk reaches the
+    // A/D update. The port serves the walk read and rejects the atomic
+    // update of the same PTE. The fault is a load access fault, and the
+    // leaf stays unchanged because the store-conditional never commits.
+    let leaf_addr = (ROOT_PPN + 2) * PAGE + ((VA_DATA >> 12) & 0x1ff) * 8;
+    let (mut core, ram) = core_with_injected(leaf_addr - BASE, Injected::Target);
+    install_leaf(&ram, VA, 0x80005, 0x4f); // R|W|X|A, so the fetch writes nothing
+    install_leaf(&ram, VA_DATA, 0x80004, 0x06); // R|W, A clear
+    gp_write(&ram, DATA_PA, 0x11);
+    store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
+    core.state_mut().regs[1] = VA_DATA;
+    enable_sv39(&mut core, PrivilegeMode::Supervisor);
+
+    let trap = trap_of(&core.step_outcome());
+    assert_eq!(trap.cause, Trap::Exception(ExceptionCause::LoadAccessFault));
+    assert_eq!(trap.mtval, VA_DATA);
+    assert_eq!(load_value(&ram, leaf_addr) & 0xc0, 0, "A and D stay clear");
+    assert_eq!(core.state().regs[5], 0, "the load never wrote its result");
 }
 
 #[test]

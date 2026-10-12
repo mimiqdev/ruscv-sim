@@ -33,7 +33,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-const GUESTS: [&str; 3] = ["s4_mapped_rw", "s4_permission_fault", "s4_mprv"];
+const GUESTS: [&str; 4] = [
+    "s4_mapped_rw",
+    "s4_permission_fault",
+    "s4_mprv",
+    "s4_walk_fault",
+];
 const LINKER_SCRIPT: &str = "linker-s4.ld";
 const MAX_CYCLES: u64 = 100_000;
 
