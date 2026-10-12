@@ -8,6 +8,10 @@ pub(super) struct ObservedMemory<'a> {
     inner: &'a mut dyn MemoryInterface,
     journal: Option<&'a MemoryJournal>,
     base: u64,
+    /// Page delta (translated - virtual) the adapter added before issuing
+    /// the request. The journal reports the architectural address and the
+    /// port offset, so the recorded issued address adds this delta back.
+    translation_delta: u64,
 }
 
 impl<'a> ObservedMemory<'a> {
@@ -15,11 +19,13 @@ impl<'a> ObservedMemory<'a> {
         inner: &'a mut dyn MemoryInterface,
         journal: Option<&'a MemoryJournal>,
         base: u64,
+        translation_delta: u64,
     ) -> Self {
         Self {
             inner,
             journal,
             base,
+            translation_delta,
         }
     }
 
@@ -29,7 +35,9 @@ impl<'a> ObservedMemory<'a> {
             bytes[..width.bytes()].copy_from_slice(&value.to_le_bytes()[..width.bytes()]);
             journal.borrow_mut().push(MemoryEffect {
                 guest_address: address,
-                issued_address: address.checked_sub(self.base),
+                issued_address: address
+                    .wrapping_add(self.translation_delta)
+                    .checked_sub(self.base),
                 width,
                 read: (!write).then_some(bytes),
                 write: write.then_some(bytes),

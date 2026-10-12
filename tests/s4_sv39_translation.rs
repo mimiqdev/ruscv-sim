@@ -183,6 +183,16 @@ fn sd(rs2: u8, rs1: u8, imm: i32) -> u32 {
         | 0x23
 }
 
+/// amoswap.d rd, rs2, (rs1): funct5 00001, aq/rl 0, width D.
+fn amoswap_d(rd: u8, rs2: u8, rs1: u8) -> u32 {
+    (1u32 << 27)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x2f
+}
+
 fn load_value(ram: &Arc<Mutex<SimpleMemory>>, guest_addr: u64) -> u64 {
     gp_read(ram, guest_addr)
 }
@@ -260,6 +270,52 @@ fn walk_reads_are_data_reads_on_the_data_port_distinct_from_the_access() {
 }
 
 #[test]
+fn store_with_rs2_equal_rs1_writes_the_architectural_operand() {
+    // Regression: the staged translation delta used to live in rs1 for the
+    // execution window, so a store whose data register equals its base
+    // register stored the delta-adjusted value.  sd x5, 0(x5) must store
+    // the architectural x5 (the virtual address), not a physical one.
+    let (mut core, ram) = core_with_ram();
+    install_leaf(&ram, VA, 0x80005, 0x0e); // R|W|X program page
+    install_leaf(&ram, VA_DATA, 0x80004, 0x06); // R|W data page
+    store_program(&ram, MAPPED_PA, &[sd(5, 5, 0), 0x13]); // sd x5, 0(x5)
+    core.state_mut().regs[5] = VA_DATA; // x5 is both base and operand
+    enable_sv39(&mut core, PrivilegeMode::Supervisor);
+
+    let outcome = core.step_outcome();
+    assert!(
+        matches!(outcome, StepOutcome::InstructionRetired(_)),
+        "{outcome:?}"
+    );
+    assert_eq!(gp_read(&ram, DATA_PA), VA_DATA);
+    // The architectural x5 is unchanged.
+    assert_eq!(core.state().regs[5], VA_DATA);
+}
+
+#[test]
+fn amoswap_with_rs2_equal_rs1_swaps_the_architectural_operand() {
+    // Regression for the same hole through the AMO envelope: amoswap.d
+    // x5, x5, (x5) must swap the architectural x5 into the translated
+    // address and return the old value.
+    let (mut core, ram) = core_with_ram();
+    install_leaf(&ram, VA, 0x80005, 0x0e);
+    install_leaf(&ram, VA_DATA, 0x80004, 0x06);
+    gp_write(&ram, DATA_PA, 0x77);
+    store_program(&ram, MAPPED_PA, &[amoswap_d(5, 5, 5), 0x13]);
+    core.state_mut().regs[5] = VA_DATA; // x5 is address and operand
+    core.state_mut().regs[1] = VA_DATA;
+    enable_sv39(&mut core, PrivilegeMode::Supervisor);
+
+    let outcome = core.step_outcome();
+    assert!(
+        matches!(outcome, StepOutcome::InstructionRetired(_)),
+        "{outcome:?}"
+    );
+    assert_eq!(gp_read(&ram, DATA_PA), VA_DATA);
+    assert_eq!(core.state().regs[5], 0x77);
+}
+
+#[test]
 fn mapped_load_and_store_translate_with_ad_bits_and_observations() {
     let (mut core, ram) = core_with_ram();
     install_leaf(&ram, VA, 0x80005, 0x0e); // R|W|X program page
@@ -280,18 +336,24 @@ fn mapped_load_and_store_translate_with_ad_bits_and_observations() {
         panic!("expected a commit record")
     };
     let effects = &commit.effects.memory;
-    // The implicit A/D write for the data leaf, the implicit A/D write for
-    // the next fetch's program leaf, then the explicit load: three effects,
-    // with the data-leaf write first because the data walk runs before the
-    // executor issues the access and before the next fetch begins.
+    // The implicit A/D writes for the fetch's program leaf and the load's
+    // data leaf, then the explicit load: three effects, with the fetch's
+    // write first because the fetch walk runs before the data walk.
     assert_eq!(effects.len(), 3);
     assert!(effects[0].implicit);
+    assert!(effects[1].implicit);
     assert!(!effects[2].implicit);
-    // The two implicit writes are the next fetch's program leaf and the
-    // data leaf, in walk order.
+    // The fetch write targets the program leaf; the load's write targets
+    // the data leaf.
     let prog_leaf = (ROOT_PPN + 2) * PAGE + ((VA >> 12) & 0x1ff) * 8;
     assert_eq!(effects[0].guest_address, prog_leaf);
     assert_eq!(effects[1].guest_address, leaf_addr);
+    // The A/D effect records the guest-physical PTE address in both
+    // address fields, the same address the walk handed the port before
+    // the base conversion.
+    assert_eq!(effects[0].issued_address, Some(prog_leaf));
+    assert_eq!(effects[1].issued_address, Some(leaf_addr));
+    assert_eq!(effects[2].guest_address, VA_DATA);
     let pte_after_load = load_value(&ram, leaf_addr);
     assert_eq!(pte_after_load & 0x40, 0x40, "A set after the load");
     assert_eq!(pte_after_load & 0x80, 0, "D clear after the load");
@@ -533,9 +595,11 @@ fn sum_mxr_and_umode_permission_checks() {
     ));
     assert_eq!(core.state().regs[5], 0x21);
 
-    // S-mode fetch of a U=1 page faults regardless of SUM.
+    // S-mode fetch of a U=1 page faults regardless of SUM.  The leaf has
+    // X and U (R|X|U, no W), so only the U=1 rule can fault it: a broken
+    // SUM check would retire the fetch instead.
     let (mut core, ram) = core_with_ram();
-    install_leaf(&ram, VA, 0x80005, 0x16); // R|W|U, no X
+    install_leaf(&ram, VA, 0x80005, 0x1a); // X|U program page
     store_program(&ram, MAPPED_PA, &[0x13]);
     enable_sv39(&mut core, PrivilegeMode::Supervisor);
     set_mstatus(&mut core, PrivilegeMode::Supervisor, mstatus::SUM);

@@ -97,6 +97,7 @@ _start:
     li      t0, 0x20800                 # MPRV | MPP=S, SUM clear
     csrw    mstatus, t0
     ld      a1, 0(s0)
+    j       fail
 case2_resume:
 
     # Case 4: fetch never used translation.  mret below returns to M mode

@@ -11,6 +11,6 @@ SECTIONS
 {
     . = 0x80000000;
     .text : { *(.text*) *(.data*) *(.rodata*) }
-    . = 0x80008000;
+    . = ALIGN(0x1000);
     .tohost : { *(.tohost) }
 }

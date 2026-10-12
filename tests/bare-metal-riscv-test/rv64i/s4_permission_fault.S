@@ -10,8 +10,9 @@
 #   1. Store to a read-only PTE        -> store page fault (15), mtval VA
 #   2. Fetch from a non-X PTE          -> instr page fault (12), mtval VA
 #   3. Load of U=1 page with SUM=0     -> load page fault (13), mtval VA
-#   4. Load of X-only page, MXR=0      -> load page fault (13), mtval VA
-#   5. Same load with MXR=1            -> retires, correct value
+#   4. Fetch of a U=1 page             -> instruction page fault (12), mtval VA
+#   5. Load of X-only page, MXR=0      -> load page fault (13), mtval VA
+#   6. Same load with MXR=1            -> retires, correct value
 #
 # The whole image is one contiguous .text region (see linker-s4.ld).  The
 # translated program page runs at VA 0x1000, so `la` inside it would
@@ -70,6 +71,14 @@ _start:
     ori     t3, t3, 0x17                # V | R | W | U
     sd      t3, 32(t0)
 
+    # leaf[vpn0=6]: VA 0x6000 -> U page, R|X|U: case 4's S fetch faults
+    # regardless of SUM.  X is set, so only the U=1 rule can fault it.
+    la      t3, ufetch_page
+    srli    t3, t3, 12
+    slli    t3, t3, 10
+    ori     t3, t3, 0x1b                # V | R | X | U
+    sd      t3, 48(t0)
+
     # leaf[vpn0=5]: VA 0x5000 -> execute-only page, X only: cases 4 and 5.
     la      t3, xonly_page
     srli    t3, t3, 12
@@ -96,9 +105,14 @@ _start:
     #   s0 = VA 0x2000 (read-only data page)
     #   s1 = tohost address (identity mapped)
     #   s2 = VA 0x5000 (execute-only page)
+    #   s3 = identity-mapped resume after the U-page fetch fault
     li      s0, 0x2000
     la      s1, tohost
     li      s2, 0x5000
+    la      s3, ufetch_resume
+    la      t0, case5_arm
+    la      t1, s4_page
+    sub     s4, t0, t1              # case5_arm offset inside the VA 0x1000 page
 
     # ---- Enter Supervisor with Sv39 on ----
     la      t0, trap_handler
@@ -177,24 +191,30 @@ ro_page:
     .align 12
 xonly_page:
     .zero 4096
+    .align 12
+ufetch_page:
+    # Never executed.  R|X|U, so only the S-mode U=1 fetch rule faults it.
+    nop
+    .zero 4092
+
+# Case 4 resumes here, on the identity superpage, then returns to the
+# translated page for the MXR cases.
+ufetch_resume:
+    li      t0, 0x1000
+    add     t0, t0, s4
+    jr      t0
 
 # ---- The translated program page (VA 0x1000) ----
     .align 12
     .globl s4_page
 s4_page:
-prog_exit_dbg:
-    li      t1, 1
-    slli    t1, t1, 63
-    or      a0, a0, t1
-    sd      a0, 0(s1)
-dbg_hang:
-    j       dbg_hang
     # Case 1: store to the read-only page at VA 0x2000 (s0).
     li      s5, 15                      # expect store page fault
     li      s6, 0x2000                  # expect mtval VA 0x2000
     la      s7, case1_resume
     li      a1, 0x77
     sd      a1, 0(s0)
+    j       prog_fail
 case1_resume:
     # The handler resumed here.  The stored byte must not have landed.
     ld      a2, 0(s0)
@@ -207,6 +227,7 @@ case1_resume:
     la      s7, case2_resume
     li      t0, 0x3000
     jr      t0
+    j       prog_fail
 case2_resume:
     # Case 3: S-mode load of the U=1 page at VA 0x4000 with SUM=0.
     li      s5, 13                      # expect load page fault
@@ -214,14 +235,30 @@ case2_resume:
     la      s7, case3_resume
     li      t0, 0x4000
     ld      a1, 0(t0)
+    j       prog_fail
 case3_resume:
-    # Case 4: load of the execute-only page at VA 0x5000 (s2) with MXR=0.
+    # Case 4: S-mode fetch of the U=1 page at VA 0x6000, with SUM set.
+    # D9 faults this fetch regardless of SUM, so the case has to run with
+    # SUM=1: under SUM=0 the ordinary user-page rule would fault it too,
+    # and the test could not tell the two apart.  The recovery address
+    # was computed in M mode (s3).
+    li      t0, 0x40000                 # SUM (bit 18)
+    csrs    sstatus, t0
+    li      s5, 12
+    li      s6, 0x6000
+    mv      s7, s3
+    li      t0, 0x6000
+    jr      t0
+    j       prog_fail
+case5_arm:
+    # Case 5: load of the execute-only page at VA 0x5000 (s2) with MXR=0.
     li      s5, 13
     li      s6, 0x5000
-    la      s7, case4_resume
+    la      s7, case5_resume
     ld      a1, 0(s2)
-case4_resume:
-    # Case 5: the same load with MXR=1 retires with the known value.
+    j       prog_fail
+case5_resume:
+    # Case 6: the same load with MXR=1 retires with the known value.
     li      s5, -1                      # must retire, no trap
     li      t0, 0x80000                 # MXR (bit 19)
     csrs    sstatus, t0

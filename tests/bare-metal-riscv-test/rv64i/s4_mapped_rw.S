@@ -171,11 +171,10 @@ s4_page:
     # very fetch set it.  D must be clear: nothing stores to VA 0x1000.
     li      a2, 0x2008                  # VA 0x2000 + 8, leaf[1]
     ld      a3, 0(a2)
-    li      a4, 0x40                    # A
-    and     a3, a3, a4
-    bne     a3, a4, prog_fail
-    andi    a3, a3, 0x80                # D
-    bnez    a3, prog_fail
+    andi    a4, a3, 0x40                # A
+    beqz    a4, prog_fail
+    andi    a4, a3, 0x80                # D stays clear: nothing stores here
+    bnez    a4, prog_fail
 
     # ---- SFENCE.VMA: all four forms (D8) ----
     sfence.vma                          # rs1=x0, rs2=x0 (global)
