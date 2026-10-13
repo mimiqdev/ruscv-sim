@@ -8,9 +8,11 @@ Usage: python3 tools/a10/derive_oracles.py target/<fresh-build> [--check|--check
 --check audits the complete checked-in derivation without changing any file.
 --check-artifacts excludes only build-tool identities: identical source/linker/ELF
 and semantic/placement expectations remain mandatory. It does not certify tools.
---extend adds the Stage 4 witnesses and rewrites suite-v1.json's oracle pin from
-the file bytes. It preserves the sealed producer identities and refuses to write
-if any pre-existing fixture changes.
+--extend adds the Stage 4 witnesses. It preserves the sealed producer identities
+and refuses to write if any pre-existing fixture changes. With no flag the whole
+oracle is rederived and this platform's producer identities are replaced from
+build.json. Both writing modes rewrite suite-v1.json's oracle pin from the bytes
+they wrote.
 """
 import copy
 import hashlib
@@ -331,11 +333,11 @@ if mode in (['--check'], ['--check-artifacts']):
         print('P0 linked-source/oracle derivation audit: matches (no simulator invoked)')
 else:
     MANIFEST.write_text(rendered)
-    if mode == ['--extend']:
-        # The suite pin is the oracle file's own digest. Adding a witness
-        # rewrites that one pin; there is no second handwritten constant.
-        suite_path = ROOT/'tools/a10/suite-v1.json'
-        suite = json.loads(suite_path.read_text())
-        suite['oracle_sha256'] = hashlib.sha256(rendered.encode()).hexdigest()
-        suite_path.write_text(json.dumps(suite, separators=(',', ':'))+'\n')
-        print(f'P0 oracle extended; suite pin {suite["oracle_sha256"]}')
+    # The suite pin is the oracle file's own digest. Every write rewrites
+    # that one pin; there is no second handwritten constant.
+    suite_path = ROOT/'tools/a10/suite-v1.json'
+    suite = json.loads(suite_path.read_text())
+    suite['oracle_sha256'] = hashlib.sha256(rendered.encode()).hexdigest()
+    suite_path.write_text(json.dumps(suite, separators=(',', ':'))+'\n')
+    verb = 'extended' if mode == ['--extend'] else 'resealed'
+    print(f'P0 oracle {verb}; suite pin {suite["oracle_sha256"]}')

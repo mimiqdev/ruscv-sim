@@ -431,11 +431,7 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
                     "fact detail count",
                 )?;
                 let strict = f.facts == crate::support::FactsPolicy::Strict;
-                let allowed = if strict {
-                    &[3u8][..]
-                } else {
-                    &[0u8, 1, 3][..]
-                };
+                let allowed = if strict { &[3u8][..] } else { &[0u8, 1, 3][..] };
                 for (i, (d, t)) in details.iter().zip(&f.trace).enumerate() {
                     let base = if route == "machine-native" {
                         0
@@ -450,7 +446,8 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
                             && d.minstret == i as u64 + 1
                             && !d.explicit_minstret_write
                             && {
-                                let mcycle_old = crate::support::mcycle_before(&f.trap_at, i as u64);
+                                let mcycle_old =
+                                    crate::support::mcycle_before(&f.trap_at, i as u64);
                                 let counters = [
                                     [0xb02, i as u64, i as u64 + 1, 1],
                                     [0xb00, mcycle_old, mcycle_old + 1, 1],

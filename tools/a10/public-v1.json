@@ -2734,7 +2734,7 @@
       "source": "tools/a10/fixtures/s4_tvm.S",
       "linker": "tools/a10/fixtures/linker.ld",
       "native_only": false,
-      "source_sha256": "46307f3a629019c5c45e513e55a45459d6b711fe49455511f4972f9d6abe94e5",
+      "source_sha256": "60a87bf14b42c54e0c7ee6bb2b8a2cbb5952a9e62c6c2bf8a668c56b1b91acff",
       "linker_sha256": "39bc63071e6718a09a486e34e37be6dc2f4b7c088bc53814b7ffebc0ddd96372",
       "elf_sha256": "56fb9b126b5707ca990bf18c2aea4000a020ce5b9d2a217d02142d9d3e5467ed",
       "entry": 2147483648,

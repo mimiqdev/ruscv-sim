@@ -37,6 +37,16 @@
 //! with vectored mtvec enters at BASE, and the slots at BASE + 4*cause are
 //! failure paths. SRET from S returns to U with MPRV clear, SPIE set, and
 //! SEPC bits 1:0 clear, and the same instruction in U is illegal.
+//!
+//! `s4_sfence_vma` proves the SFENCE.VMA family (D8, M4): S mode rewrites a
+//! leaf PTE before each of the four rs1/rs2 forms and then loads (or
+//! stores) through the newly written mapping, a previously invalid leaf
+//! becomes usable after a per-VA fence, and a non-canonical rs1 raises no
+//! exception. The rewritten leaf is also visible before the fence; that is
+//! recorded as a property of this cache-less model, not as an architectural
+//! requirement. HFENCE.VVMA (a SYSTEM funct3 = 0 encoding that is not
+//! SFENCE.VMA) in S and SFENCE.VMA in U are illegal-instruction traps with
+//! mtval equal to the instruction bits.
 
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 use std::env;
@@ -44,13 +54,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-const GUESTS: [&str; 6] = [
+const GUESTS: [&str; 7] = [
     "s4_mapped_rw",
     "s4_permission_fault",
     "s4_mprv",
     "s4_walk_fault",
     "s4_ad_observation",
     "s4_sret_vectored",
+    "s4_sfence_vma",
 ];
 const LINKER_SCRIPT: &str = "linker-s4.ld";
 const MAX_CYCLES: u64 = 100_000;
