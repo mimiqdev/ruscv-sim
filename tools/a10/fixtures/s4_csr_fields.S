@@ -56,11 +56,18 @@ sample_checks:
     bne t0, t4, fail
     ld t0, 8(s0)
     bnez t0, fail
+    li t0, 1
+    sd t0, 0(s1)
+    li t0, 2827
+    sd t0, 8(s1)
+counter_read:
+    csrr t5, minstret
+    sd t5, 16(s1)
     li t4, 1
     slli t4, t4, 63
     la t6, tohost
     sd t4, 0(t6)
-3:  j 3b
+4:  j 4b
 fail:
     li a0, 41
     la t6, tohost

@@ -53,6 +53,9 @@ pub struct Fixture {
     pub ram: Vec<Ram>,
     pub regs: Vec<u64>,
     pub trace: Vec<Trace>,
+    /// Observation-plane policy; defaults to the original strict A10 rules.
+    #[serde(default)]
+    pub facts: FactsPolicy,
     pub segments: Vec<Segment>,
     pub tohost: Option<u64>,
     pub memory_size: usize,
@@ -118,6 +121,20 @@ pub struct Counts {
     pub turns: u64,
     pub retirements: u64,
     pub traps: u64,
+}
+/// Per-fixture policy for the immutable-facts observation plane.
+///
+/// `Strict` is the original A10 rule set: M-mode-only retirements whose only
+/// CSR effects are the two implicit counters, and no trap records. `S4`
+/// admits Stage 4 fixtures: retirements in any privilege mode, explicit CSR
+/// instruction effects recorded after the two counter entries, and trap
+/// turns, which produce no CommitRecord and are absent from the trace.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub enum FactsPolicy {
+    #[default]
+    Strict,
+    S4,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PublicResult {
@@ -540,42 +557,73 @@ pub fn image_identity(f: &Fixture, image: &LoadImage) -> Check {
     equal("ELF segments", &segments, &f.segments)
 }
 /// Capture only existing immutable facts; never snapshots/refetches for commits.
+/// Trap turns produce no CommitRecord; under `S4` they are absent from the
+/// trace, and the entry's own CSR writes (mepc/mcause/mstatus) are recorded
+/// in FactDetail.csr but own no trace row.
 fn capture_fact(
     observation: &Observation,
+    policy: FactsPolicy,
     kind: PlatformKind,
     index: usize,
     base: u64,
-) -> Result<Trace, String> {
+) -> Result<Option<Trace>, String> {
     use ruscv_sim::physical::{AtomicAccessKind, ConditionalStatus};
     let Observation::Commit(c) = observation else {
-        return Err("unexpected trap record".into());
+        return match policy {
+            FactsPolicy::Strict => Err("unexpected trap record".into()),
+            FactsPolicy::S4 => Ok(None),
+        };
     };
     let retired = c.retired;
     if c.hart_id != 0
         || c.instruction_length != 4
         || retired.explicit_minstret_write
         || retired.minstret != index as u64 + 1
-        || retired.privilege as u8 != 3
-        || retired.next_privilege as u8 != 3
         || !c.effects.fpr.is_empty()
         || c.effects.fcsr.is_some()
-        || c.effects.csr
-            != [
-                ruscv_sim::csr::CsrAccess {
-                    addr: MINSTRET,
-                    old_value: index as u64,
-                    new_value: index as u64 + 1,
-                    wrote: true,
-                },
-                ruscv_sim::csr::CsrAccess {
-                    addr: MCYCLE,
-                    old_value: index as u64,
-                    new_value: index as u64 + 1,
-                    wrote: true,
-                },
-            ]
     {
-        return Err("Hart identity/privilege/CSR/counter or unexpected FPR/FCSR effects".into());
+        return Err("Hart identity/CSR/counter or unexpected FPR/FCSR effects".into());
+    }
+    let (allowed_privileges, counters_only) = match policy {
+        FactsPolicy::Strict => (&[3u8][..], true),
+        FactsPolicy::S4 => (&[0u8, 1, 3][..], false),
+    };
+    if !allowed_privileges.contains(&(retired.privilege as u8))
+        || !allowed_privileges.contains(&(retired.next_privilege as u8))
+    {
+        return Err("retirement privilege outside the declared policy".into());
+    }
+    let counters = [
+        ruscv_sim::csr::CsrAccess {
+            addr: MINSTRET,
+            old_value: index as u64,
+            new_value: index as u64 + 1,
+            wrote: true,
+        },
+        ruscv_sim::csr::CsrAccess {
+            addr: MCYCLE,
+            old_value: index as u64,
+            new_value: index as u64 + 1,
+            wrote: true,
+        },
+    ];
+    let expected = if counters_only {
+        c.effects.csr.clone()
+    } else {
+        let mut rest = c.effects.csr.clone();
+        if rest.len() >= 2 && rest[0].addr == MINSTRET && rest[1].addr == MCYCLE {
+            rest.drain(..2);
+            rest
+        } else {
+            return Err("implicit counter effects must lead the CSR journal".into());
+        }
+    };
+    if expected != counters && counters_only
+        || counters_only && c.effects.csr != counters
+        || !counters_only && (c.effects.csr.first().map(|a| a.addr) != Some(MINSTRET)
+            || c.effects.csr.get(1).map(|a| a.addr) != Some(MCYCLE))
+    {
+        return Err("implicit counter CSR effects missing or misplaced".into());
     }
     let mut memory = Vec::new();
     for effect in &c.effects.memory {
@@ -618,7 +666,7 @@ fn capture_fact(
             rl: atomic.is_some_and(|a| a.ordering.rl),
         });
     }
-    Ok(Trace {
+    Ok(Some(Trace {
         pc: retired.pc,
         instruction: retired.instruction,
         next_pc: retired.next_pc,
@@ -638,7 +686,7 @@ fn capture_fact(
             .reservation
             .as_ref()
             .map(|r| [r.before.is_some(), r.after.is_some()]),
-    })
+    }))
 }
 fn event(e: &PlatformEvent) -> Event {
     match e {
@@ -679,15 +727,25 @@ pub fn machine_config(kind: PlatformKind) -> (MachineConfig, UartCapture) {
 struct FactSink {
     facts: Vec<Trace>,
     details: Vec<FactDetail>,
+    policy: FactsPolicy,
     kind: PlatformKind,
     base: u64,
 }
 impl ObservationSink for FactSink {
     type Error = String;
     fn observe(&mut self, observation: &Observation) -> Result<(), String> {
-        let record = capture_fact(observation, self.kind, self.facts.len(), self.base)?;
+        let record = capture_fact(
+            observation,
+            self.policy,
+            self.kind,
+            self.facts.len(),
+            self.base,
+        )?;
         let Observation::Commit(c) = observation else {
-            return Err("unexpected trap".into());
+            // Under S4 the trap turn was validated by capture_fact and owns
+            // no trace row; its entry effects stay out of FactDetail, which
+            // mirrors the CommitRecord journal only.
+            return Ok(());
         };
         self.details.push(FactDetail {
             hart_id: c.hart_id,
@@ -721,7 +779,9 @@ impl ObservationSink for FactSink {
                 .map(|m| m.atomic.map(|a| a.indivisible))
                 .collect(),
         });
-        self.facts.push(record);
+        if let Some(record) = record {
+            self.facts.push(record);
+        }
         Ok(())
     }
 }
@@ -758,6 +818,7 @@ impl MachineRun {
                 None
             },
             sink: FactSink {
+                policy: f.facts,
                 details: if mode == "off" {
                     Vec::new()
                 } else {

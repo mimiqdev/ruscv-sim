@@ -430,6 +430,12 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
                     details.len() == if mode == "off" { 0 } else { f.trace.len() },
                     "fact detail count",
                 )?;
+                let strict = f.facts == crate::support::FactsPolicy::Strict;
+                let allowed = if strict {
+                    &[3u8][..]
+                } else {
+                    &[0u8, 1, 3][..]
+                };
                 for (i, (d, t)) in details.iter().zip(&f.trace).enumerate() {
                     let base = if route == "machine-native" {
                         0
@@ -439,15 +445,23 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
                     need(
                         d.hart_id == 0
                             && d.instruction_length == 4
-                            && d.privilege == 3
-                            && d.next_privilege == 3
+                            && allowed.contains(&d.privilege)
+                            && allowed.contains(&d.next_privilege)
                             && d.minstret == i as u64 + 1
                             && !d.explicit_minstret_write
-                            && d.csr
-                                == vec![
-                                    [0xb02, i as u64, i as u64 + 1, 1],
-                                    [0xb00, i as u64, i as u64 + 1, 1],
-                                ]
+                            && (if strict {
+                                d.csr
+                                    == vec![
+                                        [0xb02, i as u64, i as u64 + 1, 1],
+                                        [0xb00, i as u64, i as u64 + 1, 1],
+                                    ]
+                            } else {
+                                d.csr.len() >= 2
+                                    && d.csr[0]
+                                        == [0xb02, i as u64, i as u64 + 1, 1]
+                                    && d.csr[1]
+                                        == [0xb00, i as u64, i as u64 + 1, 1]
+                            })
                             && d.fpr.is_empty()
                             && d.fcsr.is_none(),
                         "direct Hart/CSR/FPR details",

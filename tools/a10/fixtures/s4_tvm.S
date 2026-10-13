@@ -25,10 +25,17 @@ m_cont:
     li t0, 0x77
     sd t0, 0(s0)
     li t0, 1
-    slli t0, t0, 63
+    sd t0, 0(s1)
+    li t0, 119
+    sd t0, 8(s1)
+counter_read:
+    csrr t5, minstret
+    sd t5, 16(s1)
+    li t4, 1
+    slli t4, t4, 63
     la t6, tohost
-    sd t0, 0(t6)
-2:  j 2b
+    sd t4, 0(t6)
+4:  j 4b
 fail:
     li a0, 41
     la t6, tohost
@@ -43,6 +50,8 @@ handler:
     bne t0, t1, fail
     csrr t0, mscratch
     csrw mepc, t0
+    li t0, 0x1880                  # MIE | MPIE | MPP = M
+    csrw mstatus, t0
     mret
 .section .tohost,"aw",@progbits
 .balign 8

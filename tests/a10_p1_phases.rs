@@ -146,8 +146,8 @@ fn every_actual_public_cell_has_its_own_phase_oracle_and_availability() {
         .iter()
         .filter(|r| r.semantic_status != "not_applicable")
         .collect();
-    assert_eq!(measured.len(), 360);
-    assert_eq!(rows.len(), 684);
+    assert_eq!(measured.len(), 450);
+    assert_eq!(rows.len(), 855);
     for r in measured {
         assert_eq!(
             r.semantic_status, "correct",
@@ -175,7 +175,7 @@ fn every_actual_public_cell_has_its_own_phase_oracle_and_availability() {
         .iter()
         .filter(|r| r.semantic_status == "not_applicable")
         .all(|r| r.reason.is_some() && r.interval.is_none() && r.accepted_ns.is_none()));
-    println!("P1: 180 applicable real phase cells x (one warmup + one basic) = 360 validated intervals; 324 explicit N/A cells; no performance verdict");
+    println!("P1: 225 applicable real phase cells x (one warmup + one basic) = 450 validated intervals; 324 explicit N/A cells; no performance verdict");
 }
 #[test]
 fn ordered_real_flat_scope_includes_owned_copy_and_actual_drop() {
