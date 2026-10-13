@@ -1,6 +1,7 @@
-# public-v1 s4_ssip: SSIP+SSIE taken in M once MIE=1; mcause is
-# (1<<63)|1, mepc is the interrupted instruction, mtval is 0; the handler
-# clears the pending bit and exits 0.  work=1, checksum=0x55.
+# public-v1 s4_ssip: SSIP+SSIE taken in M once MIE=1. mcause is
+# (1<<63)|1, mepc is the interrupted instruction, mtval is 0. The
+# handler clears the pending bit and exits 0. work=1, checksum=0x55.
+# The interrupt turn is not an instruction attempt.
 .option norvc
 .option norelax
 .section .text
@@ -19,7 +20,7 @@ _start:
     li t0, 8                        # MIE
     csrs mstatus, t0
 int_site:
-    addi x0, x0, 7                  # interrupted here
+    addi x0, x0, 7                  # interrupted here; does not retire
     j fail
 m_cont:
     csrr t0, mip
@@ -33,16 +34,15 @@ m_cont:
 counter_read:
     csrr t5, minstret
     sd t5, 16(s1)
-    li t4, 1
-    slli t4, t4, 63
+    li a0, 1
     la t6, tohost
-    sd t4, 0(t6)
-4:  j 4b
+    sd a0, 0(t6)
+1:  j 1b
 fail:
     li a0, 41
     la t6, tohost
     sd a0, 0(t6)
-3:  j 3b
+2:  j 2b
 handler:
     csrr t0, mcause
     li t1, 1
@@ -57,8 +57,9 @@ handler:
     csrw mip, x0
     csrr t0, mscratch
     csrw mepc, t0
-    li t1, 0x1880                  # MIE | MPIE | MPP = M
-    csrw mstatus, t1
+    addi t0, x0, 0x188
+    slli t0, t0, 4                  # MIE | MPIE | MPP = M
+    csrw mstatus, t0
     mret
 .section .tohost,"aw",@progbits
 .balign 8

@@ -48,26 +48,23 @@ _start:
     li t0, 0xB0B
     sd t0, 0(s0)
     sd x0, 8(s0)
-    sd t0, 0(s1)
-    sd x0, 8(s1)
 sample_checks:
     ld t0, 0(s0)
     li t4, 0xB0B
     bne t0, t4, fail
     ld t0, 8(s0)
     bnez t0, fail
-    li t0, 1
+    li t0, 6
     sd t0, 0(s1)
-    li t0, 2827
+    li t0, 0xB0B
     sd t0, 8(s1)
 counter_read:
     csrr t5, minstret
     sd t5, 16(s1)
-    li t4, 1
-    slli t4, t4, 63
+    li a0, 1
     la t6, tohost
-    sd t4, 0(t6)
-4:  j 4b
+    sd a0, 0(t6)
+1:  j 1b
 fail:
     li a0, 41
     la t6, tohost

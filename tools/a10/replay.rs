@@ -449,19 +449,16 @@ pub fn validate_report(root: &Path, report: &Value) -> Result<i32, String> {
                             && allowed.contains(&d.next_privilege)
                             && d.minstret == i as u64 + 1
                             && !d.explicit_minstret_write
-                            && (if strict {
-                                d.csr
-                                    == vec![
-                                        [0xb02, i as u64, i as u64 + 1, 1],
-                                        [0xb00, i as u64, i as u64 + 1, 1],
-                                    ]
-                            } else {
+                            && {
+                                let mcycle_old = crate::support::mcycle_before(&f.trap_at, i as u64);
+                                let counters = [
+                                    [0xb02, i as u64, i as u64 + 1, 1],
+                                    [0xb00, mcycle_old, mcycle_old + 1, 1],
+                                ];
                                 d.csr.len() >= 2
-                                    && d.csr[0]
-                                        == [0xb02, i as u64, i as u64 + 1, 1]
-                                    && d.csr[1]
-                                        == [0xb00, i as u64, i as u64 + 1, 1]
-                            })
+                                    && d.csr[d.csr.len() - 2..] == counters
+                                    && (!strict || d.csr.len() == 2)
+                            }
                             && d.fpr.is_empty()
                             && d.fcsr.is_none(),
                         "direct Hart/CSR/FPR details",

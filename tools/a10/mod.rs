@@ -56,6 +56,11 @@ pub struct Fixture {
     /// Observation-plane policy; defaults to the original strict A10 rules.
     #[serde(default)]
     pub facts: FactsPolicy,
+    /// Retirement count at each trap turn, before the next retired instruction.
+    /// Empty for the original no-trap fixtures. `mcycle` includes these turns
+    /// and `minstret` does not.
+    #[serde(default)]
+    pub trap_at: Vec<u64>,
     pub segments: Vec<Segment>,
     pub tohost: Option<u64>,
     pub memory_size: usize,
@@ -556,16 +561,22 @@ pub fn image_identity(f: &Fixture, image: &LoadImage) -> Check {
         .collect();
     equal("ELF segments", &segments, &f.segments)
 }
+/// `mcycle` value before retirement `index`, including earlier trap turns.
+pub fn mcycle_before(trap_at: &[u64], retirement: u64) -> u64 {
+    retirement + trap_at.iter().filter(|at| **at <= retirement).count() as u64
+}
 /// Capture only existing immutable facts; never snapshots/refetches for commits.
-/// Trap turns produce no CommitRecord; under `S4` they are absent from the
-/// trace, and the entry's own CSR writes (mepc/mcause/mstatus) are recorded
-/// in FactDetail.csr but own no trace row.
+/// Trap turns produce no CommitRecord. Under `S4` they are absent from the
+/// trace and from `FactDetail`, which records retired instructions only.
+/// Implicit counter effects are the journal suffix: an explicit CSR write is
+/// recorded first, then `minstret`, then `mcycle`.
 fn capture_fact(
     observation: &Observation,
     policy: FactsPolicy,
     kind: PlatformKind,
     index: usize,
     base: u64,
+    mcycle_old: u64,
 ) -> Result<Option<Trace>, String> {
     use ruscv_sim::physical::{AtomicAccessKind, ConditionalStatus};
     let Observation::Commit(c) = observation else {
@@ -602,27 +613,14 @@ fn capture_fact(
         },
         ruscv_sim::csr::CsrAccess {
             addr: MCYCLE,
-            old_value: index as u64,
-            new_value: index as u64 + 1,
+            old_value: mcycle_old,
+            new_value: mcycle_old + 1,
             wrote: true,
         },
     ];
-    let expected = if counters_only {
-        c.effects.csr.clone()
-    } else {
-        let mut rest = c.effects.csr.clone();
-        if rest.len() >= 2 && rest[0].addr == MINSTRET && rest[1].addr == MCYCLE {
-            rest.drain(..2);
-            rest
-        } else {
-            return Err("implicit counter effects must lead the CSR journal".into());
-        }
-    };
-    if expected != counters && counters_only
-        || counters_only && c.effects.csr != counters
-        || !counters_only && (c.effects.csr.first().map(|a| a.addr) != Some(MINSTRET)
-            || c.effects.csr.get(1).map(|a| a.addr) != Some(MCYCLE))
-    {
+    let csr = c.effects.csr.as_slice();
+    let suffix = csr.len() >= 2 && csr[csr.len() - 2..] == counters;
+    if (counters_only && csr != counters) || (!counters_only && !suffix) {
         return Err("implicit counter CSR effects missing or misplaced".into());
     }
     let mut memory = Vec::new();
@@ -728,6 +726,7 @@ struct FactSink {
     facts: Vec<Trace>,
     details: Vec<FactDetail>,
     policy: FactsPolicy,
+    trap_at: Vec<u64>,
     kind: PlatformKind,
     base: u64,
 }
@@ -740,6 +739,7 @@ impl ObservationSink for FactSink {
             self.kind,
             self.facts.len(),
             self.base,
+            mcycle_before(&self.trap_at, self.facts.len() as u64),
         )?;
         let Observation::Commit(c) = observation else {
             // Under S4 the trap turn was validated by capture_fact and owns
@@ -819,6 +819,7 @@ impl MachineRun {
             },
             sink: FactSink {
                 policy: f.facts,
+                trap_at: f.trap_at.clone(),
                 details: if mode == "off" {
                     Vec::new()
                 } else {

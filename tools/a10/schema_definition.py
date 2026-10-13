@@ -77,7 +77,7 @@ SCHEMA = dict({'$schema':'https://json-schema.org/draft/2020-12/schema', '$id':'
  'tools': obj({key:ref('tool') for key in ('rustc','cargo','rustfmt','as','ld','nm','objdump')}),
  'binaries': obj({key:ref('binary') for key in ('driver','cli','probe')}),
  'environment': obj({'execution':ref('host'),'physical_host':ref('host_observation'),'container':OBS,'ci':OBS,'filesystem':OBS,'sink_policy':S,'concurrency':S}),
- 'fixtures': array(obj({'id':S,'source':PATH,'linker':PATH,'elf':PATH,'source_sha256':SHA,'linker_sha256':SHA,'elf_sha256':SHA,'metadata':{'type':'object'},'producer':{'type':'object'},'identity_class':{'enum':['strict-pinned-tools','portable-artifact-equivalence']}}),12),
+ 'fixtures': array(obj({'id':S,'source':PATH,'linker':PATH,'elf':PATH,'source_sha256':SHA,'linker_sha256':SHA,'elf_sha256':SHA,'metadata':{'type':'object'},'producer':{'type':'object'},'identity_class':{'enum':['strict-pinned-tools','portable-artifact-equivalence']}}),15),
  'clocks': array(ref('clock')), 'policy':obj({'basic_repetitions':integer(8,1),'warmup_repetitions':{'const':1},'calibrated':{'const':False},'version':S,'sufficiency':OBS}),
  'records': array(ref('record')), 'aggregates': array(ref('aggregate')), 'semantic_status':{'enum':['correct','semantic_failure','unavailable']}, 'comparison_status':{'const':'inconclusive'}, 'diagnostics':TEXTS,
  'bundle': obj({'id':S,'manifest':{'const':'bundle.json'}})

@@ -80,17 +80,17 @@ fn all_actual_cells_round_trip_each_warmup_basic_native_cli_and_load_oracle() {
     let reread = replay::unique_json(&bytes).unwrap();
     assert_eq!(reread, a.report);
     assert_eq!(replay::validate_report(&a.root, &reread), Ok(0));
-    assert_eq!(reread["records"].as_array().unwrap().len(), 855);
+    assert_eq!(reread["records"].as_array().unwrap().len(), 858);
     let usable: Vec<_> = reread["records"]
         .as_array()
         .unwrap()
         .iter()
         .filter(|e| e["raw"]["semantic_status"] == "correct")
         .collect();
-    assert_eq!(usable.len(), 450);
+    assert_eq!(usable.len(), 456);
     assert_eq!(
         usable.iter().filter(|e| e["raw"]["warmup"] == true).count(),
-        225
+        228
     );
 }
 #[test]

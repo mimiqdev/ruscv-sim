@@ -148,11 +148,13 @@ fn versioned_manifest_and_capabilities_fail_closed() {
                 }
             }
             FactsPolicy::S4 => {
-                // Trap turns own no CommitRecord: retirements match the
-                // trace, and attempts cover retirements plus traps.
+                // Trap turns own no CommitRecord. An exception is an
+                // instruction attempt; a supervisor interrupt is not, so
+                // attempts equal turns or equal retirements.
                 assert_eq!(f.retirements, f.trace.len() as u64);
-                assert_eq!(f.attempts, f.turns);
                 assert_eq!(f.turns, f.retirements + f.traps);
+                assert_eq!(f.trap_at.len() as u64, f.traps);
+                assert!(f.attempts == f.turns || f.attempts == f.retirements);
                 for t in &f.trace {
                     assert!(!t.gpr.iter().any(|w| w.index == 0));
                 }
