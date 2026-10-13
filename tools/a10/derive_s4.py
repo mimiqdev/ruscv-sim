@@ -1,9 +1,12 @@
-"""RV64 effect model for the Stage 4 public-v1 witnesses.
+"""RV64 effect model for three public-v1 witnesses, not a general Stage 4 model.
 
 The model reads linked opcode words and applies RV64I plus the profile WARL
 rules in this file. It does not call ruscv-sim and it does not copy a trace.
 `s4_tvm` is the TVM illegal-instruction witness, `s4_ssip` the supervisor
 software-interrupt witness, and `s4_csr_fields` the CSR field-policy witness.
+Only the opcodes those three programs execute are implemented. The only TVM
+path is an S-mode CSR access to satp. SFENCE.VMA, TSR, and TW are not modeled.
+An opcode outside that set raises ValueError.
 """
 BASE = 0x80000000
 MASK = (1 << 64) - 1

@@ -2,7 +2,11 @@
 
 **Status:** Implementation progress for PR #84. Not a substitute for the milestone contract.
 
-**Code head:** `fc98f54729e05c4fc5a82fd7270f37957b843988` on `feat/stage4-sv39-8`. The A10 runs below used that commit. This note's run record is the following documentation commit; it does not change Rust, Python, schema, or fixture bytes.
+**Commits on `feat/stage4-sv39-8`:**
+
+- `fc98f54` seals the oracle, the harness, and the first draft of this note. The quality gate and both A10 runs used that tree.
+- `80f8c1e` changes only this file. It records those runs and an author check. That author check is not the §7 item 10 review.
+- The commit that adds the independent-review section also tightens the `derive_s4.py` module comment. It does not change the oracle, the witness sources, the schema, or Rust.
 
 ## What was wrong in `627625c`
 
@@ -53,6 +57,8 @@ Result: exit 0. Wall time about 373 seconds. `cargo test` reported 1951 passed, 
 
 `s4_profile_guests_pass_through_cli_library_and_flat_facade` and `s4_sv39_guests_pass_through_cli_library_and_flat_facade` both passed. The log has no toolchain skip line.
 
+The independent-review commit changes this note and the `derive_s4.py` module comment. The same host gate on that tree also exited 0, with 1951 passed, 0 failed, and 0 ignored. Oracle bytes, witness sources, and Rust were unchanged, so the A10 runs were not repeated.
+
 ## A10 baseline and smoke
 
 Both runs used a clean tree at `fc98f54`. The harness sets `CARGO_BUILD_JOBS=2` for its own release build. Reports stay under `target/` and are not committed. The lines below are the harness output.
@@ -91,14 +97,25 @@ Checked against `docs/dev-plan.md` §7 item 8, on the gate run above. Each row i
 
 The compact public-v1 witnesses repeat three of those rows for the smoke matrix: `s4_tvm` (`mtval` = `0x18002373`), `s4_ssip` (SSIP taken in M with MIE=1, `mtval` = 0), and `s4_csr_fields` (MPP=2, FS, SD, `misa`, `mepc`, `mtvec` MODE, unsupported `satp` MODE, `mie`/`mip` outside `0x222`). Sv39 families stay on `s4_sv39_guests`.
 
-## §7.10 review of `fc98f54`
+## §7.10 review
 
-Author check of that commit, after the gate and the two A10 runs. No code changed as a result.
+The author check of `fc98f54` confirmed the points below and changed no code. It does not by itself meet §7 item 10.
 
 - `derive_s4.py` does not call the simulator. It applies the profile WARL rules, takes a supervisor interrupt before fetch without counting an attempt, and takes an S-mode `satp` access with TVM=1 as cause 2 with `mtval` equal to the instruction word, counted as an attempt. P0 compared those traces with the simulator.
 - Strict facts still require the CSR journal to be exactly `minstret` then `mcycle`. S4 allows explicit CSR writes before that suffix. `mcycle`'s old value is the retirement index plus the number of trap turns at or before that index.
 - The original 12 fixtures are unchanged. `--check-artifacts` matched, and `suite-v1.json` `oracle_sha256` equals the SHA-256 of `public-v1.json`. There is no handwritten `ORACLE_SHA`.
-- The comment on the `0x188` immediate in `tools/a10/fixtures/s4_tvm.S` describes that immediate as MIE, MPIE, and MPP. The shifted value actually written is `0x1880`, which is MPIE and MPP=M. The simulator accepted that encoding. A comment-only edit would change `source_sha256` and force another oracle seal, so the comment stays.
-- Not every §4 family ELF is inside `public-v1.json`. The eight profile guests and six Sv39 guests are self-checking route programs. Tracing every Sv39 walk into the public oracle was not done.
+- Not every §4 family ELF is inside `public-v1.json`. The eight profile guests and six Sv39 guests are self-checking route programs.
 
-No open spec question. The two rulings in "Spec rulings kept" stay settled. No blocker in this review.
+An independent read-only review then covered `627625c..fc98f54` and this note as updated in `80f8c1e`. Outcome: no code or oracle blocker. The original 12 fixtures match `c2f1252`. The suite pin matches the oracle file. Strict facts stay exactly two counter entries. S4 allows an explicit CSR prefix and counts trap turns in `mcycle`. What that review asked for is handled as follows.
+
+| Review point | Disposition |
+| --- | --- |
+| §7 item 10 needs an independent review, not only an author check | This section is that recorded outcome. |
+| The note header mixed `fc98f54` with a later documentation-only commit | The header now names `fc98f54` and `80f8c1e` separately. |
+| Gate and A10 results are not stored as committed reports | The harness lines quoted above are the retained evidence. Full reports stay under `target/` and are not in git. |
+| `derive_s4.py` could be read as a general Stage 4 model | The module comment now limits it to the three witnesses and to one TVM path: an S-mode CSR access to `satp`. SFENCE.VMA, TSR, and TW are not modeled. An unknown opcode raises `ValueError`. |
+| `s4_tvm.S` comment on the `0x188` immediate | Left in place. The written value is `0x1880` (MPIE and MPP=M). A comment edit changes `source_sha256` and would reseal the oracle. |
+| `tools/a10/fixtures/linker-s4.ld` looked unused | That file is not in the tree. `fc98f54` deletes it. The three witnesses use `tools/a10/fixtures/linker.ld`. |
+| Report field `nontrapping_witness` | The name is older than the trap-inclusive method text. `witness_method()` already describes trap turns. Renaming the field would change the report shape after the recorded smoke run, so the name stays. |
+
+No open spec question. The two rulings in "Spec rulings kept" stay settled.
