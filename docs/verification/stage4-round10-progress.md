@@ -2,7 +2,7 @@
 
 **Status:** Implementation progress on `feat/stage4-sv39-9`. Not a substitute for the milestone contract.
 
-**Base:** `main` at `f964bfa` (PR #84).
+**Base:** `main` at `f964bfa` (PR #84). The implementation commit is `67ae539`. The commit after it changes only this note, to record the A10 smoke.
 
 ## Audit against `docs/dev-plan.md`
 
@@ -74,7 +74,18 @@ No step is a `SimulatorFailure`, and both retirements and traps occur in every s
 - The reseal ran in the pinned image `ghcr.io/mimiqdev/ruscv-sim-dev@sha256:cc3cfea2…` on fresh fixtures (`build_fixtures.py --out target/a10-r10-fixtures-1`). The only oracle diff is `s4_tvm.source_sha256`. The x86_64 producer pins came out identical. `--check-artifacts` and strict `--check` both match. New oracle and suite pin: `411933d75f0e546825f3ad9b1a51a8edaf649ae096098ad0d803d0712021b426`.
 - `python3 -m unittest discover -s tools/a10 -p 'test_*.py'`: 29 run, OK, 1 skipped.
 
-The A10 smoke result is recorded below.
+### A10 smoke
+
+The smoke ran in the pinned image on a clean tree at `67ae539`, the implementation commit, using the default 2 basic repetitions plus one warmup. The process exited 2, which is the harness rule that a valid smoke report is still not a performance pass. Report and logs stay under `target/` and are not committed. Harness output:
+
+```text
+P0 artifact-equivalence/oracle audit: matches; NOT pinned-toolchain evidence (no simulator invoked)
+INCONCLUSIVE: valid ruscv-perf/1 evidence at /workspace/target/perf/r10-smoke/report.json; 1086 ordered rows. P3 calibration/baseline/ratios and P4 retention deferred; NO performance PASS
+```
+
+`semantic_status` is `correct`, `comparison_status` is `inconclusive`, and diagnostics are empty. 684 rows are `correct` and 402 are `not_applicable`. There are 228 aggregates. Each of `s4_csr_fields`, `s4_ssip`, and `s4_tvm` has 48 correct rows and 26 explicit N/A rows, the same as round 9. The report's only oracle digest is `411933d7…b426`, which matches `suite-v1.json`. Every evidence entry carries `oracle_witness`, and none carries `nontrapping_witness`. `source.head` is `67ae539` and `source.clean` is true.
+
+`./scripts/perf-test.sh validate target/perf/r10-smoke/report.json` reported `Strict schema/integrity/own-P0 status 0; NEVER a speed/regression PASS`. The checker rebuilds every evidence entry, including `oracle_witness`, and compares it with the report.
 
 ## Gate
 
@@ -99,3 +110,5 @@ Result on the implementation commit's tree: exit 0, wall time 268 seconds. `carg
 1. **HFENCE.VVMA as the "other SYSTEM funct3 = 0 encoding".** The guest uses HFENCE.VVMA because its illegality follows from the specification: `misa.H` = 0. Encodings such as SFENCE.VMA with `rd ≠ 0` are illegal by this profile's §3 rule ("other SYSTEM funct3 = 0 encodings stay illegal"). The specification marks them reserved and does not require a trap, so the guest does not use them. The core driver test `sfence_all_forms_privilege_tvm_and_reserved_fields` still covers them.
 2. **"The same driver test" in §7 item 2.** Every clause is covered, but in two test files. The A/D race clauses run on the component walker through a racing `PhysicalMemory`, which is the walker the Hart uses, rather than on the Hart's validated port. Should the owner want a single Hart-level test, that needs a port that can interpose a host write between the walk's load-reserved and store-conditional. That port was not added this round.
 3. **SRET clearing MPRV from S.** On this profile MPRV is always 0 while the hart is in S: `mret` and SRET to S both clear it, and no trap is delegated to S. So "SRET from S clears MPRV" cannot be observed by a guest. The M-to-S SRET case observes the clearing.
+
+The same gate on the note-only commit also exited 0: wall time 246 seconds, with 1954 passed, 0 failed, and 0 ignored across 69 binaries.
