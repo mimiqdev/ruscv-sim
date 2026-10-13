@@ -95,13 +95,21 @@ fn every_major_opcode_funct3_and_funct7_is_never_a_simulator_failure() {
         let opcode = (major << 2) | 0b11;
         for funct3 in 0..8 {
             for funct7 in 0..128 {
-                for (rd, rs1, rs2) in [(0, 0, 0), (1, 2, 0), (5, 6, 1), (31, 0, 2), (0, 7, 31)] {
+                // rs2 = 5 with rd = rs1 = 0 reaches WFI (funct7 0001000).
+                for (rd, rs1, rs2) in [
+                    (0, 0, 0),
+                    (1, 2, 0),
+                    (5, 6, 1),
+                    (31, 0, 2),
+                    (0, 0, 5),
+                    (0, 7, 31),
+                ] {
                     sweep.check(encode(opcode, rd, funct3, rs1, rs2, funct7));
                 }
             }
         }
     }
-    assert_eq!(sweep.steps, 32 * 8 * 128 * 5 * 3);
+    assert_eq!(sweep.steps, 32 * 8 * 128 * 6 * 3);
     assert!(
         sweep.retired > 0 && sweep.trapped > 0,
         "sweep is not vacuous"

@@ -7,7 +7,7 @@
 # a load (or a store) through the newly written mapping:
 #
 #   sfence.vma x0, x0    global
-#   sfence.vma x0, rs2   one ASID (rs2 = 0, the only ASID: ASIDLEN = 0)
+#   sfence.vma x0, rs2   one ASID (ASIDLEN = 0: rs2 = 0, then rs2 = 0xffff)
 #   sfence.vma rs1, x0   one VA, all ASIDs
 #   sfence.vma rs1, rs2  one VA in one ASID
 #
@@ -18,8 +18,9 @@
 # fence. A non-canonical VA in rs1 raises no exception.
 #
 # Two illegal-instruction cases follow, each with mtval equal to the
-# instruction bits: a SYSTEM funct3 = 0 encoding that is not SFENCE.VMA
-# (HFENCE.VVMA; the H extension is absent) in S, and SFENCE.VMA in U.
+# instruction bits and mepc equal to its address: a SYSTEM funct3 = 0
+# encoding that is not SFENCE.VMA (HFENCE.VVMA; the H extension is absent)
+# in S, and SFENCE.VMA in U. The trap-entry MPP shows the mode of each.
 
     .equ ANY, -2
 
@@ -159,6 +160,14 @@ s_main:
     ld      t1, 8(t0)
     bnez    t1, fail
 
+    # ASIDLEN = 0, yet every rs2 value is legal (D8): ASID bits that do not
+    # exist are ignored, and the mapping is still the one just written.
+    li      t3, 0xffff
+    sfence.vma x0, t3
+    sfence.vma s4, t3
+    ld      t1, 0(s4)
+    bne     t1, a2, fail
+
     # A previously invalid leaf becomes valid: VA 0x4000 -> page_c, fenced
     # by VA, then loaded.
     li      s6, 0x4000
@@ -179,11 +188,17 @@ s_main:
     li      s6, 0x22000073
     la      s7, after_hfence
     li      s8, 0x800                   # resume in S
+    la      s0, hfence_at               # expected mepc
+hfence_at:
     .word   0x22000073                  # hfence.vvma x0, x0
     j       fail
 after_hfence:
     li      t0, -1
     bne     s5, t0, fail                # the handler ran and consumed it
+    srli    t1, a5, 11                  # the trap came from S: MPP = 1
+    andi    t1, t1, 3
+    li      t0, 1
+    bne     t1, t0, fail
 
     # Return to U through SRET: SPP = U, sepc = VA 0x2000.
     li      t0, 0x100
@@ -194,6 +209,7 @@ after_hfence:
     li      s6, 0x12000073              # sfence.vma x0, x0
     la      s7, done
     li      s8, 0x1800                  # resume in M
+    li      s0, 0x2000                  # expected mepc: the U-mode sfence.vma
     sret
     j       fail
 
@@ -213,6 +229,10 @@ unexpected:
     li      a0, 63
     j       write_exit
 
+epc_mismatch:
+    li      a0, 62
+    j       write_exit
+
 # (mcause << 16 | mtval) << 8 | 0x7f: the low byte is never 0, so the CLI
 # process status also fails when mtval's low byte is 0 (ECALL).
 mismatch:
@@ -230,7 +250,7 @@ write_exit:
 hang:
     j       hang
 
-# Expected mcause in s5, mtval in s6, recovery address in s7, and the
+# Expected mcause in s5, mtval in s6, mepc in s0, recovery address in s7, and the
 # mstatus value for the return in s8. The trap-entry mstatus is kept in a5.
 trap_handler:
     csrr    t0, mcause
@@ -242,6 +262,8 @@ trap_handler:
     beq     s6, t5, mtval_ok
     bne     t1, s6, mismatch
 mtval_ok:
+    csrr    t2, mepc
+    bne     t2, s0, epc_mismatch
     csrr    a5, mstatus
     li      s5, -1
     csrw    mepc, s7

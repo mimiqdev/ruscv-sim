@@ -151,7 +151,7 @@ s_d:
     li      t0, 0x120                   # SPIE = 0, SPP = U
     csrc    sstatus, t0
     la      t0, u_d
-    addi    t0, t0, 1                   # sepc bit 0 written as 1
+    addi    t0, t0, 3                   # sepc bits 1:0 written as 1
     csrw    sepc, t0
     li      s5, 2
     li      s6, CSRR_SSTATUS
