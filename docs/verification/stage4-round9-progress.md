@@ -2,7 +2,7 @@
 
 **Status:** Implementation progress for PR #84. Not a substitute for the milestone contract.
 
-**Head under review:** the commit that adds this note, on `feat/stage4-sv39-8`.
+**Code head:** `fc98f54729e05c4fc5a82fd7270f37957b843988` on `feat/stage4-sv39-8`. The A10 runs below used that commit. This note's run record is the following documentation commit; it does not change Rust, Python, schema, or fixture bytes.
 
 ## What was wrong in `627625c`
 
@@ -39,7 +39,7 @@ Producer pins in `tool_sha256` are unchanged. `--extend` does not reseal them.
 
 ## Gate
 
-Docker is not available in this environment. The gate ran on the host with `CARGO_BUILD_JOBS=4` and `RUST_TEST_THREADS=4`, one cargo invocation at a time:
+Docker is not available here, so the gate ran on the host rather than in the pinned image. `CARGO_BUILD_JOBS=4` and `RUST_TEST_THREADS=4`. One cargo invocation at a time, on the sources in `fc98f54`:
 
 ```bash
 cargo fmt --all -- --check
@@ -49,14 +49,56 @@ cargo test --all-features -- --test-threads=4
 cargo doc --all-features --no-deps
 ```
 
-Result: exit 0. Wall time about 373 seconds. `cargo test` reported 1951 passed, 0 failed, 0 ignored, summed across 68 test binaries. That matches the stated baseline of 1951. This round adds no `#[test]` function. The branch as a whole, versus `main` at `7538e41`, adds one integration test, `s4_profile_guests_pass_through_cli_library_and_flat_facade`. `main` was not re-run here.
+Result: exit 0. Wall time about 373 seconds. `cargo test` reported 1951 passed, 0 failed, 0 ignored, summed across 68 test binaries. That matches the stated baseline of 1951. This round adds no `#[test]` function. Versus `main` at `7538e41`, the branch adds one integration test, `s4_profile_guests_pass_through_cli_library_and_flat_facade`. `main` was not re-run here.
 
-The Rust, Python, schema, and fixture files in the commit that introduces this section are the tree that gate ran on. A10 baseline and smoke are recorded in the next section after they run on that commit. Until that section names their exits, it is not A10 evidence.
+`s4_profile_guests_pass_through_cli_library_and_flat_facade` and `s4_sv39_guests_pass_through_cli_library_and_flat_facade` both passed. The log has no toolchain skip line.
 
 ## A10 baseline and smoke
 
-Pending on the clean commit above.
+Both runs used a clean tree at `fc98f54`. The harness sets `CARGO_BUILD_JOBS=2` for its own release build. Reports stay under `target/` and are not committed. The lines below are the harness output.
 
-## §7.10 review
+Baseline, 15 repetitions, exit 0:
 
-Pending on that same committed head. No open spec question. The two settled rulings in "Spec rulings kept" stay as checked.
+```text
+valid a10-baseline-report/1 evidence at /workspace/target/a10-baseline-s4/report.json; informational only, NO performance PASS
+```
+
+`semantic_status` is `correct`. 45 rows, 0 failed. `alu-branch-loop`, `ram-store-load-loop`, and `device-cli-hello` each have `verified_count` 15. `source.head` is `fc98f54`. Diagnostics empty.
+
+Smoke, default 2 basic repetitions plus one warmup, process exit 2. That exit is the harness rule that a valid smoke report is still not a performance pass:
+
+```text
+P0 artifact-equivalence/oracle audit: matches; NOT pinned-toolchain evidence (no simulator invoked)
+INCONCLUSIVE: valid ruscv-perf/1 evidence at /workspace/target/perf/s4-smoke/report.json; 1086 ordered rows. P3 calibration/baseline/ratios and P4 retention deferred; NO performance PASS
+```
+
+`semantic_status` is `correct`, `comparison_status` is `inconclusive`, diagnostics empty. 684 rows are `correct` and 402 are `not_applicable`. Aggregates: 228. Oracle sha256 in the report is `7229e98c1f69eeb88825983c049ca953d63f97f50a9f0cb87cfe5718f48a2917`, the same digest as `suite-v1.json`. Each of `s4_csr_fields`, `s4_ssip`, and `s4_tvm` has 48 correct rows and 26 explicit N/A rows. `source.clean` is true and `source.head` is `fc98f54`.
+
+## §7.8 sweep
+
+Checked against `docs/dev-plan.md` §7 item 8, on the gate run above. Each row is a guest that exited 0 on the CLI, the library route, and the flat facade.
+
+| Clause | Where it passed |
+| --- | --- |
+| `medeleg`/`mideleg` read 0; page fault taken in M | `s4_delegation` |
+| TVM, TSR, TW, including both U-mode WFI cases; `mtval` is the instruction bits | `s4_tvm_tsr_tw` |
+| Environment configuration | `s4_envcfg` |
+| Identity and counters | `s4_counters` |
+| F and D absent; `mtval` is the instruction bits | `s4_fp_absent` |
+| CSR field policy | `s4_csr_policy` |
+| Supervisor interrupt: U, S, and M; not taken in M while MIE is 0; taken once MIE is 1; SEI before SSI before STI; vectored `mtvec` | `s4_supervisor_interrupt` |
+| PMP CSR read-only zero, odd `pmpcfg` illegal | `s4_pmp_csr` |
+
+The compact public-v1 witnesses repeat three of those rows for the smoke matrix: `s4_tvm` (`mtval` = `0x18002373`), `s4_ssip` (SSIP taken in M with MIE=1, `mtval` = 0), and `s4_csr_fields` (MPP=2, FS, SD, `misa`, `mepc`, `mtvec` MODE, unsupported `satp` MODE, `mie`/`mip` outside `0x222`). Sv39 families stay on `s4_sv39_guests`.
+
+## §7.10 review of `fc98f54`
+
+Author check of that commit, after the gate and the two A10 runs. No code changed as a result.
+
+- `derive_s4.py` does not call the simulator. It applies the profile WARL rules, takes a supervisor interrupt before fetch without counting an attempt, and takes an S-mode `satp` access with TVM=1 as cause 2 with `mtval` equal to the instruction word, counted as an attempt. P0 compared those traces with the simulator.
+- Strict facts still require the CSR journal to be exactly `minstret` then `mcycle`. S4 allows explicit CSR writes before that suffix. `mcycle`'s old value is the retirement index plus the number of trap turns at or before that index.
+- The original 12 fixtures are unchanged. `--check-artifacts` matched, and `suite-v1.json` `oracle_sha256` equals the SHA-256 of `public-v1.json`. There is no handwritten `ORACLE_SHA`.
+- The comment on the `0x188` immediate in `tools/a10/fixtures/s4_tvm.S` describes that immediate as MIE, MPIE, and MPP. The shifted value actually written is `0x1880`, which is MPIE and MPP=M. The simulator accepted that encoding. A comment-only edit would change `source_sha256` and force another oracle seal, so the comment stays.
+- Not every §4 family ELF is inside `public-v1.json`. The eight profile guests and six Sv39 guests are self-checking route programs. Tracing every Sv39 walk into the public oracle was not done.
+
+No open spec question. The two rulings in "Spec rulings kept" stay settled. No blocker in this review.
