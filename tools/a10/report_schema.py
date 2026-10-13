@@ -17,6 +17,10 @@ def oracle_file_sha():
     return digest((ROOT / 'tools/a10/public-v1.json').read_bytes())
 
 def witness_method(fixture):
+    """How the oracle witnesses counts the route cannot expose (`oracle_witness`).
+
+    Covers both the original no-trap fixtures and the Stage 4 trap-inclusive
+    ones, so the field name does not say "nontrapping"."""
     if fixture.get('traps', 0):
         return 'Stage 4 trap-inclusive fixture: trap turns are counted apart from retirements and own no commit row; the same P0 validator checks attempts, turns, traps, retirements, and effects'
     return 'linked path independently declares no traps/no explicit retirement writes; actual own exit/PC/turns/signature/self-check validated by SAME P0, not general cycle=retirement conversion'
@@ -156,13 +160,13 @@ def evidence(raw, fixture):
     witnesses = {}
     for field in ('regs','ram','uart_state','signal','events','facts','fact_details','minstret'):
         value = sample[field]
-        witnesses[field] = observation(value, {'source':'own captured public API' if value is not None else 'route capability; own guest self-check and exact linked no-trap path'}, None if value is not None else f'{raw["route"]} public interface does not expose {field}; no companion/expected-as-observed value')
+        witnesses[field] = observation(value, {'source':'own captured public API' if value is not None else 'route capability; own guest self-check and exact linked oracle path (oracle_witness.method)'}, None if value is not None else f'{raw["route"]} public interface does not expose {field}; no companion/expected-as-observed value')
     signature = result['signature'] if result else None
     witnesses['signature_bytes'] = observation(signature, {'source':'own ExecutionResult' if signature is not None else 'own CLI address/size+self-check or ELF absence'}, None if signature is not None else 'public CLI exposes metadata only, or pinned ELF has no signature; expected bytes are not observed bytes')
     return {'execution':'own_public_run','expected': {k:fixture[k] for k in ('exit_code','process_code','final_pc','attempts','turns','traps','retirements','work','checksum','signature_addr','signature')},
             'observed_guest': result, 'observed_process': observation(raw['transport_code'], {'source':'actual Command::output status; library transport is not guest code'}, 'in-process route, no process exit' if raw['transport_code'] is None else None),
             'progress': observation(counts, {'source':'always-present Hart control facts'}, 'convenience API exposes completed turns only; no attempt/trap/retirement values fabricated' if counts is None else None),
-            'nontrapping_witness': {'oracle_fixture':fixture['id'], 'oracle_sha256':oracle_file_sha(), 'method':witness_method(fixture)},
+            'oracle_witness': {'oracle_fixture':fixture['id'], 'oracle_sha256':oracle_file_sha(), 'method':witness_method(fixture)},
             'state_and_effects':witnesses,
             'signature_sha256': digest(bytes(signature)) if signature is not None else None,
             'facts_count': len(sample['facts']) if sample['facts'] is not None else None,

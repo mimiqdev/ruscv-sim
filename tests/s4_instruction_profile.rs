@@ -181,6 +181,9 @@ fn sfence_all_forms_privilege_tvm_and_reserved_fields() {
                     if legal {
                         assert_eq!(state.pc, 4);
                     }
+                    // rd != 0 and funct7 = 0001011 are reserved
+                    // encodings.  The trap is consistency with Spike and
+                    // Sail, not a specification requirement.
                     check(raw | (1 << 7), mode, tvm, false);
                     check(raw ^ (1 << 26), mode, tvm, false);
                 }

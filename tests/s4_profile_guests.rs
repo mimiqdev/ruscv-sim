@@ -15,6 +15,14 @@
 //! vectored mtvec).  Illegal-instruction traps from TVM/TSR/TW and the
 //! absent-CSR/extension cases assert the exact 32-bit faulting
 //! instruction bits in mtval (dev-plan §7.8 ruling).
+//! `s4_privilege_transition` is the §4 "Privilege transition" row: mret
+//! to U and to S, SRET from M to S and from S to U with sepc bits 1:0
+//! written as 1, SRET in U (illegal), and ECALL from U (cause 8) and from
+//! S (cause 9), each taken in M; the CSR file checks later accesses at the
+//! privilege the return selected.  SRET from M to S clears MPRV, which the
+//! ECALL back to M reads as 0; the control is MRET with MPP = M, which
+//! keeps MPRV = 1.  SRET from S clearing MPRV is not guest-observable,
+//! since MPRV is already 0 in S and sstatus does not expose it.
 
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 use std::env;
@@ -22,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-const GUESTS: [&str; 8] = [
+const GUESTS: [&str; 9] = [
     "s4_tvm_tsr_tw",
     "s4_pmp_csr",
     "s4_delegation",
@@ -31,6 +39,7 @@ const GUESTS: [&str; 8] = [
     "s4_fp_absent",
     "s4_csr_policy",
     "s4_supervisor_interrupt",
+    "s4_privilege_transition",
 ];
 const LINKER_SCRIPT: &str = "linker-s4.ld";
 const MAX_CYCLES: u64 = 100_000;

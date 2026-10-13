@@ -3,8 +3,10 @@
 //! These build a real Hart with the validated fetch/data ports, install Sv39
 //! page tables in the same RAM the ports serve, and drive the guest through
 //! the public step path. They prove the D3 fault table, the D4 A/D
-//! observation rules, the D9 SUM/MXR/MPRV checks, and that a walk read is a
-//! physical data read on the data port, distinct from the guest access.
+//! observation rules, and the D9 SUM/MXR/MPRV checks. dev-plan §7 item 2 is
+//! one driver test, `sv39_walk_reads_d3_outcomes_and_ad_race_on_the_hart_ports`:
+//! walk reads on the data port, the D3 outcomes, and the A/D race, all
+//! through the Hart's own ports rather than the component walker.
 //!
 //! Guest-physical layout inside the one RAM (PTE permission bits: R=0x02,
 //! W=0x04, X=0x08, U=0x10, A=0x40, D=0x80; V is ORed by the installer):
@@ -57,50 +59,6 @@ fn core_with_ram() -> (RiscvCore, Arc<Mutex<SimpleMemory>>) {
     core.reset(0, BASE);
     core.state_mut().csr.write(machine::MTVEC, MTVEC).unwrap();
     (core, ram)
-}
-
-/// The same RAM behind one traced port shared by fetch and data, so every
-/// physical request the Hart issues is visible in one ordered vector.
-#[allow(clippy::type_complexity)]
-fn core_with_traced_ram() -> (
-    RiscvCore,
-    Arc<Mutex<SimpleMemory>>,
-    Arc<Mutex<Vec<ruscv_sim::PhysicalRequestDescriptor>>>,
-) {
-    use ruscv_sim::physical::{
-        AtomicBackend, AtomicBackendResult, AtomicRequest, PhysicalBackend, PhysicalBackendResult,
-        PhysicalRequest,
-    };
-
-    struct Trace {
-        inner: NativeRamBackend,
-        calls: Arc<Mutex<Vec<ruscv_sim::PhysicalRequestDescriptor>>>,
-    }
-    impl PhysicalBackend for Trace {
-        fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
-            self.calls.lock().unwrap().push(request.descriptor());
-            self.inner.transact(request)
-        }
-    }
-    impl AtomicBackend for Trace {
-        fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
-            self.inner.transact_atomic(request)
-        }
-    }
-
-    let ram = Arc::new(Mutex::new(SimpleMemory::new(RAM_SIZE)));
-    let calls = Arc::new(Mutex::new(Vec::new()));
-    let typed: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = ram.clone();
-    let port = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(Trace {
-        inner: NativeRamBackend::new(ram.clone(), 0, RAM_SIZE),
-        calls: calls.clone(),
-    })));
-    let fetch = port.clone();
-    let data = port;
-    let mut core = RiscvCore::new_with_physical_ports(typed.clone(), typed, fetch, data);
-    core.reset(0, BASE);
-    core.state_mut().csr.write(machine::MTVEC, MTVEC).unwrap();
-    (core, ram, calls)
 }
 
 /// Installs Sv39 with the standard root and drops the hart into `mode` at
@@ -295,55 +253,439 @@ fn core_with_injected(fail_at: u64, injected: Injected) -> (RiscvCore, Arc<Mutex
     (core, ram)
 }
 
-#[test]
-fn walk_reads_are_data_reads_on_the_data_port_distinct_from_the_access() {
-    let (mut core, ram, calls) = core_with_traced_ram();
-    install_leaf(&ram, VA, 0x80005, 0x0e); // R|W|X program page
-    store_program(&ram, MAPPED_PA, &[ld(5, 1, 0), 0x13]);
-    core.state_mut().regs[1] = VA;
-    enable_sv39(&mut core, PrivilegeMode::Supervisor);
+/// One physical request a driver port saw, in issue order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PortEvent {
+    Fetch(u64),
+    DataRead(u64),
+    DataWrite(u64),
+    Lr(u64),
+    Sc(u64, Option<ruscv_sim::physical::ConditionalStatus>),
+}
 
-    let outcome = core.step_outcome();
+/// Where a host write is interposed around the Hart's A/D update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RaceStage {
+    /// Before the n-th load-reserved, after the step-2 walk read.
+    BeforeLr(usize),
+    /// After the n-th load-reserved returned, before its store-conditional.
+    AfterLr(usize),
+}
+
+type RaceHook = Box<dyn FnMut(RaceStage, &Arc<Mutex<SimpleMemory>>) + Send>;
+
+/// RAM behind one Hart port that logs every request, can fail one issued
+/// address, and can run a host write between the Hart's walk read, its
+/// load-reserved, and its store-conditional. The host write goes straight to
+/// the shared `SimpleMemory`, so it is a committed write the conditional
+/// check sees, exactly as another agent's store would be.
+struct DriverBackend {
+    inner: NativeRamBackend,
+    ram: Arc<Mutex<SimpleMemory>>,
+    events: Arc<Mutex<Vec<PortEvent>>>,
+    fail_at: Option<(u64, Injected)>,
+    lrs: usize,
+    race: RaceHook,
+}
+
+impl ruscv_sim::physical::PhysicalBackend for DriverBackend {
+    fn transact(
+        &mut self,
+        request: &ruscv_sim::physical::PhysicalRequest<'_>,
+    ) -> ruscv_sim::physical::PhysicalBackendResult {
+        use ruscv_sim::physical::PhysicalAccessKind;
+        let descriptor = request.descriptor();
+        self.events.lock().unwrap().push(match descriptor.category {
+            PhysicalAccessKind::Fetch => PortEvent::Fetch(descriptor.paddr),
+            PhysicalAccessKind::DataRead => PortEvent::DataRead(descriptor.paddr),
+            PhysicalAccessKind::DataWrite => PortEvent::DataWrite(descriptor.paddr),
+        });
+        match self.fail_at {
+            Some((paddr, injected)) if paddr == descriptor.paddr => Err(injected_error(injected)),
+            _ => self.inner.transact(request),
+        }
+    }
+}
+
+impl ruscv_sim::physical::AtomicBackend for DriverBackend {
+    fn transact_atomic(
+        &mut self,
+        request: &ruscv_sim::physical::AtomicRequest<'_>,
+    ) -> ruscv_sim::physical::AtomicBackendResult {
+        use ruscv_sim::physical::AtomicAccessKind;
+        let paddr = request.paddr();
+        let is_lr = request.kind() == AtomicAccessKind::LoadReserved;
+        if is_lr {
+            self.lrs += 1;
+            (self.race)(RaceStage::BeforeLr(self.lrs), &self.ram);
+        }
+        let result = match self.fail_at {
+            Some((fail, injected)) if fail == paddr => Err(injected_error(injected)),
+            _ => self.inner.transact_atomic(request),
+        };
+        let event = match request.kind() {
+            AtomicAccessKind::LoadReserved => PortEvent::Lr(paddr),
+            AtomicAccessKind::StoreConditional => PortEvent::Sc(
+                paddr,
+                result.as_ref().ok().and_then(|r| r.conditional_status()),
+            ),
+            AtomicAccessKind::Rmw => panic!("the walk must not use the RMW transform"),
+        };
+        self.events.lock().unwrap().push(event);
+        if is_lr && result.is_ok() {
+            (self.race)(RaceStage::AfterLr(self.lrs), &self.ram);
+        }
+        result
+    }
+}
+
+/// A Hart whose fetch and data ports are separate traced `DriverBackend`s
+/// over one RAM. Only the data port carries the failure and the race.
+struct Driver {
+    core: RiscvCore,
+    ram: Arc<Mutex<SimpleMemory>>,
+    fetch: Arc<Mutex<Vec<PortEvent>>>,
+    data: Arc<Mutex<Vec<PortEvent>>>,
+}
+
+impl Driver {
+    fn new(fail_at: Option<(u64, Injected)>, race: RaceHook) -> Self {
+        let ram = Arc::new(Mutex::new(SimpleMemory::new(RAM_SIZE)));
+        let typed: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = ram.clone();
+        let fetch = Arc::new(Mutex::new(Vec::new()));
+        let data = Arc::new(Mutex::new(Vec::new()));
+        let port = |events: &Arc<Mutex<Vec<PortEvent>>>,
+                    fail_at: Option<(u64, Injected)>,
+                    race: RaceHook| {
+            Arc::new(Mutex::new(ValidatedPhysicalAccess::new(DriverBackend {
+                inner: NativeRamBackend::new(ram.clone(), 0, RAM_SIZE),
+                ram: ram.clone(),
+                events: events.clone(),
+                fail_at,
+                lrs: 0,
+                race,
+            })))
+        };
+        let fetch_port = port(&fetch, None, Box::new(|_, _| {}));
+        let data_port = port(&data, fail_at, race);
+        let mut core =
+            RiscvCore::new_with_physical_ports(typed.clone(), typed, fetch_port, data_port);
+        core.reset(0, BASE);
+        core.state_mut().csr.write(machine::MTVEC, MTVEC).unwrap();
+        Self {
+            core,
+            ram,
+            fetch,
+            data,
+        }
+    }
+
+    /// Program page R|W|X|A at VA, data page R|W|A at VA_DATA, the guest
+    /// word 0x11 at DATA_PA and 0x22 at DATA2_PA, and `insn` at VA in S.
+    /// A is already set on both leaves so no A/D update runs unless a case
+    /// clears it.
+    fn mapped(fail_at: Option<(u64, Injected)>, race: RaceHook, insn: u32, rs1: u64) -> Self {
+        let mut driver = Self::new(fail_at, race);
+        install_leaf(&driver.ram, VA, 0x80005, 0x4e);
+        install_leaf(&driver.ram, VA_DATA, 0x80004, 0x46);
+        gp_write(&driver.ram, DATA_PA, 0x11);
+        gp_write(&driver.ram, DATA2_PA, 0x22);
+        store_program(&driver.ram, MAPPED_PA, &[insn]);
+        driver.core.state_mut().regs[1] = rs1;
+        driver.core.state_mut().regs[2] = 0x99;
+        enable_sv39(&mut driver.core, PrivilegeMode::Supervisor);
+        driver
+    }
+
+    fn data_events(&self) -> Vec<PortEvent> {
+        self.data.lock().unwrap().clone()
+    }
+}
+
+fn no_race() -> RaceHook {
+    Box::new(|_, _| {})
+}
+
+/// Issued (port) address of a guest-physical address.
+fn issued(guest: u64) -> u64 {
+    guest - BASE
+}
+
+/// Issued addresses of the three walk reads for `va`.
+fn walk_reads(va: u64) -> [PortEvent; 3] {
+    [
+        PortEvent::DataRead(issued(ROOT_PPN * PAGE + ((va >> 30) & 0x1ff) * 8)),
+        PortEvent::DataRead(issued((ROOT_PPN + 1) * PAGE + ((va >> 21) & 0x1ff) * 8)),
+        PortEvent::DataRead(issued((ROOT_PPN + 2) * PAGE + ((va >> 12) & 0x1ff) * 8)),
+    ]
+}
+
+/// dev-plan §7 item 2, as one Hart-level driver test on the validated
+/// ports. Every case below steps a `RiscvCore` built with separate traced
+/// fetch and data ports; nothing calls the component walker.
+///
+/// 1. A walk read is a `DataRead` on the data port, distinct from the
+///    guest's own data access and from the fetch.
+/// 2. The three D3 outcomes: a target rejection of the walk read is an
+///    access fault of the original kind; a host, protocol, or unknown
+///    completion is a `SimulatorFailure`; an invalid PTE, a reserved PTE, a
+///    misaligned superpage, and a non-canonical VA are page faults, and the
+///    non-canonical VA is rejected before any walk read.
+/// 3. The A/D race through the Hart's data port: a leaf that changes
+///    between the walk read and the conditional write gets no write and is
+///    re-read (step 2), and a host write between the load-reserved and the
+///    store-conditional is never overwritten with stale bytes.
+#[test]
+fn sv39_walk_reads_d3_outcomes_and_ad_race_on_the_hart_ports() {
+    let data_leaf = (ROOT_PPN + 2) * PAGE + ((VA_DATA >> 12) & 0x1ff) * 8;
+    let prog_leaf = (ROOT_PPN + 2) * PAGE + ((VA >> 12) & 0x1ff) * 8;
+
+    // ----- 1. Walk reads are data reads on the data port. -----
+    let mut d = Driver::mapped(None, no_race(), ld(5, 1, 0), VA_DATA);
+    let outcome = d.core.step_outcome();
     assert!(
         matches!(outcome, StepOutcome::InstructionRetired(_)),
         "{outcome:?}"
     );
-
-    let calls = calls.lock().unwrap();
-    // The fetch walk reads three PTEs on the data port, the load walk reads
-    // the same three, and the explicit load is one more DataRead: seven in
-    // total. The instruction fetch itself is one Fetch-category request on
-    // the same port, distinct from all seven.
-    let data_reads: Vec<_> = calls
-        .iter()
-        .filter(|call| call.category == ruscv_sim::physical::PhysicalAccessKind::DataRead)
-        .collect();
-    assert_eq!(data_reads.len(), 7, "{calls:#x?}");
-    // The walk reads land at the storage offsets hart_issued_paddr issues,
-    // which are the guest-physical PTE addresses minus the RAM base.
-    let root_read = ROOT_PPN * PAGE + (VA >> 30) * 8 - BASE;
-    let mid_read = (ROOT_PPN + 1) * PAGE + ((VA >> 21) & 0x1ff) * 8 - BASE;
-    let leaf_read = (ROOT_PPN + 2) * PAGE + ((VA >> 12) & 0x1ff) * 8 - BASE;
-    assert_eq!(data_reads[0].paddr, root_read);
-    assert_eq!(data_reads[1].paddr, mid_read);
-    assert_eq!(data_reads[2].paddr, leaf_read);
-    assert_eq!(data_reads[3].paddr, root_read);
-    assert_eq!(data_reads[4].paddr, mid_read);
-    assert_eq!(data_reads[5].paddr, leaf_read);
-    // The explicit load is the last data read, at the translated address.
-    assert_eq!(data_reads[6].paddr, MAPPED_PA - BASE);
-    let fetches: Vec<_> = calls
-        .iter()
-        .filter(|call| call.category == ruscv_sim::physical::PhysicalAccessKind::Fetch)
-        .collect();
-    assert_eq!(fetches.len(), 1);
-    assert_eq!(fetches[0].paddr, MAPPED_PA - BASE);
-    // The load reads the two words at its address: the ld encoding and the
-    // nop that follows it, both zero-extended and little endian.
+    assert_eq!(d.core.state().regs[5], 0x11);
+    // The fetch port carries only the instruction fetch, at the translated
+    // address. Every walk read is on the data port.
     assert_eq!(
-        core.state().regs[5],
-        (0x13u64) << 32 | u64::from(ld(5, 1, 0))
+        *d.fetch.lock().unwrap(),
+        [PortEvent::Fetch(issued(MAPPED_PA))]
     );
+    let mut expected = walk_reads(VA).to_vec();
+    expected.extend(walk_reads(VA_DATA));
+    expected.push(PortEvent::DataRead(issued(DATA_PA)));
+    assert_eq!(d.data_events(), expected, "fetch walk, load walk, load");
+
+    // ----- 2a. Target rejection: an access fault of the original kind. -----
+    // The port rejects the leaf read of the access's own walk.
+    for (insn, va, leaf, cause) in [
+        (
+            ld(5, 1, 0),
+            VA_DATA,
+            data_leaf,
+            ExceptionCause::LoadAccessFault,
+        ),
+        (
+            sd(2, 1, 0),
+            VA_DATA,
+            data_leaf,
+            ExceptionCause::StoreAccessFault,
+        ),
+        (0x13, VA, prog_leaf, ExceptionCause::InstructionAccessFault),
+    ] {
+        let mut d = Driver::mapped(
+            Some((issued(leaf), Injected::Target)),
+            no_race(),
+            insn,
+            VA_DATA,
+        );
+        let trap = trap_of(&d.core.step_outcome());
+        assert_eq!(trap.cause, Trap::Exception(cause));
+        assert_eq!(trap.mtval, va);
+        assert_eq!(gp_read(&d.ram, DATA_PA), 0x11, "{cause:?} wrote nothing");
+    }
+    // A root table below the RAM base is rejected by the guest-physical
+    // conversion before the port: the fetch's walk takes the access fault.
+    let mut d = Driver::mapped(None, no_race(), 0x13, 0);
+    d.core.state_mut().csr.set_privilege(PrivilegeMode::Machine);
+    d.core
+        .state_mut()
+        .csr
+        .write(supervisor::SATP, crate_satp(0x1))
+        .unwrap();
+    d.core
+        .state_mut()
+        .csr
+        .set_privilege(PrivilegeMode::Supervisor);
+    let trap = trap_of(&d.core.step_outcome());
+    assert_eq!(
+        trap.cause,
+        Trap::Exception(ExceptionCause::InstructionAccessFault)
+    );
+    assert_eq!(trap.mtval, VA);
+    assert!(d.data_events().is_empty() && d.fetch.lock().unwrap().is_empty());
+
+    // ----- 2b. Host, protocol, unknown: SimulatorFailure, never a trap. -----
+    for (injected, kind) in [
+        (
+            Injected::Host,
+            ruscv_sim::core::SimulatorFailureKind::HostBackend,
+        ),
+        (
+            Injected::Protocol,
+            ruscv_sim::core::SimulatorFailureKind::Invariant,
+        ),
+        (
+            Injected::Unknown,
+            ruscv_sim::core::SimulatorFailureKind::HostBackend,
+        ),
+    ] {
+        let mut d = Driver::mapped(
+            Some((issued(data_leaf), injected)),
+            no_race(),
+            ld(5, 1, 0),
+            VA_DATA,
+        );
+        let StepOutcome::SimulatorFailure(failure) = d.core.step_outcome() else {
+            panic!("{injected:?} must be a SimulatorFailure")
+        };
+        assert_eq!(failure.kind, kind);
+        assert_eq!(machine_csr(&d.core, machine::MCAUSE), 0, "{injected:?}");
+    }
+
+    // ----- 2c. Page faults. -----
+    let page_fault = |d: &mut Driver, va: u64| {
+        let trap = trap_of(&d.core.step_outcome());
+        assert_eq!(trap.cause, Trap::Exception(ExceptionCause::LoadPageFault));
+        assert_eq!(trap.mtval, va);
+    };
+    // Invalid leaf (V = 0).
+    let mut d = Driver::mapped(None, no_race(), ld(5, 1, 0), VA_DATA);
+    let leaf = gp_read(&d.ram, data_leaf);
+    gp_write(&d.ram, data_leaf, leaf & !1);
+    page_fault(&mut d, VA_DATA);
+    // Reserved PTE bits: bit 63 (N, Svnapot absent), bits 62:61 (PBMT,
+    // Svpbmt absent), and bits 60:54.
+    for bit in [63, 61, 54] {
+        let mut d = Driver::mapped(None, no_race(), ld(5, 1, 0), VA_DATA);
+        let leaf = gp_read(&d.ram, data_leaf);
+        gp_write(&d.ram, data_leaf, leaf | (1 << bit));
+        page_fault(&mut d, VA_DATA);
+    }
+    // A level-0 pointer: the walk must end on a leaf.
+    let mut d = Driver::mapped(None, no_race(), ld(5, 1, 0), VA_DATA);
+    gp_write(&d.ram, data_leaf, ((ROOT_PPN + 3) << 10) | 0x1);
+    page_fault(&mut d, VA_DATA);
+    // Misaligned megapage: a level-1 leaf with PPN[0] != 0.
+    let big_va = (1u64 << 21) + 0x1000;
+    let mut d = Driver::mapped(None, no_race(), ld(5, 1, 0), big_va);
+    gp_write(
+        &d.ram,
+        (ROOT_PPN + 1) * PAGE + ((big_va >> 21) & 0x1ff) * 8,
+        (0x80005u64 << 10) | 0x46 | 0x1,
+    );
+    page_fault(&mut d, big_va);
+    // Non-canonical VA: bits 63:39 differ from bit 38. Canonicity belongs to
+    // the VA, so the load issues no walk read at all; only the fetch walks.
+    let non_canonical = 0x0000_0040_0000_0000;
+    let mut d = Driver::mapped(None, no_race(), ld(5, 1, 0), non_canonical);
+    page_fault(&mut d, non_canonical);
+    assert_eq!(d.data_events(), walk_reads(VA));
+
+    // ----- 3. A/D race on the Hart's data port. -----
+    // The data leaf starts with A clear, so the load's walk performs the
+    // step-9 update. The program leaf keeps A set, so the only
+    // load-reserved is the data walk's.
+    let fresh = (0x80004u64 << 10) | 0x06 | 0x1; // R|W|V, A = D = 0
+    let remapped = (0x80006u64 << 10) | 0x06 | 0x1; // DATA2_PA, A = D = 0
+    let load_walk = |extra: &[PortEvent]| {
+        let mut events = walk_reads(VA).to_vec();
+        events.extend(walk_reads(VA_DATA));
+        events.extend_from_slice(extra);
+        events
+    };
+    let leaf_at = issued(data_leaf);
+    use ruscv_sim::physical::ConditionalStatus::{Failure, Success};
+
+    // 3a. The leaf changes between the walk read and the load-reserved. The
+    // load-reserved observes the new value, which differs from the checked
+    // one, so no store-conditional is issued (no write). The walk resumes
+    // at step 2 with that value and updates the new PTE.
+    let race: RaceHook = Box::new(move |stage, ram| {
+        if stage == RaceStage::BeforeLr(1) {
+            gp_write(ram, data_leaf, remapped);
+        }
+    });
+    let mut d = Driver::mapped(None, race, ld(5, 1, 0), VA_DATA);
+    gp_write(&d.ram, data_leaf, fresh);
+    let outcome = d.core.step_outcome();
+    assert!(
+        matches!(outcome, StepOutcome::InstructionRetired(_)),
+        "{outcome:?}"
+    );
+    assert_eq!(d.core.state().regs[5], 0x22, "the load used the new PTE");
+    assert_eq!(gp_read(&d.ram, data_leaf), remapped | 0x40);
+    assert_eq!(
+        d.data_events(),
+        load_walk(&[
+            PortEvent::Lr(leaf_at),
+            PortEvent::Lr(leaf_at),
+            PortEvent::Sc(leaf_at, Some(Success)),
+            PortEvent::DataRead(issued(DATA2_PA)),
+        ])
+    );
+
+    // 3b. A host write lands between the load-reserved and the
+    // store-conditional. The store-conditional fails and writes nothing;
+    // the walk re-reads the PTE (a step-2 DataRead) and updates the new one.
+    let race: RaceHook = Box::new(move |stage, ram| {
+        if stage == RaceStage::AfterLr(1) {
+            gp_write(ram, data_leaf, remapped);
+        }
+    });
+    let mut d = Driver::mapped(None, race, ld(5, 1, 0), VA_DATA);
+    gp_write(&d.ram, data_leaf, fresh);
+    let outcome = d.core.step_outcome();
+    assert!(
+        matches!(outcome, StepOutcome::InstructionRetired(_)),
+        "{outcome:?}"
+    );
+    assert_eq!(d.core.state().regs[5], 0x22);
+    assert_eq!(
+        gp_read(&d.ram, data_leaf),
+        remapped | 0x40,
+        "A set on the host's PTE"
+    );
+    assert_eq!(
+        d.data_events(),
+        load_walk(&[
+            PortEvent::Lr(leaf_at),
+            PortEvent::Sc(leaf_at, Some(Failure)),
+            PortEvent::DataRead(leaf_at),
+            PortEvent::Lr(leaf_at),
+            PortEvent::Sc(leaf_at, Some(Success)),
+            PortEvent::DataRead(issued(DATA2_PA)),
+        ])
+    );
+
+    // 3c. The host invalidates the leaf between the load-reserved and the
+    // store-conditional. The stale A (and, for the store, D) update is
+    // never written over it: the PTE keeps the host's bytes and the access
+    // takes a page fault of its own kind after the step-2 re-read.
+    for (insn, cause) in [
+        (ld(5, 1, 0), ExceptionCause::LoadPageFault),
+        (sd(2, 1, 0), ExceptionCause::StorePageFault),
+    ] {
+        let invalid = fresh & !1;
+        let race: RaceHook = Box::new(move |stage, ram| {
+            if stage == RaceStage::AfterLr(1) {
+                gp_write(ram, data_leaf, invalid);
+            }
+        });
+        let mut d = Driver::mapped(None, race, insn, VA_DATA);
+        gp_write(&d.ram, data_leaf, fresh);
+        let trap = trap_of(&d.core.step_outcome());
+        assert_eq!(trap.cause, Trap::Exception(cause));
+        assert_eq!(trap.mtval, VA_DATA);
+        assert_eq!(
+            gp_read(&d.ram, data_leaf),
+            invalid,
+            "{cause:?}: stale PTE bytes replaced the host write"
+        );
+        assert_eq!(gp_read(&d.ram, DATA_PA), 0x11, "{cause:?} wrote no data");
+        assert_eq!(
+            d.data_events(),
+            load_walk(&[
+                PortEvent::Lr(leaf_at),
+                PortEvent::Sc(leaf_at, Some(Failure)),
+                PortEvent::DataRead(leaf_at),
+            ]),
+            "{cause:?}"
+        );
+    }
 }
 
 #[test]
@@ -499,166 +841,6 @@ fn fetch_page_fault_on_non_executable_leaf_keeps_original_va() {
     assert_eq!(trap.mtval, VA);
     // The trapping fetch retires nothing.
     assert_eq!(machine_csr(&core, machine::MINSTRET), 0);
-}
-
-#[test]
-fn noncanonical_va_is_a_page_fault_of_the_original_kind() {
-    let (mut core, ram) = core_with_ram();
-    install_leaf(&ram, VA, 0x80005, 0x0e); // R|W|X program page
-    store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
-    core.state_mut().regs[1] = 0x0000_0040_0000_0000; // bits 63:39 != bit 38
-    enable_sv39(&mut core, PrivilegeMode::Supervisor);
-
-    let outcome = core.step_outcome();
-    let trap = trap_of(&outcome);
-    assert_eq!(trap.cause, Trap::Exception(ExceptionCause::LoadPageFault));
-    assert_eq!(trap.mtval, 0x0000_0040_0000_0000);
-}
-
-#[test]
-fn invalid_reserved_and_pointer_only_walks_page_fault() {
-    // Invalid PTE (V=0) at the root: the instruction fetch's own walk is the
-    // first to see it.
-    let (mut core, ram) = core_with_ram();
-    install_leaf(&ram, VA, 0x80005, 0x0e);
-    gp_write(&ram, ROOT_PPN * PAGE, 0);
-    store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
-    core.state_mut().regs[1] = VA;
-    enable_sv39(&mut core, PrivilegeMode::Supervisor);
-    let trap = trap_of(&core.step_outcome());
-    assert_eq!(
-        trap.cause,
-        Trap::Exception(ExceptionCause::InstructionPageFault)
-    );
-    assert_eq!(trap.mtval, VA);
-
-    // Reserved PTE bit 63 set on the leaf the load's walk visits.
-    let (mut core, ram) = core_with_ram();
-    install_leaf(&ram, VA, 0x80005, 0x0e);
-    install_leaf(&ram, VA_DATA, 0x80004, 0x06);
-    let leaf_addr = (ROOT_PPN + 2) * PAGE + ((VA_DATA >> 12) & 0x1ff) * 8;
-    let leaf = load_value(&ram, leaf_addr);
-    gp_write(&ram, leaf_addr, leaf | (1 << 63));
-    store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
-    core.state_mut().regs[1] = VA_DATA;
-    enable_sv39(&mut core, PrivilegeMode::Supervisor);
-    let trap = trap_of(&core.step_outcome());
-    assert_eq!(trap.cause, Trap::Exception(ExceptionCause::LoadPageFault));
-    assert_eq!(trap.mtval, VA_DATA);
-
-    // Pointer-only walk: the level-0 entry of the data page is a pointer.
-    let (mut core, ram) = core_with_ram();
-    install_leaf(&ram, VA, 0x80005, 0x0e);
-    install_leaf(&ram, VA_DATA, 0x80004, 0x06);
-    let leaf_addr = (ROOT_PPN + 2) * PAGE + ((VA_DATA >> 12) & 0x1ff) * 8;
-    let pointer = ((ROOT_PPN + 3) << 10) | 0x1;
-    gp_write(&ram, leaf_addr, pointer);
-    store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
-    core.state_mut().regs[1] = VA_DATA;
-    enable_sv39(&mut core, PrivilegeMode::Supervisor);
-    let trap = trap_of(&core.step_outcome());
-    assert_eq!(trap.cause, Trap::Exception(ExceptionCause::LoadPageFault));
-    assert_eq!(trap.mtval, VA_DATA);
-}
-
-#[test]
-fn misaligned_superpage_page_faults_instead_of_translating() {
-    let (mut core, ram) = core_with_ram();
-    install_leaf(&ram, VA, 0x80005, 0x0e); // R|W|X program page, vpn1 = 0
-                                           // A level-1 leaf for the vpn1 = 1 region whose PPN[0] is nonzero:
-                                           // misaligned megapage. The program page's vpn1 = 0 region keeps its
-                                           // 4 KiB mapping, so the fetch completes.
-    let big_va = (1u64 << 21) + 0x1000;
-    let vpn1 = (big_va >> 21) & 0x1ff;
-    let pte_addr = (ROOT_PPN + 1) * PAGE + vpn1 * 8;
-    let leaf = (0x80005u64 << 10) | 0x06 | 0x1;
-    gp_write(&ram, pte_addr, leaf);
-    store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
-    core.state_mut().regs[1] = big_va;
-    enable_sv39(&mut core, PrivilegeMode::Supervisor);
-    let trap = trap_of(&core.step_outcome());
-    assert_eq!(trap.cause, Trap::Exception(ExceptionCause::LoadPageFault));
-    assert_eq!(trap.mtval, big_va);
-}
-
-#[test]
-fn walk_read_target_rejection_is_an_access_fault_of_the_original_kind() {
-    // The root PTE read lands below the flat RAM range, so the
-    // guest-physical conversion rejects it. The fetch is the first access
-    // to walk, so it takes the instruction access fault.
-    let (mut core, ram) = core_with_ram();
-    install_leaf(&ram, VA, 0x80005, 0x0e);
-    core.state_mut().csr.set_privilege(PrivilegeMode::Machine);
-    // satp PPN 0x1 places the root table at guest-physical 0x1000, below
-    // the RAM base the hart subtracts.
-    core.state_mut()
-        .csr
-        .write(supervisor::SATP, crate_satp(0x1))
-        .unwrap();
-    core.state_mut().privilege = PrivilegeMode::Supervisor;
-    core.state_mut()
-        .csr
-        .set_privilege(PrivilegeMode::Supervisor);
-    store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
-    core.state_mut().regs[1] = VA;
-    core.state_mut().pc = VA;
-    let trap = trap_of(&core.step_outcome());
-    assert_eq!(
-        trap.cause,
-        Trap::Exception(ExceptionCause::InstructionAccessFault)
-    );
-    assert_eq!(trap.mtval, VA);
-}
-
-#[test]
-fn port_rejected_walk_read_is_an_access_fault_of_the_original_kind() {
-    // The data leaf's PTE sits inside RAM, and the port rejects that one
-    // address. The fetch walk never touches it, so the fault comes from the
-    // load's walk read and keeps the load's cause and virtual address.
-    let leaf_issued = (ROOT_PPN + 2) * PAGE + ((VA_DATA >> 12) & 0x1ff) * 8 - BASE;
-    let (mut core, ram) = core_with_injected(leaf_issued, Injected::Target);
-    install_leaf(&ram, VA, 0x80005, 0x0e);
-    install_leaf(&ram, VA_DATA, 0x80004, 0x06);
-    store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
-    core.state_mut().regs[1] = VA_DATA;
-    enable_sv39(&mut core, PrivilegeMode::Supervisor);
-
-    let trap = trap_of(&core.step_outcome());
-    assert_eq!(trap.cause, Trap::Exception(ExceptionCause::LoadAccessFault));
-    assert_eq!(trap.mtval, VA_DATA);
-}
-
-#[test]
-fn walk_read_host_protocol_and_unknown_are_simulator_failures() {
-    // D3: a host, protocol, or unknown completion of a walk read is a
-    // SimulatorFailure, never an access fault and never a page fault.
-    let leaf_issued = (ROOT_PPN + 2) * PAGE + ((VA_DATA >> 12) & 0x1ff) * 8 - BASE;
-    for (injected, expected) in [
-        (
-            Injected::Host,
-            ruscv_sim::core::SimulatorFailureKind::HostBackend,
-        ),
-        (
-            Injected::Protocol,
-            ruscv_sim::core::SimulatorFailureKind::Invariant,
-        ),
-        (
-            Injected::Unknown,
-            ruscv_sim::core::SimulatorFailureKind::HostBackend,
-        ),
-    ] {
-        let (mut core, ram) = core_with_injected(leaf_issued, injected);
-        install_leaf(&ram, VA, 0x80005, 0x0e);
-        install_leaf(&ram, VA_DATA, 0x80004, 0x06);
-        store_program(&ram, MAPPED_PA, &[ld(5, 1, 0)]);
-        core.state_mut().regs[1] = VA_DATA;
-        enable_sv39(&mut core, PrivilegeMode::Supervisor);
-
-        let StepOutcome::SimulatorFailure(failure) = core.step_outcome() else {
-            panic!("{injected:?} must be a SimulatorFailure")
-        };
-        assert_eq!(failure.kind, expected);
-    }
 }
 
 #[test]

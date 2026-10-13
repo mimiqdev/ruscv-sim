@@ -53,7 +53,7 @@ handler:
     bne t0, t1, fail
     csrr t0, mscratch
     csrw mepc, t0
-    addi t0, x0, 0x188             # MIE | MPIE | MPP = M, shifted below
+    addi t0, x0, 0x188             # 0x188 << 4 = 0x1880: MPIE | MPP = M
     slli t0, t0, 4
     csrw mstatus, t0
     mret
