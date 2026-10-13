@@ -18,7 +18,7 @@ def main(path, reader):
     report = loads(original.read_bytes())
     require_code = validate(original,reader,(base/'bundle.sha256').read_text().strip())
     assert require_code == 0, 'valid semantic reader must return 0, not a performance verdict'
-    assert len(report['aggregates']) == 180 and len([e for e in report['records'] if e['raw']['semantic_status']=='not_applicable']) == 324
+    assert len(report['aggregates']) == 228 and len([e for e in report['records'] if e['raw']['semantic_status']=='not_applicable']) == 402
     assert report['comparison_status']=='inconclusive' and all(a['ratio']['value'] is None and a['bootstrap_median_ci']['value'] is None for a in report['aggregates'])
     oracle = loads(read(base,report['identity']['oracle']['artifact']))
     fixtures={f['id']:f for f in oracle['fixtures']}

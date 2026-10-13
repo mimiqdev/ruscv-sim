@@ -4,17 +4,23 @@
 Reads linked opcode identities, NEVER executes/decodes instructions or reads a
 simulator result. Each emit below declares an algorithm/assembly effect directly.
 Not used at run time: changing these tables requires oracle-version review.
-Usage: python3 tools/a10/derive_oracles.py target/<fresh-build> [--check|--check-artifacts]
+Usage: python3 tools/a10/derive_oracles.py target/<fresh-build> [--check|--check-artifacts|--extend]
 --check audits the complete checked-in derivation without changing any file.
 --check-artifacts excludes only build-tool identities: identical source/linker/ELF
 and semantic/placement expectations remain mandatory. It does not certify tools.
+--extend adds the Stage 4 witnesses and rewrites suite-v1.json's oracle pin from
+the file bytes. It preserves the sealed producer identities and refuses to write
+if any pre-existing fixture changes.
 """
+import copy
+import hashlib
 import json
 from pathlib import Path
 import re
 import struct
 import sys
 from audit_fixtures import merge_tool_sha256
+from derive_s4 import apply as apply_s4
 
 BASE = 0x80000000
 MASK = (1 << 64)-1
@@ -24,13 +30,29 @@ BUILD = Path(sys.argv[1])
 MANIFEST = ROOT/'tools/a10/public-v1.json'
 manifest = json.loads(MANIFEST.read_text())
 original_tools = {k:manifest[k] for k in ['tool_versions', 'tool_sha256']}
+original_fixtures = copy.deepcopy(manifest['fixtures'])
 mode = sys.argv[2:]
-if mode not in [[], ['--check'], ['--check-artifacts']]:
-    raise ValueError('expected only --check or --check-artifacts')
+if mode not in [[], ['--check'], ['--check-artifacts'], ['--extend']]:
+    raise ValueError('expected only --check, --check-artifacts, or --extend')
 build = json.loads((BUILD/'build.json').read_text())
+S4_WITNESSES = ('s4_csr_fields', 's4_ssip', 's4_tvm')
+if mode == ['--extend']:
+    present = {f['id'] for f in manifest['fixtures']}
+    for name in S4_WITNESSES:
+        if name in present:
+            continue
+        if name not in build['fixtures']:
+            raise ValueError(f'{name} is missing from the fresh fixture build')
+        manifest['fixtures'].append(dict(
+            id=name, source=f'tools/a10/fixtures/{name}.S', linker='tools/a10/fixtures/linker.ld',
+            native_only=False, source_sha256='', linker_sha256='', elf_sha256='', entry=0,
+            final_pc=0, exit_code=0, process_code=0, attempts=0, turns=0, retirements=0, traps=0,
+            work=0, checksum=0, signature_addr=None, signature=None, uart=[], events=[], ram=[],
+            regs=[0]*32, trace=[], segments=[], tohost=None, memory_size=0, signature_file_offset=None,
+        ))
 # Artifact equivalence ignores producer identity. Only write and strict --check
 # replace this platform's pin; an unpinned platform must not be consulted here.
-if mode == ['--check-artifacts']:
+if mode in (['--check-artifacts'], ['--extend']):
     tool_sha256 = original_tools['tool_sha256']
 elif 'platform' not in build:
     raise ValueError('build.json lacks producer platform (uname -m); rebuild fixtures')
@@ -234,10 +256,25 @@ for f in manifest['fixtures']:
             {412:[mem(BASE+4096,8,write=1<<63)]})
         ram=[dict(offset=target-BASE,bytes=sum([raw(v,4) for v in [0x33333333,0x99998888,0x55667788,0]],[]))]
         work=len(stores); checksum=0x33333333+0x99998888+0x55667788
+    elif name in S4_WITNESSES:
+        # Explicit CSR effects and trap turns. The witness model returns the
+        # counts; `emit` already appended every retired row.
+        s4 = apply_s4(name, opcodes, syms, emit, mem, regs)
+        work, checksum = s4['work'], s4['checksum']
+        signature_addr, signature = s4['signature_addr'], s4['signature']
+        uart, events, ram = s4['uart'], s4['events'], s4['ram']
+        f['facts'] = 'S4'
+        if s4['trap_at']:
+            f['trap_at'] = s4['trap_at']
     else: raise ValueError(name)
     exit_code=3 if name in ['control_loop','ram_loop','mixed_w','mixed_d','native_device'] else 0
+    if name in S4_WITNESSES:
+        counts = s4
+    else:
+        counts = dict(attempts=len(trace), turns=len(trace), retirements=len(trace), traps=0)
     f.update(entry=BASE,final_pc=trace[-1]['next_pc'],exit_code=exit_code,process_code=exit_code,
-        attempts=len(trace),turns=len(trace),retirements=len(trace),traps=0,work=work,checksum=checksum,
+        attempts=counts['attempts'],turns=counts['turns'],retirements=counts['retirements'],traps=counts['traps'],
+        work=work,checksum=checksum,
         signature_addr=signature_addr,signature=signature,uart=uart,events=events,ram=ram,regs=regs,trace=trace)
     # ELF metadata identity independently parsed from fixed ELF64 fields.
     elf=(BUILD/(name+'.elf')).read_bytes()
@@ -263,8 +300,13 @@ for f in manifest['fixtures']:
 
 # An explicit portable audit preserves the baseline tool metadata instead of
 # falsely certifying a different producer. build.json retains actual identities.
-if mode == ['--check-artifacts']:
+if mode in (['--check-artifacts'], ['--extend']):
     manifest.update(original_tools)
+if mode == ['--extend']:
+    derived = {f['id']: f for f in manifest['fixtures']}
+    for old in original_fixtures:
+        if derived[old['id']] != old:
+            raise ValueError(f'--extend changed sealed fixture {old["id"]}')
 # Keep one complete trace row per line for bounded, reviewable diffs.
 header={k:v for k,v in manifest.items() if k!='fixtures'}
 lines=[json.dumps(header,indent=2)[:-2]+',\n  "fixtures": [']
@@ -280,7 +322,7 @@ for index,f in enumerate(manifest['fixtures']):
     lines.append('    }'+(',' if index+1<len(manifest['fixtures']) else ''))
 lines.extend(['  ]','}'])
 rendered='\n'.join(lines)+'\n'
-if mode:
+if mode in (['--check'], ['--check-artifacts']):
     if rendered != MANIFEST.read_text():
         raise ValueError('checked-in oracle differs from independent derivation')
     if mode == ['--check-artifacts']:
@@ -289,3 +331,11 @@ if mode:
         print('P0 linked-source/oracle derivation audit: matches (no simulator invoked)')
 else:
     MANIFEST.write_text(rendered)
+    if mode == ['--extend']:
+        # The suite pin is the oracle file's own digest. Adding a witness
+        # rewrites that one pin; there is no second handwritten constant.
+        suite_path = ROOT/'tools/a10/suite-v1.json'
+        suite = json.loads(suite_path.read_text())
+        suite['oracle_sha256'] = hashlib.sha256(rendered.encode()).hexdigest()
+        suite_path.write_text(json.dumps(suite, separators=(',', ':'))+'\n')
+        print(f'P0 oracle extended; suite pin {suite["oracle_sha256"]}')

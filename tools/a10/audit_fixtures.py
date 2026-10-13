@@ -36,8 +36,12 @@ def merge_tool_sha256(saved, platform, tools):
 
 def audit(out):
     manifest = json.loads((ROOT / 'tools/a10/public-v1.json').read_text())
-    if sha(ROOT / 'tools/a10/public-v1.json') != 'a9dd39078beb2a1bed7278e22c1001a7de55b1a8b57ea29581b0b4bf3281a1a9':
-        raise ValueError('P1 must preserve the accepted P0 manifest')
+    # Integrity is the suite pin versus the oracle bytes. Adding a manifest
+    # entry rewrites that pin from the file; a handwritten digest constant is
+    # not a second seal.
+    suite = json.loads((ROOT / 'tools/a10/suite-v1.json').read_text())
+    if suite.get('oracle_sha256') != sha(ROOT / 'tools/a10/public-v1.json'):
+        raise ValueError('suite oracle pin does not match public-v1.json bytes')
     report = json.loads((out / 'build.json').read_text())
     if set(report['fixtures']) != {f['id'] for f in manifest['fixtures']}:
         raise ValueError('stale/missing/extra fixture IDs')

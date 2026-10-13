@@ -17,9 +17,9 @@ rows = report['records']
 valid = [r for r in rows if r['semantic_status'] != 'not_applicable']
 na = [r for r in rows if r['semantic_status'] == 'not_applicable']
 reps = report['policy']['basic_repetitions']
-assert len(valid) == 180 * (1 + reps)
-assert len(na) == 324
-assert len(report['aggregates']) == 180
+assert len(valid) == 228 * (1 + reps)
+assert len(na) == 402
+assert len(report['aggregates']) == 228
 for row in valid:
     assert row['semantic_status'] == 'correct'
     assert row['scope_error'] is None
@@ -41,4 +41,4 @@ for row in valid:
 for row in na:
     assert row['interval'] is None and row['accepted_ns'] is None and row['reason']
 assert all(a['basic_interval_sum_ns'] is not None and a['warmup_count'] == 1 and a['basic_count'] == reps for a in report['aggregates'])
-print(f'P1 smoke bookkeeping: {len(valid)} independently validated raw intervals / 180 cells; 324 explicit N/A; measurement INCONCLUSIVE')
+print(f'P1 smoke bookkeeping: {len(valid)} independently validated raw intervals / 228 cells; 402 explicit N/A; measurement INCONCLUSIVE')

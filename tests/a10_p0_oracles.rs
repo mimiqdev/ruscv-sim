@@ -128,13 +128,38 @@ fn versioned_manifest_and_capabilities_fail_closed() {
     assert!(m
         .image
         .ends_with("sha256:cc3cfea2499f69d2ee91fc711fb646807a08d8160148c00303d2fa92e3e9a65c"));
-    assert_eq!(m.fixtures.len(), 12);
+    assert_eq!(m.fixtures.len(), 15);
     assert_eq!(m.na.len(), 10);
     for f in &m.fixtures {
-        assert_eq!(f.turns, f.trace.len() as u64);
-        assert_eq!(f.attempts, f.turns);
-        assert_eq!(f.retirements, f.turns);
-        assert_eq!(f.traps, 0);
+        match f.facts {
+            FactsPolicy::Strict => {
+                assert_eq!(f.turns, f.trace.len() as u64);
+                assert_eq!(f.attempts, f.turns);
+                assert_eq!(f.retirements, f.turns);
+                assert_eq!(f.traps, 0);
+                // Every trace row declares only supported 32-bit fetched
+                // identities; no instruction may explicitly write MINSTRET
+                // (CSRRS x0-source read only).
+                for t in &f.trace {
+                    if t.instruction & 0x7f == 0x73 {
+                        assert_eq!(t.instruction, 0xb0202f73, "only csrr t5,minstret admitted");
+                    }
+                    assert!(!t.gpr.iter().any(|w| w.index == 0));
+                }
+            }
+            FactsPolicy::S4 => {
+                // Trap turns own no CommitRecord. An exception is an
+                // instruction attempt; a supervisor interrupt is not, so
+                // attempts equal turns or equal retirements.
+                assert_eq!(f.retirements, f.trace.len() as u64);
+                assert_eq!(f.turns, f.retirements + f.traps);
+                assert_eq!(f.trap_at.len() as u64, f.traps);
+                assert!(f.attempts == f.turns || f.attempts == f.retirements);
+                for t in &f.trace {
+                    assert!(!t.gpr.iter().any(|w| w.index == 0));
+                }
+            }
+        }
         assert_eq!(f.regs.len(), 32);
         assert_eq!(f.regs[0], 0);
         assert!(f.work > 0);
@@ -148,14 +173,6 @@ fn versioned_manifest_and_capabilities_fail_closed() {
                 u64::from_le_bytes(sig[16..24].try_into().unwrap()) + 6,
                 f.retirements
             );
-        }
-        // Every trace row declares only supported 32-bit fetched identities;
-        // no instruction may explicitly write MINSTRET (CSRRS x0-source read only).
-        for t in &f.trace {
-            if t.instruction & 0x7f == 0x73 {
-                assert_eq!(t.instruction, 0xb0202f73, "only csrr t5,minstret admitted");
-            }
-            assert!(!t.gpr.iter().any(|w| w.index == 0));
         }
     }
     let f = &m.fixtures[0];
@@ -385,7 +402,7 @@ fn all_mandatory_fixtures_own_their_public_route_oracle() {
             }
         }
     }
-    assert_eq!(cells, 148); // 10 RAM fixtures*13 + 2 native-device fixtures*9
+    assert_eq!(cells, 187); // 13 RAM fixtures*13 + 2 native-device fixtures*9
     eprintln!(
         "P0: {cells} required public fixture/route/observation cells validated; no timing verdict"
     );
