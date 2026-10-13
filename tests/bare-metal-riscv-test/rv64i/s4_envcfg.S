@@ -69,7 +69,7 @@ u_fence:
     # U cannot write senvcfg; the read of an M CSR proves the mode and
     # returns to M to finish.
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, 0x30102373              # csrr t1,misa (§7.8 ruling)
     la      s7, done_ok
     li      s4, 0x1800                  # return to M
     csrr    t1, misa

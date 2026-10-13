@@ -45,13 +45,13 @@ _start:
 
     # Odd pmpcfg1 (0x3A1) and pmpcfg15 (0x3AF) do not exist: illegal.
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, 0x3a102373              # csrr t1,pmpcfg1 (§7.8 ruling)
     la      s7, odd2
     csrr    t1, 0x3A1
     j       fail
 odd2:
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, 0x3af29073              # csrw pmpcfg15,t0 (§7.8 ruling)
     la      s7, done_ok
     csrw    0x3AF, t0
     j       fail

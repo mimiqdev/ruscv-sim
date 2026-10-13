@@ -7,6 +7,14 @@
 //! taken in M with the original virtual address in mtval.  `s4_envcfg` is
 //! the §4 "Environment configuration" row: menvcfg and senvcfg keep only
 //! FIOM, and FENCE retires in M, S, and U with FIOM set and clear.
+//! `s4_counters` is the "Identity and counters" row, `s4_fp_absent` the
+//! "F and D absent" row (illegal-instruction with mtval equal to the
+//! instruction bits, no data walk), `s4_csr_policy` the "CSR field
+//! policy" row, and `s4_supervisor_interrupt` the "Supervisor
+//! interrupt" row (delivery in U, S, and M; SEI-before-SSI-before-STI;
+//! vectored mtvec).  Illegal-instruction traps from TVM/TSR/TW and the
+//! absent-CSR/extension cases assert the exact 32-bit faulting
+//! instruction bits in mtval (dev-plan §7.8 ruling).
 
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 use std::env;
@@ -14,7 +22,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-const GUESTS: [&str; 4] = ["s4_tvm_tsr_tw", "s4_pmp_csr", "s4_delegation", "s4_envcfg"];
+const GUESTS: [&str; 8] = [
+    "s4_tvm_tsr_tw",
+    "s4_pmp_csr",
+    "s4_delegation",
+    "s4_envcfg",
+    "s4_counters",
+    "s4_fp_absent",
+    "s4_csr_policy",
+    "s4_supervisor_interrupt",
+];
 const LINKER_SCRIPT: &str = "linker-s4.ld";
 const MAX_CYCLES: u64 = 100_000;
 

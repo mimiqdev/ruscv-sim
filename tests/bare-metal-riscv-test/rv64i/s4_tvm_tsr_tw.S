@@ -51,19 +51,19 @@ s_entry:
     j       request_bits
 tvm_read_case:                           # S, TVM=1
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, 0x18002373              # csrr t1,satp (§7.8 ruling)
     la      s7, tvm_write_case
     csrr    t1, satp
     j       fail
 tvm_write_case:
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, 0x18001073              # csrw satp,x0 (§7.8 ruling)
     la      s7, tvm_sfence_case
     csrw    satp, x0
     j       fail
 tvm_sfence_case:
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, 0x12000073              # sfence.vma (§7.8 ruling)
     la      s7, tvm_off
     sfence.vma
     j       fail
@@ -81,7 +81,7 @@ tvm0_case:                              # S, TVM=0
 
     # S-mode read of the M-only minstret traps at TVM=0.
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, 0xb0202373              # csrr t1,minstret (§7.8 ruling)
     la      s7, tsr_on
     csrr    t1, minstret
     j       fail
@@ -93,7 +93,7 @@ tsr_on:
     j       request_bits
 tsr1_case:                              # S, TSR=1
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, 0x10200073              # sret (§7.8 ruling)
     la      s7, wfi_tw0
     sret
     j       fail
@@ -111,7 +111,7 @@ wfi0_case:                              # S, TW=0
     j       request_bits
 wfi1_case:                              # S, TW=1
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, WFI_ENC                 # 0x10500073 (§7.8 ruling)
     la      s7, u_wfi_arm
     wfi
     j       fail
@@ -143,7 +143,7 @@ u_wfi2_case:                            # S, TW=0
 u_misa_arm:                             # S
     # ===== U-mode read of the M-only misa proves the mode =====
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, 0x30102373              # csrr t1,misa (§7.8 ruling)
     la      s7, tsr0_arm
     la      t0, u_misa_code
     csrw    sepc, t0
@@ -177,7 +177,7 @@ m_block:                                # M
     j       fail
 m_after_sret:                           # U (SPP was 0)
     li      s5, CAUSE_ILLEGAL
-    li      s6, ANY
+    li      s6, 0x30102373              # csrr t1,misa (§7.8 ruling)
     la      s7, m_exit
     li      s4, 0x1800                  # return to M to write the exit word
     li      s2, 0
