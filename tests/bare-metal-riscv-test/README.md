@@ -7,7 +7,8 @@
 ```
 tests/bare-metal-riscv-test/
 ├── Makefile            # 编译脚本
-├── linker.ld           # 链接器脚本
+├── linker.ld           # 链接器脚本（默认）
+├── linker-s4.ld        # Stage 4 guest（rv64i/s4_*.S）专用链接器脚本
 ├── README.md           # 本文件
 ├── rv64a/              # RV64A 原子指令回归 guest
 ├── rv64i/              # RV64I 基础整数指令测试
@@ -64,6 +65,8 @@ cd tests/bare-metal-riscv-test/rv64i
 riscv64-unknown-elf-as -march=rv64ima -mabi=lp64 add.S -o add.o
 riscv64-unknown-elf-ld -T ../linker.ld add.o -o add.elf
 ```
+
+`s4_*` guest 需改用 `-T ../linker-s4.ld`：其镜像内含页表，tohost 必须位于镜像之后的独立页。
 
 ### 3. 运行测试
 
