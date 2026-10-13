@@ -4,9 +4,7 @@ This directory contains completed and explicitly superseded milestone plans with
 
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
-[approved A10 contract](../../dev-plan.md), active on actual rotation merge following approval 2026-10-03 UTC. Until then main retains A9; on merge A9 is formally completed/archived.
-The [A8 snapshot](a8-single-hart-atomic-physical-convergence.md) is historical.
-A9's entire contract and standalone closeout below preserve distinct implementation and document-delivery evidence; this docs-only rotation is not A10 implementation.
+[approved A11 contract](../../dev-plan.md), active on the A10→A11 rotation merge following approval 2026-10-10 UTC. Until then main retains A10. The [complete A10 record](a10-performance-baseline-infrastructure.md) preserves its contract and bounded implementation completion at squash merge `5d23d337…`, distinct from this documentation-only rotation. The A8/A9 records remain unchanged history; this rotation implements no Sv39 capability.
 
 ## Rolling process
 
@@ -20,6 +18,11 @@ A9's entire contract and standalone closeout below preserve distinct implementat
    technical planning context, not a second current contract.
 
 ## Records
+
+- [A10: Entire approved performance-baseline infrastructure contract and completion record](a10-performance-baseline-infrastructure.md)
+  - Technical completion 2026-10-10; squash PR #72 `5d23d337…`, reviewed branch `2090586…` with equal tree, exact merge-head CI 38019391250 success, final independent review no_actionable_findings / 0 and seven exact-HEAD observations.
+  - Entire contract preserved verbatim, including P3′/P4′ right-sizing. Delivered smoke/three-phase framework and single-session `a10-baseline-report/1`; deleted cohort/comparison certification and prior failed heavy runs remain explicit history, not A11 obligations.
+  - [Approved A11 informational snapshot](../../proposals/a11-sv39-integration.md) is not a second Current contract or integrated Sv39 claim.
 
 - [A9: Entire approved Hart facts and safe N=1 lifecycle contract](a9-hart-facts-safe-n1-machine-lifecycle.md)
   - Technical acceptance 2026-10-02; closeout document delivery 2026-10-03; successor/rotation approved 2026-10-03 UTC. Full original body preserved, formal completion/archival effective on actual rotation merge.

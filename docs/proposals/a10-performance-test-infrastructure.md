@@ -2,7 +2,7 @@
 
 **Status:** Current approved snapshot — detailed successor approved 2026-10-03 UTC; not a second Current milestone contract.
 
-**Authority:** Informational drafting record. [docs/dev-plan.md](../dev-plan.md) contains the promoted normative A10 contract, approved for activation on actual rotation merge. Until that merge main retains A9; on merge A9 is formally completed/archived. P0–P4 implementation is subsequent scoped work, not part of this documentation rotation. No performance infrastructure or result is claimed.
+**Authority:** Informational drafting record. The [complete A10 contract and completion record](../archive/milestones/a10-performance-baseline-infrastructure.md) preserve its accepted scope, subsequent right-sizing and bounded delivery at PR #72. [docs/dev-plan.md](../dev-plan.md) now contains the separately approved A11 successor, effective on the A10→A11 rotation merge. The proposal body below is unchanged drafting history, not a claim that its full certification recommendations were delivered.
 
 **Snapshot boundary:** The complete proposal from baseline `32bb28e84fd433446caa93f870d921a86b3ddab3` follows. Its original Draft status, decision-request/pending-approval phrasing and future recommendations are historical drafting language, not a new approval request or present authority. The original A9 Current-contract link now targets the stable archive. Approval covers these detailed technical boundaries, not old roadmap debt or later features; Git/PR history records rotation delivery.
 

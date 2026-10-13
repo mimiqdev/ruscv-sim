@@ -2,8 +2,8 @@
 
 - Status: Current
 - Authority: Informational
-- Scope: approved P2 local smoke/evidence and P3 implementation under development; not P3 acceptance or P4 retention
-- Contract: [current contract](../dev-plan.md), [ADRs](../architecture/decisions/README.md)
+- Scope: delivered P2 local smoke/evidence. P3 prototype/deferred-acceptance wording below is development history; cohort/comparison certification was subsequently deleted, not accepted. [A10 closeout](../archive/milestones/a10-performance-baseline-infrastructure.md#completion-record--2026-10-10-utc) records delivered baseline v1 separately; no P4 retention certification.
+- Contract: [preserved A10 contract](../archive/milestones/a10-performance-baseline-infrastructure.md#preserved-complete-a10-contract), [ADRs](../architecture/decisions/README.md)
 - Implementation: [`report_schema.py`](../../tools/a10/report_schema.py), [`replay.rs`](../../tools/a10/replay.rs)
 - Machine-readable definition: [`ruscv-perf-1.schema.json`](../../tools/a10/ruscv-perf-1.schema.json) (Draft 2020-12)
 
