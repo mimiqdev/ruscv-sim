@@ -18,9 +18,12 @@
 # fence. A non-canonical VA in rs1 raises no exception.
 #
 # Two illegal-instruction cases follow, each with mtval equal to the
-# instruction bits and mepc equal to its address: a SYSTEM funct3 = 0
-# encoding that is not SFENCE.VMA (HFENCE.VVMA; the H extension is absent)
-# in S, and SFENCE.VMA in U. The trap-entry MPP shows the mode of each.
+# instruction bits and mepc equal to its address: HFENCE.VVMA in S, and
+# SFENCE.VMA in U. The trap-entry MPP shows the mode of each. The U-mode
+# SFENCE.VMA trap is a specification requirement. HFENCE.VVMA with the H
+# extension absent is a reserved encoding whose behavior the specification
+# leaves unspecified; the trap is asserted for consistency with the Spike
+# and Sail reference models, not as a specification requirement.
 
     .equ ANY, -2
 
@@ -182,8 +185,9 @@ s_main:
     sfence.vma t0, x0
     sfence.vma t0, t2
 
-    # A SYSTEM funct3 = 0 encoding that is not SFENCE.VMA: HFENCE.VVMA
-    # (funct7 0010001). H is absent, so it is illegal-instruction.
+    # HFENCE.VVMA (funct7 0010001). H is absent, so the encoding is
+    # reserved; Spike and Sail raise illegal-instruction, and so does this
+    # model. Not a specification requirement.
     li      s5, 2
     li      s6, 0x22000073
     la      s7, after_hfence

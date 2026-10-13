@@ -19,7 +19,10 @@
 //! to U and to S, SRET from M to S and from S to U with sepc bits 1:0
 //! written as 1, SRET in U (illegal), and ECALL from U (cause 8) and from
 //! S (cause 9), each taken in M; the CSR file checks later accesses at the
-//! privilege the return selected.
+//! privilege the return selected.  SRET from M to S clears MPRV, which the
+//! ECALL back to M reads as 0; the control is MRET with MPP = M, which
+//! keeps MPRV = 1.  SRET from S clearing MPRV is not guest-observable,
+//! since MPRV is already 0 in S and sstatus does not expose it.
 
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 use std::env;

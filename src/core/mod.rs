@@ -1623,7 +1623,10 @@ impl RiscvCore {
     }
 
     /// SFENCE.VMA: SYSTEM, funct3 = 0, funct7 = 0b0001001, rd = 0.  Every
-    /// rs1 and rs2 value is legal.
+    /// rs1 and rs2 value is legal.  SFENCE.VMA with rd != 0 and HFENCE.*
+    /// without H are reserved encodings, whose behavior the specification
+    /// leaves unspecified; they fall through to the illegal-instruction trap
+    /// for consistency with Spike and Sail, not because the spec requires it.
     fn is_sfence_vma(raw: u32) -> bool {
         raw & 0xFE00_7FFF == 0x1200_0073
     }

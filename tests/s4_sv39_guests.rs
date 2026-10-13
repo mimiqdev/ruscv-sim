@@ -44,9 +44,11 @@
 //! becomes usable after a per-VA fence, and a non-canonical rs1 raises no
 //! exception. The rewritten leaf is also visible before the fence; that is
 //! recorded as a property of this cache-less model, not as an architectural
-//! requirement. HFENCE.VVMA (a SYSTEM funct3 = 0 encoding that is not
-//! SFENCE.VMA) in S and SFENCE.VMA in U are illegal-instruction traps with
-//! mtval equal to the instruction bits.
+//! requirement. SFENCE.VMA in U is an illegal-instruction trap with mtval
+//! equal to the instruction bits, as the specification requires. HFENCE.VVMA
+//! in S also traps with mtval equal to its bits; with H absent that encoding
+//! is reserved, so the trap is asserted as consistency with the Spike and
+//! Sail reference models, not as a specification requirement.
 
 use ruscv_sim::executor::{load_and_run, RiscVSimulator};
 use std::env;

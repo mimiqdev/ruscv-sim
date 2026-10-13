@@ -58,6 +58,9 @@ pub fn exec_system_with_csr_access(
                 0x0000_0073 | 0x0010_0073 | 0x3020_0073 | 0x1020_0073 | 0x1050_0073
             );
             let sfence = instr.raw & 0xfe00_7fff == 0x1200_0073;
+            // Everything else here is reserved (e.g. SFENCE.VMA with rd != 0,
+            // HFENCE.* without H).  Trapping matches Spike and Sail; the
+            // specification leaves reserved encodings unspecified.
             if !fixed && !sfence {
                 return Err(ExecuteError::IllegalInstruction);
             }

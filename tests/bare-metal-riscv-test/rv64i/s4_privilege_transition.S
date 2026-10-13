@@ -9,9 +9,14 @@
 #      at U. ECALL in U is cause 8.
 #   B. mret to S. S-mode `csrr sstatus` retires and `csrr mstatus` is
 #      illegal. ECALL in S is cause 9.
+#   C0. Control for C: MRET with MPP = M keeps MPRV = 1, because an xRET
+#      clears MPRV only when the new privilege is below M.
 #   C. SRET from M to S, with MPRV set and sepc written with bits 1:0 set.
 #      sepc reads back with bits 1:0 clear and SRET lands there. SRET sets
-#      SPIE, moves SPIE into SIE, clears SPP, and clears MPRV.
+#      SPIE, moves SPIE into SIE, clears SPP, and clears MPRV: the ECALL
+#      back to M reads MPRV = 0. SRET from S clearing MPRV is not
+#      observable, because MPRV is already 0 in S and sstatus does not
+#      expose it; this M-to-S SRET is the observable case.
 #   D. SRET from S to U, again with sepc bits 1:0 written as 1. U-mode
 #      `csrr sstatus` is illegal, so the CSR file checks at U.
 #   E. SRET in U is illegal (mtval = the SRET encoding) and changes none
@@ -98,6 +103,23 @@ m_c:
     andi    t1, t1, 3
     li      t2, 1
     bne     t1, t2, fail
+
+    # ===== C0: MRET with MPP = M keeps MPRV =====
+    li      t0, 0x21800                 # MPRV | MPP = M
+    csrw    mstatus, t0
+    la      t0, m_c0
+    csrw    mepc, t0
+    mret
+    j       fail
+
+m_c0:
+    # Still M. Read mstatus before any load or store: MRET left MPP = U,
+    # so with MPRV = 1 data accesses would use U (Bare, no PMP here).
+    csrr    t1, mstatus
+    li      t2, 0x20000
+    and     t3, t1, t2
+    beqz    t3, fail                    # MPRV still 1
+    csrc    mstatus, t2
 
     # ===== C: SRET from M to S =====
     # MPP = M keeps M's own accesses untranslated while MPRV is set.
