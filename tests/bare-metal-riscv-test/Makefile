@@ -18,8 +18,11 @@ EXT_DIRS = rv64i rv64m rv64a rv64f rv64d rv64c
 # Assembly flags
 ASFLAGS = -march=rv64ima_zicsr -mabi=lp64
 
-# Linker script for bare metal
-LDSCRIPT = -Tlinker.ld
+# Linker script for bare metal; Stage 4 guests (s4_*) use linker-s4.ld,
+# matching scripts/compile_riscv_tests.sh and tests/s4_*_guests.rs
+LDSCRIPT = linker.ld
+LDSCRIPT_S4 = linker-s4.ld
+ldscript_for = $(if $(filter s4_%,$(notdir $(1))),$(LDSCRIPT_S4),$(LDSCRIPT))
 
 # Find all .S files in extension subdirectories
 SOURCES = $(foreach dir,$(EXT_DIRS),$(wildcard $(dir)/*.S))
@@ -32,11 +35,12 @@ ELFS    = $(SOURCES:.S=.elf)
 all: $(ELFS)
 
 # Pattern rule for building .elf from .S files in subdirectories
-%.elf: %.S linker.ld
+.SECONDEXPANSION:
+%.elf: %.S $$(call ldscript_for,$$*)
 	@echo "  AS      $<"
 	$(AS) $(ASFLAGS) $< -o $*.o
 	@echo "  LD      $@"
-	$(LD) $(LDSCRIPT) $*.o -o $@
+	$(LD) -T$(call ldscript_for,$*) $*.o -o $@
 	@rm -f $*.o
 
 disasm: $(ELFS)

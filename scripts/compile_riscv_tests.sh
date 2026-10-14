@@ -50,10 +50,23 @@ if [ "${check_toolchain_status}" -ne 0 ]; then
     exit "${check_toolchain_status}"
 fi
 
-if [ ! -f "${TESTS_DIR}/linker.ld" ]; then
-    echo -e "${RED}Error: linker script not found: ${TESTS_DIR}/linker.ld${NC}" >&2
-    exit 2
-fi
+for script in linker.ld linker-s4.ld; do
+    if [ ! -f "${TESTS_DIR}/${script}" ]; then
+        echo -e "${RED}Error: linker script not found: ${TESTS_DIR}/${script}${NC}" >&2
+        exit 2
+    fi
+done
+
+# Stage 4 guests (named s4_*) build page tables and translated pages inside
+# their image and need the HTIF tohost word on its own page after it, which
+# linker-s4.ld provides; linker.ld fixes tohost at 0x80001000, inside larger
+# images.  The s4_* name is the same convention tests/s4_*_guests.rs use.
+linker_script_for() {
+    case "$(basename "$1")" in
+        s4_*) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
+        *) printf '%s' "${TESTS_DIR}/linker.ld" ;;
+    esac
+}
 
 # Fresh means fresh: do not reuse a previous source/HEAD's generated ELF.
 if ! rm -rf -- "${OUTDIR}"; then
@@ -91,7 +104,9 @@ for source in "${SOURCES[@]}"; do
         failed=$((failed + 1))
         continue
     fi
-    if ! "${LD}" -T "${TESTS_DIR}/linker.ld" "${object}" -o "${elf}"; then
+    linker_script="$(linker_script_for "${source}")"
+    echo "  Linker script: ${linker_script#"${TESTS_DIR}/"}"
+    if ! "${LD}" -T "${linker_script}" "${object}" -o "${elf}"; then
         echo -e "${RED}  [FAIL] link: ${relative}${NC}" >&2
         failed=$((failed + 1))
         rm -f "${object}"

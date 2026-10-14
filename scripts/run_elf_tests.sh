@@ -22,6 +22,10 @@ if ! source "${SCRIPT_DIR}/riscv_elf_paths.sh"; then
     echo -e "${RED}Error: cannot load path validation helper${NC}" >&2
     exit 2
 fi
+if ! source "${SCRIPT_DIR}/riscv_elf_result.sh"; then
+    echo -e "${RED}Error: cannot load result classification helper${NC}" >&2
+    exit 2
+fi
 OUTDIR_REQUESTED="${RISCV_TEST_OUTDIR:-target/riscv-elf-tests}"
 if ! OUTDIR="$(riscv_validate_output_dir "${PROJECT_DIR}" "${OUTDIR_REQUESTED}")"; then
     exit 2
@@ -156,8 +160,9 @@ for elf in "${ELF_FILES[@]}"; do
     output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" 2>&1)
     status=$?
     printf '%s\n' "${output}"
-    if [ "${status}" -ne 0 ]; then
-        echo -e "${RED}  [FAIL] CLI exit status ${status}, expected 0${NC}"
+    # Exit 0 alone is not success: the host truncates the status to 8 bits.
+    if ! reason=$(riscv_classify_cli_run "${status}" "${output}"); then
+        echo -e "${RED}  [FAIL] ${reason}${NC}"
         failed=$((failed + 1))
         continue
     fi
@@ -166,7 +171,7 @@ for elf in "${ELF_FILES[@]}"; do
         failed=$((failed + 1))
         continue
     fi
-    echo -e "${GREEN}  [PASS]${NC} CLI exit status 0"
+    echo -e "${GREEN}  [PASS]${NC} CLI exit status 0, ${RISCV_CLI_SUCCESS_LINE}"
     passed=$((passed + 1))
 done
 
