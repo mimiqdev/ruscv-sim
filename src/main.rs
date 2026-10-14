@@ -74,14 +74,7 @@ fn main() {
             match run_elf(&elf, max_cycles, tohost, log_commits, verbose) {
                 Ok(result) => {
                     print_result(&result);
-                    // Guest success does not hide a separate reporting error.
-                    // Preserve nonzero guest codes and the library result itself.
-                    let process_code = if result.exit_code == 0 && result.error.is_some() {
-                        1
-                    } else {
-                        result.exit_code as i32
-                    };
-                    std::process::exit(process_code);
+                    std::process::exit(process_exit_code(&result));
                 }
                 Err(e) => {
                     eprintln!("Error: {}", e);
@@ -109,6 +102,29 @@ fn run_elf(
     .map_err(|e| format!("Execution failed: {}", e))
 }
 
+/// Whether the run is reported as `Status:     SUCCESS`.
+fn is_success(result: &ExecutionResult) -> bool {
+    !result.timed_out && result.exit_code == 0 && result.error.is_none()
+}
+
+/// Map a run result to the host process exit status.
+///
+/// The process status is zero exactly when the run is reported as SUCCESS.
+/// A host keeps only the low 8 bits of the status, so a failing 32-bit guest
+/// code whose low byte is zero (for example `0x10000400`) would otherwise exit
+/// 0. Such codes, and failures that retain a zero guest code (a reporting
+/// error), exit 1; any other failing code keeps its low byte. The full guest
+/// code is still printed on the `Exit Code:` line.
+fn process_exit_code(result: &ExecutionResult) -> i32 {
+    if is_success(result) {
+        return 0;
+    }
+    match result.exit_code & 0xff {
+        0 => 1,
+        low => low as i32,
+    }
+}
+
 fn print_result(result: &ExecutionResult) {
     println!();
     println!("========== Execution Result ==========");
@@ -118,7 +134,7 @@ fn print_result(result: &ExecutionResult) {
 
     if result.timed_out {
         println!("Status:     TIMEOUT");
-    } else if result.exit_code == 0 && result.error.is_none() {
+    } else if is_success(result) {
         println!("Status:     SUCCESS");
     } else {
         println!("Status:     FAILED");
@@ -137,4 +153,44 @@ fn print_result(result: &ExecutionResult) {
     }
 
     println!("=====================================");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(exit_code: u32, timed_out: bool, error: Option<&str>) -> ExecutionResult {
+        ExecutionResult {
+            exit_code,
+            timed_out,
+            error: error.map(str::to_string),
+            ..ExecutionResult::default()
+        }
+    }
+
+    #[test]
+    fn only_success_exits_zero() {
+        assert_eq!(process_exit_code(&result(0, false, None)), 0);
+        assert_eq!(process_exit_code(&result(0, false, Some("log"))), 1);
+        assert_eq!(process_exit_code(&result(1, true, Some("Timeout"))), 1);
+    }
+
+    #[test]
+    fn failing_code_with_zero_low_byte_exits_nonzero() {
+        for code in [0x100, 0x400, 0x1000_0400, 0xffff_ff00] {
+            assert!(!is_success(&result(code, false, None)));
+            assert_eq!(
+                process_exit_code(&result(code, false, None)),
+                1,
+                "{code:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn failing_code_keeps_nonzero_low_byte() {
+        assert_eq!(process_exit_code(&result(3, false, None)), 3);
+        assert_eq!(process_exit_code(&result(0xff, false, None)), 0xff);
+        assert_eq!(process_exit_code(&result(0x1234_5605, false, None)), 5);
+    }
 }
