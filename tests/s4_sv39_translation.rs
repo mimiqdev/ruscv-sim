@@ -689,6 +689,53 @@ fn sv39_walk_reads_d3_outcomes_and_ad_race_on_the_hart_ports() {
 }
 
 #[test]
+fn ad_race_past_the_old_retry_budget_still_retires() {
+    // A walk that loses the A/D race restarts at step 2. The specification
+    // gives that restart no budget, so a race that settles after the old
+    // 64-attempt cap still retires and sets A.
+    const LOSSES: usize = 65;
+    let data_leaf = (ROOT_PPN + 2) * PAGE + ((VA_DATA >> 12) & 0x1ff) * 8;
+    let fresh = (0x80004u64 << 10) | 0x06 | 0x1;
+    let race: RaceHook = Box::new(move |stage, ram| {
+        if let RaceStage::AfterLr(n) = stage {
+            if n <= LOSSES {
+                let value = gp_read(ram, data_leaf) ^ (1 << 8);
+                gp_write(ram, data_leaf, value);
+            }
+        }
+    });
+    let mut d = Driver::mapped(None, race, ld(5, 1, 0), VA_DATA);
+    gp_write(&d.ram, data_leaf, fresh);
+    let outcome = d.core.step_outcome();
+    assert!(
+        matches!(outcome, StepOutcome::InstructionRetired(_)),
+        "{outcome:?}"
+    );
+    assert_eq!(d.core.state().regs[5], 0x11);
+    assert_eq!(gp_read(&d.ram, data_leaf) & 0x40, 0x40, "A is set");
+    let events = d.data_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, PortEvent::Lr(_)))
+            .count(),
+        LOSSES + 1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    PortEvent::Sc(_, Some(ruscv_sim::physical::ConditionalStatus::Failure))
+                )
+            })
+            .count(),
+        LOSSES
+    );
+}
+
+#[test]
 fn store_with_rs2_equal_rs1_writes_the_architectural_operand() {
     // Regression: the staged translation delta used to live in rs1 for the
     // execution window, so a store whose data register equals its base

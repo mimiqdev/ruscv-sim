@@ -1,4 +1,5 @@
 //! Component validation; these tests do not establish public-path translation.
+use ruscv_sim::core::PrivilegeMode;
 use ruscv_sim::mmu::physical::PhysicalMemory;
 use ruscv_sim::mmu::pte::{flags, PagePermissions, PageTableEntry};
 use ruscv_sim::mmu::sv39::{PageTableWalker, VirtualAddress, WalkResult};
@@ -20,7 +21,8 @@ fn check(level: usize, raw: u64, valid: bool) {
     let result = PageTableWalker::new(&mut memory, 1).walk_check_permissions_and_update_ad(
         VirtualAddress::new(0).unwrap(),
         AccessType::Read,
-        false,
+        PrivilegeMode::Supervisor,
+        0,
     );
     if valid {
         assert!(

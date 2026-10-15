@@ -133,7 +133,10 @@ fn permissive_entry(vpn: u64) -> TlbEntry {
         read: true,
         write: true,
         execute: true,
-        user: true,
+        // An S-mode access of a U=1 page faults unless SUM is set, and an
+        // S-mode fetch faults even then. This entry is an S page so the
+        // canonicity cases are not permission faults.
+        user: false,
         accessed: true,
         dirty: true,
     }
@@ -175,6 +178,7 @@ fn explicit_walk_page_faults_before_pte_access() {
                 SV39_MODE | ROOT_PPN,
                 access,
                 PrivilegeMode::Supervisor,
+                0,
                 &mut memory,
             );
             assert_noncanonical(result, vaddr, access);
@@ -238,6 +242,7 @@ fn canonical_boundaries_translate_and_malformed_neighbors_do_not() {
             SV39_MODE | ROOT_PPN,
             AccessType::Write,
             PrivilegeMode::Supervisor,
+            0,
             &mut memory,
         );
         assert_eq!(result, Ok(paddr));
@@ -305,6 +310,7 @@ fn bare_passthrough_parser_and_mode_errors_keep_their_precedence() {
         9u64 << 60,
         AccessType::Read,
         PrivilegeMode::Supervisor,
+        0,
         &mut memory,
     );
     assert_eq!(

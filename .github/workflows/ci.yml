@@ -1,7 +1,8 @@
 # RISC-V ISS Simulator CI
 # ========================
-# Pull requests run one consolidated Rust quality job. More expensive release,
-# bare-metal ELF, and coverage work runs only when it provides additional value.
+# Pull requests run one consolidated Rust quality job. That job includes the
+# release binary and the project ELF suite, so a green check is the Stage 4
+# gate. Coverage stays manual.
 
 name: CI
 
@@ -56,6 +57,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Check the workspace
+        run: cargo check --all-features
+
       - name: Check A5 inventory and fail-closed accounting controls
         run: |
           python3 -m unittest discover -s scripts/a5 -p 'test_*.py'
@@ -81,22 +85,19 @@ jobs:
           bash scripts/test_riscv_elf_guards.sh
           bash scripts/test_riscv_elf_result.sh
 
-      # Pull requests already exercise the debug/test build above. Build and run
-      # the release binary only after code reaches main.
+      # The release binary and the project ELF suite, including every Stage 4
+      # s4_* guest, run on pull requests and on main. A green Quality and
+      # tests check is the Stage 4 gate, not a debug-only subset.
       - name: Build release binary
-        if: github.event_name == 'push'
         run: cargo build --release --all-features
 
       - name: Smoke test release binary
-        if: github.event_name == 'push'
         run: ./target/ci-cargo/release/ruscv-sim --version
 
       - name: Compile RISC-V test programs in a fresh output directory
-        if: github.event_name == 'push'
         run: ./scripts/compile_riscv_tests.sh
 
       - name: Run RISC-V ELF tests through the public CLI
-        if: github.event_name == 'push'
         env:
           RISCV_TEST_SKIP_BUILD: "1"
         run: ./scripts/run_elf_tests.sh

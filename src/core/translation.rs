@@ -10,8 +10,9 @@
 //!
 //! Fault classification follows the D3 table. Page faults keep the original
 //! virtual address in `mtval`; a target-rejected walk read or A/D write-back
-//! is an access fault of the original access kind; host, protocol, unknown,
-//! and retry-cap failures are `SimulatorFailure`, never guest traps.
+//! is an access fault of the original access kind; host, protocol, and unknown
+//! completions are `SimulatorFailure`, never guest traps. A lost A/D race
+//! restarts the walk. The specification gives that restart no budget.
 
 use super::{
     hart_issued_paddr, ExceptionCause, PrivilegeMode, RiscvCore, SimulatorFailureKind, StepOutcome,
@@ -26,8 +27,6 @@ use crate::physical::{
     PhysicalAccessError, PhysicalDataAccess, PhysicalRequest, PhysicalWidth,
 };
 
-/// Matches the component walker's bounded step-2 restart budget.
-const MAX_AD_UPDATE_ATTEMPTS: usize = 64;
 const LEVELS: usize = 3;
 
 /// The original access kind a translation serves. It selects the fault cause
@@ -172,7 +171,6 @@ impl RiscvCore {
                 Ok(value) => value,
                 Err(walk) => return walk,
             };
-        let mut attempts = 0;
         loop {
             let pte = PageTableEntry::from_raw(pte_value);
             if !pte.valid_sv39_at_level(level) {
@@ -214,13 +212,6 @@ impl RiscvCore {
                     return Walk::Translated(Sv39::build_physical_address(&pte, va, level))
                 }
                 AdUpdate::Retry { pte } => {
-                    attempts += 1;
-                    if attempts >= MAX_AD_UPDATE_ATTEMPTS {
-                        return Walk::Failure(
-                            SimulatorFailureKind::Invariant,
-                            "Sv39 A/D update exceeded the retry budget".into(),
-                        );
-                    }
                     pte_value = match pte {
                         Some(value) => value,
                         None => {
@@ -433,29 +424,18 @@ fn classify_ad_update(error: AtomicAccessError) -> Walk {
     }
 }
 
-/// Steps 6 and 8 of the Sv39 walk. U, SUM, MXR, then R/W/X for the access.
+/// Steps 6 and 8 of the Sv39 walk. The component walker and TLB use the same
+/// predicate, so SUM and MXR cannot drift between the two.
 fn leaf_permits(
     pte: &PageTableEntry,
     access: AccessKind,
     privilege: PrivilegeMode,
     status: u64,
 ) -> bool {
-    let permissions = pte.permissions();
-    let user_ok = match privilege {
-        PrivilegeMode::User => permissions.user,
-        // An S-mode fetch of a U=1 page faults regardless of SUM; SUM widens
-        // only S-mode data access.
-        PrivilegeMode::Supervisor => {
-            !permissions.user || (access != AccessKind::Fetch && status & mstatus::SUM != 0)
-        }
-        PrivilegeMode::Machine => true,
+    let access = match access {
+        AccessKind::Fetch => crate::mmu::AccessType::InstructionFetch,
+        AccessKind::Load => crate::mmu::AccessType::Read,
+        AccessKind::Store => crate::mmu::AccessType::Write,
     };
-    if !user_ok {
-        return false;
-    }
-    match access {
-        AccessKind::Fetch => permissions.execute,
-        AccessKind::Load => permissions.read || (status & mstatus::MXR != 0 && permissions.execute),
-        AccessKind::Store => permissions.write,
-    }
+    crate::mmu::pte::leaf_permits(pte.permissions(), access, privilege, status)
 }

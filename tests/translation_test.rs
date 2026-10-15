@@ -8,10 +8,13 @@
 //! - SATP mode switching
 
 use ruscv_sim::core::PrivilegeMode;
+use ruscv_sim::csr::mstatus;
 use ruscv_sim::mmu::physical::PhysicalMemory;
 use ruscv_sim::mmu::pte::{PagePermissions, PageTableEntry};
 use ruscv_sim::mmu::translator::{AddressTranslator, TranslationRequest};
-use ruscv_sim::mmu::{AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TranslationMode};
+use ruscv_sim::mmu::{
+    AccessType, Mmu, MmuConfig, MmuError, PageFaultReason, Satp, Tlb, TranslationMode,
+};
 
 /// Setup a simple 3-level page table for testing
 /// Uses root_ppn as the base, with level1 at root_ppn + 1, level0 at root_ppn + 2
@@ -302,8 +305,8 @@ fn test_tlb_flush_asid() {
     let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().misses, 1);
 
-    // Flush TLB for ASID 1
-    tlb.flush_asid(1);
+    // The translator tags the fill with Satp::asid, which is 0.
+    tlb.flush_asid(0);
 
     // Next access should miss again
     let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
@@ -336,8 +339,8 @@ fn test_tlb_flush_asid_va() {
     let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
     assert_eq!(tlb.stats().misses, 1);
 
-    // Flush TLB for ASID 1, VPN 1
-    tlb.flush_asid_va(1, 1);
+    // The translator tags the fill with Satp::asid, which is 0. VPN of 0x1000 is 1.
+    tlb.flush_asid_va(0, 1);
 
     // Next access should miss again
     let _ = translator.translate_with_tlb(request, &mut tlb, &mut memory);
@@ -441,7 +444,7 @@ fn test_satp_parsing() {
     assert_eq!(satp.mode(), Some(TranslationMode::Sv39));
     assert!(satp.paging_enabled());
     assert!(satp.is_valid());
-    assert_eq!(satp.asid(), 0x1234);
+    assert_eq!(satp.asid(), 0);
     assert_eq!(satp.ppn(), 0xABCDEF);
     assert_eq!(satp.root_page_table_addr(), 0xABCDEF << 12);
 
@@ -797,4 +800,208 @@ fn test_mmu_custom_config() {
     // Both TLBs should be initialized
     assert_eq!(itlb_stats.accesses, 0);
     assert_eq!(dtlb_stats.accesses, 0);
+}
+
+#[test]
+fn sum_mxr_and_supervisor_fetch_use_leaf_permits_on_walk_and_tlb_hit() {
+    let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
+    let root_ppn = 0x80000;
+    setup_page_table(&mut memory, root_ppn);
+    let level0 = (root_ppn + 2) << 12;
+    memory
+        .write_dword(
+            level0 + 32,
+            PageTableEntry::new_leaf(
+                0x90004,
+                PagePermissions {
+                    read: false,
+                    write: false,
+                    execute: true,
+                    user: true,
+                },
+                false,
+            )
+            .bits(),
+        )
+        .unwrap();
+    memory
+        .write_dword(
+            level0 + 40,
+            PageTableEntry::new_leaf(
+                0x90005,
+                PagePermissions {
+                    read: false,
+                    write: false,
+                    execute: true,
+                    user: false,
+                },
+                false,
+            )
+            .bits(),
+        )
+        .unwrap();
+
+    let translator = AddressTranslator::new(MmuConfig::default());
+    let mut tlb = Tlb::new(64, 4);
+    let satp = (8u64 << 60) | root_ppn;
+    let request = |vaddr, access_type, privilege, mstatus_value| TranslationRequest {
+        vaddr,
+        access_type,
+        privilege,
+        satp,
+        mstatus: mstatus_value,
+    };
+
+    let denied = translator.translate_with_tlb(
+        request(0x3000, AccessType::Read, PrivilegeMode::Supervisor, 0),
+        &mut tlb,
+        &mut memory,
+    );
+    assert!(matches!(
+        denied,
+        Err(MmuError::PageFault(PageFaultReason::PageTableWalk { .. }))
+    ));
+    assert_eq!(tlb.stats().misses, 1);
+
+    let translated = translator
+        .translate_with_tlb(
+            request(
+                0x3000,
+                AccessType::Read,
+                PrivilegeMode::Supervisor,
+                mstatus::SUM,
+            ),
+            &mut tlb,
+            &mut memory,
+        )
+        .unwrap();
+    assert_eq!(translated, 0x9000_3000);
+    assert_eq!(tlb.stats().misses, 2);
+
+    let hit_denied = translator.translate_with_tlb(
+        request(0x3000, AccessType::Read, PrivilegeMode::Supervisor, 0),
+        &mut tlb,
+        &mut memory,
+    );
+    assert!(matches!(
+        hit_denied,
+        Err(MmuError::PageFault(
+            PageFaultReason::PermissionDenied { .. }
+        ))
+    ));
+    assert_eq!(tlb.stats().misses, 2);
+    assert_eq!(tlb.stats().hits, 1);
+
+    let fetch_denied = translator.translate_with_tlb(
+        request(
+            0x4000,
+            AccessType::InstructionFetch,
+            PrivilegeMode::Supervisor,
+            mstatus::SUM,
+        ),
+        &mut tlb,
+        &mut memory,
+    );
+    assert!(matches!(
+        fetch_denied,
+        Err(MmuError::PageFault(PageFaultReason::PageTableWalk { .. }))
+    ));
+
+    let user_fetch = translator
+        .translate_with_tlb(
+            request(0x4000, AccessType::InstructionFetch, PrivilegeMode::User, 0),
+            &mut tlb,
+            &mut memory,
+        )
+        .unwrap();
+    assert_eq!(user_fetch, 0x9000_4000);
+
+    let fetch_hit = translator.translate_with_tlb(
+        request(
+            0x4000,
+            AccessType::InstructionFetch,
+            PrivilegeMode::Supervisor,
+            mstatus::SUM,
+        ),
+        &mut tlb,
+        &mut memory,
+    );
+    assert!(matches!(
+        fetch_hit,
+        Err(MmuError::PageFault(
+            PageFaultReason::PermissionDenied { .. }
+        ))
+    ));
+
+    let mxr_denied = translator.translate_with_tlb(
+        request(0x5000, AccessType::Read, PrivilegeMode::Supervisor, 0),
+        &mut tlb,
+        &mut memory,
+    );
+    assert!(matches!(
+        mxr_denied,
+        Err(MmuError::PageFault(PageFaultReason::PageTableWalk { .. }))
+    ));
+
+    let mxr_ok = translator
+        .translate_with_tlb(
+            request(
+                0x5000,
+                AccessType::Read,
+                PrivilegeMode::Supervisor,
+                mstatus::MXR,
+            ),
+            &mut tlb,
+            &mut memory,
+        )
+        .unwrap();
+    assert_eq!(mxr_ok, 0x9000_5000);
+
+    let mxr_hit = translator.translate_with_tlb(
+        request(0x5000, AccessType::Read, PrivilegeMode::Supervisor, 0),
+        &mut tlb,
+        &mut memory,
+    );
+    assert!(matches!(
+        mxr_hit,
+        Err(MmuError::PageFault(
+            PageFaultReason::PermissionDenied { .. }
+        ))
+    ));
+}
+
+#[test]
+fn raw_asid_bits_do_not_change_satp_asid_or_tlb_identity() {
+    let mut memory = PhysicalMemory::new(0x8000_0000, 0x1001_0000);
+    let root_ppn = 0x80000;
+    setup_page_table(&mut memory, root_ppn);
+    let satp_a = (8u64 << 60) | (1u64 << 44) | root_ppn;
+    let satp_b = (8u64 << 60) | (2u64 << 44) | root_ppn;
+    assert_eq!(Satp(satp_a).asid(), 0);
+    assert_eq!(Satp(satp_b).asid(), 0);
+
+    let translator = AddressTranslator::new(MmuConfig::default());
+    let mut tlb = Tlb::new(64, 4);
+    let request = |satp| TranslationRequest {
+        vaddr: 0x1000,
+        access_type: AccessType::Read,
+        privilege: PrivilegeMode::Supervisor,
+        satp,
+        mstatus: 0,
+    };
+    assert_eq!(
+        translator
+            .translate_with_tlb(request(satp_a), &mut tlb, &mut memory)
+            .unwrap(),
+        0x9000_1000
+    );
+    assert_eq!(tlb.stats().misses, 1);
+    assert_eq!(
+        translator
+            .translate_with_tlb(request(satp_b), &mut tlb, &mut memory)
+            .unwrap(),
+        0x9000_1000
+    );
+    assert_eq!(tlb.stats().misses, 1);
+    assert_eq!(tlb.stats().hits, 1);
 }

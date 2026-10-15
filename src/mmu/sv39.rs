@@ -26,19 +26,14 @@
 //! | 1     | 2MB       | Megapage |
 //! | 2     | 1GB       | Gigapage |
 
-use super::pte::PageTableEntry;
+use super::pte::{leaf_permits, PageTableEntry};
 use super::MmuError;
+use crate::core::PrivilegeMode;
 use crate::memory::MemoryError;
 use crate::physical::{
     AtomicAccessError, AtomicOrdering, AtomicRequest, AtomicReservationContext, ConditionalStatus,
     PhysicalWidth,
 };
-
-/// Step-9 attempts before the walker reports a simulator diagnostic.
-///
-/// The spec bounds neither retries nor progress, so exhausting this limit is
-/// never a guest-visible fault.
-const MAX_AD_UPDATE_ATTEMPTS: usize = 64;
 
 /// Sv39 virtual address
 #[derive(Debug, Clone, Copy)]
@@ -184,11 +179,6 @@ pub enum WalkResult {
     /// The adapter cannot establish whether a walk read or A/D update completed.
     UnknownFault {
         /// Level where the fault occurred
-        level: usize,
-    },
-    /// The leaf PTE kept changing during every allowed A/D update attempt.
-    AdUpdateRetryLimit {
-        /// Level of the last leaf PTE
         level: usize,
     },
 }
@@ -429,21 +419,22 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
     /// Similar to walk(), but also checks if the requested access type
     /// is allowed by the page permissions.
     ///
-    /// Note: In RISC-V, supervisor mode can access user pages (U=1).
-    /// The SSTATUS.SUM bit controls whether supervisor can access user pages,
-    /// but for simplicity we allow it here.
+    /// SUM and MXR come from `mstatus`. An S-mode fetch of a U=1 page faults
+    /// even when SUM is set.
     ///
     /// # Arguments
     /// * `vaddr` - Virtual address to translate
     /// * `access_type` - Type of access (read/write/execute)
-    /// * `is_user` - Whether this is a user-mode access
+    /// * `privilege` - Effective privilege for this access
+    /// * `mstatus` - Architectural `mstatus`, including SUM and MXR
     pub fn walk_check_permissions(
         &self,
         vaddr: VirtualAddress,
         access_type: super::AccessType,
-        is_user: bool,
+        privilege: PrivilegeMode,
+        mstatus: u64,
     ) -> WalkResult {
-        check_leaf_permissions(self.walk(vaddr), access_type, is_user)
+        check_leaf_permissions(self.walk(vaddr), access_type, privilege, mstatus)
     }
 
     /// Walk the page table, check permissions, and update Accessed/Dirty bits
@@ -459,7 +450,8 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
     /// # Arguments
     /// * `vaddr` - Virtual address to translate
     /// * `access_type` - Type of access (read/write/execute)
-    /// * `is_user` - Whether this is a user-mode access
+    /// * `privilege` - Effective privilege for this access
+    /// * `mstatus` - Architectural `mstatus`, including SUM and MXR
     ///
     /// # Returns
     /// WalkResult indicating success or type of fault
@@ -468,12 +460,12 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
         &mut self,
         vaddr: VirtualAddress,
         access_type: super::AccessType,
-        is_user: bool,
+        privilege: PrivilegeMode,
+        mstatus: u64,
     ) -> WalkResult {
         let mut result = self.walk(vaddr);
-        let mut last_level = VirtualAddress::LEVELS - 1;
-        for _ in 0..MAX_AD_UPDATE_ATTEMPTS {
-            let checked = check_leaf_permissions(result, access_type, is_user);
+        loop {
+            let checked = check_leaf_permissions(result, access_type, privilege, mstatus);
             let WalkResult::Success {
                 paddr,
                 pte,
@@ -508,10 +500,8 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
 
             // Step 2 again with the same table and level. The PTE index lies
             // within the table page, so the table PPN is `pte_addr >> 12`.
-            last_level = level;
             result = self.walk_from(vaddr, pte_addr >> 12, level);
         }
-        WalkResult::AdUpdateRetryLimit { level: last_level }
     }
 
     /// Performs the step-9 compare and conditional update of one leaf PTE.
@@ -570,26 +560,17 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
     }
 }
 
-/// Applies the leaf U and R/W/X checks to a successful walk.
+/// Applies [`leaf_permits`] to a successful walk.
 fn check_leaf_permissions(
     result: WalkResult,
     access_type: super::AccessType,
-    is_user: bool,
+    privilege: PrivilegeMode,
+    mstatus: u64,
 ) -> WalkResult {
     let WalkResult::Success { pte, level, .. } = result else {
         return result;
     };
-    let perms = pte.permissions();
-
-    // User mode can only access user pages (U=1); supervisor mode can access
-    // all pages.
-    let allowed = (!is_user || perms.user)
-        && match access_type {
-            super::AccessType::Read => perms.read,
-            super::AccessType::Write => perms.write,
-            super::AccessType::InstructionFetch => perms.execute,
-        };
-    if allowed {
+    if leaf_permits(pte.permissions(), access_type, privilege, mstatus) {
         result
     } else {
         WalkResult::PageFault { level }
@@ -878,23 +859,37 @@ mod tests {
         let va = VirtualAddress::new(0).unwrap();
 
         // User execute should succeed (page is user+execute)
-        match walker.walk_check_permissions(va, super::super::AccessType::InstructionFetch, true) {
+        match walker.walk_check_permissions(
+            va,
+            super::super::AccessType::InstructionFetch,
+            crate::core::PrivilegeMode::User,
+            0,
+        ) {
             WalkResult::Success { .. } => {}
             other => panic!("Expected Success for user execute, got {:?}", other),
         }
 
         // User write should fail (page is RX, not RW)
-        match walker.walk_check_permissions(va, super::super::AccessType::Write, true) {
+        match walker.walk_check_permissions(
+            va,
+            super::super::AccessType::Write,
+            crate::core::PrivilegeMode::User,
+            0,
+        ) {
             WalkResult::PageFault { .. } => {}
             other => panic!("Expected PageFault for user write, got {:?}", other),
         }
 
-        // Supervisor read from user page should succeed (RISC-V allows this)
-        // Note: SSTATUS.SUM bit controls this, but we allow it by default
-        match walker.walk_check_permissions(va, super::super::AccessType::Read, false) {
-            WalkResult::Success { .. } => {}
+        // SUM = 0: an S-mode load of a U=1 page is a page fault.
+        match walker.walk_check_permissions(
+            va,
+            super::super::AccessType::Read,
+            crate::core::PrivilegeMode::Supervisor,
+            0,
+        ) {
+            WalkResult::PageFault { .. } => {}
             other => panic!(
-                "Expected Success for supervisor read from user page, got {:?}",
+                "Expected PageFault for supervisor read of a user page with SUM=0, got {:?}",
                 other
             ),
         }

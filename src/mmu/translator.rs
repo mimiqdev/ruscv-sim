@@ -93,7 +93,12 @@ impl AddressTranslator {
         // Check TLB first
         if let Some(entry) = tlb.lookup(vpn, satp.asid()) {
             // TLB hit - check permissions
-            if !self.check_tlb_permissions(&entry, request.access_type, request.privilege) {
+            if !self.check_tlb_permissions(
+                &entry,
+                request.access_type,
+                request.privilege,
+                request.mstatus,
+            ) {
                 return Err(MmuError::PageFault(
                     super::PageFaultReason::PermissionDenied {
                         access_type: request.access_type,
@@ -114,10 +119,12 @@ impl AddressTranslator {
         // TLB miss - perform page table walk
         let mut walker = PageTableWalker::new(memory, satp.ppn());
 
-        let is_user = matches!(request.privilege, PrivilegeMode::User);
-
-        // Use walk_check_permissions_and_update_ad to update A/D bits
-        match walker.walk_check_permissions_and_update_ad(va, request.access_type, is_user) {
+        match walker.walk_check_permissions_and_update_ad(
+            va,
+            request.access_type,
+            request.privilege,
+            request.mstatus,
+        ) {
             WalkResult::Success {
                 paddr,
                 pte,
@@ -139,29 +146,28 @@ impl AddressTranslator {
             WalkResult::HostFault { .. } => Err(MmuError::WalkHostFault(vaddr)),
             WalkResult::ProtocolFault { .. } => Err(MmuError::WalkProtocolFault(vaddr)),
             WalkResult::UnknownFault { .. } => Err(MmuError::WalkUnknownFault(vaddr)),
-            WalkResult::AdUpdateRetryLimit { .. } => Err(MmuError::WalkAdRetryLimit(vaddr)),
         }
     }
 
-    /// Check permissions against TLB entry
+    /// TLB-hit permission check. Same U / SUM / MXR / R / W / X rules as the walk.
     fn check_tlb_permissions(
         &self,
         entry: &TlbEntry,
         access_type: AccessType,
         privilege: PrivilegeMode,
+        mstatus: u64,
     ) -> bool {
-        // Check privilege level
-        let is_user = matches!(privilege, PrivilegeMode::User);
-        if is_user && !entry.user {
-            return false;
-        }
-
-        // Check access type permission
-        match access_type {
-            AccessType::Read => entry.read,
-            AccessType::Write => entry.write,
-            AccessType::InstructionFetch => entry.execute,
-        }
+        super::pte::leaf_permits(
+            super::pte::PagePermissions {
+                read: entry.read,
+                write: entry.write,
+                execute: entry.execute,
+                user: entry.user,
+            },
+            access_type,
+            privilege,
+            mstatus,
+        )
     }
 
     fn create_tlb_entry(
@@ -222,6 +228,7 @@ impl AddressTranslator {
         satp: u64,
         access_type: AccessType,
         privilege: PrivilegeMode,
+        mstatus: u64,
         memory: &mut M,
     ) -> Result<u64, MmuError> {
         let satp = Satp(satp);
@@ -232,9 +239,8 @@ impl AddressTranslator {
 
         let va = Self::canonical_sv39(vaddr, access_type)?;
         let mut walker = PageTableWalker::new(memory, satp.ppn());
-        let is_user = matches!(privilege, PrivilegeMode::User);
 
-        match walker.walk_check_permissions_and_update_ad(va, access_type, is_user) {
+        match walker.walk_check_permissions_and_update_ad(va, access_type, privilege, mstatus) {
             WalkResult::Success { paddr, .. } => Ok(paddr),
             WalkResult::PageFault { level } => {
                 Err(MmuError::PageFault(super::PageFaultReason::PageTableWalk {
@@ -246,7 +252,6 @@ impl AddressTranslator {
             WalkResult::HostFault { .. } => Err(MmuError::WalkHostFault(vaddr)),
             WalkResult::ProtocolFault { .. } => Err(MmuError::WalkProtocolFault(vaddr)),
             WalkResult::UnknownFault { .. } => Err(MmuError::WalkUnknownFault(vaddr)),
-            WalkResult::AdUpdateRetryLimit { .. } => Err(MmuError::WalkAdRetryLimit(vaddr)),
         }
     }
 

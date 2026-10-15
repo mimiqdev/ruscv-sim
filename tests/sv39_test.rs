@@ -249,13 +249,23 @@ fn test_sv39_permission_check_read() {
     let va = VirtualAddress::new(0x1000).unwrap();
 
     // Read access should succeed
-    match walker.walk_check_permissions(va, ruscv_sim::mmu::AccessType::Read, false) {
+    match walker.walk_check_permissions(
+        va,
+        ruscv_sim::mmu::AccessType::Read,
+        ruscv_sim::core::PrivilegeMode::Supervisor,
+        0,
+    ) {
         WalkResult::Success { .. } => {}
         other => panic!("Expected Success for read, got {:?}", other),
     }
 
     // Write access should fail
-    match walker.walk_check_permissions(va, ruscv_sim::mmu::AccessType::Write, false) {
+    match walker.walk_check_permissions(
+        va,
+        ruscv_sim::mmu::AccessType::Write,
+        ruscv_sim::core::PrivilegeMode::Supervisor,
+        0,
+    ) {
         WalkResult::PageFault { .. } => {}
         other => panic!("Expected PageFault for write on RX page, got {:?}", other),
     }
@@ -276,13 +286,23 @@ fn test_sv39_permission_check_user() {
     let va = VirtualAddress::new(0x1000).unwrap();
 
     // Supervisor access should succeed
-    match walker.walk_check_permissions(va, ruscv_sim::mmu::AccessType::Read, false) {
+    match walker.walk_check_permissions(
+        va,
+        ruscv_sim::mmu::AccessType::Read,
+        ruscv_sim::core::PrivilegeMode::Supervisor,
+        0,
+    ) {
         WalkResult::Success { .. } => {}
         other => panic!("Expected Success for supervisor access, got {:?}", other),
     }
 
     // User access should fail
-    match walker.walk_check_permissions(va, ruscv_sim::mmu::AccessType::Read, true) {
+    match walker.walk_check_permissions(
+        va,
+        ruscv_sim::mmu::AccessType::Read,
+        ruscv_sim::core::PrivilegeMode::User,
+        0,
+    ) {
         WalkResult::PageFault { .. } => {}
         other => panic!(
             "Expected PageFault for user access on S-only page, got {:?}",
@@ -306,7 +326,12 @@ fn test_sv39_user_page() {
     let va = VirtualAddress::new(0x1000).unwrap();
 
     // User access should succeed
-    match walker.walk_check_permissions(va, ruscv_sim::mmu::AccessType::Read, true) {
+    match walker.walk_check_permissions(
+        va,
+        ruscv_sim::mmu::AccessType::Read,
+        ruscv_sim::core::PrivilegeMode::User,
+        0,
+    ) {
         WalkResult::Success { .. } => {}
         other => panic!(
             "Expected Success for user access on U page, got {:?}",
@@ -315,13 +340,23 @@ fn test_sv39_user_page() {
     }
 
     // User write should succeed
-    match walker.walk_check_permissions(va, ruscv_sim::mmu::AccessType::Write, true) {
+    match walker.walk_check_permissions(
+        va,
+        ruscv_sim::mmu::AccessType::Write,
+        ruscv_sim::core::PrivilegeMode::User,
+        0,
+    ) {
         WalkResult::Success { .. } => {}
         other => panic!("Expected Success for user write on U page, got {:?}", other),
     }
 
     // User execute should fail (no X permission)
-    match walker.walk_check_permissions(va, ruscv_sim::mmu::AccessType::InstructionFetch, true) {
+    match walker.walk_check_permissions(
+        va,
+        ruscv_sim::mmu::AccessType::InstructionFetch,
+        ruscv_sim::core::PrivilegeMode::User,
+        0,
+    ) {
         WalkResult::PageFault { .. } => {}
         other => panic!(
             "Expected PageFault for user execute on non-X page, got {:?}",
