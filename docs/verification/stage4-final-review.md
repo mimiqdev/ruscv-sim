@@ -37,16 +37,19 @@ No public-path defect was found that violates the privileged specification or th
 
 | Id | Severity | Location | Finding | Disposition |
 | --- | --- | --- | --- | --- |
-| F1 | follow-up | `src/mmu/translator.rs` `check_tlb_permissions` | A component TLB hit does not apply SUM or MXR. An S-mode load of a U=1 page is allowed, and an execute-only load is refused even when MXR=1. The public Hart does not use this TLB (M4). The two §2 TLB defects, the missing D update and the dropped superpage VPN bits, are fixed on this component: a clean write drops the entry and walks, and the stored PPN is the resolved 4 KiB page. | Do not treat this TLB as the future public cache without adding SUM and MXR. Not a public-path defect. |
+| F1 | follow-up | `src/mmu/sv39.rs` `check_leaf_permissions`; `src/mmu/translator.rs` `check_tlb_permissions` | Both component checks allow a non-user access whenever the page is not restricted to U, including an S-mode fetch of a U=1 page. Loads ignore MXR. `mstatus` is not consulted. The public Hart uses `leaf_permits` in `src/core/translation.rs`, which applies SUM, MXR, and the fetch exception, and it does not call these two functions (M4). The two §2 TLB defects, the missing D update and the dropped superpage VPN bits, are fixed on this component: a clean write drops the entry and walks, and the stored PPN is the resolved 4 KiB page. | Do not copy either function into a future public cache. Apply the same U / SUM / MXR / R / W / X rules as `leaf_permits`, including “an S-mode fetch of a U=1 page faults regardless of SUM.” Not a public-path defect. |
 | F2 | follow-up | `src/mmu/mod.rs` `Satp::asid` | The component still returns a 16-bit ASID. The public `satp` write clears that field (ASIDLEN 0). The contract already records the component width as not the public width. | Leave it. A later TLB that keys on this helper would be wrong for the public profile. |
-| F3 | follow-up | `src/core/trap.rs` `TrapDelegation` | The component handler can still delegate when a caller sets `TrapDelegation`. The public core constructs the handler at zero, and `medeleg` / `mideleg` cannot be written to a non-zero value. | Not a public-path control, as M1 says. |
+| F3 | follow-up | `src/core/trap.rs` `TrapDelegation` | The component handler can still delegate when a caller sets `TrapDelegation`. The public core constructs the handler at zero, and `medeleg` / `mideleg` cannot be written to a non-zero value. `delegation_mut` is reached from `tests/trap_test.rs`. | Not a public-path control, as M1 says. |
 | F4 | follow-up | `src/core/translation.rs` `MAX_AD_UPDATE_ATTEMPTS` | A walk that loses the A/D race more than the retry budget becomes `SimulatorFailure`, not another guest fault. The specification tells the implementation to retry. The budget is an implementation limit so a livelock is not silent. | Keep. A guest cannot force the budget without a concurrent host writer. |
+| F5 | follow-up | `src/core/trap.rs` `handle_trap_checked`, Supervisor arm | The S-entry update is `(sstatus & !0x222) \| (sie << 5) \| (spp << 8)`. `0x222` clears bits 1, 5, and 9. SIE is bit 1 and SPIE is bit 5, so those two are cleared. SPP is bit 8, so a trap from U leaves a previous SPP=1 in place. | Not reachable on the public path: every public trap takes the Machine arm. If this component API is later made architectural, clear SIE, SPIE, and SPP (`!(SIE \| SPIE \| SPP)`, which is `!0x122`), then set SPIE from the old SIE and SPP from the interrupted privilege. |
 
 No finding in this table was changed in this pull request.
 
 ## Open questions
 
-No new specification question came out of this review.
+One encoding is unspecified, and this profile already chooses a behavior for it. It does not need a code change for this contract.
+
+1. A base FENCE whose `fm` field is not 0, including FENCE.TSO when Ztso is absent, is a reserved MISC-MEM encoding. `is_illegal_encoding` accepts every MISC-MEM instruction with `funct3 = 0`, and the Hart retires it as a fence. The unprivileged specification leaves the reserved `fm` values unspecified. Retiring them as a fence is a legal choice for unspecified behavior. The Stage 4 contract requires FENCE.I to trap, which this profile does. Whether a later profile should trap a non-zero `fm` stays open.
 
 These two are already decided and are restated so a later reader does not reopen them as defects:
 
@@ -57,4 +60,4 @@ These two are already decided and are restated so a later reader does not reopen
 
 Item 9 is the quality gate plus CI. This pull request makes the Quality-and-tests job run `cargo check`, the release ELF suite, and the required Stage 4 guests on the pull request, so a green check at that head is the gate. The local gate result is in [the closeout](stage4-closeout.md).
 
-Item 10 is this document. Findings F1–F4 stay open as follow-ups. There is no defect fix to re-verify on the Hart.
+Item 10 is this document. Findings F1–F5 stay open as follow-ups. There is no defect fix to re-verify on the Hart.

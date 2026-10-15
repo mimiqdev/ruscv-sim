@@ -37,7 +37,7 @@ Coverage remains manual.
 
 ## 3. Review (§7 item 10)
 
-The review is [stage4-final-review.md](stage4-final-review.md). No public-path specification defect was fixed in this pull request, because none was found. Follow-ups F1–F4 stay open. No new specification question was opened.
+The review is [stage4-final-review.md](stage4-final-review.md). No public-path specification defect was fixed in this pull request, because none was found. Follow-ups F1–F5 stay open. One open question is recorded there: a reserved FENCE `fm` value, including FENCE.TSO with Ztso absent, currently retires as a fence. The contract requires FENCE.I to trap, which it does. D8 and D10 stay decided.
 
 ## 4. Local gate
 
