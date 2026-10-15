@@ -13,7 +13,6 @@ use ruscv_sim::core::PrivilegeMode;
 use ruscv_sim::memory::MemoryError;
 use ruscv_sim::mmu::physical::{PhysicalMemory, PhysicalMemoryInterface};
 use ruscv_sim::mmu::pte::{PagePermissions, PageTableEntry};
-use ruscv_sim::mmu::sv39::{PageTableWalker, VirtualAddress, WalkResult};
 use ruscv_sim::mmu::translator::{AddressTranslator, TranslationRequest};
 use ruscv_sim::mmu::{AccessType, MmuConfig, MmuError, PageFaultReason, Tlb};
 use ruscv_sim::physical::{
@@ -155,6 +154,7 @@ fn walk(memory: &mut Racy, access: AccessType) -> Result<u64, MmuError> {
         SATP,
         access,
         PrivilegeMode::Supervisor,
+        0,
         memory,
     )
 }
@@ -362,42 +362,28 @@ fn failed_walk_sc_leaves_guest_reservation_intact() {
 }
 
 #[test]
-fn retry_cap_is_a_simulator_diagnostic_not_a_page_fault() {
+fn ad_race_longer_than_the_old_budget_still_commits() {
+    // The old walker stopped after 64 lost races and reported a simulator
+    // diagnostic. The specification restarts step 2 with no budget, so a
+    // race that eventually settles still sets A and D.
+    const LOSSES: usize = 65;
     let original = leaf(PagePermissions::rw());
     let mut memory = Racy::new(original).with_hook(move |stage, ram| {
-        if let Stage::AfterLr(_) = stage {
-            // Toggle a software (RSW) bit so every SC sees a committed write.
-            let value = ram.read_dword(LEAF).unwrap() ^ (1 << 8);
-            ram.write_dword(LEAF, value).unwrap();
+        if let Stage::AfterLr(n) = stage {
+            if n <= LOSSES {
+                let value = ram.read_dword(LEAF).unwrap() ^ (1 << 8);
+                ram.write_dword(LEAF, value).unwrap();
+            }
         }
     });
 
-    assert_eq!(
-        walk(&mut memory, AccessType::Write),
-        Err(MmuError::WalkAdRetryLimit(VA))
-    );
-    assert_eq!(memory.count(|e| matches!(e, Event::Lr(_))), 64);
+    assert_eq!(walk(&mut memory, AccessType::Write), Ok(DATA_PPN << 12));
+    assert_eq!(memory.count(|e| matches!(e, Event::Lr(_))), LOSSES + 1);
     assert_eq!(
         memory.count(|e| *e == Event::Sc(LEAF, Some(ConditionalStatus::Failure))),
-        64
+        LOSSES
     );
-    assert_eq!(memory.leaf() & (A | D), 0, "no A/D write committed");
-
-    let mut memory = Racy::new(original).with_hook(|stage, ram| {
-        if let Stage::AfterLr(_) = stage {
-            let value = ram.read_dword(LEAF).unwrap();
-            ram.write_dword(LEAF, value).unwrap();
-        }
-    });
-    let mut walker = PageTableWalker::new(&mut memory, ROOT_PPN);
-    assert!(matches!(
-        walker.walk_check_permissions_and_update_ad(
-            VirtualAddress::new(VA).unwrap(),
-            AccessType::Read,
-            false
-        ),
-        WalkResult::AdUpdateRetryLimit { level: 0 }
-    ));
+    assert_eq!(memory.leaf() & (A | D), A | D);
 }
 
 #[test]
@@ -434,6 +420,7 @@ fn d_is_set_only_when_the_store_passes_every_check() {
         SATP,
         AccessType::Write,
         PrivilegeMode::User,
+        0,
         &mut memory,
     );
     assert_eq!(result, Err(walk_page_fault()));
@@ -639,6 +626,7 @@ fn memory_without_atomic_capability_is_an_access_fault_only_when_step_9_runs() {
                 SATP,
                 access,
                 PrivilegeMode::Supervisor,
+                0,
                 &mut memory
             ),
             Err(MmuError::AccessFault(VA))
@@ -650,6 +638,7 @@ fn memory_without_atomic_capability_is_an_access_fault_only_when_step_9_runs() {
                 SATP,
                 access,
                 PrivilegeMode::Supervisor,
+                0,
                 &mut memory
             ),
             Ok(DATA_PPN << 12)

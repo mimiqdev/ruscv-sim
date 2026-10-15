@@ -37,20 +37,20 @@ Coverage remains manual.
 
 ## 3. Review (§7 item 10)
 
-The review is [stage4-final-review.md](stage4-final-review.md). No public-path specification defect was fixed in this pull request, because none was found. Follow-ups F1–F5 stay open. One open question is recorded there: a reserved FENCE `fm` value, including FENCE.TSO with Ztso absent, currently retires as a fence. The contract requires FENCE.I to trap, which it does. D8 and D10 stay decided.
+The review is [stage4-final-review.md](stage4-final-review.md). No public-path specification defect was found. Component follow-ups F1–F5 are fixed in this pull request: the walker and the TLB share `leaf_permits`, `Satp::asid` returns 0, `TrapDelegation` cannot be set nonzero, a lost A/D race retries with no budget, and the Supervisor trap arm clears `SIE|SPIE|SPP` (`!0x122`). One open question remains: a reserved FENCE `fm` value, including FENCE.TSO with Ztso absent, currently retires as a fence. The contract requires FENCE.I to trap, which it does. D8 and D10 stay decided.
 
 ## 4. Local gate
 
-Docker was not available in this environment. The gate below is plain cargo, with `CARGO_BUILD_JOBS=4` and `RUST_TEST_THREADS=4`, one command at a time, then the ELF suite. Log: the run that produced these lines.
+Docker was not available in this environment. The gate below is plain cargo, with `CARGO_BUILD_JOBS=4` and `RUST_TEST_THREADS=4`, one command at a time, then the ELF suite. It was run after the F1–F5 fixes. `fmt`, `check`, and `clippy` reused the warm target from the focused run that preceded this gate, so those three times are shorter than a cold build.
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | pass, 1s |
-| `cargo check --all-features` | pass, 12s |
-| `cargo clippy --all-features --all-targets -- -D warnings` | pass, 24s |
-| `cargo test --all-features -- --test-threads=4` | pass, 448s. 1952 tests, 0 failed, including 27 doc-tests |
+| `cargo check --all-features` | pass, 1s |
+| `cargo clippy --all-features --all-targets -- -D warnings` | pass, under 1s |
+| `cargo test --all-features -- --test-threads=4` | pass, 420s. 1957 tests, 0 failed, including 27 doc-tests |
 | `cargo doc --all-features --no-deps` | pass, 2s |
-| `./scripts/run_elf_tests.sh` | pass, 210s. 75 fresh ELF cases, 0 failed, including every `s4_*` guest linked with `linker-s4.ld` |
+| `./scripts/run_elf_tests.sh` | pass, 232s. 75 fresh ELF cases, 0 failed, including every `s4_*` guest linked with `linker-s4.ld` |
 
 A green GitHub Quality-and-tests check on this pull request is the CI half of §7 item 9. That job also runs the A5 and A10 Python unit tests and the guest-script guards. The A10 suite was run locally after the cargo gate: `python3 -m unittest discover -s tools/a10 -p 'test_*.py'` — 29 tests, 1 skipped, 0 failed.
 

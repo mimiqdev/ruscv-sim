@@ -112,38 +112,25 @@ fn test_trap_delegation_default() {
 
 #[test]
 fn test_trap_delegation_exception() {
-    let mut delegation = TrapDelegation::new();
-
-    delegation.delegate_exception(ExceptionCause::IllegalInstruction);
-    delegation.delegate_exception(ExceptionCause::EcallU);
-
-    assert!(delegation.should_delegate_exception(ExceptionCause::IllegalInstruction));
-    assert!(delegation.should_delegate_exception(ExceptionCause::EcallU));
+    let delegation = TrapDelegation::new();
+    assert!(!delegation.should_delegate_exception(ExceptionCause::IllegalInstruction));
+    assert!(!delegation.should_delegate_exception(ExceptionCause::EcallU));
     assert!(!delegation.should_delegate_exception(ExceptionCause::StoreAddressMisaligned));
 }
 
 #[test]
 fn test_trap_delegation_interrupt() {
-    let mut delegation = TrapDelegation::new();
-
-    delegation.delegate_interrupt(InterruptCause::SupervisorSoftware);
-    delegation.delegate_interrupt(InterruptCause::SupervisorTimer);
-
-    assert!(delegation.should_delegate_interrupt(InterruptCause::SupervisorSoftware));
-    assert!(delegation.should_delegate_interrupt(InterruptCause::SupervisorTimer));
+    let delegation = TrapDelegation::new();
+    assert!(!delegation.should_delegate_interrupt(InterruptCause::SupervisorSoftware));
+    assert!(!delegation.should_delegate_interrupt(InterruptCause::SupervisorTimer));
     assert!(!delegation.should_delegate_interrupt(InterruptCause::MachineSoftware));
 }
 
 #[test]
 fn test_trap_delegation_bits() {
-    let mut delegation = TrapDelegation::new();
-
-    // Medeleg: bits 0-15 for different exception types
-    delegation.delegate_exception(ExceptionCause::IllegalInstruction);
-    assert_eq!(delegation.medeleg, 1 << 2);
-
-    delegation.delegate_exception(ExceptionCause::EcallU);
-    assert_eq!(delegation.medeleg, (1 << 2) | (1 << 8));
+    let delegation = TrapDelegation::new();
+    assert!(!delegation.should_delegate_exception(ExceptionCause::IllegalInstruction));
+    assert!(!delegation.should_delegate_exception(ExceptionCause::EcallU));
 }
 
 // ========================================
@@ -384,59 +371,36 @@ fn test_handle_machine_external_interrupt() {
 // ========================================
 
 #[test]
-fn test_delegated_exception_to_supervisor() {
+fn test_supervisor_source_exception_stays_in_machine() {
     let mut handler = TrapHandler::new();
     let mut context = create_test_context();
-
-    // Set privilege to Supervisor mode so delegation can work
-    // (delegation only works when not in Machine mode)
     context.privilege = PrivilegeMode::Supervisor;
-
-    // Delegate illegal instruction to supervisor
-    handler
-        .delegation_mut()
-        .delegate_exception(ExceptionCause::IllegalInstruction);
-
-    // Set up supervisor CSRs
     context.csr.write(supervisor::STVEC, 0x4000_0000).unwrap();
 
     let trap = Trap::Exception(ExceptionCause::IllegalInstruction);
     let new_pc = handler.handle_trap(trap, 0x1000, 0xBAD, &mut context);
 
-    // Should vector to stvec
-    assert_eq!(new_pc, 0x4000_0000);
-
-    // Check that supervisor CSRs were updated
-    assert_eq!(context.csr.read(supervisor::SEPC).unwrap(), 0x1000);
-    assert_eq!(context.csr.read(supervisor::SCAUSE).unwrap(), 2);
-
-    // Check privilege mode
-    assert_eq!(context.privilege, PrivilegeMode::Supervisor);
+    assert_eq!(new_pc, 0);
+    assert_eq!(context.csr.read(machine::MEPC).unwrap(), 0x1000);
+    assert_eq!(context.csr.read(machine::MCAUSE).unwrap(), 2);
+    assert_eq!(context.privilege, PrivilegeMode::Machine);
+    assert_eq!(context.csr.read(supervisor::SEPC).unwrap(), 0);
 }
 
 #[test]
-fn test_delegated_interrupt_to_supervisor() {
+fn test_supervisor_source_interrupt_stays_in_machine() {
     let mut handler = TrapHandler::new();
     let mut context = create_test_context();
-
-    // Set privilege to Supervisor mode so delegation can work
-    // (delegation only works when not in Machine mode)
     context.privilege = PrivilegeMode::Supervisor;
-
-    // Delegate supervisor timer interrupt
-    handler
-        .delegation_mut()
-        .delegate_interrupt(InterruptCause::SupervisorTimer);
-
-    // Set up supervisor CSRs
     context.csr.write(supervisor::STVEC, 0x4000_0000).unwrap();
 
     let trap = Trap::Interrupt(InterruptCause::SupervisorTimer);
     let new_pc = handler.handle_trap(trap, 0x2000, 0, &mut context);
 
-    assert_eq!(new_pc, 0x4000_0000);
-    assert_eq!(context.csr.read(supervisor::SEPC).unwrap(), 0x2000);
-    assert_eq!(context.privilege, PrivilegeMode::Supervisor);
+    assert_eq!(new_pc, 0);
+    assert_eq!(context.csr.read(machine::MEPC).unwrap(), 0x2000);
+    assert_eq!(context.privilege, PrivilegeMode::Machine);
+    assert_eq!(context.csr.read(supervisor::SEPC).unwrap(), 0);
 }
 
 #[test]

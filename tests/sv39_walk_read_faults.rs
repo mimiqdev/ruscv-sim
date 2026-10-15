@@ -246,7 +246,12 @@ fn permission_and_ad_wrappers_propagate_the_read_class() {
             let mut memory = Script::fault(level, injected);
             let mut walker = PageTableWalker::new(&mut memory, ROOT_PPN);
             expect_walk(
-                walker.walk_check_permissions(virtual_address(), AccessType::Read, false),
+                walker.walk_check_permissions(
+                    virtual_address(),
+                    AccessType::Read,
+                    PrivilegeMode::Supervisor,
+                    0,
+                ),
                 injected,
                 level,
             );
@@ -254,7 +259,8 @@ fn permission_and_ad_wrappers_propagate_the_read_class() {
                 walker.walk_check_permissions_and_update_ad(
                     virtual_address(),
                     AccessType::Write,
-                    false,
+                    PrivilegeMode::Supervisor,
+                    0,
                 ),
                 injected,
                 level,
@@ -299,6 +305,7 @@ fn both_translator_routes_and_mmu_keep_the_class_and_vaddr() {
                     SATP,
                     access,
                     PrivilegeMode::Supervisor,
+                    0,
                     &mut memory,
                 );
                 expect_mmu(direct, injected);
@@ -330,7 +337,8 @@ fn success_with_preset_ad_and_invalid_pte_are_unchanged() {
         let walked = walker.walk_check_permissions_and_update_ad(
             virtual_address(),
             AccessType::Write,
-            false,
+            PrivilegeMode::Supervisor,
+            0,
         );
         let WalkResult::Success {
             paddr, level: got, ..

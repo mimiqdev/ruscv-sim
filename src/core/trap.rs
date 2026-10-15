@@ -22,6 +22,7 @@
 
 use crate::core::{CoreState, PrivilegeMode};
 use crate::csr::machine;
+use crate::csr::mstatus;
 use crate::csr::supervisor;
 use crate::csr::CsrFile;
 use thiserror::Error;
@@ -187,17 +188,18 @@ impl InterruptCause {
     }
 }
 
-/// Trap delegation configuration
+/// Trap delegation configuration.
+///
+/// Stage 4 does not delegate traps (M1). The fields stay zero: there is no
+/// setter, and a caller cannot store a non-zero `medeleg` or `mideleg` here.
 #[derive(Debug)]
 pub struct TrapDelegation {
-    /// Exception delegation to supervisor
-    pub medeleg: u32,
-    /// Interrupt delegation to supervisor
-    pub mideleg: u32,
+    medeleg: u32,
+    mideleg: u32,
 }
 
 impl TrapDelegation {
-    /// Create new delegation configuration
+    /// Create a configuration that delegates nothing.
     pub fn new() -> Self {
         Self {
             medeleg: 0,
@@ -205,24 +207,14 @@ impl TrapDelegation {
         }
     }
 
-    /// Check if exception should be delegated to supervisor
+    /// Whether an exception would be taken in S. Always false in this profile.
     pub fn should_delegate_exception(&self, cause: ExceptionCause) -> bool {
         (self.medeleg >> (cause as u32)) & 1 == 1
     }
 
-    /// Check if interrupt should be delegated to supervisor
+    /// Whether an interrupt would be taken in S. Always false in this profile.
     pub fn should_delegate_interrupt(&self, cause: InterruptCause) -> bool {
         (self.mideleg >> (cause as u32)) & 1 == 1
-    }
-
-    /// Delegate exception to supervisor
-    pub fn delegate_exception(&mut self, cause: ExceptionCause) {
-        self.medeleg |= 1 << (cause as u32);
-    }
-
-    /// Delegate interrupt to supervisor
-    pub fn delegate_interrupt(&mut self, cause: InterruptCause) {
-        self.mideleg |= 1 << (cause as u32);
     }
 }
 
@@ -380,13 +372,13 @@ impl TrapHandler {
                 state.csr.write(supervisor::SCAUSE, cause_value)?;
                 state.csr.write(supervisor::STVAL, trap_value)?;
 
-                // SPIE receives SIE, SIE is cleared, and SPP records whether
-                // the source was Supervisor mode.
+                // SPIE receives SIE, SIE is cleared, and SPP records the
+                // interrupted privilege. The clear mask is SIE|SPIE|SPP.
                 let sstatus = state.csr.read(supervisor::SSTATUS)?;
-                let sie = (sstatus >> 1) & 1;
-                let spp = u64::from(source_privilege == PrivilegeMode::Supervisor);
-                let new_sstatus = (sstatus & !0x222) | (sie << 5) | (spp << 8);
-                state.csr.write(supervisor::SSTATUS, new_sstatus)?;
+                state.csr.write(
+                    supervisor::SSTATUS,
+                    sstatus_on_trap_entry(sstatus, source_privilege),
+                )?;
 
                 state.privilege = PrivilegeMode::Supervisor;
                 state.csr.set_privilege(PrivilegeMode::Supervisor);
@@ -426,15 +418,18 @@ impl TrapHandler {
         }
     }
 
-    /// Get trap delegation configuration
+    /// Get trap delegation configuration. It delegates nothing.
     pub fn delegation(&self) -> &TrapDelegation {
         &self.delegation
     }
+}
 
-    /// Get mutable trap delegation configuration
-    pub fn delegation_mut(&mut self) -> &mut TrapDelegation {
-        &mut self.delegation
-    }
+/// `sstatus` after a trap into S. Clears SIE, SPIE, and SPP (`!0x122`), then
+/// sets SPIE from the old SIE and SPP from the interrupted privilege.
+fn sstatus_on_trap_entry(sstatus: u64, source: PrivilegeMode) -> u64 {
+    let sie = (sstatus >> 1) & 1;
+    let spp = u64::from(source == PrivilegeMode::Supervisor);
+    (sstatus & !(mstatus::SIE | mstatus::SPIE | mstatus::SPP)) | (sie << 5) | (spp << 8)
 }
 
 impl Default for TrapHandler {
@@ -501,18 +496,57 @@ mod tests {
     }
 
     #[test]
-    fn test_trap_delegation() {
-        let mut delegation = TrapDelegation::new();
-
+    fn test_trap_delegation_stays_clear() {
+        let delegation = TrapDelegation::new();
+        assert_eq!(delegation.medeleg, 0);
+        assert_eq!(delegation.mideleg, 0);
         assert!(!delegation.should_delegate_exception(ExceptionCause::IllegalInstruction));
-        assert!(!delegation.should_delegate_interrupt(InterruptCause::MachineSoftware));
+        assert!(!delegation.should_delegate_interrupt(InterruptCause::SupervisorSoftware));
+    }
 
-        delegation.delegate_exception(ExceptionCause::IllegalInstruction);
-        delegation.delegate_interrupt(InterruptCause::SupervisorSoftware);
+    #[test]
+    fn sstatus_trap_entry_clears_spp_and_keeps_bit_9() {
+        // 0x222 cleared bit 9 and left SPP (bit 8) set. The mask is
+        // SIE|SPIE|SPP, which is 0x122.
+        let old = mstatus::SIE | mstatus::SPP | mstatus::SUM | (1 << 9);
+        let from_user = super::sstatus_on_trap_entry(old, PrivilegeMode::User);
+        assert_eq!(
+            from_user & (mstatus::SIE | mstatus::SPIE | mstatus::SPP),
+            mstatus::SPIE
+        );
+        assert_eq!(from_user & mstatus::SUM, mstatus::SUM);
+        assert_eq!(from_user & (1 << 9), 1 << 9);
 
-        assert!(delegation.should_delegate_exception(ExceptionCause::IllegalInstruction));
-        assert!(!delegation.should_delegate_interrupt(InterruptCause::MachineSoftware));
-        assert!(delegation.should_delegate_interrupt(InterruptCause::SupervisorSoftware));
+        let from_supervisor = super::sstatus_on_trap_entry(old, PrivilegeMode::Supervisor);
+        assert_eq!(from_supervisor & mstatus::SPP, mstatus::SPP);
+        assert_eq!(from_supervisor & mstatus::SIE, 0);
+    }
+
+    #[test]
+    fn supervisor_trap_arm_uses_the_spp_mask() {
+        let mut handler = TrapHandler::new();
+        handler.delegation.medeleg = 1 << (ExceptionCause::IllegalInstruction as u32);
+        let mut state = CoreState {
+            privilege: PrivilegeMode::User,
+            ..CoreState::default()
+        };
+        state
+            .csr
+            .write(supervisor::SSTATUS, mstatus::SIE | mstatus::SPP)
+            .unwrap();
+        state.csr.write(supervisor::STVEC, 0x4000).unwrap();
+        let pc = handler.handle_trap(
+            Trap::Exception(ExceptionCause::IllegalInstruction),
+            0x1000,
+            0,
+            &mut state,
+        );
+        assert_eq!(pc, 0x4000);
+        assert_eq!(state.privilege, PrivilegeMode::Supervisor);
+        let sstatus = state.csr.read(supervisor::SSTATUS).unwrap();
+        assert_eq!(sstatus & mstatus::SIE, 0);
+        assert_eq!(sstatus & mstatus::SPP, 0);
+        assert_eq!(sstatus & mstatus::SPIE, mstatus::SPIE);
     }
 
     #[test]

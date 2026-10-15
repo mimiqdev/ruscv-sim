@@ -2,7 +2,7 @@
 
 **Status:** Recorded outcome of the §7 item 10 review.
 
-**Reviewed tree:** the Stage 4 implementation on `main` at `2066047`, plus the oracle-digest and CI changes in this pull request. The digest and CI edits do not change instruction behavior.
+**Reviewed tree:** the Stage 4 implementation on `main` at `2066047`, plus the oracle-digest and CI changes in this pull request. The digest and CI edits do not change instruction behavior. F1–F5 were fixed on this branch after that review. The regression tests named in the findings table cover those fixes.
 
 **Authority:** This is the review record. It is not a substitute for the [Stage 4 contract](../dev-plan.md). Formal completion of the milestone is the merge, not this document.
 
@@ -10,7 +10,7 @@
 
 ## Verdict
 
-No public-path defect was found that violates the privileged specification or the Stage 4 contract. The findings below are follow-ups. None of them is a reason to change the public Hart in this pull request.
+No public-path defect was found that violates the privileged specification or the Stage 4 contract. Findings F1–F5 were component-path follow-ups. Each one now has a fix and a regression test in this pull request. The reserved FENCE `fm` question stays open.
 
 ## What was checked
 
@@ -37,13 +37,13 @@ No public-path defect was found that violates the privileged specification or th
 
 | Id | Severity | Location | Finding | Disposition |
 | --- | --- | --- | --- | --- |
-| F1 | follow-up | `src/mmu/sv39.rs` `check_leaf_permissions`; `src/mmu/translator.rs` `check_tlb_permissions` | Both component checks allow a non-user access whenever the page is not restricted to U, including an S-mode fetch of a U=1 page. Loads ignore MXR. `mstatus` is not consulted. The public Hart uses `leaf_permits` in `src/core/translation.rs`, which applies SUM, MXR, and the fetch exception, and it does not call these two functions (M4). The two §2 TLB defects, the missing D update and the dropped superpage VPN bits, are fixed on this component: a clean write drops the entry and walks, and the stored PPN is the resolved 4 KiB page. | Do not copy either function into a future public cache. Apply the same U / SUM / MXR / R / W / X rules as `leaf_permits`, including “an S-mode fetch of a U=1 page faults regardless of SUM.” Not a public-path defect. |
-| F2 | follow-up | `src/mmu/mod.rs` `Satp::asid` | The component still returns a 16-bit ASID. The public `satp` write clears that field (ASIDLEN 0). The contract already records the component width as not the public width. | Leave it. A later TLB that keys on this helper would be wrong for the public profile. |
-| F3 | follow-up | `src/core/trap.rs` `TrapDelegation` | The component handler can still delegate when a caller sets `TrapDelegation`. The public core constructs the handler at zero, and `medeleg` / `mideleg` cannot be written to a non-zero value. `delegation_mut` is reached from `tests/trap_test.rs`. | Not a public-path control, as M1 says. |
-| F4 | follow-up | `src/core/translation.rs` `MAX_AD_UPDATE_ATTEMPTS` | A walk that loses the A/D race more than the retry budget becomes `SimulatorFailure`, not another guest fault. The specification tells the implementation to retry. The budget is an implementation limit so a livelock is not silent. | Keep. A guest cannot force the budget without a concurrent host writer. |
-| F5 | follow-up | `src/core/trap.rs` `handle_trap_checked`, Supervisor arm | The S-entry update is `(sstatus & !0x222) \| (sie << 5) \| (spp << 8)`. `0x222` clears bits 1, 5, and 9. SIE is bit 1 and SPIE is bit 5, so those two are cleared. SPP is bit 8, so a trap from U leaves a previous SPP=1 in place. | Not reachable on the public path: every public trap takes the Machine arm. If this component API is later made architectural, clear SIE, SPIE, and SPP (`!(SIE \| SPIE \| SPP)`, which is `!0x122`), then set SPIE from the old SIE and SPP from the interrupted privilege. |
+| F1 | fixed | `src/mmu/pte.rs` `leaf_permits` | The walker (`check_leaf_permissions`) and the TLB hit path (`check_tlb_permissions`) each had their own permission check. Both allowed an S-mode fetch of a U=1 page and ignored MXR. | Both call `leaf_permits`. An S-mode load of a U=1 page faults unless SUM is set, an S-mode fetch of a U=1 page faults even when SUM is set, and MXR widens loads only. The same rules apply on the walk and on a later TLB hit. Regression: `sum_mxr_and_supervisor_fetch_use_leaf_permits_on_walk_and_tlb_hit`. |
+| F2 | fixed | `src/mmu/mod.rs` `Satp::asid` | The helper returned bits 59:44. ASIDLEN is 0, and a public `satp` write already clears that field. | `Satp::asid` returns 0. A translator fill is tagged with that value, so two `satp` values that differ only in bits 59:44 share one TLB entry. A direct `Tlb::insert` still stores the ASID on the entry. Regression: `raw_asid_bits_do_not_change_satp_asid_or_tlb_identity`. |
+| F3 | fixed | `src/core/trap.rs` `TrapDelegation` | `delegate_exception`, `delegate_interrupt`, and `delegation_mut` could store a non-zero delegation. The public handler is constructed at zero, and `medeleg` / `mideleg` cannot be written nonzero. | The setters are gone. `medeleg` and `mideleg` are private and stay 0, so `should_delegate_exception` and `should_delegate_interrupt` are false for every cause a caller can construct. A trap taken from S stays in M. Regression: `test_trap_delegation_stays_clear`, `test_supervisor_source_exception_stays_in_machine`, `test_supervisor_source_interrupt_stays_in_machine`. |
+| F4 | fixed | `src/core/translation.rs` and `src/mmu/sv39.rs` | A lost A/D race past 64 attempts became `SimulatorFailure::Invariant`. The specification says to restart the walk. | The retry has no budget on the Hart walk and on the component walker. `WalkResult::AdUpdateRetryLimit` and `MmuError::WalkAdRetryLimit` are gone. A host that never lets the store-conditional succeed can livelock; that is the specification. Host, protocol, and unknown completions stay `SimulatorFailure`. Regression: `ad_race_past_the_old_retry_budget_still_retires` and `ad_race_longer_than_the_old_budget_still_commits`. |
+| F5 | fixed | `src/core/trap.rs` `sstatus_on_trap_entry` | The Supervisor arm cleared bits with `!0x222`. That mask clears bits 1, 5, and 9 and leaves SPP (bit 8) unchanged. | The clear mask is `!(SIE \| SPIE \| SPP)`, which is `!0x122`. SPIE receives the old SIE. SPP is clear when the source is U and set when the source is S. Bit 9 survives the mask. The public path still takes every trap in M, because delegation cannot be set. The Supervisor arm is what an in-module test reaches by writing the private field. Regression: `sstatus_trap_entry_clears_spp_and_keeps_bit_9` and `supervisor_trap_arm_uses_the_spp_mask`. |
 
-No finding in this table was changed in this pull request.
+F1–F5 are fixed in this pull request.
 
 ## Open questions
 
@@ -60,4 +60,4 @@ These two are already decided and are restated so a later reader does not reopen
 
 Item 9 is the quality gate plus CI. This pull request makes the Quality-and-tests job run `cargo check`, the release ELF suite, and the required Stage 4 guests on the pull request, so a green check at that head is the gate. The local gate result is in [the closeout](stage4-closeout.md).
 
-Item 10 is this document. Findings F1–F5 stay open as follow-ups. There is no defect fix to re-verify on the Hart.
+Item 10 is this document. Findings F1–F5 are fixed in this pull request, each with a regression test named in the table above. The reserved FENCE `fm` question in the next section stays open.

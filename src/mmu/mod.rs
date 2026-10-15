@@ -147,9 +147,10 @@ impl Satp {
         TranslationMode::from_satp(self.0)
     }
 
-    /// Get ASID (Address Space Identifier)
+    /// Architectural ASID. ASIDLEN is 0 in this profile, so the field is
+    /// read-only zero even when bits 59:44 of the raw value are set.
     pub fn asid(&self) -> u16 {
-        ((self.0 >> 44) & 0xFFFF) as u16
+        0
     }
 
     /// Get root page table PPN (Physical Page Number)
@@ -258,8 +259,6 @@ pub enum MmuError {
     WalkProtocolFault(u64),
     #[error("Walk unknown fault: address 0x{0:016x}")]
     WalkUnknownFault(u64),
-    #[error("Walk A/D update retry limit: address 0x{0:016x}")]
-    WalkAdRetryLimit(u64),
     #[error("PMP violation: address 0x{0:016x}")]
     PmpViolation(u64),
     #[error("Translation mode not supported: {0:?}")]
@@ -400,7 +399,7 @@ mod tests {
         let satp = Satp((8 << 60) | (1 << 44) | 0x12345);
 
         assert_eq!(satp.mode(), Some(TranslationMode::Sv39));
-        assert_eq!(satp.asid(), 1);
+        assert_eq!(satp.asid(), 0, "ASIDLEN is 0");
         assert_eq!(satp.ppn(), 0x12345);
         assert_eq!(satp.root_page_table_addr(), 0x12345 << 12);
         assert!(satp.paging_enabled());

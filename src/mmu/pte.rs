@@ -141,6 +141,40 @@ impl PagePermissions {
     }
 }
 
+/// Sv39 steps 6 and 8. U, then SUM, then MXR, then R/W/X.
+///
+/// An S-mode fetch of a U=1 page faults even when SUM is set. MXR widens
+/// loads only. Machine mode is not subject to the U bit.
+pub fn leaf_permits(
+    perms: PagePermissions,
+    access: super::AccessType,
+    privilege: crate::core::PrivilegeMode,
+    mstatus_value: u64,
+) -> bool {
+    use crate::core::PrivilegeMode;
+    use crate::csr::mstatus;
+
+    let user_ok = match privilege {
+        PrivilegeMode::User => perms.user,
+        PrivilegeMode::Supervisor => {
+            !perms.user
+                || (access != super::AccessType::InstructionFetch
+                    && mstatus_value & mstatus::SUM != 0)
+        }
+        PrivilegeMode::Machine => true,
+    };
+    if !user_ok {
+        return false;
+    }
+    match access {
+        super::AccessType::InstructionFetch => perms.execute,
+        super::AccessType::Read => {
+            perms.read || (mstatus_value & mstatus::MXR != 0 && perms.execute)
+        }
+        super::AccessType::Write => perms.write,
+    }
+}
+
 impl PageTableEntry {
     const PPN0_SHIFT: u32 = 10;
     const PPN1_SHIFT: u32 = 19;
