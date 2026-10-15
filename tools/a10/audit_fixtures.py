@@ -36,20 +36,22 @@ def merge_tool_sha256(saved, platform, tools):
 
 def audit(out):
     manifest = json.loads((ROOT / 'tools/a10/public-v1.json').read_text())
-    # Integrity is the suite pin versus the oracle bytes. Adding a manifest
-    # entry rewrites that pin from the file; a handwritten digest constant is
-    # not a second seal.
+    # Owner decision 2026-10-13: do not seal the oracle while features are
+    # unfinished. build.json must honestly record the files it just produced.
+    # Those digests are not compared to the checked-in oracle pins.
     suite = json.loads((ROOT / 'tools/a10/suite-v1.json').read_text())
-    if suite.get('oracle_sha256') != sha(ROOT / 'tools/a10/public-v1.json'):
-        raise ValueError('suite oracle pin does not match public-v1.json bytes')
+    if suite.get('id') != 'public-v1' or suite.get('oracle') != manifest.get('schema'):
+        raise ValueError('suite does not name the public-v1 oracle')
+    if 'oracle_sha256' in suite:
+        raise ValueError('suite oracle hash pin is not a gate')
     report = json.loads((out / 'build.json').read_text())
     if set(report['fixtures']) != {f['id'] for f in manifest['fixtures']}:
         raise ValueError('stale/missing/extra fixture IDs')
     for f in manifest['fixtures']:
         actual = report['fixtures'][f['id']]
         for key, path in [('source_sha256', ROOT / f['source']), ('linker_sha256', ROOT / f['linker']), ('elf_sha256', out / (f['id'] + '.elf'))]:
-            if sha(path) != f[key] or actual[key] != f[key]:
-                raise ValueError(f'{f["id"]} changed {key}')
+            if sha(path) != actual[key]:
+                raise ValueError(f'{f["id"]} build record {key} does not match the file')
         if actual['argv_as'][1:] != ['-march=rv64ima_zicsr', '-mabi=lp64', str(ROOT / f['source']), '-o', str(out / (f['id'] + '.o'))]:
             raise ValueError('assembler argv mismatch')
         if actual['argv_ld'][1:] != ['-T' + str(ROOT / f['linker']), str(out / (f['id'] + '.o')), '-o', str(out / (f['id'] + '.elf'))]:

@@ -134,7 +134,7 @@ def main(argv):
     oracle = loads((ROOT/'tools/a10/public-v1.json').read_bytes())
     fixture_build = loads((out/'fixtures/build.json').read_bytes())
     fixtures = [{'id':f['id'],'source':'evidence/source/'+f['source'],'linker':'evidence/source/'+f['linker'],'elf':'fixtures/'+f['id']+'.elf',
-                 'source_sha256':f['source_sha256'],'linker_sha256':f['linker_sha256'],'elf_sha256':f['elf_sha256'],
+                 'source_sha256':fixture_build['fixtures'][f['id']]['source_sha256'],'linker_sha256':fixture_build['fixtures'][f['id']]['linker_sha256'],'elf_sha256':fixture_build['fixtures'][f['id']]['elf_sha256'],
                  'metadata':{k:f[k] for k in ('entry','segments','tohost','signature_addr','signature_file_offset','memory_size','native_only')},
                  'producer':fixture_build['fixtures'][f['id']],'identity_class':'strict-pinned-tools' if strict else 'portable-artifact-equivalence'} for f in oracle['fixtures']]
     source_files = loads((out/'evidence/source-manifest.json').read_bytes())['files']

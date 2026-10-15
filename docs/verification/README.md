@@ -38,7 +38,7 @@ Test language follows the layer rather than the simulator implementation languag
 
 - Rust tests live under `src/**` and `tests/*.rs`.
 - Project-authored guest programs currently live under `tests/bare-metal-riscv-test/` and are assembly sources.
-- CI installs a RISC-V GNU assembler/linker, runs all Rust tests, and on pushes to `main` builds and runs the project-authored ELF programs.
+- CI installs a RISC-V GNU assembler/linker, runs the Rust quality gate, and on pull requests and on pushes to `main` builds and runs the project-authored ELF programs, including the Stage 4 `s4_*` guests.
 - Commit-log comparison helpers exist, but the log currently omits memory-access records in the public ELF run loop.
 - No external RISC-V architecture suite is treated as integrated merely because documentation mentions it.
 
@@ -80,6 +80,8 @@ Test language follows the layer rather than the simulator implementation languag
 - [A10 implementation closeout record](../archive/milestones/a10-closeout-record.md) — bounded technical acceptance 2026-10-10; criterion to commit evidence, merged-main baseline re-run, limitations and re-evaluated unfinished work. The independent final PR-head review returned APPROVE for `c4fda56`.
 - [A10 documentation-rotation audit](a10-contract-rotation.md) — historical audit of the A9 to A10 rotation; no runtime or performance claims
 - [Stage 4 documentation-rotation audit](stage4-contract-rotation.md) — whole-contract preservation, phrase allowlist and link audit for the A10 to Stage 4 rotation; no runtime or performance claims
+- [Stage 4 final review](stage4-final-review.md) — §7 item 10 review of Sv39, privilege, CSRs, traps, delegation, MPRV, and SFENCE.VMA
+- [Stage 4 progress and closeout](stage4-closeout.md) — oracle-digest decision, CI gate, review pointer, and local gate evidence; not a formal completion
 - [A9 T4 source/tool/artifact and per-case evidence](a9-t4-guest-evidence.json) — self-contained checkpoint execution record; not ACT4 or milestone certification
 - [External RISC-V test integration contract](external-riscv-tests.md)
 - [Commit tracing and differential testing](commit-tracing.md)

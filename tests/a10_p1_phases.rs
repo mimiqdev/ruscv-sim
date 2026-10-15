@@ -450,14 +450,12 @@ fn real_capture_failure_timeout_file_error_and_receipt_lifecycle_reject_timing()
         driver: p.driver,
         file_sinks: None,
     };
-    // Declare these intentionally malformed input bytes so this test reaches
-    // the real parse-error clock boundary, not the earlier ELF-identity guard.
-    let mut malformed = f.clone();
-    malformed.elf_sha256 = digest::sha256(b"malformed-ELF");
+    // These bytes are not an ELF. The load-only cell records the parse
+    // failure inside the timed scope.
     let mut spy = Spy::default();
     let bad = measure_cell(
         &m,
-        &malformed,
+        f,
         Cell {
             route: "machine-native",
             phase: "load_only",
