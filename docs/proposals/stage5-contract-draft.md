@@ -1,10 +1,10 @@
 # Stage 5 platform interrupts, WFI, modeled time, and counters (proposed milestone contract)
 
-**Status:** Draft. **Not approved, not active.** This document is the approval candidate for the next milestone. It records open decisions for the owner. It does not archive the Stage 4 contract and does not replace [`docs/dev-plan.md`](../dev-plan.md).
+**Status:** Decisions approved. **Not active.** This document records the owner's decisions of 2026-10-16 13:08 CST. Each row in §8 is owner approved, recommended option. It does not archive the Stage 4 contract and does not replace [`docs/dev-plan.md`](../dev-plan.md).
 
 **Authority:** Informational until a later approval promotes it.
 
-**Why this is a draft, not a rotation:** The Stage 4 contract was written first as a proposal with open decisions, and it became [`docs/dev-plan.md`](../dev-plan.md) only after a separate owner approval and a documentation rotation. The [archive index](../archive/milestones/README.md) says the next milestone is promoted into `docs/dev-plan.md` only after it is separately approved. The decisions in §8 are open, so this text cannot be the sole Current contract. Stage 4 implementation and review are recorded at PR #88, `ee134b441f6e0504cec60cf2e652a6ff7782b396`, and in the [final review](../verification/stage4-final-review.md). The [Stage 4 closeout](../verification/stage4-closeout.md) leaves archival of that contract to a later, separately authorized rotation. That rotation is not this document.
+**Why this is a draft, not a rotation:** The Stage 4 contract was written first as a proposal with open decisions, and it became [`docs/dev-plan.md`](../dev-plan.md) only after a separate owner approval and a documentation rotation. The [archive index](../archive/milestones/README.md) says the next milestone is promoted into `docs/dev-plan.md` only after it is separately approved. The decisions in §8 are decided. This text is not the sole Current contract until a separate rotation. Stage 4 implementation and review are recorded at PR #88, `ee134b441f6e0504cec60cf2e652a6ff7782b396`, and in the [final review](../verification/stage4-final-review.md). The [Stage 4 closeout](../verification/stage4-closeout.md) leaves archival of that contract to a later, separately authorized rotation. That rotation is not this document.
 
 **Authority if later approved:** would become the sole Current normative milestone contract, constrained by accepted [ADR-0001](../architecture/decisions/0001-hart-execution-outcome-and-observation.md), [ADR-0002](../architecture/decisions/0002-physical-access-transaction-and-fault.md), [ADR-0003](../architecture/decisions/0003-runner-machine-and-platform-ownership.md), and [ADR-0004](../architecture/decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md). No new ADR is proposed. If review finds an ADR gap, that gap is surfaced before implementation.
 
@@ -106,13 +106,13 @@ These checks apply only after this contract is approved and activated. They are 
 8. The full local quality gate is green, and CI Quality-and-tests is green at the implementation head. The ELF suite includes the new guests.
 9. An independent final PR-head review has a recorded outcome. Findings are addressed on the same branch and re-verified.
 
-## 8. Open decisions
+## 8. Decided options
 
-Every row is OPEN. Decider: owner (Tony). The recommendation is advice, not a decision. Unchosen options stay so the choice is visible.
+Every row is DECIDED. Decider: owner (Tony). Date: 2026-10-16 13:08 CST. Each row is owner approved, recommended option. Unchosen options stay so the choice is visible.
 
 Roadmap §11 items 1 through 4 were answered by A8, A9, and the Stage 4 contract. Item 5 was answered for virtual memory by Stage 4. Item 6 stays conditional. Item 7, the certification layer, stays deferred. None of those is reopened here except the Stage 3 scheduling gate, which D0 inherits rather than re-litigates.
 
-**D0. Stage 3 exit and Stage 5 entry.** OPEN. Recommend option B.
+**D0. Stage 3 exit and Stage 5 entry.** DECIDED, 2026-10-16 13:08 CST, owner approved, recommended option B.
 
 The roadmap Stage 3 exit requires retained revision and PR baseline comparison, scheduled CI publication, and noise calibration. Stage 4 D0 waived that gate for Stage 4 and said the waiver does not mean A10 delivered the work. Stage 4 §9 says Stage 5 and later inherit the waiver unless a later milestone picks the work up.
 
@@ -122,7 +122,7 @@ The roadmap Stage 3 exit requires retained revision and PR baseline comparison, 
 
 Rationale: the interrupt work has no architectural need for noise calibration, and claiming the gate was met would record work that was not delivered.
 
-**D1. Time unit and `mtime` frequency.** OPEN. Recommend option A.
+**D1. Time unit and `mtime` frequency.** DECIDED, 2026-10-16 13:08 CST, owner approved, recommended option A.
 
 Privileged §3.2.1 requires `mtime` to increment at a constant frequency, and it requires the platform to provide a mechanism for determining the period of one tick. It does not set the frequency, and it does not identify `mtime` with `mcycle`. The same section's note says a simple fixed-frequency system may use one clock for both, and it also says the timer exists so that wall time can diverge from a variable core clock. ADR-0004 §5.1 sets the default framework map at one virtual-time tick to one `mtime` tick, and it forbids the Machine from inventing an `mcycle` delta during an idle jump. Host wall time is not guest time (ADR-0004 §3).
 
@@ -135,7 +135,7 @@ Whether Spike fast-forwards `mtime` to the next timer when every hart is waiting
 
 Privileged §3.2.1 (machine.adoc lines 2314–2316) permits a compare to show up in MTIP immediately. "Eventually, but not necessarily immediately" allows a delay and also allows the next instruction boundary. Spike `17e8a69f` ticks the CLINT on every CLINT write (`clint.cc` lines 96–118). Sail `6136f843` calls `update_mip` at step start (`interrupt_regs.sail` lines 243–268). The next-boundary rule matches both. A model that delays MTIP past the next instruction would make the timer guest race its own handler, which this milestone does not need.
 
-**D2. CLINT and PLIC memory map and profile.** OPEN. Recommend option A.
+**D2. CLINT and PLIC memory map and profile.** DECIDED, 2026-10-16 13:08 CST, owner approved, recommended option A.
 
 Privileged §3.2.1 does not assign an address to `mtime` or `mtimecmp`. A platform map cannot violate that section by choosing an address. ACLINT 1.0-rc4 (Draft, 10 January 2022) defines MSWI, MTIMER, and SSWI as separate devices, each with its own base. MSIP0 is at offset 0 of the MSWI base, the upper 31 bits are wired 0, and the register resets to 0. MTIME is at offset 0 of a separate MTIME base, is read-write, and resets to 0. MTIMECMP0 is at offset 0 of a separate MTIMECMP base, and its reset value is unknown. That revision does not place `mtime` at offset `0x7FF8`. Its compatibility table says one SiFive CLINT is an MSWI device covering offsets `0x0` through `0x3fff` and an MTIMER device covering offsets `0x4000` through `0xbfff`. Spike's `clint` and QEMU's virt machine use that SiFive window: `msip` at offset 0, `mtimecmp` at `0x4000`, and `mtime` at `0xBFF8`, in one `0xC000` region. The component already implements that window. Putting the MTIME base at window plus `0xBFF8` makes the ACLINT MTIME register, which lives at offset 0 of its own base, land on the SiFive address. The PLIC 1.0.0 memory map is the component's PLIC map, and QEMU virt places it at `0x0C00_0000`.
 
@@ -149,7 +149,7 @@ Rationale: option A is the map the component, Spike, and QEMU virt already share
 
 Addresses that must not move under option A: UART stays `0x1000_0000`, HTIF stays `0x4000_8000`. The CLINT window ends at `0x0200_C000`. The PLIC window ends at `0x0C40_0000`. The gateway word is the first word after that window.
 
-**D3. WFI semantics.** OPEN. Recommend option A.
+**D3. WFI semantics.** DECIDED, 2026-10-16 13:08 CST, owner approved, recommended option A.
 
 Privileged §3.3.3 (machine.adoc lines 2464–2478) says WFI tells the hart it may stall until an interrupt might need service. Wake uses `mip` & `mie` only. The hart must resume when a locally enabled interrupt becomes pending even if MIE or SIE is clear and even if `mideleg` would delegate it, and implementations should not resume for a pending interrupt that is not individually enabled. Taking the trap is a separate condition, the same one U2 uses: the hart is below M, or it is in M and MIE is 1. "Take the trap if MIE is 1" is the M-mode case. In S and U, an M-level interrupt is not gated by MIE. When the trap is taken, it is taken on the following instruction, with `mepc` equal to the WFI address plus 4. If the resume does not take a trap, execution continues at the WFI address plus 4. The same section permits a resume for any reason, and it therefore permits implementing WFI as a NOP. TW and the U-mode rule are unchanged from Stage 4: this profile traps U-mode WFI, and S-mode WFI with TW = 1, immediately. Those encodings do not retire.
 
@@ -161,7 +161,7 @@ Spike `17e8a69f` retires WFI and then waits until a locally enabled interrupt is
 
 Rationale: option A is the behavior the exit guests have to show. It follows Spike's retire-then-wait order. Sail's retire-after-wake order also conforms, and this profile records that difference so an implementation does not treat it as a spec conflict. Illegal WFI stays the Stage 4 trap. The `s4_tvm_tsr_tw` legal-WFI fall-through is a recorded compatibility change.
 
-**D4. `ExecutionResult.cycles`.** OPEN. Recommend option A.
+**D4. `ExecutionResult.cycles`.** DECIDED, 2026-10-16 13:08 CST, owner approved, recommended option A.
 
 The roadmap says a compatibility change to this field needs approval before activation. Today the field is the number of completed Hart turns. The runner increments it for every successful step, including a Stage 4 interrupt entry, and not for a simulator failure. The struct is public, every field is public, and it is not `non_exhaustive`. Adding a field is a source break of the same kind as Stage 4's `MemoryEffect.implicit`.
 
@@ -173,7 +173,7 @@ Under D1 and D3, a waited WFI retires once and then the idle jump adds `mtime` w
 
 Rationale: the compatibility change reviewers must accept is the WFI run's cycle count and the NoProgress stop, not a new meaning for the field. Callers that treat a clear `timed_out` and an empty `error` as success will see NoProgress as a failed run, which is the intended signal.
 
-**D5. Whether Stage 4 M4 (TLB integration) folds in.** OPEN. Recommend option A.
+**D5. Whether Stage 4 M4 (TLB integration) folds in.** DECIDED, 2026-10-16 13:08 CST, owner approved, recommended option A.
 
 Stage 4 M4 put no translation cache on the public path and recorded the roadmap's TLB deliverable as deferred. The component TLB's permission and superpage defects were fixed so a later cache would not inherit them. Stage 5's guests do not need a cache. SFENCE.VMA stays an ordering no-op while nothing is cached.
 
@@ -182,7 +182,7 @@ Stage 4 M4 put no translation cache on the public path and recorded the roadmap'
 
 Rationale: a TLB changes fetch and load results and the meaning of SFENCE.VMA. Those proofs are not the Stage 5 exit, and mixing them makes a failure in one look like a failure in the other.
 
-**D6. FENCE `fm` other than 0.** OPEN as a record. Recommend option A. Option B is not available if the milestone obeys the spec.
+**D6. FENCE `fm` other than 0.** DECIDED, 2026-10-16 13:08 CST, owner approved, recommended option A. Option B is not available if the milestone obeys the spec.
 
 Unprivileged 20250508 §2.7 (`rv32.adoc`) defines `fm = 0000` as a normal fence and `fm = 1000` with predecessor and successor both RW as FENCE.TSO. FENCE.TSO is a base I instruction and may be implemented as FENCE RW,RW (lines 856–857). Every other `fm` value, and `fm = 1000` with any other predecessor or successor, is reserved. Lines 865–867 say: "Base implementations shall treat all such reserved configurations as FENCE instructions (with `fm=0000`)." This hart has one in-order observer, so both encodings order nothing. Ztso is not claimed. The Stage 4 review said the reserved encodings were unspecified and that retiring them was a legal choice. The 20250508 sentence is a shall. Sail `6136f843` matches any `fm` (`base_insts.sail` lines 436–488). Spike executes these encodings as fences.
 
@@ -191,7 +191,7 @@ Unprivileged 20250508 §2.7 (`rv32.adoc`) defines `fm = 0000` as a normal fence 
 
 Rationale: the review question can be closed without a behavior change. The profile records the spec rule so a later change does not start trapping a reserved `fm`.
 
-**D7. The `time` CSR and Zicntr.** OPEN. Recommend option A.
+**D7. The `time` CSR and Zicntr.** DECIDED, 2026-10-16 13:08 CST, owner approved, recommended option A.
 
 Privileged §3.1.10 (lines 1520–1540) requires `mcycle` and `minstret` to be implemented, and §3.2.1 says `time` is a read-only shadow of `mtime`. Zicntr is `cycle`, `time`, and `instret` together (`counters.adoc` lines 12–15). Claiming Zicntr is valid once `time` exists: `mcounteren` is WARL and may be read-only 0 (§3.1.11, lines 1602–1606), and an absent `mcountinhibit` behaves as 0 (§3.1.12, lines 1628–1629). Sail `6136f843` reads `mtime` for `time` (`zicntr_control.sail` line 26). Stage 4 implements `mcycle` and `minstret`, leaves `time` illegal, and does not claim Zicntr. `mcounteren` stays read-only 0, so an S-mode or U-mode read of an enabled-counter CSR still traps.
 
@@ -201,7 +201,7 @@ Privileged §3.1.10 (lines 1520–1540) requires `mcycle` and `minstret` to be i
 
 Rationale: option A completes the trio the extension names, without reopening the Stage 4 counter-enable policy. A read-only-0 `mcounteren` and an absent `mcountinhibit` are both conforming under the citations above. Next-boundary reflection of `time` is the same rule as D1, and §3.2.1 permits that immediate reflection.
 
-**D8. Oracle digest seal.** OPEN. Recommend option A.
+**D8. Oracle digest seal.** DECIDED, 2026-10-16 13:08 CST, owner approved, recommended option A.
 
 The owner decision of 2026-10-13, recorded as Stage 4 D12, is that `tools/a10/public-v1.json` is not sealed or re-sealed while features are unfinished. Counts, effects, placement, and exits stay the regression. Digest fields stay descriptive.
 
@@ -210,7 +210,7 @@ The owner decision of 2026-10-13, recorded as Stage 4 D12, is that `tools/a10/pu
 
 Rationale: the rule exists so unfinished ISA work does not pretend a hash is the specification. Stage 5 is unfinished until it is approved and implemented.
 
-**D9. Which public routes run the new guests.** OPEN. Recommend option A.
+**D9. Which public routes run the new guests.** DECIDED, 2026-10-16 13:08 CST, owner approved, recommended option A.
 
 The flat facade has no SystemBus devices. UART and HTIF guests are already native-route guests. Putting a CLINT and a PLIC on the flat facade would invent a second physical map for addresses that, on flat, are either RAM offsets or faults.
 
