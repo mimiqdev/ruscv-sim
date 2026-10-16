@@ -4,7 +4,7 @@ This directory contains completed and explicitly superseded milestone plans with
 
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
-[approved Stage 4 contract](../../dev-plan.md), sole Current on the actual rotation merge following the owner-authorized activation of 2026-10-11 UTC. Until that merge main retains A10. On the merge the [entire A10 contract](a10-independent-public-path-performance-test-infrastructure.md) is formally completed and archived. The [Stage 4 snapshot](../../proposals/stage4-contract-draft.md) is informational, not a second Current contract.
+[approved Stage 5 contract](../../dev-plan.md), sole Current on the actual Stage 4 to Stage 5 rotation merge following the owner approval of 2026-10-16 13:08 CST. Until that merge main retains Stage 4. On the merge the [entire Stage 4 contract](stage4-virtual-memory-and-protection.md) is formally completed and archived. The [Stage 5 snapshot](../../proposals/stage5-contract-draft.md) is informational, not a second Current contract. The [Stage 4 snapshot](../../proposals/stage4-contract-draft.md) is informational, not a second Current contract.
 
 ## Rolling process
 
@@ -19,6 +19,8 @@ that predates end-to-end integration or ACT4 verification. Consult the
 
 ## Records
 
+- [Stage 4: Entire approved virtual memory and protection contract](stage4-virtual-memory-and-protection.md)
+  - Decisions recorded by PR #75 on 2026-10-11; owner-authorized activation 2026-10-11 UTC; implementation and review at PR #88, `ee134b4`. The full original body is preserved. Formal completion and archival take effect on the Stage 4 to Stage 5 rotation merge.
 - [A10: Entire approved independent public-path performance-test infrastructure contract](a10-independent-public-path-performance-test-infrastructure.md)
   - Activated by PR #71 on 2026-10-08; implementation PR #72 merged 2026-10-10; closeout PR #73 reviewed and merged 2026-10-10. The full original body is preserved. Formal completion and archival take effect on the A10 to Stage 4 rotation merge.
 - [A10: Implementation acceptance and closeout record](a10-closeout-record.md)

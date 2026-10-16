@@ -31,7 +31,7 @@ A8 之后 AMO/LR/SC
 `RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
 评估约束。
 
-当前合同见 [`docs/dev-plan.md`](docs/dev-plan.md)：Stage 4（虚拟内存与保护），于实际轮换合并时成为唯一 Current 合同；合并前 main 仍保留 A10。A10 由 PR #71 于 2026-10-08 激活，PR #72 于 2026-10-10 交付，其[完整合同归档](docs/archive/milestones/a10-independent-public-path-performance-test-infrastructure.md)与[实现收尾记录](docs/archive/milestones/a10-closeout-record.md)保留全部范围与证据。Stage 4 决策由 PR #75 记录，激活为 2026-10-11 UTC 的所有者授权；[提案快照](docs/proposals/stage4-contract-draft.md)不是第二份当前合同。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
+当前合同见 [`docs/dev-plan.md`](docs/dev-plan.md)：Stage 5（平台中断、WFI、建模时间与计数器），于实际轮换合并时成为唯一 Current 合同；合并前 main 仍保留 Stage 4。Stage 4 的[完整合同归档](docs/archive/milestones/stage4-virtual-memory-and-protection.md)保留全部正文，正式完成于本次轮换合并。Stage 5 决策 D0–D9 于 2026-10-16 13:08 CST 由所有者按推荐选项批准；[提案快照](docs/proposals/stage5-contract-draft.md)不是第二份当前合同。A10 由 PR #71 于 2026-10-08 激活，PR #72 于 2026-10-10 交付，其[完整合同归档](docs/archive/milestones/a10-independent-public-path-performance-test-infrastructure.md)与[实现收尾记录](docs/archive/milestones/a10-closeout-record.md)已在 A10 到 Stage 4 的轮换合并时归档。Stage 4 决策由 PR #75 记录，激活为 2026-10-11 UTC 的所有者授权；[提案快照](docs/proposals/stage4-contract-draft.md)不是第二份当前合同。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
 
 ## 快速开始
 
