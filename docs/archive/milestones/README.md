@@ -4,7 +4,7 @@ This directory contains completed and explicitly superseded milestone plans with
 
 Archived files are not active plans. They may describe component-level completion
 that predates end-to-end integration or ACT4 verification. Consult the
-[approved Stage 4 contract](../../dev-plan.md), sole Current on the actual rotation merge following the owner-authorized activation of 2026-10-11 UTC. Until that merge main retains A10. On the merge the [entire A10 contract](a10-independent-public-path-performance-test-infrastructure.md) is formally completed and archived. The [Stage 4 snapshot](../../proposals/stage4-contract-draft.md) is informational, not a second Current contract.
+[approved Stage 4 contract](../../dev-plan.md), sole Current on the actual rotation merge following the owner-authorized activation of 2026-10-11 UTC. Until that merge main retains A10. On the merge the [entire A10 contract](a10-independent-public-path-performance-test-infrastructure.md) is formally completed and archived. The [Stage 4 snapshot](../../proposals/stage4-contract-draft.md) is informational, not a second Current contract. The [Stage 5 draft](../../proposals/stage5-contract-draft.md) is not a second Current contract and does not archive Stage 4.
 
 ## Rolling process
 

@@ -56,4 +56,4 @@ A green GitHub Quality-and-tests check on this pull request is the CI half of §
 
 ## 5. What this record does not do
 
-It does not archive the Stage 4 contract, replace `docs/dev-plan.md`, merge, tag, or declare the milestone formally complete. Those steps stay separately authorized. A10's certification layer stays deferred.
+It does not archive the Stage 4 contract, replace `docs/dev-plan.md`, merge, tag, or declare the milestone formally complete. Those steps stay separately authorized. The [Stage 5 draft](../proposals/stage5-contract-draft.md) is a proposal with open decisions. It is not that rotation. A10's certification layer stays deferred.

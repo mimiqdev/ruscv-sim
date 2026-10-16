@@ -4,7 +4,7 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-10-11
+**Last reviewed:** 2026-10-16
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
@@ -47,6 +47,7 @@ Target architecture is not implementation status. Component presence is not end-
 - [Post-A7 short-term technical development roadmap proposal](proposals/post-a7-roadmap.md) — Draft A7-after technical implementation planning; not an overall product roadmap and does not activate a successor contract.
 
 - [Stage 4 approved informational proposal snapshot](proposals/stage4-contract-draft.md) — the complete drafting record of the decided contract. Original proposal wording is historical. Not a second Current contract, and not an implementation.
+- [Stage 5 proposed contract](proposals/stage5-contract-draft.md) — Draft platform interrupts, WFI, modeled time, and counters. Open decisions, not approved, not a second Current contract, and not an archive of Stage 4.
 
 - [A10 / Stage 3 approved informational proposal snapshot](proposals/a10-performance-test-infrastructure.md) — detailed scope approved 2026-10-03; original decision-request phrasing is historical. Not a second Current contract, not implemented, no performance result. The A7-era roadmap's global-reservation/current-A7/host-writer-choice claims are historical and superseded by A8/A9, not inherited work.
 
