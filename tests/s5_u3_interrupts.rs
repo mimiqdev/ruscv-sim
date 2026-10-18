@@ -96,8 +96,9 @@ fn meie(rd: u8) -> [u32; 2] {
     [elf::addi(rd, 0, 1), elf::slli(rd, rd, 11)]
 }
 
-/// Priority, context-0 enable, threshold 0, then gateway level 1.
-/// `x6` is left holding the context-0 claim base `0x0C20_0000`.
+/// Priority, context-0 enable, threshold 0, then the simulator-only
+/// source-1 level word at `0x4000_0000`. `x6` holds the context-0
+/// claim base `0x0C20_0000`.
 fn arm_machine_source(priority: i32) -> Vec<u32> {
     let mut code = vec![
         elf::lui(6, 0x0C000),
@@ -108,7 +109,7 @@ fn arm_machine_source(priority: i32) -> Vec<u32> {
         sw(7, 6, 0),
         elf::lui(6, 0x0C200),
         sw(0, 6, 0),
-        elf::lui(8, 0x0C400),
+        elf::lui(8, 0x40000),
         elf::addi(7, 0, 1),
         sw(7, 8, 0),
     ];
@@ -247,7 +248,7 @@ fn clearing_the_level_and_completing_leaves_meip_clear() {
     let mut code = arm_machine_source(1);
     code.extend([
         lw(10, 6, 4),
-        elf::lui(8, 0x0C400),
+        elf::lui(8, 0x40000),
         sw(0, 8, 0),
         elf::addi(7, 0, 1),
         sw(7, 6, 4),
@@ -321,7 +322,7 @@ fn priority_zero_and_a_blocking_threshold_do_not_present_meip() {
         elf::lui(6, 0x0C200),
         elf::addi(7, 0, 1),
         sw(7, 6, 0),
-        elf::lui(8, 0x0C400),
+        elf::lui(8, 0x40000),
         elf::addi(7, 0, 1),
         sw(7, 8, 0),
     ];
@@ -352,7 +353,7 @@ fn supervisor_line_ors_into_seip_without_sticking_the_software_bit() {
         elf::lui(6, 0x0C002),
         elf::addi(7, 0, 2),
         sw(7, 6, 0x80),
-        elf::lui(8, 0x0C400),
+        elf::lui(8, 0x40000),
         elf::addi(7, 0, 1),
         sw(7, 8, 0),
         csrr(10, machine::MIP),
@@ -438,7 +439,7 @@ fn threshold_blocks_meip_but_claim_still_returns_one() {
         elf::lui(6, 0x0C200),
         elf::addi(7, 0, 1),
         sw(7, 6, 0),
-        elf::lui(8, 0x0C400),
+        elf::lui(8, 0x40000),
         elf::addi(7, 0, 1),
         sw(7, 8, 0),
     ];
@@ -469,7 +470,7 @@ fn threshold_blocks_meip_but_claim_still_returns_one() {
 fn a_falling_level_does_not_retract_a_forwarded_request() {
     let mut code = arm_machine_source(1);
     code.extend([
-        elf::lui(8, 0x0C400),
+        elf::lui(8, 0x40000),
         sw(0, 8, 0),
         elf::lui(9, 0x0C001),
         lw(10, 9, 0),
@@ -520,4 +521,158 @@ fn a_byte_load_of_the_claim_register_does_not_claim() {
         MEIP_BIT,
         "a rejected byte read does not claim"
     );
+}
+
+fn amoadd_w(rd: u8, rs1: u8, rs2: u8) -> u32 {
+    (u32::from(rs2) << 20) | (u32::from(rs1) << 15) | (2 << 12) | (u32::from(rd) << 7) | 0x2f
+}
+
+fn trap_at(code: &[u32], cause: ExceptionCause, mtval: u64) -> Machine {
+    let machine = machine_with(code);
+    retire_named(&machine, code.len() - 1, "reach the faulting access");
+    let turn = machine.step(false).expect("step");
+    let StepOutcome::TrapEntered(entered) = turn.hart().outcome.clone() else {
+        panic!("expected {cause:?}, got {:?}", turn.hart().outcome);
+    };
+    assert_eq!(entered.cause, Trap::Exception(cause));
+    assert_eq!(entered.mtval, mtval);
+    drop(turn);
+    machine
+}
+
+#[test]
+fn an_unexpected_complete_while_source_1_is_in_service_is_ignored() {
+    let mut code = arm_machine_source(1);
+    code.extend([
+        lw(10, 6, 4),
+        elf::addi(7, 0, 2),
+        sw(7, 6, 4),
+        sw(0, 6, 4),
+        lw(11, 6, 4),
+        elf::lui(9, 0x0C001),
+        lw(12, 9, 0),
+        csrr(13, machine::MIP),
+        elf::addi(7, 0, 1),
+        sw(7, 6, 4),
+        lw(14, 9, 0),
+    ]);
+    let machine = machine_with(&code);
+    retire_named(
+        &machine,
+        code.len(),
+        "complete 2 and 0, then the matching id",
+    );
+    assert_eq!(reg(&machine, 10), 1, "the first claim takes source 1");
+    assert_eq!(
+        reg(&machine, 11),
+        0,
+        "source 1 stays in service after the unexpected ids"
+    );
+    assert_eq!(reg(&machine, 12) & 2, 0, "pending stays clear");
+    assert_eq!(reg(&machine, 13) & MEIP_BIT, 0);
+    assert_eq!(
+        reg(&machine, 14) & 2,
+        2,
+        "the matching complete ends service and the level forwards again"
+    );
+}
+
+#[test]
+fn claim_returns_zero_when_nothing_qualifies() {
+    let mut in_service = arm_machine_source(1);
+    in_service.extend([lw(10, 6, 4), lw(11, 6, 4)]);
+    let machine = machine_with(&in_service);
+    retire_named(&machine, in_service.len(), "claim twice while in service");
+    assert_eq!(reg(&machine, 10), 1);
+    assert_eq!(reg(&machine, 11), 0, "a second claim returns 0");
+
+    let disabled = [
+        elf::lui(6, 0x0C000),
+        elf::addi(7, 0, 1),
+        sw(7, 6, 4),
+        elf::lui(8, 0x40000),
+        elf::addi(7, 0, 1),
+        sw(7, 8, 0),
+        elf::lui(6, 0x0C200),
+        lw(10, 6, 4),
+        elf::lui(9, 0x0C001),
+        lw(11, 9, 0),
+    ];
+    let machine = machine_with(&disabled);
+    retire_named(&machine, disabled.len(), "claim with the enable off");
+    assert_eq!(reg(&machine, 10), 0, "a disabled source is not claimed");
+    assert_eq!(
+        reg(&machine, 11) & 2,
+        2,
+        "the forwarded request stays pending"
+    );
+}
+
+#[test]
+fn an_aligned_doubleword_inside_the_plic_window_faults() {
+    let mut load_code = arm_machine_source(1);
+    load_code.push(elf::ld(10, 6, 0));
+    let machine = trap_at(&load_code, ExceptionCause::LoadAccessFault, 0x0C20_0000);
+    assert_eq!(csr_value(&machine, machine::MIP) & MEIP_BIT, MEIP_BIT);
+
+    let mut store_code = arm_machine_source(1);
+    store_code.extend([elf::lui(5, 0x0C000), elf::sd(7, 5, 0)]);
+    let machine = trap_at(&store_code, ExceptionCause::StoreAccessFault, 0x0C00_0000);
+    assert_eq!(csr_value(&machine, machine::MIP) & MEIP_BIT, MEIP_BIT);
+}
+
+#[test]
+fn a_misaligned_plic_word_load_traps_as_misaligned() {
+    let mut code = arm_machine_source(1);
+    code.push(lw(10, 6, 1));
+    let machine = trap_at(&code, ExceptionCause::LoadAddressMisaligned, 0x0C20_0001);
+    assert_eq!(
+        csr_value(&machine, machine::MIP) & MEIP_BIT,
+        MEIP_BIT,
+        "the misaligned load does not reach the claim register"
+    );
+}
+
+#[test]
+fn an_amo_on_the_claim_register_faults() {
+    let mut code = arm_machine_source(1);
+    code.extend([elf::addi(6, 6, 4), amoadd_w(10, 6, 7)]);
+    let machine = trap_at(&code, ExceptionCause::StoreAccessFault, 0x0C20_0004);
+    assert_eq!(
+        csr_value(&machine, machine::MIP) & MEIP_BIT,
+        MEIP_BIT,
+        "the rejected AMO does not claim"
+    );
+}
+
+#[test]
+fn a_byte_or_adjacent_gateway_access_faults() {
+    let machine = trap_at(
+        &[elf::lui(8, 0x40000), load(0, 10, 8, 0)],
+        ExceptionCause::LoadAccessFault,
+        0x4000_0000,
+    );
+    assert_eq!(csr_value(&machine, machine::MIP) & MEIP_BIT, 0);
+
+    trap_at(
+        &[elf::lui(8, 0x40000), lw(10, 8, 4)],
+        ExceptionCause::LoadAccessFault,
+        0x4000_0004,
+    );
+}
+
+#[test]
+fn a_mip_write_leaves_meip_set() {
+    let mut code = arm_machine_source(1);
+    code.extend([
+        csrw(machine::MIP, 0),
+        csrr(10, machine::MIP),
+        elf::addi(7, 0, -1),
+        csrw(machine::MIP, 7),
+        csrr(11, machine::MIP),
+    ]);
+    let machine = machine_with(&code);
+    retire_named(&machine, code.len(), "write mip while MEIP is presented");
+    assert_eq!(reg(&machine, 10) & MEIP_BIT, MEIP_BIT);
+    assert_eq!(reg(&machine, 11) & MEIP_BIT, MEIP_BIT);
 }

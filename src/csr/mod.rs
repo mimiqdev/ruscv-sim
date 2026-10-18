@@ -304,7 +304,9 @@ impl CsrFile {
         match addr {
             supervisor::SSTATUS => Some(self.stored(machine::MSTATUS) & mstatus::SSTATUS_VIEW),
             supervisor::SIE => Some(self.stored(machine::MIE) & self.stored(machine::MIDELEG)),
-            supervisor::SIP => Some(self.stored(machine::MIP) & self.stored(machine::MIDELEG)),
+            // The external SEIP line is part of `mip`. A future writable
+            // `mideleg` must show it in `sip` only when bit 9 is delegated.
+            supervisor::SIP => Some(self.mip() & self.stored(machine::MIDELEG)),
             machine::MIP => Some(self.mip()),
             unprivileged::CYCLE => Some(self.stored(machine::MCYCLE)),
             unprivileged::TIME => Some(self.time),
@@ -674,6 +676,20 @@ impl Default for CsrFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sip_includes_external_seip_only_under_the_delegation_mask() {
+        let mut csr = CsrFile::new(0);
+        csr.set_privilege(PrivilegeMode::Machine);
+        csr.set_seip_external(true);
+        assert_eq!(csr.read(supervisor::SIP).unwrap(), 0);
+        csr.csrs.insert(machine::MIDELEG, 1 << 9);
+        assert_eq!(csr.read(supervisor::SIP).unwrap(), 1 << 9);
+        csr.set_seip_external(false);
+        assert_eq!(csr.read(supervisor::SIP).unwrap(), 0);
+        csr.csrs.insert(machine::MIP, 1 << 9);
+        assert_eq!(csr.read(supervisor::SIP).unwrap(), 1 << 9);
+    }
 
     #[test]
     fn test_csr_file_creation() {

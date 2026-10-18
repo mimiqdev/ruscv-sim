@@ -6,6 +6,8 @@
 # clears pending. A 4-byte complete ends service. A level that is still
 # high makes the source pending again. Trap entry does not claim.
 # Clearing the level and completing leaves MEIP clear.
+# The level word at 0x40000000 is a simulator-only test device. It is
+# not a PLIC register. The architectural PLIC map runs through 0x0FFFFFFF.
 
 .section .text
 .globl _start
@@ -25,7 +27,7 @@ _start:
     lui     t0, 0x0C200
     sw      zero, 0(t0)                 # machine threshold 0
 
-    lui     t0, 0x0C400
+    lui     t0, 0x40000
     li      t1, 1
     sw      t1, 0(t0)                   # gateway level 1
 
@@ -98,7 +100,7 @@ trap_handler:
     li      t2, 1
     bne     t1, t2, mismatch
 
-    lui     t0, 0x0C400
+    lui     t0, 0x40000
     sw      zero, 0(t0)                 # level 0
 
     lui     t0, 0x0C200

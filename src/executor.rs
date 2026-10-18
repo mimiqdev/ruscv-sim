@@ -187,10 +187,13 @@ pub const SYSTEM_BUS_CLINT_BASE: u64 = 0x0200_0000;
 pub const SYSTEM_BUS_CLINT_SIZE: usize = CLINT_SIZE;
 /// PLIC 1.0.0 window. One hart, context 0 machine and context 1 supervisor.
 pub const SYSTEM_BUS_PLIC_BASE: u64 = 0x0C00_0000;
-/// Byte length of [`SYSTEM_BUS_PLIC_BASE`]. The window ends at `0x0C40_0000`.
+/// Byte length of the implemented [`SYSTEM_BUS_PLIC_BASE`] window.
+/// That window ends at `0x0C40_0000`. PLIC specification 1.0.0's full map
+/// is 64 MiB, `0x0C00_0000` through `0x0FFF_FFFF`.
 pub const SYSTEM_BUS_PLIC_SIZE: usize = PLIC_SIZE;
-/// Level gateway for PLIC source 1. Bit 0. The first word after the PLIC window.
-pub const SYSTEM_BUS_PLIC_GATEWAY: u64 = 0x0C40_0000;
+/// Simulator-only level word for PLIC source 1. Bit 0. Not a PLIC register.
+/// Offset `0x400000` in the architectural map is context 512's threshold.
+pub const SYSTEM_BUS_PLIC_GATEWAY: u64 = 0x4000_0000;
 
 /// Lines the platform presents to hart 0 at an instruction boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,7 +221,7 @@ impl PresentedInterruptLines {
 /// - RAM: Configurable base address and size
 /// - CLINT: Fixed at 0x02000000, size 0xC000
 /// - PLIC: Fixed at 0x0C000000, size 0x400000
-/// - Source-1 gateway: Fixed at 0x0C400000, one word
+/// - Source-1 level: simulator-only word at 0x40000000, not a PLIC register
 /// - UART: Fixed at 0x10000000, size 0x100
 /// - HTIF: Fixed at 0x40008000, size 8 (tohost register)
 ///
@@ -511,7 +514,7 @@ impl SystemBus {
         }
     }
 
-    /// Bit 0 at `0x0C40_0000` is the level for PLIC source 1.
+    /// Bit 0 at `0x4000_0000` is the simulator-only level for PLIC source 1.
     fn transact_gateway(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
         let descriptor = request.descriptor();
         if descriptor.category == PhysicalAccessKind::Fetch {

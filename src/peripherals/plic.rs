@@ -295,14 +295,19 @@ impl Plic {
     }
 
     /// 完成中断（写回中断 ID）
+    ///
+    /// PLIC specification 1.0.0, Interrupt Completion: a completion ID that
+    /// is not currently enabled for the target is silently ignored.
     pub fn complete_interrupt(&mut self, context_id: u32, irq_id: u32) {
-        if let Some(ctx) = self.contexts.get_mut(context_id as usize) {
-            // 清除已声明状态
-            if ctx.claimed == Some(irq_id) {
-                ctx.claimed = None;
-            }
+        let Some(ctx) = self.contexts.get_mut(context_id as usize) else {
+            return;
+        };
+        if !ctx.is_enabled(irq_id) {
+            return;
         }
-        // 重新处理中断（可能有新的或重新触发的中断）
+        if ctx.claimed == Some(irq_id) {
+            ctx.claimed = None;
+        }
         self.process_interrupts();
     }
 
