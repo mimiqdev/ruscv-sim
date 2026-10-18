@@ -2,7 +2,9 @@
 
 **Status:** Historical source-inspected A7 inventory; not a current A8/A9 atomic route description.
 
-**Authority:** Informational historical snapshot. Its present-tense legacy AMO/LR/SC and A8-not-started statements describe the A7 inspection date below; for the subsequently implemented native single-Hart atomic route and its precise limits use the [A8 closeout assessment](../verification/a8-closeout-assessment.md), current source/tests, and the [A9 bounded acceptance](../verification/a9-closeout-assessment.md). The [approved A10 plan](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md) was activated by PR #71 on 2026-10-08. The [Stage 4 contract](../archive/milestones/stage4-virtual-memory-and-protection.md) is archived on the Stage 4 to Stage 5 rotation merge, and [Stage 5](../dev-plan.md) becomes sole Current on that merge. Until that merge main retains Stage 4. This historical snapshot is not updated into a current implementation claim.
+**Authority:** Informational historical snapshot. Its present-tense legacy AMO/LR/SC and A8-not-started statements describe the A7 inspection date below; for the subsequently implemented native single-Hart atomic route and its precise limits use the [A8 closeout assessment](../verification/a8-closeout-assessment.md), current source/tests, and the [A9 bounded acceptance](../verification/a9-closeout-assessment.md). The [approved A10 plan](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md) was activated by PR #71 on 2026-10-08. The [Stage 4 contract](../archive/milestones/stage4-virtual-memory-and-protection.md) is archived on the Stage 4 to Stage 5 rotation merge, and [Stage 5](../dev-plan.md) becomes sole Current on that merge. Until that merge main retains Stage 4.
+
+The inventory rows for the native CLINT, the source-1 PLIC, the pre-fetch interrupt sample, and WFI describe the Stage 5 public path. Flat has no CLINT or PLIC window. A guest that waits on `mtimecmp` does that wait on the native CLI and the native library. The rest of this file remains the A7 snapshot.
 
 **Last verified:** 2026-09-19 at A7 implementation evidence head `fb6f51c771f32585f1547422c9633379f7ae370b`;
 A4 evidence updated 2026-09-11;
@@ -27,7 +29,7 @@ At implementation merge `f2edf77f17a76bea3d7062f40f5f4f38ad4eb580`,
 cleanly generated and passed all **51 frozen nontrapping RV64I self-check ELFs**
 through the release public CLI. Standard push CI `34749931575` at the same head
 separately compiled and passed **46/46 project-authored guests**.
-The current suite also runs the Stage 5 guests `s5_counters`, `s5_software`, and `s5_timer`.
+The current suite also runs the Stage 5 guests `s5_counters`, `s5_software`, `s5_timer`, `s5_external`, `s5_wfi_event`, `s5_wfi_masked`, and `s5_wfi_none`.
 The [assessment](../verification/a5-capability-assessment.md) records approved
 MXLEN test-adapter/natural-alignment decisions, all 1,970 source dispositions,
 exact reviews, hashes and negative controls.

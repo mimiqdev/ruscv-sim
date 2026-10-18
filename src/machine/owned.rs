@@ -79,6 +79,10 @@ impl OwnedMachine {
     pub(crate) fn set_verbose(&mut self, verbose: bool) {
         self.domain_mut().core.set_verbose(verbose);
     }
+    #[cfg(test)]
+    pub(crate) fn set_virtual_deadline(&mut self, deadline: Option<u64>) {
+        self.domain_mut().virtual_deadline = deadline;
+    }
     pub(crate) fn select_signal(&mut self, address: u64) {
         if self.control.status().is_ok_and(|status| !status.uncertain) {
             self.domain_mut().platform.selected_tohost = address;
