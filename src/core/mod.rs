@@ -938,7 +938,11 @@ impl RiscvCore {
     }
 
     fn accepted_interrupt(&self) -> Option<InterruptCause> {
-        const PRIORITY: [(u64, InterruptCause); 5] = [
+        const PRIORITY: [(u64, InterruptCause); 6] = [
+            (
+                1u64 << (InterruptCause::MachineExternal as u32),
+                InterruptCause::MachineExternal,
+            ),
             (
                 1u64 << (InterruptCause::MachineSoftware as u32),
                 InterruptCause::MachineSoftware,

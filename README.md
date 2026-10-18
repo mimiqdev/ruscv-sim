@@ -161,7 +161,9 @@ Stage 4 指令配置把 FENCE.I 改为非法指令异常。WFI 在 M 模式及 T
 
 Stage 5 U1 把 `time`（`0xC01`）做成 `mtime` 的只读影子（特权规范 20250508 §3.2.1），因此这个配置声称 Zicntr。`mcounteren` 仍为 0，所以 S 模式和 U 模式读 `cycle`、`time` 或 `instret` 都触发非法指令异常。对 `time` 的写在 M 模式也是非法指令。原生总线把 SiFive CLINT 放在 `0x0200_0000`（窗口 `0xC000`）。`mtime` 每完成一个 Hart turn 加一，写它不改变 `mcycle` 或 `minstret`，反过来也一样。失败的 turn 不增加 `mtime`。
 
-Stage 5 U2 让 MSIP 跟随 `msip` 的 bit 0，让 MTIP 跟随无符号比较 `mtime >= mtimecmp`。依据是特权规范 20250508 §3.1.9 和 §3.2.1。这两个比特在 `mip` 里只读。MSIE 和 MTIE 可写，复位为 0。中断在取指前进入 M 模式。条件是对应使能已置位，并且 hart 低于 M 或 MIE 为 1。MSI 优先于 MTI。被打断的指令不退休。MEIP 和 PLIC 不在这条路径上。WFI 仍是空操作。
+Stage 5 U2 让 MSIP 跟随 `msip` 的 bit 0，让 MTIP 跟随无符号比较 `mtime >= mtimecmp`。依据是特权规范 20250508 §3.1.9 和 §3.2.1。这两个比特在 `mip` 里只读。MSIE 和 MTIE 可写，复位为 0。中断在取指前进入 M 模式。条件是对应使能已置位，并且 hart 低于 M 或 MIE 为 1。MSI 优先于 MTI。被打断的指令不退休。WFI 仍是空操作。
+
+Stage 5 U3 把 PLIC 1.0.0 放在 `0x0C00_0000`（窗口 `0x400000`）。源 1 的电平在 `0x0C40_0000` 的 bit 0。机器上下文的输出驱动 MEIP。MEIP 在 `mip` 里只读。MEIE 可写，复位为 0。4 字节 claim 读返回源 ID 并清除 pending。4 字节 complete 写结束服务。电平仍为 1 时 pending 回来。陷入本身不 claim。监督上下文的线与软件可写的 SEIP 位相或。CSRRS 和 CSRRC 只改软件位。优先级是 MEI、MSI、MTI、SEI、SSI、STI。WFI 仍是空操作。
 
 公开路径的页表翻译和 A/D 效果仍待完成。已启用的 SSIP、STIP 和 SEIP 在取指前进入 M 模式陷阱，不取指也不退休。`mcause` 保留中断位。S 模式下 `sip` 和 `sie` 仍读 0。
 完整交付边界以当前合同和对应实现测试为准。

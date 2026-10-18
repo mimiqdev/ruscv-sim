@@ -1,7 +1,7 @@
 # Stage 4 supervisor-interrupt guest (dev-plan §4 "Supervisor interrupt",
 # D11 option (a)).
 #
-# mie keeps 0x2AA. mip keeps 0x222 while no machine line is pending.
+# mie keeps 0xAAA. mip keeps 0x222 while no machine line is pending.
 # sie and sip read 0 and ignore writes while mideleg is 0. SSIP with SSIE
 # is not taken in M while MIE is 0, is taken
 # in M once MIE is 1, is taken in S and in U while MIE is 0.  With SEIP,
@@ -24,11 +24,11 @@ _start:
     la      s1, tohost
     li      s3, 0                       # vectored-entry marker
 
-    # ---- mie keeps 0x2AA; mip keeps 0x222 with no machine line ----
+    # ---- mie keeps 0xAAA; mip keeps 0x222 with no machine line ----
     li      t0, -1
     csrw    mie, t0
     csrr    t1, mie
-    li      t2, 0x2AA
+    li      t2, 0xAAA
     bne     t1, t2, fail
     csrw    mip, t0
     csrr    t1, mip

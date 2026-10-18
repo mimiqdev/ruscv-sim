@@ -110,11 +110,11 @@ fn test_mhartid_write_fails() {
 #[test]
 fn test_mie_read_write() {
     let mut csr = CsrFile::new(0);
-    // SSIE, STIE, SEIE, MSIE, and MTIE are writable. MEIE stays 0.
+    // SSIE, STIE, SEIE, MSIE, MTIE, and MEIE are writable.
     csr.write(machine::MIE, 0x888).unwrap();
-    assert_eq!(csr.read(machine::MIE).unwrap(), 0x88);
+    assert_eq!(csr.read(machine::MIE).unwrap(), 0x888);
     csr.write(machine::MIE, u64::MAX).unwrap();
-    assert_eq!(csr.read(machine::MIE).unwrap(), 0x2AA);
+    assert_eq!(csr.read(machine::MIE).unwrap(), 0xAAA);
 }
 
 #[test]

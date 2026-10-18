@@ -37,8 +37,9 @@ pub use debug::{
 pub use decode::{DecodeError, DecodedInstruction, InstructionDecoder, InstructionFormat};
 pub use execute::{ExecuteError, Executor};
 pub use executor::{
-    load_and_run, load_and_run_file, ExecutionResult, ExecutorError, RiscVSimulator,
-    SYSTEM_BUS_CLINT_BASE, SYSTEM_BUS_CLINT_SIZE, SYSTEM_BUS_HTIF_BASE, SYSTEM_BUS_HTIF_SIZE,
+    load_and_run, load_and_run_file, ExecutionResult, ExecutorError, PresentedInterruptLines,
+    RiscVSimulator, SYSTEM_BUS_CLINT_BASE, SYSTEM_BUS_CLINT_SIZE, SYSTEM_BUS_HTIF_BASE,
+    SYSTEM_BUS_HTIF_SIZE, SYSTEM_BUS_PLIC_BASE, SYSTEM_BUS_PLIC_GATEWAY, SYSTEM_BUS_PLIC_SIZE,
     SYSTEM_BUS_UART_BASE, SYSTEM_BUS_UART_WINDOW,
 };
 pub use fpu::{Fcsr, Fpr, FpuRegisterFile};

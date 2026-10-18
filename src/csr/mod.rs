@@ -141,7 +141,10 @@ pub const MISA_VALUE: u64 = 0x8000_0000_0014_1101;
 /// Supervisor bits of `mip` and `mie`: SSIP/SSIE, STIP/STIE, SEIP/SEIE.
 pub const SUPERVISOR_INTERRUPTS: u64 = 0x222;
 
-const MACHINE_LINE_BITS: u64 = (1 << 3) | (1 << 7);
+/// Platform lines in `mip` and their enables in `mie`: MSIP/MSIE, MTIP/MTIE, MEIP/MEIE.
+/// SEIP stays in [`SUPERVISOR_INTERRUPTS`]. Its software bit is writable, and the
+/// supervisor PLIC line is ORed at read time (privileged §3.1.9).
+const MACHINE_LINE_BITS: u64 = (1 << 3) | (1 << 7) | (1 << 11);
 
 /// `satp` MODE encodings this profile implements.
 pub const SATP_MODE_BARE: u64 = 0;
@@ -207,6 +210,8 @@ pub struct CsrFile {
     hart_id: u64,
     /// `mtime` at the start of the current instruction. Not `mcycle`.
     time: u64,
+    /// Supervisor PLIC context line. ORed into SEIP on read. Not the software bit.
+    seip_external: bool,
 }
 
 impl CsrFile {
@@ -248,6 +253,7 @@ impl CsrFile {
             privilege: PrivilegeMode::Machine,
             hart_id,
             time: 0,
+            seip_external: false,
         }
     }
 
@@ -256,11 +262,17 @@ impl CsrFile {
         self.time = mtime;
     }
 
-    pub(crate) fn set_machine_interrupt_lines(&mut self, msip: bool, mtip: bool) {
+    pub(crate) fn set_machine_interrupt_lines(&mut self, msip: bool, mtip: bool, meip: bool) {
         let old = self.stored(machine::MIP);
-        let lines = (u64::from(msip) << 3) | (u64::from(mtip) << 7);
+        let lines = (u64::from(msip) << 3) | (u64::from(mtip) << 7) | (u64::from(meip) << 11);
         self.csrs
             .insert(machine::MIP, (old & !MACHINE_LINE_BITS) | lines);
+    }
+
+    /// Publish the supervisor context's presented line. A later `mip` read ORs
+    /// this into SEIP without changing the software-writable bit.
+    pub(crate) fn set_seip_external(&mut self, level: bool) {
+        self.seip_external = level;
     }
 
     /// Return whether `addr` is a register that always reads zero and
@@ -293,6 +305,7 @@ impl CsrFile {
             supervisor::SSTATUS => Some(self.stored(machine::MSTATUS) & mstatus::SSTATUS_VIEW),
             supervisor::SIE => Some(self.stored(machine::MIE) & self.stored(machine::MIDELEG)),
             supervisor::SIP => Some(self.stored(machine::MIP) & self.stored(machine::MIDELEG)),
+            machine::MIP => Some(self.mip()),
             unprivileged::CYCLE => Some(self.stored(machine::MCYCLE)),
             unprivileged::TIME => Some(self.time),
             unprivileged::INSTRET => Some(self.stored(machine::MINSTRET)),
@@ -427,7 +440,17 @@ impl CsrFile {
     ///
     /// Interrupt sampling runs in S and U, which cannot read `mip`.
     pub(crate) fn mip(&self) -> u64 {
-        self.stored(machine::MIP)
+        self.stored(machine::MIP) | (u64::from(self.seip_external) << 9)
+    }
+
+    /// Value a CSRRS or CSRRC merges. `mip` merges the stored software bit,
+    /// not the SEIP value a read returns (privileged §3.1.9).
+    fn rmw_base(&self, addr: u16, observed: u64) -> u64 {
+        if addr == machine::MIP {
+            self.stored(machine::MIP)
+        } else {
+            observed
+        }
     }
 
     /// The whole `mie` register, independent of the current privilege.
@@ -572,7 +595,7 @@ impl CsrFile {
     ) -> Result<CsrAccess, CsrError> {
         let old_value = self.read(addr)?;
         if perform_write {
-            self.write(addr, old_value | mask)?;
+            self.write(addr, self.rmw_base(addr, old_value) | mask)?;
         }
         let new_value = if perform_write {
             self.read(addr)?
@@ -596,7 +619,7 @@ impl CsrFile {
     ) -> Result<CsrAccess, CsrError> {
         let old_value = self.read(addr)?;
         if perform_write {
-            self.write(addr, old_value & !mask)?;
+            self.write(addr, self.rmw_base(addr, old_value) & !mask)?;
         }
         let new_value = if perform_write {
             self.read(addr)?

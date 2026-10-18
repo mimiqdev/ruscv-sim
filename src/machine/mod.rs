@@ -218,16 +218,18 @@ impl Installed {
         if let Some(hook) = &self.before_turn {
             hook();
         }
-        // `time`, MSIP, and MTIP are the values from the previous boundary.
-        // The tick and any compare or `msip` write below show up on the next
-        // boundary (privileged §3.2.1, contract D1).
+        // `time` and the hart lines are the values from the previous boundary.
+        // A CLINT or PLIC write below shows up on the next boundary
+        // (privileged §3.2.1, contract D1). This pre-fetch sample is the only
+        // acceptance sample.
         let mtime = self.platform.read_mtime()?;
         self.core.state_mut().csr.set_time(mtime);
-        let (msip, mtip) = self.platform.machine_interrupt_lines()?;
+        let lines = self.platform.machine_interrupt_lines()?;
         self.core
             .state_mut()
             .csr
-            .set_machine_interrupt_lines(msip, mtip);
+            .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
+        self.core.state_mut().csr.set_seip_external(lines.seip);
         let hart = self.core.step_transition(observe);
         let failure = match &hart.outcome {
             StepOutcome::SimulatorFailure(failure) => Some(failure.clone()),
@@ -244,11 +246,12 @@ impl Installed {
             // machine lines on the post-tick device so a host inspect matches
             // the store plus the tick.
             self.core.state_mut().csr.set_time(mtime);
-            let (msip, mtip) = self.platform.machine_interrupt_lines()?;
+            let lines = self.platform.machine_interrupt_lines()?;
             self.core
                 .state_mut()
                 .csr
-                .set_machine_interrupt_lines(msip, mtip);
+                .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
+            self.core.state_mut().csr.set_seip_external(lines.seip);
             events
         };
         let tohost = (sample && !failed).then(|| self.sample());

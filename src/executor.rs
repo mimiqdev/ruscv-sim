@@ -11,7 +11,7 @@ use crate::core::{
 use crate::elf::{ElfError, LoadImage, SignatureInfo};
 use crate::machine::{MachineConfig, OwnedMachine, PlatformEvent, PlatformKind};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
-use crate::peripherals::{Clint, Uart16550, CLINT_SIZE};
+use crate::peripherals::{Clint, Plic, Uart16550, CLINT_SIZE, PLIC_SIZE};
 pub use crate::physical::NativeSystemBusBackend;
 use crate::physical::{
     map_native_memory_error, native_ram_atomic_transact, AtomicAccessKind, AtomicBackend,
@@ -185,12 +185,40 @@ pub const SYSTEM_BUS_HTIF_SIZE: usize = 8;
 pub const SYSTEM_BUS_CLINT_BASE: u64 = 0x0200_0000;
 /// Byte length of [`SYSTEM_BUS_CLINT_BASE`]. The window ends at `0x0200_C000`.
 pub const SYSTEM_BUS_CLINT_SIZE: usize = CLINT_SIZE;
+/// PLIC 1.0.0 window. One hart, context 0 machine and context 1 supervisor.
+pub const SYSTEM_BUS_PLIC_BASE: u64 = 0x0C00_0000;
+/// Byte length of [`SYSTEM_BUS_PLIC_BASE`]. The window ends at `0x0C40_0000`.
+pub const SYSTEM_BUS_PLIC_SIZE: usize = PLIC_SIZE;
+/// Level gateway for PLIC source 1. Bit 0. The first word after the PLIC window.
+pub const SYSTEM_BUS_PLIC_GATEWAY: u64 = 0x0C40_0000;
+
+/// Lines the platform presents to hart 0 at an instruction boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresentedInterruptLines {
+    pub msip: bool,
+    pub mtip: bool,
+    pub meip: bool,
+    pub seip: bool,
+}
+
+impl PresentedInterruptLines {
+    pub(crate) const fn clear() -> Self {
+        Self {
+            msip: false,
+            mtip: false,
+            meip: false,
+            seip: false,
+        }
+    }
+}
 
 /// System Bus connecting CPU, RAM, and Peripherals
 ///
 /// # Memory Map
 /// - RAM: Configurable base address and size
 /// - CLINT: Fixed at 0x02000000, size 0xC000
+/// - PLIC: Fixed at 0x0C000000, size 0x400000
+/// - Source-1 gateway: Fixed at 0x0C400000, one word
 /// - UART: Fixed at 0x10000000, size 0x100
 /// - HTIF: Fixed at 0x40008000, size 8 (tohost register)
 ///
@@ -219,6 +247,13 @@ pub struct SystemBus {
     clint: Clint,
     clint_base: u64,
     clint_size: usize,
+    plic: Plic,
+    plic_base: u64,
+    plic_size: usize,
+    gateway_base: u64,
+    /// PLIC source 1 level. Pending is set only while this is high and the
+    /// source is not in service (PLIC specification 1.0.0, level gateway).
+    gateway_level: bool,
     /// Committed-write bookkeeping for the HTIF endpoint (dev-plan §5.6 D-c).
     ///
     /// The endpoint is one eight-byte block, so its exact committed-write
@@ -254,6 +289,11 @@ impl SystemBus {
             clint: Clint::new(SYSTEM_BUS_CLINT_BASE, 1, 0),
             clint_base: SYSTEM_BUS_CLINT_BASE,
             clint_size: SYSTEM_BUS_CLINT_SIZE,
+            plic: Plic::with_default_config(SYSTEM_BUS_PLIC_BASE),
+            plic_base: SYSTEM_BUS_PLIC_BASE,
+            plic_size: SYSTEM_BUS_PLIC_SIZE,
+            gateway_base: SYSTEM_BUS_PLIC_GATEWAY,
+            gateway_level: false,
         }
     }
 
@@ -262,14 +302,21 @@ impl SystemBus {
         self.clint.read_mtime()
     }
 
-    pub fn machine_interrupt_lines(&self) -> (bool, bool) {
+    pub fn machine_interrupt_lines(&self) -> PresentedInterruptLines {
         let msip = self.clint.read_msip(0).is_some_and(|value| value & 1 != 0);
         let mtime = self.clint.read_mtime();
         let mtip = self
             .clint
             .read_mtimecmp(0)
             .is_some_and(|compare| mtime >= compare);
-        (msip, mtip)
+        // A presented line is the context output, not the pending bit alone.
+        // Priority 0 and a threshold at or above the priority keep the line low.
+        PresentedInterruptLines {
+            msip,
+            mtip,
+            meip: self.plic.find_highest_priority_interrupt(0) != 0,
+            seip: self.plic.find_highest_priority_interrupt(1) != 0,
+        }
     }
 
     /// Add one tick. Does not touch `mcycle` or `minstret`.
@@ -311,6 +358,33 @@ impl SystemBus {
 
     fn in_clint(&self, addr: u64, width: usize) -> bool {
         contains_range(self.clint_base, self.clint_size, addr, width)
+    }
+
+    fn in_plic(&self, addr: u64, width: usize) -> bool {
+        contains_range(self.plic_base, self.plic_size, addr, width)
+    }
+
+    fn in_gateway(&self, addr: u64, width: usize) -> bool {
+        contains_range(self.gateway_base, 4, addr, width)
+    }
+
+    fn source1_in_service(&self) -> bool {
+        (0..2).any(|context| self.plic.get_claimed(context) == Some(1))
+    }
+
+    /// Level gateway for source 1. Pending is set only while the level is high
+    /// and no context holds the source in service.
+    fn reconcile_source1(&mut self) {
+        if self.source1_in_service() {
+            return;
+        }
+        if self.gateway_level {
+            if !self.plic.is_pending(1) {
+                self.plic.trigger_interrupt(1);
+            }
+        } else if self.plic.is_pending(1) {
+            self.plic.clear_pending(1);
+        }
     }
 
     /// Plain 4-byte and 8-byte CLINT accesses. `mtime` is the dword at
@@ -384,6 +458,111 @@ impl SystemBus {
             }
             PhysicalAccessKind::Fetch => {
                 unreachable!("native CLINT fetch category was rejected before device access")
+            }
+        }
+    }
+
+    /// Four-byte PLIC accesses. A claim read claims. A complete write ends
+    /// service and, when source 1's level is still high, sets pending again.
+    fn transact_plic(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        let descriptor = request.descriptor();
+        if descriptor.category == PhysicalAccessKind::Fetch {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::UnsupportedCategory,
+                "PLIC does not support instruction fetches",
+            ));
+        }
+        if descriptor.width.bytes() != 4 {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::UnsupportedWidth,
+                "PLIC native accesses are 4 bytes",
+            ));
+        }
+        if !descriptor.paddr.is_multiple_of(4) {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::TargetError,
+                "PLIC access is not naturally aligned",
+            ));
+        }
+        let offset = descriptor.paddr - self.plic_base;
+        match descriptor.category {
+            PhysicalAccessKind::DataRead => {
+                let value = self.plic.read_guest_word(offset);
+                let bytes = value.to_le_bytes();
+                Ok(PhysicalResponse::new(
+                    descriptor,
+                    PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(&bytes)),
+                ))
+            }
+            PhysicalAccessKind::DataWrite => {
+                let payload = request.write_payload().ok_or_else(|| {
+                    PhysicalBackendError::protocol(
+                        "validated native PLIC write was missing its payload",
+                    )
+                })?;
+                let mut raw = [0u8; 4];
+                raw.copy_from_slice(payload);
+                if self.plic.write_guest_word(offset, u32::from_le_bytes(raw)) {
+                    self.reconcile_source1();
+                }
+                Ok(PhysicalResponse::new(
+                    descriptor,
+                    PhysicalResponseCompletion::WriteAcknowledgement,
+                ))
+            }
+            PhysicalAccessKind::Fetch => {
+                unreachable!("native PLIC fetch category was rejected before device access")
+            }
+        }
+    }
+
+    /// Bit 0 at `0x0C40_0000` is the level for PLIC source 1.
+    fn transact_gateway(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        let descriptor = request.descriptor();
+        if descriptor.category == PhysicalAccessKind::Fetch {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::UnsupportedCategory,
+                "PLIC gateway does not support instruction fetches",
+            ));
+        }
+        if descriptor.width.bytes() != 4 {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::UnsupportedWidth,
+                "PLIC gateway native accesses are 4 bytes",
+            ));
+        }
+        if descriptor.paddr != self.gateway_base {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::TargetError,
+                "PLIC gateway access is not naturally aligned",
+            ));
+        }
+        match descriptor.category {
+            PhysicalAccessKind::DataRead => {
+                let value = u32::from(self.gateway_level);
+                let bytes = value.to_le_bytes();
+                Ok(PhysicalResponse::new(
+                    descriptor,
+                    PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(&bytes)),
+                ))
+            }
+            PhysicalAccessKind::DataWrite => {
+                let payload = request.write_payload().ok_or_else(|| {
+                    PhysicalBackendError::protocol(
+                        "validated native PLIC gateway write was missing its payload",
+                    )
+                })?;
+                let mut raw = [0u8; 4];
+                raw.copy_from_slice(payload);
+                self.gateway_level = u32::from_le_bytes(raw) & 1 != 0;
+                self.reconcile_source1();
+                Ok(PhysicalResponse::new(
+                    descriptor,
+                    PhysicalResponseCompletion::WriteAcknowledgement,
+                ))
+            }
+            PhysicalAccessKind::Fetch => {
+                unreachable!("native PLIC gateway fetch category was rejected before device access")
             }
         }
     }
@@ -474,6 +653,14 @@ impl SystemBus {
 
         if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {
             return self.transact_clint(request);
+        }
+
+        if self.in_plic(descriptor.paddr, descriptor.width.bytes()) {
+            return self.transact_plic(request);
+        }
+
+        if self.in_gateway(descriptor.paddr, descriptor.width.bytes()) {
+            return self.transact_gateway(request);
         }
 
         // The native UART keeps the historical 0x100-byte SystemBus window,
@@ -648,6 +835,15 @@ impl SystemBus {
             return Err(PhysicalBackendError::target(
                 PhysicalTargetRejectionReason::UnsupportedCategory,
                 "CLINT window accepts plain loads and stores only",
+            ));
+        }
+
+        if self.in_plic(descriptor.paddr, descriptor.width.bytes())
+            || self.in_gateway(descriptor.paddr, descriptor.width.bytes())
+        {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::UnsupportedCategory,
+                "PLIC window accepts plain loads and stores only",
             ));
         }
 

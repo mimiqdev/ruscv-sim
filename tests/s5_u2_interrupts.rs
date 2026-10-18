@@ -3,8 +3,7 @@
 //! Privileged specification 20250508 §3.1.9 makes MSIP and MTIP read-only in
 //! `mip` and makes MSIE and MTIE writable. §3.2.1 makes a compare or `msip`
 //! change visible at the next instruction boundary. MSI is taken before MTI.
-//! MEIE and MEIP stay clear. Flat has no CLINT, so this file uses the native
-//! machine only.
+//! Flat has no CLINT, so this file uses the native machine only.
 
 #[allow(dead_code)]
 mod common;
@@ -21,7 +20,8 @@ const MSIP_BIT: u64 = 1 << 3;
 const MTIP_BIT: u64 = 1 << 7;
 const MSIE: u64 = MSIP_BIT;
 const MTIE: u64 = MTIP_BIT;
-const MIE_ENABLES: u64 = 0x222 | MSIE | MTIE;
+const MEIE: u64 = 1 << 11;
+const MIE_ENABLES: u64 = 0x222 | MSIE | MTIE | MEIE;
 const MRET: u32 = 0x3020_0073;
 const SRET: u32 = 0x1020_0073;
 
@@ -173,7 +173,7 @@ fn reset_masks_keep_machine_enables_and_clear_pending_bits() {
     assert_eq!(
         reg(&machine, 4),
         MIE_ENABLES,
-        "all-ones mie keeps MSIE and MTIE"
+        "all-ones mie keeps MSIE, MTIE, and MEIE"
     );
     assert_eq!(
         reg(&machine, 5),

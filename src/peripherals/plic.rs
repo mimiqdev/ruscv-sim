@@ -353,6 +353,31 @@ impl Plic {
             .and_then(|ctx| ctx.claimed)
     }
 
+    /// Four-byte native read. A claim address of an existing context claims.
+    ///
+    /// `read_reg` stays `&self` and returns 0 for that address. Claim needs
+    /// `&mut self`, so the native bus uses this path (PLIC specification 1.0.0).
+    pub fn read_guest_word(&mut self, offset: u64) -> u32 {
+        if let RegAddr::ClaimComplete(context_id) = self.calculate_reg_addr(offset) {
+            if context_id < self.num_contexts {
+                return self.claim_interrupt(context_id);
+            }
+            return 0;
+        }
+        self.read_reg(offset, 4).unwrap_or(0) as u32
+    }
+
+    /// Four-byte native write. Returns whether this address completed a context,
+    /// so the gateway can set source 1 pending again when its level is still high.
+    pub fn write_guest_word(&mut self, offset: u64, value: u32) -> bool {
+        let complete = matches!(
+            self.calculate_reg_addr(offset),
+            RegAddr::ClaimComplete(context_id) if context_id < self.num_contexts
+        );
+        let _ = self.write_reg(offset, value);
+        complete
+    }
+
     /// 计算寄存器地址
     fn calculate_reg_addr(&self, offset: u64) -> RegAddr {
         // 优先级寄存器 (0x0000 - 0x0FFF)
