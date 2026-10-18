@@ -322,8 +322,15 @@ impl SystemBus {
             ));
         }
         if !descriptor.paddr.is_multiple_of(width as u64) {
+            // The span is inside the window, so this is not an unmapped
+            // address. The unprivileged load/store rule allows either an
+            // address-misaligned exception or an access fault when the
+            // region does not support the alignment. This profile's hart
+            // raises address-misaligned before any transaction. A raw
+            // request that still arrives is a target error, the same class
+            // `map_native_memory_error` uses for a misaligned native access.
             return Err(PhysicalBackendError::target(
-                PhysicalTargetRejectionReason::Unmapped,
+                PhysicalTargetRejectionReason::TargetError,
                 "CLINT access is not naturally aligned",
             ));
         }

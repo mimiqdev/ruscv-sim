@@ -156,7 +156,10 @@ Stage 4 指令配置把 FENCE.I 改为非法指令异常。WFI 在 M 模式及 T
 这些是 Stage 4 的基础变更，尚不代表完整里程碑验收。`satp` 的 CSR 字段策略接受 Bare 和 Sv39，
 `mcycle` 计完成的 Hart turn，包括陷入但不退休的指令。`minstret` 仍只计退休的指令。
 显式写入其中一个计数器会替代该指令对同一计数器的隐式增量，包括写入与旧值相同的值。
-`cycle` 和 `instret` 是只读影子。`time`（`0xC01`）是 `mtime` 的只读影子（特权规范 20250508 §3.2.1），因此这个配置声称 Zicntr。`mcounteren` 保持 0，所以 S 模式和 U 模式读 `cycle`、`time` 或 `instret` 都触发非法指令异常。对 `time` 的写在 M 模式也是非法指令。原生总线把 SiFive CLINT 放在 `0x0200_0000`（窗口 `0xC000`）。`mtime` 每完成一个 Hart turn 加一，写它不改变 `mcycle` 或 `minstret`，反过来也一样。失败的 turn 不增加这些计数器，也不增加 `mtime`。
+`cycle` 和 `instret` 是只读影子。`mcounteren` 保持 0，所以 S 模式和 U 模式读任一影子都触发非法指令异常。
+失败的 turn 不增加任一计数器。
+
+Stage 5 U1 把 `time`（`0xC01`）做成 `mtime` 的只读影子（特权规范 20250508 §3.2.1），因此这个配置声称 Zicntr。`mcounteren` 仍为 0，所以 S 模式和 U 模式读 `cycle`、`time` 或 `instret` 都触发非法指令异常。对 `time` 的写在 M 模式也是非法指令。原生总线把 SiFive CLINT 放在 `0x0200_0000`（窗口 `0xC000`）。`mtime` 每完成一个 Hart turn 加一，写它不改变 `mcycle` 或 `minstret`，反过来也一样。失败的 turn 不增加 `mtime`。
 公开路径的页表翻译和 A/D 效果仍待完成。已启用的 SSIP、STIP 和 SEIP 在取指前进入 M 模式陷阱，不取指也不退休。`mcause` 保留中断位。S 模式下 `sip` 和 `sie` 仍读 0。
 完整交付边界以当前合同和对应实现测试为准。
 
