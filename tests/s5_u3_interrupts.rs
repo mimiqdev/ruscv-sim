@@ -578,6 +578,42 @@ fn an_unexpected_complete_while_source_1_is_in_service_is_ignored() {
 }
 
 #[test]
+fn a_complete_while_the_source_is_disabled_leaves_it_in_service() {
+    let mut code = arm_machine_source(1);
+    code.extend([
+        lw(10, 6, 4),
+        elf::lui(9, 0x0C002),
+        sw(0, 9, 0),
+        elf::addi(7, 0, 1),
+        sw(7, 6, 4),
+        elf::addi(7, 0, 2),
+        sw(7, 9, 0),
+        elf::lui(5, 0x0C001),
+        lw(11, 5, 0),
+        lw(12, 6, 4),
+        csrr(13, machine::MIP),
+    ]);
+    let machine = machine_with(&code);
+    retire_named(
+        &machine,
+        code.len(),
+        "claim, disable, complete 1, re-enable",
+    );
+    assert_eq!(reg(&machine, 10), 1, "the claim takes source 1");
+    assert_eq!(
+        reg(&machine, 11) & 2,
+        0,
+        "re-enabling a disabled complete does not forward source 1"
+    );
+    assert_eq!(
+        reg(&machine, 12),
+        0,
+        "source 1 stays in service, so the next claim returns 0"
+    );
+    assert_eq!(reg(&machine, 13) & MEIP_BIT, 0);
+}
+
+#[test]
 fn claim_returns_zero_when_nothing_qualifies() {
     let mut in_service = arm_machine_source(1);
     in_service.extend([lw(10, 6, 4), lw(11, 6, 4)]);
