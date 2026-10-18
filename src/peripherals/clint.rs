@@ -906,6 +906,26 @@ mod tests {
     }
 
     #[test]
+    fn test_clint_mtimecmp_word_halves() {
+        let mut clint = Clint::new(0x0200_0000, 1, 10_000_000);
+        assert_eq!(
+            clint.read_mapped(reg_offset::MTIMECMP_BASE, 4).unwrap(),
+            0xFFFF_FFFF
+        );
+        assert_eq!(
+            clint.read_mapped(reg_offset::MTIMECMP_BASE + 4, 4).unwrap(),
+            0xFFFF_FFFF
+        );
+        clint
+            .write_mapped(reg_offset::MTIMECMP_BASE, 0x89AB_CDEF, 4)
+            .unwrap();
+        clint
+            .write_mapped(reg_offset::MTIMECMP_BASE + 4, 0x0123_4567, 4)
+            .unwrap();
+        assert_eq!(clint.read_mtimecmp(0), Some(0x0123_4567_89AB_CDEF));
+    }
+
+    #[test]
     fn test_clint_msip_boundary_bits() {
         let mut clint = Clint::new(0x0200_0000, 1, 10_000_000);
 

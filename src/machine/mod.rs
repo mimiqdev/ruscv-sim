@@ -233,7 +233,10 @@ impl Installed {
             Vec::new()
         } else {
             let events = self.platform.take_events()?;
-            self.platform.advance_mtime()?;
+            let mtime = self.platform.advance_mtime()?;
+            // The instruction read the pre-turn snapshot. Park the shadow on
+            // the post-tick value so a host inspect matches `mtime`.
+            self.core.state_mut().csr.set_time(mtime);
             events
         };
         let tohost = (sample && !failed).then(|| self.sample());

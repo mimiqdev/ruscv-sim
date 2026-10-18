@@ -381,9 +381,9 @@ impl CsrFile {
         if (self.privilege as u8) < (required as u8) {
             return Err(CsrError::PrivilegeViolation(addr));
         }
-        // mcounteren is read-only zero, so CY and IR stay clear.  A read of
-        // either shadow from S or U is therefore illegal.  Machine mode is
-        // not gated by mcounteren.
+        // mcounteren is read-only zero, so CY, TM, and IR stay clear.  A
+        // read of `cycle`, `time`, or `instret` from S or U is illegal.
+        // Machine mode is not gated by mcounteren.
         if self.privilege != PrivilegeMode::Machine
             && matches!(
                 addr,

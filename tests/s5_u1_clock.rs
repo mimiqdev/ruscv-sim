@@ -110,7 +110,25 @@ fn native_clint_window_mtime_and_time_stay_off_the_cycle_counters() {
         csrrs(21, unprivileged::TIME), // 21 trapped from S
     ];
     let machine = machine_with(PlatformKind::Native, &code);
-    for _ in 0..21 {
+    for _ in 0..14 {
+        retire(&machine);
+    }
+    let before_store = machine.inspect().unwrap().hart;
+    let mcycle_before = before_store.csr.read(machine::MCYCLE).unwrap();
+    let minstret_before = before_store.csr.read(machine::MINSTRET).unwrap();
+    retire(&machine);
+    let after_store = machine.inspect().unwrap().hart;
+    assert_eq!(
+        after_store.csr.read(machine::MCYCLE).unwrap(),
+        mcycle_before.wrapping_add(1),
+        "the mtime store must not write mcycle"
+    );
+    assert_eq!(
+        after_store.csr.read(machine::MINSTRET).unwrap(),
+        minstret_before.wrapping_add(1),
+        "the mtime store must not write minstret"
+    );
+    for _ in 0..6 {
         retire(&machine);
     }
 
@@ -140,7 +158,18 @@ fn native_clint_window_mtime_and_time_stay_off_the_cycle_counters() {
     assert_eq!(
         reg(&machine, 19),
         0x1001,
-        "writing mtime does not write mcycle"
+        "the explicit mcycle write reads back as that value plus one tick"
+    );
+    assert_eq!(
+        machine
+            .inspect()
+            .unwrap()
+            .hart
+            .csr
+            .read(unprivileged::TIME)
+            .unwrap(),
+        0x1007,
+        "after the last retired turn, time matches the post-tick mtime"
     );
     assert_eq!(
         reg(&machine, 20),
@@ -176,6 +205,17 @@ fn flat_time_tracks_completed_turns_and_rejects_a_write() {
     assert_eq!(reg(&machine, 3), 3);
     assert_eq!(reg(&machine, 4), 0x1_0001);
     assert_illegal(&machine);
+    assert_eq!(
+        machine
+            .inspect()
+            .unwrap()
+            .hart
+            .csr
+            .read(unprivileged::TIME)
+            .unwrap(),
+        6,
+        "trap entry completes a turn, so mtime and time advance"
+    );
 
     let bytes = elf::elf_with_code(
         &[csrrs(1, unprivileged::TIME)],

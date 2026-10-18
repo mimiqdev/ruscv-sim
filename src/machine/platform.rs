@@ -152,14 +152,15 @@ impl Platform {
     }
 
     /// One completed Hart turn. A `SimulatorFailure` does not call this.
-    pub(super) fn advance_mtime(&mut self) -> Result<(), MachineError> {
+    /// Returns the `mtime` visible to the next instruction.
+    pub(super) fn advance_mtime(&mut self) -> Result<u64, MachineError> {
         if let Some(bus) = &self.bus {
             let mut bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
             bus.advance_mtime();
-            return Ok(());
+            return Ok(bus.mtime());
         }
         self.flat_mtime = self.flat_mtime.wrapping_add(1);
-        Ok(())
+        Ok(self.flat_mtime)
     }
 
     /// One active RAM allocation; image descriptions are immutable restoration
