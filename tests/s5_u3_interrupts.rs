@@ -358,13 +358,14 @@ fn supervisor_line_ors_into_seip_without_sticking_the_software_bit() {
         csrr(10, machine::MIP),
         elf::addi(7, 0, 2),
         csrrs(0, machine::MIP, 7),
-        sw(0, 8, 0),
+        elf::lui(6, 0x0C201),
+        lw(0, 6, 4),
         csrr(11, machine::MIP),
         elf::addi(7, 0, 1),
-        sw(7, 8, 0),
+        sw(7, 6, 4),
         csrw(machine::MIP, 0),
         csrr(12, machine::MIP),
-        sw(0, 8, 0),
+        lw(0, 6, 4),
         csrr(13, machine::MIP),
     ];
     let machine = machine_with(&code);
@@ -372,14 +373,14 @@ fn supervisor_line_ors_into_seip_without_sticking_the_software_bit() {
     assert_eq!(reg(&machine, 10) & SEIP_BIT, SEIP_BIT);
     assert_eq!(reg(&machine, 10) & MEIP_BIT, 0, "context 0 is disabled");
     assert_eq!(csr_value(&machine, machine::MIP) & SEIP_BIT, SEIP_BIT);
-    retire_named(&machine, 4, "CSRRS of SSIP, then drop the level");
+    retire_named(&machine, 5, "CSRRS of SSIP, then claim context 1");
     assert_eq!(reg(&machine, 11) & 2, 2, "CSRRS sets the software SSIP bit");
     assert_eq!(
         reg(&machine, 11) & SEIP_BIT,
         0,
         "CSRRS does not copy the external line into the software SEIP bit"
     );
-    retire_named(&machine, 6, "raise the line, CSRW 0, then drop it");
+    retire_named(&machine, 6, "complete, CSRW 0, then claim again");
     assert_eq!(
         reg(&machine, 12) & SEIP_BIT,
         SEIP_BIT,
@@ -423,6 +424,79 @@ fn supervisor_takes_meip_with_mie_clear() {
     assert_eq!(csr_value(&machine, machine::MIP) & MEIP_BIT, MEIP_BIT);
     let source = assert_taken(&machine, InterruptCause::MachineExternal, VICTIM, 0x11);
     assert_eq!(source, PrivilegeMode::Supervisor);
+}
+
+#[test]
+fn threshold_blocks_meip_but_claim_still_returns_one() {
+    let mut code = vec![
+        elf::lui(6, 0x0C000),
+        elf::addi(7, 0, 1),
+        sw(7, 6, 4),
+        elf::lui(6, 0x0C002),
+        elf::addi(7, 0, 2),
+        sw(7, 6, 0),
+        elf::lui(6, 0x0C200),
+        elf::addi(7, 0, 1),
+        sw(7, 6, 0),
+        elf::lui(8, 0x0C400),
+        elf::addi(7, 0, 1),
+        sw(7, 8, 0),
+    ];
+    code.extend(meie(9));
+    code.extend([
+        csrw(machine::MIE, 9),
+        elf::addi(9, 0, MIE_BIT),
+        csrrs(0, machine::MSTATUS, 9),
+        csrr(10, machine::MIP),
+        lw(11, 6, 4),
+        elf::lui(9, 0x0C001),
+        lw(12, 9, 0),
+        csrr(13, machine::MIP),
+    ]);
+    let machine = machine_with(&code);
+    retire_named(
+        &machine,
+        code.len(),
+        "threshold masks MEIP and the claim still returns source 1",
+    );
+    assert_eq!(reg(&machine, 10) & MEIP_BIT, 0);
+    assert_eq!(reg(&machine, 11), 1);
+    assert_eq!(reg(&machine, 12) & 2, 0);
+    assert_eq!(reg(&machine, 13) & MEIP_BIT, 0);
+}
+
+#[test]
+fn a_falling_level_does_not_retract_a_forwarded_request() {
+    let mut code = arm_machine_source(1);
+    code.extend([
+        elf::lui(8, 0x0C400),
+        sw(0, 8, 0),
+        elf::lui(9, 0x0C001),
+        lw(10, 9, 0),
+        csrr(11, machine::MIP),
+        lw(12, 6, 4),
+        lw(13, 9, 0),
+        csrr(14, machine::MIP),
+        elf::addi(7, 0, 1),
+        sw(7, 6, 4),
+        lw(15, 9, 0),
+    ]);
+    let machine = machine_with(&code);
+    retire_named(&machine, code.len(), "drop the level before claim");
+    assert_eq!(
+        reg(&machine, 10) & 2,
+        2,
+        "pending stays after the level falls"
+    );
+    assert_eq!(reg(&machine, 11) & MEIP_BIT, MEIP_BIT);
+    assert_eq!(reg(&machine, 12), 1);
+    assert_eq!(reg(&machine, 13) & 2, 0);
+    assert_eq!(reg(&machine, 14) & MEIP_BIT, 0);
+    assert_eq!(
+        reg(&machine, 15) & 2,
+        0,
+        "complete with the level low does not forward again"
+    );
 }
 
 #[test]

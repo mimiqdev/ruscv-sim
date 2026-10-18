@@ -276,8 +276,11 @@ impl Plic {
     }
 
     /// 声明中断（读取最高优先级的中断 ID）
+    ///
+    /// The claim ignores the priority threshold. Priority 0 is not an
+    /// interrupt (PLIC specification 1.0.0, Interrupt Claim Process).
     pub fn claim_interrupt(&mut self, context_id: u32) -> u32 {
-        let irq_id = self.find_highest_priority_interrupt(context_id);
+        let irq_id = self.highest_enabled_pending(context_id);
 
         if irq_id > 0 {
             // 记录已声明的中断
@@ -326,6 +329,27 @@ impl Plic {
             }
         }
 
+        highest_irq
+    }
+
+    /// Highest pending, enabled source with priority greater than 0.
+    /// The threshold masks the presented line, not this scan.
+    fn highest_enabled_pending(&self, context_id: u32) -> u32 {
+        let ctx = match self.contexts.get(context_id as usize) {
+            Some(c) => c,
+            None => return 0,
+        };
+        let mut highest_irq: u32 = 0;
+        let mut highest_priority: u32 = 0;
+        for irq_id in 1..self.num_sources {
+            if self.is_pending(irq_id) && ctx.is_enabled(irq_id) {
+                let priority = self.priorities[irq_id as usize];
+                if priority > 0 && priority > highest_priority {
+                    highest_priority = priority;
+                    highest_irq = irq_id;
+                }
+            }
+        }
         highest_irq
     }
 

@@ -372,19 +372,14 @@ impl SystemBus {
         (0..2).any(|context| self.plic.get_claimed(context) == Some(1))
     }
 
-    /// Level gateway for source 1. Pending is set only while the level is high
-    /// and no context holds the source in service.
+    /// Forward source 1 once while its level is high and it is not in service.
+    /// A forwarded request stays pending until claim. The gateway cannot
+    /// retract it (PLIC specification 1.0.0, Interrupt Gateways).
     fn reconcile_source1(&mut self) {
-        if self.source1_in_service() {
+        if self.source1_in_service() || !self.gateway_level || self.plic.is_pending(1) {
             return;
         }
-        if self.gateway_level {
-            if !self.plic.is_pending(1) {
-                self.plic.trigger_interrupt(1);
-            }
-        } else if self.plic.is_pending(1) {
-            self.plic.clear_pending(1);
-        }
+        self.plic.trigger_interrupt(1);
     }
 
     /// Plain 4-byte and 8-byte CLINT accesses. `mtime` is the dword at
