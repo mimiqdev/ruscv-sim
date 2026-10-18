@@ -42,6 +42,12 @@ trap_handler:
     bnez    t0, mismatch
     li      t1, 0x22
     bne     s8, t1, mismatch
+    lui     t0, 0x02004
+    li      t1, -1
+    sd      t1, 0(t0)
+    csrr    t1, mip
+    andi    t1, t1, 0x80
+    bnez    t1, mismatch
     li      a0, 0
     j       write_exit
 

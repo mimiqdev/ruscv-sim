@@ -264,7 +264,11 @@ impl SystemBus {
 
     pub fn machine_interrupt_lines(&self) -> (bool, bool) {
         let msip = self.clint.read_msip(0).is_some_and(|value| value & 1 != 0);
-        let mtip = self.clint.read_mtime() >= self.clint.read_mtimecmp(0).unwrap_or(u64::MAX);
+        let mtime = self.clint.read_mtime();
+        let mtip = self
+            .clint
+            .read_mtimecmp(0)
+            .is_some_and(|compare| mtime >= compare);
         (msip, mtip)
     }
 
