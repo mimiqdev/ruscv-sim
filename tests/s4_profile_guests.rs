@@ -175,5 +175,26 @@ fn s4_profile_guests_pass_through_cli_library_and_flat_facade() {
             "flat facade error for {name}: {:?}",
             flat_result.error
         );
+
+        // The S-mode TW=0 WFI touches the CLINT. A native run that skipped
+        // that wait would still exit 0. The guest leaves this marker only
+        // after the timer wake. Flat has no CLINT and may skip.
+        if name == "s4_tvm_tsr_tw" {
+            let stdout = String::from_utf8_lossy(&cli_result.stdout);
+            assert!(
+                stdout.contains("WFI_WAITED"),
+                "native CLI skipped the S-mode WFI wait:\n{stdout}"
+            );
+            assert_eq!(
+                library_result.signature_data.as_deref(),
+                Some(b"WFI_WAITED".as_slice()),
+                "native library skipped the S-mode WFI wait"
+            );
+            assert_eq!(
+                flat_result.signature_data.as_deref(),
+                Some([0_u8; 10].as_slice()),
+                "flat ran the CLINT wait"
+            );
+        }
     }
 }

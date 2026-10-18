@@ -253,3 +253,123 @@ fn an_s_mode_wfi_with_tw_set_traps_and_does_not_wait() {
         PrivilegeMode::Machine
     );
 }
+
+/// Privileged §3.1.9. An xRET is not followed by a fetch when a takeable
+/// interrupt is already pending. `mepc` is the WFI address.
+#[test]
+fn mret_into_s_mode_traps_on_a_pending_wfi() {
+    let code = [
+        elf::addi(5, 0, MTIE),
+        csrw(machine::MIE, 5),
+        elf::lui(9, 0x02004),
+        elf::sd(0, 9, 0),
+        elf::addi(5, 0, 1),
+        elf::slli(5, 5, 11),
+        csrw(machine::MSTATUS, 5),
+        elf::auipc(5, 0),
+        elf::addi(5, 5, 16),
+        csrw(machine::MEPC, 5),
+        MRET,
+        WFI,
+        elf::addi(24, 0, 0x99),
+    ];
+    let wfi = 11;
+    let machine = machine_with(&code);
+    retire(&machine, wfi);
+    assert_eq!(
+        machine.inspect().unwrap().hart.privilege,
+        PrivilegeMode::Supervisor
+    );
+    assert_eq!(machine.inspect().unwrap().hart.pc, pc_at(wfi));
+    let minstret = csr_value(&machine, machine::MINSTRET);
+    let taken = machine.step(false).expect("timer at WFI");
+    let StepOutcome::TrapEntered(entered) = taken.hart().outcome.clone() else {
+        panic!(
+            "mret landed on WFI and the timer was not taken: {:?}",
+            taken.hart().outcome
+        );
+    };
+    assert!(!taken.hart().control.instruction_attempted);
+    assert!(!taken.hart().control.retired);
+    assert_eq!(entered.cause, Trap::Interrupt(InterruptCause::MachineTimer));
+    assert_eq!(entered.faulting_pc, pc_at(wfi));
+    drop(taken);
+    assert_eq!(csr_value(&machine, machine::MEPC), pc_at(wfi));
+    assert_eq!(csr_value(&machine, machine::MINSTRET), minstret);
+    assert_eq!(reg(&machine, 24), 0);
+}
+
+/// Privileged §3.1.9. The interrupt is taken after the `mstatus` write and
+/// before the WFI that follows it.
+#[test]
+fn enabling_mie_directly_before_wfi_traps_on_the_wfi() {
+    let code = [
+        elf::addi(5, 0, MTIE),
+        csrw(machine::MIE, 5),
+        elf::lui(9, 0x02004),
+        elf::sd(0, 9, 0),
+        elf::addi(5, 0, mstatus::MIE as i32),
+        csrrs(0, machine::MSTATUS, 5),
+        WFI,
+        elf::addi(24, 0, 0x99),
+    ];
+    let wfi = 6;
+    let machine = machine_with(&code);
+    retire(&machine, wfi);
+    let minstret = csr_value(&machine, machine::MINSTRET);
+    let taken = machine.step(false).expect("timer at WFI");
+    let StepOutcome::TrapEntered(entered) = taken.hart().outcome.clone() else {
+        panic!(
+            "the MIE write did not expose the timer before WFI: {:?}",
+            taken.hart().outcome
+        );
+    };
+    assert!(!taken.hart().control.instruction_attempted);
+    assert!(!taken.hart().control.retired);
+    assert_eq!(entered.cause, Trap::Interrupt(InterruptCause::MachineTimer));
+    assert_eq!(entered.faulting_pc, pc_at(wfi));
+    drop(taken);
+    assert_eq!(csr_value(&machine, machine::MEPC), pc_at(wfi));
+    assert_eq!(csr_value(&machine, machine::MINSTRET), minstret);
+    assert_eq!(reg(&machine, 24), 0);
+}
+
+/// The wait retires the WFI. The idle jump then advances `mtime` without a
+/// retirement, and the following step takes the timer at WFI+4.
+#[test]
+fn a_wait_jumps_to_the_timer_and_traps_at_wfi_plus_four() {
+    let mut code = arm_future_timer();
+    let wfi = code.iter().position(|word| *word == WFI).unwrap();
+    code.insert(wfi, elf::addi(5, 0, mstatus::MIE as i32));
+    code.insert(wfi + 1, csrrs(0, machine::MSTATUS, 5));
+    let wfi = code.iter().position(|word| *word == WFI).unwrap();
+    let machine = machine_with(&code);
+    retire(&machine, wfi);
+    let retired = machine.step(false).expect("WFI");
+    assert!(
+        matches!(retired.hart().outcome, StepOutcome::InstructionRetired(_)),
+        "WFI did not retire: {:?}",
+        retired.hart().outcome
+    );
+    drop(retired);
+    let waiting = machine.step(false).expect("wait");
+    assert!(matches!(waiting.hart().outcome, StepOutcome::Waiting));
+    drop(waiting);
+    let time = csr_value(&machine, unprivileged::TIME);
+    let minstret = csr_value(&machine, machine::MINSTRET);
+    assert_eq!(machine.settle_wait().unwrap(), WaitSettlement::Jumped);
+    assert!(csr_value(&machine, unprivileged::TIME) > time);
+    assert_eq!(csr_value(&machine, machine::MINSTRET), minstret);
+    let taken = machine.step(false).expect("timer after the jump");
+    let StepOutcome::TrapEntered(entered) = taken.hart().outcome.clone() else {
+        panic!("the jumped timer was not taken: {:?}", taken.hart().outcome);
+    };
+    assert_eq!(entered.cause, Trap::Interrupt(InterruptCause::MachineTimer));
+    assert_eq!(entered.faulting_pc, pc_at(wfi + 1));
+    assert!(!taken.hart().control.retired);
+    drop(taken);
+    assert_eq!(csr_value(&machine, machine::MEPC), pc_at(wfi + 1));
+    assert_eq!(csr_value(&machine, machine::MINSTRET), minstret);
+    assert!(csr_value(&machine, unprivileged::TIME) > time);
+    assert_eq!(reg(&machine, 24), 0x22);
+}

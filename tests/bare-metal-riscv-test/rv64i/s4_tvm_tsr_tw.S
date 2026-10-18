@@ -14,9 +14,10 @@
 #   TSR=1, S: sret -> illegal (2);  TSR=0: sret retires into U
 #   TW=0, S: wfi waits for a later machine timer (mtimecmp = mtime+0x1000,
 #   MTIE). The timer is taken after the WFI, and mepc is wfi+4
-#   (privileged §3.1.9, §3.3.3). Flat has no CLINT, so the mtime load
-#   faults and that wait is skipped. Falling through the WFI without
-#   the timer trap exits nonzero.
+#   (privileged §3.1.9, §3.3.3). That path stores and prints WFI_WAITED.
+#   Flat has no CLINT, so the mtime load faults and that wait is skipped.
+#   The marker stays zero. Falling through the WFI without the timer
+#   trap exits nonzero.
 #   TW=1, S: wfi -> illegal (2)
 #   U: wfi -> illegal (2) at TW=0 and TW=1, mtval = the WFI encoding
 #   U: read of the M-only misa -> illegal (2), proving the mode
@@ -120,6 +121,27 @@ wfi0_after:
     # took the timer falls through with that cause still in s5.
     li      t0, -1
     bne     s5, t0, fail
+    # The timer trap reached this instruction, so the wait ran. Flat
+    # returns to wfi_flat and leaves the marker clear.
+    la      t0, wfi_wait_mark
+    la      t1, wfi_wait_text
+    li      t2, 10
+copy_mark:
+    lbu     t3, 0(t1)
+    sb      t3, 0(t0)
+    addi    t0, t0, 1
+    addi    t1, t1, 1
+    addi    t2, t2, -1
+    bnez    t2, copy_mark
+    la      t0, wfi_wait_mark
+    lui     t1, 0x10000                 # UART THR
+    li      t2, 10
+emit_mark:
+    lbu     t3, 0(t0)
+    sb      t3, 0(t1)
+    addi    t0, t0, 1
+    addi    t2, t2, -1
+    bnez    t2, emit_mark
 wfi_flat:                               # flat skipped the wait; s5 is already -1
     li      s10, 0
     li      s2, TW
@@ -314,6 +336,14 @@ plain_return:
 mepc_unchecked:
     csrw    mepc, s7
     mret
+
+.section .rodata
+wfi_wait_text:
+    .ascii "WFI_WAITED"
+
+.section .signature, "aw"
+wfi_wait_mark:
+    .space 10
 
 .section .tohost
 .align 3
