@@ -141,7 +141,6 @@ pub const MISA_VALUE: u64 = 0x8000_0000_0014_1101;
 /// Supervisor bits of `mip` and `mie`: SSIP/SSIE, STIP/STIE, SEIP/SEIE.
 pub const SUPERVISOR_INTERRUPTS: u64 = 0x222;
 
-/// MSIP and MTIP. The same positions are MSIE and MTIE in `mie`.
 const MACHINE_LINE_BITS: u64 = (1 << 3) | (1 << 7);
 
 /// `satp` MODE encodings this profile implements.
@@ -257,7 +256,6 @@ impl CsrFile {
         self.time = mtime;
     }
 
-    /// Copy hart 0 MSIP and MTIP into `mip`. Software bits stay as they are.
     pub(crate) fn set_machine_interrupt_lines(&mut self, msip: bool, mtip: bool) {
         let old = self.stored(machine::MIP);
         let lines = (u64::from(msip) << 3) | (u64::from(mtip) << 7);
