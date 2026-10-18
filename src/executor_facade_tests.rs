@@ -836,12 +836,14 @@ fn a_virtual_deadline_stop_reports_deadline_reached() {
     let bytes = elf::elf_with_code(&code, 0, true, false, 0x4000);
     let hooks = NativeHooks {
         prepare: Some(Box::new(|machine| {
-            machine.set_virtual_deadline(Some(1));
+            // Eight turns complete before the wait, so mtime is 8.
+            // 8 < 0x100 < mtimecmp 0x1000.
+            machine.set_virtual_deadline(Some(0x100));
         })),
         ..NativeHooks::default()
     };
     let result = run_native_inner(&bytes, Some(64), None, None, false, None, hooks).unwrap();
     assert!(!result.timed_out);
     assert_eq!(result.error.as_deref(), Some("DeadlineReached"));
-    assert!(result.cycles < 64);
+    assert_eq!(result.cycles, 8);
 }

@@ -226,10 +226,15 @@ fn s5_wfi_none_stops_with_no_progress() {
     assert_eq!(library.exit_code, 1);
     assert!(!library.timed_out);
     assert_eq!(library.error.as_deref(), Some("NoProgress"));
+    // auipc, addi, csrw mtvec, addi, csrw mie, addi, and the WFI retirement.
+    // The waiting turn starts a slot and does not complete it.
+    assert_eq!(
+        library.cycles, 7,
+        "NoProgress cycles are the turns completed"
+    );
     assert!(
-        library.cycles < 50,
-        "NoProgress ran until the cycle budget: {}",
-        library.cycles
+        text.contains("Cycles:     7"),
+        "CLI cycle count is not the turns completed:\n{text}"
     );
 }
 
