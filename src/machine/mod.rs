@@ -218,6 +218,10 @@ impl Installed {
         if let Some(hook) = &self.before_turn {
             hook();
         }
+        // `time` reads the mtime of this instruction. The tick below is
+        // visible on the next boundary (privileged §3.2.1, contract D1).
+        let mtime = self.platform.read_mtime()?;
+        self.core.state_mut().csr.set_time(mtime);
         let hart = self.core.step_transition(observe);
         let failure = match &hart.outcome {
             StepOutcome::SimulatorFailure(failure) => Some(failure.clone()),
@@ -228,7 +232,9 @@ impl Installed {
         let events = if failed {
             Vec::new()
         } else {
-            self.platform.take_events()?
+            let events = self.platform.take_events()?;
+            self.platform.advance_mtime()?;
+            events
         };
         let tohost = (sample && !failed).then(|| self.sample());
         let receipt = lease.boundary(uncertain, failure)?;

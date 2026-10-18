@@ -63,7 +63,7 @@ done
 # images.  The s4_* name is the same convention tests/s4_*_guests.rs use.
 linker_script_for() {
     case "$(basename "$1")" in
-        s4_*) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
+        s4_*|s5_*) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
         *) printf '%s' "${TESTS_DIR}/linker.ld" ;;
     esac
 }

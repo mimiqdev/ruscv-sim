@@ -114,7 +114,7 @@ flowchart TB
     RESULT --> CLI
 ```
 
-The flow is real and usable: the CLI loads an RV64 ELF, constructs RAM, UART, and the concrete bus, steps the core, observes `tohost`, optionally writes a commit log, and returns an execution result. Project-authored bare-metal ELF tests, including the Stage 4 guests, are compiled and run in CI on pull requests and on non-documentation pushes to `main`.
+The flow is real and usable: the CLI loads an RV64 ELF, constructs RAM, the CLINT window at `0x0200_0000`, UART, and the concrete bus, steps the core, observes `tohost`, optionally writes a commit log, and returns an execution result. Project-authored bare-metal ELF tests, including the Stage 4 guests, are compiled and run in CI on pull requests and on non-documentation pushes to `main`.
 
 The current composition has several important properties:
 

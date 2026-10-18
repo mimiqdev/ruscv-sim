@@ -11,7 +11,7 @@ use crate::core::{
 use crate::elf::{ElfError, LoadImage, SignatureInfo};
 use crate::machine::{MachineConfig, OwnedMachine, PlatformEvent, PlatformKind};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
-use crate::peripherals::Uart16550;
+use crate::peripherals::{Clint, Uart16550, CLINT_SIZE};
 pub use crate::physical::NativeSystemBusBackend;
 use crate::physical::{
     map_native_memory_error, native_ram_atomic_transact, AtomicAccessKind, AtomicBackend,
@@ -31,8 +31,8 @@ pub struct ExecutionResult {
     /// otherwise the run's failure code. A zero code alone does not establish
     /// success; callers must also inspect `error` and `timed_out`.
     pub exit_code: u32,
-    /// Number of completed Hart turns (retirements and synchronous trap entries).
-    /// Started turns that end in `SimulatorFailure` are not included.
+    /// Number of completed Hart turns, including retired instructions and trap
+    /// entries. A started turn that ends in `SimulatorFailure` is not included.
     pub cycles: u64,
     /// Final program counter
     pub final_pc: u64,
@@ -181,11 +181,16 @@ pub const SYSTEM_BUS_UART_WINDOW: usize = 0x100;
 pub const SYSTEM_BUS_HTIF_BASE: u64 = 0x4000_8000;
 /// Native HTIF endpoint span.
 pub const SYSTEM_BUS_HTIF_SIZE: usize = 8;
+/// SiFive CLINT window. ACLINT 1.0-rc4 packs one MSWI and one MTIMER here.
+pub const SYSTEM_BUS_CLINT_BASE: u64 = 0x0200_0000;
+/// Byte length of [`SYSTEM_BUS_CLINT_BASE`]. The window ends at `0x0200_C000`.
+pub const SYSTEM_BUS_CLINT_SIZE: usize = CLINT_SIZE;
 
 /// System Bus connecting CPU, RAM, and Peripherals
 ///
 /// # Memory Map
 /// - RAM: Configurable base address and size
+/// - CLINT: Fixed at 0x02000000, size 0xC000
 /// - UART: Fixed at 0x10000000, size 0x100
 /// - HTIF: Fixed at 0x40008000, size 8 (tohost register)
 ///
@@ -211,6 +216,9 @@ pub struct SystemBus {
     htif_size: usize,
     /// Callback for HTIF write events (exit signal detection)
     htif_write_callback: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    clint: Clint,
+    clint_base: u64,
+    clint_size: usize,
     /// Committed-write bookkeeping for the HTIF endpoint (dev-plan §5.6 D-c).
     ///
     /// The endpoint is one eight-byte block, so its exact committed-write
@@ -241,7 +249,22 @@ impl SystemBus {
             htif_size: HTIF_SIZE,
             htif_write_callback: None,
             htif_committed_writes: 0,
+            // clock_freq is the unused TLM crystal. The public clock is
+            // advance_mtime, one tick per completed Hart turn.
+            clint: Clint::new(SYSTEM_BUS_CLINT_BASE, 1, 0),
+            clint_base: SYSTEM_BUS_CLINT_BASE,
+            clint_size: SYSTEM_BUS_CLINT_SIZE,
         }
+    }
+
+    /// `mtime` in the native CLINT. Reset is 0 (ACLINT 1.0-rc4 line 198).
+    pub fn mtime(&self) -> u64 {
+        self.clint.read_mtime()
+    }
+
+    /// Add one tick. Does not touch `mcycle` or `minstret`.
+    pub fn advance_mtime(&mut self) {
+        self.clint.advance_one_tick();
     }
 
     /// Set callback for HTIF write events
@@ -274,6 +297,78 @@ impl SystemBus {
 
     fn is_uart(&self, addr: u64) -> bool {
         contains_range(self.uart_base, self.uart_size, addr, 1)
+    }
+
+    fn in_clint(&self, addr: u64, width: usize) -> bool {
+        contains_range(self.clint_base, self.clint_size, addr, width)
+    }
+
+    /// Plain 4-byte and 8-byte CLINT accesses. `mtime` is the dword at
+    /// `0xBFF8`, hart 0 `mtimecmp` the dword at `0x4000`, and `msip` the
+    /// word at offset 0 (ACLINT 1.0-rc4 SiFive compatibility table).
+    fn transact_clint(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        let descriptor = request.descriptor();
+        if descriptor.category == PhysicalAccessKind::Fetch {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::UnsupportedCategory,
+                "CLINT does not support instruction fetches",
+            ));
+        }
+        let width = descriptor.width.bytes();
+        if width != 4 && width != 8 {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::UnsupportedWidth,
+                "CLINT native accesses are 4 or 8 bytes",
+            ));
+        }
+        if !descriptor.paddr.is_multiple_of(width as u64) {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::Unmapped,
+                "CLINT access is not naturally aligned",
+            ));
+        }
+        let offset = descriptor.paddr - self.clint_base;
+        match descriptor.category {
+            PhysicalAccessKind::DataRead => {
+                let value = self.clint.read_mapped(offset, width).map_err(|error| {
+                    PhysicalBackendError::target(
+                        PhysicalTargetRejectionReason::TargetError,
+                        error.to_string(),
+                    )
+                })?;
+                let bytes = value.to_le_bytes();
+                Ok(PhysicalResponse::new(
+                    descriptor,
+                    PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(
+                        &bytes[..width],
+                    )),
+                ))
+            }
+            PhysicalAccessKind::DataWrite => {
+                let payload = request.write_payload().ok_or_else(|| {
+                    PhysicalBackendError::protocol(
+                        "validated native CLINT write was missing its payload",
+                    )
+                })?;
+                let mut raw = [0u8; 8];
+                raw[..width].copy_from_slice(payload);
+                self.clint
+                    .write_mapped(offset, u64::from_le_bytes(raw), width)
+                    .map_err(|error| {
+                        PhysicalBackendError::target(
+                            PhysicalTargetRejectionReason::TargetError,
+                            error.to_string(),
+                        )
+                    })?;
+                Ok(PhysicalResponse::new(
+                    descriptor,
+                    PhysicalResponseCompletion::WriteAcknowledgement,
+                ))
+            }
+            PhysicalAccessKind::Fetch => {
+                unreachable!("native CLINT fetch category was rejected before device access")
+            }
+        }
     }
 
     /// Creates a validated raw native backend view over this exact bus.
@@ -358,6 +453,10 @@ impl SystemBus {
                     ))
                 }
             };
+        }
+
+        if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {
+            return self.transact_clint(request);
         }
 
         // The native UART keeps the historical 0x100-byte SystemBus window,
@@ -526,6 +625,13 @@ impl SystemBus {
             descriptor.width.bytes(),
         ) {
             return native_ram_atomic_transact(&self.ram, self.ram_base, self.ram_size, request);
+        }
+
+        if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::UnsupportedCategory,
+                "CLINT window accepts plain loads and stores only",
+            ));
         }
 
         // The UART window is byte-only: every atomic width (4 or 8 bytes) is
@@ -773,7 +879,7 @@ impl MemoryInterface for SystemBus {
     }
 
     fn size(&self) -> usize {
-        self.ram_size + self.uart_size // Approximate
+        self.ram_size + self.uart_size + self.clint_size // Approximate
     }
 }
 

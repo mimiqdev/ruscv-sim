@@ -68,7 +68,22 @@ fn counters_and_shadows_share_storage_and_access_policy() {
         csr.set_privilege(PrivilegeMode::Machine);
         assert_eq!(csr.read(counter), Ok(u64::MAX));
     }
-    for absent in [unprivileged::TIME, 0xC03, 0xC1F, 0x320] {
+    // time exists and is read-only. The platform publishes mtime through
+    // the Hart; this file alone still reads the reset shadow, which is 0,
+    // and that read does not change mcycle.
+    assert_eq!(csr.read(unprivileged::TIME), Ok(0));
+    assert_eq!(
+        csr.write(unprivileged::TIME, 1),
+        Err(CsrError::ReadOnly(unprivileged::TIME))
+    );
+    assert_eq!(csr.read(machine::MCYCLE), Ok(u64::MAX));
+    csr.set_privilege(PrivilegeMode::Supervisor);
+    assert_eq!(
+        csr.read(unprivileged::TIME),
+        Err(CsrError::PrivilegeViolation(unprivileged::TIME))
+    );
+    for absent in [0xC03u16, 0xC1F, 0x320] {
+        csr.set_privilege(PrivilegeMode::Machine);
         assert_eq!(csr.read(absent), Err(CsrError::InvalidAddress(absent)));
     }
 }
