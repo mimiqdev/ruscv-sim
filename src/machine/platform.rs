@@ -151,6 +151,15 @@ impl Platform {
         Ok(self.flat_mtime)
     }
 
+    /// Hart 0 MSIP and MTIP. Flat has no CLINT, so both lines stay clear.
+    pub(super) fn machine_interrupt_lines(&self) -> Result<(bool, bool), MachineError> {
+        if let Some(bus) = &self.bus {
+            let bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            return Ok(bus.machine_interrupt_lines());
+        }
+        Ok((false, false))
+    }
+
     /// One completed Hart turn. A `SimulatorFailure` does not call this.
     /// Returns the `mtime` visible to the next instruction.
     pub(super) fn advance_mtime(&mut self) -> Result<u64, MachineError> {

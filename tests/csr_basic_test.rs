@@ -110,18 +110,19 @@ fn test_mhartid_write_fails() {
 #[test]
 fn test_mie_read_write() {
     let mut csr = CsrFile::new(0);
-    // Only SSIE, STIE, and SEIE are writable; MSIE, MTIE, MEIE read 0.
+    // SSIE, STIE, SEIE, MSIE, and MTIE are writable. MEIE stays 0.
     csr.write(machine::MIE, 0x888).unwrap();
-    assert_eq!(csr.read(machine::MIE).unwrap(), 0);
+    assert_eq!(csr.read(machine::MIE).unwrap(), 0x88);
     csr.write(machine::MIE, u64::MAX).unwrap();
-    assert_eq!(csr.read(machine::MIE).unwrap(), 0x222);
+    assert_eq!(csr.read(machine::MIE).unwrap(), 0x2AA);
 }
 
 #[test]
 fn test_mip_read_write() {
     let mut csr = CsrFile::new(0);
-    // SSIP, STIP, SEIP are writable; MSIP, MTIP, MEIP are read-only 0.
-    csr.write(machine::MIP, 0xAAA).unwrap();
+    // SSIP, STIP, and SEIP are writable. MSIP, MTIP, and MEIP stay 0
+    // while no machine line is pending.
+    csr.write(machine::MIP, u64::MAX).unwrap();
     assert_eq!(csr.read(machine::MIP).unwrap(), 0x222);
 }
 

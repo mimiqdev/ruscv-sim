@@ -138,8 +138,11 @@ pub mod mstatus {
 /// `misa` for RV64IMA plus S and U.  No bit is writable.
 pub const MISA_VALUE: u64 = 0x8000_0000_0014_1101;
 
-/// Writable bits of `mip` and `mie`: SSIP/SSIE, STIP/STIE, SEIP/SEIE.
+/// Supervisor bits of `mip` and `mie`: SSIP/SSIE, STIP/STIE, SEIP/SEIE.
 pub const SUPERVISOR_INTERRUPTS: u64 = 0x222;
+
+/// MSIP and MTIP. The same positions are MSIE and MTIE in `mie`.
+const MACHINE_LINE_BITS: u64 = (1 << 3) | (1 << 7);
 
 /// `satp` MODE encodings this profile implements.
 pub const SATP_MODE_BARE: u64 = 0;
@@ -254,6 +257,14 @@ impl CsrFile {
         self.time = mtime;
     }
 
+    /// Copy hart 0 MSIP and MTIP into `mip`. Software bits stay as they are.
+    pub(crate) fn set_machine_interrupt_lines(&mut self, msip: bool, mtip: bool) {
+        let old = self.stored(machine::MIP);
+        let lines = (u64::from(msip) << 3) | (u64::from(mtip) << 7);
+        self.csrs
+            .insert(machine::MIP, (old & !MACHINE_LINE_BITS) | lines);
+    }
+
     /// Return whether `addr` is a register that always reads zero and
     /// ignores writes in this profile.
     fn is_read_only_zero(addr: u16) -> bool {
@@ -311,7 +322,11 @@ impl CsrFile {
             machine::MEDELEG | machine::MIDELEG | machine::MCOUNTEREN | supervisor::SCOUNTEREN => {
                 (addr, old)
             }
-            machine::MIE | machine::MIP => (addr, value & SUPERVISOR_INTERRUPTS),
+            machine::MIE => (addr, value & (SUPERVISOR_INTERRUPTS | MACHINE_LINE_BITS)),
+            machine::MIP => (
+                addr,
+                (value & SUPERVISOR_INTERRUPTS) | (old & MACHINE_LINE_BITS),
+            ),
             supervisor::SIE | supervisor::SIP => {
                 let target = if addr == supervisor::SIE {
                     machine::MIE

@@ -927,7 +927,7 @@ impl RiscvCore {
             self.state.csr.set_privilege(self.state.privilege);
         }
 
-        if let Some(cause) = self.accepted_supervisor_interrupt() {
+        if let Some(cause) = self.accepted_interrupt() {
             return (
                 self.enter_trap(Trap::Interrupt(cause), self.state.pc, 0, None),
                 false,
@@ -937,23 +937,39 @@ impl RiscvCore {
         (self.execute_instruction(), true)
     }
 
-    fn accepted_supervisor_interrupt(&self) -> Option<InterruptCause> {
+    fn accepted_interrupt(&self) -> Option<InterruptCause> {
+        const PRIORITY: [(u64, InterruptCause); 5] = [
+            (
+                1u64 << (InterruptCause::MachineSoftware as u32),
+                InterruptCause::MachineSoftware,
+            ),
+            (
+                1u64 << (InterruptCause::MachineTimer as u32),
+                InterruptCause::MachineTimer,
+            ),
+            (
+                1u64 << (InterruptCause::SupervisorExternal as u32),
+                InterruptCause::SupervisorExternal,
+            ),
+            (
+                1u64 << (InterruptCause::SupervisorSoftware as u32),
+                InterruptCause::SupervisorSoftware,
+            ),
+            (
+                1u64 << (InterruptCause::SupervisorTimer as u32),
+                InterruptCause::SupervisorTimer,
+            ),
+        ];
         let enabled = self.state.privilege != PrivilegeMode::Machine
             || self.state.csr.mstatus() & crate::csr::mstatus::MIE != 0;
         if !enabled {
             return None;
         }
-        let pending =
-            self.state.csr.mip() & self.state.csr.mie() & crate::csr::SUPERVISOR_INTERRUPTS;
-        if pending & (1 << 9) != 0 {
-            Some(InterruptCause::SupervisorExternal)
-        } else if pending & (1 << 1) != 0 {
-            Some(InterruptCause::SupervisorSoftware)
-        } else if pending & (1 << 5) != 0 {
-            Some(InterruptCause::SupervisorTimer)
-        } else {
-            None
-        }
+        let pending = self.state.csr.mip() & self.state.csr.mie();
+        PRIORITY
+            .into_iter()
+            .find(|(bit, _)| pending & bit != 0)
+            .map(|(_, cause)| cause)
     }
 
     fn execute_instruction(&mut self) -> StepOutcome {

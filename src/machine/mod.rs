@@ -218,10 +218,16 @@ impl Installed {
         if let Some(hook) = &self.before_turn {
             hook();
         }
-        // `time` reads the mtime of this instruction. The tick below is
-        // visible on the next boundary (privileged §3.2.1, contract D1).
+        // `time`, MSIP, and MTIP are the values from the previous boundary.
+        // The tick and any compare or `msip` write below show up on the next
+        // boundary (privileged §3.2.1, contract D1).
         let mtime = self.platform.read_mtime()?;
         self.core.state_mut().csr.set_time(mtime);
+        let (msip, mtip) = self.platform.machine_interrupt_lines()?;
+        self.core
+            .state_mut()
+            .csr
+            .set_machine_interrupt_lines(msip, mtip);
         let hart = self.core.step_transition(observe);
         let failure = match &hart.outcome {
             StepOutcome::SimulatorFailure(failure) => Some(failure.clone()),
@@ -234,9 +240,15 @@ impl Installed {
         } else {
             let events = self.platform.take_events()?;
             let mtime = self.platform.advance_mtime()?;
-            // The instruction read the pre-turn snapshot. Park the shadow on
-            // the post-tick value so a host inspect matches `mtime`.
+            // The instruction read the pre-turn snapshot. Park `time` and the
+            // machine lines on the post-tick device so a host inspect matches
+            // the store plus the tick.
             self.core.state_mut().csr.set_time(mtime);
+            let (msip, mtip) = self.platform.machine_interrupt_lines()?;
+            self.core
+                .state_mut()
+                .csr
+                .set_machine_interrupt_lines(msip, mtip);
             events
         };
         let tohost = (sample && !failed).then(|| self.sample());

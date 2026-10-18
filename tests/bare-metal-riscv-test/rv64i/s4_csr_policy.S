@@ -5,8 +5,9 @@
 # sstatus shows the same S-visible result; misa never changes; sepc and
 # mepc keep bits 1:0 clear; stvec and mtvec keep MODE in {0,1};
 # mcounteren and scounteren are 32-bit; satp keeps only Bare/Sv39 MODEs
-# with ASID read-only 0; menvcfg and senvcfg keep only FIOM; mip and mie
-# keep only bits 1, 5, and 9 (mask 0x222).  A write raises no trap.
+# with ASID read-only 0; menvcfg and senvcfg keep only FIOM; mip keeps
+# bits 1, 5, and 9 (mask 0x222) while no machine line is pending; mie
+# keeps those bits plus MSIE and MTIE (mask 0x2AA).  A write raises no trap.
 
 .section .text
 .globl _start
@@ -174,11 +175,11 @@ _start:
     li      t3, 1
     bne     t2, t3, fail
 
-    # ---- mip / mie keep only 0x222 ----
+    # ---- mie keeps 0x2AA; mip keeps 0x222 with no machine line ----
     li      t0, -1
     csrw    mie, t0
     csrr    t2, mie
-    li      t3, 0x222
+    li      t3, 0x2AA
     bne     t2, t3, fail
     csrw    mip, t0
     csrr    t2, mip

@@ -445,7 +445,7 @@ fn masked_bits_and_supervisor_views_ignore_writes() {
     csr.write(machine::MIP, u64::MAX).unwrap();
     csr.write(machine::MIE, u64::MAX).unwrap();
     assert_eq!(csr.read(machine::MIP), Ok(SUPERVISOR_INTERRUPTS));
-    assert_eq!(csr.read(machine::MIE), Ok(SUPERVISOR_INTERRUPTS));
+    assert_eq!(csr.read(machine::MIE), Ok(0x2AA));
     csr.set_privilege(PrivilegeMode::Supervisor);
     assert_eq!(csr.read(supervisor::SIP), Ok(0));
     assert_eq!(csr.read(supervisor::SIE), Ok(0));
@@ -455,7 +455,7 @@ fn masked_bits_and_supervisor_views_ignore_writes() {
     assert_eq!(csr.read(supervisor::SIE), Ok(0));
     csr.set_privilege(PrivilegeMode::Machine);
     assert_eq!(csr.read(machine::MIP), Ok(SUPERVISOR_INTERRUPTS));
-    assert_eq!(csr.read(machine::MIE), Ok(SUPERVISOR_INTERRUPTS));
+    assert_eq!(csr.read(machine::MIE), Ok(0x2AA));
     csr.set_privilege(PrivilegeMode::User);
     assert_eq!(
         csr.read(machine::MIP),

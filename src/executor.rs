@@ -262,6 +262,13 @@ impl SystemBus {
         self.clint.read_mtime()
     }
 
+    /// Hart 0 MSIP (`msip` bit 0) and MTIP (unsigned `mtime >= mtimecmp`).
+    pub fn machine_interrupt_lines(&self) -> (bool, bool) {
+        let msip = self.clint.read_msip(0).is_some_and(|value| value & 1 != 0);
+        let mtip = self.clint.read_mtime() >= self.clint.read_mtimecmp(0).unwrap_or(u64::MAX);
+        (msip, mtip)
+    }
+
     /// Add one tick. Does not touch `mcycle` or `minstret`.
     pub fn advance_mtime(&mut self) {
         self.clint.advance_one_tick();

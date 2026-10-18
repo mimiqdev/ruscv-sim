@@ -142,14 +142,14 @@ for required in lrsc_loop amo_w amo_d aq_rl_set sc_after_store_failure atomic_ne
     fi
 done
 
-# Stage 4 guests and the Stage 5 U1 guest live under rv64i and are linked
-# with linker-s4.ld. The suite fails if any of them is missing.
+# Stage 4 guests and the Stage 5 U1 and U2 guests live under rv64i and are
+# linked with linker-s4.ld. The suite fails if any of them is missing.
 for required in \
     s4_ad_observation s4_counters s4_csr_policy s4_delegation s4_envcfg \
     s4_fp_absent s4_mapped_rw s4_mprv s4_permission_fault s4_pmp_csr \
     s4_privilege_transition s4_sfence_vma s4_sret_vectored \
     s4_supervisor_interrupt s4_tvm_tsr_tw s4_walk_fault \
-    s5_counters
+    s5_counters s5_software s5_timer
 do
     if [ ! -f "${OUTDIR}/rv64i/${required}.elf" ]; then
         echo -e "${RED}Error: required guest missing: ${required}.elf${NC}" >&2
