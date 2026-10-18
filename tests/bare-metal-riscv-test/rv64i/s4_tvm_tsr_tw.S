@@ -12,7 +12,8 @@
 #   TVM=0, S: the same three operations retire; satp reads 0 (never on)
 #   S-mode read of the M-only minstret -> illegal (2) at TVM=0
 #   TSR=1, S: sret -> illegal (2);  TSR=0: sret retires into U
-#   TW=0, S: wfi retires, then the armed SSI is taken (mepc = wfi+4)
+#   TW=0, S: wfi retires, then the armed SSI is taken (mepc = wfi+4).
+#   Falling through that WFI without the trap exits nonzero.
 #   TW=1, S: wfi -> illegal (2)
 #   U: wfi -> illegal (2) at TW=0 and TW=1, mtval = the WFI encoding
 #   U: read of the M-only misa -> illegal (2), proving the mode
@@ -114,6 +115,11 @@ wfi_tw0:                                # S, all bits clear
 wfi0_insn:                              # S, TW=0, SSI pending and enabled
     wfi
 wfi0_after:
+    # The handler sets s5 to -1 before returning here. A retired WFI that
+    # never took the armed SSI falls through with the interrupt cause still
+    # in s5, and that path must not reach a successful exit.
+    li      t0, -1
+    bne     s5, t0, fail
     li      s10, 0
     li      s2, TW
     la      s3, wfi1_case

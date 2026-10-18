@@ -329,11 +329,14 @@ impl Installed {
     /// `mtimecmp` with MTIE set.
     fn settle_wait(&mut self) -> WaitSettlement {
         const MTIE: u64 = 1 << 7;
+        let Ok(mtime) = self.platform.read_mtime() else {
+            return WaitSettlement::NoProgress;
+        };
         let timer = if self.core.state().csr.mie() & MTIE == 0 {
             None
         } else {
-            match (self.platform.read_mtime(), self.platform.read_mtimecmp()) {
-                (Ok(mtime), Ok(Some(compare))) if compare > mtime => Some(compare),
+            match self.platform.read_mtimecmp() {
+                Ok(Some(compare)) if compare > mtime => Some(compare),
                 _ => None,
             }
         };
@@ -346,6 +349,11 @@ impl Installed {
             (None, Some(deadline)) => (deadline, WaitSettlement::Deadline),
             (None, None) => return WaitSettlement::NoProgress,
         };
+        // A deadline that is not strictly ahead of `mtime` has already
+        // arrived. Stop there. Do not store a smaller `mtime`.
+        if settlement == WaitSettlement::Deadline && target <= mtime {
+            return WaitSettlement::Deadline;
+        }
         if self.platform.set_mtime(target).is_err() {
             return WaitSettlement::NoProgress;
         }
@@ -575,8 +583,10 @@ impl Machine {
     }
 
     /// Idle-jump a waiting hart. A single-step does not call this.
-    /// `mtime` changes only on [`WaitSettlement::Jumped`] and
-    /// [`WaitSettlement::Deadline`].
+    /// `mtime` changes on [`WaitSettlement::Jumped`], and on
+    /// [`WaitSettlement::Deadline`] only when that deadline is strictly
+    /// ahead of the current `mtime`. A deadline that has already arrived
+    /// stops the wait and leaves `mtime` where it is.
     pub fn settle_wait(&self) -> Result<WaitSettlement, MachineError> {
         let mut domain = self
             .inner

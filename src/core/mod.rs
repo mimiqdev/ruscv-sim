@@ -950,7 +950,7 @@ impl RiscvCore {
             // A legal WFI still retires. The interrupt is taken at the next
             // boundary, so mepc is the WFI address plus 4 (§3.3.3).
             if self
-                .peek_bare_instruction()
+                .peek_instruction()
                 .is_some_and(|word| self.legal_wfi(word))
             {
                 return (self.execute_instruction(), true);
@@ -964,20 +964,21 @@ impl RiscvCore {
         (self.execute_instruction(), true)
     }
 
-    /// Fetch one word without entering a trap. Translation-on fetches are
-    /// left to the real step so a peek cannot walk or set A/D bits.
-    fn peek_bare_instruction(&self) -> Option<u32> {
-        if self.translation_active(self.state.privilege) {
-            return None;
-        }
+    /// Fetch one word without entering a trap and without setting A or D.
+    ///
+    /// Sv39 uses a side-effect-free walk. A fault or a host failure returns
+    /// `None`, and the accepted interrupt is taken. A confirmed legal WFI
+    /// is then retired by the ordinary fetch, which does set A.
+    fn peek_instruction(&mut self) -> Option<u32> {
         let pc = self.state.pc;
         if pc & 0b11 != 0 {
             return None;
         }
+        let paddr = self.probe_fetch_address(pc)?;
         if let Some(access) = self.instruction_access.as_ref() {
             let mut port = access.lock().ok()?;
             let adapter = self.physical_adapter(&mut *port, None);
-            adapter.fetch_word(pc).ok()
+            adapter.fetch_word(paddr).ok()
         } else {
             let address = pc.checked_sub(self.base_addr)?;
             let mem = self.instruction_mem.lock().ok()?;
