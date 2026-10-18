@@ -9,15 +9,12 @@
 mod common;
 use common::public_elf as elf;
 use ruscv_sim::core::trap::{ExceptionCause, InterruptCause, Trap};
-use ruscv_sim::core::{RiscvCore, StepOutcome};
-use ruscv_sim::csr::{machine, mstatus, supervisor, unprivileged};
+use ruscv_sim::core::StepOutcome;
+use ruscv_sim::csr::{machine, mstatus, unprivileged};
 use ruscv_sim::elf::LoadImage;
 use ruscv_sim::machine::{Machine, MachineConfig, PlatformKind, WaitSettlement};
-use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
-use ruscv_sim::mmu::pte::flags;
-use ruscv_sim::physical::{NativeRamBackend, ValidatedPhysicalAccess};
 use ruscv_sim::PrivilegeMode;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const WFI: u32 = 0x1050_0073;
 const MRET: u32 = 0x3020_0073;
@@ -185,7 +182,7 @@ fn a_deadline_already_due_does_not_rewind_mtime() {
 }
 
 #[test]
-fn a_pending_local_interrupt_retires_wfi_then_traps_at_the_next_word() {
+fn a_takeable_pending_interrupt_is_taken_before_wfi() {
     let code = [
         elf::addi(24, 0, 0x22),
         elf::addi(5, 0, MTIE),
@@ -200,27 +197,20 @@ fn a_pending_local_interrupt_retires_wfi_then_traps_at_the_next_word() {
     let wfi = 7;
     let machine = machine_with(&code);
     retire(&machine, wfi);
-    let retired = machine.step(false).expect("WFI");
-    assert!(
-        matches!(retired.hart().outcome, StepOutcome::InstructionRetired(_)),
-        "a pending interrupt suppressed the WFI retirement: {:?}",
-        retired.hart().outcome
-    );
-    drop(retired);
-    assert_eq!(csr_value(&machine, machine::MINSTRET), wfi as u64 + 1);
     let taken = machine.step(false).expect("timer");
     let StepOutcome::TrapEntered(entered) = taken.hart().outcome.clone() else {
         panic!(
-            "the following boundary did not trap: {:?}",
+            "the takeable timer was not taken before WFI: {:?}",
             taken.hart().outcome
         );
     };
     assert!(!taken.hart().control.instruction_attempted);
     assert!(!taken.hart().control.retired);
     assert_eq!(entered.cause, Trap::Interrupt(InterruptCause::MachineTimer));
-    assert_eq!(entered.faulting_pc, pc_at(wfi + 1));
+    assert_eq!(entered.faulting_pc, pc_at(wfi));
     drop(taken);
-    assert_eq!(csr_value(&machine, machine::MEPC), pc_at(wfi + 1));
+    assert_eq!(csr_value(&machine, machine::MEPC), pc_at(wfi));
+    assert_eq!(csr_value(&machine, machine::MINSTRET), wfi as u64);
     assert_eq!(csr_value(&machine, machine::MTVAL), 0);
     assert_eq!(reg(&machine, 24), 0x22, "the victim retired");
 }
@@ -262,133 +252,4 @@ fn an_s_mode_wfi_with_tw_set_traps_and_does_not_wait() {
         machine.inspect().unwrap().hart.privilege,
         PrivilegeMode::Machine
     );
-}
-
-const SV_PAGE: u64 = 0x1000;
-const SV_RAM: usize = 0x10_0000;
-const SV_BASE: u64 = 0x8000_0000;
-const SV_VA: u64 = 0x1000;
-const SV_PA: u64 = 0x8000_5000;
-const SV_ROOT: u64 = 0x80000;
-const SSIP: u64 = 1 << 1;
-const PTE_X: u64 = 0x08;
-const PTE_R: u64 = 0x02;
-
-fn sv_write(ram: &Arc<Mutex<SimpleMemory>>, guest: u64, value: u64) {
-    ram.lock()
-        .unwrap()
-        .write_dword(guest - SV_BASE, value)
-        .unwrap();
-}
-
-fn sv_read(ram: &Arc<Mutex<SimpleMemory>>, guest: u64) -> u64 {
-    ram.lock().unwrap().read_dword(guest - SV_BASE).unwrap()
-}
-
-fn install_sv39_leaf(ram: &Arc<Mutex<SimpleMemory>>, perm: u64) -> u64 {
-    let vpn0 = (SV_VA >> 12) & 0x1ff;
-    sv_write(ram, SV_ROOT * SV_PAGE, ((SV_ROOT + 1) << 10) | 1);
-    sv_write(ram, (SV_ROOT + 1) * SV_PAGE, ((SV_ROOT + 2) << 10) | 1);
-    let pte_addr = (SV_ROOT + 2) * SV_PAGE + vpn0 * 8;
-    sv_write(ram, pte_addr, ((SV_PA / SV_PAGE) << 10) | perm | 1);
-    pte_addr
-}
-
-/// Supervisor, Sv39, SSIP and SSIE pending. The leaf has no A bit.
-fn sv39_supervisor(word: u32, perm: u64) -> (RiscvCore, Arc<Mutex<SimpleMemory>>, u64) {
-    let ram = Arc::new(Mutex::new(SimpleMemory::new(SV_RAM)));
-    let typed: Arc<Mutex<dyn MemoryInterface + Send + Sync>> = ram.clone();
-    let fetch = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-        NativeRamBackend::new(ram.clone(), 0, SV_RAM),
-    )));
-    let data = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-        NativeRamBackend::new(ram.clone(), 0, SV_RAM),
-    )));
-    let mut core = RiscvCore::new_with_physical_ports(typed.clone(), typed, fetch, data);
-    core.reset(0, SV_BASE);
-    let pte_addr = install_sv39_leaf(&ram, perm);
-    ram.lock()
-        .unwrap()
-        .write_word(SV_PA - SV_BASE, word)
-        .unwrap();
-    core.state_mut()
-        .csr
-        .write(supervisor::SATP, (8u64 << 60) | SV_ROOT)
-        .unwrap();
-    core.state_mut().csr.write(machine::MIP, SSIP).unwrap();
-    core.state_mut().csr.write(machine::MIE, SSIP).unwrap();
-    core.state_mut().csr.write(machine::MTVEC, 0x100).unwrap();
-    core.state_mut().privilege = PrivilegeMode::Supervisor;
-    core.state_mut()
-        .csr
-        .set_privilege(PrivilegeMode::Supervisor);
-    core.state_mut().pc = SV_VA;
-    assert_eq!(sv_read(&ram, pte_addr) & flags::A, 0);
-    (core, ram, pte_addr)
-}
-
-fn core_csr(core: &RiscvCore, addr: u16) -> u64 {
-    let mut csr = core.state().csr.clone();
-    csr.set_privilege(PrivilegeMode::Machine);
-    csr.read(addr).unwrap()
-}
-
-#[test]
-fn an_sv39_supervisor_wfi_retires_before_the_pending_interrupt() {
-    let (mut core, ram, pte_addr) = sv39_supervisor(WFI, PTE_X);
-    let retired = core.step_transition(false);
-    let StepOutcome::InstructionRetired(done) = retired.outcome else {
-        panic!("Sv39 WFI did not retire: {:?}", retired.outcome);
-    };
-    assert_eq!(done.instruction, WFI);
-    assert_eq!(done.next_pc, SV_VA + 4);
-    assert_eq!(core.state().pc, SV_VA + 4);
-    assert_ne!(sv_read(&ram, pte_addr) & flags::A, 0);
-
-    let taken = core.step_transition(false);
-    let StepOutcome::TrapEntered(entered) = taken.outcome else {
-        panic!("the following boundary did not trap: {:?}", taken.outcome);
-    };
-    assert!(!taken.control.retired);
-    assert!(!taken.control.instruction_attempted);
-    assert_eq!(
-        entered.cause,
-        Trap::Interrupt(InterruptCause::SupervisorSoftware)
-    );
-    assert_eq!(entered.faulting_pc, SV_VA + 4);
-    assert_eq!(core_csr(&core, machine::MEPC), SV_VA + 4);
-    assert_eq!(core_csr(&core, machine::MTVAL), 0);
-}
-
-#[test]
-fn an_sv39_non_wfi_interrupt_does_not_set_accessed() {
-    let (mut core, ram, pte_addr) = sv39_supervisor(0x0000_0013, PTE_X);
-    let taken = core.step_transition(false);
-    let StepOutcome::TrapEntered(entered) = taken.outcome else {
-        panic!("expected the interrupt, got {:?}", taken.outcome);
-    };
-    assert!(!taken.control.retired);
-    assert_eq!(
-        entered.cause,
-        Trap::Interrupt(InterruptCause::SupervisorSoftware)
-    );
-    assert_eq!(entered.faulting_pc, SV_VA);
-    assert_eq!(core_csr(&core, machine::MEPC), SV_VA);
-    assert_eq!(sv_read(&ram, pte_addr) & flags::A, 0);
-}
-
-#[test]
-fn an_sv39_faulting_fetch_takes_the_interrupt_and_leaves_the_pte() {
-    let (mut core, ram, pte_addr) = sv39_supervisor(WFI, PTE_R);
-    let before = sv_read(&ram, pte_addr);
-    let taken = core.step_transition(false);
-    let StepOutcome::TrapEntered(entered) = taken.outcome else {
-        panic!("expected the interrupt, got {:?}", taken.outcome);
-    };
-    assert_eq!(
-        entered.cause,
-        Trap::Interrupt(InterruptCause::SupervisorSoftware)
-    );
-    assert_eq!(entered.faulting_pc, SV_VA);
-    assert_eq!(sv_read(&ram, pte_addr), before);
 }

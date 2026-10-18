@@ -947,14 +947,9 @@ impl RiscvCore {
         }
 
         if let Some(cause) = self.accepted_interrupt() {
-            // A legal WFI still retires. The interrupt is taken at the next
-            // boundary, so mepc is the WFI address plus 4 (§3.3.3).
-            if self
-                .peek_instruction()
-                .is_some_and(|word| self.legal_wfi(word))
-            {
-                return (self.execute_instruction(), true);
-            }
+            // Privileged §3.1.9 evaluates the interrupt before the next
+            // instruction. A takeable pending interrupt is taken at this
+            // PC, including a WFI. mepc is that address.
             return (
                 self.enter_trap(Trap::Interrupt(cause), self.state.pc, 0, None),
                 false,
@@ -962,43 +957,6 @@ impl RiscvCore {
         }
 
         (self.execute_instruction(), true)
-    }
-
-    /// Fetch one word without entering a trap and without setting A or D.
-    ///
-    /// Sv39 uses a side-effect-free walk. A fault or a host failure returns
-    /// `None`, and the accepted interrupt is taken. A confirmed legal WFI
-    /// is then retired by the ordinary fetch, which does set A.
-    fn peek_instruction(&mut self) -> Option<u32> {
-        let pc = self.state.pc;
-        if pc & 0b11 != 0 {
-            return None;
-        }
-        let paddr = self.probe_fetch_address(pc)?;
-        if let Some(access) = self.instruction_access.as_ref() {
-            let mut port = access.lock().ok()?;
-            let adapter = self.physical_adapter(&mut *port, None);
-            adapter.fetch_word(paddr).ok()
-        } else {
-            let address = pc.checked_sub(self.base_addr)?;
-            let mem = self.instruction_mem.lock().ok()?;
-            mem.read_word(address).ok()
-        }
-    }
-
-    fn legal_wfi(&self, word: u32) -> bool {
-        if word != 0x1050_0073 {
-            return false;
-        }
-        match self.state.privilege {
-            PrivilegeMode::User => false,
-            PrivilegeMode::Supervisor
-                if self.state.csr.mstatus() & crate::csr::mstatus::TW != 0 =>
-            {
-                false
-            }
-            _ => true,
-        }
     }
 
     fn accepted_interrupt(&self) -> Option<InterruptCause> {

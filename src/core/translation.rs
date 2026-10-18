@@ -121,7 +121,7 @@ impl RiscvCore {
         if !self.translation_active(privilege) {
             return Ok(address);
         }
-        match self.walk(address, access, privilege, true) {
+        match self.walk(address, access, privilege) {
             Walk::Translated(paddr) => Ok(paddr),
             Walk::PageFault => Err(self.enter_trap(
                 Trap::Exception(access.page_fault()),
@@ -139,31 +139,7 @@ impl RiscvCore {
         }
     }
 
-    /// Classify one fetch without step 9 and without trap entry.
-    ///
-    /// A pending interrupt is taken before the real fetch. The probe only
-    /// decides whether that fetch is a legal WFI, which must still retire
-    /// (privileged §3.3.3). A page fault, an access fault, or a host failure
-    /// means the word is not a retired WFI, so the interrupt is taken and
-    /// the page table is left unchanged.
-    pub(super) fn probe_fetch_address(&mut self, address: u64) -> Option<u64> {
-        let privilege = self.translation_privilege(AccessKind::Fetch);
-        if !self.translation_active(privilege) {
-            return Some(address);
-        }
-        match self.walk(address, AccessKind::Fetch, privilege, false) {
-            Walk::Translated(paddr) => Some(paddr),
-            _ => None,
-        }
-    }
-
-    fn walk(
-        &mut self,
-        address: u64,
-        access: AccessKind,
-        privilege: PrivilegeMode,
-        commit_ad: bool,
-    ) -> Walk {
+    fn walk(&mut self, address: u64, access: AccessKind, privilege: PrivilegeMode) -> Walk {
         // Step 1: canonicity is a property of the virtual address and is
         // checked before any walk read (D3).
         let va = match VirtualAddress::new(address) {
@@ -218,9 +194,6 @@ impl RiscvCore {
             // Leaf: permission checks (steps 6 and 8).
             if !leaf_permits(&pte, access, privilege, status) {
                 return Walk::PageFault;
-            }
-            if !commit_ad {
-                return Walk::Translated(Sv39::build_physical_address(&pte, va, level));
             }
             // Step 9: hardware sets A, and D for a store-class access.
             let updated = pte_value

@@ -1770,7 +1770,7 @@ fn run_native_inner(
         }
         if matches!(turn.hart().outcome, StepOutcome::Waiting) {
             let diagnostic = if turn.boundary().deadline_stop {
-                "Deadline"
+                "DeadlineReached"
             } else {
                 "NoProgress"
             };
@@ -1981,7 +1981,12 @@ pub fn reset_core(core: &mut RiscvCore, entry_point: u64, base_addr: u64) {
     core.reset(entry_point, base_addr);
 }
 
-/// Run a single step and return the result
+/// Run one Hart step through the legacy core API.
+///
+/// `Ok(())` includes [`StepOutcome::Waiting`]. This helper does not publish
+/// interrupt lines or advance `mtime`, so a caller that loops while the
+/// result is `Ok` spins after a legal WFI. The public run loops stop on
+/// that wait.
 pub fn step_once(core: &mut RiscvCore) -> Result<(), ExecutorError> {
     core.step()
         .map_err(|e| ExecutorError::ExecutionError(e.to_string()))
@@ -2240,7 +2245,7 @@ impl RiscVSimulator {
             };
             if matches!(turn.hart().outcome, StepOutcome::Waiting) {
                 let diagnostic = if turn.boundary().deadline_stop {
-                    "Deadline"
+                    "DeadlineReached"
                 } else {
                     "NoProgress"
                 };
