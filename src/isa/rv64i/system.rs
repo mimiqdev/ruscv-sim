@@ -81,9 +81,9 @@ pub fn exec_system_with_csr_access(
                     Ok(None)
                 }
                 0x105 => {
-                    // WFI retires as a NOP in M, and in S with TW = 0.  It
-                    // raises illegal-instruction in S with TW = 1 and in U
-                    // at either TW value (S-mode is implemented).
+                    // WFI retires in M, and in S with TW = 0. The machine
+                    // then waits until mip & mie is nonzero (privileged
+                    // §3.3.3). U-mode, and S with TW = 1, are illegal.
                     match state.privilege {
                         PrivilegeMode::User => Err(ExecuteError::IllegalInstruction),
                         PrivilegeMode::Supervisor if state.csr.mstatus() & mstatus::TW != 0 => {

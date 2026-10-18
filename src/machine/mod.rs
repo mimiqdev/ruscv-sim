@@ -97,6 +97,12 @@ pub struct BoundaryFacts {
     pub reporting_error: Option<String>,
     pub lifecycle: Lifecycle,
     pub uncertain: bool,
+    /// The hart is waiting and this call retired nothing.
+    pub waiting: bool,
+    /// A wait has no future platform event.
+    pub no_progress: bool,
+    /// The idle jump stopped at a virtual-time deadline.
+    pub deadline_stop: bool,
 }
 impl Default for BoundaryFacts {
     fn default() -> Self {
@@ -106,8 +112,24 @@ impl Default for BoundaryFacts {
             reporting_error: None,
             lifecycle: Lifecycle::Running,
             uncertain: false,
+            waiting: false,
+            no_progress: false,
+            deadline_stop: false,
         }
     }
+}
+
+/// What an idle wait did. The jump itself retires nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitSettlement {
+    /// The hart was not waiting.
+    NotWaiting,
+    /// `mtime` moved to the next timer compare.
+    Jumped,
+    /// No locally enabled interrupt can ever become pending.
+    NoProgress,
+    /// `mtime` stopped at the virtual-time deadline, before the next compare.
+    Deadline,
 }
 
 /// A completed boundary. No mutable core/port/device capability escapes.
@@ -182,6 +204,9 @@ struct Installed {
     core: RiscvCore,
     platform: Platform,
     image: Arc<LoadImage>,
+    /// Stops an idle jump when it is earlier than the next `mtimecmp`.
+    /// Not a CLI flag.
+    virtual_deadline: Option<u64>,
     #[cfg(test)]
     before_turn: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -203,6 +228,7 @@ impl Installed {
             core,
             platform,
             image,
+            virtual_deadline: None,
             #[cfg(test)]
             before_turn: None,
         })
@@ -213,6 +239,7 @@ impl Installed {
         lease: Lease,
         observe: bool,
         sample: bool,
+        single_step: bool,
     ) -> Result<MachineTurn, MachineError> {
         #[cfg(test)]
         if let Some(hook) = &self.before_turn {
@@ -221,23 +248,46 @@ impl Installed {
         // `time` and the hart lines are the values from the previous boundary.
         // A CLINT or PLIC write below shows up on the next boundary
         // (privileged §3.2.1, contract D1). This pre-fetch sample is the only
-        // acceptance sample.
-        let mtime = self.platform.read_mtime()?;
-        self.core.state_mut().csr.set_time(mtime);
-        let lines = self.platform.machine_interrupt_lines()?;
-        self.core
-            .state_mut()
-            .csr
-            .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
-        self.core.state_mut().csr.set_seip_external(lines.seip);
-        let hart = self.core.step_transition(observe);
+        // acceptance sample. An idle jump republishes and uses that same
+        // sample again. It is not a second Hart entry point.
+        let mut idle_stop = (false, false);
+        let mut jumped = false;
+        let hart = loop {
+            let mtime = self.platform.read_mtime()?;
+            self.core.state_mut().csr.set_time(mtime);
+            let lines = self.platform.machine_interrupt_lines()?;
+            self.core
+                .state_mut()
+                .csr
+                .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
+            self.core.state_mut().csr.set_seip_external(lines.seip);
+            let hart = self.core.step_transition(observe);
+            if !matches!(hart.outcome, StepOutcome::Waiting) || single_step || jumped {
+                if jumped && matches!(hart.outcome, StepOutcome::Waiting) {
+                    idle_stop = (true, false);
+                }
+                break hart;
+            }
+            match self.settle_wait() {
+                WaitSettlement::NoProgress => {
+                    idle_stop = (true, false);
+                    break hart;
+                }
+                WaitSettlement::Deadline => {
+                    idle_stop = (false, true);
+                    break hart;
+                }
+                WaitSettlement::Jumped | WaitSettlement::NotWaiting => jumped = true,
+            }
+        };
+        let waiting = matches!(hart.outcome, StepOutcome::Waiting);
         let failure = match &hart.outcome {
             StepOutcome::SimulatorFailure(failure) => Some(failure.clone()),
             _ => None,
         };
         let failed = failure.is_some();
         let uncertain = self.core.unresolved_physical_access().is_some();
-        let events = if failed {
+        let events = if failed || waiting {
             Vec::new()
         } else {
             let events = self.platform.take_events()?;
@@ -262,14 +312,49 @@ impl Installed {
             events,
             tohost,
             boundary: BoundaryFacts {
-                single_step: true,
+                single_step,
                 lifecycle,
                 uncertain,
+                waiting,
+                no_progress: idle_stop.0,
+                deadline_stop: idle_stop.1,
                 ..BoundaryFacts::default()
             },
             _receipt: receipt,
         })
     }
+    /// Jump `mtime` to the next wake, or stop. Does not retire an instruction.
+    /// Privileged §3.3.3 wakes on `mip & mie` only. The only future event
+    /// this profile can raise while the hart waits is `mtime` reaching
+    /// `mtimecmp` with MTIE set.
+    fn settle_wait(&mut self) -> WaitSettlement {
+        const MTIE: u64 = 1 << 7;
+        let timer = if self.core.state().csr.mie() & MTIE == 0 {
+            None
+        } else {
+            match (self.platform.read_mtime(), self.platform.read_mtimecmp()) {
+                (Ok(mtime), Ok(Some(compare))) if compare > mtime => Some(compare),
+                _ => None,
+            }
+        };
+        let deadline = self.virtual_deadline;
+        let (target, settlement) = match (timer, deadline) {
+            (Some(compare), Some(deadline)) if deadline < compare => {
+                (deadline, WaitSettlement::Deadline)
+            }
+            (Some(compare), _) => (compare, WaitSettlement::Jumped),
+            (None, Some(deadline)) => (deadline, WaitSettlement::Deadline),
+            (None, None) => return WaitSettlement::NoProgress,
+        };
+        if self.platform.set_mtime(target).is_err() {
+            return WaitSettlement::NoProgress;
+        }
+        let _ = self.platform.read_mtime().map(|mtime| {
+            self.core.state_mut().csr.set_time(mtime);
+        });
+        settlement
+    }
+
     fn sample(&self) -> TohostSample {
         TohostSample {
             address: self.platform.selected_tohost,
@@ -476,6 +561,35 @@ impl Machine {
         admission.lifecycle = Lifecycle::Running;
         Ok(())
     }
+    /// Virtual-time deadline for an idle jump. Earlier than the next
+    /// `mtimecmp`, the jump stops there and retires nothing. Not a CLI flag.
+    pub fn set_virtual_deadline(&self, deadline: Option<u64>) -> Result<(), MachineError> {
+        let mut domain = self
+            .inner
+            .installed
+            .lock()
+            .map_err(|_| MachineError::Poisoned)?;
+        let installed = domain.as_mut().ok_or(MachineError::NoImage)?;
+        installed.virtual_deadline = deadline;
+        Ok(())
+    }
+
+    /// Idle-jump a waiting hart. A single-step does not call this.
+    /// `mtime` changes only on [`WaitSettlement::Jumped`] and
+    /// [`WaitSettlement::Deadline`].
+    pub fn settle_wait(&self) -> Result<WaitSettlement, MachineError> {
+        let mut domain = self
+            .inner
+            .installed
+            .lock()
+            .map_err(|_| MachineError::Poisoned)?;
+        let installed = domain.as_mut().ok_or(MachineError::NoImage)?;
+        if !installed.core.is_wfi_waiting() {
+            return Ok(WaitSettlement::NotWaiting);
+        }
+        Ok(installed.settle_wait())
+    }
+
     /// Execute exactly one existing Hart transition; no Runner budget/exit policy.
     pub fn step(&self, observe: bool) -> Result<MachineTurn, MachineError> {
         let lease = Lease::hart(&self.inner.gate)?;
@@ -485,7 +599,7 @@ impl Machine {
             .lock()
             .map_err(|_| MachineError::Poisoned)?;
         let installed = domain.as_mut().ok_or(MachineError::NoImage)?;
-        installed.turn(lease, observe, true)
+        installed.turn(lease, observe, true, true)
     }
     /// Stop admission, including new host writes to the live generation. Already
     /// admitted writes/turns/callbacks/boundary deliveries are allowed to finish.

@@ -346,7 +346,7 @@ fn csr_write_and_xret_deliver_at_the_next_boundary() {
 }
 
 #[test]
-fn interrupt_entry_fetches_nothing_and_matches_with_observation_off() {
+fn interrupt_entry_probes_for_wfi_and_matches_with_observation_off() {
     let fetches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let memory = Arc::new(Mutex::new(CountingMemory {
         inner: SimpleMemory::new(0x1000),
@@ -384,7 +384,9 @@ fn interrupt_entry_fetches_nothing_and_matches_with_observation_off() {
     off.state_mut().reservation = Some(ReservationSet::new(0x40, PhysicalWidth::Doubleword, None));
     let silent = off.step_transition(false);
 
-    assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 0);
+    // Each accepted interrupt reads one word to see whether it is a legal
+    // WFI. This NOP is not, so the read does not retire. Two cores, two reads.
+    assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 2);
     assert_eq!(observed.control, silent.control);
     assert_eq!(observed.outcome, silent.outcome);
     assert!(silent.observation.is_none());

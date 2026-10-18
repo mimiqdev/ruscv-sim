@@ -102,7 +102,7 @@ impl RiscvCore {
     /// True when Sv39 translation applies at the effective privilege. Bare
     /// mode (`satp` MODE 0) and M-mode effective privilege keep the
     /// untranslated guest address (D2, D9).
-    fn translation_active(&self, privilege: PrivilegeMode) -> bool {
+    pub(super) fn translation_active(&self, privilege: PrivilegeMode) -> bool {
         privilege != PrivilegeMode::Machine
             && self.state.csr.architectural_value(supervisor::SATP) >> 60 == SATP_MODE_SV39
     }

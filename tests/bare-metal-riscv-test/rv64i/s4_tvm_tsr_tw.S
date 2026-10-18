@@ -12,10 +12,13 @@
 #   TVM=0, S: the same three operations retire; satp reads 0 (never on)
 #   S-mode read of the M-only minstret -> illegal (2) at TVM=0
 #   TSR=1, S: sret -> illegal (2);  TSR=0: sret retires into U
-#   TW=0, S: wfi retires;  TW=1, S: wfi -> illegal (2)
+#   TW=0, S: wfi retires, then the armed SSI is taken (mepc = wfi+4)
+#   TW=1, S: wfi -> illegal (2)
 #   U: wfi -> illegal (2) at TW=0 and TW=1, mtval = the WFI encoding
 #   U: read of the M-only misa -> illegal (2), proving the mode
-#   M with TVM|TW|TSR set: satp r/w, sfence, wfi, sret all retire
+#   M with TVM|TW|TSR set: satp r/w, sfence, and sret retire.
+#   The M-mode wfi retires with MIE clear and a locally enabled SSI,
+#   so it does not wait and it does not trap (§3.3.3).
 #
 # Any trap while s5 = -1, or a wrong cause/mtval, exits 63 / mcause.
 
@@ -36,6 +39,8 @@ _start:
     la      s1, tohost
     li      s5, -1                      # no trap expected yet
     li      s4, 0x800                   # plain returns go to S
+    li      s9, 0                       # 1 = arm SSI before the legal WFI
+    li      s10, 0                      # expected mepc, or 0 to skip the check
 
     # ---- Enter Supervisor ----
     la      t0, s_entry
@@ -99,13 +104,17 @@ tsr1_case:                              # S, TSR=1
     j       fail
 
     # ===== WFI: TW=0 retires, TW=1 traps =====
+    # MRET lands on the WFI. SSI is already pending, so any instruction
+    # between the return and the WFI would be the one that traps.
 wfi_tw0:                                # S, all bits clear
     li      s2, 0
-    la      s3, wfi0_case
+    li      s9, 1
+    la      s3, wfi0_insn
     j       request_bits
-wfi0_case:                              # S, TW=0
-    li      s5, -1
-    wfi                                 # retires
+wfi0_insn:                              # S, TW=0, SSI pending and enabled
+    wfi
+wfi0_after:
+    li      s10, 0
     li      s2, TW
     la      s3, wfi1_case
     j       request_bits
@@ -170,7 +179,14 @@ m_block:                                # M
     csrr    t2, satp
     bne     t2, t0, fail
     sfence.vma                          # legal in M with TVM set
-    wfi                                 # retires in M with TW set
+    csrci   mstatus, 8                  # MIE clear: the wake does not trap
+    li      t0, 2
+    csrs    mie, t0
+    csrs    mip, t0
+    wfi                                 # retires, does not wait
+    csrc    mie, t0
+    csrc    mip, t0
+    csrsi   mstatus, 8
     la      t0, m_after_sret
     csrw    sepc, t0
     sret                                 # legal in M with TSR set
@@ -239,6 +255,18 @@ mtval_ok:
     or      t5, t5, t6
     csrw    mstatus, t5
     csrw    mepc, s3
+    beqz    s9, arm_return
+    li      s5, 1
+    slli    s5, s5, 63
+    addi    s5, s5, 1                   # supervisor software interrupt
+    li      s6, 0
+    la      s7, wfi0_after
+    mv      s10, s7                     # mepc must be the WFI address plus 4
+    li      t6, 2                       # SSIP and SSIE, so the WFI does not wait
+    csrs    mie, t6
+    csrs    mip, t6
+    li      s9, 0
+arm_return:
     mret
 plain_return:
     # Preserve the armed bits, return to s7 with the s4-selected MPP.
@@ -250,6 +278,13 @@ plain_return:
     or      t5, t5, t6
     or      t5, t5, s4
     csrw    mstatus, t5
+    li      t6, 2
+    csrc    mie, t6                     # drop the WFI wake so S is not reentered
+    csrc    mip, t6
+    beqz    s10, mepc_unchecked
+    csrr    t3, mepc
+    bne     t3, s10, mismatch
+mepc_unchecked:
     csrw    mepc, s7
     mret
 

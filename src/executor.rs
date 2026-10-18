@@ -327,6 +327,16 @@ impl SystemBus {
         self.clint.advance_one_tick();
     }
 
+    /// Hart 0 compare. Reset is all-ones.
+    pub fn mtimecmp(&self) -> Option<u64> {
+        self.clint.read_mtimecmp(0)
+    }
+
+    /// Idle-jump `mtime`. Does not tick `mcycle` or `minstret`.
+    pub fn set_mtime(&mut self, value: u64) {
+        self.clint.write_mtime(value);
+    }
+
     /// Set callback for HTIF write events
     pub fn set_htif_write_callback<F>(&mut self, callback: F)
     where
@@ -1758,11 +1768,28 @@ fn run_native_inner(
                     .unwrap_or_default()
             ));
         }
+        if matches!(turn.hart().outcome, StepOutcome::Waiting) {
+            let diagnostic = if turn.boundary().deadline_stop {
+                "Deadline"
+            } else {
+                "NoProgress"
+            };
+            return Ok(cli_result(
+                &machine,
+                &placement,
+                1,
+                control.cycles(),
+                current_pc,
+                false,
+                Some(diagnostic.to_string()),
+            ));
+        }
         let step = match &turn.hart().outcome {
             StepOutcome::InstructionRetired(_) => Ok(()),
             StepOutcome::TrapEntered(trap) => match trap.continuation {
                 TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
             },
+            StepOutcome::Waiting => unreachable!("a waiting hart already stopped the run"),
             StepOutcome::SimulatorFailure(failure) => Err(format_failure(failure.clone())),
         };
         // Raw callback facts are visible only after the parent Hart transition.
@@ -2211,11 +2238,20 @@ impl RiscVSimulator {
                     ));
                 }
             };
+            if matches!(turn.hart().outcome, StepOutcome::Waiting) {
+                let diagnostic = if turn.boundary().deadline_stop {
+                    "Deadline"
+                } else {
+                    "NoProgress"
+                };
+                return Ok(self.finish(control.cycles(), 1, false, Some(diagnostic.to_string())));
+            }
             let step = match &turn.hart().outcome {
                 StepOutcome::InstructionRetired(_) => Ok(()),
                 StepOutcome::TrapEntered(trap) => match trap.continuation {
                     TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
                 },
+                StepOutcome::Waiting => unreachable!("a waiting hart already stopped the run"),
                 StepOutcome::SimulatorFailure(failure) => Err(format!(
                     "Execution error: {}",
                     format_failure(failure.clone())

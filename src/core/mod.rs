@@ -116,6 +116,8 @@ pub enum StepOutcome {
     TrapEntered(TrapEntered),
     /// The Hart could not complete an architectural operation.
     SimulatorFailure(SimulatorFailure),
+    /// A retired WFI is waiting. No instruction retired on this call.
+    Waiting,
 }
 
 /// Descriptive aliases for callers that name the boundary after the Hart/core.
@@ -215,6 +217,10 @@ pub struct RiscvCore {
     base_addr: u64,
     /// Verbose output flag
     verbose: bool,
+    /// A legal WFI has retired and `mip & mie` was zero at that sample.
+    /// Privileged specification 20250508 §3.3.3. The next pre-fetch sample
+    /// is the wake check.
+    wfi_wait: bool,
 }
 
 /// Memory adapter for virtual to physical address translation
@@ -759,6 +765,7 @@ impl RiscvCore {
             tlm_interface: None,
             base_addr: 0,
             verbose: false,
+            wfi_wait: false,
         }
     }
 
@@ -850,6 +857,10 @@ impl RiscvCore {
         self.tlm_interface = Some(tlm);
     }
 
+    pub(crate) fn is_wfi_waiting(&self) -> bool {
+        self.wfi_wait
+    }
+
     /// Get core state (read-only)
     pub fn state(&self) -> &CoreState {
         &self.state
@@ -927,7 +938,23 @@ impl RiscvCore {
             self.state.csr.set_privilege(self.state.privilege);
         }
 
+        if self.wfi_wait {
+            let wake = self.state.csr.mip() & self.state.csr.mie() != 0;
+            if !wake {
+                return (StepOutcome::Waiting, false);
+            }
+            self.wfi_wait = false;
+        }
+
         if let Some(cause) = self.accepted_interrupt() {
+            // A legal WFI still retires. The interrupt is taken at the next
+            // boundary, so mepc is the WFI address plus 4 (§3.3.3).
+            if self
+                .peek_bare_instruction()
+                .is_some_and(|word| self.legal_wfi(word))
+            {
+                return (self.execute_instruction(), true);
+            }
             return (
                 self.enter_trap(Trap::Interrupt(cause), self.state.pc, 0, None),
                 false,
@@ -935,6 +962,42 @@ impl RiscvCore {
         }
 
         (self.execute_instruction(), true)
+    }
+
+    /// Fetch one word without entering a trap. Translation-on fetches are
+    /// left to the real step so a peek cannot walk or set A/D bits.
+    fn peek_bare_instruction(&self) -> Option<u32> {
+        if self.translation_active(self.state.privilege) {
+            return None;
+        }
+        let pc = self.state.pc;
+        if pc & 0b11 != 0 {
+            return None;
+        }
+        if let Some(access) = self.instruction_access.as_ref() {
+            let mut port = access.lock().ok()?;
+            let adapter = self.physical_adapter(&mut *port, None);
+            adapter.fetch_word(pc).ok()
+        } else {
+            let address = pc.checked_sub(self.base_addr)?;
+            let mem = self.instruction_mem.lock().ok()?;
+            mem.read_word(address).ok()
+        }
+    }
+
+    fn legal_wfi(&self, word: u32) -> bool {
+        if word != 0x1050_0073 {
+            return false;
+        }
+        match self.state.privilege {
+            PrivilegeMode::User => false,
+            PrivilegeMode::Supervisor
+                if self.state.csr.mstatus() & crate::csr::mstatus::TW != 0 =>
+            {
+                false
+            }
+            _ => true,
+        }
     }
 
     fn accepted_interrupt(&self) -> Option<InterruptCause> {
@@ -1295,6 +1358,11 @@ impl RiscvCore {
             );
         }
 
+        if instruction == 0x1050_0073 {
+            let wake = self.state.csr.mip() & self.state.csr.mie() != 0;
+            self.wfi_wait = !wake;
+        }
+
         StepOutcome::InstructionRetired(InstructionRetired {
             pc: pc_before,
             next_pc,
@@ -1311,7 +1379,9 @@ impl RiscvCore {
     /// through the legacy `anyhow::Result` API.
     pub fn step(&mut self) -> Result<()> {
         match self.step_outcome() {
-            StepOutcome::InstructionRetired(_) | StepOutcome::TrapEntered(_) => Ok(()),
+            StepOutcome::InstructionRetired(_)
+            | StepOutcome::TrapEntered(_)
+            | StepOutcome::Waiting => Ok(()),
             StepOutcome::SimulatorFailure(failure) => {
                 Err(anyhow::anyhow!("{:?}: {}", failure.kind, failure.message))
             }
@@ -1740,6 +1810,7 @@ impl RiscvCore {
         self.state = CoreState::default();
         self.state.pc = entry_point;
         self.base_addr = base_addr;
+        self.wfi_wait = false;
         self.trap_handler = TrapHandler::new();
     }
 
@@ -1753,6 +1824,7 @@ impl RiscvCore {
                 StepOutcome::InstructionRetired(_) | StepOutcome::TrapEntered(_) => {
                     cycles += 1;
                 }
+                StepOutcome::Waiting => return Ok(cycles),
                 StepOutcome::SimulatorFailure(failure) => {
                     return Err(anyhow::anyhow!("{:?}: {}", failure.kind, failure.message));
                 }
