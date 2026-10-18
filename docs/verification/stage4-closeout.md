@@ -1,6 +1,6 @@
 # Stage 4 progress and closeout
 
-**Status:** Implementation and review recorded. Not a formal completion. The [contract](../dev-plan.md) stays Current until a later, separately authorized rotation merges.
+**Status:** Implementation and review recorded. Formal completion takes effect on the Stage 4 to Stage 5 rotation merge. Until that merge the [archived contract](../archive/milestones/stage4-virtual-memory-and-protection.md) is the preserved Stage 4 text, and `main` retains Stage 4 as Current.
 
 **Base:** `main` at `20660471cf675851943cbeb39a7270a88841bb2a`.
 
@@ -56,4 +56,4 @@ A green GitHub Quality-and-tests check on this pull request is the CI half of §
 
 ## 5. What this record does not do
 
-It does not archive the Stage 4 contract, replace `docs/dev-plan.md`, merge, tag, or declare the milestone formally complete. Those steps stay separately authorized. A10's certification layer stays deferred.
+The Stage 4 to Stage 5 rotation archives this contract and promotes the successor. Formal completion, the merge, and any tag stay separately authorized. The [Stage 5 snapshot](../proposals/stage5-contract-draft.md) is not a second Current contract. A10's certification layer stays deferred.

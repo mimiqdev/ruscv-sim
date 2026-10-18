@@ -4,7 +4,7 @@
 
 **Reviewed tree:** the Stage 4 implementation on `main` at `2066047`, plus the oracle-digest and CI changes in this pull request. The digest and CI edits do not change instruction behavior. F1–F5 were fixed on this branch after that review. The regression tests named in the findings table cover those fixes.
 
-**Authority:** This is the review record. It is not a substitute for the [Stage 4 contract](../dev-plan.md). Formal completion of the milestone is the merge, not this document.
+**Authority:** This is the review record. It is not a substitute for the [Stage 4 contract](../archive/milestones/stage4-virtual-memory-and-protection.md). Formal completion of the milestone is the Stage 4 to Stage 5 rotation merge, not this document.
 
 **Method:** Read-only comparison of the public Hart path with the contract and with the RISC-V privileged specification (the 20250508 text the contract cites). The paths read were `src/core/translation.rs`, `src/core/mod.rs` (fetch, alignment, illegal-encoding check, supervisor-interrupt sampling, trap entry), `src/core/trap.rs`, `src/isa/rv64i/system.rs`, `src/csr/mod.rs`, `src/mmu/pte.rs`, `src/mmu/sv39.rs`, and `src/mmu/translator.rs`. Guest evidence is the existing `tests/s4_*.rs` suites and `tests/bare-metal-riscv-test/rv64i/s4_*.S`. No Spike or Sail lock-step was run in this review. Where the specification leaves the behavior unspecified, this record does not invent a requirement.
 

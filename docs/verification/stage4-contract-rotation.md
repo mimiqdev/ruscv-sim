@@ -1,8 +1,8 @@
 # A10→Stage 4 documentation contract-rotation audit
 
-**Status:** Current rotation-verification procedure. Not Stage 4 implementation, runtime, ACT4, or performance evidence.
+**Status:** Historical rotation audit for the A10 to Stage 4 range. The promoted-text check is pinned to rotation commit `9f6f67814ec2b7060fb5b186a37b95b7c6306708`, because later Stage 4 amendments live in the [preserved Stage 4 contract](../archive/milestones/stage4-virtual-memory-and-protection.md) and `docs/dev-plan.md` is the Stage 5 contract on the next rotation merge. Not Stage 4 implementation, runtime, ACT4, or performance evidence.
 
-**Authority:** Informational reproducible audit, constrained by [the sole approved Stage 4 contract](../dev-plan.md), [documentation policy](../documentation-policy.md) and accepted ADR-0001–0004. It applies to this docs-only rotation range, not to later implementation ranges.
+**Authority:** Informational reproducible audit, constrained by [the preserved Stage 4 contract](../archive/milestones/stage4-virtual-memory-and-protection.md), [documentation policy](../documentation-policy.md) and accepted ADR-0001–0004. It applies to the A10 to Stage 4 docs-only rotation range, not to later ranges.
 
 **Approval boundary (2026-10-11 UTC):** owner-authorized activation, 2026-10-11 UTC, after [PR #75](https://github.com/mimiqdev/ruscv-sim/pull/75) recorded the Stage 4 decisions. The exact approval wording belongs to PR provenance and is not reproduced here. The [approved informational snapshot](../proposals/stage4-contract-draft.md) preserves the entire drafting body. Stage 4 activates and A10 is formally completed and archived on the actual rotation merge. Until then main retains A10.
 
@@ -99,7 +99,7 @@ closing = "Activation boundary. This document becomes the Current contract only 
 replacement = "Rotation boundary. On actual rotation merge A10 is formally completed and its entire approved contract is archived, and this Stage 4 contract becomes the sole Current contract. Until that merge main retains A10. The checks in §7 and every fixture, suite, and guest named above are future implementation deliverables. This documentation-only rotation implements none of them and authorizes no archive of its own. Git and PR history record the rotation identity after delivery. No future SHA, PR, or run is asserted here.\n"
 assert source.endswith(closing)
 source = source[:-len(closing)] + replacement
-plan = text('docs/dev-plan.md')
+plan = git('show', '9f6f67814ec2b7060fb5b186a37b95b7c6306708:docs/dev-plan.md')
 assert plan[plan.index('## 1. '):] == source
 a, b = unchanged.splitlines(), source.splitlines()
 delta = [l for l in difflib.unified_diff(a, b, lineterm='', n=0) if l[:1] in '+-' and l[:3] not in ('---', '+++')]
@@ -111,7 +111,7 @@ baseline = old('docs/verification/a10-baseline.md')
 current = text('docs/verification/a10-baseline.md')
 assert current == baseline.replace('../dev-plan.md#8-future-implementation-deliverables-and-falsifiable-acceptance', '../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md#8-future-implementation-deliverables-and-falsifiable-acceptance')
 print('PASS a10-baseline.md differs by the single permitted link')
-names = [p for p in git('diff', '--name-only', BASE).splitlines() if p]
+names = [p for p in git('diff', '--name-only', BASE, '9f6f67814ec2b7060fb5b186a37b95b7c6306708').splitlines() if p]
 assert names and all(p == 'README.md' or p.startswith('docs/') for p in names), names
 assert all(p.endswith('.md') for p in names)
 print('PASS docs-only diff:', len(names), 'paths')
