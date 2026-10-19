@@ -142,14 +142,15 @@ for required in lrsc_loop amo_w amo_d aq_rl_set sc_after_store_failure atomic_ne
     fi
 done
 
-# Stage 4 guests and the Stage 5 U1, U2, and U3 guests live under rv64i and
+# Stage 4 guests and the Stage 5 U1 through U4 guests live under rv64i and
 # are linked with linker-s4.ld. The suite fails if any of them is missing.
 for required in \
     s4_ad_observation s4_counters s4_csr_policy s4_delegation s4_envcfg \
     s4_fp_absent s4_mapped_rw s4_mprv s4_permission_fault s4_pmp_csr \
     s4_privilege_transition s4_sfence_vma s4_sret_vectored \
     s4_supervisor_interrupt s4_tvm_tsr_tw s4_walk_fault \
-    s5_counters s5_software s5_timer s5_external
+    s5_counters s5_software s5_timer s5_external \
+    s5_wfi_event s5_wfi_masked s5_wfi_none
 do
     if [ ! -f "${OUTDIR}/rv64i/${required}.elf" ]; then
         echo -e "${RED}Error: required guest missing: ${required}.elf${NC}" >&2
@@ -175,6 +176,20 @@ for elf in "${ELF_FILES[@]}"; do
     output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" 2>&1)
     status=$?
     printf '%s\n' "${output}"
+    # s5_wfi_none has no future platform event. D4 says that run stops with
+    # NoProgress, timed_out clear, and a non-zero status. That is the pass.
+    if [ "${name}" = "s5_wfi_none" ]; then
+        if [ "${status}" -eq 0 ] \
+            || ! printf '%s\n' "${output}" | grep -q 'Error:      NoProgress' \
+            || printf '%s\n' "${output}" | grep -q 'TIMEOUT'; then
+            echo -e "${RED}  [FAIL] s5_wfi_none must stop with NoProgress and not time out${NC}"
+            failed=$((failed + 1))
+            continue
+        fi
+        echo -e "${GREEN}  [PASS]${NC} NoProgress, timed_out clear"
+        passed=$((passed + 1))
+        continue
+    fi
     # Exit 0 alone is not success: the host truncates the status to 8 bits.
     if ! reason=$(riscv_classify_cli_run "${status}" "${output}"); then
         echo -e "${RED}  [FAIL] ${reason}${NC}"

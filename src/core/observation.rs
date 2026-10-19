@@ -138,7 +138,10 @@ pub(crate) fn build(
     destination: Option<u8>,
     memory: Vec<MemoryEffect>,
 ) -> Option<Observation> {
-    if matches!(outcome, StepOutcome::SimulatorFailure(_)) {
+    if matches!(
+        outcome,
+        StepOutcome::SimulatorFailure(_) | StepOutcome::Waiting
+    ) {
         return None;
     }
     #[cfg(test)]
@@ -193,7 +196,7 @@ pub(crate) fn build(
             instruction_length: trap.instruction.map(|_| 4),
             effects,
         })),
-        StepOutcome::SimulatorFailure(_) => unreachable!(),
+        StepOutcome::SimulatorFailure(_) | StepOutcome::Waiting => unreachable!(),
     }
 }
 

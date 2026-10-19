@@ -162,8 +162,8 @@ fn source_audit_standard_facades_have_no_core_composition_invocation_or_effect_r
         shared.matches("self.core.step_transition(observe)").count(),
         1
     );
-    assert!(shared.contains("installed.turn(lease, observe, true)"));
-    assert!(owned.contains(".turn(lease, observe, false)"));
+    assert!(shared.contains("installed.turn(lease, observe, true, true)"));
+    assert!(owned.contains(".turn(lease, observe, false, single_step)"));
     assert!(!owned.contains("RiscvCore::new") && !owned.contains("step_transition("));
 }
 

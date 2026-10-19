@@ -12,10 +12,18 @@
 #   TVM=0, S: the same three operations retire; satp reads 0 (never on)
 #   S-mode read of the M-only minstret -> illegal (2) at TVM=0
 #   TSR=1, S: sret -> illegal (2);  TSR=0: sret retires into U
-#   TW=0, S: wfi retires;  TW=1, S: wfi -> illegal (2)
+#   TW=0, S: wfi waits for a later machine timer (mtimecmp = mtime+0x1000,
+#   MTIE). The timer is taken after the WFI, and mepc is wfi+4
+#   (privileged §3.1.9, §3.3.3). That path stores and prints WFI_WAITED.
+#   Flat has no CLINT, so the mtime load faults and that wait is skipped.
+#   The marker stays zero. Falling through the WFI without the timer
+#   trap exits nonzero.
+#   TW=1, S: wfi -> illegal (2)
 #   U: wfi -> illegal (2) at TW=0 and TW=1, mtval = the WFI encoding
 #   U: read of the M-only misa -> illegal (2), proving the mode
-#   M with TVM|TW|TSR set: satp r/w, sfence, wfi, sret all retire
+#   M with TVM|TW|TSR set: satp r/w, sfence, and sret retire.
+#   The M-mode wfi retires with MIE clear and a locally enabled SSI,
+#   so it does not wait and it does not trap (§3.3.3).
 #
 # Any trap while s5 = -1, or a wrong cause/mtval, exits 63 / mcause.
 
@@ -36,6 +44,8 @@ _start:
     la      s1, tohost
     li      s5, -1                      # no trap expected yet
     li      s4, 0x800                   # plain returns go to S
+    li      s9, 0                       # 1 = arm a future timer before the S-mode WFI
+    li      s10, 0                      # expected mepc, or 0 to skip the check
 
     # ---- Enter Supervisor ----
     la      t0, s_entry
@@ -98,14 +108,42 @@ tsr1_case:                              # S, TSR=1
     sret
     j       fail
 
-    # ===== WFI: TW=0 retires, TW=1 traps =====
+    # ===== WFI: TW=0 waits for a later timer, TW=1 traps =====
 wfi_tw0:                                # S, all bits clear
     li      s2, 0
-    la      s3, wfi0_case
+    li      s9, 1
+    la      s3, wfi0_insn
     j       request_bits
-wfi0_case:                              # S, TW=0
-    li      s5, -1
-    wfi                                 # retires
+wfi0_insn:                              # S, TW=0, timer still in the future
+    wfi
+wfi0_after:
+    # The handler sets s5 to -1 before returning here. A WFI that never
+    # took the timer falls through with that cause still in s5.
+    li      t0, -1
+    bne     s5, t0, fail
+    # The timer trap reached this instruction, so the wait ran. Flat
+    # returns to wfi_flat and leaves the marker clear.
+    la      t0, wfi_wait_mark
+    la      t1, wfi_wait_text
+    li      t2, 10
+copy_mark:
+    lbu     t3, 0(t1)
+    sb      t3, 0(t0)
+    addi    t0, t0, 1
+    addi    t1, t1, 1
+    addi    t2, t2, -1
+    bnez    t2, copy_mark
+    la      t0, wfi_wait_mark
+    lui     t1, 0x10000                 # UART THR
+    li      t2, 10
+emit_mark:
+    lbu     t3, 0(t0)
+    sb      t3, 0(t1)
+    addi    t0, t0, 1
+    addi    t2, t2, -1
+    bnez    t2, emit_mark
+wfi_flat:                               # flat skipped the wait; s5 is already -1
+    li      s10, 0
     li      s2, TW
     la      s3, wfi1_case
     j       request_bits
@@ -170,7 +208,14 @@ m_block:                                # M
     csrr    t2, satp
     bne     t2, t0, fail
     sfence.vma                          # legal in M with TVM set
-    wfi                                 # retires in M with TW set
+    csrci   mstatus, 8                  # MIE clear: the wake does not trap
+    li      t0, 2
+    csrs    mie, t0
+    csrs    mip, t0
+    wfi                                 # retires, does not wait
+    csrc    mie, t0
+    csrc    mip, t0
+    csrsi   mstatus, 8
     la      t0, m_after_sret
     csrw    sepc, t0
     sret                                 # legal in M with TSR set
@@ -239,6 +284,31 @@ mtval_ok:
     or      t5, t5, t6
     csrw    mstatus, t5
     csrw    mepc, s3
+    beqz    s9, arm_return
+    # A takeable interrupt is taken before the WFI (§3.1.9). The timer
+    # is still in the future, so the WFI retires and waits. Flat faults
+    # this load and skips the wait. Clear s9 first: the fault is taken
+    # from this handler, and a later arm request must not retry it.
+    li      s9, 0
+    li      s5, 5                       # load access fault
+    li      s6, 0x0200BFF8
+    la      s7, wfi_flat
+    li      t0, 0x0200BFF8
+    ld      t1, 0(t0)
+    li      t2, 0x1000
+    add     t1, t1, t2
+    li      t0, 0x02004000              # mtimecmp
+    sd      t1, 0(t0)
+    li      t0, 0x80                    # MTIE
+    csrs    mie, t0
+    li      s5, 1
+    slli    s5, s5, 63
+    addi    s5, s5, 7                   # machine timer interrupt
+    li      s6, 0
+    la      s7, wfi0_after
+    mv      s10, s7                     # mepc must be the WFI address plus 4
+    li      s9, 0
+arm_return:
     mret
 plain_return:
     # Preserve the armed bits, return to s7 with the s4-selected MPP.
@@ -248,10 +318,32 @@ plain_return:
     or      t5, t5, s2
     li      t6, 0x80                    # MPIE
     or      t5, t5, t6
+    # s4 selects MPP. A trap taken from M leaves MPP=M, and OR cannot
+    # clear that bit, so replace the field.
+    li      t6, 0x1800
+    not     t6, t6
+    and     t5, t5, t6
     or      t5, t5, s4
     csrw    mstatus, t5
+    li      t6, 2
+    csrc    mie, t6                     # drop the WFI wake so S is not reentered
+    csrc    mip, t6
+    li      t6, 0x80
+    csrc    mie, t6                     # drop MTIE after the timer wake
+    beqz    s10, mepc_unchecked
+    csrr    t3, mepc
+    bne     t3, s10, mismatch
+mepc_unchecked:
     csrw    mepc, s7
     mret
+
+.section .rodata
+wfi_wait_text:
+    .ascii "WFI_WAITED"
+
+.section .signature, "aw"
+wfi_wait_mark:
+    .space 10
 
 .section .tohost
 .align 3

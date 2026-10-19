@@ -162,6 +162,26 @@ impl Platform {
         Ok(PresentedInterruptLines::clear())
     }
 
+    /// Hart 0 `mtimecmp`, if this platform has a CLINT.
+    pub(super) fn read_mtimecmp(&self) -> Result<Option<u64>, MachineError> {
+        if let Some(bus) = &self.bus {
+            let bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            return Ok(bus.mtimecmp());
+        }
+        Ok(None)
+    }
+
+    /// Replace `mtime`. Does not tick `mcycle` or `minstret`.
+    pub(super) fn set_mtime(&mut self, value: u64) -> Result<u64, MachineError> {
+        if let Some(bus) = &self.bus {
+            let mut bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            bus.set_mtime(value);
+            return Ok(bus.mtime());
+        }
+        self.flat_mtime = value;
+        Ok(self.flat_mtime)
+    }
+
     /// One completed Hart turn. A `SimulatorFailure` does not call this.
     /// Returns the `mtime` visible to the next instruction.
     pub(super) fn advance_mtime(&mut self) -> Result<u64, MachineError> {

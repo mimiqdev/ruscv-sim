@@ -121,7 +121,7 @@ impl OwnedMachine {
         }
         let lease = Lease::hart(&self.control.inner.gate)?;
         // Native Runner requests the selected signal lazily after callback facts.
-        let mut turn = self.domain_mut().turn(lease, observe, false)?;
+        let mut turn = self.domain_mut().turn(lease, observe, false, single_step)?;
         if matches!(&turn.hart.outcome, StepOutcome::SimulatorFailure(failure)
             if failure.kind == crate::core::SimulatorFailureKind::UnsupportedLegalInstruction
                 && !turn.boundary.uncertain)

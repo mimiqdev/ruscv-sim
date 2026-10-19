@@ -76,6 +76,9 @@ impl Sweep {
             match outcome {
                 StepOutcome::InstructionRetired(_) => self.retired += 1,
                 StepOutcome::TrapEntered(_) => self.trapped += 1,
+                StepOutcome::Waiting => {
+                    panic!("encoding {raw:#010x} in {mode:?} waited on a single step")
+                }
                 StepOutcome::SimulatorFailure(failure) => {
                     panic!("encoding {raw:#010x} in {mode:?} is a simulator failure: {failure:?}")
                 }

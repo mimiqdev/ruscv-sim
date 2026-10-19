@@ -11,6 +11,7 @@ SECTIONS
 {
     . = 0x80000000;
     .text : { *(.text*) *(.data*) *(.rodata*) }
+    .signature : { *(.signature) }
     . = ALIGN(0x1000);
     .tohost : { *(.tohost) }
 }
