@@ -142,6 +142,15 @@ for required in lrsc_loop amo_w amo_d aq_rl_set sc_after_store_failure atomic_ne
     fi
 done
 
+# Stage 6 U1 guests use linker.ld. They pass with the debug ebreak bits at
+# their reset value of 0. The suite fails if either guest is missing.
+for required in s6_ebreak s6_debug_csr; do
+    if [ ! -f "${OUTDIR}/rv64i/${required}.elf" ]; then
+        echo -e "${RED}Error: required Stage 6 guest missing: ${required}.elf${NC}" >&2
+        exit 2
+    fi
+done
+
 # Stage 4 guests and the Stage 5 U1 through U4 guests live under rv64i and
 # are linked with linker-s4.ld. The suite fails if any of them is missing.
 for required in \
