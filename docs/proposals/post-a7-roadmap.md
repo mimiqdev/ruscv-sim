@@ -11,7 +11,7 @@ A9's [bounded acceptance](../verification/a9-closeout-assessment.md) supersede
 its current-A7, global-reservation/legacy atomic debt and open host-writer-choice
 claims: admitted host writers remain real participants, with A9 lifecycle fencing
 and stale-generation isolation. Unknown completion still has no adapter resolution
-API. A10 was activated by PR #71 and its [entire contract](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md) was archived on the A10 to Stage 4 rotation merge. The Stage 4 contract was decided by PR #75 and approved for activation on 2026-10-11 UTC. Its [entire contract](../archive/milestones/stage4-virtual-memory-and-protection.md) is archived on the Stage 4 to Stage 5 rotation merge. [Stage 5](../dev-plan.md) becomes sole Current on that merge, and main retains Stage 4 until then. The [approved Stage 5 snapshot](stage5-contract-draft.md) is not a second Current contract or an implementation. The [approved Stage 4 snapshot](stage4-contract-draft.md) is not a second Current contract or an implementation. Later roadmap stages remain candidates. Historical
+API. A10 was activated by PR #71 and its [entire contract](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md) was archived on the A10 to Stage 4 rotation merge. The Stage 4 contract was decided by PR #75 and approved for activation on 2026-10-11 UTC. Its [entire contract](../archive/milestones/stage4-virtual-memory-and-protection.md) is archived on the Stage 4 to Stage 5 rotation merge. Stage 5 was activated on the Stage 4 to Stage 5 rotation merge. On the Stage 5 to Stage 6 rotation merge the [entire Stage 5 contract](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md) is formally completed and archived, and [Stage 6](../dev-plan.md) becomes sole Current. Until that merge main retains Stage 5. The [approved Stage 5 snapshot](stage5-contract-draft.md) is not a second Current contract or an implementation. The [approved Stage 4 snapshot](stage4-contract-draft.md) is not a second Current contract or an implementation. Later roadmap stages remain candidates. Historical
 A7 evidence and recommendations below are not rewritten as A8/A9 results.
 
 **Planning baseline:** repository commit `c059500a6af20f93569099c4b05ced3364a7703b`,
@@ -632,40 +632,43 @@ alone is insufficient. The selected profile and any compatibility change to
 **Cost/risk:** high semantic and test cost; time units and profile behavior are
 product decisions, not implementation defaults.
 
-### Stage 6 — public debug wiring
+### Stage 6 — RISC-V Debug Mode
 
-**Recommended entry:** Stage 3 performance-test infrastructure has exited, in
-addition to this stage's lifecycle and inspection prerequisites. The Stage 3
-requirement is a user scheduling gate, not a debugger architectural dependency.
+**Recommended entry:** Stage 5 has exited. The Stage 3 performance-test gate
+stays the inherited waiver. It is not a debugger architectural dependency.
 
-**Target:** connect the existing debug protocol to the Machine/Runner boundary.
+**Target:** one-hart RISC-V Debug Mode against Debug Specification 1.0, ratified,
+tag `5695c0a`, with an abstract-command Debug Module and a JTAG `remote_bitbang`
+transport that OpenOCD and GDB can attach to. Owner decision, Tony, 2026-10-19.
+The normative text is the Stage 6 contract. This roadmap is not a second contract.
 
-**Boundary:** one-Hart GDB/RSP and library control through quiescent inspection,
-with external stop, guest breakpoint, watchpoint, and single-step kept distinct.
+**Boundary:** the Hart owns Debug Mode. The Debug Module owns abstract commands.
+The Machine admits a debug transaction only at a Hart boundary. The old GDB
+Remote Serial Protocol component is not this stage's debugger.
 
-**Non-goals:** RISC-V Debug Mode/trigger modules, multi-Hart thread control,
-software breakpoint patching during an in-flight quantum, or a new debugger CLI
-contract without approval.
+**Non-goals for this stage:** trigger modules, a second hart, and a new
+`ExecutionResult` field. A program buffer and system bus access are also outside
+this stage. They are the next debug increment below, not a silent expansion of
+Stage 6. The 2026-10-19 decision supersedes the earlier non-goal that put
+RISC-V Debug Mode itself out of scope. The new CLI flags `--rbb-port` and
+`--halted` are approved.
 
-**Deliverables:**
+**Deliverables:** the Stage 6 contract's units U1 through U6. U1 is the Hart.
+U2 is the Debug Module. U3 is Machine integration. U4 is JTAG and the CLI.
+U5 is the OpenOCD and GDB attach. U6 removes `src/debug/` after that attach
+exists.
 
-- a production `DebugTarget` adapter over Machine control and inspection;
-- register/memory access through Platform/physical inspection rather than direct
-  concrete-memory mutation;
-- breakpoint/watchpoint hit facts, stop requests, continue/single-step, and
-  lifecycle mutation checks;
-- public integration tests using an ELF fixture and a real RSP exchange or
-  equivalent protocol harness.
+**Later debug increment, not Stage 6:** full Spike-style support. That means a
+program buffer, system bus access, and execution of instructions while the hart
+is in Debug Mode. The Stage 6 abstract-command module (`progbufsize` 0,
+`datacount` 4) is a temporary first implementation. Owner decision, Tony,
+2026-10-19.
 
-**Verifiable exit standard:** public debug operations cannot race an in-flight
-transaction; memory/register changes require the declared quiescent boundary;
-stop facts remain distinct from guest traps and Platform exit; enabled debug
-observation preserves the same Hart state and result oracle. This stage can be
-prepared in parallel with Stages 3/4 after Stage 2.
+**Verifiable exit standard:** the Stage 6 contract's §7 list. A component test
+of the old GDB stub is not that exit.
 
-**Cost/risk:** medium-to-high; compatibility risk is concentrated in control
-and inspection API shape. Component/design preparation may proceed in parallel
-with Stages 4/5, but integrated debug entry remains gated by Stage 3.
+**Cost/risk:** high. `StepOutcome` gains a variant. OpenOCD's acceptance of
+`dmstatus.version` 3 is a source fact until U5 runs it.
 
 ### Stage 7 — native ↔ Rust TLM ↔ SystemC and DMI (conditional integration)
 

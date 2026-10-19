@@ -1,6 +1,6 @@
 # A10→Stage 4 documentation contract-rotation audit
 
-**Status:** Historical rotation audit for the A10 to Stage 4 range. The promoted-text check is pinned to rotation commit `9f6f67814ec2b7060fb5b186a37b95b7c6306708`, because later Stage 4 amendments live in the [preserved Stage 4 contract](../archive/milestones/stage4-virtual-memory-and-protection.md) and `docs/dev-plan.md` is the Stage 5 contract on the next rotation merge. Not Stage 4 implementation, runtime, ACT4, or performance evidence.
+**Status:** Historical rotation audit for the A10 to Stage 4 range. The promoted-text check is pinned to rotation commit `9f6f67814ec2b7060fb5b186a37b95b7c6306708`, because later Stage 4 amendments live in the [preserved Stage 4 contract](../archive/milestones/stage4-virtual-memory-and-protection.md). The Stage 5 contract is in [its archive](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md), and `docs/dev-plan.md` is the Stage 6 contract on the Stage 5 to Stage 6 rotation merge. Not Stage 4 implementation, runtime, ACT4, or performance evidence.
 
 **Authority:** Informational reproducible audit, constrained by [the preserved Stage 4 contract](../archive/milestones/stage4-virtual-memory-and-protection.md), [documentation policy](../documentation-policy.md) and accepted ADR-0001–0004. It applies to the A10 to Stage 4 docs-only rotation range, not to later ranges.
 

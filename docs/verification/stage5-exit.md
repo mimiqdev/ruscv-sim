@@ -1,6 +1,6 @@
 # Stage 5 public exit
 
-These are the checks in `docs/dev-plan.md` §7. They are evidence for the implementation, not acceptance criteria of that contract. Check 9 is recorded in the Stage 5 final review of `main` at `fb8399b`.
+These are the checks in the archived Stage 5 contract, `docs/archive/milestones/stage5-platform-interrupts-wfi-and-counters.md`, §7 of the preserved body. They are evidence for the implementation, not acceptance criteria of that contract. Check 9 is recorded in the Stage 5 final review of `main` at `fb8399b`.
 
 `tools/a10/public-v1.json` is not rewritten. `suite-v1.json` has no `oracle_sha256`. The legal-WFI fall-through expectation lived in `s4_tvm_tsr_tw` and its harness, and that is where it was updated. That guest now waits for a later machine timer and leaves `WFI_WAITED` only after the wake. The native CLI and library routes require the marker. Flat leaves it zero. No A10 fixture executes WFI. A search of `tools/a10` finds no `wfi`, no `WFI`, and no `0x10500073`, so `tools/a10/public-v1.json` needs no change.
 

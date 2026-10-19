@@ -1,8 +1,8 @@
 # Stage 4→Stage 5 documentation contract-rotation audit
 
-**Status:** Current rotation-verification procedure. Not Stage 5 implementation, runtime, ACT4, or performance evidence.
+**Status:** Historical rotation audit for the Stage 4 to Stage 5 range. The promoted-text check is pinned to rotation commit `02f20b12152675bfada582b70135635869ad07ac`, because later Stage 5 amendments live in the [preserved Stage 5 contract](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md) and `docs/dev-plan.md` is the Stage 6 contract on the next rotation merge. Not Stage 5 implementation, runtime, ACT4, or performance evidence.
 
-**Authority:** Informational reproducible audit, constrained by [the sole approved Stage 5 contract](../dev-plan.md), [documentation policy](../documentation-policy.md) and accepted ADR-0001–0004. It applies to this docs-only rotation range, not to later implementation ranges.
+**Authority:** Informational reproducible audit, constrained by [the preserved Stage 5 contract](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md), [documentation policy](../documentation-policy.md) and accepted ADR-0001–0004. It applies to the Stage 4 to Stage 5 docs-only rotation range, not to later ranges.
 
 **Approval boundary (2026-10-16 13:08 CST):** owner approval of every Stage 5 decision D0–D9 as the recommended option. The decision record is `077974755466f43c002fc28a55fb4098938fd506`. The [approved informational snapshot](../proposals/stage5-contract-draft.md) preserves the entire drafting body. Stage 5 activates and Stage 4 is formally completed and archived on the actual rotation merge. Until then main retains Stage 4.
 
@@ -50,6 +50,7 @@ An assertion failure is a verification blocker, not a pass.
 from pathlib import Path
 import difflib, hashlib, posixpath, re, subprocess, unicodedata
 BASE = '077974755466f43c002fc28a55fb4098938fd506'
+PIN = '02f20b12152675bfada582b70135635869ad07ac'
 ARCHIVE = 'docs/archive/milestones/stage4-virtual-memory-and-protection.md'
 PROPOSAL = 'docs/proposals/stage5-contract-draft.md'
 def git(*args):
@@ -67,10 +68,10 @@ def relocate(s, origin, destination):
         moved = posixpath.relpath(posixpath.normpath(posixpath.join(origin, path)), destination)
         return '](' + moved + (sep + anchor if sep else '') + ')'
     return re.sub(r'\]\(([^)]+)\)', sub, s)
-archived = text(ARCHIVE).split('## Preserved approved Stage 4 contract\n\n', 1)[1]
+archived = git('show', f'{PIN}:{ARCHIVE}').split('## Preserved approved Stage 4 contract\n\n', 1)[1]
 assert archived == relocate(old('docs/dev-plan.md'), 'docs', 'docs/archive/milestones')
 print('PASS complete Stage 4 body:', hashlib.sha256(archived.encode()).hexdigest())
-preserved = text(PROPOSAL).split('## Preserved approved proposal\n\n', 1)[1]
+preserved = git('show', f'{PIN}:{PROPOSAL}').split('## Preserved approved proposal\n\n', 1)[1]
 expected = old(PROPOSAL).replace('](../dev-plan.md)', '](../archive/milestones/stage4-virtual-memory-and-protection.md)')
 expected = expected.replace('does not replace `docs/dev-plan.md`', 'does not replace the Stage 4 contract')
 assert preserved == expected
@@ -98,7 +99,7 @@ closing = "Approval boundary. This document is not the Current contract. It does
 replacement = "Rotation boundary. On actual rotation merge Stage 4 is formally completed and its entire approved contract is archived, and this Stage 5 contract becomes the sole Current contract. Until that merge main retains Stage 4. The checks in §7 and every guest named above are future implementation deliverables. This documentation-only rotation implements none of them and authorizes no archive of its own. Git and PR history record the rotation identity after delivery. No future SHA, PR, or run is asserted here.\n"
 assert source.endswith(closing)
 source = source[:-len(closing)] + replacement
-plan = text('docs/dev-plan.md')
+plan = git('show', f'{PIN}:docs/dev-plan.md')
 assert plan[plan.index('## 1. '):] == source
 a, b = unchanged.splitlines(), source.splitlines()
 delta = [l for l in difflib.unified_diff(a, b, lineterm='', n=0) if l[:1] in '+-' and l[:3] not in ('---', '+++')]
@@ -108,8 +109,7 @@ assert len(re.findall(r'^\*\*Current milestone', plan, re.M)) == 1
 assert 'owner approved, recommended option' in plan
 assert '2026-10-16 13:08 CST' in plan
 print('PASS Stage 5 sections 1-9 equal the proposal after relocation and the ten-entry allowlist; unified diff 14 removed / 14 added, 10 changed lines')
-names = [p for p in git('diff', '--name-only', BASE).splitlines() if p]
-names += [p for p in git('ls-files', '--others', '--exclude-standard').splitlines() if p]
+names = [p for p in git('diff', '--name-only', BASE, PIN).splitlines() if p]
 assert names and all(p == 'README.md' or p.startswith('docs/') for p in names), names
 assert all(p.endswith('.md') for p in names)
 print('PASS docs-only diff:', len(names), 'paths')
@@ -130,7 +130,7 @@ def anchors(content):
     return result
 links = 0
 for path in sorted(set(names)):
-    content = prose(text(path))
+    content = prose(git('show', f'{PIN}:{path}'))
     shown = subprocess.run(['git','show',f'{BASE}:{path}'],capture_output=True,text=True)
     prior = set(re.findall(r'\]\(([^)]+)\)', prose(shown.stdout))) if shown.returncode==0 else set()
     for link in re.findall(r'\]\(([^)]+)\)', content):

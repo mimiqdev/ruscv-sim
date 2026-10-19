@@ -4,13 +4,13 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-10-16
+**Last reviewed:** 2026-10-19
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
 ## Sources of truth
 
-1. [Milestone plan and activation status](dev-plan.md) — the sole Current contract. On the Stage 4 to Stage 5 rotation merge this is the Stage 5 contract; until that merge main retains Stage 4.
+1. [Milestone plan and activation status](dev-plan.md) — the sole Current contract. On the Stage 5 to Stage 6 rotation merge this is the Stage 6 contract; until that merge main retains Stage 5.
 2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
 3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests, the [A8 assessment](verification/a8-closeout-assessment.md) for the atomic route, and the [A9 acceptance assessment](verification/a9-closeout-assessment.md) for Hart facts/Machine integration, separating historical checkpoint and final PR/merge-head evidence.
 4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
@@ -33,7 +33,8 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Approved Stage 5 contract — sole Current on rotation merge](dev-plan.md) — Platform interrupts, WFI, modeled time, and counters, post-A7 Stage 5. Decisions D0–D9 were owner approved, recommended option, on 2026-10-16 13:08 CST. Until the rotation merges, main retains Stage 4.
+- [Approved Stage 6 contract — sole Current on rotation merge](dev-plan.md) — RISC-V Debug Mode, Debug Specification 1.0. Decisions D0–D15 were owner approved on 2026-10-19. D0–D14 are the recommended option. D15 is `cmderr=3`. Until the rotation merges, main retains Stage 5.
+- [Entire approved Stage 5 contract archive](archive/milestones/stage5-platform-interrupts-wfi-and-counters.md) — Platform interrupts, WFI, modeled time, and counters. Decisions D0–D9 were owner approved, recommended option, on 2026-10-16 13:08 CST. Implementation is PR #90 through PR #94. The full original body is preserved. Formal completion and archival take effect on the Stage 5 to Stage 6 rotation merge.
 - [Entire approved Stage 4 contract archive](archive/milestones/stage4-virtual-memory-and-protection.md) — Virtual Memory and Protection. Decisions recorded by PR #75, owner-authorized activation 2026-10-11 UTC, implementation and review at PR #88. The full original body is preserved. Formal completion and archival take effect on the Stage 4 to Stage 5 rotation merge.
 - [Stage 5 approved informational proposal snapshot](proposals/stage5-contract-draft.md) — the complete drafting record of the decided contract. Original proposal wording is historical. Not a second Current contract, and not an implementation.
 - [Stage 4 approved informational proposal snapshot](proposals/stage4-contract-draft.md) — the complete drafting record of the decided Stage 4 contract. Original proposal wording is historical. Not a second Current contract, and not an implementation.
@@ -76,7 +77,8 @@ Target architecture is not implementation status. Component presence is not end-
 - [A10 public-path evidence schema](verification/a10-perf-schema.md) — `ruscv-perf/1` commands/statuses and the deferred calibration/certification boundary
 - [A10 contract-rotation executable audit](verification/a10-contract-rotation.md) — historical audit of the A9 to A10 rotation; documentation checks only
 - [Stage 4 contract-rotation executable audit](verification/stage4-contract-rotation.md) — historical audit of the A10 to Stage 4 rotation; the promoted-text check is pinned to `9f6f678`
-- [Stage 5 contract-rotation executable audit](verification/stage5-contract-rotation.md) — whole-body preservation, phrase allowlist, link repairs and docs-only scope for the Stage 4 to Stage 5 rotation
+- [Stage 5 contract-rotation executable audit](verification/stage5-contract-rotation.md) — historical audit of the Stage 4 to Stage 5 rotation; the promoted-text check is pinned to `02f20b1`
+- [Stage 6 contract-rotation executable audit](verification/stage6-contract-rotation.md) — whole-body preservation of the Stage 5 contract and a bounded check of the Stage 6 contract; no runtime or performance claims
 - [A9 T4 per-case source/tool/artifact evidence](verification/a9-t4-guest-evidence.json) — self-contained checkpoint execution record, not a new ACT4 run
 - [External RISC-V test integration contract](verification/external-riscv-tests.md)
 - [Commit tracing and differential testing](verification/commit-tracing.md)
