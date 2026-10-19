@@ -8,7 +8,7 @@
 # written to either counter reads back after that instruction.  cycle and
 # instret reads in S and in U raise illegal-instruction while mcounteren is
 # 0.  mhpmcounter3/31 and mhpmevent3/31 read 0 and ignore writes.
-# hpmcounter3 and time do not exist.
+# hpmcounter3 does not exist. time is the read-only mtime shadow.
 #
 # The handler returns to s7 with the s4-selected MPP (0x800 = S,
 # 0x1800 = M), set per case so an M-phase continuation stays in M.
@@ -119,17 +119,23 @@ counters:
     csrr    t1, 0x33F
     bnez    t1, fail
 
-    # hpmcounter3 (0xC03) and time (0xC01) do not exist in any mode.
+    # hpmcounter3 (0xC03) does not exist. time (0xC01) is the
+    # read-only mtime shadow in M (privileged §3.2.1). This guest does
+    # not touch the CLINT, so the value is the completed-turn count and
+    # stays far below the mcycle value written above.
     li      s5, CAUSE_ILLEGAL
     li      s6, 0xc0302373              # csrr t1,hpmcounter3
-    la      s7, no_time
+    la      s7, time_reads
     csrr    t1, 0xC03
     j       fail
-no_time:
+time_reads:
+    csrr    t1, time
+    li      t2, 0x1000
+    bgeu    t1, t2, fail
     li      s5, CAUSE_ILLEGAL
-    li      s6, 0xc0102373              # csrr t1,time (rdtime)
+    li      s6, 0xc0129073              # csrw time,t0
     la      s7, to_s
-    csrr    t1, 0xC01
+    csrw    time, t0
     j       fail
 
 to_s:

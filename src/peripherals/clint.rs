@@ -201,6 +201,16 @@ impl Clint {
         self.msip.get(hart_id as usize).copied()
     }
 
+    /// Advance `mtime` by one completed Hart turn.
+    ///
+    /// Privileged specification 20250508 §3.2.1 requires a constant frequency
+    /// and does not identify `mtime` with `mcycle`. This profile's frequency
+    /// is one tick per completed turn (contract D1), not `clock_freq`.
+    pub fn advance_one_tick(&mut self) {
+        self.mtime.fetch_add(1, Ordering::Relaxed);
+        self.update_timer_interrupts();
+    }
+
     /// 写入 msip（只有第0位有效）
     pub fn write_msip(&mut self, hart_id: u32, value: u32) {
         if let Some(reg) = self.msip.get_mut(hart_id as usize) {
@@ -311,6 +321,33 @@ impl Clint {
         }
     }
 
+    pub(crate) fn read_mapped(&self, offset: u64, size: usize) -> Result<u64, TlmError> {
+        self.read_reg(offset, size)
+    }
+
+    pub(crate) fn write_mapped(
+        &mut self,
+        offset: u64,
+        value: u64,
+        size: usize,
+    ) -> Result<(), TlmError> {
+        self.write_reg(offset, value, size)
+    }
+
+    /// Low or high 32-bit half of one hart's `mtimecmp`, if `offset` names it.
+    fn mtimecmp_half(&self, offset: u64) -> Option<(u32, bool)> {
+        let end = reg_offset::MTIMECMP_BASE + u64::from(self.num_harts) * 8;
+        if offset < reg_offset::MTIMECMP_BASE || offset + 4 > end || !offset.is_multiple_of(4) {
+            return None;
+        }
+        let index = offset - reg_offset::MTIMECMP_BASE;
+        match index % 8 {
+            0 => Some(((index / 8) as u32, false)),
+            4 => Some(((index / 8) as u32, true)),
+            _ => None,
+        }
+    }
+
     /// 读取寄存器（内部实现）
     fn read_reg(&self, offset: u64, size: usize) -> Result<u64, TlmError> {
         match size {
@@ -326,6 +363,15 @@ impl Clint {
         if offset < reg_offset::MSIP_BASE + (self.num_harts as u64 * 4) {
             let hart_id = (offset / 4) as u32;
             return Ok(self.read_msip(hart_id).unwrap_or(0));
+        }
+
+        if let Some((hart_id, high)) = self.mtimecmp_half(offset) {
+            let value = self.read_mtimecmp(hart_id).unwrap_or(u64::MAX);
+            return Ok(if high {
+                (value >> 32) as u32
+            } else {
+                value as u32
+            });
         }
 
         let mtime = self.read_mtime();
@@ -379,6 +425,17 @@ impl Clint {
         if offset < reg_offset::MSIP_BASE + (self.num_harts as u64 * 4) {
             let hart_id = (offset / 4) as u32;
             self.write_msip(hart_id, value);
+            return Ok(());
+        }
+
+        if let Some((hart_id, high)) = self.mtimecmp_half(offset) {
+            let old = self.read_mtimecmp(hart_id).unwrap_or(u64::MAX);
+            let new = if high {
+                (old & 0xFFFF_FFFF) | (u64::from(value) << 32)
+            } else {
+                (old & !0xFFFF_FFFF) | u64::from(value)
+            };
+            self.write_mtimecmp(hart_id, new);
             return Ok(());
         }
 
@@ -846,6 +903,26 @@ mod tests {
         // 验证数据（低4字节应该是0，因为我们从偏移4写入了0x100）
         // 实际上这会作为 Hart 0 的高4字节写入
         assert_eq!(clint.read_mtimecmp(0), Some(0x100));
+    }
+
+    #[test]
+    fn test_clint_mtimecmp_word_halves() {
+        let mut clint = Clint::new(0x0200_0000, 1, 10_000_000);
+        assert_eq!(
+            clint.read_mapped(reg_offset::MTIMECMP_BASE, 4).unwrap(),
+            0xFFFF_FFFF
+        );
+        assert_eq!(
+            clint.read_mapped(reg_offset::MTIMECMP_BASE + 4, 4).unwrap(),
+            0xFFFF_FFFF
+        );
+        clint
+            .write_mapped(reg_offset::MTIMECMP_BASE, 0x89AB_CDEF, 4)
+            .unwrap();
+        clint
+            .write_mapped(reg_offset::MTIMECMP_BASE + 4, 0x0123_4567, 4)
+            .unwrap();
+        assert_eq!(clint.read_mtimecmp(0), Some(0x0123_4567_89AB_CDEF));
     }
 
     #[test]

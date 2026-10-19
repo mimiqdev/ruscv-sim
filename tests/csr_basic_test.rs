@@ -418,8 +418,10 @@ fn test_hpm_counters_and_events_are_read_only_zero() {
         csr.write(addr, u64::MAX).unwrap();
         assert_eq!(csr.read(addr).unwrap(), 0);
     }
-    // The unprivileged hpmcounter shadows and time stay absent.
-    for addr in [0xC01u16, 0xC03, 0xC1F] {
+    // hpmcounter shadows stay absent. time is the read-only mtime shadow.
+    assert_eq!(csr.read(0xC01).unwrap(), 0);
+    assert_eq!(csr.write(0xC01, 1), Err(CsrError::ReadOnly(0xC01)));
+    for addr in [0xC03u16, 0xC1F] {
         assert_eq!(csr.read(addr), Err(CsrError::InvalidAddress(addr)));
     }
 }

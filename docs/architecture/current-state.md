@@ -27,6 +27,7 @@ At implementation merge `f2edf77f17a76bea3d7062f40f5f4f38ad4eb580`,
 cleanly generated and passed all **51 frozen nontrapping RV64I self-check ELFs**
 through the release public CLI. Standard push CI `34749931575` at the same head
 separately compiled and passed **46/46 project-authored guests**.
+The current suite also runs the Stage 5 U1 guest `s5_counters`.
 The [assessment](../verification/a5-capability-assessment.md) records approved
 MXLEN test-adapter/natural-alignment decisions, all 1,970 source dispositions,
 exact reviews, hashes and negative controls.
@@ -114,7 +115,7 @@ flowchart TB
     RESULT --> CLI
 ```
 
-The flow is real and usable: the CLI loads an RV64 ELF, constructs RAM, UART, and the concrete bus, steps the core, observes `tohost`, optionally writes a commit log, and returns an execution result. Project-authored bare-metal ELF tests, including the Stage 4 guests, are compiled and run in CI on pull requests and on non-documentation pushes to `main`.
+The flow is real and usable: the CLI loads an RV64 ELF, constructs RAM, the CLINT window at `0x0200_0000`, UART, and the concrete bus, steps the core, observes `tohost`, optionally writes a commit log, and returns an execution result. Project-authored bare-metal ELF tests, including the Stage 4 guests and `s5_counters`, are compiled and run in CI on pull requests and on non-documentation pushes to `main`.
 
 The current composition has several important properties:
 
@@ -144,6 +145,7 @@ flowchart LR
         CORE["RiscvCore"]
         SBUS["SystemBus"]
         RAM["SimpleMemory"]
+        CLINTW["CLINT window"]
         UART["UART16550"]
         HTIF["HTIF logic"]
         LOG["CommitLogger"]
@@ -152,7 +154,7 @@ flowchart LR
     subgraph Side["Implemented side components"]
         MMU["MMU / Sv39 / TLB"]
         TLM["TLM traits / bus / DMI cache"]
-        IRQ["CLINT / PLIC"]
+        IRQ["PLIC / interrupt lines"]
         DBG["GDB RSP / breakpoints / watchpoints"]
         RV64C["RV64C decoder / semantics"]
     end
@@ -162,13 +164,14 @@ flowchart LR
     MONO --> SBUS
     MONO --> LOG
     SBUS --> RAM
+    SBUS --> CLINTW
     SBUS --> UART
     SBUS --> HTIF
 
     MMU -. not wired .-> CORE
     CORE --> TRAP["TrapHandler<br/>Machine synchronous entry"]
     TLM -. optional field only .-> CORE
-    IRQ -. not in public bus .-> SBUS
+    IRQ -. interrupt lines not connected .-> SBUS
     DBG -. no production DebugTarget .-> CORE
     RV64C -. not in fetch/decode loop .-> CORE
 ```
@@ -200,19 +203,19 @@ external RV64I compatibility.
 | RV64 instruction semantics | RV64I dispatch plus M/A/F/D paths in the active executor; ordinary integer/FP loads and stores use the raw DataRead/DataWrite route, while AMO/LR/SC use the explicit typed legacy bridge | **Public path, coverage varies** | Presence in the dispatcher is not a claim of full extension compliance; the bounded frozen ACT4 nontrapping RV64I selection is externally verified, not all dispatched extensions. Base-I FENCE (`MiscMem` with `funct3 = 0b000`) now decodes and executes as a no-op through `exec_fence`: on this synchronous single-Hart `MemoryInterface` with no cache, store buffer or reordering, every prior memory effect is already globally visible before the next instruction issues, so `FENCE` (every `pred`/`succ`/`fm` shape, including `FENCE.TSO` and HINTs) only needs to let the PC advance. `rs1`/`rd` are ignored per the base-I reserved-field rule. `FENCE.I` (Zifencei, `funct3 = 0b001`) remains `DecodeError::UnimplementedInstruction` and a simulator failure; other nonzero `MiscMem` `funct3` values are reserved in the active profile and now enter an illegal-instruction trap (`src/decode/mod.rs`, `tests/a6_task3_core_trap_test.rs`); see [gap G-14](../verification/public-behavior-gaps.md#g-14--base-i-fence-miscmem-funct3--0b000-was-unconditionally-rejected). |
 | AMO / LR/SC | Active dispatcher calls ordinary read/write helpers; LR/SC reservation is process-global | **Public dispatch, incomplete contract** | `src/execute/mod.rs::execute_amo` has encoding/width debt; `src/isa/rv64a/amo.rs` uses word read then word write, and `lr_sc.rs` uses `GLOBAL_RESERVATION` without ordinary-store invalidation. Helper arithmetic tests and A6 atomic-fault tests do not prove ADR-0002 atomicity or A-extension compliance. The A7 contract excluded atomic repair/envelopes and preserved existing atomic behavior over shared storage as explicit legacy debt. Ordinary stores currently do not invalidate the global reservation. The approved [A8 contract](../archive/milestones/a8-single-hart-atomic-physical-convergence.md) now owns atomic convergence (indivisible envelopes, per-Hart reservation state, writer visibility) as current scope; until that implementation lands, the characterized legacy behavior remains and must not be silently altered. This is not ADR-0002 atomic conformance. |
 | Flat memory | Thread-safe byte vector with typed aligned accesses | **Public path** | Also used directly by the alternate library simulator path. |
-| Native bus | Concrete typed RAM/UART/HTIF routing plus raw backend views in `executor.rs`/`physical.rs` | **Public raw path for standard facades; typed compatibility path retained** | `SystemBus` is public through `ruscv_sim::executor`, with fixed devices and limited typed access widths. `NativeSystemBusBackend` wraps the caller's shared `Arc<Mutex<SystemBus>>` and applies full-span raw routing without copying targets. Its UART route spans `0x1000_0000..0x1000_00ff` (`uart_size = 0x100`), while the exported `UART_SIZE` is 8 bytes. `load_and_run` now installs separate validated raw fetch/data views over this shared domain; old typed methods remain for host inspection and legacy atomics. |
+| Native bus | Concrete typed RAM/UART/HTIF routing, the raw CLINT window, plus raw backend views in `executor.rs`/`physical.rs` | **Public raw path for standard facades; typed compatibility path retained** | `SystemBus` is public through `ruscv_sim::executor`, with fixed devices and limited typed access widths. The raw path serves the SiFive CLINT window at `0x0200_0000` for 4-byte and 8-byte accesses. `NativeSystemBusBackend` wraps the caller's shared `Arc<Mutex<SystemBus>>` and applies full-span raw routing without copying targets. Its UART route spans `0x1000_0000..0x1000_00ff` (`uart_size = 0x100`), while the exported `UART_SIZE` is 8 bytes. `load_and_run` now installs separate validated raw fetch/data views over this shared domain; old typed methods remain for host inspection and legacy atomics. |
 | UART16550 | Register model and raw native target view with output callback | **Public path for ordinary Hart accesses; typed host/legacy path retained** | The public bus and raw adapter expose byte accesses at `0x1000_0000` through a 0x100-byte window, while the UART model declares `UART_SIZE = 8` and a TLM range ending at `0x1000_0007`; offsets `0x08..0xff` retain reserved zero/ignored behavior. The raw adapter rejects Fetch and non-byte spans before touching FIFO/status/output state. The richer TLM target behavior is tested separately. |
 | HTIF / `tohost` | Fixed typed write endpoint, callback, selected-address polling, exit decoding, RAM clearing, and raw exact-endpoint view | **Public raw guest path plus typed host/legacy path** | The fixed `0x4000_8000` typed endpoint remains dword-only and start-address-only for compatibility: `read_dword` returns `0`, `write_dword` invokes the callback, including interior starts, and byte/halfword/word methods reject it. The raw view validates the complete eight-byte endpoint, rejects interior/Fetch requests without a callback, and invokes one callback on a successful raw write. Separately, runner polling, clearing, and artifact extraction remain typed host observations; legacy SC width behavior remains on the typed bridge. |
 | Commit trace | Optional per-retired-instruction record | **Public path** | The native runner logs only `InstructionRetired` facts supplied by the Hart, including the fetched instruction and privilege; trap and failure boundaries produce no commit. `mem_access` remains `None` in the existing logger format. |
-| `RiscVSimulator` wrapper | Flat-memory load/step/run API | **Library path** | Its run loop remains its own, but image installation, placement resolution, result construction and the run-control decision are shared with `load_and_run`; it does not use `SystemBus`, so it has no UART/HTIF device mapping. Its flat addresses remain storage offsets. Both entry points now resolve image-declared `tohost`/`.signature` metadata through one internal placement owner that expresses the two address forms: the bus configuration passes guest addresses through, the flat configuration converts them with checked arithmetic. The conversion is storage adaptation, not guest virtual-to-physical translation, and grants no device ability. It must not become a second architecture engine. |
+| `RiscVSimulator` wrapper | Flat-memory load/step/run API | **Library path** | Its run loop remains its own, but image installation, placement resolution, result construction and the run-control decision are shared with `load_and_run`; it does not use `SystemBus`, so it has no UART/HTIF/CLINT window. Flat still keeps a per-turn `mtime` that only the `time` CSR exposes. Its flat addresses remain storage offsets. Both entry points now resolve image-declared `tohost`/`.signature` metadata through one internal placement owner that expresses the two address forms: the bus configuration passes guest addresses through, the flat configuration converts them with checked arithmetic. The conversion is storage adaptation, not guest virtual-to-physical translation, and grants no device ability. It must not become a second architecture engine. |
 | Cached instruction dispatcher | `Dispatcher`, instruction-key lookup, and LRU cache | **Component** | `src/dispatch/mod.rs` defines `Dispatcher`; focused tests cover registration and cache behavior, but `RiscvCore` owns and calls `Executor` directly, so this dispatcher is not in the active execution path. |
 | Code-generation experiments | Encoding templates and procedural-macro experiments | **Component / placeholder** | They are not the active decoder or executor; some macro expansions target APIs absent from the current core. See [Code-Generation Component Status](../reference/code-generation.md). |
 | Trap model | Causes, Machine-mode entry, typed Hart outcomes, delegation component, MRET semantics, and A6 guest/fault verification | **Public path (A6 formally accepted)** | `src/core/trap.rs` and `src/isa/rv64i/system.rs` provide cause/vector/CSR entry and MRET restoration. `RiscvCore::step_outcome` stages trap entry and maps fetch, decode, alignment, execution, and physical-access failures to `TrapEntered` or `SimulatorFailure`; successful instructions produce `InstructionRetired` with `minstret` facts. `src/executor.rs` consumes the boundary with continue-to-guest-handler policy and started-slot/completed-turn accounting. `tests/trap_test.rs` adds genuine induced-fault/transaction assertions; `tests/a6_trap_elf_integration.rs` and the fresh scripts exercise public CLI and library facades when the cross-toolchain is available. See the bounded [A6 evidence matrix](../verification/a6-capability-assessment.md); no asynchronous interrupt, MMU, compressed-instruction, or ACT4 extension claim follows. |
 | MMU / Sv39 / TLB | Sv39 page-table translation, TLB, A/D behavior, and physical-memory model; Sv48 is recognized as a mode but rejected as unsupported, while PMP configuration/error placeholders exist without checks | **Component** | Focused tests cover the Sv39 path, but no MMU is owned or called by `RiscvCore`; the public ELF path uses ELF base adaptation instead. `MmuConfig::enable_sv48` and `pmp_entries` are configuration fields, and `MmuError::PmpViolation` exists, but the translator rejects Sv48 and no PMP check is implemented in `Mmu` or `AddressTranslator`. |
 | TLM | Payloads, phases, target/initiator traits, routed bus, simple memory, DMI cache | **Component** | Tested as a Rust TLM-style subsystem. The optional `RiscvCore::tlm_interface` field can be set but is not read by `step`; no SystemC/C++ adapter exists. |
-| CLINT / PLIC | MMIO models, interrupt state, TLM target implementations | **Component** | Unit/integration tests compose them with `TlmBus`, but the public `SystemBus` does not map them and the Hart has no interrupt-line input. |
+| CLINT / PLIC | MMIO models, interrupt state, TLM target implementations | **CLINT window on the native path; PLIC still a component** | The native `SystemBus` serves the SiFive CLINT window (`mtime`, `mtimecmp`, `msip`). `mtime` advances one tick per completed Hart turn. Pending bits are not sampled into `mip`. PLIC is not mapped, and the Hart has no interrupt-line input. |
 | Debug | GDB RSP server, debug CLI, breakpoint and watchpoint managers | **Component** | Production code defines the `DebugTarget` contract, but only mock targets implement it; the product CLI does not expose a debug mode. |
-| Platform time | TLM-style `ScTime` and CLINT time functions | **Component** | Public `ExecutionResult.cycles` counts completed Hart turns, including synchronous trap entry, not only retired instructions. Started slots and `minstret` remain separate. No scheduler/device-time advancement is integrated. |
+| Platform time | Per-turn `mtime`, plus unused TLM `ScTime` helpers | **Public `mtime`; TLM crystal unused** | Public `ExecutionResult.cycles` counts completed Hart turns, including synchronous trap entry, not only retired instructions. `mtime` advances by one on each of those turns and does not advance on `SimulatorFailure`. `time` is that `mtime`. Native `mtime` lives in the CLINT window. Flat keeps the same per-turn counter and exposes it only through `time`, with no MMIO window. `executor::step_once` and a raw `RiscvCore::step` never publish that counter, so `time` reads 0 there. `mcycle` and `minstret` stay separate registers. The CLINT `clock_freq` / `ScTime` updater is not the public clock. |
 
 ## 5. Current → Target gap matrix
 
@@ -228,7 +231,7 @@ external RV64I compatibility.
 | Platform/address map | `SystemBus` is a fixed RAM/UART/HTIF switch inside `executor.rs`; `TlmBus` is separate | Choose one platform address-space abstraction with native and future TLM backends, without routing ISA semantics through two buses. |
 | MMU | Standalone `mmu` subsystem is not called by the core | Decide how Hart-owned instruction/data translation uses the same physical-access port as normal accesses and page-table walks. |
 | Traps and interrupts | A6 synchronous Machine traps are integrated through `step_outcome`; asynchronous line sampling remains absent | Define Platform source/input admission and Machine grants at Hart/profile-provided architectural boundaries; keep eligibility, masking, delegation, architectural priority, trap/debug/WFI transitions, and ISA-visible counter deltas in the Hart/profile. |
-| Devices | UART is minimally wired; CLINT/PLIC are TLM-side components; HTIF is embedded in the executor bus | Define device lifecycle, reset, MMIO routing, interrupt output, host service, and platform-exit contracts. |
+| Devices | UART is minimally wired; the CLINT window is on the native bus; PLIC is still TLM-side; HTIF is embedded in the executor bus | Interrupt output, PLIC routing, and the rest of the device lifecycle remain undefined. |
 | Time/scheduling | Public execution counts completed turns and started slots separately; side components have independent time concepts | Implement the accepted minimal ISS time/budget contract in [ADR-0004](decisions/0004-interrupt-time-scheduling-and-stop-boundaries.md) so it can later be driven by a VP scheduler without changing Hart semantics. |
 | Debug/run control | GDB and managers exist only against mock `DebugTarget` implementations | Bind debug operations to Machine/Runner state and distinguish debugger stops from traps, exits, limits, and faults. |
 | TLM/SystemC | Rust TLM-style components and an unused optional core field exist | Make TLM a `PhysicalAccess` adapter. Define a narrow C/C++ boundary later; do not add a TLM-specific Hart execution path. |
@@ -259,7 +262,7 @@ debt is not a new architecture-decision backlog or an approved sequence:
 This inventory does not claim that:
 
 - Full RV64I/M/A/F/D/C, privilege, or trap behavior is externally certified. The frozen 51-case nontrapping RV64I baseline and A7 ordinary physical-access evidence are bounded exceptions, not whole-extension or atomic certification.
-- MMU, CLINT, PLIC, GDB, or TLM is integrated into public ELF execution.
+- MMU, PLIC, GDB, or TLM is integrated into public ELF execution. The native CLINT window and its per-turn `mtime` are on that path. CLINT pending bits are not connected to `mip`.
 - the Rust TLM-style API is a SystemC-compatible adapter.
 - the current fixed 32-bit fetch policy is the intended final ISA boundary.
 - component tests constitute a bootable full-system machine or Virtual Platform.

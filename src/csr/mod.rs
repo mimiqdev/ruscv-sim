@@ -80,8 +80,10 @@ pub mod supervisor {
 }
 
 /// Unprivileged counter addresses.  `cycle` and `instret` are read-only
-/// shadows of `mcycle` and `minstret`.  `time` is absent because this
-/// profile has no `mtime`.
+/// shadows of `mcycle` and `minstret`.  `time` is a read-only shadow of
+/// platform `mtime` (privileged specification 20250508 §3.2.1).  The three
+/// together are Zicntr.  `mcounteren` stays 0, so S-mode and U-mode still
+/// trap on all three.
 pub mod unprivileged {
     pub const CYCLE: u16 = 0xC00;
     pub const TIME: u16 = 0xC01;
@@ -201,6 +203,8 @@ pub struct CsrFile {
     /// Hart ID (hardware thread ID)
     #[allow(dead_code)]
     hart_id: u64,
+    /// `mtime` at the start of the current instruction. Not `mcycle`.
+    time: u64,
 }
 
 impl CsrFile {
@@ -241,7 +245,13 @@ impl CsrFile {
             observed_writes: None,
             privilege: PrivilegeMode::Machine,
             hart_id,
+            time: 0,
         }
+    }
+
+    /// Publish the platform `mtime` for this instruction's `time` read.
+    pub(crate) fn set_time(&mut self, mtime: u64) {
+        self.time = mtime;
     }
 
     /// Return whether `addr` is a register that always reads zero and
@@ -275,6 +285,7 @@ impl CsrFile {
             supervisor::SIE => Some(self.stored(machine::MIE) & self.stored(machine::MIDELEG)),
             supervisor::SIP => Some(self.stored(machine::MIP) & self.stored(machine::MIDELEG)),
             unprivileged::CYCLE => Some(self.stored(machine::MCYCLE)),
+            unprivileged::TIME => Some(self.time),
             unprivileged::INSTRET => Some(self.stored(machine::MINSTRET)),
             _ if Self::is_read_only_zero(addr) => Some(0),
             _ => self.csrs.get(&addr).copied(),
@@ -370,11 +381,14 @@ impl CsrFile {
         if (self.privilege as u8) < (required as u8) {
             return Err(CsrError::PrivilegeViolation(addr));
         }
-        // mcounteren is read-only zero, so CY and IR stay clear.  A read of
-        // either shadow from S or U is therefore illegal.  Machine mode is
-        // not gated by mcounteren.
+        // mcounteren is read-only zero, so CY, TM, and IR stay clear.  A
+        // read of `cycle`, `time`, or `instret` from S or U is illegal.
+        // Machine mode is not gated by mcounteren.
         if self.privilege != PrivilegeMode::Machine
-            && matches!(addr, unprivileged::CYCLE | unprivileged::INSTRET)
+            && matches!(
+                addr,
+                unprivileged::CYCLE | unprivileged::TIME | unprivileged::INSTRET
+            )
         {
             return Err(CsrError::PrivilegeViolation(addr));
         }

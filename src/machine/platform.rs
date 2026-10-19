@@ -29,6 +29,10 @@ pub(super) struct Platform {
     pub ram_tohost_offset: Option<u64>,
     uart: Option<Arc<Mutex<Uart16550>>>,
     events: Arc<Mutex<Vec<PlatformEvent>>>,
+    /// Native CLINT. Flat has no device window.
+    bus: Option<Arc<Mutex<SystemBus>>>,
+    /// Flat `mtime`. Native time lives in the CLINT.
+    flat_mtime: u64,
 }
 impl Platform {
     pub fn build(config: &MachineConfig, image: &LoadImage) -> Result<Self, MachineError> {
@@ -60,58 +64,63 @@ impl Platform {
         let ram = Arc::new(Mutex::new(SimpleMemory::new(image.memory_size())));
         Self::place(&ram, image)?;
         let events = Arc::new(Mutex::new(Vec::new()));
-        let (typed, fetch, data, uart): (SharedMemory, SharedPhysicalAccess, SharedDataAccess, _) =
-            match config.platform {
-                PlatformKind::Flat => {
-                    let port = || {
-                        Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-                            NativeRamBackend::new(ram.clone(), 0, image.memory_size()),
-                        )))
-                    };
-                    (ram.clone(), port(), port(), None)
-                }
-                PlatformKind::Native => {
-                    let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
-                    let queue = events.clone();
-                    let output = config.uart_output.clone();
-                    uart.lock()
-                        .map_err(|_| MachineError::Poisoned)?
-                        .set_output_callback(move |byte| {
-                            queue
-                                .lock()
-                                .expect("Platform event lock")
-                                .push(PlatformEvent::UartTransmit(byte));
-                            if let Some(callback) = &output {
-                                callback(byte);
-                            }
-                        });
-                    let bus = Arc::new(Mutex::new(SystemBus::new(
-                        ram.clone(),
-                        uart.clone(),
-                        image.base_addr(),
-                        image.memory_size(),
-                    )));
-                    let queue = events.clone();
-                    let callback = config.htif_write.clone();
-                    bus.lock()
-                        .map_err(|_| MachineError::Poisoned)?
-                        .set_htif_write_callback(move |value| {
-                            queue
-                                .lock()
-                                .expect("Platform event lock")
-                                .push(PlatformEvent::HtifWrite(value));
-                            if let Some(callback) = &callback {
-                                callback(value);
-                            }
-                        });
-                    let port = || {
-                        Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-                            SystemBus::physical_backend(bus.clone()),
-                        )))
-                    };
-                    (bus.clone(), port(), port(), Some(uart))
-                }
-            };
+        let (typed, fetch, data, uart, bus): (
+            SharedMemory,
+            SharedPhysicalAccess,
+            SharedDataAccess,
+            _,
+            _,
+        ) = match config.platform {
+            PlatformKind::Flat => {
+                let port = || {
+                    Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+                        NativeRamBackend::new(ram.clone(), 0, image.memory_size()),
+                    )))
+                };
+                (ram.clone(), port(), port(), None, None)
+            }
+            PlatformKind::Native => {
+                let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
+                let queue = events.clone();
+                let output = config.uart_output.clone();
+                uart.lock()
+                    .map_err(|_| MachineError::Poisoned)?
+                    .set_output_callback(move |byte| {
+                        queue
+                            .lock()
+                            .expect("Platform event lock")
+                            .push(PlatformEvent::UartTransmit(byte));
+                        if let Some(callback) = &output {
+                            callback(byte);
+                        }
+                    });
+                let bus = Arc::new(Mutex::new(SystemBus::new(
+                    ram.clone(),
+                    uart.clone(),
+                    image.base_addr(),
+                    image.memory_size(),
+                )));
+                let queue = events.clone();
+                let callback = config.htif_write.clone();
+                bus.lock()
+                    .map_err(|_| MachineError::Poisoned)?
+                    .set_htif_write_callback(move |value| {
+                        queue
+                            .lock()
+                            .expect("Platform event lock")
+                            .push(PlatformEvent::HtifWrite(value));
+                        if let Some(callback) = &callback {
+                            callback(value);
+                        }
+                    });
+                let port = || {
+                    Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+                        SystemBus::physical_backend(bus.clone()),
+                    )))
+                };
+                (bus.clone(), port(), port(), Some(uart), Some(bus))
+            }
+        };
         let offset = match config.platform {
             PlatformKind::Native => selected_tohost.checked_sub(image.base_addr()),
             PlatformKind::Flat => Some(selected_tohost),
@@ -129,7 +138,29 @@ impl Platform {
             ram_tohost_offset,
             uart,
             events,
+            bus,
+            flat_mtime: 0,
         })
+    }
+
+    pub(super) fn read_mtime(&self) -> Result<u64, MachineError> {
+        if let Some(bus) = &self.bus {
+            let bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            return Ok(bus.mtime());
+        }
+        Ok(self.flat_mtime)
+    }
+
+    /// One completed Hart turn. A `SimulatorFailure` does not call this.
+    /// Returns the `mtime` visible to the next instruction.
+    pub(super) fn advance_mtime(&mut self) -> Result<u64, MachineError> {
+        if let Some(bus) = &self.bus {
+            let mut bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            bus.advance_mtime();
+            return Ok(bus.mtime());
+        }
+        self.flat_mtime = self.flat_mtime.wrapping_add(1);
+        Ok(self.flat_mtime)
     }
 
     /// One active RAM allocation; image descriptions are immutable restoration
