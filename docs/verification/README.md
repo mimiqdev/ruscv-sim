@@ -84,6 +84,8 @@ Test language follows the layer rather than the simulator implementation languag
 - [Stage 4 documentation-rotation audit](stage4-contract-rotation.md) — historical audit of the A10 to Stage 4 rotation; the promoted-text check is pinned to `9f6f678`
 - [Stage 5 documentation-rotation audit](stage5-contract-rotation.md) — whole-contract preservation, phrase allowlist and link audit for the Stage 4 to Stage 5 rotation; no runtime or performance claims
 - [Stage 4 final review](stage4-final-review.md) — §7 item 10 review of Sv39, privilege, CSRs, traps, delegation, MPRV, and SFENCE.VMA
+- [Stage 5 final review](stage5-final-review.md) — §7 item 9 review of the clock, MSIP and MTIP, PLIC source 1, WFI, and the public exit, read at `fb8399b`
+- [Stage 5 public exit](stage5-exit.md) — §7 checks 1 through 8 for the implementation, and the pointer to the item 9 review
 - [Stage 4 progress and closeout](stage4-closeout.md) — oracle-digest decision, CI gate, review pointer, and local gate evidence; not a formal completion
 - [A9 T4 source/tool/artifact and per-case evidence](a9-t4-guest-evidence.json) — self-contained checkpoint execution record; not ACT4 or milestone certification
 - [External RISC-V test integration contract](external-riscv-tests.md)
