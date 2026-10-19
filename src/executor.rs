@@ -1784,12 +1784,31 @@ fn run_native_inner(
                 Some(diagnostic.to_string()),
             ));
         }
+        if let StepOutcome::DebugHalted { completed_turn, .. } = turn.hart().outcome {
+            if completed_turn {
+                control.complete_turn();
+            }
+            let pc = turn.hart().control.after_pc;
+            drop(turn);
+            return Ok(cli_result(
+                &machine,
+                &placement,
+                1,
+                control.cycles(),
+                pc,
+                false,
+                Some("DebugHalted".to_string()),
+            ));
+        }
         let step = match &turn.hart().outcome {
             StepOutcome::InstructionRetired(_) => Ok(()),
             StepOutcome::TrapEntered(trap) => match trap.continuation {
                 TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
             },
             StepOutcome::Waiting => unreachable!("a waiting hart already stopped the run"),
+            StepOutcome::DebugHalted { .. } => {
+                unreachable!("a debug halt already stopped the run")
+            }
             StepOutcome::SimulatorFailure(failure) => Err(format_failure(failure.clone())),
         };
         // Raw callback facts are visible only after the parent Hart transition.
@@ -2081,6 +2100,21 @@ impl RiscVSimulator {
         self.machine.set_verbose(verbose);
     }
 
+    /// Debugger write of `dcsr` on the loaded hart. Returns the stored value.
+    pub fn write_dcsr(&mut self, value: u64) -> u64 {
+        self.machine.write_dcsr(value)
+    }
+
+    /// Read `dcsr` from the loaded hart.
+    pub fn dcsr(&self) -> u64 {
+        self.machine.dcsr()
+    }
+
+    /// Read `dpc` from the loaded hart.
+    pub fn dpc(&self) -> u64 {
+        self.machine.dpc()
+    }
+
     /// Load ELF data into memory and reset the core to its entry point.
     ///
     /// # Address handling
@@ -2181,7 +2215,10 @@ impl RiscVSimulator {
             StepOutcome::SimulatorFailure(failure) => Err(ExecutorError::ExecutionError(
                 format_failure(failure.clone()),
             )),
-            _ => Ok(()),
+            StepOutcome::DebugHalted { .. }
+            | StepOutcome::InstructionRetired(_)
+            | StepOutcome::TrapEntered(_)
+            | StepOutcome::Waiting => Ok(()),
         }
     }
 
@@ -2251,12 +2288,27 @@ impl RiscVSimulator {
                 };
                 return Ok(self.finish(control.cycles(), 1, false, Some(diagnostic.to_string())));
             }
+            if let StepOutcome::DebugHalted { completed_turn, .. } = turn.hart().outcome {
+                if completed_turn {
+                    control.complete_turn();
+                }
+                drop(turn);
+                return Ok(self.finish(
+                    control.cycles(),
+                    1,
+                    false,
+                    Some("DebugHalted".to_string()),
+                ));
+            }
             let step = match &turn.hart().outcome {
                 StepOutcome::InstructionRetired(_) => Ok(()),
                 StepOutcome::TrapEntered(trap) => match trap.continuation {
                     TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
                 },
                 StepOutcome::Waiting => unreachable!("a waiting hart already stopped the run"),
+                StepOutcome::DebugHalted { .. } => {
+                    unreachable!("a debug halt already stopped the run")
+                }
                 StepOutcome::SimulatorFailure(failure) => Err(format!(
                     "Execution error: {}",
                     format_failure(failure.clone())

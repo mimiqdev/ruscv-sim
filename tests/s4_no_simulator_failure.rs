@@ -79,6 +79,9 @@ impl Sweep {
                 StepOutcome::Waiting => {
                     panic!("encoding {raw:#010x} in {mode:?} waited on a single step")
                 }
+                StepOutcome::DebugHalted { .. } => {
+                    panic!("encoding {raw:#010x} in {mode:?} entered Debug Mode")
+                }
                 StepOutcome::SimulatorFailure(failure) => {
                     panic!("encoding {raw:#010x} in {mode:?} is a simulator failure: {failure:?}")
                 }
