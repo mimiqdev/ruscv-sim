@@ -646,7 +646,10 @@ impl Machine {
             .map_err(|_| MachineError::Poisoned)?;
         acknowledge_drain(&mut admission, domain.as_ref())
     }
-    /// Coherent inspection under admission exclusion, not raw volatile handles.
+    /// Debugger updates between boundaries. The installed lock serializes with
+    /// the hart turn, and the latch is sampled at the next `execute_turn`, so
+    /// this path skips the admission gate. Gating it on drain completion would
+    /// refuse a `haltreq` while the machine is still running.
     fn with_core_mut<T>(
         &self,
         update: impl FnOnce(&mut RiscvCore) -> T,
@@ -683,6 +686,7 @@ impl Machine {
         self.with_core_mut(|core| core.debug_resume())
     }
 
+    /// Coherent inspection under admission exclusion, not raw volatile handles.
     pub fn inspect(&self) -> Result<MachineInspection, MachineError> {
         let admission = lock(&self.inner.gate)?;
         if admission.uncertain {

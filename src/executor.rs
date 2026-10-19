@@ -1784,10 +1784,21 @@ fn run_native_inner(
                 Some(diagnostic.to_string()),
             ));
         }
-        if let StepOutcome::DebugHalted { completed_turn, .. } = turn.hart().outcome {
-            if completed_turn {
-                control.complete_turn();
+        // An entry that did not complete a turn has no guest exit to report.
+        // A completed single-step still runs the Stage 5 exit check. Contract
+        // D9 counts the step. D12 ends the process on guest exit.
+        let completed_debug = matches!(
+            turn.hart().outcome,
+            StepOutcome::DebugHalted {
+                completed_turn: true,
+                ..
             }
+        );
+        if let StepOutcome::DebugHalted {
+            completed_turn: false,
+            ..
+        } = turn.hart().outcome
+        {
             let pc = turn.hart().control.after_pc;
             drop(turn);
             return Ok(cli_result(
@@ -1806,9 +1817,14 @@ fn run_native_inner(
                 TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
             },
             StepOutcome::Waiting => unreachable!("a waiting hart already stopped the run"),
-            StepOutcome::DebugHalted { .. } => {
-                unreachable!("a debug halt already stopped the run")
-            }
+            StepOutcome::DebugHalted {
+                completed_turn: true,
+                ..
+            } => Ok(()),
+            StepOutcome::DebugHalted {
+                completed_turn: false,
+                ..
+            } => unreachable!("an incomplete debug halt already stopped the run"),
             StepOutcome::SimulatorFailure(failure) => Err(format_failure(failure.clone())),
         };
         // Raw callback facts are visible only after the parent Hart transition.
@@ -1915,6 +1931,17 @@ fn run_native_inner(
                 ));
             }
             RunDecision::Continue | RunDecision::Timeout => {
+                if completed_debug {
+                    return Ok(cli_result(
+                        &machine,
+                        &placement,
+                        1,
+                        control.cycles(),
+                        machine.state().pc,
+                        false,
+                        Some("DebugHalted".to_string()),
+                    ));
+                }
                 // Preserve periodic diagnostics on the final timeout slot.
                 if verbose && control.cycles().is_multiple_of(1000) {
                     let state = machine.state();
@@ -2286,10 +2313,20 @@ impl RiscVSimulator {
                 };
                 return Ok(self.finish(control.cycles(), 1, false, Some(diagnostic.to_string())));
             }
-            if let StepOutcome::DebugHalted { completed_turn, .. } = turn.hart().outcome {
-                if completed_turn {
-                    control.complete_turn();
+            // An entry that did not complete a turn has no guest exit to report.
+            // A completed single-step still runs the Stage 5 exit check.
+            let completed_debug = matches!(
+                turn.hart().outcome,
+                StepOutcome::DebugHalted {
+                    completed_turn: true,
+                    ..
                 }
+            );
+            if let StepOutcome::DebugHalted {
+                completed_turn: false,
+                ..
+            } = turn.hart().outcome
+            {
                 drop(turn);
                 return Ok(self.finish(
                     control.cycles(),
@@ -2304,9 +2341,14 @@ impl RiscVSimulator {
                     TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
                 },
                 StepOutcome::Waiting => unreachable!("a waiting hart already stopped the run"),
-                StepOutcome::DebugHalted { .. } => {
-                    unreachable!("a debug halt already stopped the run")
-                }
+                StepOutcome::DebugHalted {
+                    completed_turn: true,
+                    ..
+                } => Ok(()),
+                StepOutcome::DebugHalted {
+                    completed_turn: false,
+                    ..
+                } => unreachable!("an incomplete debug halt already stopped the run"),
                 StepOutcome::SimulatorFailure(failure) => Err(format!(
                     "Execution error: {}",
                     format_failure(failure.clone())
@@ -2372,7 +2414,16 @@ impl RiscVSimulator {
                 RunDecision::ExecutionError(error) => {
                     return Ok(self.finish(control.cycles(), 1, false, Some(error.clone())));
                 }
-                RunDecision::Continue | RunDecision::Timeout => {}
+                RunDecision::Continue | RunDecision::Timeout => {
+                    if completed_debug {
+                        return Ok(self.finish(
+                            control.cycles(),
+                            1,
+                            false,
+                            Some("DebugHalted".to_string()),
+                        ));
+                    }
+                }
             }
         }
 

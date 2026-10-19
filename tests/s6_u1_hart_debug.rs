@@ -2,6 +2,7 @@
 mod common;
 use common::public_elf as elf;
 
+use ruscv_sim::core::observation::Observation;
 use ruscv_sim::core::trap::{ExceptionCause, InterruptCause, Trap};
 use ruscv_sim::core::{DebugCause, StepOutcome};
 use ruscv_sim::csr::{machine, mstatus, unprivileged};
@@ -260,6 +261,39 @@ fn each_halt_cause_reports_dcsr_cause_prv_and_dpc() {
     assert_eq!(step.state().regs[1], 5);
 }
 
+/// Debug 1.0 `dcsr.ebreaks`. An S-mode EBREAK redirects only when `ebreaks`
+/// is 1. `ebreaku` does not.
+#[test]
+fn supervisor_ebreak_redirects_only_when_ebreaks_is_set() {
+    let (mut core, _) = core_with(&[EBREAK]);
+    core.state_mut().privilege = PrivilegeMode::Supervisor;
+    core.state_mut()
+        .csr
+        .set_privilege(PrivilegeMode::Supervisor);
+    core.write_dcsr(EBREAKU);
+    match core.step_outcome() {
+        StepOutcome::TrapEntered(trap) => {
+            assert_eq!(trap.cause, Trap::Exception(ExceptionCause::Breakpoint));
+        }
+        other => panic!("ebreaku redirected an S-mode EBREAK: {other:?}"),
+    }
+
+    let (mut core, _) = core_with(&[EBREAK]);
+    core.state_mut().privilege = PrivilegeMode::Supervisor;
+    core.state_mut()
+        .csr
+        .set_privilege(PrivilegeMode::Supervisor);
+    core.write_dcsr(EBREAKS);
+    match core.step_outcome() {
+        StepOutcome::DebugHalted {
+            cause: DebugCause::Ebreak,
+            completed_turn: false,
+        } => {}
+        other => panic!("ebreaks did not redirect an S-mode EBREAK: {other:?}"),
+    }
+    assert_eq!(dcsr_prv(core.dcsr()), PrivilegeMode::Supervisor as u64);
+}
+
 /// Privileged §3.1.15 cause 3. §7 item 1: with the ebreak bit clear, EBREAK
 /// still traps with cause 3.
 #[test]
@@ -321,6 +355,11 @@ fn halt_during_wfi_sets_dpc_to_wfi_plus_four_and_clears_the_wait() {
     let machine = machine_with(&code);
     retire(&machine, wfi + 1);
     assert_eq!(machine.inspect().unwrap().hart.pc, pc_at(wfi + 1));
+    let waiting = take_turn(&machine);
+    assert!(
+        matches!(waiting, StepOutcome::Waiting),
+        "the hart was not waiting before haltreq: {waiting:?}"
+    );
     machine.set_haltreq(true).unwrap();
     let halted = take_turn(&machine);
     assert!(matches!(
@@ -490,6 +529,24 @@ fn haltreq_beside_a_takeable_interrupt_stops_at_that_pc_and_resume_takes_it() {
     assert_eq!(csr_of(&machine, machine::MEPC), pc);
 }
 
+/// Debug 1.0 Sdext, Resume, and privileged `mstatus.MPRV`. MPRV is cleared
+/// only when the resumed privilege is below M. Resume to M keeps it.
+#[test]
+fn resume_to_machine_keeps_mprv() {
+    let (mut core, _) = core_with(&[]);
+    core.state_mut()
+        .csr
+        .write(machine::MSTATUS, mstatus::MPRV)
+        .expect("mprv");
+    core.set_haltreq(true);
+    core.step_outcome();
+    core.set_haltreq(false);
+    core.write_dcsr(PrivilegeMode::Machine as u64);
+    assert!(core.debug_resume());
+    assert_eq!(core.state().privilege, PrivilegeMode::Machine);
+    assert_ne!(core_csr(&core, machine::MSTATUS) & mstatus::MPRV, 0);
+}
+
 /// Debug 1.0 Sdext, Resume: below M, `mstatus.MPRV` is cleared. §7 item 1:
 /// resume to U clears MPRV. The same sentence in the spec covers S.
 #[test]
@@ -623,6 +680,55 @@ fn mtime_does_not_move_while_the_hart_is_halted() {
     assert_eq!(csr_of(&machine, unprivileged::TIME), mtime);
     assert_eq!(csr_of(&machine, machine::MCYCLE), mcycle);
     assert_eq!(csr_of(&machine, machine::MINSTRET), minstret);
+}
+
+/// D9. A single-step retires the instruction. The outcome stays
+/// `DebugHalted`, and the retirement is still the control fact and the
+/// commit observation. `minstret` moves from 0 to 1.
+#[test]
+fn stepped_retirement_is_visible_while_the_outcome_stays_debug_halted() {
+    let word = elf::addi(1, 0, 1);
+    let (mut core, _) = core_with(&[word]);
+    core.write_dcsr(core.dcsr() | STEP);
+    let turn = core.step_transition(true);
+    assert!(matches!(
+        turn.outcome,
+        StepOutcome::DebugHalted {
+            cause: DebugCause::Step,
+            completed_turn: true,
+        }
+    ));
+    assert!(turn.control.retired);
+    assert!(!turn.control.trap_entered);
+    assert_eq!(turn.control.minstret_before, 0);
+    assert_eq!(turn.control.minstret_after, 1);
+    match turn.observation {
+        Some(Observation::Commit(record)) => assert_eq!(record.retired.instruction, word),
+        other => panic!("stepped retirement had no commit observation: {other:?}"),
+    }
+}
+
+/// D9 and D12. §5 keeps the Stage 5 exit check on a completed turn. A stepped
+/// `sd` of the guest exit still exits 0.
+#[test]
+fn stepped_sd_to_tohost_exits_zero() {
+    let code = [
+        elf::auipc(5, 1),
+        elf::addi(6, 0, 1),
+        elf::slli(6, 6, 63),
+        elf::sd(6, 5, 0),
+    ];
+    let bytes = elf::elf_with_code(&code, 0, true, false, elf::BSS_MEMORY_SIZE);
+    let mut sim = RiscVSimulator::new(0x20_000);
+    sim.load_elf(&bytes).expect("flat load");
+    for _ in 0..3 {
+        sim.step().expect("setup");
+    }
+    sim.write_dcsr(sim.dcsr() | STEP);
+    let result = sim.run(Some(10)).expect("flat run");
+    assert_eq!(result.exit_code, 0, "{result:?}");
+    assert!(result.error.is_none(), "{result:?}");
+    assert!(!result.timed_out);
 }
 
 /// Debug 1.0 `dpc` table, halt request: the address of the next instruction,

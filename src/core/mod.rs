@@ -985,15 +985,18 @@ impl RiscvCore {
         self.observation_demand = observe;
         self.memory_journal = observe.then(|| RefCell::new(Vec::new()));
         self.gpr_destination = None;
-        let (outcome, instruction_attempted) = self.execute_turn();
+        let (outcome, instruction_attempted, stepped) = self.execute_turn();
+        // A single-step publishes DebugHalted. The retirement or trap that
+        // D9 already counted is still the control fact and the observation.
+        let fact = stepped.as_ref().unwrap_or(&outcome);
         let control = ControlFacts {
             before_pc,
             after_pc: self.state.pc,
             before_privilege,
             after_privilege: self.state.privilege,
             instruction_attempted,
-            retired: matches!(outcome, StepOutcome::InstructionRetired(_)),
-            trap_entered: matches!(outcome, StepOutcome::TrapEntered(_)),
+            retired: matches!(fact, StepOutcome::InstructionRetired(_)),
+            trap_entered: matches!(fact, StepOutcome::TrapEntered(_)),
             minstret_before,
             minstret_after: self.state.csr.minstret_value(),
         };
@@ -1002,7 +1005,7 @@ impl RiscvCore {
             observation::build(
                 &before,
                 &mut self.state,
-                &outcome,
+                fact,
                 self.gpr_destination,
                 memory.unwrap_or_default(),
             )
@@ -1018,10 +1021,11 @@ impl RiscvCore {
         }
     }
 
-    /// Return the outcome and whether an instruction attempt began.
-    fn execute_turn(&mut self) -> (StepOutcome, bool) {
+    /// Return the outcome, whether an instruction attempt began, and the
+    /// instruction or trap a single-step wrapped, when one committed.
+    fn execute_turn(&mut self) -> (StepOutcome, bool, Option<StepOutcome>) {
         if let Some(failure) = &self.unresolved_physical_access {
-            return (StepOutcome::SimulatorFailure(failure.clone()), false);
+            return (StepOutcome::SimulatorFailure(failure.clone()), false, None);
         }
 
         // CoreState is the architectural mode authority at this boundary.
@@ -1031,6 +1035,7 @@ impl RiscvCore {
             self.state.csr.set_privilege(self.state.privilege);
         }
 
+        // Debug Mode does not retire. A repeated call keeps the recorded cause.
         if self.debug.halted {
             let cause = self
                 .debug
@@ -1042,24 +1047,31 @@ impl RiscvCore {
                     completed_turn: false,
                 },
                 false,
+                None,
             );
         }
 
+        // haltreq is higher than a takeable interrupt and higher than step.
+        // Debug 1.0 cause-priority table. Contract D6. A waiting WFI has
+        // already retired, so dpc is that instruction plus 4.
         if self.debug.haltreq {
             return (
                 self.enter_debug(DebugCause::HaltReq, self.state.pc, false),
                 false,
+                None,
             );
         }
 
+        // Setting `step` while already in a WFI wait returns Waiting.
         if self.wfi_wait {
             let wake = self.state.csr.mip() & self.state.csr.mie() != 0;
             if !wake {
-                return (StepOutcome::Waiting, false);
+                return (StepOutcome::Waiting, false, None);
             }
             self.wfi_wait = false;
         }
 
+        // stepie is fixed 0, so a takeable interrupt waits until after the step.
         if self.debug.take_interrupt_this_turn() {
             if let Some(cause) = self.accepted_interrupt() {
                 // Privileged §3.1.9 evaluates the interrupt before the next
@@ -1068,15 +1080,22 @@ impl RiscvCore {
                 return (
                     self.enter_trap(Trap::Interrupt(cause), self.state.pc, 0, None),
                     false,
+                    None,
                 );
             }
         }
 
         let outcome = self.execute_instruction();
         if self.debug.step {
-            return (self.finish_step(outcome), true);
+            let stepped = match &outcome {
+                StepOutcome::InstructionRetired(_) | StepOutcome::TrapEntered(_) => {
+                    Some(outcome.clone())
+                }
+                _ => None,
+            };
+            return (self.finish_step(outcome), true, stepped);
         }
-        (outcome, true)
+        (outcome, true, None)
     }
 
     fn enter_debug(&mut self, cause: DebugCause, dpc: u64, completed_turn: bool) -> StepOutcome {
@@ -1914,7 +1933,7 @@ impl RiscvCore {
         }
     }
 
-    /// Reset core
+    /// Reset core. Clears the `haltreq` latch.
     /// entry_point: virtual address of entry point
     /// base_addr: base address of loaded ELF (used for VA -> PA translation)
     pub fn reset(&mut self, entry_point: u64, base_addr: u64) {
