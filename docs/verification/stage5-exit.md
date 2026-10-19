@@ -1,6 +1,6 @@
 # Stage 5 public exit
 
-These are the checks in `docs/dev-plan.md` §7. They are evidence for the implementation, not acceptance criteria of that contract. Check 9 is the review of the U5 pull request and is not claimed here.
+These are the checks in `docs/dev-plan.md` §7. They are evidence for the implementation, not acceptance criteria of that contract. Check 9 is recorded in the Stage 5 final review of `main` at `fb8399b`.
 
 `tools/a10/public-v1.json` is not rewritten. `suite-v1.json` has no `oracle_sha256`. The legal-WFI fall-through expectation lived in `s4_tvm_tsr_tw` and its harness, and that is where it was updated. That guest now waits for a later machine timer and leaves `WFI_WAITED` only after the wake. The native CLI and library routes require the marker. Flat leaves it zero. No A10 fixture executes WFI. A search of `tools/a10` finds no `wfi`, no `WFI`, and no `0x10500073`, so `tools/a10/public-v1.json` needs no change.
 
@@ -14,4 +14,4 @@ Deviation from the earlier plan sentence that new guests record SHA-256 and that
 6. Done. The ELF suite and `s4_profile_guests_pass_through_cli_library_and_flat_facade` stay green. The legal-WFI case in `s4_tvm_tsr_tw` is the recorded change. Its illegal WFI cases still trap. Flat does not run the S-mode wait, because that case touches the CLINT. Guests that do not touch the CLINT or the PLIC keep their flat results. M-mode `time` is covered by `s5_counters`.
 7. Done. `s4_delegation` requires `medeleg` and `mideleg` to read 0. The machine timer, software, and external tests take those interrupts in M. `s4_supervisor_interrupt` keeps `sip` and `sie` reading 0 in S.
 8. Done. The local quality gate is recorded on the U5 pull request. CI Quality-and-tests is green at `962e475`: https://github.com/mimiqdev/ruscv-sim/actions/runs/39168555285. The workflow runs that same job for a pull request into any branch and does not drop a check.
-9. Not claimed. An independent review of the U5 head is the record.
+9. Recorded in [the Stage 5 final review](stage5-final-review.md) for `main` at `fb8399b20ee1d6b44bc6da157c3cc3f18b784474`. No instruction-behavior defect was found. Findings F1, F2, and F3 in that record stay open. They are contract wording and evidence citations. This record does not change simulator code, so there is no code fix to re-verify.
