@@ -281,9 +281,6 @@ impl Installed {
             }
         };
         let waiting = matches!(hart.outcome, StepOutcome::Waiting);
-        // A haltreq or ebreak entry is not a completed turn, and neither is a
-        // later call while the hart is already halted. A single-step's
-        // retirement still counts once. Debug 1.0 stoptime, contract D9.
         let debug_without_turn = matches!(
             hart.outcome,
             StepOutcome::DebugHalted {
@@ -668,7 +665,6 @@ impl Machine {
         self.with_core_mut(|core| core.set_haltreq(haltreq))
     }
 
-    /// Read `dcsr`.
     pub fn dcsr(&self) -> Result<u64, MachineError> {
         self.with_core_mut(|core| core.dcsr())
     }
@@ -678,7 +674,6 @@ impl Machine {
         self.with_core_mut(|core| core.write_dcsr(value))
     }
 
-    /// Read `dpc`.
     pub fn dpc(&self) -> Result<u64, MachineError> {
         self.with_core_mut(|core| core.dpc())
     }

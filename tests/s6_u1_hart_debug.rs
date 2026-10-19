@@ -1,8 +1,3 @@
-//! Stage 6 U1. Hart Debug Mode.
-//!
-//! Each test names the Debug Specification 1.0 clause it locks and the
-//! `docs/dev-plan.md` §7 item 1 sentence it proves.
-
 #[allow(dead_code)]
 mod common;
 use common::public_elf as elf;
@@ -114,7 +109,6 @@ fn retire(machine: &Machine, count: usize) {
     }
 }
 
-/// Drop the boundary receipt before the next `inspect` or `step`.
 fn take_turn(machine: &Machine) -> StepOutcome {
     let turn = machine.step(false).expect("step");
     let outcome = turn.hart().outcome.clone();

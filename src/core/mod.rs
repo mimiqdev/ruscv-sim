@@ -129,7 +129,6 @@ pub enum StepOutcome {
     /// `ExecutionResult.cycles` stay put (Debug 1.0 `dcsr.stopcount` /
     /// `stoptime`, privileged §3.1.10, contract D9).
     DebugHalted {
-        /// Why this entry happened.
         cause: DebugCause,
         /// This call completed one Hart turn before the entry.
         completed_turn: bool,
@@ -237,7 +236,6 @@ pub struct RiscvCore {
     /// Privileged specification 20250508 §3.3.3. The next pre-fetch sample
     /// is the wake check.
     wfi_wait: bool,
-    /// Sdext halt state, `dcsr`, `dpc`, and the scratch registers.
     debug: debug_mode::HartDebug,
 }
 
@@ -892,19 +890,17 @@ impl RiscvCore {
 
     /// Level-sensitive halt request sampled at the next instruction boundary.
     ///
-    /// Debug 1.0 `dmcontrol.haltreq`. U2's Debug Module sets this bit. The
-    /// Hart resumes only through [`Self::debug_resume`]; a later boundary
-    /// halts again while the bit remains set.
+    /// Debug 1.0 `dmcontrol.haltreq`. The Hart resumes only through
+    /// [`Self::debug_resume`]. A later boundary halts again while the bit
+    /// remains set.
     pub fn set_haltreq(&mut self, haltreq: bool) {
         self.debug.haltreq = haltreq;
     }
 
-    /// Whether `haltreq` is currently set.
     pub fn haltreq(&self) -> bool {
         self.debug.haltreq
     }
 
-    /// Whether the Hart is in Debug Mode.
     pub fn in_debug_mode(&self) -> bool {
         self.debug.halted
     }
@@ -935,7 +931,6 @@ impl RiscvCore {
         self.debug.dscratch0
     }
 
-    /// Debugger write of `dscratch0`.
     pub fn write_dscratch0(&mut self, value: u64) {
         self.debug.dscratch0 = value;
     }
@@ -945,17 +940,14 @@ impl RiscvCore {
         self.debug.dscratch1
     }
 
-    /// Debugger write of `dscratch1`.
     pub fn write_dscratch1(&mut self, value: u64) {
         self.debug.dscratch1 = value;
     }
 
     /// Leave Debug Mode. Returns false when the Hart is not halted.
     ///
-    /// Debug 1.0 Sdext, Resume. PC becomes `dpc`. Privilege becomes
-    /// `dcsr.prv`. `mstatus.MPRV` is cleared when the new privilege is below
-    /// M, because `dcsr.mprven` is fixed 1. `haltreq` is not cleared; U2 must
-    /// not call this while that bit is set.
+    /// PC becomes `dpc`. Privilege becomes `dcsr.prv`. `mstatus.MPRV` is
+    /// cleared when the new privilege is below M. `haltreq` is not cleared.
     pub fn debug_resume(&mut self) -> bool {
         if !self.debug.halted {
             return false;
@@ -1039,7 +1031,6 @@ impl RiscvCore {
             self.state.csr.set_privilege(self.state.privilege);
         }
 
-        // Debug Mode does not retire. A repeated call keeps the recorded cause.
         if self.debug.halted {
             let cause = self
                 .debug
@@ -1054,17 +1045,12 @@ impl RiscvCore {
             );
         }
 
-        // haltreq is higher than a takeable interrupt and higher than step.
-        // Debug 1.0 cause-priority table. Contract D6. A waiting WFI has
-        // already retired, so dpc is that instruction plus 4.
         if self.debug.haltreq {
             return (
                 self.enter_debug(DebugCause::HaltReq, self.state.pc, false),
                 false,
             );
         }
-
-        let stepping = self.debug.step;
 
         if self.wfi_wait {
             let wake = self.state.csr.mip() & self.state.csr.mie() != 0;
@@ -1074,8 +1060,7 @@ impl RiscvCore {
             self.wfi_wait = false;
         }
 
-        // stepie is fixed 0, so a takeable interrupt waits until after the step.
-        if !stepping {
+        if self.debug.take_interrupt_this_turn() {
             if let Some(cause) = self.accepted_interrupt() {
                 // Privileged §3.1.9 evaluates the interrupt before the next
                 // instruction. A takeable pending interrupt is taken at this
@@ -1088,18 +1073,17 @@ impl RiscvCore {
         }
 
         let outcome = self.execute_instruction();
-        if stepping {
+        if self.debug.step {
             return (self.finish_step(outcome), true);
         }
         (outcome, true)
     }
 
-    /// Record a Debug Mode entry. Does not retire and does not tick counters.
     fn enter_debug(&mut self, cause: DebugCause, dpc: u64, completed_turn: bool) -> StepOutcome {
         self.debug.halted = true;
         self.debug.cause = Some(cause);
         self.debug.prv = self.state.privilege;
-        self.debug.dpc = dpc & !0b11;
+        self.debug.dpc = debug_mode::legal_dpc(dpc);
         self.state.reservation = None;
         self.wfi_wait = false;
         StepOutcome::DebugHalted {
@@ -1108,8 +1092,6 @@ impl RiscvCore {
         }
     }
 
-    /// One stepped instruction has finished. Enter Debug Mode once, with no
-    /// second counter tick. An `ebreak` that already entered keeps its cause.
     fn finish_step(&mut self, outcome: StepOutcome) -> StepOutcome {
         match outcome {
             StepOutcome::DebugHalted { .. } | StepOutcome::SimulatorFailure(_) => outcome,

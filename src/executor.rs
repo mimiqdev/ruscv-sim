@@ -2105,12 +2105,10 @@ impl RiscVSimulator {
         self.machine.write_dcsr(value)
     }
 
-    /// Read `dcsr` from the loaded hart.
     pub fn dcsr(&self) -> u64 {
         self.machine.dcsr()
     }
 
-    /// Read `dpc` from the loaded hart.
     pub fn dpc(&self) -> u64 {
         self.machine.dpc()
     }
