@@ -262,6 +262,16 @@ impl SystemBus {
         self.clint.read_mtime()
     }
 
+    pub fn machine_interrupt_lines(&self) -> (bool, bool) {
+        let msip = self.clint.read_msip(0).is_some_and(|value| value & 1 != 0);
+        let mtime = self.clint.read_mtime();
+        let mtip = self
+            .clint
+            .read_mtimecmp(0)
+            .is_some_and(|compare| mtime >= compare);
+        (msip, mtip)
+    }
+
     /// Add one tick. Does not touch `mcycle` or `minstret`.
     pub fn advance_mtime(&mut self) {
         self.clint.advance_one_tick();

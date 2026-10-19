@@ -1,8 +1,9 @@
 # Stage 4 supervisor-interrupt guest (dev-plan §4 "Supervisor interrupt",
 # D11 option (a)).
 #
-# mip and mie keep only 0x222.  sie and sip read 0 and ignore writes while
-# mideleg is 0.  SSIP with SSIE is not taken in M while MIE is 0, is taken
+# mie keeps 0x2AA. mip keeps 0x222 while no machine line is pending.
+# sie and sip read 0 and ignore writes while mideleg is 0. SSIP with SSIE
+# is not taken in M while MIE is 0, is taken
 # in M once MIE is 1, is taken in S and in U while MIE is 0.  With SEIP,
 # SSIP, and STIP pending and enabled together, SEI is taken first; with
 # SSIP and STIP together, SSI is taken.  A vectored mtvec enters at
@@ -23,14 +24,15 @@ _start:
     la      s1, tohost
     li      s3, 0                       # vectored-entry marker
 
-    # ---- mip/mie field rule: only 0x222 writable ----
+    # ---- mie keeps 0x2AA; mip keeps 0x222 with no machine line ----
     li      t0, -1
     csrw    mie, t0
     csrr    t1, mie
-    li      t2, 0x222
+    li      t2, 0x2AA
     bne     t1, t2, fail
     csrw    mip, t0
     csrr    t1, mip
+    li      t2, 0x222
     bne     t1, t2, fail
 
     # ---- sie/sip read 0 and ignore writes (mideleg = 0) ----
