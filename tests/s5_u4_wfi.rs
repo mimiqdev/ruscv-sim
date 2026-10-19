@@ -339,6 +339,11 @@ fn enabling_mie_directly_before_wfi_traps_on_the_wfi() {
 #[test]
 fn a_wait_jumps_to_the_timer_and_traps_at_wfi_plus_four() {
     let mut code = arm_future_timer();
+    let mtie = code
+        .iter()
+        .position(|word| *word == elf::addi(5, 0, MTIE))
+        .unwrap();
+    code.insert(mtie, elf::addi(19, 5, 0));
     let wfi = code.iter().position(|word| *word == WFI).unwrap();
     code.insert(wfi, elf::addi(5, 0, mstatus::MIE as i32));
     code.insert(wfi + 1, csrrs(0, machine::MSTATUS, 5));
@@ -356,9 +361,15 @@ fn a_wait_jumps_to_the_timer_and_traps_at_wfi_plus_four() {
     assert!(matches!(waiting.hart().outcome, StepOutcome::Waiting));
     drop(waiting);
     let time = csr_value(&machine, unprivileged::TIME);
+    let compare = reg(&machine, 19);
     let minstret = csr_value(&machine, machine::MINSTRET);
     assert_eq!(machine.settle_wait().unwrap(), WaitSettlement::Jumped);
-    assert!(csr_value(&machine, unprivileged::TIME) > time);
+    let jumped = csr_value(&machine, unprivileged::TIME);
+    assert!(jumped > time, "the jump did not advance time");
+    assert!(
+        jumped >= compare,
+        "time {jumped} stopped short of mtimecmp {compare}"
+    );
     assert_eq!(csr_value(&machine, machine::MINSTRET), minstret);
     let taken = machine.step(false).expect("timer after the jump");
     let StepOutcome::TrapEntered(entered) = taken.hart().outcome.clone() else {
@@ -370,6 +381,6 @@ fn a_wait_jumps_to_the_timer_and_traps_at_wfi_plus_four() {
     drop(taken);
     assert_eq!(csr_value(&machine, machine::MEPC), pc_at(wfi + 1));
     assert_eq!(csr_value(&machine, machine::MINSTRET), minstret);
-    assert!(csr_value(&machine, unprivileged::TIME) > time);
+    assert!(csr_value(&machine, unprivileged::TIME) >= compare);
     assert_eq!(reg(&machine, 24), 0x22);
 }

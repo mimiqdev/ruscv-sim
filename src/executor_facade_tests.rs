@@ -814,3 +814,36 @@ fn native_zero_budget_signature_keeps_raw_platform_inspection_not_flat_clone_ser
     assert!(result.timed_out);
     assert_eq!(result.error.as_deref(), Some("Timeout after 0 cycles"));
 }
+
+fn csrrs(rd: u8, csr: u16, rs1: u8) -> u32 {
+    (u32::from(csr) << 20) | (u32::from(rs1) << 15) | (2 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
+/// A deadline earlier than the next timer stops the public native run.
+/// The diagnostic is `DeadlineReached` and the run is not a timeout.
+#[test]
+fn a_virtual_deadline_stop_reports_deadline_reached() {
+    let code = [
+        elf::addi(5, 0, 0x80),
+        csrrs(0, machine::MIE, 5),
+        elf::lui(9, 0x02004),
+        elf::lui(6, 1),
+        elf::sd(6, 9, 0),
+        elf::addi(5, 0, 8),
+        csrrs(0, machine::MSTATUS, 5),
+        0x1050_0073,
+    ];
+    let bytes = elf::elf_with_code(&code, 0, true, false, 0x4000);
+    let hooks = NativeHooks {
+        prepare: Some(Box::new(|machine| {
+            // Eight turns complete before the wait, so mtime is 8.
+            // 8 < 0x100 < mtimecmp 0x1000.
+            machine.set_virtual_deadline(Some(0x100));
+        })),
+        ..NativeHooks::default()
+    };
+    let result = run_native_inner(&bytes, Some(64), None, None, false, None, hooks).unwrap();
+    assert!(!result.timed_out);
+    assert_eq!(result.error.as_deref(), Some("DeadlineReached"));
+    assert_eq!(result.cycles, 8);
+}

@@ -147,8 +147,8 @@ flat Runner 的 tohost 取样与逐字节清除均与公共 `memory()` mutex 的
 等待公共 mutex 时不持有准入 gate，guard 持有者仍能完成其剩余 host 写入。
 不存在／零长度签名不访问目标或等待该 mutex，native 签名检查行为不变。
 
-Stage 4 指令配置把 FENCE.I 改为非法指令异常。WFI 在 M 模式及 TW=0 的 S 模式退休为空操作，
-在 TW=1 的 S 模式及 U 模式则触发非法指令异常。SRET 和四种 SFENCE.VMA 形式遵守权限检查，
+Stage 4 指令配置把 FENCE.I 改为非法指令异常。Stage 4 基线里，WFI 在 M 模式及 TW=0 的 S 模式退休为空操作，
+在 TW=1 的 S 模式及 U 模式则触发非法指令异常。Stage 5 用等待替换了那条合法空操作。当前行为见下面的 U4 段。SRET 和四种 SFENCE.VMA 形式遵守权限检查，
 五条 RV64M word 指令执行并将 32 位结果符号扩展至 64 位。
 此时没有客户指令产生 `UnsupportedLegalInstruction`。host backend 失败不退休、不退出；
 即使 host 修复锁并修改内存，后续 run／step 仍须等待 fresh reset。未知完成的恢复限制不变。
