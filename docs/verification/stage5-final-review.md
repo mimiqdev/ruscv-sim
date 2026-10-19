@@ -4,7 +4,7 @@
 
 **Reviewed tree:** `main` at `fb8399b20ee1d6b44bc6da157c3cc3f18b784474`, the Stage 5 U5 merge (PR #94). The implementation merges on that history are U1 PR #90 `379ff8c`, U2 PR #91 `7fb0043`, U3 PR #92 `364375c`, and U4 PR #93 `59f70a5`. This pull request adds the review record and the check 9 update. It does not change instruction behavior.
 
-**Authority:** This is the review record. It is not a substitute for the [Stage 5 contract](../dev-plan.md). Formal completion of the milestone is the Stage 5 to Stage 6 rotation merge, not this document.
+**Authority:** This is the review record. It is not a substitute for the [Stage 5 contract](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md). Formal completion of the milestone is the Stage 5 to Stage 6 rotation merge, not this document.
 
 **Method:** Read-only comparison of the public Hart and platform path with the Stage 5 contract and with the RISC-V privileged specification (the 20250508 text the contract cites). The paths read were `src/core/mod.rs` (`execute_turn`, `accepted_interrupt`, counter updates, trap entry), `src/isa/rv64i/system.rs` (WFI legality), `src/machine/mod.rs` (pre-fetch sample, `mtime` tick, `settle_wait`), `src/peripherals/plic.rs` (`claim_interrupt`, `read_guest_word`), and the Stage 5 guests and drivers named below. No Spike or Sail lock-step was run in this review. This review did not re-execute the suite. Execution evidence is the green Quality-and-tests run on the `main` push of `fb8399b`. Where the specification leaves the behavior unspecified, this record does not invent a requirement.
 

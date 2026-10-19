@@ -2,7 +2,7 @@
 
 **Status:** Current approved snapshot — Stage 4 contract approved for activation 2026-10-11 UTC; not a second Current milestone contract.
 
-**Authority:** Informational drafting record. The promoted Stage 4 contract is preserved in the [Stage 4 archive](../archive/milestones/stage4-virtual-memory-and-protection.md). [docs/dev-plan.md](../dev-plan.md) holds the Stage 5 contract on the Stage 4 to Stage 5 rotation merge. Until that merge main retains Stage 4. No Stage 5 implementation is part of this documentation rotation.
+**Authority:** Informational drafting record. The promoted Stage 4 contract is preserved in the [Stage 4 archive](../archive/milestones/stage4-virtual-memory-and-protection.md). The Stage 5 contract is preserved in the [Stage 5 archive](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md). [docs/dev-plan.md](../dev-plan.md) holds the Stage 6 contract on the Stage 5 to Stage 6 rotation merge. Until that merge main retains Stage 5. No Stage 6 implementation is part of this documentation rotation.
 
 **Snapshot boundary:** The complete proposal from baseline `9d6fe7f94e2fa33edb8c5213f5f4831f4ffa315f` follows. Its original "Proposed contract / Not approved, not active" wording is historical drafting language, not a new approval request or present authority. The two links that named the A10 contract now target the A10 archive. Git and PR history record the rotation delivery.
 

@@ -1328,6 +1328,16 @@ The following are explicit deferrals, not unresolved semantic choices:
   Hart outcomes; and
 - SystemC/TLM/HDL FFI, callback, delta-cycle, and external-kernel APIs.
 
+Amendment, 2026-10-19, owner decision recorded with the Stage 6 contract. The
+Debug Mode deferral in the list above is superseded for that profile. Stage 6
+implements RISC-V Debug Specification 1.0, ratified, tag `5695c0a`, including
+Sdext and an abstract-command Debug Module. Trigger-module halt stays deferred.
+`dret` stays illegal. A `haltreq` entry and an `ebreak` entry are not completed
+Hart turns, so they do not move `mtime`, `mcycle`, `minstret`, or
+`ExecutionResult.cycles`. A single-step still retires its instruction, and that
+retirement counts. The detailed outcomes live in the Stage 6 contract. This ADR still does not copy a
+priority table or choose the WFI behavior.
+
 The selected ISA/profile still owns exact trap causes, interrupt pending and
 eligibility predicates, masking/enables, delegation, architectural priority,
 trap/debug/WFI legality and transitions, and ISA-visible `mcycle`/`minstret`
@@ -1360,9 +1370,12 @@ supplies the unprivileged counter rules this profile uses for `cycle` and
 `instret`. The Stage 4 hart does not claim Zicntr, because that extension
 comprises `cycle`, `time`, and `instret` together and this profile has no
 `time`. It also
-consumes the selected debug profile, including [RISC-V External Debug Support
-0.13.2](https://github.com/riscv/riscv-debug-spec/tree/0.13-test-release) §4
-when Debug Mode is implemented. These references
+consumed the selected debug profile, including [RISC-V External Debug Support
+0.13.2](https://github.com/riscv/riscv-debug-spec/tree/0.13-test-release) §4,
+when that sentence was written. Amendment, 2026-10-19, owner decision. When
+Debug Mode is implemented, the profile consumes [RISC-V Debug Specification
+1.0, ratified, tag `5695c0a`](https://github.com/riscv/riscv-debug-spec/releases/tag/1.0)
+instead of 0.13.2. These references
 are Hart/profile inputs, not additional framework rules: ADR-0004 does not copy a
 priority table or choose WFI/debug behavior. It fixes the boundary at which
 profile results interact with scheduler accounting and Platform time.

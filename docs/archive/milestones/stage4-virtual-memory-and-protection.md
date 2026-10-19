@@ -2,7 +2,7 @@
 
 **Status:** Historical completed contract; archival and formal rolling completion take effect on the actual Stage 4 to Stage 5 rotation merge, not this branch's document HEAD. Until that merge, Stage 4 remains Current on `main`.
 
-**Authority:** Informational archive. The full approved contract below retains its original activation, task and acceptance wording, including now-historical pending-successor language; only relative links have been relocated. The sole successor authority is [the approved Stage 5 contract](../../dev-plan.md), effective on rotation merge.
+**Authority:** Informational archive. The full approved contract below retains its original activation, task and acceptance wording, including now-historical pending-successor language; only relative links have been relocated. The sole successor authority is [the approved Stage 5 contract](stage5-platform-interrupts-wfi-and-counters.md), preserved in this directory on the Stage 5 to Stage 6 rotation.
 
 **Dates:** decisions recorded by PR #75 on 2026-10-11; owner-authorized activation 2026-10-11 UTC; the rotation that made this contract Current is PR #76, `9f6f67814ec2b7060fb5b186a37b95b7c6306708`. Implementation and review are recorded at PR #88, `ee134b441f6e0504cec60cf2e652a6ff7782b396`, with the [final review](../../verification/stage4-final-review.md) and the [closeout note](../../verification/stage4-closeout.md). That note records the local gate: 1957 tests passed and 75 ELF cases passed. This archive does not re-run that gate. The successor decisions D0–D9 were owner approved, recommended option, on 2026-10-16 13:08 CST. Archival is effective on actual rotation merge; its date, SHA, and PR belong in Git and PR provenance and are not invented here.
 
