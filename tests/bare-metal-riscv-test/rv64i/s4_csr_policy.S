@@ -7,7 +7,7 @@
 # mcounteren and scounteren are 32-bit; satp keeps only Bare/Sv39 MODEs
 # with ASID read-only 0; menvcfg and senvcfg keep only FIOM; mip keeps
 # bits 1, 5, and 9 (mask 0x222) while no machine line is pending; mie
-# keeps those bits plus MSIE and MTIE (mask 0x2AA).  A write raises no trap.
+# keeps those bits plus MSIE, MTIE, and MEIE (mask 0xAAA).  A write raises no trap.
 
 .section .text
 .globl _start
@@ -175,11 +175,11 @@ _start:
     li      t3, 1
     bne     t2, t3, fail
 
-    # ---- mie keeps 0x2AA; mip keeps 0x222 with no machine line ----
+    # ---- mie keeps 0xAAA; mip keeps 0x222 with no machine line ----
     li      t0, -1
     csrw    mie, t0
     csrr    t2, mie
-    li      t3, 0x2AA
+    li      t3, 0xAAA
     bne     t2, t3, fail
     csrw    mip, t0
     csrr    t2, mip

@@ -276,8 +276,11 @@ impl Plic {
     }
 
     /// 声明中断（读取最高优先级的中断 ID）
+    ///
+    /// The claim ignores the priority threshold. Priority 0 is not an
+    /// interrupt (PLIC specification 1.0.0, Interrupt Claim Process).
     pub fn claim_interrupt(&mut self, context_id: u32) -> u32 {
-        let irq_id = self.find_highest_priority_interrupt(context_id);
+        let irq_id = self.highest_enabled_pending(context_id);
 
         if irq_id > 0 {
             // 记录已声明的中断
@@ -292,14 +295,19 @@ impl Plic {
     }
 
     /// 完成中断（写回中断 ID）
+    ///
+    /// PLIC specification 1.0.0, Interrupt Completion: a completion ID that
+    /// is not currently enabled for the target is silently ignored.
     pub fn complete_interrupt(&mut self, context_id: u32, irq_id: u32) {
-        if let Some(ctx) = self.contexts.get_mut(context_id as usize) {
-            // 清除已声明状态
-            if ctx.claimed == Some(irq_id) {
-                ctx.claimed = None;
-            }
+        let Some(ctx) = self.contexts.get_mut(context_id as usize) else {
+            return;
+        };
+        if !ctx.is_enabled(irq_id) {
+            return;
         }
-        // 重新处理中断（可能有新的或重新触发的中断）
+        if ctx.claimed == Some(irq_id) {
+            ctx.claimed = None;
+        }
         self.process_interrupts();
     }
 
@@ -329,6 +337,27 @@ impl Plic {
         highest_irq
     }
 
+    /// Highest pending, enabled source with priority greater than 0.
+    /// The threshold masks the presented line, not this scan.
+    fn highest_enabled_pending(&self, context_id: u32) -> u32 {
+        let ctx = match self.contexts.get(context_id as usize) {
+            Some(c) => c,
+            None => return 0,
+        };
+        let mut highest_irq: u32 = 0;
+        let mut highest_priority: u32 = 0;
+        for irq_id in 1..self.num_sources {
+            if self.is_pending(irq_id) && ctx.is_enabled(irq_id) {
+                let priority = self.priorities[irq_id as usize];
+                if priority > 0 && priority > highest_priority {
+                    highest_priority = priority;
+                    highest_irq = irq_id;
+                }
+            }
+        }
+        highest_irq
+    }
+
     /// 处理所有上下文的中断
     fn process_interrupts(&mut self) {
         for context_id in 0..self.num_contexts {
@@ -351,6 +380,31 @@ impl Plic {
         self.contexts
             .get(context_id as usize)
             .and_then(|ctx| ctx.claimed)
+    }
+
+    /// Four-byte native read. A claim address of an existing context claims.
+    ///
+    /// `read_reg` stays `&self` and returns 0 for that address. Claim needs
+    /// `&mut self`, so the native bus uses this path (PLIC specification 1.0.0).
+    pub fn read_guest_word(&mut self, offset: u64) -> u32 {
+        if let RegAddr::ClaimComplete(context_id) = self.calculate_reg_addr(offset) {
+            if context_id < self.num_contexts {
+                return self.claim_interrupt(context_id);
+            }
+            return 0;
+        }
+        self.read_reg(offset, 4).unwrap_or(0) as u32
+    }
+
+    /// Four-byte native write. Returns whether this address completed a context,
+    /// so the gateway can set source 1 pending again when its level is still high.
+    pub fn write_guest_word(&mut self, offset: u64, value: u32) -> bool {
+        let complete = matches!(
+            self.calculate_reg_addr(offset),
+            RegAddr::ClaimComplete(context_id) if context_id < self.num_contexts
+        );
+        let _ = self.write_reg(offset, value);
+        complete
     }
 
     /// 计算寄存器地址

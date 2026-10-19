@@ -2,7 +2,9 @@
 use super::{MachineConfig, MachineError, PlatformKind};
 use crate::core::{SharedDataAccess, SharedPhysicalAccess};
 use crate::elf::LoadImage;
-use crate::executor::{SystemBus, SYSTEM_BUS_HTIF_BASE, SYSTEM_BUS_UART_BASE};
+use crate::executor::{
+    PresentedInterruptLines, SystemBus, SYSTEM_BUS_HTIF_BASE, SYSTEM_BUS_UART_BASE,
+};
 use crate::image::{AddressForm, ImagePlacement};
 use crate::memory::{MemoryInterface, SimpleMemory};
 use crate::peripherals::uart16550::{Uart16550, UartInspection};
@@ -151,13 +153,13 @@ impl Platform {
         Ok(self.flat_mtime)
     }
 
-    /// Hart 0 MSIP and MTIP. Flat has no CLINT, so both lines stay clear.
-    pub(super) fn machine_interrupt_lines(&self) -> Result<(bool, bool), MachineError> {
+    /// Hart 0 lines. Flat has no CLINT or PLIC, so every line stays clear.
+    pub(super) fn machine_interrupt_lines(&self) -> Result<PresentedInterruptLines, MachineError> {
         if let Some(bus) = &self.bus {
             let bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
             return Ok(bus.machine_interrupt_lines());
         }
-        Ok((false, false))
+        Ok(PresentedInterruptLines::clear())
     }
 
     /// One completed Hart turn. A `SimulatorFailure` does not call this.
