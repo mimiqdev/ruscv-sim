@@ -2602,6 +2602,45 @@ mod tests {
         }
     }
 
+    /// D9 and D12. A completed single-step on the native run still reaches the
+    /// Stage 5 tohost check, so the guest exit is 0.
+    #[test]
+    fn stepped_guest_exit_on_the_native_run_exits_zero() {
+        let fixture = observation_fixture::elf_with_code(
+            &[
+                observation_fixture::auipc(5, 1),
+                observation_fixture::addi(6, 0, 1),
+                observation_fixture::slli(6, 6, 63),
+                observation_fixture::sd(6, 5, 0),
+            ],
+            0,
+            true,
+            false,
+            0x4000,
+        );
+        let result = run_native_inner(
+            &fixture,
+            Some(4),
+            None,
+            None,
+            false,
+            None,
+            NativeHooks {
+                prepare: Some(Box::new(|machine| {
+                    for _ in 0..3 {
+                        machine.step(false).expect("setup");
+                    }
+                    machine.write_dcsr(machine.dcsr() | (1 << 2));
+                })),
+                ..NativeHooks::default()
+            },
+        )
+        .expect("native run");
+        assert_eq!(result.exit_code, 0, "{result:?}");
+        assert!(result.error.is_none(), "{result:?}");
+        assert!(!result.timed_out);
+    }
+
     #[test]
     fn t1_reporting_failure_preserves_retired_exit_and_final_slot_causal_facts() {
         let fixture = observation_fixture::elf_with_code(
