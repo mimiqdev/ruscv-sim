@@ -132,6 +132,8 @@ impl<H: DebugHart> DebugModule<H> {
             self.havereset = false;
         }
         // resumereq is ignored when haltreq is set after this same write.
+        // The call below sees the previous ndmreset. The new ndmreset bit
+        // is stored after that judgment (Debug Spec 1.0 §3.14).
         if value & RESUMEREQ != 0 && !haltreq {
             self.resume_selected();
         }
@@ -149,16 +151,21 @@ impl<H: DebugHart> DebugModule<H> {
     }
 
     fn resume_selected(&mut self) {
-        // A hart under ndmreset is unavailable, not halted (§3.2, §3.4).
-        // The bit checked here is the value from before this write stores
-        // ndmreset. hartsel other than 0 does not touch hart 0.
-        if self.hartsel != 0 || self.ndmreset {
+        // Debug Spec 1.0 §3.5 and dm_registers.xml `dmcontrol.resumereq`:
+        // writing 1 clears the resume ack of each selected hart. hartsel
+        // other than 0 does not touch hart 0. The ack is set again only
+        // after an actual resume completes, before dmi_write returns.
+        // A hart under the previous ndmreset is unavailable, not halted
+        // (§3.2, §3.4), so that bit blocks the resume after the clear.
+        if self.hartsel != 0 {
+            return;
+        }
+        self.resumeack = false;
+        if self.ndmreset {
             return;
         }
         if self.hart.in_debug_mode() {
             self.hart.debug_resume();
-            // The resume completes before dmi_write returns, so ack is 1
-            // on the next dmstatus read (§3.5).
             self.resumeack = true;
         }
     }

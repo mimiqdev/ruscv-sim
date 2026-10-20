@@ -137,17 +137,23 @@ pub enum StepOutcome {
 
 /// A debugger physical access failed without trapping.
 ///
-/// Debug Spec 1.0 §3.7.1.3. Abstract Access Memory maps both to
-/// `abstractcs.cmderr` 3. `Misaligned` is the failure an M-mode load or
-/// store would report as an address-misaligned exception (contract D15).
-/// `AccessFault` is every other rejection of that M-mode access, including
-/// an unmapped address and a width the target refuses.
+/// Debug Spec 1.0 §3.7.1.3 maps an M-mode exception to `abstractcs.cmderr` 3.
+/// `Misaligned` is the failure an M-mode load or store would report as an
+/// address-misaligned exception (contract D15). `AccessFault` is every other
+/// rejection of that M-mode access, including an unmapped address, a missing
+/// data port, and a width the target refuses. `Other` is a simulator fault
+/// (Debug Spec 1.0 §3.14 `cmderr` 7): a backend, protocol, or unknown
+/// completion, or a poisoned data-port lock. Those are not M-mode exceptions.
+/// An unknown completion may already have changed target state, which
+/// `cmderr` 3 would report as not having happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugMemFault {
     /// `addr` is not a multiple of `size`. Checked before the data port.
     Misaligned,
-    /// The physical data port is absent, poisoned, or rejected the access.
+    /// The physical data port is absent or the target rejected the access.
     AccessFault,
+    /// The host could not complete the access, or cannot say whether it did.
+    Other,
 }
 
 /// Descriptive aliases for callers that name the boundary after the Hart/core.
@@ -1017,7 +1023,7 @@ impl RiscvCore {
         let Some(port) = self.data_access.clone() else {
             return Err(DebugMemFault::AccessFault);
         };
-        let mut guard = port.lock().map_err(|_| DebugMemFault::AccessFault)?;
+        let mut guard = port.lock().map_err(|_| DebugMemFault::Other)?;
         let mut adapter = self.physical_adapter(&mut *guard, None);
         let result = if let Some(value) = store {
             match size {
@@ -1037,6 +1043,11 @@ impl RiscvCore {
         };
         result.map_err(|error| match error {
             MemoryError::Misaligned(_, _) => DebugMemFault::Misaligned,
+            // Simulator faults, not the M-mode exception of §3.7.1.3.
+            // Unknown may already have side effects.
+            MemoryError::Backend(_) | MemoryError::Protocol(_) | MemoryError::Unknown(_) => {
+                DebugMemFault::Other
+            }
             _ => DebugMemFault::AccessFault,
         })
     }

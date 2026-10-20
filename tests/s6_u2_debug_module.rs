@@ -1142,7 +1142,10 @@ fn resumereq_sees_previous_ndmreset_then_the_new_bit_is_stored() {
         "resumereq saw the previous ndmreset of 0 and resumed"
     );
     let rising = dmstatus(&mut dm);
-    assert!(bit(rising, 24), "the new ndmreset is stored after the resume");
+    assert!(
+        bit(rising, 24),
+        "the new ndmreset is stored after the resume"
+    );
     assert!(bit(rising, 12) && bit(rising, 13), "unavailable");
     assert!(
         bit(rising, 16) && bit(rising, 17),
@@ -1166,7 +1169,10 @@ fn resumereq_sees_previous_ndmreset_then_the_new_bit_is_stored() {
         "resumereq saw the previous ndmreset of 1 and did not resume"
     );
     let falling = dmstatus(&mut dm);
-    assert!(!bit(falling, 24), "the new ndmreset 0 is stored after the check");
+    assert!(
+        !bit(falling, 24),
+        "the new ndmreset 0 is stored after the check"
+    );
     assert!(bit(falling, 8) && bit(falling, 9), "halted");
     assert!(!bit(falling, 16) && !bit(falling, 17));
 }
@@ -1329,9 +1335,9 @@ fn halted_with_instruction_port() -> (
         RAM_BASE,
         RAM_SIZE,
     )));
-    let instruction_port: SharedPhysicalAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-        NativeSystemBusBackend::new(bus.clone()),
-    )));
+    let instruction_port: SharedPhysicalAccess = Arc::new(Mutex::new(
+        ValidatedPhysicalAccess::new(NativeSystemBusBackend::new(bus.clone())),
+    ));
     let data_port: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
         NativeSystemBusBackend::new(bus.clone()),
     )));
@@ -1354,9 +1360,11 @@ fn install_injected(
     fault: InjectedFault,
     ram: Arc<Mutex<SimpleMemory>>,
 ) {
-    let data: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-        InjectedBackend { fault, ram },
-    )));
+    let data: SharedDataAccess =
+        Arc::new(Mutex::new(ValidatedPhysicalAccess::new(InjectedBackend {
+            fault,
+            ram,
+        })));
     dm.hart_mut().set_physical_access(instruction, data);
 }
 
@@ -1394,12 +1402,11 @@ fn simulator_memory_fault_is_cmderr_7() {
     }
 
     let (mut dm, instruction, ram) = halted_with_instruction_port();
-    let data: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-        InjectedBackend {
+    let data: SharedDataAccess =
+        Arc::new(Mutex::new(ValidatedPhysicalAccess::new(InjectedBackend {
             fault: InjectedFault::Host,
             ram: ram.clone(),
-        },
-    )));
+        })));
     let doomed = data.clone();
     let joined = std::thread::spawn(move || {
         let _guard = doomed.lock().unwrap();

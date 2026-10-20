@@ -6,10 +6,21 @@
 
 use super::hart::DebugHart;
 use super::DebugModule;
+use crate::core::DebugMemFault;
 
 const CMDERR_NOT_SUPPORTED: u8 = 2;
 const CMDERR_EXCEPTION: u8 = 3;
 const CMDERR_HALT_RESUME: u8 = 4;
+/// Debug Spec 1.0 §3.14: a simulator fault, not an M-mode exception.
+const CMDERR_OTHER: u8 = 7;
+
+/// §3.7.1.3 cmderr 3 is an M-mode exception. §3.14 cmderr 7 is other.
+fn memory_cmderr(fault: DebugMemFault) -> u8 {
+    match fault {
+        DebugMemFault::Misaligned | DebugMemFault::AccessFault => CMDERR_EXCEPTION,
+        DebugMemFault::Other => CMDERR_OTHER,
+    }
+}
 
 impl<H: DebugHart> DebugModule<H> {
     pub(super) fn write_command(&mut self, command: u32) {
@@ -148,10 +159,10 @@ impl<H: DebugHart> DebugModule<H> {
         let addr = self.arg1();
         if write {
             let value = self.arg0();
-            if self.hart.debug_physical_store(addr, size, value).is_err() {
-                // Misaligned and access fault are both the exception code.
-                // Contract D15. §3.7.1.3.
-                self.cmderr = CMDERR_EXCEPTION;
+            if let Err(fault) = self.hart.debug_physical_store(addr, size, value) {
+                // Misaligned and access fault are cmderr 3 (contract D15,
+                // §3.7.1.3). A simulator fault is cmderr 7 (§3.14).
+                self.cmderr = memory_cmderr(fault);
                 return;
             }
         } else {
@@ -161,8 +172,8 @@ impl<H: DebugHart> DebugModule<H> {
                     // This module writes one zero-extended result.
                     self.set_arg0(value, true);
                 }
-                Err(_) => {
-                    self.cmderr = CMDERR_EXCEPTION;
+                Err(fault) => {
+                    self.cmderr = memory_cmderr(fault);
                     return;
                 }
             }
