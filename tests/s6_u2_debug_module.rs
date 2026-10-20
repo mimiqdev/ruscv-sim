@@ -400,7 +400,11 @@ fn access_memory_without_a_data_port_uses_the_legacy_hart_path() {
 
     set_arg1(&mut dm, &mut hart, 0x101);
     issue(&mut dm, &mut hart, access_memory(false, 2, true, true));
-    assert_eq!(cmderr(&dm, &hart), 3, "a misaligned M-mode store still faults");
+    assert_eq!(
+        cmderr(&dm, &hart),
+        3,
+        "a misaligned M-mode store still faults"
+    );
     assert_eq!(arg1(&dm, &hart), 0x101, "no postincrement");
     assert_eq!(mem.lock().unwrap().read_word(0x100).unwrap(), 0x1122_3344);
 }
