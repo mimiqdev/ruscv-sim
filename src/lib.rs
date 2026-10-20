@@ -24,10 +24,10 @@ pub mod physical;
 pub mod tlm;
 
 pub use core::{
-    CoreState, CoreStepOutcome, HartStepOutcome, InstructionRetired, LegacyTypedMemoryAdapter,
-    MemoryAdapter, PhysicalAtomicAdapter, PhysicalMemoryAdapter, PrivilegeMode, RiscvCore,
-    SharedDataAccess, SharedPhysicalAccess, SimulatorFailure, SimulatorFailureKind, StepOutcome,
-    TrapContinuationPolicy, TrapEntered, TrapEntryError,
+    CoreState, CoreStepOutcome, DebugMemFault, HartStepOutcome, InstructionRetired,
+    LegacyTypedMemoryAdapter, MemoryAdapter, PhysicalAtomicAdapter, PhysicalMemoryAdapter,
+    PrivilegeMode, RiscvCore, SharedDataAccess, SharedPhysicalAccess, SimulatorFailure,
+    SimulatorFailureKind, StepOutcome, TrapContinuationPolicy, TrapEntered, TrapEntryError,
 };
 pub use csr::{CsrAccess, CsrError, CsrFile};
 pub use debug::{
@@ -36,7 +36,7 @@ pub use debug::{
     WatchpointAccess, WatchpointManager, WatchpointType,
 };
 pub use decode::{DecodeError, DecodedInstruction, InstructionDecoder, InstructionFormat};
-pub use dm::DebugModule;
+pub use dm::{DebugHart, DebugModule};
 pub use execute::{ExecuteError, Executor};
 pub use executor::{
     load_and_run, load_and_run_file, ExecutionResult, ExecutorError, PresentedInterruptLines,

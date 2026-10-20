@@ -1,0 +1,30 @@
+//! DMI register addresses and `dmcontrol` fields.
+//!
+//! Debug Specification 1.0 §3.14. The address is 7 bits, matching the
+//! contract's `dtmcs.abits`. `dtmcs` itself is U4.
+
+pub(super) const DATA0: u8 = 0x04;
+pub(super) const DMCONTROL: u8 = 0x10;
+pub(super) const DMSTATUS: u8 = 0x11;
+pub(super) const HARTINFO: u8 = 0x12;
+pub(super) const ABSTRACTCS: u8 = 0x16;
+pub(super) const COMMAND: u8 = 0x17;
+pub(super) const HALTSUM0: u8 = 0x40;
+
+pub(super) const HALTREQ: u32 = 1 << 31;
+pub(super) const RESUMEREQ: u32 = 1 << 30;
+pub(super) const ACKHAVERESET: u32 = 1 << 28;
+pub(super) const NDMRESET: u32 = 1 << 1;
+pub(super) const DMACTIVE: u32 = 1;
+
+pub(super) fn hartsel_of(value: u32) -> u32 {
+    let lo = (value >> 16) & 0x3ff;
+    let hi = (value >> 6) & 0x3ff;
+    lo | (hi << 10)
+}
+
+pub(super) fn hartsel_field(hartsel: u32) -> u32 {
+    let lo = (hartsel & 0x3ff) << 16;
+    let hi = ((hartsel >> 10) & 0x3ff) << 6;
+    lo | hi
+}

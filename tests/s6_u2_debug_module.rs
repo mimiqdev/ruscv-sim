@@ -328,6 +328,19 @@ fn aamvirtual_is_cmderr_2() {
     issue(&mut dm, access_memory(true, 2, false, true));
     assert_eq!(cmderr(&mut dm), 2);
     assert_eq!(ram_word(&ram, 0x1000), 0x89ab_cdef);
+
+    clear_cmderr(&mut dm);
+    for size in 4..8 {
+        issue(&mut dm, access_memory(false, size, false, false));
+        assert_eq!(cmderr(&mut dm), 2, "aamsize {size}");
+        clear_cmderr(&mut dm);
+    }
+    // Bits 18:17 and 15:0 are defined 0. Bit 16 is `write`.
+    issue(
+        &mut dm,
+        access_memory(false, 2, false, false) | (1 << 17) | (1 << 14),
+    );
+    assert_eq!(cmderr(&mut dm), 2, "defined-0 control bits");
 }
 
 /// A physical read with `MPRV` and Sv39 still uses the physical address.
@@ -525,10 +538,7 @@ fn gpr_and_csr_round_trip_honors_warl() {
 
     let dcsr = dm.hart().dcsr();
     set_arg0(&mut dm, dcsr | (1 << 15) | (1 << 2));
-    issue(
-        &mut dm,
-        access_register(3, false, false, true, true, 0x7b1 - 1),
-    );
+    issue(&mut dm, access_register(3, false, false, true, true, 0x7b0));
     assert_eq!(cmderr(&mut dm), 0);
     issue(
         &mut dm,
@@ -1138,8 +1148,12 @@ fn sbcs_and_progbuf0_read_zero() {
 #[test]
 fn debug_module_halts_reads_and_resumes_guest() {
     let (mut dm, ram) = harness();
-    // addi x5, x0, 17; lui x6, 0x80002; sd x5, 0(x6); jal x0, 0
-    let program = [0x0110_0293, 0x8000_2337, 0x0053_3023, 0x0000_006f];
+    // addi x5, x0, 17
+    // auipc x6, 2          # x6 = 0x8000_0004 + 0x2000. lui would sign-extend
+    //                      # 0x8000_2000 through bit 31.
+    // sd x5, -4(x6)        # store 17 at 0x8000_2000
+    // jal x0, 0
+    let program = [0x0110_0293, 0x0000_2317, 0xfe53_3e23, 0x0000_006f];
     for (index, word) in program.iter().enumerate() {
         ram.lock()
             .unwrap()

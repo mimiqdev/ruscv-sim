@@ -135,6 +135,21 @@ pub enum StepOutcome {
     },
 }
 
+/// A debugger physical access failed without trapping.
+///
+/// Debug Spec 1.0 §3.7.1.3. Abstract Access Memory maps both to
+/// `abstractcs.cmderr` 3. `Misaligned` is the failure an M-mode load or
+/// store would report as an address-misaligned exception (contract D15).
+/// `AccessFault` is every other rejection of that M-mode access, including
+/// an unmapped address and a width the target refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugMemFault {
+    /// `addr` is not a multiple of `size`. Checked before the data port.
+    Misaligned,
+    /// The physical data port is absent, poisoned, or rejected the access.
+    AccessFault,
+}
+
 /// Descriptive aliases for callers that name the boundary after the Hart/core.
 pub type HartStepOutcome = StepOutcome;
 pub type CoreStepOutcome = StepOutcome;
@@ -962,6 +977,68 @@ impl RiscvCore {
         self.state.csr.set_privilege(privilege);
         self.debug.halted = false;
         true
+    }
+
+    /// Physical load for Abstract Access Memory.
+    ///
+    /// Debug Spec 1.0 §3.7.1.3. The access uses this hart's data port with
+    /// no translation delta, so `mstatus.MPRV` and `satp` do not apply.
+    /// A misaligned address returns [`DebugMemFault::Misaligned`] before the
+    /// port is locked. Nothing here enters a trap or changes PC, privilege,
+    /// or the counters.
+    pub fn debug_physical_load(&mut self, addr: u64, size: u32) -> Result<u64, DebugMemFault> {
+        self.debug_physical(addr, size, None)
+    }
+
+    /// Physical store for Abstract Access Memory. See [`Self::debug_physical_load`].
+    pub fn debug_physical_store(
+        &mut self,
+        addr: u64,
+        size: u32,
+        value: u64,
+    ) -> Result<(), DebugMemFault> {
+        self.debug_physical(addr, size, Some(value)).map(|_| ())
+    }
+
+    fn debug_physical(
+        &mut self,
+        addr: u64,
+        size: u32,
+        store: Option<u64>,
+    ) -> Result<u64, DebugMemFault> {
+        if !matches!(size, 1 | 2 | 4 | 8) {
+            return Err(DebugMemFault::AccessFault);
+        }
+        // The hart rejects a misaligned data access before translation and
+        // before the port (this file's execute path). Do the same here.
+        if !addr.is_multiple_of(u64::from(size)) {
+            return Err(DebugMemFault::Misaligned);
+        }
+        let Some(port) = self.data_access.clone() else {
+            return Err(DebugMemFault::AccessFault);
+        };
+        let mut guard = port.lock().map_err(|_| DebugMemFault::AccessFault)?;
+        let mut adapter = self.physical_adapter(&mut *guard, None);
+        let result = if let Some(value) = store {
+            match size {
+                1 => adapter.write_byte(addr, value as u8),
+                2 => adapter.write_half(addr, value as u16),
+                4 => adapter.write_word(addr, value as u32),
+                _ => adapter.write_dword(addr, value),
+            }
+            .map(|()| 0)
+        } else {
+            match size {
+                1 => adapter.read_byte_zext(addr),
+                2 => adapter.read_half_zext(addr),
+                4 => adapter.read_word_zext(addr),
+                _ => adapter.read_dword(addr),
+            }
+        };
+        result.map_err(|error| match error {
+            MemoryError::Misaligned(_, _) => DebugMemFault::Misaligned,
+            _ => DebugMemFault::AccessFault,
+        })
     }
 
     /// Execute one Hart turn and return its typed semantic outcome.
