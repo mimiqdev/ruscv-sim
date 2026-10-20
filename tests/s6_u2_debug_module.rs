@@ -14,8 +14,12 @@ use ruscv_sim::executor::{
 };
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 use ruscv_sim::peripherals::Uart16550;
-use ruscv_sim::physical::{NativeSystemBusBackend, ValidatedPhysicalAccess};
-use ruscv_sim::DebugModule;
+use ruscv_sim::physical::{
+    AtomicBackend, AtomicBackendResult, AtomicRequest, NativeSystemBusBackend, PhysicalBackend,
+    PhysicalBackendError, PhysicalBackendResult, PhysicalRequest, PhysicalTargetRejectionReason,
+    ValidatedPhysicalAccess,
+};
+use ruscv_sim::{DebugModule, SharedDataAccess, SharedPhysicalAccess};
 use std::sync::{Arc, Mutex};
 
 const RAM_BASE: u64 = 0x8000_0000;
@@ -1024,13 +1028,18 @@ fn ndmreset_does_not_change_the_hart() {
     assert_eq!(cmderr(&mut dm), 4);
     assert_eq!(dm.hart().state().regs[1], 0x77);
 
-    let resumeack = bit(dmstatus(&mut dm), 16);
+    assert!(
+        bit(dmstatus(&mut dm), 16) && bit(dmstatus(&mut dm), 17),
+        "resumeack is still the reset value before this write"
+    );
     dm.dmi_write(DMCONTROL, DMACTIVE | NDMRESET | RESUMEREQ);
     assert!(
         dm.hart().in_debug_mode(),
         "resumereq while ndmreset does not resume"
     );
-    assert_eq!(bit(dmstatus(&mut dm), 16), resumeack);
+    // Debug Spec 1.0 §3.5: writing resumereq clears the selected hart's
+    // resume ack even when the previous ndmreset bit blocks the resume.
+    assert!(!bit(dmstatus(&mut dm), 16) && !bit(dmstatus(&mut dm), 17));
 
     dm.dmi_write(DMCONTROL, DMACTIVE | HALTREQ);
     assert_eq!(dm.hart().state().regs[1], 0x77);
@@ -1075,7 +1084,8 @@ fn dmactive_low_hides_version_and_ignores_haltreq() {
 }
 
 /// `resumereq` is applied to `haltreq` after the same write (Debug Spec 1.0 §3.14).
-/// Resume ack resets to 1 (§3.5).
+/// Writing `resumereq` 1 clears the selected hart's resume ack (§3.5,
+/// `dmcontrol.resumereq`). The ack is set again only after a resume completes.
 #[test]
 fn resume_requires_haltreq_clear_in_the_same_write() {
     let (mut dm, _) = ready();
@@ -1095,6 +1105,10 @@ fn resume_requires_haltreq_clear_in_the_same_write() {
         "haltreq set in this write blocks resume"
     );
     assert!(dm.hart().haltreq());
+    assert!(
+        bit(dmstatus(&mut dm), 16) && bit(dmstatus(&mut dm), 17),
+        "haltreq in this write ignores resumereq, so the ack is not cleared"
+    );
 
     dm.dmi_write(DMCONTROL, DMACTIVE | RESUMEREQ);
     assert!(!dm.hart().in_debug_mode());
@@ -1109,7 +1123,52 @@ fn resume_requires_haltreq_clear_in_the_same_write() {
     dm.dmi_write(DMCONTROL, DMACTIVE | RESUMEREQ);
     assert!(!dm.hart().in_debug_mode());
     assert_eq!(dm.hart().state().pc, pc, "a running hart ignores resumereq");
-    assert!(bit(dmstatus(&mut dm), 16));
+    // Debug Spec 1.0 §3.5: the write still clears resume ack. It is set
+    // again only after an actual resume completes.
+    assert!(!bit(dmstatus(&mut dm), 16) && !bit(dmstatus(&mut dm), 17));
+}
+
+/// Within one `dmcontrol` write, `resumereq` is judged against the previous
+/// `ndmreset` bit. The new `ndmreset` bit is stored after that judgment
+/// (Debug Spec 1.0 §3.14).
+#[test]
+fn resumereq_sees_previous_ndmreset_then_the_new_bit_is_stored() {
+    let (mut dm, _) = ready();
+    enter_halt(&mut dm);
+
+    dm.dmi_write(DMCONTROL, DMACTIVE | NDMRESET | RESUMEREQ);
+    assert!(
+        !dm.hart().in_debug_mode(),
+        "resumereq saw the previous ndmreset of 0 and resumed"
+    );
+    let rising = dmstatus(&mut dm);
+    assert!(bit(rising, 24), "the new ndmreset is stored after the resume");
+    assert!(bit(rising, 12) && bit(rising, 13), "unavailable");
+    assert!(
+        bit(rising, 16) && bit(rising, 17),
+        "the resume completed, so ack is set again"
+    );
+
+    dm.dmi_write(DMCONTROL, DMACTIVE | NDMRESET | HALTREQ);
+    let outcome = dm.hart_mut().step_outcome();
+    assert!(matches!(
+        outcome,
+        StepOutcome::DebugHalted {
+            cause: DebugCause::HaltReq,
+            ..
+        }
+    ));
+    assert!(dm.hart().in_debug_mode());
+
+    dm.dmi_write(DMCONTROL, DMACTIVE | RESUMEREQ);
+    assert!(
+        dm.hart().in_debug_mode(),
+        "resumereq saw the previous ndmreset of 1 and did not resume"
+    );
+    let falling = dmstatus(&mut dm);
+    assert!(!bit(falling, 24), "the new ndmreset 0 is stored after the check");
+    assert!(bit(falling, 8) && bit(falling, 9), "halted");
+    assert!(!bit(falling, 16) && !bit(falling, 17));
 }
 
 /// `haltsum0` bit 0 follows hart 0 while `hartsel` is below 32.
@@ -1214,4 +1273,144 @@ fn debug_module_halts_reads_and_resumes_guest() {
     assert!(exited, "guest store is the normal exit");
     assert_eq!(dm.hart().state().regs[5], 17);
     assert!(!dm.hart().in_debug_mode());
+}
+
+#[derive(Clone, Copy, Debug)]
+enum InjectedFault {
+    Host,
+    Protocol,
+    Unknown,
+}
+
+/// Data port that reports a simulator fault instead of a target rejection.
+struct InjectedBackend {
+    fault: InjectedFault,
+    ram: Arc<Mutex<SimpleMemory>>,
+}
+
+impl PhysicalBackend for InjectedBackend {
+    fn transact(&mut self, _request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        match self.fault {
+            InjectedFault::Host => Err(PhysicalBackendError::host("injected backend failure")),
+            InjectedFault::Protocol => {
+                Err(PhysicalBackendError::protocol("injected protocol failure"))
+            }
+            InjectedFault::Unknown => {
+                // The completion is unknown, so a target byte may already
+                // have changed. cmderr 3 would say the access did not happen.
+                self.ram.lock().unwrap().write_byte(0x20, 0xa5).unwrap();
+                Err(PhysicalBackendError::unknown(
+                    "injected completion may have stored",
+                ))
+            }
+        }
+    }
+}
+
+impl AtomicBackend for InjectedBackend {
+    fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+        Err(PhysicalBackendError::target(
+            PhysicalTargetRejectionReason::UnsupportedCategory,
+            format!("debug memory test does not issue atomics: {request:?}"),
+        ))
+    }
+}
+
+fn halted_with_instruction_port() -> (
+    DebugModule<RiscvCore>,
+    SharedPhysicalAccess,
+    Arc<Mutex<SimpleMemory>>,
+) {
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(RAM_SIZE)));
+    let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
+    let bus = Arc::new(Mutex::new(SystemBus::new(
+        ram.clone(),
+        uart,
+        RAM_BASE,
+        RAM_SIZE,
+    )));
+    let instruction_port: SharedPhysicalAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeSystemBusBackend::new(bus.clone()),
+    )));
+    let data_port: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        NativeSystemBusBackend::new(bus.clone()),
+    )));
+    let core = RiscvCore::new_with_physical_access(
+        typed_handle(bus.clone()),
+        typed_handle(bus),
+        instruction_port.clone(),
+        data_port,
+    );
+    let mut dm = DebugModule::new(core);
+    ram.lock().unwrap().write_word(0, 0x0000_0013).unwrap();
+    dm.hart_mut().state_mut().pc = RAM_BASE;
+    enter_halt(&mut dm);
+    (dm, instruction_port, ram)
+}
+
+fn install_injected(
+    dm: &mut DebugModule<RiscvCore>,
+    instruction: SharedPhysicalAccess,
+    fault: InjectedFault,
+    ram: Arc<Mutex<SimpleMemory>>,
+) {
+    let data: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        InjectedBackend { fault, ram },
+    )));
+    dm.hart_mut().set_physical_access(instruction, data);
+}
+
+/// A backend, protocol, or unknown completion, and a poisoned data-port
+/// lock, are simulator faults. Debug Spec 1.0 §3.14 reports them as
+/// `cmderr` 7 (other). They are not the M-mode exception §3.7.1.3 reports
+/// as `cmderr` 3. Misaligned and access-fault accesses stay at 3.
+#[test]
+fn simulator_memory_fault_is_cmderr_7() {
+    for fault in [
+        InjectedFault::Host,
+        InjectedFault::Protocol,
+        InjectedFault::Unknown,
+    ] {
+        let (mut dm, instruction, ram) = halted_with_instruction_port();
+        install_injected(&mut dm, instruction, fault, ram.clone());
+        set_arg0(&mut dm, 0x11);
+        set_arg1(&mut dm, RAM_BASE + 8);
+        issue(&mut dm, access_memory(false, 2, true, true));
+        assert_eq!(cmderr(&mut dm), 7, "{fault:?}");
+        assert_eq!(arg0(&mut dm), 0x11, "the argument is unchanged");
+        assert_eq!(
+            arg1(&mut dm),
+            RAM_BASE + 8,
+            "no postincrement on a simulator fault"
+        );
+        assert!(dm.hart().in_debug_mode());
+        assert_eq!(dm.hart().state().pc, RAM_BASE);
+        let marker = ram.lock().unwrap().read_byte(0x20).unwrap();
+        if matches!(fault, InjectedFault::Unknown) {
+            assert_eq!(marker, 0xa5, "unknown completion may already have stored");
+        } else {
+            assert_eq!(marker, 0);
+        }
+    }
+
+    let (mut dm, instruction, ram) = halted_with_instruction_port();
+    let data: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        InjectedBackend {
+            fault: InjectedFault::Host,
+            ram: ram.clone(),
+        },
+    )));
+    let doomed = data.clone();
+    let joined = std::thread::spawn(move || {
+        let _guard = doomed.lock().unwrap();
+        panic!("poison the data port");
+    })
+    .join();
+    assert!(joined.is_err(), "the lock holder panicked");
+    dm.hart_mut().set_physical_access(instruction, data);
+    set_arg1(&mut dm, RAM_BASE);
+    issue(&mut dm, access_memory(false, 2, true, false));
+    assert_eq!(cmderr(&mut dm), 7, "poisoned data-port lock");
+    assert_eq!(arg1(&mut dm), RAM_BASE, "no postincrement");
+    assert!(dm.hart().in_debug_mode());
 }
