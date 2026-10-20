@@ -343,7 +343,9 @@ fn aamvirtual_is_cmderr_2() {
         assert_eq!(cmderr(&dm, &hart), 2, "aamsize {size}");
         clear_cmderr(&mut dm, &mut hart);
     }
-    // Bits 18:17 and 15:0 are defined 0. Bit 16 is `write`.
+    // Bits 18:17 and 13:0 are defined 0. Bits 15:14 are target-specific
+    // and this target defines no use, so a 1 is an unsupported option.
+    // Bit 16 is `write`. Bit 17 alone would also be `cmderr` 2.
     issue(
         &mut dm,
         &mut hart,
@@ -372,6 +374,35 @@ fn physical_read_ignores_mprv() {
         mem_read(&mut dm, &mut hart, RAM_BASE + 0x1000, 2),
         0x89ab_cdef
     );
+}
+
+/// A hart with no physical data port still uses the legacy data memory an
+/// M-mode load or store uses. Debug Spec 1.0 §3.7.1.3: an access may fail
+/// only when that M-mode access might fail. The contract says Access Memory
+/// uses the hart's own M-mode load and store path.
+#[test]
+fn access_memory_without_a_data_port_uses_the_legacy_hart_path() {
+    let mem = Arc::new(Mutex::new(SimpleMemory::new(RAM_SIZE)));
+    mem.lock().unwrap().write_word(0x100, 0xa5a5_5a5a).unwrap();
+    let mut hart = RiscvCore::new(typed_handle(mem.clone()), typed_handle(mem.clone()));
+    let mut dm = DebugModule::new();
+    enter_halt(&mut dm, &mut hart);
+
+    set_arg1(&mut dm, &mut hart, 0x100);
+    issue(&mut dm, &mut hart, access_memory(false, 2, false, false));
+    assert_eq!(cmderr(&dm, &hart), 0, "M-mode can read this word");
+    assert_eq!(arg0(&dm, &hart), 0xa5a5_5a5a);
+
+    set_arg0(&mut dm, &mut hart, 0x1122_3344);
+    issue(&mut dm, &mut hart, access_memory(false, 2, false, true));
+    assert_eq!(cmderr(&dm, &hart), 0, "M-mode can store this word");
+    assert_eq!(mem.lock().unwrap().read_word(0x100).unwrap(), 0x1122_3344);
+
+    set_arg1(&mut dm, &mut hart, 0x101);
+    issue(&mut dm, &mut hart, access_memory(false, 2, true, true));
+    assert_eq!(cmderr(&dm, &hart), 3, "a misaligned M-mode store still faults");
+    assert_eq!(arg1(&dm, &hart), 0x101, "no postincrement");
+    assert_eq!(mem.lock().unwrap().read_word(0x100).unwrap(), 0x1122_3344);
 }
 
 /// §7 item 2: a supported command while running returns `cmderr` 4.
