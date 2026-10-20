@@ -140,7 +140,7 @@ pub(crate) fn build(
 ) -> Option<Observation> {
     if matches!(
         outcome,
-        StepOutcome::SimulatorFailure(_) | StepOutcome::Waiting
+        StepOutcome::SimulatorFailure(_) | StepOutcome::Waiting | StepOutcome::DebugHalted { .. }
     ) {
         return None;
     }
@@ -196,7 +196,9 @@ pub(crate) fn build(
             instruction_length: trap.instruction.map(|_| 4),
             effects,
         })),
-        StepOutcome::SimulatorFailure(_) | StepOutcome::Waiting => unreachable!(),
+        StepOutcome::SimulatorFailure(_)
+        | StepOutcome::Waiting
+        | StepOutcome::DebugHalted { .. } => unreachable!(),
     }
 }
 

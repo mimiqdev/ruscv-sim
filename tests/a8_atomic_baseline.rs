@@ -143,6 +143,9 @@ fn retired(core: &mut RiscvCore) -> InstructionRetired {
             panic!("expected a retired instruction, got trap {:?}", trap.cause)
         }
         StepOutcome::Waiting => panic!("expected a retired instruction, got a wait"),
+        StepOutcome::DebugHalted { .. } => {
+            panic!("expected a retired instruction, got Debug Mode")
+        }
         StepOutcome::SimulatorFailure(failure) => {
             panic!("expected a retired instruction, got failure {failure:?}")
         }
@@ -156,6 +159,7 @@ fn trapped(core: &mut RiscvCore) -> TrapEntered {
             panic!("expected a trap, got retired {:?}", fact.instruction)
         }
         StepOutcome::Waiting => panic!("expected a trap, got a wait"),
+        StepOutcome::DebugHalted { .. } => panic!("expected a trap, got Debug Mode"),
         StepOutcome::SimulatorFailure(failure) => {
             panic!("expected a trap, got failure {failure:?}")
         }

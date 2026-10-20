@@ -281,13 +281,23 @@ impl Installed {
             }
         };
         let waiting = matches!(hart.outcome, StepOutcome::Waiting);
+        let debug_without_turn = matches!(
+            hart.outcome,
+            StepOutcome::DebugHalted {
+                completed_turn: false,
+                ..
+            }
+        );
         let failure = match &hart.outcome {
             StepOutcome::SimulatorFailure(failure) => Some(failure.clone()),
-            _ => None,
+            StepOutcome::DebugHalted { .. }
+            | StepOutcome::InstructionRetired(_)
+            | StepOutcome::TrapEntered(_)
+            | StepOutcome::Waiting => None,
         };
         let failed = failure.is_some();
         let uncertain = self.core.unresolved_physical_access().is_some();
-        let events = if failed || waiting {
+        let events = if failed || waiting || debug_without_turn {
             Vec::new()
         } else {
             let events = self.platform.take_events()?;
@@ -636,6 +646,46 @@ impl Machine {
             .map_err(|_| MachineError::Poisoned)?;
         acknowledge_drain(&mut admission, domain.as_ref())
     }
+    /// Debugger updates between boundaries. The installed lock serializes with
+    /// the hart turn, and the latch is sampled at the next `execute_turn`, so
+    /// this path skips the admission gate. Gating it on drain completion would
+    /// refuse a `haltreq` while the machine is still running.
+    fn with_core_mut<T>(
+        &self,
+        update: impl FnOnce(&mut RiscvCore) -> T,
+    ) -> Result<T, MachineError> {
+        let mut domain = self
+            .inner
+            .installed
+            .lock()
+            .map_err(|_| MachineError::Poisoned)?;
+        let core = &mut domain.as_mut().ok_or(MachineError::NoImage)?.core;
+        Ok(update(core))
+    }
+
+    /// Set the Hart `haltreq` latch. Debug 1.0 `dmcontrol.haltreq`.
+    pub fn set_haltreq(&self, haltreq: bool) -> Result<(), MachineError> {
+        self.with_core_mut(|core| core.set_haltreq(haltreq))
+    }
+
+    pub fn dcsr(&self) -> Result<u64, MachineError> {
+        self.with_core_mut(|core| core.dcsr())
+    }
+
+    /// Debugger write of `dcsr`. Returns the stored value.
+    pub fn write_dcsr(&self, value: u64) -> Result<u64, MachineError> {
+        self.with_core_mut(|core| core.write_dcsr(value))
+    }
+
+    pub fn dpc(&self) -> Result<u64, MachineError> {
+        self.with_core_mut(|core| core.dpc())
+    }
+
+    /// Leave Debug Mode. See [`RiscvCore::debug_resume`].
+    pub fn debug_resume(&self) -> Result<bool, MachineError> {
+        self.with_core_mut(|core| core.debug_resume())
+    }
+
     /// Coherent inspection under admission exclusion, not raw volatile handles.
     pub fn inspect(&self) -> Result<MachineInspection, MachineError> {
         let admission = lock(&self.inner.gate)?;

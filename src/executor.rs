@@ -1784,12 +1784,47 @@ fn run_native_inner(
                 Some(diagnostic.to_string()),
             ));
         }
+        // An entry that did not complete a turn has no guest exit to report.
+        // A completed single-step still runs the Stage 5 exit check. Contract
+        // D9 counts the step. D12 ends the process on guest exit.
+        let completed_debug = matches!(
+            turn.hart().outcome,
+            StepOutcome::DebugHalted {
+                completed_turn: true,
+                ..
+            }
+        );
+        if let StepOutcome::DebugHalted {
+            completed_turn: false,
+            ..
+        } = turn.hart().outcome
+        {
+            let pc = turn.hart().control.after_pc;
+            drop(turn);
+            return Ok(cli_result(
+                &machine,
+                &placement,
+                1,
+                control.cycles(),
+                pc,
+                false,
+                Some("DebugHalted".to_string()),
+            ));
+        }
         let step = match &turn.hart().outcome {
             StepOutcome::InstructionRetired(_) => Ok(()),
             StepOutcome::TrapEntered(trap) => match trap.continuation {
                 TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
             },
             StepOutcome::Waiting => unreachable!("a waiting hart already stopped the run"),
+            StepOutcome::DebugHalted {
+                completed_turn: true,
+                ..
+            } => Ok(()),
+            StepOutcome::DebugHalted {
+                completed_turn: false,
+                ..
+            } => unreachable!("an incomplete debug halt already stopped the run"),
             StepOutcome::SimulatorFailure(failure) => Err(format_failure(failure.clone())),
         };
         // Raw callback facts are visible only after the parent Hart transition.
@@ -1896,6 +1931,17 @@ fn run_native_inner(
                 ));
             }
             RunDecision::Continue | RunDecision::Timeout => {
+                if completed_debug {
+                    return Ok(cli_result(
+                        &machine,
+                        &placement,
+                        1,
+                        control.cycles(),
+                        machine.state().pc,
+                        false,
+                        Some("DebugHalted".to_string()),
+                    ));
+                }
                 // Preserve periodic diagnostics on the final timeout slot.
                 if verbose && control.cycles().is_multiple_of(1000) {
                     let state = machine.state();
@@ -2081,6 +2127,19 @@ impl RiscVSimulator {
         self.machine.set_verbose(verbose);
     }
 
+    /// Debugger write of `dcsr` on the loaded hart. Returns the stored value.
+    pub fn write_dcsr(&mut self, value: u64) -> u64 {
+        self.machine.write_dcsr(value)
+    }
+
+    pub fn dcsr(&self) -> u64 {
+        self.machine.dcsr()
+    }
+
+    pub fn dpc(&self) -> u64 {
+        self.machine.dpc()
+    }
+
     /// Load ELF data into memory and reset the core to its entry point.
     ///
     /// # Address handling
@@ -2181,7 +2240,10 @@ impl RiscVSimulator {
             StepOutcome::SimulatorFailure(failure) => Err(ExecutorError::ExecutionError(
                 format_failure(failure.clone()),
             )),
-            _ => Ok(()),
+            StepOutcome::DebugHalted { .. }
+            | StepOutcome::InstructionRetired(_)
+            | StepOutcome::TrapEntered(_)
+            | StepOutcome::Waiting => Ok(()),
         }
     }
 
@@ -2251,12 +2313,42 @@ impl RiscVSimulator {
                 };
                 return Ok(self.finish(control.cycles(), 1, false, Some(diagnostic.to_string())));
             }
+            // An entry that did not complete a turn has no guest exit to report.
+            // A completed single-step still runs the Stage 5 exit check.
+            let completed_debug = matches!(
+                turn.hart().outcome,
+                StepOutcome::DebugHalted {
+                    completed_turn: true,
+                    ..
+                }
+            );
+            if let StepOutcome::DebugHalted {
+                completed_turn: false,
+                ..
+            } = turn.hart().outcome
+            {
+                drop(turn);
+                return Ok(self.finish(
+                    control.cycles(),
+                    1,
+                    false,
+                    Some("DebugHalted".to_string()),
+                ));
+            }
             let step = match &turn.hart().outcome {
                 StepOutcome::InstructionRetired(_) => Ok(()),
                 StepOutcome::TrapEntered(trap) => match trap.continuation {
                     TrapContinuationPolicy::ContinueToGuestHandler => Ok(()),
                 },
                 StepOutcome::Waiting => unreachable!("a waiting hart already stopped the run"),
+                StepOutcome::DebugHalted {
+                    completed_turn: true,
+                    ..
+                } => Ok(()),
+                StepOutcome::DebugHalted {
+                    completed_turn: false,
+                    ..
+                } => unreachable!("an incomplete debug halt already stopped the run"),
                 StepOutcome::SimulatorFailure(failure) => Err(format!(
                     "Execution error: {}",
                     format_failure(failure.clone())
@@ -2322,7 +2414,16 @@ impl RiscVSimulator {
                 RunDecision::ExecutionError(error) => {
                     return Ok(self.finish(control.cycles(), 1, false, Some(error.clone())));
                 }
-                RunDecision::Continue | RunDecision::Timeout => {}
+                RunDecision::Continue | RunDecision::Timeout => {
+                    if completed_debug {
+                        return Ok(self.finish(
+                            control.cycles(),
+                            1,
+                            false,
+                            Some("DebugHalted".to_string()),
+                        ));
+                    }
+                }
             }
         }
 
@@ -2499,6 +2600,45 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    /// D9 and D12. A completed single-step on the native run still reaches the
+    /// Stage 5 tohost check, so the guest exit is 0.
+    #[test]
+    fn stepped_guest_exit_on_the_native_run_exits_zero() {
+        let fixture = observation_fixture::elf_with_code(
+            &[
+                observation_fixture::auipc(5, 1),
+                observation_fixture::addi(6, 0, 1),
+                observation_fixture::slli(6, 6, 63),
+                observation_fixture::sd(6, 5, 0),
+            ],
+            0,
+            true,
+            false,
+            0x4000,
+        );
+        let result = run_native_inner(
+            &fixture,
+            Some(4),
+            None,
+            None,
+            false,
+            None,
+            NativeHooks {
+                prepare: Some(Box::new(|machine| {
+                    for _ in 0..3 {
+                        machine.step(false).expect("setup");
+                    }
+                    machine.write_dcsr(machine.dcsr() | (1 << 2));
+                })),
+                ..NativeHooks::default()
+            },
+        )
+        .expect("native run");
+        assert_eq!(result.exit_code, 0, "{result:?}");
+        assert!(result.error.is_none(), "{result:?}");
+        assert!(!result.timed_out);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! Implements RISC-V processor core fetch-decode-execute cycle
 
 pub mod commits;
+mod debug_mode;
 pub mod observation;
 mod observed_memory;
 mod translation;
@@ -19,6 +20,7 @@ use crate::physical::{
 };
 use crate::tlm::TlmInterface;
 use anyhow::Result;
+pub use debug_mode::DebugCause;
 use observation::{AtomicEffect, ControlFacts, HartTransition, MemoryEffect, MemoryJournal};
 use observed_memory::ObservedMemory;
 use std::cell::RefCell;
@@ -118,6 +120,19 @@ pub enum StepOutcome {
     SimulatorFailure(SimulatorFailure),
     /// A retired WFI is waiting. No instruction retired on this call.
     Waiting,
+    /// The Hart is in Debug Mode.
+    ///
+    /// `completed_turn` is true only when this call retired an instruction or
+    /// took a trap and then entered (single-step). A `haltreq` entry, an
+    /// `ebreak` entry, and a call that finds the Hart already halted are not
+    /// completed turns: `mtime`, `mcycle`, `minstret`, and
+    /// `ExecutionResult.cycles` stay put (Debug 1.0 `dcsr.stopcount` /
+    /// `stoptime`, privileged §3.1.10, contract D9).
+    DebugHalted {
+        cause: DebugCause,
+        /// This call completed one Hart turn before the entry.
+        completed_turn: bool,
+    },
 }
 
 /// Descriptive aliases for callers that name the boundary after the Hart/core.
@@ -221,6 +236,7 @@ pub struct RiscvCore {
     /// Privileged specification 20250508 §3.3.3. The next pre-fetch sample
     /// is the wake check.
     wfi_wait: bool,
+    debug: debug_mode::HartDebug,
 }
 
 /// Memory adapter for virtual to physical address translation
@@ -766,6 +782,7 @@ impl RiscvCore {
             base_addr: 0,
             verbose: false,
             wfi_wait: false,
+            debug: debug_mode::HartDebug::default(),
         }
     }
 
@@ -871,6 +888,82 @@ impl RiscvCore {
         &mut self.state
     }
 
+    /// Level-sensitive halt request sampled at the next instruction boundary.
+    ///
+    /// Debug 1.0 `dmcontrol.haltreq`. The Hart resumes only through
+    /// [`Self::debug_resume`]. A later boundary halts again while the bit
+    /// remains set.
+    pub fn set_haltreq(&mut self, haltreq: bool) {
+        self.debug.haltreq = haltreq;
+    }
+
+    pub fn haltreq(&self) -> bool {
+        self.debug.haltreq
+    }
+
+    pub fn in_debug_mode(&self) -> bool {
+        self.debug.halted
+    }
+
+    /// Read `dcsr` (`0x7b0`).
+    pub fn dcsr(&self) -> u64 {
+        self.debug.read_dcsr()
+    }
+
+    /// Debugger write of `dcsr`. Returns the value a later read observes.
+    pub fn write_dcsr(&mut self, value: u64) -> u64 {
+        self.debug.write_dcsr(value);
+        self.debug.read_dcsr()
+    }
+
+    /// Read `dpc` (`0x7b1`).
+    pub fn dpc(&self) -> u64 {
+        self.debug.dpc
+    }
+
+    /// Debugger write of `dpc`. Bits 1:0 are read-only zero.
+    pub fn write_dpc(&mut self, value: u64) -> u64 {
+        self.debug.write_dpc(value)
+    }
+
+    /// Read `dscratch0` (`0x7b2`).
+    pub fn dscratch0(&self) -> u64 {
+        self.debug.dscratch0
+    }
+
+    pub fn write_dscratch0(&mut self, value: u64) {
+        self.debug.dscratch0 = value;
+    }
+
+    /// Read `dscratch1` (`0x7b3`).
+    pub fn dscratch1(&self) -> u64 {
+        self.debug.dscratch1
+    }
+
+    pub fn write_dscratch1(&mut self, value: u64) {
+        self.debug.dscratch1 = value;
+    }
+
+    /// Leave Debug Mode. Returns false when the Hart is not halted.
+    ///
+    /// PC becomes `dpc`. Privilege becomes `dcsr.prv`. `mstatus.MPRV` is
+    /// cleared when the new privilege is below M. `haltreq` is not cleared.
+    pub fn debug_resume(&mut self) -> bool {
+        if !self.debug.halted {
+            return false;
+        }
+        self.state.pc = self.debug.dpc;
+        let privilege = self.debug.prv;
+        if privilege != PrivilegeMode::Machine {
+            let mstatus = self.state.csr.mstatus() & !crate::csr::mstatus::MPRV;
+            self.state.csr.set_mstatus(mstatus);
+        }
+        self.state.privilege = privilege;
+        self.state.csr.set_privilege(privilege);
+        self.debug.halted = false;
+        true
+    }
+
     /// Execute one Hart turn and return its typed semantic outcome.
     ///
     /// Architectural exceptions are entered here and returned as
@@ -892,15 +985,18 @@ impl RiscvCore {
         self.observation_demand = observe;
         self.memory_journal = observe.then(|| RefCell::new(Vec::new()));
         self.gpr_destination = None;
-        let (outcome, instruction_attempted) = self.execute_turn();
+        let (outcome, instruction_attempted, stepped) = self.execute_turn();
+        // A single-step publishes DebugHalted. The retirement or trap that
+        // D9 already counted is still the control fact and the observation.
+        let fact = stepped.as_ref().unwrap_or(&outcome);
         let control = ControlFacts {
             before_pc,
             after_pc: self.state.pc,
             before_privilege,
             after_privilege: self.state.privilege,
             instruction_attempted,
-            retired: matches!(outcome, StepOutcome::InstructionRetired(_)),
-            trap_entered: matches!(outcome, StepOutcome::TrapEntered(_)),
+            retired: matches!(fact, StepOutcome::InstructionRetired(_)),
+            trap_entered: matches!(fact, StepOutcome::TrapEntered(_)),
             minstret_before,
             minstret_after: self.state.csr.minstret_value(),
         };
@@ -909,7 +1005,7 @@ impl RiscvCore {
             observation::build(
                 &before,
                 &mut self.state,
-                &outcome,
+                fact,
                 self.gpr_destination,
                 memory.unwrap_or_default(),
             )
@@ -925,10 +1021,11 @@ impl RiscvCore {
         }
     }
 
-    /// Return the outcome and whether an instruction attempt began.
-    fn execute_turn(&mut self) -> (StepOutcome, bool) {
+    /// Return the outcome, whether an instruction attempt began, and the
+    /// instruction or trap a single-step wrapped, when one committed.
+    fn execute_turn(&mut self) -> (StepOutcome, bool, Option<StepOutcome>) {
         if let Some(failure) = &self.unresolved_physical_access {
-            return (StepOutcome::SimulatorFailure(failure.clone()), false);
+            return (StepOutcome::SimulatorFailure(failure.clone()), false, None);
         }
 
         // CoreState is the architectural mode authority at this boundary.
@@ -938,25 +1035,92 @@ impl RiscvCore {
             self.state.csr.set_privilege(self.state.privilege);
         }
 
+        // Debug Mode does not retire. A repeated call keeps the recorded cause.
+        if self.debug.halted {
+            let cause = self
+                .debug
+                .cause
+                .expect("Debug Mode records the cause that entered it");
+            return (
+                StepOutcome::DebugHalted {
+                    cause,
+                    completed_turn: false,
+                },
+                false,
+                None,
+            );
+        }
+
+        // haltreq is higher than a takeable interrupt and higher than step.
+        // Debug 1.0 cause-priority table. Contract D6. A waiting WFI has
+        // already retired, so dpc is that instruction plus 4.
+        if self.debug.haltreq {
+            return (
+                self.enter_debug(DebugCause::HaltReq, self.state.pc, false),
+                false,
+                None,
+            );
+        }
+
+        // Setting `step` while already in a WFI wait returns Waiting.
         if self.wfi_wait {
             let wake = self.state.csr.mip() & self.state.csr.mie() != 0;
             if !wake {
-                return (StepOutcome::Waiting, false);
+                return (StepOutcome::Waiting, false, None);
             }
             self.wfi_wait = false;
         }
 
-        if let Some(cause) = self.accepted_interrupt() {
-            // Privileged §3.1.9 evaluates the interrupt before the next
-            // instruction. A takeable pending interrupt is taken at this
-            // PC, including a WFI. mepc is that address.
-            return (
-                self.enter_trap(Trap::Interrupt(cause), self.state.pc, 0, None),
-                false,
-            );
+        // stepie is fixed 0, so a takeable interrupt waits until after the step.
+        if self.debug.take_interrupt_this_turn() {
+            if let Some(cause) = self.accepted_interrupt() {
+                // Privileged §3.1.9 evaluates the interrupt before the next
+                // instruction. A takeable pending interrupt is taken at this
+                // PC, including a WFI. mepc is that address.
+                return (
+                    self.enter_trap(Trap::Interrupt(cause), self.state.pc, 0, None),
+                    false,
+                    None,
+                );
+            }
         }
 
-        (self.execute_instruction(), true)
+        let outcome = self.execute_instruction();
+        if self.debug.step {
+            let stepped = match &outcome {
+                StepOutcome::InstructionRetired(_) | StepOutcome::TrapEntered(_) => {
+                    Some(outcome.clone())
+                }
+                _ => None,
+            };
+            return (self.finish_step(outcome), true, stepped);
+        }
+        (outcome, true, None)
+    }
+
+    fn enter_debug(&mut self, cause: DebugCause, dpc: u64, completed_turn: bool) -> StepOutcome {
+        self.debug.halted = true;
+        self.debug.cause = Some(cause);
+        self.debug.prv = self.state.privilege;
+        self.debug.dpc = debug_mode::legal_dpc(dpc);
+        self.state.reservation = None;
+        self.wfi_wait = false;
+        StepOutcome::DebugHalted {
+            cause,
+            completed_turn,
+        }
+    }
+
+    fn finish_step(&mut self, outcome: StepOutcome) -> StepOutcome {
+        match outcome {
+            StepOutcome::DebugHalted { .. } | StepOutcome::SimulatorFailure(_) => outcome,
+            StepOutcome::InstructionRetired(retired) => {
+                self.wfi_wait = false;
+                self.enter_debug(DebugCause::Step, retired.next_pc, true)
+            }
+            StepOutcome::TrapEntered(_) => self.enter_debug(DebugCause::Step, self.state.pc, true),
+            StepOutcome::Waiting => outcome,
+        }
     }
 
     fn accepted_interrupt(&self) -> Option<InterruptCause> {
@@ -1340,7 +1504,8 @@ impl RiscvCore {
         match self.step_outcome() {
             StepOutcome::InstructionRetired(_)
             | StepOutcome::TrapEntered(_)
-            | StepOutcome::Waiting => Ok(()),
+            | StepOutcome::Waiting
+            | StepOutcome::DebugHalted { .. } => Ok(()),
             StepOutcome::SimulatorFailure(failure) => {
                 Err(anyhow::anyhow!("{:?}: {}", failure.kind, failure.message))
             }
@@ -1433,12 +1598,18 @@ impl RiscvCore {
                 0,
                 Some(raw),
             ),
-            ExecuteError::Ebreak => self.enter_trap(
-                Trap::Exception(ExceptionCause::Breakpoint),
-                pc,
-                0,
-                Some(raw),
-            ),
+            ExecuteError::Ebreak => {
+                if self.debug.ebreak_redirects(self.state.privilege) {
+                    self.enter_debug(DebugCause::Ebreak, pc, false)
+                } else {
+                    self.enter_trap(
+                        Trap::Exception(ExceptionCause::Breakpoint),
+                        pc,
+                        0,
+                        Some(raw),
+                    )
+                }
+            }
             ExecuteError::IllegalInstruction | ExecuteError::CsrError(_) => self.enter_trap(
                 Trap::Exception(ExceptionCause::IllegalInstruction),
                 pc,
@@ -1762,7 +1933,7 @@ impl RiscvCore {
         }
     }
 
-    /// Reset core
+    /// Reset core. Clears the `haltreq` latch.
     /// entry_point: virtual address of entry point
     /// base_addr: base address of loaded ELF (used for VA -> PA translation)
     pub fn reset(&mut self, entry_point: u64, base_addr: u64) {
@@ -1770,6 +1941,7 @@ impl RiscvCore {
         self.state.pc = entry_point;
         self.base_addr = base_addr;
         self.wfi_wait = false;
+        self.debug = debug_mode::HartDebug::default();
         self.trap_handler = TrapHandler::new();
     }
 
@@ -1784,6 +1956,12 @@ impl RiscvCore {
                     cycles += 1;
                 }
                 StepOutcome::Waiting => return Ok(cycles),
+                StepOutcome::DebugHalted { completed_turn, .. } => {
+                    if completed_turn {
+                        cycles += 1;
+                    }
+                    return Ok(cycles);
+                }
                 StepOutcome::SimulatorFailure(failure) => {
                     return Err(anyhow::anyhow!("{:?}: {}", failure.kind, failure.message));
                 }

@@ -79,6 +79,15 @@ impl OwnedMachine {
     pub(crate) fn set_verbose(&mut self, verbose: bool) {
         self.domain_mut().core.set_verbose(verbose);
     }
+    pub(crate) fn write_dcsr(&mut self, value: u64) -> u64 {
+        self.domain_mut().core.write_dcsr(value)
+    }
+    pub(crate) fn dcsr(&self) -> u64 {
+        self.domain().core.dcsr()
+    }
+    pub(crate) fn dpc(&self) -> u64 {
+        self.domain().core.dpc()
+    }
     #[cfg(test)]
     pub(crate) fn set_virtual_deadline(&mut self, deadline: Option<u64>) {
         self.domain_mut().virtual_deadline = deadline;
