@@ -991,7 +991,10 @@ impl RiscvCore {
     /// no translation delta, so `mstatus.MPRV` and `satp` do not apply.
     /// A misaligned address returns [`DebugMemFault::Misaligned`] before the
     /// port is locked. Nothing here enters a trap or changes PC, privilege,
-    /// or the counters.
+    /// or the counters. [`MemoryError::Unknown`] sets the same sticky
+    /// [`Self::unresolved_physical_access`] latch as the instruction path.
+    /// A later access returns [`DebugMemFault::Other`] without locking the
+    /// port, and the next [`Self::step_outcome`] fails before retirement.
     pub fn debug_physical_load(&mut self, addr: u64, size: u32) -> Result<u64, DebugMemFault> {
         self.debug_physical(addr, size, None)
     }
@@ -1012,6 +1015,11 @@ impl RiscvCore {
         size: u32,
         store: Option<u64>,
     ) -> Result<u64, DebugMemFault> {
+        // The instruction path refuses another turn after Unknown. Do the
+        // same here, before the data port is locked.
+        if self.unresolved_physical_access.is_some() {
+            return Err(DebugMemFault::Other);
+        }
         if !matches!(size, 1 | 2 | 4 | 8) {
             return Err(DebugMemFault::AccessFault);
         }
@@ -1023,33 +1031,49 @@ impl RiscvCore {
         let Some(port) = self.data_access.clone() else {
             return Err(DebugMemFault::AccessFault);
         };
-        let mut guard = port.lock().map_err(|_| DebugMemFault::Other)?;
-        let mut adapter = self.physical_adapter(&mut *guard, None);
-        let result = if let Some(value) = store {
-            match size {
-                1 => adapter.write_byte(addr, value as u8),
-                2 => adapter.write_half(addr, value as u16),
-                4 => adapter.write_word(addr, value as u32),
-                _ => adapter.write_dword(addr, value),
-            }
-            .map(|()| 0)
-        } else {
-            match size {
-                1 => adapter.read_byte_zext(addr),
-                2 => adapter.read_half_zext(addr),
-                4 => adapter.read_word_zext(addr),
-                _ => adapter.read_dword(addr),
+        let result = {
+            let mut guard = port.lock().map_err(|_| DebugMemFault::Other)?;
+            let mut adapter = self.physical_adapter(&mut *guard, None);
+            if let Some(value) = store {
+                match size {
+                    1 => adapter.write_byte(addr, value as u8),
+                    2 => adapter.write_half(addr, value as u16),
+                    4 => adapter.write_word(addr, value as u32),
+                    _ => adapter.write_dword(addr, value),
+                }
+                .map(|()| 0)
+            } else {
+                match size {
+                    1 => adapter.read_byte_zext(addr),
+                    2 => adapter.read_half_zext(addr),
+                    4 => adapter.read_word_zext(addr),
+                    _ => adapter.read_dword(addr),
+                }
             }
         };
-        result.map_err(|error| match error {
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => Err(self.debug_mem_fault(error)),
+        }
+    }
+
+    /// Map a data-port error onto an abstract-command fault.
+    ///
+    /// Misaligned and target rejection stay the M-mode exception of Debug
+    /// Spec 1.0 §3.7.1.3. Backend, protocol, and a poisoned lock are §3.14
+    /// `cmderr` 7 and do not latch. `Unknown` may already have side effects,
+    /// so it uses the instruction path's sticky terminal latch and is also
+    /// `cmderr` 7.
+    fn debug_mem_fault(&mut self, error: MemoryError) -> DebugMemFault {
+        match error {
             MemoryError::Misaligned(_, _) => DebugMemFault::Misaligned,
-            // Simulator faults, not the M-mode exception of §3.7.1.3.
-            // Unknown may already have side effects.
-            MemoryError::Backend(_) | MemoryError::Protocol(_) | MemoryError::Unknown(_) => {
+            MemoryError::Unknown(message) => {
+                let _ = self.unresolved_physical_failure(self.state.pc, message);
                 DebugMemFault::Other
             }
+            MemoryError::Backend(_) | MemoryError::Protocol(_) => DebugMemFault::Other,
             _ => DebugMemFault::AccessFault,
-        })
+        }
     }
 
     /// Execute one Hart turn and return its typed semantic outcome.

@@ -7,22 +7,27 @@
 //! The flat `RiscVSimulator::run` loop and the native `run_native_inner` loop
 //! both step a `Machine`. Hosting this module on either loop is U3, which
 //! admits a transaction at a hart boundary and applies `ndmreset`. U2 tests
-//! drive a bare hart and `RiscvCore::step_outcome`.
+//! pass a bare [`RiscvCore`] into the DMI methods and call
+//! [`RiscvCore::step_outcome`] themselves. The module does not own the hart,
+//! so a caller cannot resume, reset, or set `haltreq` through a handle this
+//! module hands out. `step_outcome` stays outside these methods: a `haltreq`
+//! write must not run a hart turn inside the DM (Debug Spec 1.0 §3.5).
 
 mod abstract_cmd;
-mod hart;
 mod regs;
 
-pub use hart::DebugHart;
-
+use crate::core::RiscvCore;
 use regs::{
     hartsel_field, hartsel_of, ABSTRACTCS, ACKHAVERESET, COMMAND, DATA0, DMACTIVE, DMCONTROL,
     DMSTATUS, HALTREQ, HALTSUM0, HARTINFO, NDMRESET, RESUMEREQ,
 };
 
 /// One hart's Debug Module, addressed by a 7-bit DMI register number.
-pub struct DebugModule<H> {
-    hart: H,
+///
+/// DMI state lives here. The hart is an argument of [`Self::dmi_read`] and
+/// [`Self::dmi_write`], which are the only paths that sample or change its
+/// debug latch.
+pub struct DebugModule {
     dmactive: bool,
     /// `hartsel`, 20 bits. `HARTSELLEN` is 20 (§3.14).
     hartsel: u32,
@@ -39,12 +44,11 @@ pub struct DebugModule<H> {
     havereset: bool,
 }
 
-impl<H: DebugHart> DebugModule<H> {
+impl DebugModule {
     /// `dmactive` powers up at 0 (§3.14). `havereset` is already 1.
     /// Version discovery (§3.13) is a debugger sequence, not part of `new`.
-    pub fn new(hart: H) -> Self {
+    pub fn new() -> Self {
         Self {
-            hart,
             dmactive: false,
             hartsel: 0,
             ndmreset: false,
@@ -60,18 +64,18 @@ impl<H: DebugHart> DebugModule<H> {
     /// While `dmactive` is 0 every read returns 0. Unimplemented addresses
     /// also return 0, including `abstractauto`, `progbuf0`, `sbcs`, and
     /// `data4`–`data11`.
-    pub fn dmi_read(&mut self, addr: u8) -> u32 {
+    pub fn dmi_read(&self, hart: &RiscvCore, addr: u8) -> u32 {
         if !self.dmactive {
             return 0;
         }
         match addr & 0x7f {
             addr @ DATA0..=0x07 => self.data[usize::from(addr - DATA0)],
             DMCONTROL => self.read_dmcontrol(),
-            DMSTATUS => self.read_dmstatus(),
+            DMSTATUS => self.read_dmstatus(hart),
             HARTINFO => self.read_hartinfo(),
             ABSTRACTCS => self.read_abstractcs(),
             COMMAND => 0,
-            HALTSUM0 => self.read_haltsum0(),
+            HALTSUM0 => self.read_haltsum0(hart),
             _ => 0,
         }
     }
@@ -81,10 +85,10 @@ impl<H: DebugHart> DebugModule<H> {
     /// A write that leaves `dmactive` at 0 is dropped. A 1-to-0 transition
     /// resets this module and leaves the hart halted. §3.5 leaves resume on
     /// DM reset UNSPECIFIED. A later `resumereq` is what calls `debug_resume`.
-    pub fn dmi_write(&mut self, addr: u8, value: u32) {
+    pub fn dmi_write(&mut self, hart: &mut RiscvCore, addr: u8, value: u32) {
         let addr = addr & 0x7f;
         if addr == DMCONTROL {
-            self.write_dmcontrol(value);
+            self.write_dmcontrol(hart, value);
             return;
         }
         if !self.dmactive {
@@ -99,24 +103,16 @@ impl<H: DebugHart> DebugModule<H> {
                 let clear = ((value >> 8) & 0b111) as u8;
                 self.cmderr &= !clear;
             }
-            COMMAND => self.write_command(value),
+            COMMAND => self.write_command(hart, value),
             _ => {}
         }
     }
 
-    pub fn hart(&self) -> &H {
-        &self.hart
-    }
-
-    pub fn hart_mut(&mut self) -> &mut H {
-        &mut self.hart
-    }
-
-    fn write_dmcontrol(&mut self, value: u32) {
+    fn write_dmcontrol(&mut self, hart: &mut RiscvCore, value: u32) {
         let active = value & DMACTIVE != 0;
         if !active {
             if self.dmactive {
-                self.reset_module();
+                self.reset_module(hart);
             }
             return;
         }
@@ -126,7 +122,7 @@ impl<H: DebugHart> DebugModule<H> {
         self.hartsel = hartsel_of(value) & 0x000f_ffff;
         let haltreq = value & HALTREQ != 0;
         if self.hartsel == 0 {
-            self.hart.set_haltreq(haltreq);
+            hart.set_haltreq(haltreq);
         }
         if value & ACKHAVERESET != 0 && self.hartsel == 0 {
             self.havereset = false;
@@ -135,22 +131,22 @@ impl<H: DebugHart> DebugModule<H> {
         // The call below sees the previous ndmreset. The new ndmreset bit
         // is stored after that judgment (Debug Spec 1.0 §3.14).
         if value & RESUMEREQ != 0 && !haltreq {
-            self.resume_selected();
+            self.resume_selected(hart);
         }
         self.ndmreset = value & NDMRESET != 0;
     }
 
-    fn reset_module(&mut self) {
+    fn reset_module(&mut self, hart: &mut RiscvCore) {
         self.dmactive = false;
         self.hartsel = 0;
         self.ndmreset = false;
         self.cmderr = 0;
         self.data = [0; 4];
         self.resumeack = true;
-        self.hart.set_haltreq(false);
+        hart.set_haltreq(false);
     }
 
-    fn resume_selected(&mut self) {
+    fn resume_selected(&mut self, hart: &mut RiscvCore) {
         // Debug Spec 1.0 §3.5 and dm_registers.xml `dmcontrol.resumereq`:
         // writing 1 clears the resume ack of each selected hart. hartsel
         // other than 0 does not touch hart 0. The ack is set again only
@@ -164,8 +160,8 @@ impl<H: DebugHart> DebugModule<H> {
         if self.ndmreset {
             return;
         }
-        if self.hart.in_debug_mode() {
-            self.hart.debug_resume();
+        if hart.in_debug_mode() {
+            hart.debug_resume();
             self.resumeack = true;
         }
     }
@@ -178,7 +174,7 @@ impl<H: DebugHart> DebugModule<H> {
         value
     }
 
-    fn read_dmstatus(&self) -> u32 {
+    fn read_dmstatus(&self, hart: &RiscvCore) -> u32 {
         // version = 3, authenticated = 1. impebreak, authbusy, hasresethaltreq,
         // confstrptrvalid, and stickyunavail stay 0.
         let mut value = 3 | (1 << 7);
@@ -196,7 +192,7 @@ impl<H: DebugHart> DebugModule<H> {
             // An unavailable hart is not halted (§3.14).
             if self.ndmreset {
                 value |= (1 << 13) | (1 << 12);
-            } else if self.hart_halted() {
+            } else if self.hart_halted(hart) {
                 value |= (1 << 9) | (1 << 8);
             } else {
                 value |= (1 << 11) | (1 << 10);
@@ -222,17 +218,23 @@ impl<H: DebugHart> DebugModule<H> {
         (u32::from(self.cmderr) << 8) | 4
     }
 
-    fn read_haltsum0(&self) -> u32 {
+    fn read_haltsum0(&self, hart: &RiscvCore) -> u32 {
         // The LSB is the halt status of hart {hartsel[19:5], 5'b0} (§3.14).
         // Only hart 0 exists, and an unavailable hart is not halted.
-        if self.hartsel < 32 && self.hart_halted() {
+        if self.hartsel < 32 && self.hart_halted(hart) {
             1
         } else {
             0
         }
     }
 
-    fn hart_halted(&self) -> bool {
-        self.hart.in_debug_mode() && !self.ndmreset
+    fn hart_halted(&self, hart: &RiscvCore) -> bool {
+        hart.in_debug_mode() && !self.ndmreset
+    }
+}
+
+impl Default for DebugModule {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -4,9 +4,8 @@
 //! (`cmdtype` 2) run. The first failing check wins, and an unsupported
 //! option is reported before a not-halted hart (§3.7.1.1, §3.7.1.3).
 
-use super::hart::DebugHart;
 use super::DebugModule;
-use crate::core::DebugMemFault;
+use crate::core::{DebugMemFault, RiscvCore};
 
 const CMDERR_NOT_SUPPORTED: u8 = 2;
 const CMDERR_EXCEPTION: u8 = 3;
@@ -22,8 +21,8 @@ fn memory_cmderr(fault: DebugMemFault) -> u8 {
     }
 }
 
-impl<H: DebugHart> DebugModule<H> {
-    pub(super) fn write_command(&mut self, command: u32) {
+impl DebugModule {
+    pub(super) fn write_command(&mut self, hart: &mut RiscvCore, command: u32) {
         // §3.14 `command`: ignored while `cmderr` is not zero. `busy` is
         // never 1, so that half of the rule does not arise.
         if self.cmderr != 0 {
@@ -34,18 +33,18 @@ impl<H: DebugHart> DebugModule<H> {
             return;
         }
         // §3.14 cmderr 4: running, unavailable under ndmreset, or not hart 0.
-        if self.ndmreset || self.hartsel != 0 || !self.hart.in_debug_mode() {
+        if self.ndmreset || self.hartsel != 0 || !hart.in_debug_mode() {
             self.cmderr = CMDERR_HALT_RESUME;
             return;
         }
         if command >> 24 == 0 {
-            self.access_register(command);
+            self.access_register(hart, command);
         } else {
-            self.access_memory(command);
+            self.access_memory(hart, command);
         }
     }
 
-    fn access_register(&mut self, command: u32) {
+    fn access_register(&mut self, hart: &mut RiscvCore, command: u32) {
         let size64 = ((command >> 20) & 0b111) == 3;
         let transfer = command & (1 << 17) != 0;
         let write = command & (1 << 16) != 0;
@@ -54,12 +53,18 @@ impl<H: DebugHart> DebugModule<H> {
         if !transfer {
             return;
         }
-        if let Err(code) = self.transfer_reg(regno, write, size64) {
+        if let Err(code) = self.transfer_reg(hart, regno, write, size64) {
             self.cmderr = code;
         }
     }
 
-    fn transfer_reg(&mut self, regno: u32, write: bool, size64: bool) -> Result<(), u8> {
+    fn transfer_reg(
+        &mut self,
+        hart: &mut RiscvCore,
+        regno: u32,
+        write: bool,
+        size64: bool,
+    ) -> Result<(), u8> {
         match regno {
             0x1000 => {
                 if !write {
@@ -70,58 +75,64 @@ impl<H: DebugHart> DebugModule<H> {
             0x1001..=0x101f => {
                 let index = (regno - 0x1000) as u8;
                 if write {
-                    let previous = self.hart.read_gpr(index);
+                    let previous = read_gpr(hart, index);
                     let value = self.written_low(size64, previous);
-                    self.hart.write_gpr(index, value);
+                    write_gpr(hart, index, value);
                 } else {
-                    self.set_arg0(self.hart.read_gpr(index), size64);
+                    self.set_arg0(read_gpr(hart, index), size64);
                 }
                 Ok(())
             }
             // §3.7.1.1: a register that does not exist returns cmderr 3.
             // misa has F and D clear, so f0–f31 do not exist.
             0x1020..=0x103f => Err(CMDERR_EXCEPTION),
-            0x7b0 => self.transfer_dcsr(write, size64),
-            0x7b1 => self.transfer_dpc(write, size64),
-            0x7b2 => self.transfer_dscratch(0, write, size64),
-            0x7b3 => self.transfer_dscratch(1, write, size64),
-            0x0000..=0x0fff => self.transfer_csr(regno as u16, write, size64),
+            0x7b0 => self.transfer_dcsr(hart, write, size64),
+            0x7b1 => self.transfer_dpc(hart, write, size64),
+            0x7b2 => self.transfer_dscratch(hart, 0, write, size64),
+            0x7b3 => self.transfer_dscratch(hart, 1, write, size64),
+            0x0000..=0x0fff => self.transfer_csr(hart, regno as u16, write, size64),
             _ => Err(CMDERR_EXCEPTION),
         }
     }
 
-    fn transfer_dcsr(&mut self, write: bool, size64: bool) -> Result<(), u8> {
+    fn transfer_dcsr(&mut self, hart: &mut RiscvCore, write: bool, size64: bool) -> Result<(), u8> {
         if write {
-            let value = self.written_low(size64, self.hart.dcsr());
-            self.hart.write_dcsr(value);
+            let value = self.written_low(size64, hart.dcsr());
+            hart.write_dcsr(value);
         } else {
-            self.set_arg0(self.hart.dcsr(), size64);
+            self.set_arg0(hart.dcsr(), size64);
         }
         Ok(())
     }
 
-    fn transfer_dpc(&mut self, write: bool, size64: bool) -> Result<(), u8> {
+    fn transfer_dpc(&mut self, hart: &mut RiscvCore, write: bool, size64: bool) -> Result<(), u8> {
         if write {
-            let value = self.written_low(size64, self.hart.dpc());
-            self.hart.write_dpc(value);
+            let value = self.written_low(size64, hart.dpc());
+            hart.write_dpc(value);
         } else {
-            self.set_arg0(self.hart.dpc(), size64);
+            self.set_arg0(hart.dpc(), size64);
         }
         Ok(())
     }
 
-    fn transfer_dscratch(&mut self, which: u8, write: bool, size64: bool) -> Result<(), u8> {
+    fn transfer_dscratch(
+        &mut self,
+        hart: &mut RiscvCore,
+        which: u8,
+        write: bool,
+        size64: bool,
+    ) -> Result<(), u8> {
         let current = if which == 0 {
-            self.hart.dscratch0()
+            hart.dscratch0()
         } else {
-            self.hart.dscratch1()
+            hart.dscratch1()
         };
         if write {
             let value = self.written_low(size64, current);
             if which == 0 {
-                self.hart.write_dscratch0(value);
+                hart.write_dscratch0(value);
             } else {
-                self.hart.write_dscratch1(value);
+                hart.write_dscratch1(value);
             }
         } else {
             self.set_arg0(current, size64);
@@ -129,27 +140,36 @@ impl<H: DebugHart> DebugModule<H> {
         Ok(())
     }
 
-    fn transfer_csr(&mut self, addr: u16, write: bool, size64: bool) -> Result<(), u8> {
+    fn transfer_csr(
+        &mut self,
+        hart: &mut RiscvCore,
+        addr: u16,
+        write: bool,
+        size64: bool,
+    ) -> Result<(), u8> {
         if write {
-            let previous = self
-                .hart
-                .read_csr_machine(addr)
+            let previous = hart
+                .state()
+                .csr
+                .read_as_machine(addr)
                 .map_err(|_| CMDERR_EXCEPTION)?;
             let value = self.written_low(size64, previous);
-            self.hart
-                .write_csr_machine(addr, value)
+            hart.state_mut()
+                .csr
+                .write_as_machine(addr, value)
                 .map_err(|_| CMDERR_EXCEPTION)
         } else {
-            let value = self
-                .hart
-                .read_csr_machine(addr)
+            let value = hart
+                .state()
+                .csr
+                .read_as_machine(addr)
                 .map_err(|_| CMDERR_EXCEPTION)?;
             self.set_arg0(value, size64);
             Ok(())
         }
     }
 
-    fn access_memory(&mut self, command: u32) {
+    fn access_memory(&mut self, hart: &mut RiscvCore, command: u32) {
         let aamsize = (command >> 20) & 0b111;
         let size = 1u32 << aamsize;
         let write = command & (1 << 16) != 0;
@@ -159,14 +179,14 @@ impl<H: DebugHart> DebugModule<H> {
         let addr = self.arg1();
         if write {
             let value = self.arg0();
-            if let Err(fault) = self.hart.debug_physical_store(addr, size, value) {
+            if let Err(fault) = hart.debug_physical_store(addr, size, value) {
                 // Misaligned and access fault are cmderr 3 (contract D15,
                 // §3.7.1.3). A simulator fault is cmderr 7 (§3.14).
                 self.cmderr = memory_cmderr(fault);
                 return;
             }
         } else {
-            match self.hart.debug_physical_load(addr, size) {
+            match hart.debug_physical_load(addr, size) {
                 Ok(value) => {
                     // Unused high bits of a short read are UNSPECIFIED.
                     // This module writes one zero-extended result.
@@ -210,6 +230,20 @@ impl<H: DebugHart> DebugModule<H> {
     fn set_arg1(&mut self, value: u64) {
         self.data[2] = value as u32;
         self.data[3] = (value >> 32) as u32;
+    }
+}
+
+fn read_gpr(hart: &RiscvCore, index: u8) -> u64 {
+    if index == 0 {
+        0
+    } else {
+        hart.state().regs[usize::from(index)]
+    }
+}
+
+fn write_gpr(hart: &mut RiscvCore, index: u8, value: u64) {
+    if index != 0 {
+        hart.state_mut().regs[usize::from(index)] = value;
     }
 }
 
