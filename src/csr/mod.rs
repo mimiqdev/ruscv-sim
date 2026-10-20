@@ -479,13 +479,30 @@ impl CsrFile {
     /// Read CSR value
     pub fn read(&self, addr: u16) -> Result<u64, CsrError> {
         self.check_privilege(addr)?;
+        self.read_as_machine(addr)
+    }
+
+    /// Read a CSR as an M-mode abstract access.
+    ///
+    /// Debug Spec 1.0 §3.7.1.1: the transfer has the side effects of an
+    /// M-mode CSR read. The halted hart's privilege is not consulted, and
+    /// this path does not trap.
+    pub fn read_as_machine(&self, addr: u16) -> Result<u64, CsrError> {
         self.view(addr).ok_or(CsrError::InvalidAddress(addr))
     }
 
     /// Write CSR value
     pub fn write(&mut self, addr: u16, value: u64) -> Result<(), CsrError> {
         self.check_privilege(addr)?;
+        self.write_as_machine(addr, value)
+    }
 
+    /// Write a CSR as an M-mode abstract access.
+    ///
+    /// Debug Spec 1.0 §3.7.1.1. Skips the privilege check, keeps the
+    /// read-only and unimplemented-address failures, and legalizes a write
+    /// that M-mode could retire. Does not trap and does not change privilege.
+    pub fn write_as_machine(&mut self, addr: u16, value: u64) -> Result<(), CsrError> {
         // Check if CSR is read-only before looking up its storage.  This keeps
         // the architectural error for encoded read-only CSRs deterministic.
         if CsrPermission::from_address(addr) == CsrPermission::ReadOnly {
