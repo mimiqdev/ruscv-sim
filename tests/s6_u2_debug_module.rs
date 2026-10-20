@@ -19,7 +19,7 @@ use ruscv_sim::physical::{
     PhysicalBackendError, PhysicalBackendResult, PhysicalRequest, PhysicalTargetRejectionReason,
     ValidatedPhysicalAccess,
 };
-use ruscv_sim::{DebugModule, SharedDataAccess, SharedPhysicalAccess};
+use ruscv_sim::{DebugModule, SharedDataAccess, SharedPhysicalAccess, SimulatorFailureKind};
 use std::sync::{Arc, Mutex};
 
 const RAM_BASE: u64 = 0x8000_0000;
@@ -1292,10 +1292,12 @@ enum InjectedFault {
 struct InjectedBackend {
     fault: InjectedFault,
     ram: Arc<Mutex<SimpleMemory>>,
+    calls: Arc<Mutex<u32>>,
 }
 
 impl PhysicalBackend for InjectedBackend {
     fn transact(&mut self, _request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        *self.calls.lock().unwrap() += 1;
         match self.fault {
             InjectedFault::Host => Err(PhysicalBackendError::host("injected backend failure")),
             InjectedFault::Protocol => {
@@ -1364,6 +1366,7 @@ fn install_injected(
         Arc::new(Mutex::new(ValidatedPhysicalAccess::new(InjectedBackend {
             fault,
             ram,
+            calls: Arc::new(Mutex::new(0)),
         })));
     dm.hart_mut().set_physical_access(instruction, data);
 }
@@ -1398,6 +1401,10 @@ fn simulator_memory_fault_is_cmderr_7() {
             assert_eq!(marker, 0xa5, "unknown completion may already have stored");
         } else {
             assert_eq!(marker, 0);
+            assert!(
+                dm.hart().unresolved_physical_access().is_none(),
+                "{fault:?} does not latch a terminal completion"
+            );
         }
     }
 
@@ -1406,6 +1413,7 @@ fn simulator_memory_fault_is_cmderr_7() {
         Arc::new(Mutex::new(ValidatedPhysicalAccess::new(InjectedBackend {
             fault: InjectedFault::Host,
             ram: ram.clone(),
+            calls: Arc::new(Mutex::new(0)),
         })));
     let doomed = data.clone();
     let joined = std::thread::spawn(move || {
@@ -1420,4 +1428,71 @@ fn simulator_memory_fault_is_cmderr_7() {
     assert_eq!(cmderr(&mut dm), 7, "poisoned data-port lock");
     assert_eq!(arg1(&mut dm), RAM_BASE, "no postincrement");
     assert!(dm.hart().in_debug_mode());
+    assert!(dm.hart().unresolved_physical_access().is_none());
+}
+
+/// `MemoryError::Unknown` on Abstract Access Memory sets the same sticky
+/// latch the instruction path sets. The next `step_outcome` fails before
+/// retirement, and a later abstract access returns `cmderr` 7 without
+/// touching the data port. Debug Spec 1.0 §3.14 `cmderr` 7.
+#[test]
+fn unknown_completion_latches_and_blocks_the_next_access() {
+    let (mut dm, instruction, ram) = halted_with_instruction_port();
+    let calls = Arc::new(Mutex::new(0u32));
+    let data: SharedDataAccess = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        InjectedBackend {
+            fault: InjectedFault::Unknown,
+            ram: ram.clone(),
+            calls: calls.clone(),
+        },
+    )));
+    dm.hart_mut().set_physical_access(instruction, data);
+    set_arg0(&mut dm, 0x11);
+    set_arg1(&mut dm, RAM_BASE + 8);
+    issue(&mut dm, access_memory(false, 2, true, true));
+    assert_eq!(cmderr(&mut dm), 7);
+    assert_eq!(*calls.lock().unwrap(), 1);
+    let failure = dm
+        .hart()
+        .unresolved_physical_access()
+        .expect("unknown completion latches");
+    assert_eq!(failure.kind, SimulatorFailureKind::HostBackend);
+    assert!(
+        failure.message.contains("unresolved physical completion"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(ram.lock().unwrap().read_byte(0x20).unwrap(), 0xa5);
+
+    clear_cmderr(&mut dm);
+    set_arg0(&mut dm, 0x22);
+    set_arg1(&mut dm, RAM_BASE + 16);
+    issue(&mut dm, access_memory(false, 2, true, true));
+    assert_eq!(cmderr(&mut dm), 7, "the latched access is still other");
+    assert_eq!(
+        *calls.lock().unwrap(),
+        1,
+        "a second abstract access does not touch the port"
+    );
+    assert_eq!(arg1(&mut dm), RAM_BASE + 16, "no postincrement");
+    assert_eq!(ram.lock().unwrap().read_byte(0x20).unwrap(), 0xa5);
+
+    let pc = dm.hart().state().pc;
+    let outcome = dm.hart_mut().step_outcome();
+    assert!(
+        matches!(outcome, StepOutcome::SimulatorFailure(_)),
+        "step_outcome fails before retirement: {outcome:?}"
+    );
+    assert_eq!(dm.hart().state().pc, pc);
+    assert!(dm.hart().in_debug_mode());
+
+    dm.dmi_write(DMCONTROL, DMACTIVE | RESUMEREQ);
+    assert!(!dm.hart().in_debug_mode());
+    let pc = dm.hart().state().pc;
+    let outcome = dm.hart_mut().step_outcome();
+    assert!(
+        matches!(outcome, StepOutcome::SimulatorFailure(_)),
+        "a resumed hart still does not retire: {outcome:?}"
+    );
+    assert_eq!(dm.hart().state().pc, pc);
 }
