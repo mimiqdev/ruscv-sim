@@ -990,7 +990,9 @@ impl RiscvCore {
     /// Debug Spec 1.0 §3.7.1.3. The access uses this hart's data port with
     /// no translation delta, so `mstatus.MPRV` and `satp` do not apply.
     /// A misaligned address returns [`DebugMemFault::Misaligned`] before the
-    /// port is locked. Nothing here enters a trap or changes PC, privilege,
+    /// port is locked. A hart with no data port uses its legacy data memory,
+    /// which is the M-mode load and store path on that hart (Debug Spec 1.0
+    /// §3.7.1.3). Nothing here enters a trap or changes PC, privilege,
     /// or the counters. [`MemoryError::Unknown`] sets the same sticky
     /// [`Self::unresolved_physical_access`] latch as the instruction path.
     /// A later access returns [`DebugMemFault::Other`] without locking the
@@ -1028,32 +1030,48 @@ impl RiscvCore {
         if !addr.is_multiple_of(u64::from(size)) {
             return Err(DebugMemFault::Misaligned);
         }
-        let Some(port) = self.data_access.clone() else {
-            return Err(DebugMemFault::AccessFault);
-        };
-        let result = {
+        // The same choice `execute_instruction` makes. A port is the M-mode
+        // path, including a PLIC claim. A core with no port uses the legacy
+        // data memory, which is the path an M-mode load or store takes.
+        // Debug Spec 1.0 §3.7.1.3: the access may fail only if that M-mode
+        // access might fail.
+        let result = if let Some(port) = self.data_access.clone() {
             let mut guard = port.lock().map_err(|_| DebugMemFault::Other)?;
             let mut adapter = self.physical_adapter(&mut *guard, None);
-            if let Some(value) = store {
-                match size {
-                    1 => adapter.write_byte(addr, value as u8),
-                    2 => adapter.write_half(addr, value as u16),
-                    4 => adapter.write_word(addr, value as u32),
-                    _ => adapter.write_dword(addr, value),
-                }
-                .map(|()| 0)
-            } else {
-                match size {
-                    1 => adapter.read_byte_zext(addr),
-                    2 => adapter.read_half_zext(addr),
-                    4 => adapter.read_word_zext(addr),
-                    _ => adapter.read_dword(addr),
-                }
-            }
+            Self::debug_sized_access(&mut adapter, addr, size, store)
+        } else {
+            let mut guard = self.data_mem.lock().map_err(|_| DebugMemFault::Other)?;
+            let mut adapter = LegacyTypedMemoryAdapter::new(&mut *guard, self.base_addr);
+            Self::debug_sized_access(&mut adapter, addr, size, store)
         };
         match result {
             Ok(value) => Ok(value),
             Err(error) => Err(self.debug_mem_fault(error)),
+        }
+    }
+
+    /// One aligned load or store through the hart's typed data view.
+    fn debug_sized_access(
+        adapter: &mut dyn MemoryInterface,
+        addr: u64,
+        size: u32,
+        store: Option<u64>,
+    ) -> Result<u64, MemoryError> {
+        if let Some(value) = store {
+            match size {
+                1 => adapter.write_byte(addr, value as u8),
+                2 => adapter.write_half(addr, value as u16),
+                4 => adapter.write_word(addr, value as u32),
+                _ => adapter.write_dword(addr, value),
+            }
+            .map(|()| 0)
+        } else {
+            match size {
+                1 => adapter.read_byte_zext(addr),
+                2 => adapter.read_half_zext(addr),
+                4 => adapter.read_word_zext(addr),
+                _ => adapter.read_dword(addr),
+            }
         }
     }
 

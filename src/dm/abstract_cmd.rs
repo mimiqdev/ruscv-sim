@@ -260,8 +260,12 @@ fn unsupported(command: u32) -> bool {
         }
         2 => {
             let aamsize = (command >> 20) & 0b111;
-            // `aamvirtual`, `aamsize` above 3, bits 18:17, and bits 15:0.
-            // Bit 16 is `write`. Bit 19 is `aampostincrement`, which is implemented.
+            // `aamvirtual`, `aamsize` above 3, and bits defined as 0
+            // (18:17 and 13:0). Bits 15:14 are reserved for target-specific
+            // uses and this target defines none, so a 1 is an unsupported
+            // option. Debug Spec 1.0 §3.7: unsupported options and defined-0
+            // bits set `cmderr` to 2. Bit 16 is `write`. Bit 19 is
+            // `aampostincrement`, which is implemented.
             command & (1 << 23) != 0
                 || aamsize > 3
                 || command & (0b11 << 17) != 0
