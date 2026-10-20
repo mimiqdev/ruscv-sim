@@ -135,6 +135,27 @@ pub enum StepOutcome {
     },
 }
 
+/// A debugger physical access failed without trapping.
+///
+/// Debug Spec 1.0 §3.7.1.3 maps an M-mode exception to `abstractcs.cmderr` 3.
+/// `Misaligned` is the failure an M-mode load or store would report as an
+/// address-misaligned exception (contract D15). `AccessFault` is every other
+/// rejection of that M-mode access, including an unmapped address, a missing
+/// data port, and a width the target refuses. `Other` is a simulator fault
+/// (Debug Spec 1.0 §3.14 `cmderr` 7): a backend, protocol, or unknown
+/// completion, or a poisoned data-port lock. Those are not M-mode exceptions.
+/// An unknown completion may already have changed target state, which
+/// `cmderr` 3 would report as not having happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugMemFault {
+    /// `addr` is not a multiple of `size`. Checked before the data port.
+    Misaligned,
+    /// The physical data port is absent or the target rejected the access.
+    AccessFault,
+    /// The host could not complete the access, or cannot say whether it did.
+    Other,
+}
+
 /// Descriptive aliases for callers that name the boundary after the Hart/core.
 pub type HartStepOutcome = StepOutcome;
 pub type CoreStepOutcome = StepOutcome;
@@ -962,6 +983,115 @@ impl RiscvCore {
         self.state.csr.set_privilege(privilege);
         self.debug.halted = false;
         true
+    }
+
+    /// Physical load for Abstract Access Memory.
+    ///
+    /// Debug Spec 1.0 §3.7.1.3. The access uses this hart's data port with
+    /// no translation delta, so `mstatus.MPRV` and `satp` do not apply.
+    /// A misaligned address returns [`DebugMemFault::Misaligned`] before the
+    /// port is locked. A hart with no data port uses its legacy data memory,
+    /// which is the M-mode load and store path on that hart (Debug Spec 1.0
+    /// §3.7.1.3). Nothing here enters a trap or changes PC, privilege,
+    /// or the counters. [`MemoryError::Unknown`] sets the same sticky
+    /// [`Self::unresolved_physical_access`] latch as the instruction path.
+    /// A later access returns [`DebugMemFault::Other`] without locking the
+    /// port, and the next [`Self::step_outcome`] fails before retirement.
+    pub fn debug_physical_load(&mut self, addr: u64, size: u32) -> Result<u64, DebugMemFault> {
+        self.debug_physical(addr, size, None)
+    }
+
+    /// Physical store for Abstract Access Memory. See [`Self::debug_physical_load`].
+    pub fn debug_physical_store(
+        &mut self,
+        addr: u64,
+        size: u32,
+        value: u64,
+    ) -> Result<(), DebugMemFault> {
+        self.debug_physical(addr, size, Some(value)).map(|_| ())
+    }
+
+    fn debug_physical(
+        &mut self,
+        addr: u64,
+        size: u32,
+        store: Option<u64>,
+    ) -> Result<u64, DebugMemFault> {
+        // The instruction path refuses another turn after Unknown. Do the
+        // same here, before the data port is locked.
+        if self.unresolved_physical_access.is_some() {
+            return Err(DebugMemFault::Other);
+        }
+        if !matches!(size, 1 | 2 | 4 | 8) {
+            return Err(DebugMemFault::AccessFault);
+        }
+        // The hart rejects a misaligned data access before translation and
+        // before the port (this file's execute path). Do the same here.
+        if !addr.is_multiple_of(u64::from(size)) {
+            return Err(DebugMemFault::Misaligned);
+        }
+        // The same choice `execute_instruction` makes. A port is the M-mode
+        // path, including a PLIC claim. A core with no port uses the legacy
+        // data memory, which is the path an M-mode load or store takes.
+        // Debug Spec 1.0 §3.7.1.3: the access may fail only if that M-mode
+        // access might fail.
+        let result = if let Some(port) = self.data_access.clone() {
+            let mut guard = port.lock().map_err(|_| DebugMemFault::Other)?;
+            let mut adapter = self.physical_adapter(&mut *guard, None);
+            Self::debug_sized_access(&mut adapter, addr, size, store)
+        } else {
+            let mut guard = self.data_mem.lock().map_err(|_| DebugMemFault::Other)?;
+            let mut adapter = LegacyTypedMemoryAdapter::new(&mut *guard, self.base_addr);
+            Self::debug_sized_access(&mut adapter, addr, size, store)
+        };
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => Err(self.debug_mem_fault(error)),
+        }
+    }
+
+    /// One aligned load or store through the hart's typed data view.
+    fn debug_sized_access(
+        adapter: &mut dyn MemoryInterface,
+        addr: u64,
+        size: u32,
+        store: Option<u64>,
+    ) -> Result<u64, MemoryError> {
+        if let Some(value) = store {
+            match size {
+                1 => adapter.write_byte(addr, value as u8),
+                2 => adapter.write_half(addr, value as u16),
+                4 => adapter.write_word(addr, value as u32),
+                _ => adapter.write_dword(addr, value),
+            }
+            .map(|()| 0)
+        } else {
+            match size {
+                1 => adapter.read_byte_zext(addr),
+                2 => adapter.read_half_zext(addr),
+                4 => adapter.read_word_zext(addr),
+                _ => adapter.read_dword(addr),
+            }
+        }
+    }
+
+    /// Map a data-port error onto an abstract-command fault.
+    ///
+    /// Misaligned and target rejection stay the M-mode exception of Debug
+    /// Spec 1.0 §3.7.1.3. Backend, protocol, and a poisoned lock are §3.14
+    /// `cmderr` 7 and do not latch. `Unknown` may already have side effects,
+    /// so it uses the instruction path's sticky terminal latch and is also
+    /// `cmderr` 7.
+    fn debug_mem_fault(&mut self, error: MemoryError) -> DebugMemFault {
+        match error {
+            MemoryError::Misaligned(_, _) => DebugMemFault::Misaligned,
+            MemoryError::Unknown(message) => {
+                let _ = self.unresolved_physical_failure(self.state.pc, message);
+                DebugMemFault::Other
+            }
+            MemoryError::Backend(_) | MemoryError::Protocol(_) => DebugMemFault::Other,
+            _ => DebugMemFault::AccessFault,
+        }
     }
 
     /// Execute one Hart turn and return its typed semantic outcome.
