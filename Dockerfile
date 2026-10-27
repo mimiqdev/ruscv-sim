@@ -114,8 +114,10 @@ RUN rustc --version \
     && riscv64-unknown-elf-as --version \
     && openocd --version \
     && gdb-multiarch --version \
-    && spike --help | grep -q -- '--dm-datacount' \
-    && spike --help | grep -q -- '--halted' \
+    && spike --help > /tmp/spike-help.txt 2>&1 \
+    && grep -q -- '--dm-datacount' /tmp/spike-help.txt \
+    && grep -q -- '--halted' /tmp/spike-help.txt \
+    && rm -f /tmp/spike-help.txt \
     && printf '#include <vector>\nint main() { std::vector<int> v{42}; return v[0] != 42; }\n' \
         > /tmp/native-cxx-smoke.cc \
     && g++ -std=c++17 -Wall -Werror /tmp/native-cxx-smoke.cc \
