@@ -16,5 +16,5 @@ git config core.hooksPath .githooks
 
 ## Note
 
-The hook requires cargo to be in PATH. If cargo is installed via rustup,
-ensure `$HOME/.cargo/bin` is in your PATH.
+The pre-push hook uses Cargo on PATH first, with an optional `~/.cargo/env`
+rustup fallback if Cargo is not on PATH and the file exists.
