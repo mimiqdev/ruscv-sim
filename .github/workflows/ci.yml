@@ -1,8 +1,10 @@
 # RISC-V ISS Simulator CI
 # ========================
-# Pull requests run one consolidated Rust quality job. That job includes the
-# release binary and the project ELF suite, so a green check is the
-# repository quality gate. Coverage stays manual.
+# Pull requests run the Rust quality job and the OpenOCD debug-attach job.
+# The quality job includes the release binary and the project ELF suite, so a
+# green check is the repository quality gate. Coverage stays manual.
+# debug-attach builds the development image from the Dockerfile and runs
+# scripts/debug_attach.sh --require-spike inside it.
 
 name: CI
 
@@ -101,6 +103,67 @@ jobs:
         env:
           RISCV_TEST_SKIP_BUILD: "1"
         run: ./scripts/run_elf_tests.sh
+
+  # Stage 6 U5. Build ruscv-sim-dev:ci from this checkout's Dockerfile, using
+  # the same inputs as the development-container workflow, and run the attach
+  # script inside that image. Spike is the Dockerfile pin: commit 5d996117
+  # plus scripts/debug/spike-5d996117-empty-progbuf.patch. --require-spike
+  # makes the live comparison mandatory.
+  #
+  # The rolling tag ghcr.io/mimiqdev/ruscv-sim-dev:main is the image published
+  # from main (6fc09766, Spike v1.1.0). This job builds the checkout
+  # Dockerfile so the comparison uses the U5 pin. Pull requests do not publish.
+  debug-attach:
+    name: Debug attach
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Checkout repository
+        # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Check the attach script
+        run: bash -n scripts/debug_attach.sh
+
+      - name: Set up Docker Buildx
+        # v4.3.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+
+      - name: Detect runner account IDs
+        id: runner-account
+        run: |
+          echo "uid=$(id -u)" >> "$GITHUB_OUTPUT"
+          echo "gid=$(id -g)" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        # v7.3.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ruscv-sim-dev:ci
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            DEV_UID=${{ steps.runner-account.outputs.uid }}
+            DEV_GID=${{ steps.runner-account.outputs.gid }}
+          cache-from: type=gha,scope=dev-container
+          cache-to: type=gha,mode=max,scope=dev-container
+
+      - name: Run the OpenOCD and GDB attach script
+        run: |
+          docker run --rm \
+            --volume "${{ github.workspace }}:/workspace" \
+            --workdir /workspace \
+            --env CARGO_BUILD_JOBS \
+            --env CARGO_TERM_COLOR \
+            --env CARGO_TARGET_DIR \
+            ruscv-sim-dev:ci \
+            bash -ceu './scripts/debug_attach.sh --require-spike'
 
   # Coverage recompiles the workspace with instrumentation and is intentionally
   # manual. Run this workflow from the Actions UI when a coverage refresh is

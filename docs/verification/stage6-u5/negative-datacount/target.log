@@ -1,0 +1,2 @@
+ruscv-sim: verification override RUSCV_S6_DATACOUNT=2 (abstractcs.datacount)
+Listening for remote bitbang connection on port 43617.

@@ -6,7 +6,10 @@ ARG DEBIAN_RELEASE=bookworm
 FROM rust:${RUST_VERSION}-${DEBIAN_RELEASE} AS development
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG SPIKE_VERSION=v1.1.0
+# Commit 5d996117 (riscv-isa-sim PR 2086) implements abstract Access Memory
+# and already advertises --dm-datacount, --halted, and --rbb-port. A later
+# tag does not exist; v1.1.0 predates those flags.
+ARG SPIKE_VERSION=5d99611782ef8dd81b65b842369bd351a9d4702a
 ARG CARGO_LLVM_COV_VERSION=0.6.16
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -31,6 +34,7 @@ RUN apt-get update \
         gcc \
         gcc-riscv64-unknown-elf \
         gdb \
+        gdb-multiarch \
         git \
         less \
         libboost-regex-dev \
@@ -40,6 +44,7 @@ RUN apt-get update \
         libtool \
         make \
         ninja-build \
+        openocd \
         pkg-config \
         python3 \
         python3-pip \
@@ -48,10 +53,17 @@ RUN apt-get update \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Build the reference ISS from a named upstream release. /opt/riscv is also the
-# conventional prefix used by RISC-V development tools.
-RUN git clone --branch "${SPIKE_VERSION}" --depth 1 \
-        https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/riscv-isa-sim \
+# Build the reference ISS from SPIKE_VERSION. That value is a commit SHA.
+# `git clone --branch` does not accept a raw SHA, so fetch it explicitly.
+# The patch keeps `--dm-progsize=0 --dm-no-impebreak` from aborting in the
+# debug-module constructor. Upstream still has that assert on master.
+# /opt/riscv is also the conventional prefix used by RISC-V development tools.
+COPY scripts/debug/spike-5d996117-empty-progbuf.patch /tmp/spike-5d996117-empty-progbuf.patch
+RUN git init /tmp/riscv-isa-sim \
+    && git -C /tmp/riscv-isa-sim remote add origin https://github.com/riscv-software-src/riscv-isa-sim.git \
+    && git -C /tmp/riscv-isa-sim fetch --depth 1 origin "${SPIKE_VERSION}" \
+    && git -C /tmp/riscv-isa-sim checkout --detach FETCH_HEAD \
+    && patch -p1 -d /tmp/riscv-isa-sim < /tmp/spike-5d996117-empty-progbuf.patch \
     && mkdir /tmp/riscv-isa-sim/build \
     && cd /tmp/riscv-isa-sim/build \
     && ../configure --prefix=/opt/riscv \
@@ -100,7 +112,12 @@ RUN rustc --version \
     && riscv64-unknown-elf-gcc --version \
     && riscv64-unknown-elf-g++ --version \
     && riscv64-unknown-elf-as --version \
-    && spike --help >/dev/null \
+    && openocd --version \
+    && gdb-multiarch --version \
+    && spike --help > /tmp/spike-help.txt 2>&1 \
+    && grep -q -- '--dm-datacount' /tmp/spike-help.txt \
+    && grep -q -- '--halted' /tmp/spike-help.txt \
+    && rm -f /tmp/spike-help.txt \
     && printf '#include <vector>\nint main() { std::vector<int> v{42}; return v[0] != 42; }\n' \
         > /tmp/native-cxx-smoke.cc \
     && g++ -std=c++17 -Wall -Werror /tmp/native-cxx-smoke.cc \

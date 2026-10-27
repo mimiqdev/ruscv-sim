@@ -1,0 +1,168 @@
+34547
+36269
+Info : only one transport option; autoselect 'jtag'
+Info : Initializing remote_bitbang driver
+Info : Connecting to 127.0.0.1:34547
+Info : remote_bitbang driver initialized
+Info : This adapter doesn't support configurable speed
+Info : JTAG tap: riscv.cpu tap/device found: 0xdeadbeef (mfg: 0x777 (<unknown>), part: 0xeadb, ver: 0xd)
+Info : datacount=4 progbufsize=0
+Warn : We won't be able to execute fence instructions on this target. Memory may not always appear consistent. (progbufsize=0, impebreak=0)
+Info : Examined RISC-V core; found 1 harts
+Info :  hart 0: XLEN=64, misa=0x8000000000141101
+Info : starting gdb server for riscv.cpu on 36269
+Info : Listening on port 36269 for gdb connections
+Info : tcl server disabled
+Info : telnet server disabled
+Info : accepting 'gdb' connection on tcp/36269
+Warn : Prefer GDB command "target extended-remote :36269" instead of "target remote :36269"
+Warn : Failed to read memory via abstract access.
+Error: Target riscv.cpu: Failed to read memory (addr=0xffc)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x0)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x2)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x4)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x6)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x8)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0xa)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0xc)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0xe)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x10)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x12)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x14)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x16)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x18)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x1a)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x1c)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x1e)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x20)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x22)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x24)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x26)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x28)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x2a)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x2c)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x2e)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x30)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x32)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x34)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x36)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x38)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x3a)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x3c)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x3e)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x40)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x42)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x44)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x46)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x48)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x4a)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x4c)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x4e)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x50)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x52)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x54)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x56)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x58)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x5a)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x5c)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x5e)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x60)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x62)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x7ffffffc)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x0)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0xfffffffffffffffc)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Info : JTAG tap: riscv.cpu tap/device found: 0xdeadbeef (mfg: 0x777 (<unknown>), part: 0xeadb, ver: 0xd)
+Error: Error on socket 'remote_bitbang_fill_buf': errno==104, message: Connection reset by peer.
+Error: dmi_scan failed jtag scan
+Error: Failed write (NOP) at 0x10; status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Info : dropped 'gdb' connection
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+shutdown command invoked
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: failed: -4

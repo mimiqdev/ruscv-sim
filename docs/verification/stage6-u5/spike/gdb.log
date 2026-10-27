@@ -1,0 +1,41 @@
+The target architecture is set to "riscv:rv64".
+0x0000000000001000 in ?? ()
+S6 connect=ok
+S6 pc=0x1000
+S6 gpr=0x0
+S6 mstatus=0xa00000000
+S6 dcsr=0x40000143
+0x0000000080000004 in _start ()
+S6 step_pc=0x80000004
+S6 step_gpr=0x42
+Breakpoint 1 at 0x80000008
+
+Breakpoint 1, 0x0000000080000008 in s6_break ()
+S6 break_pc=0x80000008
+0x000000008000000c in s6_break ()
+S6 observe_gpr=0x1235
+S6 ram=0x1122334455667788
+S6 halt_pc=0x80000010
+JTAG tap: riscv.cpu tap/device found: 0xdeadbeef (mfg: 0x777 (<unknown>), part: 0xeadb, ver: 0xd)
+S6 reset_pc=0x1000
+Error on socket 'remote_bitbang_fill_buf': errno==104, message: Connection reset by peer.
+dmi_scan failed jtag scan
+Failed write (NOP) at 0x10; status=2
+Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+dmi_scan failed jtag scan
+failed read at 0x11, status=2
+Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+dmi_scan failed jtag scan
+failed read at 0x11, status=2
+Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+dmi_scan failed jtag scan
+failed read at 0x11, status=2
+Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+dmi_scan failed jtag scan
+failed read at 0x11, status=2
+Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+dmi_scan failed jtag scan
+failed read at 0x11, status=2
+Cannot execute this command while the target is running.
+Use the "interrupt" command to stop the target
+and then try again.

@@ -1,0 +1,26 @@
+--- a/riscv/debug_module.cc
++++ b/riscv/debug_module.cc
+@@ -108,13 +108,22 @@
+     hart_available_state[i] = true;
+   }
+ 
++  // progbufsize 0 with no implicit ebreak is a zero-length region that
++  // starts at debug_data_start. Sorting it next to the data region makes
++  // has_intersection treat the pair as an overlap, so Spike aborts before
++  // it listens. An empty region placed just after the data registers
++  // covers no bytes. Non-empty program buffers stay where they were.
++  unsigned progbuf_map = debug_progbuf_start;
++  if (program_buffer_bytes == 0)
++    progbuf_map = debug_data_start + static_cast<unsigned>(dmdata.size());
++
+   debug_memory_regions = {
+       region_descriptor{DEBUG_ROM_ENTRY, debug_rom_raw_len, debug_rom_raw},
+       region_descriptor{DEBUG_ROM_WHERETO, sizeof(debug_rom_whereto), debug_rom_whereto},
+       region_descriptor{DEBUG_ROM_FLAGS, sizeof(debug_rom_flags), debug_rom_flags},
+       region_descriptor{debug_data_start, dmdata.size(), dmdata.data()},
+       region_descriptor{debug_abstract_start, sizeof(debug_abstract), debug_abstract},
+-      region_descriptor{debug_progbuf_start, program_buffer_bytes, program_buffer},
++      region_descriptor{progbuf_map, program_buffer_bytes, program_buffer},
+   };
+ 
+   std::sort(debug_memory_regions.begin(), debug_memory_regions.end(),
