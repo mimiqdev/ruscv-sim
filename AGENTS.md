@@ -55,7 +55,6 @@ Do not delete or rewrite historical milestone records merely to match the curren
 - `src/memory/`: flat memory interface and implementation
 - `src/mmu/`: MMU, Sv39, and TLB components
 - `src/tlm/` and `src/peripherals/`: TLM-style bus and peripheral components
-- `src/debug/`: GDB RSP, breakpoint, watchpoint, and debugger components
 - `tests/`: Rust integration tests and project-authored bare-metal programs
 - `docs/archive/`: completed or superseded plans; never the active plan
 

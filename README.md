@@ -3,7 +3,7 @@
 [![CI](https://github.com/mimiqdev/ruscv-sim/actions/workflows/ci.yml/badge.svg)](https://github.com/mimiqdev/ruscv-sim/actions)
 [![Codecov](https://codecov.io/gh/mimiqdev/ruscv-sim/branch/main/graph/badge.svg)](https://codecov.io/gh/mimiqdev/ruscv-sim)
 
-Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执行 CLI；仓库里还有 MMU、TLM 风格总线、外设和 GDB RSP 等可独立测试的组件，它们不一定已经接到这条执行路径上。
+Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执行 CLI；仓库里还有 MMU、TLM 风格总线和外设等可独立测试的组件，它们不一定已经接到这条执行路径上。
 
 长期方向是可扩展的 RISC-V 虚拟原型平台，而不是只做一个解释器内核。
 
@@ -15,9 +15,9 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 - ELF64 加载、`tohost` 退出、可选 Spike 风格 commit log
 - UART 16550（固定映射 `0x10000000`）和 HTIF（`0x40008000`）
 - 指令实现覆盖 RV64I / M / A / F / D / C、CSR 和陷阱相关逻辑
-- 另有 Sv39 MMU/TLB、TLM 总线、CLINT/PLIC，以及 GDB RSP / 断点 / 观察点组件
+- 另有 Sv39 MMU/TLB、TLM 总线和 CLINT/PLIC
 
-公开 CLI 目前只有 `run`。GDB 服务器和交互式调试器作为 library API 存在，没有单独的调试 binary。ELF 核心循环按 32 位指令取指；压缩指令、页表翻译和 TLM 外设总线还没有全部接到这条路径。
+公开 CLI 目前只有 `run`。ELF 核心循环按 32 位指令取指；压缩指令、页表翻译和 TLM 外设总线还没有全部接到这条路径。
 
 外部验证已有 [A7 有界能力证据](docs/verification/a7-capability-assessment.md)：
 A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七个项目原子 guest，
@@ -224,8 +224,7 @@ ruscv-sim/
 │   ├── memory/          # 平坦内存
 │   ├── mmu/             # Sv39 / TLB
 │   ├── tlm/             # TLM 风格总线抽象
-│   ├── peripherals/     # CLINT、PLIC、UART 16550
-│   └── debug/           # GDB RSP、断点、观察点
+│   └── peripherals/     # CLINT、PLIC、UART 16550
 ├── tests/               # Rust 集成测试与自建裸机程序
 ├── benches/             # 基准
 ├── docs/                # 设计与开发文档

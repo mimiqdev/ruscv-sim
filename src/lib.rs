@@ -5,7 +5,6 @@
 pub mod codegen;
 pub mod core;
 pub mod csr;
-pub mod debug;
 pub mod decode;
 pub mod dispatch;
 pub mod dm;
@@ -31,11 +30,6 @@ pub use core::{
     SimulatorFailureKind, StepOutcome, TrapContinuationPolicy, TrapEntered, TrapEntryError,
 };
 pub use csr::{CsrAccess, CsrError, CsrFile};
-pub use debug::{
-    Breakpoint, BreakpointManager, BreakpointType, DebugCli, DebugError, DebugTarget, GdbPacket,
-    GdbServer, GdbServerConfig, GdbServerState, RspProtocol, StopReason, Watchpoint,
-    WatchpointAccess, WatchpointManager, WatchpointType,
-};
 pub use decode::{DecodeError, DecodedInstruction, InstructionDecoder, InstructionFormat};
 pub use dm::DebugModule;
 pub use execute::{ExecuteError, Executor};
