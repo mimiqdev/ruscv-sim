@@ -9,6 +9,7 @@ use crate::core::{
     TrapContinuationPolicy,
 };
 use crate::elf::{ElfError, LoadImage, SignatureInfo};
+use crate::jtag::{BitbangSession, DmiBus, DmiFault, RemoteBitbangConfig};
 use crate::machine::{MachineConfig, OwnedMachine, PlatformEvent, PlatformKind};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::{Clint, Plic, Uart16550, CLINT_SIZE, PLIC_SIZE};
@@ -1499,21 +1500,86 @@ impl RunControl {
     }
 }
 
-/// With a debugger attached, drain DMI at this boundary and report whether
-/// the hart must wait instead of fetching. Unattached runs do not call this.
+const REMOTE_BITBANG_CLOSED: &str = "remote_bitbang closed";
+
+enum DebugHold {
+    /// Fetch the next instruction.
+    Run,
+    /// Halted or held in `ndmreset`. Do not start a turn.
+    Wait,
+    /// The bitbang client disconnected or sent `Q`.
+    Closed,
+}
+
+struct MachineDmi<'a> {
+    machine: &'a mut OwnedMachine,
+}
+
+impl DmiBus for MachineDmi<'_> {
+    fn dmi_read(&mut self, addr: u8) -> Result<u32, DmiFault> {
+        self.machine
+            .dmi_read(addr)
+            .map_err(|error| DmiFault::Fatal(error.to_string()))
+    }
+
+    fn dmi_write(&mut self, addr: u8, value: u32) -> Result<(), DmiFault> {
+        self.machine
+            .dmi_write(addr, value)
+            .map_err(|error| DmiFault::Fatal(error.to_string()))
+    }
+}
+
+/// Admit debug traffic at this Hart boundary.
+///
+/// With a bitbang session, the socket is polled here, before the next fetch.
+/// A running hart does not block (`K=1`). A halted hart, or `wait_for_command`
+/// after a WFI with no platform event, blocks until the client sends a command.
+/// Without a session, an attached debugger still uses the U3 DMI queue.
 fn hold_for_debugger(
     machine: &mut OwnedMachine,
     control: &mut RunControl,
-) -> Result<bool, ExecutorError> {
-    if !machine.debugger_attached() {
-        return Ok(false);
+    session: Option<&mut BitbangSession>,
+    wait_for_command: bool,
+) -> Result<DebugHold, ExecutorError> {
+    if let Some(session) = session {
+        let block = wait_for_command || machine.debug_blocked();
+        let closed = session
+            .poll(&mut MachineDmi { machine }, block)
+            .map_err(ExecutorError::ExecutionError)?;
+        machine.publish_completed_turns(control.cycles());
+        if closed {
+            return Ok(DebugHold::Closed);
+        }
+        return Ok(if machine.debug_blocked() {
+            DebugHold::Wait
+        } else {
+            DebugHold::Run
+        });
     }
-    let block = machine.debug_blocked();
+    if !machine.debugger_attached() {
+        return Ok(DebugHold::Run);
+    }
+    let block = wait_for_command || machine.debug_blocked();
     machine
         .debug_boundary(block)
         .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
     machine.publish_completed_turns(control.cycles());
-    Ok(machine.debug_blocked())
+    if wait_for_command {
+        return Ok(DebugHold::Run);
+    }
+    Ok(if machine.debug_blocked() {
+        DebugHold::Wait
+    } else {
+        DebugHold::Run
+    })
+}
+
+fn open_bitbang(
+    machine: &mut OwnedMachine,
+    config: &RemoteBitbangConfig,
+) -> Result<BitbangSession, ExecutorError> {
+    let port = machine.attach_debugger();
+    BitbangSession::bind(config, port).map_err(ExecutorError::ExecutionError)
 }
 
 use crate::image::AddressForm;
@@ -1615,6 +1681,33 @@ pub fn load_and_run(
     )
 }
 
+/// [`load_and_run`] with a `remote_bitbang` socket.
+///
+/// Without a socket the native loop is unchanged. `--halted` is the `halted`
+/// field and is only meaningful together with a port.
+pub fn load_and_run_with_debug(
+    elf_data: &[u8],
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<&Path>,
+    verbose: bool,
+    debug: RemoteBitbangConfig,
+) -> Result<ExecutionResult, ExecutorError> {
+    let hooks = NativeHooks {
+        debug: Some(debug),
+        ..NativeHooks::default()
+    };
+    run_native_inner(
+        elf_data,
+        max_cycles,
+        tohost_addr,
+        log_commits,
+        verbose,
+        None,
+        hooks,
+    )
+}
+
 type NativeObserver =
     Box<dyn crate::core::observation::ObservationSink<Error = std::io::Error> + Send>;
 type PrepareMachine = Box<dyn FnOnce(&mut OwnedMachine) + Send>;
@@ -1626,6 +1719,7 @@ struct NativeHooks {
     boundary: Option<BoundaryObserver>,
     #[cfg(test)]
     config: Option<MachineConfig>,
+    debug: Option<RemoteBitbangConfig>,
 }
 
 // Same native Runner with bounded internal test seams; no alternate engine.
@@ -1738,9 +1832,28 @@ fn run_native_inner(
     } else {
         control.start::<String>()
     };
+    let mut bitbang = match hooks.debug.as_ref() {
+        Some(config) => Some(open_bitbang(&mut machine, config)?),
+        None => None,
+    };
+    if hooks.debug.as_ref().is_some_and(|config| config.halted) {
+        machine.request_halt();
+    }
     while matches!(decision, RunDecision::Continue) {
-        if hold_for_debugger(&mut machine, &mut control)? {
-            continue;
+        match hold_for_debugger(&mut machine, &mut control, bitbang.as_mut(), false)? {
+            DebugHold::Wait => continue,
+            DebugHold::Closed => {
+                return Ok(cli_result(
+                    &machine,
+                    &placement,
+                    1,
+                    control.cycles(),
+                    machine.state().pc,
+                    false,
+                    Some(REMOTE_BITBANG_CLOSED.to_string()),
+                ));
+            }
+            DebugHold::Run => {}
         }
         // Reserve the slot before invoking the Hart.  A host failure in this
         // slot therefore cannot be retried even when it is the final budget
@@ -1797,19 +1910,28 @@ fn run_native_inner(
             ));
         }
         if matches!(turn.hart().outcome, StepOutcome::Waiting) {
-            // D12 without the transport: a WFI that has no future platform
-            // event waits for the next DMI command instead of NoProgress.
+            // D12: a WFI that has no future platform event waits for the next
+            // DMI command instead of NoProgress when a debugger is attached.
             if machine.debugger_attached()
                 && turn.boundary().no_progress
                 && !turn.boundary().deadline_stop
             {
                 control.refund_uncompleted_slot();
-                machine.publish_completed_turns(control.cycles());
                 drop(turn);
-                machine
-                    .debug_boundary(true)
-                    .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
-                continue;
+                match hold_for_debugger(&mut machine, &mut control, bitbang.as_mut(), true)? {
+                    DebugHold::Closed => {
+                        return Ok(cli_result(
+                            &machine,
+                            &placement,
+                            1,
+                            control.cycles(),
+                            machine.state().pc,
+                            false,
+                            Some(REMOTE_BITBANG_CLOSED.to_string()),
+                        ));
+                    }
+                    DebugHold::Run | DebugHold::Wait => continue,
+                }
             }
             let diagnostic = if turn.boundary().deadline_stop {
                 "DeadlineReached"
@@ -2073,6 +2195,27 @@ pub fn load_and_run_file(
     )
 }
 
+/// [`load_and_run_file`] with a `remote_bitbang` socket.
+pub fn load_and_run_file_with_debug(
+    elf_path: &str,
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<PathBuf>,
+    verbose: bool,
+    debug: RemoteBitbangConfig,
+) -> Result<ExecutionResult, ExecutorError> {
+    let elf_data = std::fs::read(elf_path)
+        .map_err(|e| ExecutorError::ElfLoadError(ElfError::IoError(e.to_string())))?;
+    load_and_run_with_debug(
+        &elf_data,
+        max_cycles,
+        tohost_addr,
+        log_commits.as_deref(),
+        verbose,
+        debug,
+    )
+}
+
 /// Reset only Hart architectural state through the legacy compatibility API.
 /// This does not restore RAM/devices or prove Machine drain/fresh lifecycle.
 pub fn reset_core(core: &mut RiscvCore, entry_point: u64, base_addr: u64) {
@@ -2180,7 +2323,7 @@ impl RiscVSimulator {
     }
 
     /// Attach a debugger. DMI transactions on the returned port are admitted
-    /// at Hart boundaries. There is no JTAG transport in this unit.
+    /// at Hart boundaries. [`Self::run_debug`] is the JTAG `remote_bitbang` path.
     pub fn attach_debugger(&mut self) -> crate::machine::DebugPort {
         self.machine.attach_debugger()
     }
@@ -2335,6 +2478,26 @@ impl RiscVSimulator {
     /// that exposed the signal. A zero budget executes no turn and reports a
     /// timeout, and an exit in the final permitted slot is not a timeout.
     pub fn run(&mut self, max_cycles: Option<u64>) -> Result<ExecutionResult, ExecutorError> {
+        self.run_inner(max_cycles, None)
+    }
+
+    /// [`Self::run`] while serving `remote_bitbang` on `debug.port`.
+    ///
+    /// `debug.halted` stops the hart before the first instruction. The flat
+    /// loop accepts the same flags as the native loop.
+    pub fn run_debug(
+        &mut self,
+        max_cycles: Option<u64>,
+        debug: RemoteBitbangConfig,
+    ) -> Result<ExecutionResult, ExecutorError> {
+        self.run_inner(max_cycles, Some(debug))
+    }
+
+    fn run_inner(
+        &mut self,
+        max_cycles: Option<u64>,
+        debug: Option<RemoteBitbangConfig>,
+    ) -> Result<ExecutionResult, ExecutorError> {
         let max_cycles = max_cycles.unwrap_or(self.max_cycles);
         let tohost = self.tohost_offset()?;
         // The started-slot budget, completed-turn count and exit rule come from the shared
@@ -2362,9 +2525,31 @@ impl RiscVSimulator {
         } else {
             control.start::<String>()
         };
+        let mut bitbang = match debug.as_ref() {
+            Some(config) => Some(open_bitbang(&mut self.machine, config)?),
+            None => None,
+        };
+        if debug.as_ref().is_some_and(|config| config.halted) {
+            self.machine.request_halt();
+        }
         while matches!(decision, RunDecision::Continue) {
-            if hold_for_debugger(&mut self.machine, &mut control)? {
-                continue;
+            match hold_for_debugger(&mut self.machine, &mut control, bitbang.as_mut(), false)? {
+                DebugHold::Wait => {
+                    self.memory = self.machine.memory().clone();
+                    continue;
+                }
+                DebugHold::Closed => {
+                    self.memory = self.machine.memory().clone();
+                    return Ok(self.finish(
+                        control.cycles(),
+                        1,
+                        false,
+                        Some(REMOTE_BITBANG_CLOSED.to_string()),
+                    ));
+                }
+                DebugHold::Run => {
+                    self.memory = self.machine.memory().clone();
+                }
             }
             // Reserve the slot before invoking the Hart.  A host failure in the
             // final slot consumes it without completing a reported turn.
@@ -2389,19 +2574,34 @@ impl RiscVSimulator {
                 }
             };
             if matches!(turn.hart().outcome, StepOutcome::Waiting) {
-                // D12 without the transport: a WFI that has no future platform
-                // event waits for the next DMI command instead of NoProgress.
+                // D12: a WFI that has no future platform event waits for the next
+                // DMI command instead of NoProgress when a debugger is attached.
                 if self.machine.debugger_attached()
                     && turn.boundary().no_progress
                     && !turn.boundary().deadline_stop
                 {
                     control.refund_uncompleted_slot();
-                    self.machine.publish_completed_turns(control.cycles());
                     drop(turn);
-                    self.machine
-                        .debug_boundary(true)
-                        .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
-                    continue;
+                    match hold_for_debugger(
+                        &mut self.machine,
+                        &mut control,
+                        bitbang.as_mut(),
+                        true,
+                    )? {
+                        DebugHold::Closed => {
+                            self.memory = self.machine.memory().clone();
+                            return Ok(self.finish(
+                                control.cycles(),
+                                1,
+                                false,
+                                Some(REMOTE_BITBANG_CLOSED.to_string()),
+                            ));
+                        }
+                        DebugHold::Run | DebugHold::Wait => {
+                            self.memory = self.machine.memory().clone();
+                            continue;
+                        }
+                    }
                 }
                 let diagnostic = if turn.boundary().deadline_stop {
                     "DeadlineReached"

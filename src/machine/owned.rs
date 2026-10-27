@@ -403,6 +403,11 @@ impl OwnedMachine {
         self.control.inner.debug.attached()
     }
 
+    /// `--halted`. The next Hart boundary enters Debug Mode before fetch.
+    pub(crate) fn request_halt(&mut self) {
+        self.domain_mut().core.set_haltreq(true);
+    }
+
     pub(crate) fn arm_debug_session(&self) -> DebugSessionGuard {
         self.control.inner.debug.open_session();
         DebugSessionGuard {

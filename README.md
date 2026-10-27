@@ -77,6 +77,8 @@ cargo run -- run path/to/program.elf --max-cycles 100000
 | `-t, --tohost <ADDR>` | 退出探测地址，例如 `0x40008000` |
 | `-v, --verbose` | 详细日志 |
 | `--log-commits <FILE>` | 写出 Spike 兼容的 commit log |
+| `--rbb-port <PORT>` | 在该 TCP 端口上提供 OpenOCD `remote_bitbang`。不带此选项时，运行循环保持 Stage 5 / 未连接调试器的行为 |
+| `--halted` | 复位后、第一条指令之前进入 Debug Mode（`dpc` 为入口，`minstret` 为 0）。必须与 `--rbb-port` 同时给出 |
 
 Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在 Runner 中比较寄存器快照。
 文本格式保留原有的 GPR 展示与省略规则，并非完整的 FPR/CSR/内存效果导出。

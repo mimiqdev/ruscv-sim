@@ -3,7 +3,9 @@
 //! For testing and debugging RISC-V simulator
 
 use clap::{Parser, Subcommand};
-use ruscv_sim::{load_and_run_file, ExecutionResult};
+use ruscv_sim::{
+    load_and_run_file, load_and_run_file_with_debug, ExecutionResult, RemoteBitbangConfig,
+};
 use std::path::PathBuf;
 
 /// Parse address string that may be in decimal or hexadecimal format
@@ -48,6 +50,14 @@ enum Commands {
         /// Output commit log to file (Spike-compatible format)
         #[arg(long, value_name = "FILE")]
         log_commits: Option<PathBuf>,
+
+        /// TCP port for an OpenOCD `remote_bitbang` client
+        #[arg(long, value_name = "PORT")]
+        rbb_port: Option<u16>,
+
+        /// Halt before the first instruction. Requires `--rbb-port`
+        #[arg(long)]
+        halted: bool,
     },
 }
 
@@ -61,7 +71,14 @@ fn main() {
             tohost,
             verbose,
             log_commits,
+            rbb_port,
+            halted,
         } => {
+            if halted && rbb_port.is_none() {
+                eprintln!("error: --halted requires --rbb-port");
+                std::process::exit(2);
+            }
+
             if verbose {
                 eprintln!("Loading ELF file: {:?}", elf);
                 eprintln!("Max cycles: {:?}", max_cycles);
@@ -69,9 +86,23 @@ fn main() {
                 if let Some(ref path) = log_commits {
                     eprintln!("Commit log: {:?}", path);
                 }
+                if let Some(port) = rbb_port {
+                    eprintln!("remote_bitbang port: {port}");
+                    if halted {
+                        eprintln!("Halting before the first instruction");
+                    }
+                }
             }
 
-            match run_elf(&elf, max_cycles, tohost, log_commits, verbose) {
+            match run_elf(
+                &elf,
+                max_cycles,
+                tohost,
+                log_commits,
+                verbose,
+                rbb_port,
+                halted,
+            ) {
                 Ok(result) => {
                     print_result(&result);
                     std::process::exit(process_exit_code(&result));
@@ -91,14 +122,21 @@ fn run_elf(
     tohost: Option<u64>,
     log_commits: Option<PathBuf>,
     verbose: bool,
+    rbb_port: Option<u16>,
+    halted: bool,
 ) -> Result<ExecutionResult, String> {
-    load_and_run_file(
-        elf_path.to_str().unwrap(),
-        max_cycles,
-        tohost,
-        log_commits,
-        verbose,
-    )
+    let path = elf_path.to_str().unwrap();
+    match rbb_port {
+        Some(port) => load_and_run_file_with_debug(
+            path,
+            max_cycles,
+            tohost,
+            log_commits,
+            verbose,
+            RemoteBitbangConfig::listen(port).halted(halted),
+        ),
+        None => load_and_run_file(path, max_cycles, tohost, log_commits, verbose),
+    }
     .map_err(|e| format!("Execution failed: {}", e))
 }
 
