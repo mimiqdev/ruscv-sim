@@ -4,14 +4,14 @@
 //! writes finish inside the call, so `abstractcs.busy` is 0. There is no
 //! DMI `op` result. That belongs to the transport (U4).
 //!
-//! The flat `RiscVSimulator::run` loop and the native `run_native_inner` loop
-//! both step a `Machine`. Hosting this module on either loop is U3, which
-//! admits a transaction at a hart boundary and applies `ndmreset`. U2 tests
-//! pass a bare [`RiscvCore`] into the DMI methods and call
-//! [`RiscvCore::step_outcome`] themselves. The module does not own the hart,
-//! so a caller cannot resume, reset, or set `haltreq` through a handle this
-//! module hands out. `step_outcome` stays outside these methods: a `haltreq`
-//! write must not run a hart turn inside the DM (Debug Spec 1.0 §3.5).
+//! The Machine owns one of these and admits each transaction at a Hart
+//! boundary. `ndmreset` is only a bit here. The Machine sees the rising edge
+//! and calls [`crate::machine::Machine::fresh_reset`]; this object is not
+//! rebuilt. U2 tests still pass a bare [`RiscvCore`] into the DMI methods and
+//! call [`RiscvCore::step_outcome`] themselves. The module does not own the
+//! hart, so a caller cannot resume, reset, or set `haltreq` through a handle
+//! this module hands out. `step_outcome` stays outside these methods: a
+//! `haltreq` write must not run a hart turn inside the DM (Debug Spec 1.0 §3.5).
 
 mod abstract_cmd;
 mod regs;
@@ -39,8 +39,9 @@ pub struct DebugModule {
     /// this module resets resume ack to 1.
     resumeack: bool,
     /// Set at construction for the hart's power-on reset (§3.2). Cleared
-    /// only by `ackhavereset` for hart 0. Not updated on `dmactive` or
-    /// `ndmreset` edges. The `ndmreset` half of §3.2 is U3.
+    /// only by `ackhavereset` for hart 0. A standalone DMI write does not
+    /// change it on `dmactive` or `ndmreset` edges. The Machine sets it when
+    /// `ndmreset` releases the hart from [`crate::machine::Machine::fresh_reset`].
     havereset: bool,
 }
 
@@ -230,6 +231,17 @@ impl DebugModule {
 
     fn hart_halted(&self, hart: &RiscvCore) -> bool {
         hart.in_debug_mode() && !self.ndmreset
+    }
+
+    pub(crate) fn ndmreset(&self) -> bool {
+        self.ndmreset
+    }
+
+    /// Debug Spec 1.0 §3.2. The selected hart has come out of reset.
+    /// `havereset` sticks until `ackhavereset`. Called by the Machine when
+    /// `ndmreset` falls after the reload, not by [`Self::dmi_write`].
+    pub(crate) fn note_reset_release(&mut self) {
+        self.havereset = true;
     }
 }
 

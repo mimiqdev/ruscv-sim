@@ -2,6 +2,7 @@
 //! Hart is owned here, never copied or exposed as a core. Shared host admission,
 //! composition, transition and last-owner quarantine remain the T2 mechanisms.
 use super::*;
+use std::sync::Arc;
 
 #[cfg(test)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -123,6 +124,8 @@ impl OwnedMachine {
         last_slot: bool,
     ) -> Result<MachineTurn, MachineError> {
         self.admit()?;
+        let inner = Arc::clone(&self.control.inner);
+        let _instruction = super::debug_hub::InInstruction::enter(&inner.debug.in_instruction);
         if self.edited {
             // Borrowed compatibility edits may retain the current reservation,
             // but cannot introduce an opaque LR snapshot from another domain.
@@ -385,6 +388,203 @@ impl OwnedMachine {
     pub(crate) fn fresh_reset(&mut self) -> Result<(), MachineError> {
         let image = self.domain().image.clone();
         self.install(image)
+    }
+
+    /// The Machine owns the Debug Module. A later [`Machine::fresh_reset`]
+    /// reloads the hart and leaves this module in place.
+    pub(crate) fn attach_debugger(&mut self) -> DebugPort {
+        self.control.inner.debug.attach();
+        DebugPort {
+            inner: Arc::clone(&self.control.inner),
+        }
+    }
+
+    pub(crate) fn debugger_attached(&self) -> bool {
+        self.control.inner.debug.attached()
+    }
+
+    pub(crate) fn arm_debug_session(&self) -> DebugSessionGuard {
+        self.control.inner.debug.open_session();
+        DebugSessionGuard {
+            inner: Arc::clone(&self.control.inner),
+        }
+    }
+
+    pub(crate) fn publish_completed_turns(&self, turns: u64) {
+        self.control.inner.debug.publish_turns(turns);
+    }
+
+    /// `ndmreset` is set, or the hart is already in Debug Mode. The run loop
+    /// waits for a DMI command instead of fetching.
+    pub(crate) fn debug_blocked(&self) -> bool {
+        let ndmreset = self
+            .control
+            .inner
+            .debug
+            .dm
+            .lock()
+            .map(|dm| dm.ndmreset())
+            .unwrap_or(true);
+        ndmreset || self.domain().core.in_debug_mode()
+    }
+
+    /// Apply queued DMI transactions. A transaction posted during an
+    /// instruction stays queued: this returns without applying it.
+    /// `block` waits for the next command while the hart is halted, held in
+    /// `ndmreset`, or parked by the caller.
+    pub(crate) fn debug_boundary(&mut self, block: bool) -> Result<(), MachineError> {
+        if self.control.inner.debug.in_instruction() {
+            return Ok(());
+        }
+        loop {
+            if self.control.inner.debug.closed() {
+                return Err(MachineError::Debug(
+                    "debug run ended before the transaction was admitted".into(),
+                ));
+            }
+            let batch = {
+                let mut queue = self
+                    .control
+                    .inner
+                    .debug
+                    .queue()
+                    .lock()
+                    .map_err(|_| MachineError::Poisoned)?;
+                if queue.is_empty() {
+                    if !block {
+                        return Ok(());
+                    }
+                    let _waiting = self
+                        .control
+                        .inner
+                        .debug
+                        .wake()
+                        .wait(queue)
+                        .map_err(|_| MachineError::Poisoned)?;
+                    continue;
+                }
+                queue.drain(..).collect::<Vec<_>>()
+            };
+            for call in batch {
+                let result = self.apply_dmi(call.addr, call.write);
+                let _ = call.reply.send(result);
+            }
+            if !block || !self.debug_blocked() {
+                return Ok(());
+            }
+        }
+    }
+
+    pub(crate) fn dmi_read(&mut self, addr: u8) -> Result<u32, MachineError> {
+        self.admit_direct(addr, None)
+    }
+
+    pub(crate) fn dmi_write(&mut self, addr: u8, value: u32) -> Result<(), MachineError> {
+        self.admit_direct(addr, Some(value)).map(|_| ())
+    }
+
+    fn admit_direct(&mut self, addr: u8, write: Option<u32>) -> Result<u32, MachineError> {
+        if self.control.inner.debug.in_instruction() {
+            return Err(MachineError::Debug(
+                "DMI is admitted only at a Hart boundary".into(),
+            ));
+        }
+        self.apply_dmi(addr, write)
+    }
+
+    fn apply_dmi(&mut self, addr: u8, write: Option<u32>) -> Result<u32, MachineError> {
+        let hub = Arc::clone(&self.control.inner);
+        let (value, before, after) = {
+            let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
+            let core = &mut self
+                .installed
+                .as_mut()
+                .expect("exclusive installed Machine")
+                .core;
+            let before = dm.ndmreset();
+            let value = match write {
+                Some(value) => {
+                    dm.dmi_write(core, addr, value);
+                    0
+                }
+                None => dm.dmi_read(core, addr),
+            };
+            (value, before, dm.ndmreset())
+        };
+        if !before && after {
+            self.reload_for_ndmreset()?;
+        }
+        if before && !after {
+            hub.debug
+                .dm
+                .lock()
+                .map_err(|_| MachineError::Poisoned)?
+                .note_reset_release();
+            let core = &mut self
+                .installed
+                .as_mut()
+                .expect("exclusive installed Machine")
+                .core;
+            if core.haltreq() && !core.in_debug_mode() {
+                let _ = core.step_outcome();
+            }
+        }
+        Ok(value)
+    }
+
+    /// `ndmreset` rose. Reload the installed image through
+    /// [`Machine::fresh_reset`]. The Debug Module stays on the Machine.
+    fn reload_for_ndmreset(&mut self) -> Result<(), MachineError> {
+        let signal = self.domain().platform.selected_tohost;
+        let verbose = self.domain().core.verbose();
+        self.quiesce()?;
+        {
+            let mut slot = self
+                .control
+                .inner
+                .installed
+                .lock()
+                .map_err(|_| MachineError::Poisoned)?;
+            *slot = self.installed.take();
+        }
+        let reset = self.control.fresh_reset();
+        {
+            let mut slot = self
+                .control
+                .inner
+                .installed
+                .lock()
+                .map_err(|_| MachineError::Poisoned)?;
+            self.installed = slot.take();
+        }
+        self.memory = self.control.memory()?;
+        self.edited = false;
+        self.edit_reservation = None;
+        reset?;
+        self.control.resume()?;
+        self.select_signal(signal);
+        self.domain_mut().core.set_verbose(verbose);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_in_instruction_for_test(&self, active: bool) {
+        self.control.inner.debug.set_in_instruction(active);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hart_haltreq(&self) -> bool {
+        self.domain().core.haltreq()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hart_in_debug_mode(&self) -> bool {
+        self.domain().core.in_debug_mode()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_queue_len(&self) -> usize {
+        self.control.inner.debug.queue_len()
     }
 }
 impl Drop for OwnedMachine {
