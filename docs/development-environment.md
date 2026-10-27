@@ -4,7 +4,7 @@
 
 **Authority:** Normative for the repository development container
 
-**Last verified:** 2026-09-18
+**Last verified:** 2026-10-27
 
 The root [`Dockerfile`](../Dockerfile) defines the reproducible development and
 verification environment for `ruscv-sim`. It replaces the unversioned external
@@ -18,7 +18,10 @@ image referenced by archived milestone plans.
   and GDB
 - GNU `riscv64-unknown-elf` C, C++, assembler, linker, and binutils tools for
   freestanding bare-metal guests
-- Spike reference ISS
+- OpenOCD 0.12.0 and `gdb-multiarch`, used by `scripts/debug_attach.sh`
+- Spike reference ISS, pinned to commit `5d99611782ef8dd81b65b842369bd351a9d4702a`
+  (riscv-isa-sim pull request 2086). That revision implements `--dm-datacount`,
+  `--halted`, and abstract Access Memory. `v1.1.0` does not.
 
 The image is sufficient for the current Rust quality gate, project-authored
 assembly guests, freestanding C/C++ guests, and Spike-based differential work.
@@ -42,7 +45,7 @@ without editing the file:
 ```bash
 docker build \
   --build-arg RUST_VERSION=1.97.1 \
-  --build-arg SPIKE_VERSION=v1.1.0 \
+  --build-arg SPIKE_VERSION=5d99611782ef8dd81b65b842369bd351a9d4702a \
   --build-arg DEV_UID="$(id -u)" \
   --build-arg DEV_GID="$(id -g)" \
   --tag ruscv-sim-dev .

@@ -43,12 +43,26 @@ pub struct DebugModule {
     /// change it on `dmactive` or `ndmreset` edges. The Machine sets it when
     /// `ndmreset` releases the hart from [`crate::machine::Machine::fresh_reset`].
     havereset: bool,
+    /// `dmstatus.version`. Conforming runs report 3. The U5 mutation reports 4.
+    version: u8,
+    /// Implemented `data0`–`dataN` registers. Conforming runs report 4.
+    /// The U5 mutation reports 2 and ignores `data2` and `data3`.
+    datacount: u8,
 }
 
 impl DebugModule {
     /// `dmactive` powers up at 0 (§3.14). `havereset` is already 1.
     /// Version discovery (§3.13) is a debugger sequence, not part of `new`.
+    ///
+    /// `RUSCV_S6_DMSTATUS_VERSION=4` and `RUSCV_S6_DATACOUNT=2` are the §7
+    /// item 5 negative mutations. They are not CLI flags. Unset, or any other
+    /// value, keeps version 3 and `datacount` 4.
     pub fn new() -> Self {
+        let (version, datacount) = u5_discovery_from_env();
+        Self::with_discovery(version, datacount)
+    }
+
+    fn with_discovery(version: u8, datacount: u8) -> Self {
         Self {
             dmactive: false,
             hartsel: 0,
@@ -57,6 +71,8 @@ impl DebugModule {
             data: [0; 4],
             resumeack: true,
             havereset: true,
+            version,
+            datacount,
         }
     }
 
@@ -70,7 +86,10 @@ impl DebugModule {
             return 0;
         }
         match addr & 0x7f {
-            addr @ DATA0..=0x07 => self.data[usize::from(addr - DATA0)],
+            addr @ DATA0..=0x07 => self
+                .data_slot(addr)
+                .map(|index| self.data[index])
+                .unwrap_or(0),
             DMCONTROL => self.read_dmcontrol(),
             DMSTATUS => self.read_dmstatus(hart),
             HARTINFO => self.read_hartinfo(),
@@ -96,7 +115,11 @@ impl DebugModule {
             return;
         }
         match addr {
-            addr @ DATA0..=0x07 => self.data[usize::from(addr - DATA0)] = value,
+            addr @ DATA0..=0x07 => {
+                if let Some(index) = self.data_slot(addr) {
+                    self.data[index] = value;
+                }
+            }
             ABSTRACTCS => {
                 // §3.14 `cmderr` is R/W1C. §1.3.3 leaves a partial write
                 // undefined. This module clears each bit that is written 1,
@@ -138,6 +161,9 @@ impl DebugModule {
     }
 
     fn reset_module(&mut self, hart: &mut RiscvCore) {
+        // `version` and `datacount` are implementation identity, not DM
+        // state. `dmactive` 1-to-0 does not change them, and it does not
+        // clear `havereset` (that stays the pre-reset behavior).
         self.dmactive = false;
         self.hartsel = 0;
         self.ndmreset = false;
@@ -145,6 +171,16 @@ impl DebugModule {
         self.data = [0; 4];
         self.resumeack = true;
         hart.set_haltreq(false);
+    }
+
+    /// `data0` is DMI `0x04`. A register at or above `datacount` is absent.
+    fn data_slot(&self, addr: u8) -> Option<usize> {
+        let index = usize::from(addr - DATA0);
+        if index < usize::from(self.datacount) && index < self.data.len() {
+            Some(index)
+        } else {
+            None
+        }
     }
 
     fn resume_selected(&mut self, hart: &mut RiscvCore) {
@@ -176,9 +212,9 @@ impl DebugModule {
     }
 
     fn read_dmstatus(&self, hart: &RiscvCore) -> u32 {
-        // version = 3, authenticated = 1. impebreak, authbusy, hasresethaltreq,
-        // confstrptrvalid, and stickyunavail stay 0.
-        let mut value = 3 | (1 << 7);
+        // version is 3, authenticated is 1. impebreak, authbusy, hasresethaltreq,
+        // confstrptrvalid, and stickyunavail stay 0. The U5 mutation reports 4.
+        let mut value = u32::from(self.version) | (1 << 7);
         if self.ndmreset {
             value |= 1 << 24;
         }
@@ -215,8 +251,9 @@ impl DebugModule {
     }
 
     fn read_abstractcs(&self) -> u32 {
-        // progbufsize 0, busy 0, relaxedpriv 0, datacount 4.
-        (u32::from(self.cmderr) << 8) | 4
+        // progbufsize 0, busy 0, relaxedpriv 0. datacount is 4 unless the
+        // U5 mutation reports 2.
+        (u32::from(self.cmderr) << 8) | u32::from(self.datacount)
     }
 
     fn read_haltsum0(&self, hart: &RiscvCore) -> u32 {
@@ -248,5 +285,97 @@ impl DebugModule {
 impl Default for DebugModule {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+const U5_VERSION_ENV: &str = "RUSCV_S6_DMSTATUS_VERSION";
+const U5_DATACOUNT_ENV: &str = "RUSCV_S6_DATACOUNT";
+
+fn u5_discovery_from_env() -> (u8, u8) {
+    let version = std::env::var(U5_VERSION_ENV).ok();
+    let datacount = std::env::var(U5_DATACOUNT_ENV).ok();
+    let chosen = u5_discovery(version.as_deref(), datacount.as_deref());
+    if chosen.0 != 3 {
+        eprintln!(
+            "ruscv-sim: verification override {U5_VERSION_ENV}={} (dmstatus.version)",
+            chosen.0
+        );
+    }
+    if chosen.1 != 4 {
+        eprintln!(
+            "ruscv-sim: verification override {U5_DATACOUNT_ENV}={} (abstractcs.datacount)",
+            chosen.1
+        );
+    }
+    chosen
+}
+
+/// §7 item 5. `Some("4")` is the version OpenOCD 0.12.0 rejects. `Some("2")`
+/// is the `datacount` that hides the upper half of a 64-bit address. Every
+/// other string keeps the conforming discovery values.
+pub(crate) fn u5_discovery(version: Option<&str>, datacount: Option<&str>) -> (u8, u8) {
+    let version = match version {
+        Some("4") => 4,
+        Some(other) => {
+            eprintln!("ruscv-sim: ignoring {U5_VERSION_ENV}={other}; the U5 mutation is 4");
+            3
+        }
+        None => 3,
+    };
+    let datacount = match datacount {
+        Some("2") => 2,
+        Some(other) => {
+            eprintln!("ruscv-sim: ignoring {U5_DATACOUNT_ENV}={other}; the U5 mutation is 2");
+            4
+        }
+        None => 4,
+    };
+    (version, datacount)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::RiscvCore;
+    use crate::memory::{MemoryInterface, SimpleMemory};
+    use std::sync::{Arc, Mutex};
+
+    fn hart() -> RiscvCore {
+        let mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>> =
+            Arc::new(Mutex::new(SimpleMemory::new(4096)));
+        RiscvCore::new(Arc::clone(&mem), mem)
+    }
+
+    #[test]
+    fn u5_discovery_keeps_version_3_and_datacount_4_unless_mutated() {
+        assert_eq!(u5_discovery(None, None), (3, 4));
+        assert_eq!(u5_discovery(Some("4"), Some("nope")), (4, 4));
+        assert_eq!(u5_discovery(Some("3"), Some("2")), (3, 2));
+        assert_eq!(u5_discovery(Some("2"), Some("1")), (3, 4));
+    }
+
+    #[test]
+    fn version_4_and_datacount_2_change_the_registers_openocd_reads() {
+        let mut dm = DebugModule::with_discovery(4, 2);
+        let mut hart = hart();
+        dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE);
+        assert_eq!(dm.dmi_read(&hart, DMSTATUS) & 0xf, 4);
+        assert_eq!(dm.dmi_read(&hart, ABSTRACTCS) & 0xf, 2);
+        dm.dmi_write(&mut hart, DATA0, 0x1111_1111);
+        dm.dmi_write(&mut hart, DATA0 + 1, 0x2222_2222);
+        dm.dmi_write(&mut hart, DATA0 + 2, 0x3333_3333);
+        dm.dmi_write(&mut hart, DATA0 + 3, 0x4444_4444);
+        assert_eq!(dm.dmi_read(&hart, DATA0), 0x1111_1111);
+        assert_eq!(dm.dmi_read(&hart, DATA0 + 1), 0x2222_2222);
+        assert_eq!(
+            dm.dmi_read(&hart, DATA0 + 2),
+            0,
+            "data2 is outside datacount 2"
+        );
+        assert_eq!(
+            dm.dmi_read(&hart, DATA0 + 3),
+            0,
+            "data3 is outside datacount 2"
+        );
     }
 }

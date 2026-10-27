@@ -38,7 +38,8 @@ A8 之后 AMO/LR/SC
 需要 Stable Rust，以及 `rustfmt` / `clippy`。跑项目自带的裸机 ELF 测试还需要 `riscv64-unknown-elf` 工具链。
 
 推荐使用仓库内的完整开发镜像，它还包含本机 C/C++、裸机 RISC-V
-交叉工具链和 Spike：
+交叉工具链、OpenOCD 0.12.0、`gdb-multiarch` 和 Spike。
+`scripts/debug_attach.sh` 用 OpenOCD 和 GDB 通过 `--rbb-port` 连接这个模拟器：
 
 ```bash
 docker build -t ruscv-sim-dev .
