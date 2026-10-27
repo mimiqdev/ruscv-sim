@@ -127,6 +127,11 @@ QEMU as part of the multi-platform publication; its Dockerfile toolchain smoke
 tests run during that build. Publishing uses the workflow-scoped `GITHUB_TOKEN`;
 no long-lived personal access token is required.
 
+The CI job `debug-attach` builds this same image from the workflow checkout and
+runs `scripts/debug_attach.sh --require-spike` inside it. That job does not
+publish a package. The rolling `main` tag remains the image last published from
+`main`.
+
 ## Run the quality gate
 
 ```bash

@@ -53,9 +53,11 @@ Version 4: `docs/verification/stage6-u5/negative-version/openocd.log` has `OpenO
 
 ## CI and the image
 
-Job id `debug-attach` in `.github/workflows/ci.yml` installs `openocd`, `gdb-multiarch`, and the RISC-V GNU toolchain, then runs `./scripts/debug_attach.sh`. The runner does not build Spike, so that job skips the comparison. The comparison is this file and `docs/verification/stage6-u5/comparison.txt`.
+Job id `debug-attach` in `.github/workflows/ci.yml` builds `ruscv-sim-dev:ci` from the `Dockerfile` with the same inputs as the development-container workflow (`linux/amd64`, the runner uid and gid, GitHub Actions cache scope `dev-container`). It then runs `./scripts/debug_attach.sh --require-spike` inside that image. The live Spike comparison is required. The saved comparison is `docs/verification/stage6-u5/comparison.txt`.
 
-The `Dockerfile` installs the same two packages. `SPIKE_VERSION` is `5d99611782ef8dd81b65b842369bd351a9d4702a`, fetched by SHA. The image applies `scripts/debug/spike-5d996117-empty-progbuf.patch`. The image smoke check requires `openocd`, `gdb-multiarch`, and a `spike --help` that advertises `--dm-datacount` and `--halted`.
+The rolling tag `ghcr.io/mimiqdev/ruscv-sim-dev:main` is the image published from `main` (`6fc09766`, 2026-08-26), which still builds Spike `v1.1.0`. This job builds the checkout `Dockerfile` so CI uses the U5 pin. The job does not publish a package.
+
+`SPIKE_VERSION` is `5d99611782ef8dd81b65b842369bd351a9d4702a`, fetched by SHA. The image applies `scripts/debug/spike-5d996117-empty-progbuf.patch`. The image installs `openocd` and `gdb-multiarch`. The image smoke check requires those two packages and a `spike --help` that advertises `--dm-datacount` and `--halted`.
 
 ## Local gate
 

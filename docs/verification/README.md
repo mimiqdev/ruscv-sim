@@ -39,7 +39,7 @@ Test language follows the layer rather than the simulator implementation languag
 - Rust tests live under `src/**` and `tests/*.rs`.
 - Project-authored guest programs currently live under `tests/bare-metal-riscv-test/` and are assembly sources.
 - CI installs a RISC-V GNU assembler/linker, runs the Rust quality gate, and on pull requests and on pushes to `main` builds and runs the project-authored ELF programs, including the Stage 4 `s4_*` guests.
-- CI job `debug-attach` installs OpenOCD 0.12.0 and `gdb-multiarch` and runs `scripts/debug_attach.sh`. The saved session and the Spike comparison are in [stage6-exit.md](stage6-exit.md).
+- CI job `debug-attach` builds the development image from the `Dockerfile` and runs `scripts/debug_attach.sh --require-spike` inside it. The saved session and the Spike comparison are in [stage6-exit.md](stage6-exit.md).
 - Commit-log comparison helpers exist, but the log currently omits memory-access records in the public ELF run loop.
 - No external RISC-V architecture suite is treated as integrated merely because documentation mentions it.
 
