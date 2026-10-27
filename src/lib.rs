@@ -46,6 +46,7 @@ pub use executor::{
 };
 pub use fpu::{Fcsr, Fpr, FpuRegisterFile};
 pub use hart_amods::{AmoArithmeticError, AmoOperation};
+pub use machine::DebugPort;
 pub use memory::{MemoryError, MemoryInterface, SimpleMemory};
 pub use mmu::{
     AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TlbEntry, TlbStats, TranslationMode,

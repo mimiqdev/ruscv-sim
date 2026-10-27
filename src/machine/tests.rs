@@ -356,3 +356,51 @@ fn unwound_native_callback_cannot_be_claimed_drained_or_restorable() {
         Err(MachineError::UnknownCompletion)
     ));
 }
+
+/// §7 item 3. A `haltreq` posted while an instruction is in progress stays
+/// queued. Applying it there is the negative mutation.
+#[test]
+fn dmi_haltreq_waits_until_the_instruction_boundary() {
+    use std::time::{Duration, Instant};
+
+    let mut owned = OwnedMachine::new(
+        MachineConfig::new(PlatformKind::Flat),
+        image(elf::addi(1, 0, 1)),
+    )
+    .unwrap();
+    let port = owned.attach_debugger();
+    owned.set_in_instruction_for_test(true);
+    let worker = thread::spawn(move || port.dmi_write(0x10, (1 << 31) | 1));
+    let start = Instant::now();
+    while owned.debug_queue_len() == 0 {
+        assert!(
+            !owned.hart_haltreq(),
+            "haltreq was accepted mid-instruction"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "haltreq was accepted mid-instruction: the transaction never waited"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        !owned.hart_haltreq(),
+        "haltreq was accepted mid-instruction"
+    );
+    let refused = owned.dmi_write(0x10, (1 << 31) | 1);
+    assert!(
+        refused.is_err(),
+        "haltreq was accepted mid-instruction: direct DMI ran during the instruction"
+    );
+    owned.debug_boundary(false).unwrap();
+    assert!(
+        !owned.hart_haltreq(),
+        "haltreq was accepted mid-instruction"
+    );
+    assert_eq!(owned.debug_queue_len(), 1);
+    owned.set_in_instruction_for_test(false);
+    owned.debug_boundary(false).unwrap();
+    worker.join().unwrap().unwrap();
+    assert!(owned.hart_haltreq());
+    assert!(!owned.hart_in_debug_mode());
+}

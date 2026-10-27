@@ -3,10 +3,12 @@
 //! Returned boundary receipts
 //! keep accepted control/observation work admitted until consumed (dropped).
 mod admission;
+mod debug_hub;
 mod host_memory;
 mod host_port;
 mod owned;
 mod platform;
+use debug_hub::DebugHub;
 pub(crate) use owned::OwnedMachine;
 #[cfg(test)]
 pub(crate) use owned::SignalOperation;
@@ -78,6 +80,8 @@ pub enum MachineError {
     NoUart,
     #[error("no RAM-backed selected tohost")]
     NoRamTohost,
+    #[error("{0}")]
+    Debug(String),
     #[error(transparent)]
     Memory(#[from] MemoryError),
 }
@@ -410,6 +414,7 @@ struct Inner {
     installed: Mutex<Option<Installed>>,
     host: Mutex<Option<HostView>>,
     work_changed: Condvar,
+    debug: DebugHub,
 }
 
 impl Drop for Inner {
@@ -462,6 +467,7 @@ impl Machine {
                 installed: Mutex::new(None),
                 host: Mutex::new(None),
                 work_changed: Condvar::new(),
+                debug: DebugHub::new(),
             }),
         }
     }
@@ -613,6 +619,7 @@ impl Machine {
     /// Execute exactly one existing Hart transition; no Runner budget/exit policy.
     pub fn step(&self, observe: bool) -> Result<MachineTurn, MachineError> {
         let lease = Lease::hart(&self.inner.gate)?;
+        let _instruction = debug_hub::InInstruction::enter(&self.inner.debug.in_instruction);
         let mut domain = self
             .inner
             .installed
@@ -798,6 +805,61 @@ impl Machine {
         admission.generation = generation;
         admission.lifecycle = Lifecycle::TornDown;
         Ok(())
+    }
+}
+
+/// Cloneable DMI endpoint. Transactions are applied on the hart owner at a
+/// Hart boundary, not on this thread and not mid-instruction.
+pub struct DebugPort {
+    inner: Arc<Inner>,
+}
+
+impl DebugPort {
+    /// Read one DMI register. The low 7 bits are the address.
+    pub fn dmi_read(&self, addr: u8) -> Result<u32, MachineError> {
+        self.inner.debug.post(addr, None)
+    }
+
+    /// Write one DMI register. The low 7 bits are the address.
+    pub fn dmi_write(&self, addr: u8, value: u32) -> Result<(), MachineError> {
+        self.inner.debug.post(addr, Some(value)).map(|_| ())
+    }
+
+    /// Completed Hart turns the attached run has counted. This is the value
+    /// `ExecutionResult.cycles` will report. It does not move while the hart
+    /// is halted.
+    pub fn completed_turns(&self) -> u64 {
+        self.inner.debug.completed_turns()
+    }
+}
+
+impl Clone for DebugPort {
+    fn clone(&self) -> Self {
+        self.inner.debug.acquire_port();
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl Drop for DebugPort {
+    fn drop(&mut self) {
+        if self.inner.debug.release_port() {
+            self.inner.debug.close();
+        }
+    }
+}
+
+/// Wakes a debugger blocked in [`DebugPort`] when the run returns.
+pub(crate) struct DebugSessionGuard {
+    inner: Arc<Inner>,
+}
+
+impl Drop for DebugSessionGuard {
+    fn drop(&mut self) {
+        if self.inner.debug.attached() {
+            self.inner.debug.close();
+        }
     }
 }
 

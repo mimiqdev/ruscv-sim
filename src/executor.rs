@@ -1398,6 +1398,13 @@ impl RunControl {
         self.started_slots += 1;
     }
 
+    /// A halted poll, or a WFI wait that is parking for a debugger, did not
+    /// complete a turn. D12: that time does not consume the turn budget.
+    fn refund_uncompleted_slot(&mut self) {
+        debug_assert!(self.started_slots > 0);
+        self.started_slots -= 1;
+    }
+
     /// Record one completed Hart turn.
     fn complete_turn(&mut self) {
         self.cycles += 1;
@@ -1490,6 +1497,23 @@ impl RunControl {
         clear();
         Some(code)
     }
+}
+
+/// With a debugger attached, drain DMI at this boundary and report whether
+/// the hart must wait instead of fetching. Unattached runs do not call this.
+fn hold_for_debugger(
+    machine: &mut OwnedMachine,
+    control: &mut RunControl,
+) -> Result<bool, ExecutorError> {
+    if !machine.debugger_attached() {
+        return Ok(false);
+    }
+    let block = machine.debug_blocked();
+    machine
+        .debug_boundary(block)
+        .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+    machine.publish_completed_turns(control.cycles());
+    Ok(machine.debug_blocked())
 }
 
 use crate::image::AddressForm;
@@ -1694,6 +1718,7 @@ fn run_native_inner(
     // live in the shared run control; this loop supplies stepping, signal order,
     // commit logging and its own diagnostics.
     let mut control = RunControl::new(max_cycles);
+    let _debug_session = machine.arm_debug_session();
     let mut last_tohost_value: u64 = 0;
 
     // Convert tohost virtual address to physical address for checking
@@ -1714,6 +1739,9 @@ fn run_native_inner(
         control.start::<String>()
     };
     while matches!(decision, RunDecision::Continue) {
+        if hold_for_debugger(&mut machine, &mut control)? {
+            continue;
+        }
         // Reserve the slot before invoking the Hart.  A host failure in this
         // slot therefore cannot be retried even when it is the final budget
         // slot.
@@ -1769,6 +1797,20 @@ fn run_native_inner(
             ));
         }
         if matches!(turn.hart().outcome, StepOutcome::Waiting) {
+            // D12 without the transport: a WFI that has no future platform
+            // event waits for the next DMI command instead of NoProgress.
+            if machine.debugger_attached()
+                && turn.boundary().no_progress
+                && !turn.boundary().deadline_stop
+            {
+                control.refund_uncompleted_slot();
+                machine.publish_completed_turns(control.cycles());
+                drop(turn);
+                machine
+                    .debug_boundary(true)
+                    .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+                continue;
+            }
             let diagnostic = if turn.boundary().deadline_stop {
                 "DeadlineReached"
             } else {
@@ -1799,6 +1841,12 @@ fn run_native_inner(
             ..
         } = turn.hart().outcome
         {
+            if machine.debugger_attached() {
+                control.refund_uncompleted_slot();
+                machine.publish_completed_turns(control.cycles());
+                drop(turn);
+                continue;
+            }
             let pc = turn.hart().control.after_pc;
             drop(turn);
             return Ok(cli_result(
@@ -1932,6 +1980,10 @@ fn run_native_inner(
             }
             RunDecision::Continue | RunDecision::Timeout => {
                 if completed_debug {
+                    if machine.debugger_attached() {
+                        machine.publish_completed_turns(control.cycles());
+                        continue;
+                    }
                     return Ok(cli_result(
                         &machine,
                         &placement,
@@ -2127,6 +2179,33 @@ impl RiscVSimulator {
         self.machine.set_verbose(verbose);
     }
 
+    /// Attach a debugger. DMI transactions on the returned port are admitted
+    /// at Hart boundaries. There is no JTAG transport in this unit.
+    pub fn attach_debugger(&mut self) -> crate::machine::DebugPort {
+        self.machine.attach_debugger()
+    }
+
+    /// Read one DMI register on the owned hart. Refused while an instruction
+    /// is in progress.
+    pub fn dmi_read(&mut self, addr: u8) -> Result<u32, ExecutorError> {
+        self.machine
+            .dmi_read(addr)
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))
+    }
+
+    /// Write one DMI register on the owned hart. Refused while an instruction
+    /// is in progress. A rising `ndmreset` reloads the installed image.
+    pub fn dmi_write(&mut self, addr: u8, value: u32) -> Result<(), ExecutorError> {
+        self.machine
+            .dmi_write(addr, value)
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+        // `ndmreset` replaces the RAM generation. Later flat reads follow it.
+        self.memory = self.machine.memory().clone();
+        self.machine.set_verbose(self.verbose);
+        self.machine.select_signal(self.tohost_offset()?);
+        Ok(())
+    }
+
     /// Debugger write of `dcsr` on the loaded hart. Returns the stored value.
     pub fn write_dcsr(&mut self, value: u64) -> u64 {
         self.machine.write_dcsr(value)
@@ -2261,6 +2340,7 @@ impl RiscVSimulator {
         // The started-slot budget, completed-turn count and exit rule come from the shared
         // run control; this loop owns stepping and its own diagnostics.
         let mut control = RunControl::new(max_cycles);
+        let _debug_session = self.machine.arm_debug_session();
         if let Err(error) = self.machine.admit() {
             let detail = self
                 .machine
@@ -2283,6 +2363,9 @@ impl RiscVSimulator {
             control.start::<String>()
         };
         while matches!(decision, RunDecision::Continue) {
+            if hold_for_debugger(&mut self.machine, &mut control)? {
+                continue;
+            }
             // Reserve the slot before invoking the Hart.  A host failure in the
             // final slot consumes it without completing a reported turn.
             control.start_slot();
@@ -2306,6 +2389,20 @@ impl RiscVSimulator {
                 }
             };
             if matches!(turn.hart().outcome, StepOutcome::Waiting) {
+                // D12 without the transport: a WFI that has no future platform
+                // event waits for the next DMI command instead of NoProgress.
+                if self.machine.debugger_attached()
+                    && turn.boundary().no_progress
+                    && !turn.boundary().deadline_stop
+                {
+                    control.refund_uncompleted_slot();
+                    self.machine.publish_completed_turns(control.cycles());
+                    drop(turn);
+                    self.machine
+                        .debug_boundary(true)
+                        .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+                    continue;
+                }
                 let diagnostic = if turn.boundary().deadline_stop {
                     "DeadlineReached"
                 } else {
@@ -2327,6 +2424,12 @@ impl RiscVSimulator {
                 ..
             } = turn.hart().outcome
             {
+                if self.machine.debugger_attached() {
+                    control.refund_uncompleted_slot();
+                    self.machine.publish_completed_turns(control.cycles());
+                    drop(turn);
+                    continue;
+                }
                 drop(turn);
                 return Ok(self.finish(
                     control.cycles(),
@@ -2416,6 +2519,10 @@ impl RiscVSimulator {
                 }
                 RunDecision::Continue | RunDecision::Timeout => {
                     if completed_debug {
+                        if self.machine.debugger_attached() {
+                            self.machine.publish_completed_turns(control.cycles());
+                            continue;
+                        }
                         return Ok(self.finish(
                             control.cycles(),
                             1,
@@ -2573,6 +2680,10 @@ impl RiscVSimulator {
 #[cfg(test)]
 #[path = "executor_facade_tests.rs"]
 mod facade_tests;
+
+#[cfg(test)]
+#[path = "executor_u3_tests.rs"]
+mod u3_tests;
 
 #[cfg(test)]
 #[allow(dead_code)]

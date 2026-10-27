@@ -258,6 +258,11 @@ pub struct RiscvCore {
     /// is the wake check.
     wfi_wait: bool,
     debug: debug_mode::HartDebug,
+    /// After a successful fetch, set `haltreq` and keep going. The bit is
+    /// sampled only at the next `execute_turn` boundary. A check between
+    /// the fetch and retirement would abandon the instruction.
+    #[cfg(test)]
+    inject_haltreq_after_fetch: bool,
 }
 
 /// Memory adapter for virtual to physical address translation
@@ -804,7 +809,13 @@ impl RiscvCore {
             verbose: false,
             wfi_wait: false,
             debug: debug_mode::HartDebug::default(),
+            #[cfg(test)]
+            inject_haltreq_after_fetch: false,
         }
+    }
+
+    pub(crate) fn verbose(&self) -> bool {
+        self.verbose
     }
 
     /// 使用相同存储器创建core（指令+数据共用）
@@ -1363,7 +1374,15 @@ impl RiscvCore {
             mem.read_word(instruction_addr)
         };
         let instruction = match fetch_result {
-            Ok(instruction) => instruction,
+            Ok(instruction) => {
+                // The fetch has completed and the instruction has not retired.
+                // `haltreq` is not sampled again until the next Hart boundary.
+                #[cfg(test)]
+                if self.inject_haltreq_after_fetch {
+                    self.debug.haltreq = true;
+                }
+                instruction
+            }
             Err(error) => {
                 return match error {
                     MemoryError::InvalidAddress(_)
@@ -2174,5 +2193,46 @@ mod tests {
         // Read from virtual address 0x80000050
         let value = adapter.read_byte(0x80000050).unwrap();
         assert_eq!(value, 0xAB);
+    }
+
+    /// §7 item 3 negative mutation. `haltreq` becomes set after the fetch and
+    /// before decode. Accepting it there enters Debug Mode instead of retiring
+    /// `addi`, leaves `x1` clear, and stores `dpc` at the interrupted PC.
+    #[test]
+    fn haltreq_after_fetch_does_not_abandon_the_instruction() {
+        let mem = Arc::new(Mutex::new(SimpleMemory::new(0x1000)));
+        mem.lock().unwrap().write_word(0, 0x0010_0093).unwrap();
+        let mut core = RiscvCore::new(mem.clone(), mem);
+        core.reset(0, 0);
+        core.inject_haltreq_after_fetch = true;
+
+        match core.step_outcome() {
+            StepOutcome::InstructionRetired(_) => {}
+            other => panic!("haltreq was accepted mid-instruction: {other:?}"),
+        }
+        assert_eq!(core.state().regs[1], 1, "addi did not retire");
+        assert_eq!(core.state().pc, 4);
+        assert!(!core.in_debug_mode());
+        assert!(core.haltreq());
+        assert_eq!(core.state().csr.minstret_value(), 1);
+
+        match core.step_outcome() {
+            StepOutcome::DebugHalted {
+                cause: DebugCause::HaltReq,
+                completed_turn: false,
+            } => {}
+            other => panic!("the next boundary did not halt: {other:?}"),
+        }
+        assert_eq!(
+            core.dpc(),
+            4,
+            "dpc is the instruction after the one that retired"
+        );
+        assert_ne!(
+            core.dpc(),
+            0,
+            "haltreq must not abandon the interrupted addi"
+        );
+        assert_eq!(core.state().csr.minstret_value(), 1);
     }
 }
