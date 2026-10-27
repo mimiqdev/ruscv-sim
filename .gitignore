@@ -5,6 +5,8 @@ tests/peripheral_proptest.proptest-regressions
 /.claude
 *.o
 *.log
+# Stage 6 U5 keeps the OpenOCD and GDB transcripts.
+!docs/verification/stage6-u5/**/*.log
 /.a5-upstream
 /.a5
 __pycache__/

@@ -34,5 +34,9 @@ s6_scratch:
 
 .section .tohost
 .align 3
+.globl tohost
+.globl fromhost
 tohost:
+    .dword  0
+fromhost:
     .dword  0

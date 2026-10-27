@@ -16,6 +16,10 @@ printf "S6 dcsr="
 output/x $dcsr
 printf "\n"
 
+# Spike --halted stops in its boot ROM at 0x1000. This profile stops at
+# the ELF entry. The guest operations below run from _start on both.
+set $pc = _start
+
 si
 printf "S6 step_pc="
 output/x $pc

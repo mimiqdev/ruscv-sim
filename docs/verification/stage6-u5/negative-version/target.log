@@ -1,0 +1,10 @@
+ruscv-sim: verification override RUSCV_S6_DMSTATUS_VERSION=4 (dmstatus.version)
+Listening for remote bitbang connection on port 33903.
+
+========== Execution Result ==========
+Exit Code:  1
+Cycles:     0
+Final PC:   0x0000000080000000
+Status:     FAILED
+Error:      remote_bitbang closed
+=====================================

@@ -1,0 +1,9 @@
+Listening for remote bitbang connection on port 57283.
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     53779
+Final PC:   0x0000000080000024
+Status:     SUCCESS
+=====================================
+process_status=0

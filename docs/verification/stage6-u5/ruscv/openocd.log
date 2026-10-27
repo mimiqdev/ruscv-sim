@@ -1,0 +1,68 @@
+57283
+41047
+Info : only one transport option; autoselect 'jtag'
+Info : Initializing remote_bitbang driver
+Info : Connecting to 127.0.0.1:57283
+Info : remote_bitbang driver initialized
+Info : This adapter doesn't support configurable speed
+Info : JTAG tap: riscv.cpu tap/device found: 0xdeadbeef (mfg: 0x777 (<unknown>), part: 0xeadb, ver: 0xd)
+Info : datacount=4 progbufsize=0
+Warn : We won't be able to execute fence instructions on this target. Memory may not always appear consistent. (progbufsize=0, impebreak=0)
+Info : Examined RISC-V core; found 1 harts
+Info :  hart 0: XLEN=64, misa=0x8000000000141101
+Info : starting gdb server for riscv.cpu on 41047
+Info : Listening on port 41047 for gdb connections
+Info : tcl server disabled
+Info : telnet server disabled
+Info : accepting 'gdb' connection on tcp/41047
+Warn : Prefer GDB command "target extended-remote :41047" instead of "target remote :41047"
+Warn : Failed to read memory via abstract access.
+Error: Target riscv.cpu: Failed to read memory (addr=0x7ffffffc)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x7ffffffc)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0x0)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Error: Target riscv.cpu: Failed to read memory (addr=0xfffffffffffffffc)
+Error:   progbuf=skipped (insufficient progbuf), sysbus=skipped (unsupported size), abstract=failed
+Info : JTAG tap: riscv.cpu tap/device found: 0xdeadbeef (mfg: 0x777 (<unknown>), part: 0xeadb, ver: 0xd)
+Error: Error on socket 'remote_bitbang_fill_buf': errno==104, message: Connection reset by peer.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Info : dropped 'gdb' connection
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: dmi_scan failed jtag scan
+Error: failed read at 0x11, status=2
+shutdown command invoked
+Error: Error on socket 'remote_bitbang_putc': errno==32, message: Broken pipe.
+Error: failed: -4

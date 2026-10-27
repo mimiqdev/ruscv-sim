@@ -1,0 +1,15 @@
+33903
+33109
+Info : only one transport option; autoselect 'jtag'
+Info : Initializing remote_bitbang driver
+Info : Connecting to 127.0.0.1:33903
+Info : remote_bitbang driver initialized
+Info : This adapter doesn't support configurable speed
+Info : JTAG tap: riscv.cpu tap/device found: 0xdeadbeef (mfg: 0x777 (<unknown>), part: 0xeadb, ver: 0xd)
+Error: OpenOCD only supports Debug Module version 2 (0.13) and 3 (1.0), not 4 (dmstatus=0xc084). This error might be caused by a JTAG signal issue. Try reducing the JTAG clock speed.
+Warn : target riscv.cpu examination failed
+Info : starting gdb server for riscv.cpu on 33109
+Info : Listening on port 33109 for gdb connections
+Error: Target not examined yet
+
+Info : remote_bitbang interface quit

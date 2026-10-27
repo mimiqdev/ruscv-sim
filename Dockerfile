@@ -55,11 +55,15 @@ RUN apt-get update \
 
 # Build the reference ISS from SPIKE_VERSION. That value is a commit SHA.
 # `git clone --branch` does not accept a raw SHA, so fetch it explicitly.
+# The patch keeps `--dm-progsize=0 --dm-no-impebreak` from aborting in the
+# debug-module constructor. Upstream still has that assert on master.
 # /opt/riscv is also the conventional prefix used by RISC-V development tools.
+COPY scripts/debug/spike-5d996117-empty-progbuf.patch /tmp/spike-5d996117-empty-progbuf.patch
 RUN git init /tmp/riscv-isa-sim \
     && git -C /tmp/riscv-isa-sim remote add origin https://github.com/riscv-software-src/riscv-isa-sim.git \
     && git -C /tmp/riscv-isa-sim fetch --depth 1 origin "${SPIKE_VERSION}" \
     && git -C /tmp/riscv-isa-sim checkout --detach FETCH_HEAD \
+    && patch -p1 -d /tmp/riscv-isa-sim < /tmp/spike-5d996117-empty-progbuf.patch \
     && mkdir /tmp/riscv-isa-sim/build \
     && cd /tmp/riscv-isa-sim/build \
     && ../configure --prefix=/opt/riscv \

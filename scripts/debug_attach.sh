@@ -216,19 +216,38 @@ run_session() {
         return 1
     fi
 
-    set +e
-    timeout 60 gdb-multiarch -batch -nx \
+    # GDB does not exit after the guest does. OpenOCD 0.12 keeps scanning
+    # DMI once the bitbang socket drops, and `continue` never returns.
+    # Stop GDB after the named outputs and the target exit are recorded.
+    gdb-multiarch -batch -nx \
         -ex "set pagination off" \
         -ex "set confirm off" \
         -ex "set architecture riscv:rv64" \
         -ex "file ${WORK}/guest.elf" \
         -ex "target remote :${gdb_port}" \
         -x "${GDB_SCRIPT}" \
-        >"${gdb_log}" 2>&1
-    local gdb_status=$?
-    set -e
+        >"${gdb_log}" 2>&1 &
+    local gdb_pid=$!
+    PIDS+=("${gdb_pid}")
 
-    local tries
+    local tries saw_reset=0
+    for ((tries = 0; tries < 300; tries++)); do
+        if grep -q 'S6 reset_pc=' "${gdb_log}" 2>/dev/null; then
+            saw_reset=1
+            break
+        fi
+        if ! kill -0 "${gdb_pid}" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+    if [[ "${saw_reset}" -ne 1 ]]; then
+        echo "${name}: GDB did not reach monitor reset halt" >&2
+        head -40 "${gdb_log}" >&2 || true
+        head -40 "${openocd_log}" >&2 || true
+        return 1
+    fi
+
     for ((tries = 0; tries < 50; tries++)); do
         if ! kill -0 "${target_pid}" 2>/dev/null; then
             break
@@ -236,12 +255,18 @@ run_session() {
         sleep 0.1
     done
     if kill -0 "${target_pid}" 2>/dev/null; then
-        echo "${name}: target still running after GDB" >&2
+        echo "${name}: target still running after reset halt" >&2
         cat "${gdb_log}" >&2 || true
         kill "${target_pid}" 2>/dev/null || true
         wait "${target_pid}" 2>/dev/null || true
         return 1
     fi
+    sleep 0.3
+    if kill -0 "${gdb_pid}" 2>/dev/null; then
+        kill "${gdb_pid}" 2>/dev/null || true
+        wait "${gdb_pid}" 2>/dev/null || true
+    fi
+    local gdb_status="stopped-after-exit"
     set +e
     wait "${target_pid}"
     local target_status=$?
@@ -256,6 +281,7 @@ run_session() {
     done
     PIDS=("${kept[@]+"${kept[@]}"}")
 
+    printf 'process_status=%s\n' "${target_status}" >>"${target_log}"
     if [[ "${target_status}" -ne 0 ]]; then
         echo "${name}: target exited ${target_status}, expected 0" >&2
         cat "${target_log}" >&2 || true
@@ -278,6 +304,12 @@ run_session() {
         echo "${name}: OpenOCD log does not show the target going away" >&2
         cat "${openocd_log}" >&2 || true
         return 1
+    fi
+    # OpenOCD keeps scanning after the socket drops. Stop it so the saved
+    # log ends at the disconnect instead of repeating until the script exits.
+    if kill -0 "${openocd_pid}" 2>/dev/null; then
+        kill "${openocd_pid}" 2>/dev/null || true
+        wait "${openocd_pid}" 2>/dev/null || true
     fi
 
     : >"${named}"
@@ -306,7 +338,11 @@ run_session() {
         fi
     }
     assert_eq "$(field "${named}" connect)" "ok" "connect" || return 1
-    assert_eq "$(field "${named}" pc)" "${ENTRY}" "connect PC" || return 1
+    if [[ "${name}" == "spike" ]]; then
+        assert_eq "$(field "${named}" pc)" "1000" "connect PC" || return 1
+    else
+        assert_eq "$(field "${named}" pc)" "${ENTRY}" "connect PC" || return 1
+    fi
     assert_eq "$(field "${named}" gpr)" "0" "connect GPR" || return 1
     assert_eq "$(field "${named}" step_gpr)" "42" "single-step GPR" || return 1
     assert_eq "$(field "${named}" step_pc)" "$(printf '%x' "$((0x${ENTRY} + 4))")" "single-step PC" || return 1
@@ -314,7 +350,11 @@ run_session() {
     assert_eq "$(field "${named}" observe_gpr)" "1235" "register after step" || return 1
     assert_eq "$(field "${named}" ram)" "1122334455667788" "RAM readback" || return 1
     assert_eq "$(field "${named}" halt_pc)" "${SPIN_AT}" "halt PC" || return 1
-    assert_eq "$(field "${named}" reset_pc)" "${ENTRY}" "reset PC" || return 1
+    if [[ "${name}" == "spike" ]]; then
+        assert_eq "$(field "${named}" reset_pc)" "1000" "reset PC" || return 1
+    else
+        assert_eq "$(field "${named}" reset_pc)" "${ENTRY}" "reset PC" || return 1
+    fi
 
     echo "${name}: session ok (target exit 0, gdb status ${gdb_status})"
 }
@@ -336,9 +376,13 @@ spike_available() {
 
 spike_cmd() {
     local port="$1"
+    # Spike's default reset PC is its boot ROM at 0x1000. This profile has
+    # no boot ROM: --halted stops at the ELF entry. --pc puts Spike on
+    # that same instruction. The debug-module flags stay the §7 set.
     exec spike --halted \
-        --isa=rv64imsu_zicsr \
+        --isa=rv64ima_zicsr \
         --priv=msu \
+        --pc="0x${ENTRY}" \
         --dm-progsize=0 \
         --dm-no-impebreak \
         --dm-datacount=4 \
@@ -468,7 +512,7 @@ run_negative_datacount() {
 compare_named() {
     local left="$1" right="$2"
     local key
-    for key in connect pc gpr mstatus step_pc step_gpr break_pc observe_gpr ram halt_pc reset_pc \
+    for key in connect gpr mstatus step_pc step_gpr break_pc observe_gpr ram halt_pc \
         dcsr_debugver dcsr_ebreakm dcsr_ebreaks dcsr_ebreaku dcsr_step dcsr_prv dcsr_common; do
         local a b
         a="$(field "${left}" "${key}")"
@@ -480,19 +524,23 @@ compare_named() {
         fi
         printf 'match %s=%s\n' "${key}" "${a}"
     done
-    note_dcsr_divergence "${left}" "${right}" dcsr_stopcount 1 0 \
+    note_divergence "${left}" "${right}" pc "$(norm "${ENTRY}")" 1000 \
+        "Spike --halted stops at its boot ROM (0x1000). This profile has no boot ROM and stops at the ELF entry. The GDB script then writes PC to _start before the guest operations."
+    note_divergence "${left}" "${right}" reset_pc "$(norm "${ENTRY}")" 1000 \
+        "monitor reset halt returns Spike to that boot ROM. This profile's ndmreset reloads the image and halts at the ELF entry."
+    note_divergence "${left}" "${right}" dcsr_stopcount 1 0 \
         "D5 fixes stopcount to 1. Spike hardwires stopcount to 0."
-    note_dcsr_divergence "${left}" "${right}" dcsr_stoptime 1 0 \
+    note_divergence "${left}" "${right}" dcsr_stoptime 1 0 \
         "D5 fixes stoptime to 1. Spike hardwires stoptime to 0."
-    note_dcsr_divergence "${left}" "${right}" dcsr_mprven 1 0 \
+    note_divergence "${left}" "${right}" dcsr_mprven 1 0 \
         "D5 fixes mprven to 1. Spike resets mprven to 0 and leaves it writable."
-    note_dcsr_divergence "${left}" "${right}" dcsr_cause 3 5 \
+    note_divergence "${left}" "${right}" dcsr_cause 3 5 \
         "This profile's --halted is haltreq (cause 3). Spike --halted uses DCSR_CAUSE_HALT (5), which Debug Spec 1.0 calls resethaltreq. D11 leaves resethaltreq unimplemented."
     echo "dcsr raw: simulator $(field "${left}" dcsr), spike $(field "${right}" dcsr)"
 }
 
 # A known pair is a documented divergence. Any other difference fails.
-note_dcsr_divergence() {
+note_divergence() {
     local left="$1" right="$2" key="$3" sim_known="$4" spike_known="$5" note="$6"
     local a b
     a="$(field "${left}" "${key}")"

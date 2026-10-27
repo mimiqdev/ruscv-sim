@@ -21,7 +21,11 @@ image referenced by archived milestone plans.
 - OpenOCD 0.12.0 and `gdb-multiarch`, used by `scripts/debug_attach.sh`
 - Spike reference ISS, pinned to commit `5d99611782ef8dd81b65b842369bd351a9d4702a`
   (riscv-isa-sim pull request 2086). That revision implements `--dm-datacount`,
-  `--halted`, and abstract Access Memory. `v1.1.0` does not.
+  `--halted`, and abstract Access Memory. `v1.1.0` does not. The image applies
+  `scripts/debug/spike-5d996117-empty-progbuf.patch` so `--dm-progsize=0` together
+  with `--dm-no-impebreak` does not abort in the debug-module constructor. Upstream
+  still asserts on that pair, including on current master. The patch maps the
+  empty program buffer just past the data registers and covers no bytes.
 
 The image is sufficient for the current Rust quality gate, project-authored
 assembly guests, freestanding C/C++ guests, and Spike-based differential work.

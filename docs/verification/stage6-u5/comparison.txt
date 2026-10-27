@@ -1,0 +1,29 @@
+match connect=ok
+match gpr=0
+match mstatus=a00000000
+match step_pc=80000004
+match step_gpr=42
+match break_pc=80000008
+match observe_gpr=1235
+match ram=1122334455667788
+match halt_pc=80000010
+match dcsr_debugver=4
+match dcsr_ebreakm=0
+match dcsr_ebreaks=0
+match dcsr_ebreaku=0
+match dcsr_step=0
+match dcsr_prv=3
+match dcsr_common=40000003
+divergence pc: simulator 80000000, spike 1000
+  Spike --halted stops at its boot ROM (0x1000). This profile has no boot ROM and stops at the ELF entry. The GDB script then writes PC to _start before the guest operations.
+divergence reset_pc: simulator 80000000, spike 1000
+  monitor reset halt returns Spike to that boot ROM. This profile's ndmreset reloads the image and halts at the ELF entry.
+divergence dcsr_stopcount: simulator 1, spike 0
+  D5 fixes stopcount to 1. Spike hardwires stopcount to 0.
+divergence dcsr_stoptime: simulator 1, spike 0
+  D5 fixes stoptime to 1. Spike hardwires stoptime to 0.
+divergence dcsr_mprven: simulator 1, spike 0
+  D5 fixes mprven to 1. Spike resets mprven to 0 and leaves it writable.
+divergence dcsr_cause: simulator 3, spike 5
+  This profile's --halted is haltreq (cause 3). Spike --halted uses DCSR_CAUSE_HALT (5), which Debug Spec 1.0 calls resethaltreq. D11 leaves resethaltreq unimplemented.
+dcsr raw: simulator 400006d3, spike 40000143
