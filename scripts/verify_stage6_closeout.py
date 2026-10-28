@@ -216,7 +216,14 @@ def audit_ci(record: Path) -> None:
             ci["checkout_commit"] == "f7a2bb1e99fbba34fa5da9e3160e261f31870129" and
             ci["checkout_tree"] == TREES[FIX] and ci["head_tree_identical"] is True and
             ci["conclusion"] == "success", "CI identity")
-    require(git("rev-parse", f"{ci['checkout_commit']}^{{tree}}") == TREES[FIX], "CI checkout tree")
+    payload = (record / "ci-checkout-commit.txt").read_bytes()
+    object_id = hashlib.sha1(b"commit " + str(len(payload)).encode() + b"\0" + payload).hexdigest()
+    headers = payload.split(b"\n\n", 1)[0].splitlines()
+    parents = [line.removeprefix(b"parent ").decode() for line in headers
+               if line.startswith(b"parent ")]
+    require(object_id == ci["checkout_commit"] and
+            headers[0] == f"tree {TREES[FIX]}".encode() and parents == [BASE, FIX],
+            "CI checkout commit object")
     require(ci["url"] == "https://github.com/mimiqdev/ruscv-sim/actions/runs/40638546079", "CI URL")
     jobs = ci["jobs"]
     require(set(jobs) == {"Quality and tests", "Debug attach", "Coverage"}, "CI jobs")
@@ -277,7 +284,7 @@ def audit_docs() -> None:
 
 def self_test() -> None:
     controls = ["missing-unit", "wrong-source", "altered-count", "altered-patch",
-                "wrong-assertion", "compilation-failure", "reset-log", "CI-count"]
+                "wrong-assertion", "compilation-failure", "reset-log", "CI-count", "CI-object"]
     for control in controls:
         with tempfile.TemporaryDirectory(prefix="stage6-audit-") as temporary:
             record = Path(temporary) / "record"
@@ -299,6 +306,9 @@ def self_test() -> None:
                     stream.write("\naltered\n")
             elif control == "reset-log":
                 (record / "reset-regressions/unknown-reset-before.txt").write_text("could not compile")
+            elif control == "CI-object":
+                with (record / "ci-checkout-commit.txt").open("ab") as stream:
+                    stream.write(b"\n")
             else:
                 path = record / ("fixed-ci.json" if control == "CI-count" else
                                  "fixed-local-gate/receipt.json")
@@ -318,7 +328,7 @@ def self_test() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--self-test", action="store_true", help="also reject eight damaged record copies")
+    parser.add_argument("--self-test", action="store_true", help="also reject nine damaged record copies")
     args = parser.parse_args()
     audit_tree()
     audit_records(RECORD)
