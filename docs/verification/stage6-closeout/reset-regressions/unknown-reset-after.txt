@@ -1,9 +1,0 @@
-   Compiling ruscv-sim v0.1.0 ($CHECKOUT)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.18s
-     Running unittests src/lib.rs (target/debug/deps/ruscv_sim-8fbc3cb70feaa460)
-
-running 1 test
-test machine::tests::abstract_unknown_completion_blocks_ndmreset_and_lifecycle_reuse ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 831 filtered out; finished in 0.00s
-

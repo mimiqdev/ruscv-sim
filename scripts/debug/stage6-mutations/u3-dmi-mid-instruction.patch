@@ -1,9 +1,7 @@
 diff --git a/src/machine/owned.rs b/src/machine/owned.rs
 --- a/src/machine/owned.rs
 +++ b/src/machine/owned.rs
-@@ -489,11 +489,6 @@
-     }
- 
+@@ -491,7 +491,2 @@
      fn admit_direct(&mut self, addr: u8, write: Option<u32>) -> Result<u32, MachineError> {
 -        if self.control.inner.debug.in_instruction() {
 -            return Err(MachineError::Debug(
@@ -11,5 +9,3 @@ diff --git a/src/machine/owned.rs b/src/machine/owned.rs
 -            ));
 -        }
          self.apply_dmi(addr, write)
-     }
- 

@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-EVIDENCE = ROOT / "docs/verification/stage6-closeout/mutations"
+CASES = ROOT / "scripts/debug/stage6-mutations"
 BASELINE = "5c1d031b2a66bc17d058b5a7355d88ebe80eb652"
 
 
@@ -46,7 +46,7 @@ def test(source: Path, case: dict, environment: dict, log: Path, mutated: bool) 
 def run_unit(source: Path, unit: dict, environment: dict, output_dir: Path,
              logs: Path, identity: dict) -> None:
     name = unit["unit"]
-    patch = EVIDENCE / unit["patch"]
+    patch = CASES / unit["patch"]
     original = (source / unit["source"]).read_bytes()
     result = {**identity, "unit": name, "patch": unit["patch"],
               "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
@@ -82,7 +82,7 @@ def main() -> None:
     parser.add_argument("--source-ref", default=BASELINE)
     parser.add_argument("--output-dir", type=Path, default=ROOT / "target/stage6-mutations/results")
     args = parser.parse_args()
-    manifest = json.loads((EVIDENCE / "cases.json").read_text())
+    manifest = json.loads((CASES / "cases.json").read_text())
     commit = git("rev-parse", "--verify", "--end-of-options", f"{args.source_ref}^{{commit}}")
     identity = {"schema": "ruscv-stage6-mutation/1", "source_commit": commit,
                 "source_tree": git("rev-parse", f"{commit}^{{tree}}"),

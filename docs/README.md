@@ -79,9 +79,8 @@ Target architecture is not implementation status. Component presence is not end-
 - [A10 contract-rotation executable audit](verification/a10-contract-rotation.md) — historical audit of the A9 to A10 rotation; documentation checks only
 - [Stage 4 contract-rotation executable audit](verification/stage4-contract-rotation.md) — historical audit of the A10 to Stage 4 rotation; the promoted-text check is pinned to `9f6f678`
 - [Stage 5 contract-rotation executable audit](verification/stage5-contract-rotation.md) — historical audit of the Stage 4 to Stage 5 rotation; the promoted-text check is pinned to `02f20b1`
-- [Stage 6 acceptance overview](verification/stage6-closeout/README.md) — §7 items 1–9, 433 baseline, corrected 5c code review and CI, local-gate boundary, and rerunnable evidence audit. This is not formal milestone completion.
-- [Stage 6 cumulative final review](verification/stage6-final-review.md) — initial REQUEST_CHANGES at 433 and corrected code APPROVE at 5c, with execution evidence recorded separately.
-- [Stage 6 U5 tool record](verification/stage6-exit.md) — preserved original OpenOCD/GDB/Spike session and negative controls, read with the cumulative overview.
+- [Stage 6 acceptance assessment](verification/stage6-acceptance.md) — §7 items 1–9, reset findings and corrections, exact implementation/CI/review identities, and verification commands. This is not formal milestone completion.
+- [Stage 6 U5 tool record](verification/stage6-exit.md) — preserved original OpenOCD/GDB/Spike session and negative controls, read with the acceptance assessment.
 - [Stage 6 contract-rotation executable audit](verification/stage6-contract-rotation.md) — whole-body preservation of the Stage 5 contract and a bounded check of the Stage 6 contract; no runtime or performance claims
 - [A9 T4 per-case source/tool/artifact evidence](verification/a9-t4-guest-evidence.json) — self-contained checkpoint execution record, not a new ACT4 run
 - [External RISC-V test integration contract](verification/external-riscv-tests.md)

@@ -1,9 +1,0 @@
-   Compiling ruscv-sim v0.1.0 ($CHECKOUT)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.92s
-     Running tests/s6_u3_machine.rs (target/debug/deps/s6_u3_machine-8493ca10c2e1395f)
-
-running 1 test
-test ndmreset_keeps_hart_zero_halt_request_when_selection_changes ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
-

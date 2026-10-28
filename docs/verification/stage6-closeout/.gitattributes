@@ -1,7 +1,0 @@
-# Preserve captured evidence bytes without line-ending or whitespace cleanup.
-*.json -text
-ci-checkout-commit.txt -text -whitespace
-baseline-local-gate/*.txt -text -whitespace
-fixed-local-gate/*.txt -text -whitespace
-reset-regressions/*.txt -text -whitespace
-mutations/*.patch -text -whitespace
