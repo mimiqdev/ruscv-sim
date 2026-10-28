@@ -39,6 +39,8 @@ Test language follows the layer rather than the simulator implementation languag
 - Rust tests live under `src/**` and `tests/*.rs`.
 - Project-authored guest programs currently live under `tests/bare-metal-riscv-test/` and are assembly sources.
 - CI installs a RISC-V GNU assembler/linker, runs the Rust quality gate, and on pull requests and on pushes to `main` builds and runs the project-authored ELF programs, including the Stage 4 `s4_*` guests.
+- CI runs debug mutation controls with `python3 scripts/verify_stage6_mutations.py --source-ref HEAD` and tool integration with `scripts/debug_attach.sh --require-spike`. The mutation runner uses disposable storage outside the checkout and writes diagnostics to the CI log.
+- Execution results belong in CI logs/artifacts and PR discussions. This document defines verification ownership and commands; it is not a run ledger.
 - CI job `debug-attach` builds the development image from the `Dockerfile` and runs `scripts/debug_attach.sh --require-spike` inside it. The saved session and the Spike comparison are in [stage6-exit.md](stage6-exit.md).
 - Commit-log comparison helpers exist, but the log currently omits memory-access records in the public ELF run loop.
 - No external RISC-V architecture suite is treated as integrated merely because documentation mentions it.
@@ -72,8 +74,6 @@ Test language follows the layer rather than the simulator implementation languag
 - [A9 bounded acceptance assessment](a9-closeout-assessment.md) — cumulative audit, preserved checkpoint, separate final PR-head gate/review and exact merged-main CI; 58 fresh project CLI guests, Coverage skipped
 - [A9 implementation closeout record](../archive/milestones/a9-closeout-record.md) — technical acceptance 2026-10-02, closeout documents delivered 2026-10-03, approved rotation; formal completion effective on actual merge
 - [Approved Stage 6 contract](../dev-plan.md) — sole Current since PR #96, activated as `a8851c4ac57500eb54dadc89919cd7314b626594` at 2026-10-19T13:49:34Z. Decisions D0–D15 were owner approved on 2026-10-19. D0–D14 are the recommended option. D15 is `cmderr=3`.
-- [Stage 6 acceptance assessment](stage6-acceptance.md) — §7 items 1–9, reset findings and corrections, source/CI/review identities, verification commands, and remaining decisions. This is not formal completion.
-- [Stage 6 U5 tool evidence](stage6-exit.md) — preserved original OpenOCD/GDB/Spike record. Later cumulative evidence belongs in the acceptance assessment.
 - [Program-buffer debug successor proposal](../proposals/post-stage6-program-buffer-debug.md) — Draft and informational. D1–D9 await owner approval and accepted ADR amendments.
 - [Entire approved Stage 5 contract archive](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md) — decisions D0–D9 were owner approved, recommended option, on 2026-10-16 13:08 CST. Implementation is PR #90 through PR #94. Full body preserved. Formal completion took effect on the PR #96 activation merge.
 - [Entire approved Stage 4 contract archive](../archive/milestones/stage4-virtual-memory-and-protection.md) — decisions recorded by PR #75, owner-authorized activation 2026-10-11 UTC, implementation and review at PR #88. Full body preserved. Formal completion on the Stage 4 to Stage 5 rotation merge.

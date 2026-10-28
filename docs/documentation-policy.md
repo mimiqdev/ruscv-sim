@@ -8,7 +8,13 @@
 
 ## Purpose
 
-Documentation must preserve useful knowledge without allowing obsolete architecture, schedules, or implementation claims to direct current development. Repository documents preserve milestone boundaries, accepted decisions, durable evidence, and technical context; change provenance belongs in Git and pull-request history.
+Documentation must preserve useful knowledge without allowing obsolete architecture, schedules, or implementation claims to direct current development. Repository documents preserve specifications, milestone boundaries, accepted decisions, and necessary product/development guidance. Change provenance and review belong in Git and PR history; execution results belong in CI.
+
+## Execution records
+
+The repository is not an execution archive or an agent workspace. Do not add acceptance reports, pass/fail ledgers, captured build/test output, run receipts, artifact inventories, or machinery that maintains those snapshots. Do not keep local agent task or audit files in source worktrees, even when untracked or ignored. Local session scratch belongs outside checkouts. CI retains its logs and execution artifacts.
+
+Behavioral tests, useful verification scripts, reproducible fixtures, and instructions for running them belong in the repository. They check the product; they do not document a particular run's success. Approved contract and architecture history remain documentation, not a place to copy execution results.
 
 ## Public-document rule
 
@@ -36,9 +42,9 @@ Every non-archived technical document must state both status and authority. A ta
 2. `dev-plan.md` contains exactly one current milestone contract for objective, scope boundaries, non-goals, constraints, deliverables, and acceptance criteria. It does not duplicate external task checklists.
 3. Accepted cross-cutting architecture decisions live in architecture decision records; external task descriptions or status changes cannot accept or override the milestone contract or an architecture decision.
 4. Source code and verified tests are authoritative for current implementation behavior and integration claims; documents must cite them rather than infer support from component presence.
-5. A technical deliverable is complete only after its required repository artifact and verification evidence exist.
+5. A technical deliverable is complete after its required source changes are merged and the applicable CI checks and independent PR review are complete. Keep those outcomes in CI and PR history.
 6. Research documents do not contain active schedules, completion claims, or implied backlog commitments.
-7. Current behavior claims cite a source path, test, command, or recorded verification date.
+7. Current behavior claims cite source, behavioral tests, or a reproducible command. A checked-in run summary is not a source of implementation truth.
 8. Component implementation, public-path integration, and external compliance are described separately.
 9. Historical content may be cited only as historical input, never as present authority.
 10. When replacing a document, archive the full original and extract still-valid knowledge into a new current document.
