@@ -275,6 +275,15 @@ fn ndmreset_keeps_hart_zero_halt_request_when_selection_changes() {
     assert_eq!((sim.dcsr() >> 6) & 7, 3);
     assert_eq!(sim.state().csr.read(machine::MINSTRET).unwrap(), 0);
     assert_eq!(sim.state().regs[1], 0);
+
+    let mut cleared = loaded(&[public_elf::addi(1, 0, 1)]);
+    cleared
+        .dmi_write(DMCONTROL, DMACTIVE | NDMRESET | HALTREQ)
+        .unwrap();
+    cleared.dmi_write(DMCONTROL, DMACTIVE).unwrap();
+    assert_eq!(cleared.dmi_read(0x40).unwrap() & 1, 0);
+    cleared.step().unwrap();
+    assert_eq!(cleared.state().regs[1], 1);
 }
 
 /// D12 without the transport. An attached WFI waits for DMI. The same guest

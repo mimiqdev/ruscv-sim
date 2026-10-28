@@ -1837,7 +1837,9 @@ fn run_native_inner(
         None => None,
     };
     if hooks.debug.as_ref().is_some_and(|config| config.halted) {
-        machine.request_halt();
+        machine
+            .request_halt()
+            .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
     }
     while matches!(decision, RunDecision::Continue) {
         match hold_for_debugger(&mut machine, &mut control, bitbang.as_mut(), false)? {
@@ -2530,7 +2532,9 @@ impl RiscVSimulator {
             None => None,
         };
         if debug.as_ref().is_some_and(|config| config.halted) {
-            self.machine.request_halt();
+            self.machine
+                .request_halt()
+                .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
         }
         while matches!(decision, RunDecision::Continue) {
             match hold_for_debugger(&mut self.machine, &mut control, bitbang.as_mut(), false)? {

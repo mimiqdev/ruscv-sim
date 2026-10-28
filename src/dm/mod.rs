@@ -32,6 +32,8 @@ pub struct DebugModule {
     /// `hartsel`, 20 bits. `HARTSELLEN` is 20 (§3.14).
     hartsel: u32,
     ndmreset: bool,
+    /// Hart 0's request survives non-DM reset; the Hart latch is its input.
+    haltreq: bool,
     /// `abstractcs.cmderr`, three bits.
     cmderr: u8,
     data: [u32; 4],
@@ -67,6 +69,7 @@ impl DebugModule {
             dmactive: false,
             hartsel: 0,
             ndmreset: false,
+            haltreq: false,
             cmderr: 0,
             data: [0; 4],
             resumeack: true,
@@ -146,7 +149,7 @@ impl DebugModule {
         self.hartsel = hartsel_of(value) & 0x000f_ffff;
         let haltreq = value & HALTREQ != 0;
         if self.hartsel == 0 {
-            hart.set_haltreq(haltreq);
+            self.set_haltreq(hart, haltreq);
         }
         if value & ACKHAVERESET != 0 && self.hartsel == 0 {
             self.havereset = false;
@@ -170,7 +173,7 @@ impl DebugModule {
         self.cmderr = 0;
         self.data = [0; 4];
         self.resumeack = true;
-        hart.set_haltreq(false);
+        self.set_haltreq(hart, false);
     }
 
     /// `data0` is DMI `0x04`. A register at or above `datacount` is absent.
@@ -268,6 +271,25 @@ impl DebugModule {
 
     fn hart_halted(&self, hart: &RiscvCore) -> bool {
         hart.in_debug_mode() && !self.ndmreset
+    }
+
+    pub(crate) fn set_haltreq(&mut self, hart: &mut RiscvCore, haltreq: bool) {
+        self.haltreq = haltreq;
+        self.apply_haltreq(hart);
+    }
+
+    pub(crate) fn apply_haltreq(&self, hart: &mut RiscvCore) {
+        hart.set_haltreq(self.haltreq);
+    }
+
+    pub(crate) fn terminal_write_allowed(&self, addr: u8, value: u32) -> bool {
+        match addr & 0x7f {
+            COMMAND => false,
+            DMCONTROL => {
+                value & DMACTIVE == 0 || (!self.ndmreset && value & (NDMRESET | RESUMEREQ) == 0)
+            }
+            _ => true,
+        }
     }
 
     pub(crate) fn ndmreset(&self) -> bool {

@@ -10,7 +10,7 @@ pub enum Lifecycle {
     TornDown,
 }
 
-/// Synchronous physical/native callbacks are contained by `hart` work.
+/// Synchronous Hart and DMI physical/native callbacks share `hart` work.
 /// Returned boundary receipts contain causal facts and accepted observation work.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WorkCounts {
@@ -111,6 +111,24 @@ impl Lease {
     pub fn boundary_state(&self) -> Result<(Lifecycle, bool), MachineError> {
         let state = lock(&self.gate)?;
         Ok((state.lifecycle, state.uncertain))
+    }
+    /// DMI keeps error inspection available after ordinary execution is refused.
+    pub fn debug(gate: &Gate) -> Result<Self, MachineError> {
+        let mut state = lock(gate)?;
+        if state.lifecycle == Lifecycle::TornDown {
+            return Err(MachineError::TornDown);
+        }
+        if state.work.hart != 0 || state.work.boundary != 0 {
+            return Err(MachineError::Busy);
+        }
+        let owner = state.owner.upgrade().ok_or(MachineError::TornDown)?;
+        state.work.hart += 1;
+        Ok(Self {
+            gate: gate.clone(),
+            kind: Work::Hart,
+            finished: false,
+            _owner: owner,
+        })
     }
     pub fn hart(gate: &Gate) -> Result<Self, MachineError> {
         let mut state = lock(gate)?;
