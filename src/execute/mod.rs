@@ -45,9 +45,9 @@ pub use crate::isa::rv64a::{
 
 // RV64I re-exports (from isa::rv64i)
 pub use crate::isa::rv64i::{
-    exec_auipc, exec_branch, exec_fence, exec_jal, exec_jalr, exec_load, exec_lui, exec_op,
-    exec_op_32, exec_op_imm, exec_op_imm_32, exec_shift, exec_shift_imm, exec_store, exec_system,
-    exec_system_with_csr_access,
+    exec_auipc, exec_branch, exec_fence, exec_fence_i, exec_jal, exec_jalr, exec_load, exec_lui,
+    exec_op, exec_op_32, exec_op_imm, exec_op_imm_32, exec_shift, exec_shift_imm, exec_store,
+    exec_system, exec_system_with_csr_access,
 };
 
 // RV64D re-exports (from isa::rv64d)
@@ -183,7 +183,11 @@ impl Executor {
             }
             Opcode::OpFp => return self.execute_fpu(instr, state, mem).map(|rd| (None, rd)),
             Opcode::Amo => self.execute_amo(instr, state, mem),
-            Opcode::MiscMem => exec_fence(instr, state, mem),
+            Opcode::MiscMem => match instr.funct3.map(|value| value as u8) {
+                Some(0) => exec_fence(instr, state, mem),
+                Some(1) => exec_fence_i(instr, state, mem),
+                _ => Err(ExecuteError::IllegalInstruction),
+            },
             // SYSTEM is handled above so this arm is unreachable, but keeping
             // it explicit makes the dispatcher exhaustive if Opcode grows.
             Opcode::System => unreachable!("SYSTEM was handled before dispatch"),

@@ -617,7 +617,7 @@ fn native_dynamic_uart_state_and_callback_connections_are_restored() {
 
 #[test]
 fn known_failure_can_drain_but_requires_restoration_not_flag_clearing_or_retry() {
-    // FENCE.I is an illegal instruction, so it is not a failed slot. A
+    // A reserved MISC-MEM encoding is illegal, so it is not a failed slot. A
     // poisoned memory lock is the host failure that sets the flag.
     let owner = owner(PlatformKind::Flat, image(&[elf::nop()]));
     poison_memory(&owner.memory().unwrap());

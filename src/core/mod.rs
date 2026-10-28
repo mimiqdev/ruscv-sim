@@ -146,6 +146,19 @@ pub enum StepOutcome {
 /// completion, or a poisoned data-port lock. Those are not M-mode exceptions.
 /// An unknown completion may already have changed target state, which
 /// `cmderr` 3 would report as not having happened.
+/// Result of one program-buffer instruction. Not a guest retirement or trap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DebugExecOutcome {
+    /// The instruction completed.
+    Completed,
+    /// EBREAK ended the buffer successfully.
+    Ebreak,
+    /// An exception stopped the buffer (`cmderr=3`). Guest trap state is unchanged.
+    Exception,
+    /// Host or backend failure, including unknown physical completion.
+    Failure(SimulatorFailure),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugMemFault {
     /// `addr` is not a multiple of `size`. Checked before the data port.
@@ -258,6 +271,9 @@ pub struct RiscvCore {
     /// is the wake check.
     wfi_wait: bool,
     debug: debug_mode::HartDebug,
+    /// Program-buffer opcode being executed in Debug Mode. While set, the
+    /// instruction source is this word, guests traps and counters are bypassed.
+    debug_word: Option<u32>,
     /// After a successful fetch, set `haltreq` and keep going. The bit is
     /// sampled only at the next `execute_turn` boundary. A check between
     /// the fetch and retirement would abandon the instruction.
@@ -809,6 +825,7 @@ impl RiscvCore {
             verbose: false,
             wfi_wait: false,
             debug: debug_mode::HartDebug::default(),
+            debug_word: None,
             #[cfg(test)]
             inject_haltreq_after_fetch: false,
         }
@@ -1105,6 +1122,61 @@ impl RiscvCore {
         }
     }
 
+    /// Execute one program-buffer opcode through the shared instruction engine.
+    ///
+    /// The Hart must be in Debug Mode. Execution uses M privilege, masked
+    /// interrupts and no automatic counter charge. `pc` and privilege are
+    /// restored so `dpc` sequencing is untouched. Explicit CSR, GPR and
+    /// memory writes keep their effects.
+    pub fn debug_execute(&mut self, word: u32) -> DebugExecOutcome {
+        if !self.debug.halted {
+            return DebugExecOutcome::Failure(SimulatorFailure {
+                pc: self.state.pc,
+                kind: SimulatorFailureKind::Invariant,
+                message: "debug_execute requires Debug Mode".to_string(),
+            });
+        }
+        if let Some(failure) = &self.unresolved_physical_access {
+            return DebugExecOutcome::Failure(failure.clone());
+        }
+        let saved_pc = self.state.pc;
+        let saved_privilege = self.state.privilege;
+        let saved_wfi = self.wfi_wait;
+        let saved_observation = self.observation_demand;
+        self.observation_demand = false;
+        self.memory_journal = None;
+        self.state.privilege = PrivilegeMode::Machine;
+        self.state.csr.set_privilege(PrivilegeMode::Machine);
+        self.debug_word = Some(word);
+        let outcome = self.execute_instruction();
+        self.debug_word = None;
+        self.state.pc = saved_pc;
+        self.state.privilege = saved_privilege;
+        self.state.csr.set_privilege(saved_privilege);
+        self.wfi_wait = saved_wfi;
+        self.observation_demand = saved_observation;
+        self.state.regs[0] = 0;
+        match outcome {
+            StepOutcome::InstructionRetired(_) => DebugExecOutcome::Completed,
+            StepOutcome::DebugHalted { .. } => DebugExecOutcome::Ebreak,
+            StepOutcome::TrapEntered(_) => DebugExecOutcome::Exception,
+            StepOutcome::SimulatorFailure(failure) => DebugExecOutcome::Failure(failure),
+            StepOutcome::Waiting => DebugExecOutcome::Completed,
+        }
+    }
+
+    /// D6: control transfers, PC-dependent and privilege-changing opcodes
+    /// are rejected in the program buffer.
+    fn debug_forbidden(instruction: &DecodedInstruction) -> bool {
+        matches!(
+            instruction.opcode,
+            Opcode::Jal | Opcode::Jalr | Opcode::Branch | Opcode::Auipc
+        ) || matches!(
+            instruction.raw,
+            0x0000_0073 | 0x3020_0073 | 0x1020_0073 | 0x7b20_0073
+        )
+    }
+
     /// Execute one Hart turn and return its typed semantic outcome.
     ///
     /// Architectural exceptions are entered here and returned as
@@ -1308,7 +1380,7 @@ impl RiscvCore {
         self.state.branch_taken = false;
 
         // Fixed IALIGN=32 is checked before the instruction-memory transaction.
-        if pc_before & 0b11 != 0 {
+        if self.debug_word.is_none() && pc_before & 0b11 != 0 {
             return self.enter_trap(
                 Trap::Exception(ExceptionCause::InstructionAddressMisaligned),
                 pc_before,
@@ -1322,21 +1394,23 @@ impl RiscvCore {
         // sees the resulting guest-physical address (D2, D3). The walk
         // itself runs on the data port; the instruction-memory transaction
         // keeps its Fetch category.
-        let fetch_paddr = match self.translate_address(
-            pc_before,
-            translation::AccessKind::Fetch,
-            pc_before,
-            None,
-        ) {
-            Ok(paddr) => paddr,
-            Err(outcome) => return outcome,
+        let fetch_paddr = if self.debug_word.is_some() {
+            0
+        } else {
+            match self.translate_address(pc_before, translation::AccessKind::Fetch, pc_before, None)
+            {
+                Ok(paddr) => paddr,
+                Err(outcome) => return outcome,
+            }
         };
 
         // Fetch keeps the guest PC in the architectural address space.  A
         // migrated core submits one raw Fetch request; the typed view performs
         // the single configured base conversion.  Compatibility callers keep
         // the historical typed instruction-memory route.
-        let fetch_result = if let Some(access) = self.instruction_access.as_ref() {
+        let fetch_result = if let Some(word) = self.debug_word {
+            Ok(word)
+        } else if let Some(access) = self.instruction_access.as_ref() {
             let mut port = match access.lock() {
                 Ok(port) => port,
                 Err(_) => {
@@ -1422,7 +1496,11 @@ impl RiscvCore {
             }
         };
 
-        if Self::is_illegal_encoding(&decoded) {
+        if Self::is_illegal_encoding(&decoded)
+            || self
+                .debug_word
+                .is_some_and(|_| Self::debug_forbidden(&decoded))
+        {
             return self.enter_trap(
                 Trap::Exception(ExceptionCause::IllegalInstruction),
                 pc_before,
@@ -1605,12 +1683,13 @@ impl RiscvCore {
         let explicit_mcycle_write = csr_access
             .as_ref()
             .is_some_and(|access| access.addr == machine::MCYCLE && access.wrote);
-        let minstret = if explicit_minstret_write {
+        let debugging = self.debug_word.is_some();
+        let minstret = if explicit_minstret_write || debugging {
             staged.csr.minstret_value()
         } else {
             staged.csr.increment_minstret()
         };
-        if !explicit_mcycle_write {
+        if !explicit_mcycle_write && !debugging {
             staged.csr.increment_mcycle();
         }
         self.gpr_destination = destination;
@@ -1630,7 +1709,7 @@ impl RiscvCore {
             );
         }
 
-        if instruction == 0x1050_0073 {
+        if instruction == 0x1050_0073 && !debugging {
             let wake = self.state.csr.mip() & self.state.csr.mie() != 0;
             self.wfi_wait = !wake;
         }
@@ -1691,6 +1770,19 @@ impl RiscvCore {
         tval: u64,
         instruction: Option<u32>,
     ) -> StepOutcome {
+        if self.debug_word.is_some() {
+            // Program-buffer exception: no guest trap CSRs, PC or counters change.
+            return StepOutcome::TrapEntered(TrapEntered {
+                cause: trap,
+                faulting_pc,
+                mtval: 0,
+                vector_pc: faulting_pc,
+                source_privilege: self.state.privilege,
+                handler_privilege: self.state.privilege,
+                continuation: TrapContinuationPolicy::ContinueToGuestHandler,
+                instruction,
+            });
+        }
         let source_privilege = self.state.privilege;
         let mut staged = self.state.clone();
         staged.csr.begin_observation(self.observation_demand);
@@ -1747,6 +1839,10 @@ impl RiscvCore {
                 0,
                 Some(raw),
             ),
+            ExecuteError::Ebreak if self.debug_word.is_some() => StepOutcome::DebugHalted {
+                cause: DebugCause::Ebreak,
+                completed_turn: false,
+            },
             ExecuteError::Ebreak => {
                 if self.debug.ebreak_redirects(self.state.privilege) {
                     self.enter_debug(DebugCause::Ebreak, pc, false)
@@ -2069,9 +2165,9 @@ impl RiscvCore {
             // STORE-FP, and OP-FP encoding is illegal, and this check runs
             // before alignment, translation, and any data request.
             Opcode::LoadFp | Opcode::StoreFp | Opcode::OpFp => true,
-            // Only base FENCE; FENCE.I is illegal because Zifencei is not
-            // claimed.
-            Opcode::MiscMem => funct3 != Some(0),
+            // Base FENCE and Zifencei FENCE.I (funct3 0 and 1). Other MISC-MEM
+            // funct3 values are reserved.
+            Opcode::MiscMem => !matches!(funct3, Some(0 | 1)),
             // AMO/LR/SC legality is the approved §2 table: `funct5` selects
             // the operation (AMOSWAP included), `funct3` selects W or D, and
             // every reserved `funct5` value plus LR with `rs2 != 0` is an

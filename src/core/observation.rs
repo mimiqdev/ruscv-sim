@@ -329,9 +329,9 @@ mod tests {
         core.state_mut().pc = 0;
         assert!(core.step_transition(true).observation.is_some());
         assert_eq!(BUILDS.with(std::cell::Cell::get), 1);
-        // FENCE.I is an illegal instruction in this profile, so the turn
+        // A reserved MISC-MEM encoding is an illegal instruction, so the turn
         // completes as a trap and builds exactly one trap record.
-        ram.lock().unwrap().write_word(0, 0x0000_100f).unwrap();
+        ram.lock().unwrap().write_word(0, 0x0000_200f).unwrap();
         core.state_mut().pc = 0;
         assert!(matches!(
             core.step_transition(true).observation,
