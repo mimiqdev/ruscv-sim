@@ -357,6 +357,66 @@ fn unwound_native_callback_cannot_be_claimed_drained_or_restorable() {
     ));
 }
 
+#[test]
+fn abstract_unknown_completion_blocks_ndmreset_and_lifecycle_reuse() {
+    for kind in [PlatformKind::Flat, PlatformKind::Native] {
+        let mut owned = OwnedMachine::new(MachineConfig::new(kind), image(elf::nop())).unwrap();
+        let control = owned.test_control();
+        let generation = control.status().unwrap().generation;
+        let pending = Arc::new(Mutex::new(None));
+        let requests = Arc::new(AtomicUsize::new(0));
+        let data = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(UnknownWrite {
+            actual: owned.test_data(),
+            pending: pending.clone(),
+            calls: requests.clone(),
+        })));
+        owned.test_replace_data(data);
+        owned.dmi_write(0x10, (1 << 31) | 1).unwrap();
+        drop(owned.step(false).unwrap());
+        owned.dmi_write(0x04, 77).unwrap();
+        owned.dmi_write(0x05, 0).unwrap();
+        owned.dmi_write(0x06, (elf::BASE + 0x200) as u32).unwrap();
+        owned.dmi_write(0x07, 0).unwrap();
+        owned
+            .dmi_write(0x17, (2 << 24) | (3 << 20) | (1 << 16))
+            .unwrap();
+        assert_eq!((owned.dmi_read(0x16).unwrap() >> 8) & 7, 7);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert!(
+            matches!(
+                owned.dmi_write(0x10, (1 << 31) | 3),
+                Err(MachineError::UnknownCompletion)
+            ),
+            "ndmreset bypassed an unresolved abstract memory completion"
+        );
+        assert!(control.status().unwrap().uncertain);
+        assert_eq!(control.status().unwrap().generation, generation);
+        assert!(matches!(
+            control.resume(),
+            Err(MachineError::UnknownCompletion)
+        ));
+        assert!(matches!(
+            owned.quiesce(),
+            Err(MachineError::UnknownCompletion)
+        ));
+        assert!(matches!(
+            control.fresh_reset(),
+            Err(MachineError::UnknownCompletion)
+        ));
+        assert!(matches!(
+            control.teardown(),
+            Err(MachineError::UnknownCompletion)
+        ));
+        pending.lock().unwrap().take().unwrap()().unwrap();
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            owned.quiesce(),
+            Err(MachineError::UnknownCompletion)
+        ));
+        assert_eq!(control.status().unwrap().generation, generation);
+    }
+}
+
 /// §7 item 3. A `haltreq` posted while an instruction is in progress stays
 /// queued. Applying it there is the negative mutation.
 #[test]

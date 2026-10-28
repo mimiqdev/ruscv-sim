@@ -256,6 +256,27 @@ fn ndmreset_with_haltreq_reloads_and_halts_at_the_reset_entry() {
     assert_eq!((sim.dmi_read(ABSTRACTCS).unwrap() >> 8) & 0b111, 2);
 }
 
+#[test]
+fn ndmreset_keeps_hart_zero_halt_request_when_selection_changes() {
+    let mut sim = loaded(&[public_elf::addi(1, 0, 1)]);
+    sim.dmi_write(DMCONTROL, DMACTIVE | NDMRESET | HALTREQ)
+        .unwrap();
+    sim.dmi_write(DMCONTROL, DMACTIVE | (1 << 16)).unwrap();
+    assert!(
+        bit(sim.dmi_read(DMSTATUS).unwrap(), 14),
+        "hart 1 is nonexistent"
+    );
+    assert_eq!(
+        sim.dmi_read(0x40).unwrap() & 1,
+        1,
+        "hart 0 lost its halt request when reset released with hart 1 selected"
+    );
+    assert_eq!(sim.dpc(), ENTRY);
+    assert_eq!((sim.dcsr() >> 6) & 7, 3);
+    assert_eq!(sim.state().csr.read(machine::MINSTRET).unwrap(), 0);
+    assert_eq!(sim.state().regs[1], 0);
+}
+
 /// D12 without the transport. An attached WFI waits for DMI. The same guest
 /// with no debugger still reports `NoProgress`.
 #[test]
