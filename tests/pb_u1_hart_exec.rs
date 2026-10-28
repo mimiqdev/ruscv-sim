@@ -117,7 +117,11 @@ fn wfi_is_nop_and_ebreak_terminates() {
 #[test]
 fn explicit_dpc_write_changes_resume_pc() {
     let (mut core, _) = halted_core(&[0x13]);
-    core.write_dpc(0x40);
+    core.state_mut().regs[3] = 0x40;
+    assert_eq!(
+        core.debug_execute(csrrw(0, 0x7b1, 3)),
+        DebugExecOutcome::Completed
+    );
     assert_eq!(
         core.debug_execute(addi(1, 0, 1)),
         DebugExecOutcome::Completed
@@ -132,7 +136,7 @@ fn control_transfers_pc_dependents_and_privilege_ops_are_rejected() {
     let (mut core, _) = halted_core(&[0x13]);
     let pc = core.state().pc;
     for word in [
-        beq(0, 1, 8), // taken
+        beq(0, 0, 8), // taken (x0 == x0)
         beq(0, 2, 8), // not taken (x2 != 0 below)
         0x0000_006f,  // jal x0, 0
         0x0000_0067,  // jalr x0, 0(x0)
@@ -280,4 +284,71 @@ fn public_elf_guest_fence_i_self_modifying_code() {
     sim.run(Some(6)).unwrap();
     assert_eq!(sim.state().regs[5], 0, "patched instruction executed");
     assert_eq!(sim.state().csr.read(machine::MINSTRET).unwrap(), 6);
+}
+
+#[test]
+fn debug_csr_instructions_read_and_write_sdext_state() {
+    let (mut core, _) = halted_core(&[0x13]);
+    let old_dpc = core.dpc();
+    core.state_mut().regs[3] = 0x55;
+    // csrrw x4, dscratch0, x3 ; csrrs x5, dscratch0, x0 ; csrrw x6, dpc, x0-based read
+    assert_eq!(
+        core.debug_execute(csrrw(4, 0x7b2, 3)),
+        DebugExecOutcome::Completed
+    );
+    assert_eq!(core.dscratch0(), 0x55);
+    assert_eq!(core.state().regs[4], 0);
+    let csrrs =
+        |rd: u32, csr: u32, rs1: u32| (csr << 20) | (rs1 << 15) | (2 << 12) | (rd << 7) | 0x73;
+    assert_eq!(
+        core.debug_execute(csrrs(5, 0x7b1, 0)),
+        DebugExecOutcome::Completed
+    );
+    assert_eq!(core.state().regs[5], old_dpc, "read-only CSRRS leaves dpc");
+    assert_eq!(core.dpc(), old_dpc);
+    // dcsr.step is writable through the CSR instruction.
+    core.state_mut().regs[3] = 1 << 2;
+    assert_eq!(
+        core.debug_execute(csrrs(0, 0x7b0, 3)),
+        DebugExecOutcome::Completed
+    );
+    assert_ne!(core.dcsr() & (1 << 2), 0);
+}
+
+#[test]
+fn explicit_mcycle_write_is_kept() {
+    let (mut core, _) = halted_core(&[0x13]);
+    core.state_mut().regs[1] = 77;
+    core.debug_execute(csrrw(0, machine::MCYCLE as u32, 1));
+    assert_eq!(core.state().csr.read(machine::MCYCLE).unwrap(), 77);
+    core.debug_execute(addi(2, 0, 1));
+    assert_eq!(core.state().csr.read(machine::MCYCLE).unwrap(), 77);
+}
+
+#[test]
+fn pending_interrupt_and_guest_step_do_not_affect_buffer_execution() {
+    let (mut core, _) = halted_core(&[0x13]);
+    let mtvec = core.state().csr.read(machine::MTVEC).unwrap();
+    core.state_mut().csr.write(machine::MIE, 1 << 1).unwrap();
+    core.state_mut()
+        .csr
+        .write(machine::MSTATUS, 1 << 3)
+        .unwrap();
+    core.state_mut().csr.write(machine::MIP, 1 << 1).unwrap();
+    assert_ne!(
+        core.state().csr.read(machine::MIP).unwrap() & 2,
+        0,
+        "pending"
+    );
+    core.write_dcsr(1 << 2); // guest step requested
+    for _ in 0..2 {
+        assert_eq!(
+            core.debug_execute(addi(1, 1, 1)),
+            DebugExecOutcome::Completed
+        );
+    }
+    assert_eq!(core.state().regs[1], 2);
+    assert_eq!(core.state().csr.read(machine::MTVEC).unwrap(), mtvec);
+    assert_eq!(core.state().csr.read(machine::MCAUSE).unwrap(), 0);
+    assert!(core.in_debug_mode());
 }

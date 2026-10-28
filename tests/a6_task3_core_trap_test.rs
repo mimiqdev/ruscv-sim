@@ -604,7 +604,7 @@ fn reserved_op32_and_misc_mem_encodings_enter_illegal_instruction_traps() {
 }
 
 #[test]
-fn fence_i_enters_illegal_instruction_without_retiring() {
+fn reserved_misc_mem_enters_illegal_instruction_without_retiring() {
     let raw = 0x0000_200f;
     let (mut core, _) = core_with_program(&[(0, raw)]);
     let outcome = core.step_outcome();

@@ -1139,6 +1139,9 @@ impl RiscvCore {
         if let Some(failure) = &self.unresolved_physical_access {
             return DebugExecOutcome::Failure(failure.clone());
         }
+        if let Some(done) = self.debug_csr_instruction(word) {
+            return done;
+        }
         let saved_pc = self.state.pc;
         let saved_privilege = self.state.privilege;
         let saved_wfi = self.wfi_wait;
@@ -1163,6 +1166,53 @@ impl RiscvCore {
             StepOutcome::SimulatorFailure(failure) => DebugExecOutcome::Failure(failure),
             StepOutcome::Waiting => DebugExecOutcome::Completed,
         }
+    }
+
+    /// Zicsr access to the Hart-owned Sdext CSRs (`0x7b0`-`0x7b3`). Returns
+    /// `None` for any other instruction so the shared engine handles it.
+    fn debug_csr_instruction(&mut self, word: u32) -> Option<DebugExecOutcome> {
+        if word & 0x7f != 0x73 {
+            return None;
+        }
+        let funct3 = (word >> 12) & 7;
+        let csr = (word >> 20) as u16;
+        if funct3 == 0 || funct3 == 4 || !(0x7b0..=0x7b3).contains(&csr) {
+            return None;
+        }
+        let rd = ((word >> 7) & 0x1f) as usize;
+        let field = ((word >> 15) & 0x1f) as usize;
+        let operand = if funct3 >= 5 {
+            field as u64
+        } else {
+            self.state.regs[field]
+        };
+        let old = match csr {
+            0x7b0 => self.debug.read_dcsr(),
+            0x7b1 => self.debug.dpc,
+            0x7b2 => self.debug.dscratch0,
+            _ => self.debug.dscratch1,
+        };
+        // CSRRW/CSRRWI always write. CSRRS/CSRRC (and immediates) write only
+        // when the source field is nonzero.
+        let new = match funct3 & 3 {
+            1 => Some(operand),
+            2 => (field != 0).then_some(old | operand),
+            _ => (field != 0).then_some(old & !operand),
+        };
+        if let Some(value) = new {
+            match csr {
+                0x7b0 => self.debug.write_dcsr(value),
+                0x7b1 => {
+                    self.debug.write_dpc(value);
+                }
+                0x7b2 => self.debug.dscratch0 = value,
+                _ => self.debug.dscratch1 = value,
+            }
+        }
+        if rd != 0 {
+            self.state.regs[rd] = old;
+        }
+        Some(DebugExecOutcome::Completed)
     }
 
     /// D6: control transfers, PC-dependent and privilege-changing opcodes
