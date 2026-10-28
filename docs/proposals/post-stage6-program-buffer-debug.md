@@ -38,7 +38,7 @@ D4 is an explicit extension proposal. Stage 6's existing FENCE.I-illegal behavio
 
 D8 is required for the proposed ordinary bulk program-buffer workflow with OpenOCD 0.12.0. Its read path enables automatic execution after the first element, and its write path depends on it for subsequent elements. A single-element-only alternative would exclude ordinary bulk program-buffer transfers and must be presented as a narrower product choice, not inferred from a successful one-element demo.
 
-OpenOCD 0.12.0 only enables its MPRV/MPP helper with at least five program-buffer words. The selected two-word profile therefore proves tool-driven physical memory and proves effective-privilege/Sv39 behavior through a direct Hart/DMI fixture. It does not claim OpenOCD virtual-memory access for this profile.
+OpenOCD 0.12.0 only enables its MPRV/MPP helper with at least five effective program-buffer words, counting the implicit EBREAK. Four writable words plus an implicit EBREAK satisfy that condition; the selected two-word profile does not. This profile therefore proves tool-driven physical memory and proves effective-privilege/Sv39 behavior through a direct Hart/DMI fixture. It does not claim OpenOCD virtual-memory access.
 
 ## 3. Architectural constraints
 
