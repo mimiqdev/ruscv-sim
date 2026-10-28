@@ -16,6 +16,8 @@
 > serialization formats, scheduling algorithms, device maps, or SystemC APIs. It
 > does not claim that the target boundaries are implemented.
 
+**2026-10-28 amendment:** The [program-buffer work amendment](#2026-10-28-amendment-program-buffer-work) extends this target for the owner-approved [successor contract](../../dev-plan.md). Normal guest grants, interrupt ordering and physical-delay ownership remain in force.
+
 ## 1. Context and scope
 
 The first three accepted decisions establish the boundaries needed to evolve a
@@ -1387,6 +1389,18 @@ truth for Runner/Machine/Platform ownership, dual hosting, and final result
 assembly. This ADR supplies the detailed temporal/event contract those records
 left to a subsequent decision; it does not move instruction or physical-access
 ownership across their boundaries.
+
+## 2026-10-28 amendment: program-buffer work
+
+The owner approved the Program-buffer Debug Execution contract's D1–D9 scope on 2026-10-28. A Machine may grant bounded debug instructions to an architecturally halted Hart. This is control work distinct from an ordinary guest Hart-turn grant: completing it does not charge guest instruction attempts, retirement, a guest-turn budget slot or framework `iss_tick`.
+
+The Hart masks interrupts and applies the selected Debug Mode execution/exception rules. The Machine samples inputs and services DMI between debug instruction boundaries without turning that admission into guest execution, interrupt entry, a WFI wait grant or an idle jump. A pending command is admissible work and cannot be discarded as NoProgress. The selected buffer/control-transfer restrictions bound the command without a new application work-budget option.
+
+For the selected fixed stopcount/stoptime profile, debug work adds no automatic guest counter, platform-clock or application cycle charge. Explicit legal counter/CSR/MMIO writes retain their effects. Existing physical-delay consumption rules remain unchanged; this milestone introduces no nonzero-delay transport or external-kernel integration.
+
+Command completion/error, debug instruction effects, Platform events and simulator failure remain distinguishable and causally ordered. A buffer exception terminates the command without guest trap entry. Resume cannot preempt unfinished command work; completion facts precede any permitted guest resume. Reset stops new grants and drains started physical work before lifecycle mutation. Unknown completion remains non-resumable without adapter proof, regardless of command-error clear, DM reset or a reset request.
+
+Guest single-step, WFI, interrupt eligibility/priority and ordinary grant semantics remain unchanged. DRET remains illegal in the selected non-ROM design. SBA, triggers and additional harts remain deferred.
 
 ## 18. Source and test map
 

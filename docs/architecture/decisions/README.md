@@ -31,6 +31,8 @@ Each record must state:
 | [0003 — Runner, Machine, and Platform ownership](0003-runner-machine-and-platform-ownership.md) | Runner taxonomy, one-or-more-Hart Machine composition, dual hosting, and unclassified control facts | Accepted | 2026-09-07 |
 | [0004 — Interrupt, time, scheduling, and stop-event boundaries](0004-interrupt-time-scheduling-and-stop-boundaries.md) | Platform-input admission, Hart/profile-provided sampling slots, modeled time, Machine exchanges, WFI/idle scheduling, deterministic event order, and non-lossy stop facts | Accepted | 2026-09-07 |
 
+The owner approved the Program-buffer Debug Execution contract's D1–D9 scope on 2026-10-28. The coordinated target amendments in ADR-0001–0004 activate with the [successor contract](../../dev-plan.md) on the actual rotation merge. The original acceptance dates above remain the base decisions' dates; neither acceptance nor this rotation claims implementation.
+
 ADR-0001 through ADR-0004 were accepted by the maintainer on 2026-09-07,
 including ADR-0003's loader-metadata / Machine-installation / Platform-write
 split. The [principles](../principles.md) and [target views](../README.md) reflect

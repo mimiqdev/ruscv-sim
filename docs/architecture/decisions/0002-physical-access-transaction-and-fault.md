@@ -8,6 +8,8 @@
 | Accepted | 2026-09-07 |
 | Related decisions | [ADR-0001](0001-hart-execution-outcome-and-observation.md), [ADR-0003](0003-runner-machine-and-platform-ownership.md), [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) |
 
+**2026-10-28 amendment:** The selected program-buffer profile has a bounded, non-addressable instruction-source exception described [below](#2026-10-28-amendment-program-buffer-instruction-source). All ordinary guest fetch and data-access rules remain in force. This target amendment activates with the [successor contract](../../dev-plan.md).
+
 ## Context
 
 The target architecture has one Hart implementation for the standalone ISS and the
@@ -385,6 +387,16 @@ The existing MMU, A/D, AMO/LR/SC, native-bus, and TLM tests cited by
 when implementation begins. Acceptance of this semantic contract does not certify
 those components' integration; no implementation, public API, or simulator
 behavior is part of this documentation change.
+
+## 2026-10-28 amendment: program-buffer instruction source
+
+The owner approved the Program-buffer Debug Execution contract's D1–D9 scope on 2026-10-28. Its DM-owned, non-addressable program buffer may supply opcodes to the Hart through a Machine debug grant instead of issuing a physical instruction-fetch transaction. This is a selected instruction source, not RAM, a debug ROM, or a second execution engine.
+
+The exception is permitted only for the bounded buffer command while the Hart remains in Debug Mode. It cannot inject instructions into normal guest execution or bypass that execution's fetch checks. The Hart still owns decode, legality, privilege and execution. The DM owns the words and command state; the Machine owns admission.
+
+Every guest physical fetch and every debug or guest data load/store, AMO, LR/SC and page-table transaction continues through PhysicalAccess with the existing raw-byte, fault, atomic, reservation and failure semantics. Supplying an opcode creates no permission to read guest memory through a host pointer or to bypass translation/PMP rules for data access.
+
+SBA and other inbound Platform masters remain deferred under §9. The instruction-source exception does not make the DM a physical initiator. Timing, ownership and debug control facts follow the coordinated ADR-0001/0003/0004 amendments and the selected contract. No concrete transport or Rust API is chosen here.
 
 ## Bounded deferrals
 

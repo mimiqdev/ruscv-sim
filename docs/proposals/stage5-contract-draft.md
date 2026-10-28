@@ -2,7 +2,7 @@
 
 **Status:** Current approved snapshot — Stage 5 decisions owner approved, recommended option, 2026-10-16 13:08 CST; not a second Current milestone contract.
 
-**Authority:** Informational drafting record. The promoted Stage 5 contract is preserved in the [Stage 5 archive](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md). [docs/dev-plan.md](../dev-plan.md) holds the Stage 6 contract on the Stage 5 to Stage 6 rotation merge. Until that merge main retains Stage 5. No Stage 6 implementation is part of this documentation rotation.
+**Authority:** Informational drafting record. The promoted Stage 5 contract is preserved in the [Stage 5 archive](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md). The [Stage 6 contract](../archive/milestones/stage6-riscv-debug-mode.md) becomes historical on the successor rotation merge. [docs/dev-plan.md](../dev-plan.md) holds the sole Current target. The preserved drafting body below is unchanged.
 
 **Snapshot boundary:** The complete proposal from baseline `077974755466f43c002fc28a55fb4098938fd506` follows. Its original "Not active" wording is historical drafting language, not a new approval request or present authority. Links that named the Stage 4 contract now target the Stage 4 archive. Git and PR history record the rotation delivery.
 

@@ -9,6 +9,8 @@
 
 > This record defines the semantic Hart outcome, retirement, trap, and observation-ownership contracts. It is not a trace schema or a Rust implementation plan. The outcome and record names below are illustrative; this ADR does not prescribe enum or struct layouts, field types, serialization, wire formats, or migration mechanics.
 
+**2026-10-28 amendment:** The owner-approved program-buffer profile extends the guest-execution boundary as specified [below](#2026-10-28-amendment-program-buffer-debug-execution). It activates with the [successor contract](../../dev-plan.md); it is not an implementation claim.
+
 ## Context
 
 The target architecture requires one RISC-V Hart implementation to serve both the standalone ISS and the future Virtual Platform. The Hart owns architectural state, instruction semantics, privilege, traps, address translation, and retirement; the Runner and Platform drive it and observe its facts. This boundary is described in the [target architecture](../README.md) and [architecture principles](../principles.md), while the [current implementation inventory](../current-state.md) records that the boundary is not yet implemented.
@@ -258,6 +260,16 @@ The following are implementation evidence to obtain later:
 6. RISC-V Debug Mode, trigger-module halt, and `dcsr`/`dret` state are Hart-owned when implemented; their detailed outcome contract is deferred and must not be classified as an external protocol halt or as a guest breakpoint exception.
 
 The physical-fault cause matrix, architectural trap value, A/D-write visibility, and device-fault versus simulator-failure distinction are decisions above, not open questions. There is no superseding record. This ADR is **Accepted**; implementation verification remains separate.
+
+## 2026-10-28 amendment: program-buffer debug execution
+
+The owner approved the Program-buffer Debug Execution contract's D1–D9 scope on 2026-10-28. For that selected profile, a halted Hart may receive a Machine debug-instruction grant while remaining in architectural Debug Mode. The existing Hart decodes and executes the supplied instruction; the DM and transport do not implement another ISA engine.
+
+Debug instruction completion, buffer exception, command completion, and simulator failure are distinct control facts. They do not produce guest retirement, guest trap-entry, or fabricated guest instruction-attempt facts. A buffer exception leaves guest trap CSRs unchanged and terminates the command; earlier completed effects remain committed. Unknown physical completion retains the existing non-resumable failure boundary.
+
+Required debug control facts exist independently of optional observation. Any materialized debug effects originate from the Hart transition that created them; a frontend must not reconstruct them through a second fetch or state-difference loop. Guest CommitRecord and TrapRecord semantics remain unchanged. This amendment does not prescribe new public Rust types or application result fields.
+
+The selected contract defines buffer instruction restrictions, saved `dpc`, counters and command completion. Trigger-module behavior remains deferred.
 
 ## Source and test map
 
