@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 外设集成测试: 20+ 个
     - 总计 90+ 个测试
 
+### Removed
+
+- **Stage 6 U6:** the unused GDB Remote Serial Protocol debugger under `src/debug/` and its crate re-exports (`DebugTarget`, `GdbServer`, breakpoint and watchpoint managers, and the debug CLI). OpenOCD `remote_bitbang` on `run --rbb-port` is unchanged.
+
 ### Planned
 
 - **Sprint 8.5: 推广 C 指令模块化模式到所有指令集**
