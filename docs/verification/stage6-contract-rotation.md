@@ -1,8 +1,8 @@
 # Stage 5 to Stage 6 documentation contract-rotation audit
 
-**Status:** Current rotation-verification procedure. Not Stage 6 implementation, runtime, ACT4, or performance evidence.
+**Status:** Current reproducible procedure for the historical Stage 5 to Stage 6 activation at `a8851c4ac57500eb54dadc89919cd7314b626594`. Not current-successor verification, runtime, ACT4, or performance evidence.
 
-**Authority:** Informational reproducible audit, constrained by [the sole approved Stage 6 contract](../dev-plan.md), [documentation policy](../documentation-policy.md), and accepted ADR-0001–0004. It applies to this docs-only rotation range, not to later implementation ranges.
+**Authority:** Informational procedure for the [preserved approved Stage 6 contract](../archive/milestones/stage6-riscv-debug-mode.md), constrained by [documentation policy](../documentation-policy.md) and the ADRs applicable to that historical range. Its inputs are the Stage 5 to Stage 6 activation, not today's `dev-plan.md` or successor implementation.
 
 **Approval boundary (2026-10-19):** owner approval of Stage 6 decisions D0–D15. D0–D14 are the recommended option. D15 is `cmderr=3`. Stage 6 activates and Stage 5 is formally completed and archived on the actual rotation merge. Until then main retains Stage 5.
 
@@ -14,12 +14,15 @@ This rotation's verification is the executable audit below and `git diff --check
 
 ## Reproduce the executable audit
 
-Run from the repository root with Python 3 and Git. The document is the durable source. Extract its single Python block into disposable `target/` storage and run it.
+Run from the repository root at the historical activation commit named above with Python 3 and Git. Execute the existing procedure in memory; do not create task scratch inside a checkout.
 
 ```bash
-mkdir -p target/stage6-rotation
-python3 -c 'from pathlib import Path; s=Path("docs/verification/stage6-contract-rotation.md").read_text(); Path("target/stage6-rotation/audit.py").write_text(s.split("```python\n",1)[1].split("\n```",1)[0]+"\n")'
-python3 target/stage6-rotation/audit.py
+python3 - <<'PY'
+from pathlib import Path
+text = Path('docs/verification/stage6-contract-rotation.md').read_text()
+code = text.split('```python\n', 1)[1].split('\n```', 1)[0]
+exec(compile(code, '<historical-stage6-rotation>', 'exec'))
+PY
 ```
 
 An assertion failure is a verification blocker, not a pass.

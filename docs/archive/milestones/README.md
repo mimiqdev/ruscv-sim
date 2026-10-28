@@ -1,23 +1,24 @@
 # Archived Milestones
 
-This directory contains completed and explicitly superseded milestone plans with their historical outcomes, plus clearly labeled preparation records that do not claim completion.
+This directory preserves approved milestone contracts and explicitly superseded plans, including their scope and limitations. Clearly labeled preparation records do not claim completion.
 
-Archived files are not active plans. They may describe component-level completion
-that predates end-to-end integration or ACT4 verification. Consult the
-[approved Stage 6 contract](../../dev-plan.md), sole Current on the actual Stage 5 to Stage 6 rotation merge following the owner approval of 2026-10-19. Until that merge main retains Stage 5. On the merge the [entire Stage 5 contract](stage5-platform-interrupts-wfi-and-counters.md) is formally completed and archived. The [Stage 5 snapshot](../../proposals/stage5-contract-draft.md) is informational, not a second Current contract. The [Stage 4 snapshot](../../proposals/stage4-contract-draft.md) is informational, not a second Current contract.
+Archived files are not active plans. Consult the [sole current contract](../../dev-plan.md). The owner-approved Program-buffer Debug Execution target succeeds Stage 6 on the actual rotation merge. The [entire Stage 6 contract](stage6-riscv-debug-mode.md) is preserved here for historical scope; activation and completion do not claim implementation of the successor. CI and PR history retain execution and review outcomes.
 
 ## Rolling process
 
 1. `docs/dev-plan.md` contains exactly one active milestone.
 2. Once all acceptance criteria are verified, move that plan here as completed.
 3. If planning is deliberately reset, archive the replaced plan as superseded without claiming completion.
-4. Add completion evidence or the supersession reason and known limitations to the archived record.
+4. Preserve the approved contract, completion boundary/date, source identifiers and known limitations. Keep execution and review outcomes in CI/PR history.
 5. Promote the next milestone into `docs/dev-plan.md` only after it is separately
    approved. The archived A8 record documents only its own bounded completion;
    the [post-A7 roadmap proposal](../../proposals/post-a7-roadmap.md) remains Draft
    technical planning context, not a second current contract.
 
 ## Records
+
+- [Stage 6: Entire approved RISC-V Debug Mode contract](stage6-riscv-debug-mode.md)
+  - Preserves owner-approved D0–D15 and the temporary abstract-command profile. Formal completion and archival take effect on the Program-buffer Debug Execution rotation merge; no execution results are copied here.
 
 - [Stage 5: Entire approved platform interrupt, WFI, and counter contract](stage5-platform-interrupts-wfi-and-counters.md)
   - Decisions D0–D9 were owner approved, recommended option, on 2026-10-16 13:08 CST. Implementation is PR #90 through PR #94, head `fb8399b`. The [final review](../../verification/stage5-final-review.md) found no instruction-behavior defect. The full original body is preserved. Formal completion and archival take effect on the Stage 5 to Stage 6 rotation merge.
@@ -99,4 +100,4 @@ that predates end-to-end integration or ACT4 verification. Consult the
 - [M7: Spike-compatible commit log](m7-commit-log.md)
 - [M8: ACT4 RV64I baseline — superseded](m8-act4-rv64i-superseded.md)
 
-Supporting historical reports and execution plans are stored alongside their milestone summaries.
+Legacy supporting records remain historical context. New milestone archives preserve contracts, not execution ledgers.

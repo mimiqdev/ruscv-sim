@@ -15,6 +15,8 @@
 > shapes, serialization, scheduling algorithms, address maps, transport APIs, or a
 > migration sequence. It does not claim that the target boundaries are implemented.
 
+**2026-10-28 amendment:** The [program-buffer composition amendment](#2026-10-28-amendment-program-buffer-composition) extends this target for the owner-approved [successor contract](../../dev-plan.md). It changes no implementation claim or guest-execution ownership.
+
 ## Context
 
 The product must provide a standalone instruction set simulator (ISS) now and a
@@ -690,6 +692,18 @@ These are implementation evidence for a later implementation:
 - **Interrupt, time, and stop-event decision:** separately verify interrupt,
   timing/delay, and stop arbitration once its technical contract is defined;
   verify the Machine scheduler's §3 boundary independently.
+
+## 2026-10-28 amendment: program-buffer composition
+
+The owner approved the Program-buffer Debug Execution contract's D1–D9 scope on 2026-10-28. The Machine composes the DM command/buffer state with its existing Hart and Platform. The DM owns its words, data/autoexec state, busy/error state and persistent requests. The Hart owns debug instruction semantics and effects. The Machine admits DMI and grants debug work at coherent boundaries; the transport only carries DMI.
+
+A DM-supplied instruction follows ADR-0002's narrow program-buffer source exception. Debug data/atomic/page-table accesses remain Hart-initiated physical transactions. No DM-originated Platform port, alternate RAM view, or second architectural loop is added.
+
+Started debug work participates in existing lifecycle admission and completion receipts. A reset or teardown must not mistake an in-flight command access for drain. DM state cannot clear Machine uncertainty, and a completed late callback is not adapter proof. Stop further grants before reset, preserve completed effects until the selected reset semantics apply, and retain pending request ownership across Hart reconstruction.
+
+Do not hold the DM lock across Hart execution or physical callbacks. Command progress must not depend on another socket request when admitted work can advance. Completion/error and Platform effects return through the Machine with debug provenance; the Runner retains terminal classification and must not invent guest retirement to deliver them.
+
+The selected profile bounds commands and defines resume, abort and reset behavior. Public CLI/result shape remains unchanged. This amendment defines no FFI, SystemC, DMI cache, new master or multi-Hart protocol.
 
 ## Bounded deferrals and open questions
 

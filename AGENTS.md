@@ -10,6 +10,7 @@
 - When `README.md`, `CHANGELOG.md`, design documents, or archived plans conflict with the current milestone contract, an accepted ADR, or verified implementation evidence, follow the authoritative source and note the stale documentation if it affects the task.
 - Treat `docs/archive/` as historical context only. Archived checkboxes, old version targets, and superseded frameworks are not current work.
 - Keep durable repository documents self-contained; record change provenance in Git history rather than relying on private execution systems.
+- Keep product code, behavioral tests, verification tooling, specifications, and necessary user/developer documentation in the repository. CI and PR history own execution and acceptance results. Do not add result reports, captured outputs, execution ledgers, or agent scratch files to worktrees, including untracked `.audit/` directories. Keep local session scratch outside every checkout.
 - Do not silently add unrelated cleanup, old backlog items, or speculative future features to the active milestone.
 
 ## Branch and review workflow
@@ -20,16 +21,16 @@
 - Merging into `main`, pushing directly to `main`, creating tags, publishing releases, force-pushing, rewriting shared history, and destructive cleanup require separate explicit authorization. A clean review or passing CI does not authorize these actions.
 - Formal review targets the committed PR head and its applicable CI or recorded verification evidence. Coding and review must use separate Agents or contexts; the reviewer is read-only and must not modify the coding worktree. A local committed-range pre-review may precede PR creation but does not replace PR-head verification.
 - Freeze the reviewed worktree during review. Address findings on the same branch after the review round, then verify and repeat review against the new PR head. Evidence and review conclusions apply only to their exact committed HEAD; do not carry them forward after changes without re-verification.
-- Consider work complete only after the PR is merged and the required repository evidence exists.
+- Consider work complete only after the PR is merged and its required CI checks and independent review are complete.
 - For a solo-maintainer repository, applicable required checks and resolved review findings are sufficient; do not require an impossible self-approval.
 
 ## Rolling milestone workflow
 
 When the active milestone is complete:
 
-1. Verify every acceptance criterion in `docs/dev-plan.md` with recorded repository evidence.
+1. Verify every acceptance criterion in `docs/dev-plan.md` through the relevant tests and CI checks. Record outcomes in CI and PR history.
 2. Move the completed plan to `docs/archive/milestones/` as a standalone record.
-3. Record its completion date, test evidence, known limitations, and relevant commit or release identifiers.
+3. Preserve the contract's scope, completion date, known limitations, and relevant source identifiers. Do not copy test output or acceptance-result tables into the archive.
 4. Re-evaluate unfinished work; do not automatically carry it forward.
 5. Replace `docs/dev-plan.md` with the next approved milestone contract.
 

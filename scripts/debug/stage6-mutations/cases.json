@@ -1,0 +1,55 @@
+[
+  {
+    "unit": "u1",
+    "source": "src/core/mod.rs",
+    "patch": "u1-haltreq-dpc.patch",
+    "tests": [
+      {
+        "target": ["--test", "s6_u1_hart_debug"],
+        "test": "haltreq_stores_dpc_as_the_current_pc",
+        "failure": ["assertion `left == right` failed", "left:\\s+68", "right:\\s+64"]
+      }
+    ]
+  },
+  {
+    "unit": "u2",
+    "source": "src/dm/mod.rs",
+    "patch": "u2-datacount.patch",
+    "tests": [
+      {
+        "target": ["--test", "s6_u2_debug_module"],
+        "test": "datacount_is_4_and_address_uses_data3",
+        "failure": ["assertion `left == right` failed: datacount", "left:\\s+2", "right:\\s+4"]
+      },
+      {
+        "target": ["--test", "s6_u2_debug_module"],
+        "test": "physical_read_ignores_mprv",
+        "failure": ["load from 0x80001000 aamsize 2", "left:\\s+3", "right:\\s+0"]
+      }
+    ]
+  },
+  {
+    "unit": "u3",
+    "source": "src/machine/owned.rs",
+    "patch": "u3-dmi-mid-instruction.patch",
+    "tests": [
+      {
+        "target": ["--lib"],
+        "test": "machine::tests::dmi_haltreq_waits_until_the_instruction_boundary",
+        "failure": ["haltreq was accepted mid-instruction: direct DMI ran during the instruction"]
+      }
+    ]
+  },
+  {
+    "unit": "u4",
+    "source": "src/jtag/mod.rs",
+    "patch": "u4-reset-ir.patch",
+    "tests": [
+      {
+        "target": ["--test", "s6_u4_remote_bitbang"],
+        "test": "bitbang_client_reads_idcode_after_test_logic_reset",
+        "failure": ["assertion `left == right` failed", "left:\\s+16", "right:\\s+1"]
+      }
+    ]
+  }
+]

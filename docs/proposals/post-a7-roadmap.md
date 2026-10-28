@@ -5,13 +5,13 @@
 **Authority:** Informational proposal awaiting maintainer/user approval; it is not a
 milestone contract and does not replace [`docs/dev-plan.md`](../dev-plan.md).
 
-**As-of boundary (2026-10-11 navigation update):** The bodies below preserve the
+**As-of boundary (2026-10-28 navigation update):** The bodies below preserve the
 A7-era planning input, not today's backlog. A8's verified atomic convergence and
 A9's [bounded acceptance](../verification/a9-closeout-assessment.md) supersede
 its current-A7, global-reservation/legacy atomic debt and open host-writer-choice
 claims: admitted host writers remain real participants, with A9 lifecycle fencing
 and stale-generation isolation. Unknown completion still has no adapter resolution
-API. A10 was activated by PR #71 and its [entire contract](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md) was archived on the A10 to Stage 4 rotation merge. The Stage 4 contract was decided by PR #75 and approved for activation on 2026-10-11 UTC. Its [entire contract](../archive/milestones/stage4-virtual-memory-and-protection.md) is archived on the Stage 4 to Stage 5 rotation merge. Stage 5 was activated on the Stage 4 to Stage 5 rotation merge. On the Stage 5 to Stage 6 rotation merge the [entire Stage 5 contract](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md) is formally completed and archived, and [Stage 6](../dev-plan.md) becomes sole Current. Until that merge main retains Stage 5. The [approved Stage 5 snapshot](stage5-contract-draft.md) is not a second Current contract or an implementation. The [approved Stage 4 snapshot](stage4-contract-draft.md) is not a second Current contract or an implementation. Later roadmap stages remain candidates. Historical
+API. A10 was activated by PR #71 and its [entire contract](../archive/milestones/a10-independent-public-path-performance-test-infrastructure.md) was archived on the A10 to Stage 4 rotation merge. The Stage 4 contract was decided by PR #75 and approved for activation on 2026-10-11 UTC. Its [entire contract](../archive/milestones/stage4-virtual-memory-and-protection.md) is archived on the Stage 4 to Stage 5 rotation merge. Stage 5 was activated on the Stage 4 to Stage 5 rotation merge. Stage 6 was activated by `a8851c4ac57500eb54dadc89919cd7314b626594`; the [entire Stage 5 contract](../archive/milestones/stage5-platform-interrupts-wfi-and-counters.md) is archived. On the owner-approved program-buffer rotation, the [entire Stage 6 contract](../archive/milestones/stage6-riscv-debug-mode.md) becomes historical and [Program-buffer Debug Execution](../dev-plan.md) becomes the sole Current target. That rotation implements no successor feature. The [approved Stage 5 snapshot](stage5-contract-draft.md) is not a second Current contract or an implementation. The [approved Stage 4 snapshot](stage4-contract-draft.md) is not a second Current contract or an implementation. Later roadmap stages remain candidates. Historical
 A7 evidence and recommendations below are not rewritten as A8/A9 results.
 
 **Planning baseline:** repository commit `c059500a6af20f93569099c4b05ced3364a7703b`,
@@ -640,7 +640,7 @@ stays the inherited waiver. It is not a debugger architectural dependency.
 **Target:** one-hart RISC-V Debug Mode against Debug Specification 1.0, ratified,
 tag `5695c0a`, with an abstract-command Debug Module and a JTAG `remote_bitbang`
 transport that OpenOCD and GDB can attach to. Owner decision, Tony, 2026-10-19.
-The normative text is the Stage 6 contract. This roadmap is not a second contract.
+The normative text for that milestone is the [archived Stage 6 contract](../archive/milestones/stage6-riscv-debug-mode.md). This roadmap is not a second contract.
 
 **Boundary:** the Hart owns Debug Mode. The Debug Module owns abstract commands.
 The Machine admits a debug transaction only at a Hart boundary. The old GDB
@@ -648,7 +648,7 @@ Remote Serial Protocol component is not this stage's debugger.
 
 **Non-goals for this stage:** trigger modules, a second hart, and a new
 `ExecutionResult` field. A program buffer and system bus access are also outside
-this stage. They are the next debug increment below, not a silent expansion of
+this stage. They are the later debug increments below, not a silent expansion of
 Stage 6. The 2026-10-19 decision supersedes the earlier non-goal that put
 RISC-V Debug Mode itself out of scope. The new CLI flags `--rbb-port` and
 `--halted` are approved.
@@ -658,11 +658,9 @@ U2 is the Debug Module. U3 is Machine integration. U4 is JTAG and the CLI.
 U5 is the OpenOCD and GDB attach. U6 removes `src/debug/` after that attach
 exists.
 
-**Later debug increment, not Stage 6:** full Spike-style support. That means a
-program buffer, system bus access, and execution of instructions while the hart
-is in Debug Mode. The Stage 6 abstract-command module (`progbufsize` 0,
-`datacount` 4) is a temporary first implementation. Owner decision, Tony,
-2026-10-19.
+**Approved successor on rotation, owner Tony, 2026-10-28:** the [Program-buffer Debug Execution contract](../dev-plan.md) selects the bounded program-buffer portion first, with D1–D9 approved. SBA remains a separate subsequent goal. Only that contract and its coordinated ADR amendments define the selected capacity, instruction-source exception, Zifencei, data-autoexec and component API changes. This roadmap does not activate or implement them.
+
+**Later complete debug direction, not Stage 6:** full Spike-style support still includes a program buffer, system bus access, and execution of instructions while the hart is in Debug Mode. The Stage 6 abstract-command module (`progbufsize` 0, `datacount` 4) was the temporary first implementation selected on 2026-10-19. Splitting the next delivery does not remove SBA from that direction.
 
 **Verifiable exit standard:** the Stage 6 contract's §7 list. A component test
 of the old GDB stub is not that exit.
