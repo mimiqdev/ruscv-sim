@@ -531,7 +531,14 @@ impl Machine {
             .installed
             .lock()
             .map_err(|_| MachineError::Poisoned)?;
+        let dm = self
+            .inner
+            .debug
+            .dm
+            .lock()
+            .map_err(|_| MachineError::Poisoned)?;
         let mut host = self.inner.host.lock().map_err(|_| MachineError::Poisoned)?;
+        dm.apply_haltreq(&mut installed.core);
         *domain = Some(installed);
         *host = Some(view);
         admission.generation = generation;
@@ -670,9 +677,17 @@ impl Machine {
         Ok(update(core))
     }
 
-    /// Set the Hart `haltreq` latch. Debug 1.0 `dmcontrol.haltreq`.
+    /// Set the DM's Hart 0 request and drive its Hart input.
     pub fn set_haltreq(&self, haltreq: bool) -> Result<(), MachineError> {
-        self.with_core_mut(|core| core.set_haltreq(haltreq))
+        self.with_core_mut(|core| {
+            self.inner
+                .debug
+                .dm
+                .lock()
+                .map_err(|_| MachineError::Poisoned)?
+                .set_haltreq(core, haltreq);
+            Ok(())
+        })?
     }
 
     pub fn dcsr(&self) -> Result<u64, MachineError> {

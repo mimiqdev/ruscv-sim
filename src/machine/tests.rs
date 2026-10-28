@@ -115,10 +115,14 @@ struct UnknownWrite {
     actual: crate::core::SharedDataAccess,
     pending: Arc<Mutex<Option<LateOperation>>>,
     calls: Arc<AtomicUsize>,
+    before: Option<Box<dyn FnOnce() + Send>>,
 }
 impl PhysicalBackend for UnknownWrite {
     fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
         assert_eq!(request.category(), AccessCategory::DataWrite);
+        if let Some(before) = self.before.take() {
+            before();
+        }
         self.calls.fetch_add(1, Ordering::SeqCst);
         let actual = self.actual.clone();
         let address = request.paddr();
@@ -171,6 +175,7 @@ fn unknown_delayed_ram_write_or_native_callback_never_permits_new_generation_or_
                 actual: installed.platform.data.clone(),
                 pending: pending.clone(),
                 calls: requests.clone(),
+                before: None,
             })));
             installed
                 .core
@@ -355,6 +360,235 @@ fn unwound_native_callback_cannot_be_claimed_drained_or_restorable() {
         owner.teardown(),
         Err(MachineError::UnknownCompletion)
     ));
+}
+
+#[test]
+fn abstract_unknown_completion_blocks_ndmreset_and_lifecycle_reuse() {
+    for kind in [PlatformKind::Flat, PlatformKind::Native] {
+        let mut owned = OwnedMachine::new(MachineConfig::new(kind), image(elf::nop())).unwrap();
+        let control = owned.test_control();
+        let generation = control.status().unwrap().generation;
+        let pending = Arc::new(Mutex::new(None));
+        let requests = Arc::new(AtomicUsize::new(0));
+        let data = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(UnknownWrite {
+            actual: owned.test_data(),
+            pending: pending.clone(),
+            calls: requests.clone(),
+            before: None,
+        })));
+        owned.test_replace_data(data);
+        owned.dmi_write(0x10, (1 << 31) | 1).unwrap();
+        drop(owned.step(false).unwrap());
+        owned.dmi_write(0x04, 77).unwrap();
+        owned.dmi_write(0x05, 0).unwrap();
+        owned.dmi_write(0x06, (elf::BASE + 0x200) as u32).unwrap();
+        owned.dmi_write(0x07, 0).unwrap();
+        owned
+            .dmi_write(0x17, (2 << 24) | (3 << 20) | (1 << 16))
+            .unwrap();
+        assert!(control.status().unwrap().uncertain);
+        assert!(control.status().unwrap().last_failure.is_some());
+        assert_eq!((owned.dmi_read(0x16).unwrap() >> 8) & 7, 7);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert!(
+            matches!(
+                owned.dmi_write(0x10, (1 << 31) | 3),
+                Err(MachineError::UnknownCompletion)
+            ),
+            "ndmreset bypassed an unresolved abstract memory completion"
+        );
+        assert_eq!(owned.dmi_read(0x10).unwrap() & 2, 0);
+        let status = owned.dmi_read(0x11).unwrap();
+        assert_ne!(status & (1 << 8), 0);
+        assert_eq!(status & ((1 << 12) | (1 << 24)), 0);
+        owned.dmi_write(0x16, 7 << 8).unwrap();
+        assert_eq!((owned.dmi_read(0x16).unwrap() >> 8) & 7, 0);
+        owned.dmi_write(0x04, 0x55).unwrap();
+        assert!(matches!(
+            owned.dmi_write(0x17, (3 << 20) | (1 << 17) | (1 << 16) | 0x1001),
+            Err(MachineError::UnknownCompletion)
+        ));
+        assert_eq!(owned.state().regs[1], 0);
+        assert!(matches!(
+            owned.dmi_write(0x10, (1 << 30) | 1),
+            Err(MachineError::UnknownCompletion)
+        ));
+        owned.dmi_write(0x10, 0).unwrap();
+        owned.dmi_write(0x10, 1).unwrap();
+        assert_eq!((owned.dmi_read(0x16).unwrap() >> 8) & 7, 0);
+        assert!(control.status().unwrap().uncertain);
+        assert_eq!(control.status().unwrap().generation, generation);
+        assert!(matches!(
+            control.resume(),
+            Err(MachineError::UnknownCompletion)
+        ));
+        assert!(matches!(
+            owned.quiesce(),
+            Err(MachineError::UnknownCompletion)
+        ));
+        assert!(matches!(
+            control.fresh_reset(),
+            Err(MachineError::UnknownCompletion)
+        ));
+        assert!(matches!(
+            control.teardown(),
+            Err(MachineError::UnknownCompletion)
+        ));
+        pending.lock().unwrap().take().unwrap()().unwrap();
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            owned.quiesce(),
+            Err(MachineError::UnknownCompletion)
+        ));
+        assert_eq!(control.status().unwrap().generation, generation);
+    }
+}
+
+#[test]
+fn abstract_memory_in_flight_blocks_lifecycle_before_unknown_is_reported() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    owned.dmi_write(0x10, (1 << 31) | 1).unwrap();
+    drop(owned.step(false).unwrap());
+    for (addr, value) in [
+        (0x04, 77),
+        (0x05, 0),
+        (0x06, (elf::BASE + 0x200) as u32),
+        (0x07, 0),
+    ] {
+        owned.dmi_write(addr, value).unwrap();
+    }
+    let control = owned.test_control();
+    let generation = control.status().unwrap().generation;
+    let pending = Arc::new(Mutex::new(None));
+    let (entered, started) = mpsc::channel();
+    let (release, wait) = mpsc::channel();
+    let data = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(UnknownWrite {
+        actual: owned.test_data(),
+        pending: pending.clone(),
+        calls: Arc::new(AtomicUsize::new(0)),
+        before: Some(Box::new(move || {
+            entered.send(()).unwrap();
+            wait.recv().unwrap();
+        })),
+    })));
+    owned.test_replace_data(data);
+    let worker = thread::spawn(move || {
+        let result = owned.dmi_write(0x17, (2 << 24) | (3 << 20) | (1 << 16));
+        (owned, result)
+    });
+    started
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(control.status().unwrap().work.hart, 1);
+    control.request_quiesce().unwrap();
+    assert!(matches!(control.try_drain(), Err(MachineError::Busy)));
+    assert!(matches!(control.fresh_reset(), Err(MachineError::Busy)));
+    assert!(matches!(
+        control.install(image(elf::nop())),
+        Err(MachineError::Busy)
+    ));
+    assert!(matches!(control.teardown(), Err(MachineError::Busy)));
+    assert_eq!(control.status().unwrap().generation, generation);
+    release.send(()).unwrap();
+    let (mut owned, result) = worker.join().unwrap();
+    result.unwrap();
+    assert_eq!((owned.dmi_read(0x16).unwrap() >> 8) & 7, 7);
+    assert!(control.status().unwrap().uncertain);
+    assert!(matches!(
+        control.try_drain(),
+        Err(MachineError::UnknownCompletion)
+    ));
+    pending.lock().unwrap().take().unwrap()().unwrap();
+    assert!(matches!(
+        control.try_drain(),
+        Err(MachineError::UnknownCompletion)
+    ));
+    assert_eq!(control.status().unwrap().generation, generation);
+}
+
+#[test]
+fn dm_halt_request_survives_rebuild_and_explicit_clears_stay_cleared() {
+    for replace in [false, true] {
+        for clear in [None, Some(1), Some(0)] {
+            let mut owned = OwnedMachine::new(
+                MachineConfig::new(PlatformKind::Flat),
+                image(elf::addi(1, 0, 7)),
+            )
+            .unwrap();
+            owned.dmi_write(0x10, (1 << 31) | 1).unwrap();
+            owned.dmi_write(0x10, (1 << 16) | 1).unwrap();
+            if let Some(value) = clear {
+                owned.dmi_write(0x10, value).unwrap();
+            }
+            if replace {
+                owned.install(image(elf::addi(1, 0, 7))).unwrap();
+            } else {
+                owned.fresh_reset().unwrap();
+            }
+            let turn = owned.step(false).unwrap();
+            if clear.is_none() {
+                assert!(matches!(
+                    turn.hart().outcome,
+                    StepOutcome::DebugHalted { .. }
+                ));
+                assert!(!turn.hart().control.retired);
+                assert_eq!(owned.dpc(), elf::BASE);
+                assert_eq!(owned.state().regs[1], 0);
+            } else {
+                assert!(turn.hart().control.retired);
+                assert_eq!(owned.state().regs[1], 7);
+            }
+        }
+    }
+}
+
+#[test]
+fn shared_halt_setter_and_dm_control_use_the_same_request_across_reset() {
+    for clear in [false, true] {
+        let owner = owner(PlatformKind::Native);
+        {
+            let mut domain = owner.inner.installed.lock().unwrap();
+            let core = &mut domain.as_mut().unwrap().core;
+            owner
+                .inner
+                .debug
+                .dm
+                .lock()
+                .unwrap()
+                .dmi_write(core, 0x10, (1 << 31) | 1);
+        }
+        owner.set_haltreq(!clear).unwrap();
+        owner.request_quiesce().unwrap();
+        owner.try_drain().unwrap();
+        owner.fresh_reset().unwrap();
+        owner.resume().unwrap();
+        let turn = owner.step(false).unwrap();
+        assert_eq!(turn.hart().control.retired, clear);
+        assert_eq!(
+            matches!(turn.hart().outcome, StepOutcome::DebugHalted { .. }),
+            !clear
+        );
+    }
+}
+
+#[test]
+fn poisoned_debug_module_cannot_publish_a_new_generation() {
+    let owner = owner(PlatformKind::Flat);
+    owner.write_mem(0x200, &[0x55]).unwrap();
+    owner.request_quiesce().unwrap();
+    owner.try_drain().unwrap();
+    let generation = owner.status().unwrap().generation;
+    let debug = owner.clone();
+    assert!(thread::spawn(move || {
+        let _guard = debug.inner.debug.dm.lock().unwrap();
+        panic!("poison the Debug Module");
+    })
+    .join()
+    .is_err());
+    assert!(matches!(owner.fresh_reset(), Err(MachineError::Poisoned)));
+    assert_eq!(owner.status().unwrap().generation, generation);
+    assert_eq!(owner.read_mem(0x200, 1).unwrap(), [0x55]);
 }
 
 /// §7 item 3. A `haltreq` posted while an instruction is in progress stays

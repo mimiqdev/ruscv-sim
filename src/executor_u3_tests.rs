@@ -128,6 +128,15 @@ fn native_run_halts_a_spinning_hart_from_another_thread() {
     assert_eq!(read_reg(&port, u32::from(machine::MINSTRET)), minstret);
     assert_eq!(read_reg(&port, u32::from(machine::MCYCLE)), mcycle);
     assert_eq!(read_reg(&port, u32::from(unprivileged::TIME)), time);
+    for _ in 0..4 {
+        port.dmi_write(DATA0 + 2, 0x0200_bff8).unwrap();
+        port.dmi_write(DATA0 + 3, 0).unwrap();
+        port.dmi_write(COMMAND, (2 << 24) | (3 << 20)).unwrap();
+        assert_eq!((port.dmi_read(ABSTRACTCS).unwrap() >> 8) & 7, 0);
+        let low = u64::from(port.dmi_read(DATA0).unwrap());
+        let high = u64::from(port.dmi_read(DATA0 + 1).unwrap());
+        assert_eq!(low | (high << 32), time, "CLINT mtime moved while halted");
+    }
     write_reg(&port, 0x7b1, ENTRY + 8);
     port.dmi_write(DMCONTROL, DMACTIVE | RESUMEREQ).unwrap();
     let result = rx

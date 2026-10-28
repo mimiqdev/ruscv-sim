@@ -404,8 +404,14 @@ impl OwnedMachine {
     }
 
     /// `--halted`. The next Hart boundary enters Debug Mode before fetch.
-    pub(crate) fn request_halt(&mut self) {
-        self.domain_mut().core.set_haltreq(true);
+    pub(crate) fn request_halt(&mut self) -> Result<(), MachineError> {
+        let hub = Arc::clone(&self.control.inner);
+        hub.debug
+            .dm
+            .lock()
+            .map_err(|_| MachineError::Poisoned)?
+            .set_haltreq(&mut self.domain_mut().core, true);
+        Ok(())
     }
 
     pub(crate) fn arm_debug_session(&self) -> DebugSessionGuard {
@@ -499,8 +505,13 @@ impl OwnedMachine {
 
     fn apply_dmi(&mut self, addr: u8, write: Option<u32>) -> Result<u32, MachineError> {
         let hub = Arc::clone(&self.control.inner);
-        let (value, before, after) = {
+        let lease = Lease::debug(&hub.gate)?;
+        let uncertain = lease.boundary_state()?.1;
+        let (value, before, after, failure) = {
             let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
+            if uncertain && write.is_some_and(|value| !dm.terminal_write_allowed(addr, value)) {
+                return Err(MachineError::UnknownCompletion);
+            }
             let core = &mut self
                 .installed
                 .as_mut()
@@ -514,12 +525,20 @@ impl OwnedMachine {
                 }
                 None => dm.dmi_read(core, addr),
             };
-            (value, before, dm.ndmreset())
+            (
+                value,
+                before,
+                dm.ndmreset(),
+                core.unresolved_physical_access().cloned(),
+            )
         };
+        let receipt = lease.boundary(failure.is_some(), failure)?;
+        let uncertain = receipt.boundary_state()?.1;
         if !before && after {
+            drop(receipt);
             self.reload_for_ndmreset()?;
         }
-        if before && !after {
+        if before && !after && !uncertain {
             hub.debug
                 .dm
                 .lock()

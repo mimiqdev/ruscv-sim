@@ -206,6 +206,15 @@ fn dcsr_dpc_and_scratch_exist_with_the_decided_warl_rules() {
     core.write_dscratch1(0x2222);
     assert_eq!(core.dscratch0(), 0x1111);
     assert_eq!(core.dscratch1(), 0x2222);
+
+    core.set_haltreq(true);
+    assert!(matches!(
+        core.step_outcome(),
+        StepOutcome::DebugHalted { .. }
+    ));
+    assert_eq!(dcsr_cause(core.dcsr()), DebugCause::HaltReq.code());
+    let written = core.write_dcsr((DebugCause::Ebreak.code() << 6) | 3);
+    assert_eq!(dcsr_cause(written), DebugCause::HaltReq.code());
 }
 
 /// Debug 1.0 Halt, and the `dpc` column for ebreak, halt request, and single
@@ -324,9 +333,19 @@ fn ebreak_with_the_bit_clear_traps_with_cause_3() {
 #[test]
 fn ebreak_with_the_bit_set_leaves_mepc_mcause_mcycle_and_minstret() {
     let (mut core, _) = core_with(&[elf::addi(1, 0, 1), EBREAK]);
+    core.state_mut().csr.write(machine::MEPC, 0x80).unwrap();
+    core.state_mut()
+        .csr
+        .write(
+            machine::MCAUSE,
+            (1 << 63) | InterruptCause::MachineTimer as u64,
+        )
+        .unwrap();
     core.step_outcome();
     let mepc = core_csr(&core, machine::MEPC);
     let mcause = core_csr(&core, machine::MCAUSE);
+    assert_ne!(mepc, 0);
+    assert_ne!(mcause, 0);
     let mcycle = core_csr(&core, machine::MCYCLE);
     let minstret = core_csr(&core, machine::MINSTRET);
     core.write_dcsr(EBREAKM);
