@@ -1,0 +1,1289 @@
+[0;32m[OK][0m RISC-V toolchain found
+  Assembler: GNU assembler (GNU Binutils) 2.45
+  Linker:    GNU ld (GNU Binutils) 2.45
+[0;34mCompiling rv64i/add.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/add.elf
+[0;34mCompiling rv64i/addi.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/addi.elf
+[0;34mCompiling rv64i/and.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/and.elf
+[0;34mCompiling rv64i/andi.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/andi.elf
+[0;34mCompiling rv64i/beq.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/beq.elf
+[0;34mCompiling rv64i/bge.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/bge.elf
+[0;34mCompiling rv64i/bgeu.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/bgeu.elf
+[0;34mCompiling rv64i/blt.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/blt.elf
+[0;34mCompiling rv64i/bltu.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/bltu.elf
+[0;34mCompiling rv64i/bne.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/bne.elf
+[0;34mCompiling rv64i/csrrc.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrc.elf
+[0;34mCompiling rv64i/csrrci.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrci.elf
+[0;34mCompiling rv64i/csrrs.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrs.elf
+[0;34mCompiling rv64i/csrrsi.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrsi.elf
+[0;34mCompiling rv64i/csrrw.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrw.elf
+[0;34mCompiling rv64i/csrrwi.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrwi.elf
+[0;34mCompiling rv64i/fib.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/fib.elf
+[0;34mCompiling rv64i/hello.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/hello.elf
+[0;34mCompiling rv64i/jal.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/jal.elf
+[0;34mCompiling rv64i/jalr.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/jalr.elf
+[0;34mCompiling rv64i/lb.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lb.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lb.elf
+[0;34mCompiling rv64i/lh.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lh.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lh.elf
+[0;34mCompiling rv64i/lw.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lw.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lw.elf
+[0;34mCompiling rv64i/lwu.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lwu.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lwu.elf
+[0;34mCompiling rv64i/or.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/or.elf
+[0;34mCompiling rv64i/ori.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/ori.elf
+[0;34mCompiling rv64i/s4_ad_observation.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_ad_observation.elf
+[0;34mCompiling rv64i/s4_counters.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_counters.elf
+[0;34mCompiling rv64i/s4_csr_policy.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_csr_policy.elf
+[0;34mCompiling rv64i/s4_delegation.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_delegation.elf
+[0;34mCompiling rv64i/s4_envcfg.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_envcfg.elf
+[0;34mCompiling rv64i/s4_fp_absent.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_fp_absent.elf
+[0;34mCompiling rv64i/s4_mapped_rw.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_mapped_rw.elf
+[0;34mCompiling rv64i/s4_mprv.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_mprv.elf
+[0;34mCompiling rv64i/s4_permission_fault.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_permission_fault.elf
+[0;34mCompiling rv64i/s4_pmp_csr.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_pmp_csr.elf
+[0;34mCompiling rv64i/s4_privilege_transition.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_privilege_transition.elf
+[0;34mCompiling rv64i/s4_sfence_vma.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_sfence_vma.elf
+[0;34mCompiling rv64i/s4_sret_vectored.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_sret_vectored.elf
+[0;34mCompiling rv64i/s4_supervisor_interrupt.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_supervisor_interrupt.elf
+[0;34mCompiling rv64i/s4_tvm_tsr_tw.S[0m
+  Linker script: linker-s4.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_tvm_tsr_tw.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_tvm_tsr_tw.elf
+[0;34mCompiling rv64i/s4_walk_fault.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_walk_fault.elf
+[0;34mCompiling rv64i/s5_counters.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_counters.elf
+[0;34mCompiling rv64i/s5_external.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_external.elf
+[0;34mCompiling rv64i/s5_software.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_software.elf
+[0;34mCompiling rv64i/s5_timer.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_timer.elf
+[0;34mCompiling rv64i/s5_wfi_event.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_wfi_event.elf
+[0;34mCompiling rv64i/s5_wfi_masked.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_wfi_masked.elf
+[0;34mCompiling rv64i/s5_wfi_none.S[0m
+  Linker script: linker-s4.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_wfi_none.elf
+[0;34mCompiling rv64i/s6_debug_csr.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s6_debug_csr.elf
+[0;34mCompiling rv64i/s6_ebreak.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s6_ebreak.elf
+[0;34mCompiling rv64i/s6_u5_attach.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s6_u5_attach.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s6_u5_attach.elf
+[0;34mCompiling rv64i/sb.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sb.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sb.elf
+[0;34mCompiling rv64i/sh.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sh.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sh.elf
+[0;34mCompiling rv64i/sll.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sll.elf
+[0;34mCompiling rv64i/slli.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/slli.elf
+[0;34mCompiling rv64i/sra.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sra.elf
+[0;34mCompiling rv64i/srai.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/srai.elf
+[0;34mCompiling rv64i/srl.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/srl.elf
+[0;34mCompiling rv64i/srli.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/srli.elf
+[0;34mCompiling rv64i/sub.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sub.elf
+[0;34mCompiling rv64i/supervisor_interrupt.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/supervisor_interrupt.elf
+[0;34mCompiling rv64i/sw.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sw.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sw.elf
+[0;34mCompiling rv64i/trap_ebreak.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/trap_ebreak.elf
+[0;34mCompiling rv64i/trap_ecall.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/trap_ecall.elf
+[0;34mCompiling rv64i/trap_illegal.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/trap_illegal.elf
+[0;34mCompiling rv64i/trap_mret_priv.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/trap_mret_priv.elf
+[0;34mCompiling rv64i/trap_vectored.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/trap_vectored.elf
+[0;34mCompiling rv64i/xor.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/xor.elf
+[0;34mCompiling rv64i/xori.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/xori.elf
+[0;34mCompiling rv64m/div.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/div.elf
+[0;34mCompiling rv64m/divu.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/divu.elf
+[0;34mCompiling rv64m/mul.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/mul.elf
+[0;34mCompiling rv64m/mulh.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/mulh.elf
+[0;34mCompiling rv64m/mulhsu.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/mulhsu.elf
+[0;34mCompiling rv64m/mulhu.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/mulhu.elf
+[0;34mCompiling rv64m/rem.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/rem.elf
+[0;34mCompiling rv64m/remu.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/remu.elf
+[0;34mCompiling rv64a/amo_d.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/amo_d.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/amo_d.elf
+[0;34mCompiling rv64a/amo_w.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/amo_w.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/amo_w.elf
+[0;34mCompiling rv64a/aq_rl_set.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/aq_rl_set.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/aq_rl_set.elf
+[0;34mCompiling rv64a/atomic_near_ram_end.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/atomic_near_ram_end.elf
+[0;34mCompiling rv64a/atomic_tohost_exit.S[0m
+  Linker script: linker.ld
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/atomic_tohost_exit.elf
+[0;34mCompiling rv64a/lrsc_loop.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/lrsc_loop.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/lrsc_loop.elf
+[0;34mCompiling rv64a/sc_after_store_failure.S[0m
+  Linker script: linker.ld
+riscv64-unknown-elf-ld: warning: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/sc_after_store_failure.elf has a LOAD segment with RWX permissions
+[0;32m  [OK][0m $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/sc_after_store_failure.elf
+
+============================================
+  Fresh RISC-V ELF compilation summary
+============================================
+  Source HEAD: 5c1d031b2a66bc17d058b5a7355d88ebe80eb652
+  Sources:     85
+  Compiled:    85
+  Failed:      0
+  Output:      $CHECKOUT/target/stage6-local-gate-guests-5c1d031
+
+[0;32m[PASS][0m fresh assembly/link completed for 85 guest cases
+[0;34mBuilding ruscv-sim in $CHECKOUT/target/stage6-local-gate-5c1d031/cargo[0m
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.22
+   Compiling quote v1.0.44
+   Compiling memchr v2.7.6
+   Compiling syn v2.0.114
+   Compiling utf8parse v0.2.2
+   Compiling winnow v0.7.14
+   Compiling equivalent v1.0.2
+   Compiling hashbrown v0.16.1
+   Compiling indexmap v2.13.0
+   Compiling toml_parser v1.0.6+spec-1.1.0
+   Compiling anstyle-parse v0.2.7
+   Compiling aho-corasick v1.1.4
+   Compiling regex-syntax v0.8.8
+   Compiling anstyle v1.0.13
+   Compiling toml_datetime v0.7.5+spec-1.1.0
+   Compiling serde_core v1.0.228
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.4
+   Compiling anstyle-query v1.1.5
+   Compiling anstream v0.6.21
+   Compiling toml_edit v0.23.10+spec-1.0.0
+   Compiling regex-automata v0.4.13
+   Compiling rustversion v1.0.22
+   Compiling zmij v1.0.17
+   Compiling proc-macro-crate v3.4.0
+   Compiling regex v1.12.2
+   Compiling log v0.4.29
+   Compiling heck v0.5.0
+   Compiling anyhow v1.0.100
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling strsim v0.11.1
+   Compiling clap_lex v0.7.7
+   Compiling thiserror v2.0.18
+   Compiling clap_builder v4.5.56
+   Compiling clap_derive v4.5.55
+   Compiling env_filter v0.1.4
+   Compiling num_enum_derive v0.7.5
+   Compiling thiserror-impl v2.0.18
+   Compiling serde_derive v1.0.228
+   Compiling itoa v1.0.17
+   Compiling jiff v0.2.18
+   Compiling num_enum v0.7.5
+   Compiling clap v4.5.56
+   Compiling env_logger v0.11.8
+   Compiling ruscv-macros v0.1.0 ($CHECKOUT/ruscv-macros)
+   Compiling once_cell v1.21.3
+   Compiling bitflags v2.10.0
+   Compiling ruscv-sim v0.1.0 ($CHECKOUT)
+    Finished `release` profile [optimized] target(s) in 24.51s
+[0;32m[OK][0m Simulator: $CHECKOUT/target/stage6-local-gate-5c1d031/cargo/release/ruscv-sim
+[0;32m[OK][0m Guest manifest: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/manifest.txt
+source_head=5c1d031b2a66bc17d058b5a7355d88ebe80eb652
+source_count=85
+compiled_count=85
+Found 85 fresh ELF cases
+[1;33mTest 1/85: add.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/add.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     53
+Final PC:   0x0000000080000048
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 2/85: addi.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/addi.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     32
+Final PC:   0x0000000080000084
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 3/85: and.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/and.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     45
+Final PC:   0x00000000800000b8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 4/85: andi.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/andi.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     44
+Final PC:   0x00000000800000b4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 5/85: beq.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/beq.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     23
+Final PC:   0x0000000080000070
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 6/85: bge.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/bge.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     29
+Final PC:   0x000000008000008c
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 7/85: bgeu.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/bgeu.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     34
+Final PC:   0x00000000800000a8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 8/85: blt.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/blt.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     29
+Final PC:   0x0000000080000088
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 9/85: bltu.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/bltu.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     29
+Final PC:   0x0000000080000088
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 10/85: bne.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/bne.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     26
+Final PC:   0x000000008000007c
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 11/85: csrrc.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrc.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     48
+Final PC:   0x00000000800000c8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 12/85: csrrci.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrci.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     46
+Final PC:   0x00000000800000c0
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 13/85: csrrs.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrs.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     48
+Final PC:   0x00000000800000c8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 14/85: csrrsi.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrsi.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     39
+Final PC:   0x00000000800000a4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 15/85: csrrw.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrw.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     44
+Final PC:   0x00000000800000b8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 16/85: csrrwi.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/csrrwi.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     28
+Final PC:   0x0000000080000078
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 17/85: fib.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/fib.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     68
+Final PC:   0x0000000080000054
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 18/85: hello.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/hello.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+Hello!
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     58
+Final PC:   0x0000000080000088
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 19/85: jal.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/jal.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     28
+Final PC:   0x0000000080000074
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 20/85: jalr.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/jalr.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     34
+Final PC:   0x00000000800000a0
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 21/85: lb.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lb.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     63
+Final PC:   0x0000000080000100
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 22/85: lh.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lh.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     57
+Final PC:   0x00000000800000e8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 23/85: lw.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lw.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     49
+Final PC:   0x00000000800000cc
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 24/85: lwu.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/lwu.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     87
+Final PC:   0x0000000080000164
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 25/85: or.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/or.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     45
+Final PC:   0x00000000800000b8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 26/85: ori.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/ori.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     47
+Final PC:   0x00000000800000c0
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 27/85: s4_ad_observation.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_ad_observation.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     137
+Final PC:   0x00000000000010bc
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 28/85: s4_counters.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_counters.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     299
+Final PC:   0x00000000800002e4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 29/85: s4_csr_policy.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_csr_policy.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     197
+Final PC:   0x0000000080000318
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 30/85: s4_delegation.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_delegation.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     71
+Final PC:   0x0000000080000100
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 31/85: s4_envcfg.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_envcfg.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     77
+Final PC:   0x0000000080000120
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 32/85: s4_fp_absent.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_fp_absent.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     326
+Final PC:   0x00000000800002c0
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 33/85: s4_mapped_rw.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_mapped_rw.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     143
+Final PC:   0x00000000000010e4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 34/85: s4_mprv.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_mprv.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     102
+Final PC:   0x00000000800001b0
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 35/85: s4_permission_fault.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_permission_fault.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     230
+Final PC:   0x00000000000010fc
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 36/85: s4_pmp_csr.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_pmp_csr.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     76
+Final PC:   0x00000000800000f8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 37/85: s4_privilege_transition.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_privilege_transition.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     293
+Final PC:   0x000000008000030c
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 38/85: s4_sfence_vma.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_sfence_vma.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     255
+Final PC:   0x00000000800003b4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 39/85: s4_sret_vectored.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_sret_vectored.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     160
+Final PC:   0x0000000080000190
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 40/85: s4_supervisor_interrupt.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_supervisor_interrupt.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     283
+Final PC:   0x00000000800001fc
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 41/85: s4_tvm_tsr_tw.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_tvm_tsr_tw.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+WFI_WAITED
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     842
+Final PC:   0x0000000080000328
+Status:     SUCCESS
+Signature:  0x000000008000045e (10 bytes)
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 42/85: s4_walk_fault.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s4_walk_fault.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     198
+Final PC:   0x00000000000010c4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 43/85: s5_counters.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_counters.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     129
+Final PC:   0x00000000800001b4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 44/85: s5_external.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_external.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     96
+Final PC:   0x0000000080000190
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 45/85: s5_software.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_software.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     46
+Final PC:   0x00000000800000c8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 46/85: s5_timer.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_timer.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     42
+Final PC:   0x00000000800000b8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 47/85: s5_wfi_event.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_wfi_event.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     55
+Final PC:   0x00000000800000ec
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 48/85: s5_wfi_masked.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_wfi_masked.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     35
+Final PC:   0x0000000080000098
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 49/85: s5_wfi_none.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s5_wfi_none.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  1
+Cycles:     7
+Final PC:   0x000000008000001c
+Status:     FAILED
+Error:      NoProgress
+=====================================
+[0;32m  [PASS][0m NoProgress, timed_out clear
+[1;33mTest 50/85: s6_debug_csr.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s6_debug_csr.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     60
+Final PC:   0x0000000080000074
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 51/85: s6_ebreak.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s6_ebreak.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     41
+Final PC:   0x00000000800000a8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 52/85: s6_u5_attach.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/s6_u5_attach.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     8
+Final PC:   0x0000000080000024
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 53/85: sb.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sb.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     127
+Final PC:   0x0000000080000200
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 54/85: sh.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sh.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     105
+Final PC:   0x00000000800001a8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 55/85: sll.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sll.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     36
+Final PC:   0x0000000080000094
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 56/85: slli.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/slli.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     36
+Final PC:   0x0000000080000094
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 57/85: sra.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sra.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     40
+Final PC:   0x00000000800000a4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 58/85: srai.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/srai.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     34
+Final PC:   0x000000008000008c
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 59/85: srl.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/srl.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     36
+Final PC:   0x0000000080000094
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 60/85: srli.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/srli.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     36
+Final PC:   0x0000000080000094
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 61/85: sub.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sub.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     28
+Final PC:   0x0000000080000074
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 62/85: supervisor_interrupt.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/supervisor_interrupt.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     28
+Final PC:   0x0000000080000078
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 63/85: sw.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/sw.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     103
+Final PC:   0x00000000800001a0
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 64/85: trap_ebreak.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/trap_ebreak.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     41
+Final PC:   0x00000000800000a8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 65/85: trap_ecall.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/trap_ecall.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     51
+Final PC:   0x00000000800000d4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 66/85: trap_illegal.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/trap_illegal.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     44
+Final PC:   0x00000000800000b4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 67/85: trap_mret_priv.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/trap_mret_priv.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     65
+Final PC:   0x0000000080000108
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 68/85: trap_vectored.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/trap_vectored.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     41
+Final PC:   0x00000000800000d4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 69/85: xor.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/xor.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     44
+Final PC:   0x00000000800000b4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 70/85: xori.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64i/xori.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     48
+Final PC:   0x00000000800000c4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 71/85: div.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/div.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     71
+Final PC:   0x0000000080000124
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 72/85: divu.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/divu.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     59
+Final PC:   0x00000000800000f4
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 73/85: mul.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/mul.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     49
+Final PC:   0x00000000800000cc
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 74/85: mulh.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/mulh.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     52
+Final PC:   0x00000000800000d8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 75/85: mulhsu.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/mulhsu.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     48
+Final PC:   0x00000000800000c8
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 76/85: mulhu.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/mulhu.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     58
+Final PC:   0x00000000800000f0
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 77/85: rem.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/rem.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     62
+Final PC:   0x0000000080000100
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 78/85: remu.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64m/remu.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     54
+Final PC:   0x00000000800000e0
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 79/85: amo_d.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/amo_d.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     28
+Final PC:   0x0000000080000074
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 80/85: amo_w.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/amo_w.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     29
+Final PC:   0x0000000080000078
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 81/85: aq_rl_set.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/aq_rl_set.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     23
+Final PC:   0x0000000080000060
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 82/85: atomic_near_ram_end.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/atomic_near_ram_end.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     12
+Final PC:   0x0000000080000030
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 83/85: atomic_tohost_exit.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/atomic_tohost_exit.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     4
+Final PC:   0x0000000080000010
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 84/85: lrsc_loop.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/lrsc_loop.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     16
+Final PC:   0x0000000080000044
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+[1;33mTest 85/85: sc_after_store_failure.elf[0m
+  File: $CHECKOUT/target/stage6-local-gate-guests-5c1d031/rv64a/sc_after_store_failure.elf
+  Entry: 0x80000000 (_start 0000000080000000)
+
+========== Execution Result ==========
+Exit Code:  0
+Cycles:     20
+Final PC:   0x0000000080000054
+Status:     SUCCESS
+=====================================
+[0;32m  [PASS][0m CLI exit status 0, Status:     SUCCESS
+
+============================================
+  Fresh RISC-V ELF execution summary
+============================================
+  Total:  85
+  Passed: 85
+  Failed: 0
+  Cases:  85
+
+[0;32m[PASS][0m all 85 fresh ELF cases passed through the public CLI

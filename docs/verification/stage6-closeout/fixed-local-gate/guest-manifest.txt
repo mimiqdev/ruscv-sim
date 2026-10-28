@@ -1,0 +1,9 @@
+source_head=5c1d031b2a66bc17d058b5a7355d88ebe80eb652
+source_dir=$CHECKOUT/tests/bare-metal-riscv-test
+output_dir=$CHECKOUT/target/stage6-local-gate-guests-5c1d031
+toolchain_prefix=riscv64-unknown-elf-
+assembler=riscv64-unknown-elf-as
+linker=riscv64-unknown-elf-ld
+source_count=85
+compiled_count=85
+failed_count=0

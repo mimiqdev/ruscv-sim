@@ -1,0 +1,12 @@
+diff --git a/src/dm/mod.rs b/src/dm/mod.rs
+--- a/src/dm/mod.rs
++++ b/src/dm/mod.rs
+@@ -59,7 +59,7 @@
+     /// value, keeps version 3 and `datacount` 4.
+     pub fn new() -> Self {
+         let (version, datacount) = u5_discovery_from_env();
+-        Self::with_discovery(version, datacount)
++        Self::with_discovery(version, datacount.min(2))
+     }
+ 
+     fn with_discovery(version: u8, datacount: u8) -> Self {

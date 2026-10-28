@@ -1,0 +1,74 @@
+{
+  "schema": "ruscv-stage6-ci/1",
+  "run": 40638546079,
+  "url": "https://github.com/mimiqdev/ruscv-sim/actions/runs/40638546079",
+  "event": "pull_request",
+  "pr_head": "5c1d031b2a66bc17d058b5a7355d88ebe80eb652",
+  "base": "4332841a565fb845952cd52ccf84283959f373bf",
+  "checkout_commit": "f7a2bb1e99fbba34fa5da9e3160e261f31870129",
+  "checkout_tree": "6f488e7788508f3a79a40f1d92e329c5eb26b8b5",
+  "head_tree_identical": true,
+  "conclusion": "success",
+  "jobs": {
+    "Quality and tests": {
+      "conclusion": "success",
+      "url": "https://github.com/mimiqdev/ruscv-sim/actions/runs/40638546079/job/122651068932",
+      "rust_summary_count": 82,
+      "rust_passed": 2039,
+      "rust_failed": 0,
+      "rust_ignored": 0,
+      "fresh_guest_compiled": 85,
+      "guest_passed": 85,
+      "guest_failed": 0,
+      "raw_log_sha256": "0634c903d320f5a6acf393964f26d2ba4507a57097d2115d1f2155127f496fc5"
+    },
+    "Debug attach": {
+      "conclusion": "success",
+      "url": "https://github.com/mimiqdev/ruscv-sim/actions/runs/40638546079/job/122651069255",
+      "saved_output": [
+        "OpenOCD: Open On-Chip Debugger 0.12.0",
+        "GDB: GNU gdb (Debian 13.1-3) 13.1",
+        "ruscv: session ok (target exit 0, gdb status stopped-after-exit)",
+        "negative version: OpenOCD rejected dmstatus.version 4",
+        "negative datacount: abstract memory failed",
+        "Spike: /opt/riscv/bin/spike",
+        "spike: session ok (target exit 0, gdb status stopped-after-exit)",
+        "match connect=ok",
+        "match gpr=0",
+        "match mstatus=a00000000",
+        "match step_pc=80000004",
+        "match step_gpr=42",
+        "match break_pc=80000008",
+        "match observe_gpr=1235",
+        "match ram=1122334455667788",
+        "match halt_pc=80000010",
+        "match dcsr_debugver=4",
+        "match dcsr_ebreakm=0",
+        "match dcsr_ebreaks=0",
+        "match dcsr_ebreaku=0",
+        "match dcsr_step=0",
+        "match dcsr_prv=3",
+        "match dcsr_common=40000003",
+        "divergence pc: simulator 80000000, spike 1000",
+        "divergence reset_pc: simulator 80000000, spike 1000",
+        "divergence dcsr_stopcount: simulator 1, spike 0",
+        "divergence dcsr_stoptime: simulator 1, spike 0",
+        "divergence dcsr_mprven: simulator 1, spike 0",
+        "divergence dcsr_cause: simulator 3, spike 5",
+        "dcsr raw: simulator 400006d3, spike 40000143",
+        "debug-attach ok"
+      ],
+      "raw_log_sha256": "b19ed76e6e85bc9d70e1edc637909d5af942b0075b1b3fa753b0f19773c8ab68"
+    },
+    "Coverage": {
+      "conclusion": "skipped"
+    }
+  },
+  "independent_code_review": {
+    "head": "5c1d031b2a66bc17d058b5a7355d88ebe80eb652",
+    "verdict": "APPROVE",
+    "url": "https://github.com/mimiqdev/ruscv-sim/pull/107#pullrequestreview-5678303368",
+    "focused_tests_passed": 100,
+    "limits": "The independent reviewer did not run the heavy complete local gate or local OpenOCD."
+  }
+}

@@ -1,0 +1,12 @@
+diff --git a/src/jtag/mod.rs b/src/jtag/mod.rs
+--- a/src/jtag/mod.rs
++++ b/src/jtag/mod.rs
+@@ -261,7 +261,7 @@
+             self.state = NEXT[index][usize::from(self.tms)];
+         } else {
+             match self.state {
+-                TapState::TestLogicReset => self.ir = IR_IDCODE,
++                TapState::TestLogicReset => self.ir = IR_DTMCS,
+                 TapState::CaptureDr => self.capture_dr(),
+                 TapState::ShiftDr => self.tdo = self.dr & 1 != 0,
+                 TapState::UpdateDr => self.update_dr(bus)?,

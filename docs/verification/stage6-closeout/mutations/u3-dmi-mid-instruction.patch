@@ -1,0 +1,15 @@
+diff --git a/src/machine/owned.rs b/src/machine/owned.rs
+--- a/src/machine/owned.rs
++++ b/src/machine/owned.rs
+@@ -489,11 +489,6 @@
+     }
+ 
+     fn admit_direct(&mut self, addr: u8, write: Option<u32>) -> Result<u32, MachineError> {
+-        if self.control.inner.debug.in_instruction() {
+-            return Err(MachineError::Debug(
+-                "DMI is admitted only at a Hart boundary".into(),
+-            ));
+-        }
+         self.apply_dmi(addr, write)
+     }
+ 

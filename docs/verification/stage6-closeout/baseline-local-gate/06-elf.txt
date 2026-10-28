@@ -1,0 +1,1 @@
+[FAIL] output must be directly below $CHECKOUT/target: $CHECKOUT/target/stage6-local-gate/guests

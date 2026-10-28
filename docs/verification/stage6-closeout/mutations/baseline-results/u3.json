@@ -1,0 +1,65 @@
+{
+  "schema": "ruscv-stage6-mutation/1",
+  "source_commit": "4332841a565fb845952cd52ccf84283959f373bf",
+  "source_tree": "3457fb9793b722f06ac364a363235b927522b46e",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "method": "one exact test on baseline, isolated mutation, and restored source",
+  "unit": "u3",
+  "patch": "u3-dmi-mid-instruction.patch",
+  "patch_sha256": "feb1de73dcd45df1677891e73260407260850f98ff156db878a7bcb51e141ee5",
+  "source": "src/machine/owned.rs",
+  "status": "verified",
+  "tests": [
+    {
+      "test": "machine::tests::dmi_haltreq_waits_until_the_instruction_boundary",
+      "baseline": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--all-features",
+          "--lib",
+          "machine::tests::dmi_haltreq_waits_until_the_instruction_boundary",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "exit_status": 0,
+        "result": "ok. 1 passed; 0 failed",
+        "assertion": "test result: ok. 1 passed; 0 failed"
+      },
+      "mutated": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--all-features",
+          "--lib",
+          "machine::tests::dmi_haltreq_waits_until_the_instruction_boundary",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "exit_status": 101,
+        "result": "FAILED. 0 passed; 1 failed",
+        "assertion": "thread 'machine::tests::dmi_haltreq_waits_until_the_instruction_boundary' (2245577) panicked at src/machine/tests.rs:391:5:\nhaltreq was accepted mid-instruction: direct DMI ran during the instruction\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest machine::tests::dmi_haltreq_waits_until_the_instruction_boundary ... FAILED"
+      },
+      "restored": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--all-features",
+          "--lib",
+          "machine::tests::dmi_haltreq_waits_until_the_instruction_boundary",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "exit_status": 0,
+        "result": "ok. 1 passed; 0 failed",
+        "assertion": "test result: ok. 1 passed; 0 failed"
+      }
+    }
+  ]
+}

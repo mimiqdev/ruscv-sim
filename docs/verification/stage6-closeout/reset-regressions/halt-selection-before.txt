@@ -1,0 +1,21 @@
+   Compiling ruscv-sim v0.1.0 ($BEFORE_CHECKOUT)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.34s
+     Running tests/s6_u3_machine.rs (/home/mrtoniliu/.t3/worktrees/ruscv-sim/docs-stage6-closeout-and-rotation/target/stage6-reset-replay/cargo/debug/deps/s6_u3_machine-8493ca10c2e1395f)
+
+running 1 test
+
+thread 'ndmreset_keeps_hart_zero_halt_request_when_selection_changes' (2297204) panicked at tests/s6_u3_machine.rs:269:5:
+assertion `left == right` failed: hart 0 lost its halt request when reset released with hart 1 selected
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test ndmreset_keeps_hart_zero_halt_request_when_selection_changes ... FAILED
+
+failures:
+
+failures:
+    ndmreset_keeps_hart_zero_halt_request_when_selection_changes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test s6_u3_machine`

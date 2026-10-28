@@ -1,8 +1,8 @@
 # Development Plan
 
-**Current milestone on rotation merge:** Stage 6 — RISC-V Debug Mode
+**Current milestone:** Stage 6 — RISC-V Debug Mode
 
-**Status:** Current accepted target — **approved for activation on merge**. Approval is the owner approval of 2026-10-19: every decision D0–D15 is owner approved. D0–D14 are the recommended option. D15 is `cmderr=3`. This is exactly one milestone contract, not an implementation-completeness claim. Until the actual documentation-only rotation merges, `main` retains Stage 5 as Current. On that merge Stage 5 is formally completed and [its entire approved contract is archived](archive/milestones/stage5-platform-interrupts-wfi-and-counters.md), and this Stage 6 contract becomes sole Current.
+**Status:** Current accepted target. Decisions D0–D15 were owner approved on 2026-10-19. D0–D14 are the recommended option. D15 is `cmderr=3`. Activation merged in [PR #96](https://github.com/mimiqdev/ruscv-sim/pull/96) as `a8851c4ac57500eb54dadc89919cd7314b626594` at 2026-10-19T13:49:34Z. That merge formally completed Stage 5 and [archived its entire approved contract](archive/milestones/stage5-platform-interrupts-wfi-and-counters.md). Stage 6 is the sole Current contract. Activation does not claim implementation completeness. The [Stage 6 acceptance evidence](verification/stage6-closeout/README.md) separates implementation, review, CI, and local gate identities.
 
 **Authority:** Normative milestone contract, constrained by accepted ADR-0001–0004. The 2026-10-19 amendment in ADR-0004 replaces the Debug Mode deferral and the External Debug Support 0.13.2 citation for this profile. ADR-0001 already keeps a Debug Mode halt distinct from a protocol halt and from a guest trap. This contract does not add a second Current contract.
 
@@ -251,4 +251,4 @@ The risks that follow from the decisions:
 - `ndmreset` reloads the image, so a guest that stored secrets in RAM loses them. That is option A of D11, not an accident.
 - Inheriting the Stage 3 waiver leaves comparison, publication, and calibration with no owner. This contract does not pick them up.
 
-Rotation boundary. On actual rotation merge Stage 5 is formally completed and its entire approved contract is archived, and this Stage 6 contract becomes the sole Current contract. Until that merge main retains Stage 5. The checks in §7 and every unit above are future implementation deliverables. This documentation-only rotation implements none of them. Git and PR history record the rotation identity after delivery. No future SHA, PR, or run is asserted here.
+Rotation boundary. Stage 6 became the sole Current contract on the activation merge `a8851c4ac57500eb54dadc89919cd7314b626594` at 2026-10-19T13:49:34Z (PR #96). That documentation-only rotation implemented none of §7. The [acceptance overview](verification/stage6-closeout/README.md) records subsequent implementation evidence and remaining gates. The [program-buffer successor proposal](proposals/post-stage6-program-buffer-debug.md) is Draft and informational. It neither completes Stage 6 nor activates a successor. Formal completion and a later rotation require their own owner decision after acceptance evidence and successor approval.

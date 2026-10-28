@@ -1,0 +1,5 @@
+# Preserve captured log bytes and executable patch context without whitespace cleanup.
+baseline-local-gate/*.txt -whitespace
+fixed-local-gate/*.txt -whitespace
+reset-regressions/*.txt -whitespace
+mutations/*.patch -whitespace

@@ -1,0 +1,163 @@
+{
+  "schema": "ruscv-stage6-local-gate/1",
+  "source_commit": "4332841a565fb845952cd52ccf84283959f373bf",
+  "source_tree": "3457fb9793b722f06ac364a363235b927522b46e",
+  "started_utc": "2026-10-28T04:37:46.564378+00:00",
+  "finished_utc": "2026-10-28T04:45:07.449042+00:00",
+  "source_clean": true,
+  "tools": {
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
+    "riscv64-unknown-elf-as": "GNU assembler (GNU Binutils) 2.45",
+    "riscv64-unknown-elf-ld": "GNU ld (GNU Binutils) 2.45",
+    "riscv64-unknown-elf-readelf": "GNU readelf (GNU Binutils) 2.45",
+    "riscv64-unknown-elf-nm": "GNU nm (GNU Binutils) 2.45"
+  },
+  "environment": {
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_NET_OFFLINE": "true",
+    "CARGO_TARGET_DIR": "target/stage6-local-gate/cargo",
+    "RISCV_TEST_SKIP_BUILD": "0",
+    "RISCV_PREFIX": "riscv64-unknown-elf-",
+    "RISCV_TEST_OUTDIR": "target/stage6-local-gate-guests-4332841"
+  },
+  "commands": [
+    {
+      "name": "01-fmt",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "start_utc": "2026-10-28T04:37:46.626304+00:00",
+      "end_utc": "2026-10-28T04:37:47.140912+00:00",
+      "exit": 0,
+      "result": "PASS",
+      "log": "01-fmt.txt",
+      "raw_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "02-check",
+      "argv": [
+        "cargo",
+        "check",
+        "--all-features",
+        "--offline"
+      ],
+      "start_utc": "2026-10-28T04:37:47.141274+00:00",
+      "end_utc": "2026-10-28T04:37:56.283206+00:00",
+      "exit": 0,
+      "result": "PASS",
+      "log": "02-check.txt",
+      "raw_log_sha256": "ab7dae260a4c796e60940a34b652d03434549e199174ec567c02516f688076d8",
+      "stored_log_sha256": "164bdfbb3555a681b6f918ccbf5ac1fccef28a87465205d87a2a3c6764df0c56"
+    },
+    {
+      "name": "03-clippy",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--all-features",
+        "--all-targets",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-28T04:37:56.283694+00:00",
+      "end_utc": "2026-10-28T04:38:09.852406+00:00",
+      "exit": 0,
+      "result": "PASS",
+      "log": "03-clippy.txt",
+      "raw_log_sha256": "681a5c3748f99389d110615cf490693cbaa5ac3c95f49234a3e26c2150bc59a6",
+      "stored_log_sha256": "79c1de6fe42ff3b6e72b47dc8060d9a55587c6eeac091cf4b9bad328496c06a1"
+    },
+    {
+      "name": "04-test",
+      "argv": [
+        "cargo",
+        "test",
+        "--all-features",
+        "--offline"
+      ],
+      "start_utc": "2026-10-28T04:38:09.852760+00:00",
+      "end_utc": "2026-10-28T04:44:01.217184+00:00",
+      "exit": 0,
+      "result": "PASS",
+      "log": "04-test.txt",
+      "raw_log_sha256": "81e14675345754e45d9e3447d4f505c879923d9a4c937b42c2cf70c21be2298b",
+      "stored_log_sha256": "1fd028b8d9ba7683a4fa2332db3518d9fba2d3812802506f6dd07039c21c603e",
+      "test_totals": {
+        "passed": 2033,
+        "failed": 0,
+        "ignored": 0
+      },
+      "test_summary_count": 82
+    },
+    {
+      "name": "05-doc",
+      "argv": [
+        "cargo",
+        "doc",
+        "--all-features",
+        "--no-deps",
+        "--offline"
+      ],
+      "start_utc": "2026-10-28T04:44:01.218528+00:00",
+      "end_utc": "2026-10-28T04:44:02.054634+00:00",
+      "exit": 0,
+      "result": "PASS",
+      "log": "05-doc.txt",
+      "raw_log_sha256": "52b86add64d3699bccc2adc2857e3a95eca61853bbb79c002e0f62b9bac1d157",
+      "stored_log_sha256": "25e2941716c8c7e848232f4d2a1f11309a5b6eca9d6ad5a7593327bb4f522fbc"
+    },
+    {
+      "name": "06-elf",
+      "argv": [
+        "scripts/run_elf_tests.sh"
+      ],
+      "start_utc": "2026-10-28T04:44:02.055031+00:00",
+      "end_utc": "2026-10-28T04:44:02.061156+00:00",
+      "exit": 2,
+      "result": "FAIL",
+      "log": "06-elf.txt",
+      "raw_log_sha256": "2b4cc677cc8a92d369f531fcea78410f5e6880e56638f5ba9c16c47fcc6edfd8",
+      "stored_log_sha256": "d687f4ce03b9ef0edc2452f1ec017e5a05f043b8f59143257868e509dca98ce8",
+      "guest_counts": {}
+    },
+    {
+      "name": "07-elf-valid-output",
+      "argv": [
+        "scripts/run_elf_tests.sh"
+      ],
+      "start_utc": "2026-10-28T04:44:40.529093+00:00",
+      "end_utc": "2026-10-28T04:45:07.442704+00:00",
+      "exit": 0,
+      "result": "PASS",
+      "log": "07-elf-valid-output.txt",
+      "raw_log_sha256": "31f8144865747cac0a12dd56301bda47156141b19f56b32c57163a3c4d7e52e2",
+      "stored_log_sha256": "c7d82beac0519c4538cd7562b87109155b72ab292ae7d90d757072c81cd461e4",
+      "guest_counts": {
+        "Total": 85,
+        "Passed": 85,
+        "Failed": 0,
+        "Cases": 85
+      },
+      "guest_output_absent_before_run": true,
+      "environment_override": {
+        "RISCV_TEST_OUTDIR": "$CHECKOUT/target/stage6-local-gate-guests-4332841"
+      },
+      "manifest": "guest-manifest.txt",
+      "raw_manifest_sha256": "8080851cacaa49a2d51211ffddf2894794ed285d1e4b4ecccb9287de662be7db"
+    }
+  ],
+  "limitations": [
+    "Host native validation, not a container image validation.",
+    "OpenOCD not run by request; supplied main CI 40628551229 evidence is separate and not independently rechecked here."
+  ],
+  "invocation_issue": "Initial ELF command rejected nested output before compilation (exit 2); corrected to permitted fresh direct target child. All attempts retained.",
+  "normalization": "Checkout path replaced with $CHECKOUT and ANSI color escapes removed; source identity, commands, assertions and counts preserved."
+}

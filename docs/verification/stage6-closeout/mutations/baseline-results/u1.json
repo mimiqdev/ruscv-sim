@@ -1,0 +1,68 @@
+{
+  "schema": "ruscv-stage6-mutation/1",
+  "source_commit": "4332841a565fb845952cd52ccf84283959f373bf",
+  "source_tree": "3457fb9793b722f06ac364a363235b927522b46e",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "method": "one exact test on baseline, isolated mutation, and restored source",
+  "unit": "u1",
+  "patch": "u1-haltreq-dpc.patch",
+  "patch_sha256": "4e69a8f40c6c0085ac7351913bdd4e71da8289b48967bfe4c74accda537dd1e3",
+  "source": "src/core/mod.rs",
+  "status": "verified",
+  "tests": [
+    {
+      "test": "haltreq_stores_dpc_as_the_current_pc",
+      "baseline": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--all-features",
+          "--test",
+          "s6_u1_hart_debug",
+          "haltreq_stores_dpc_as_the_current_pc",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "exit_status": 0,
+        "result": "ok. 1 passed; 0 failed",
+        "assertion": "test result: ok. 1 passed; 0 failed"
+      },
+      "mutated": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--all-features",
+          "--test",
+          "s6_u1_hart_debug",
+          "haltreq_stores_dpc_as_the_current_pc",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "exit_status": 101,
+        "result": "FAILED. 0 passed; 1 failed",
+        "assertion": "thread 'haltreq_stores_dpc_as_the_current_pc' (2275595) panicked at tests/s6_u1_hart_debug.rs:749:5:\nassertion `left == right` failed\n  left: 68\n right: 64\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest haltreq_stores_dpc_as_the_current_pc ... FAILED"
+      },
+      "restored": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--all-features",
+          "--test",
+          "s6_u1_hart_debug",
+          "haltreq_stores_dpc_as_the_current_pc",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "exit_status": 0,
+        "result": "ok. 1 passed; 0 failed",
+        "assertion": "test result: ok. 1 passed; 0 failed"
+      }
+    }
+  ]
+}

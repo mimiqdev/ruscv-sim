@@ -1,0 +1,12 @@
+diff --git a/src/core/mod.rs b/src/core/mod.rs
+--- a/src/core/mod.rs
++++ b/src/core/mod.rs
+@@ -1197,7 +1197,7 @@
+         // already retired, so dpc is that instruction plus 4.
+         if self.debug.haltreq {
+             return (
+-                self.enter_debug(DebugCause::HaltReq, self.state.pc, false),
++                self.enter_debug(DebugCause::HaltReq, self.state.pc.wrapping_add(4), false),
+                 false,
+                 None,
+             );

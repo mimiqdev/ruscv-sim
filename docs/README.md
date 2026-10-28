@@ -10,7 +10,7 @@ This index is the entry point for project decisions and technical documentation.
 
 ## Sources of truth
 
-1. [Milestone plan and activation status](dev-plan.md) — the sole Current contract. On the Stage 5 to Stage 6 rotation merge this is the Stage 6 contract; until that merge main retains Stage 5.
+1. [Milestone plan and activation status](dev-plan.md) — Stage 6 is the sole Current contract, activated by PR #96 as `a8851c4ac57500eb54dadc89919cd7314b626594` at 2026-10-19T13:49:34Z.
 2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
 3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests, the [A8 assessment](verification/a8-closeout-assessment.md) for the atomic route, and the [A9 acceptance assessment](verification/a9-closeout-assessment.md) for Hart facts/Machine integration, separating historical checkpoint and final PR/merge-head evidence.
 4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
@@ -33,8 +33,9 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Approved Stage 6 contract — sole Current on rotation merge](dev-plan.md) — RISC-V Debug Mode, Debug Specification 1.0. Decisions D0–D15 were owner approved on 2026-10-19. D0–D14 are the recommended option. D15 is `cmderr=3`. Until the rotation merges, main retains Stage 5.
-- [Entire approved Stage 5 contract archive](archive/milestones/stage5-platform-interrupts-wfi-and-counters.md) — Platform interrupts, WFI, modeled time, and counters. Decisions D0–D9 were owner approved, recommended option, on 2026-10-16 13:08 CST. Implementation is PR #90 through PR #94. The full original body is preserved. Formal completion and archival take effect on the Stage 5 to Stage 6 rotation merge.
+- [Approved Stage 6 contract](dev-plan.md) — sole Current since PR #96. RISC-V Debug Mode, Debug Specification 1.0. Decisions D0–D15 were owner approved on 2026-10-19. D0–D14 are the recommended option. D15 is `cmderr=3`.
+- [Program-buffer debug successor proposal](proposals/post-stage6-program-buffer-debug.md) — Draft, informational recommendation D1–D9. Owner approval and accepted ADR amendments are required before activation.
+- [Entire approved Stage 5 contract archive](archive/milestones/stage5-platform-interrupts-wfi-and-counters.md) — Platform interrupts, WFI, modeled time, and counters. Decisions D0–D9 were owner approved, recommended option, on 2026-10-16 13:08 CST. Implementation is PR #90 through PR #94. The full original body is preserved. Formal completion and archival took effect on the PR #96 activation merge.
 - [Entire approved Stage 4 contract archive](archive/milestones/stage4-virtual-memory-and-protection.md) — Virtual Memory and Protection. Decisions recorded by PR #75, owner-authorized activation 2026-10-11 UTC, implementation and review at PR #88. The full original body is preserved. Formal completion and archival take effect on the Stage 4 to Stage 5 rotation merge.
 - [Stage 5 approved informational proposal snapshot](proposals/stage5-contract-draft.md) — the complete drafting record of the decided contract. Original proposal wording is historical. Not a second Current contract, and not an implementation.
 - [Stage 4 approved informational proposal snapshot](proposals/stage4-contract-draft.md) — the complete drafting record of the decided Stage 4 contract. Original proposal wording is historical. Not a second Current contract, and not an implementation.
@@ -78,6 +79,9 @@ Target architecture is not implementation status. Component presence is not end-
 - [A10 contract-rotation executable audit](verification/a10-contract-rotation.md) — historical audit of the A9 to A10 rotation; documentation checks only
 - [Stage 4 contract-rotation executable audit](verification/stage4-contract-rotation.md) — historical audit of the A10 to Stage 4 rotation; the promoted-text check is pinned to `9f6f678`
 - [Stage 5 contract-rotation executable audit](verification/stage5-contract-rotation.md) — historical audit of the Stage 4 to Stage 5 rotation; the promoted-text check is pinned to `02f20b1`
+- [Stage 6 acceptance overview](verification/stage6-closeout/README.md) — §7 items 1–9, 433 baseline, corrected 5c code review and CI, local-gate boundary, and rerunnable evidence audit. This is not formal milestone completion.
+- [Stage 6 cumulative final review](verification/stage6-final-review.md) — initial REQUEST_CHANGES at 433 and corrected code APPROVE at 5c, with execution evidence recorded separately.
+- [Stage 6 U5 tool record](verification/stage6-exit.md) — preserved original OpenOCD/GDB/Spike session and negative controls, read with the cumulative overview.
 - [Stage 6 contract-rotation executable audit](verification/stage6-contract-rotation.md) — whole-body preservation of the Stage 5 contract and a bounded check of the Stage 6 contract; no runtime or performance claims
 - [A9 T4 per-case source/tool/artifact evidence](verification/a9-t4-guest-evidence.json) — self-contained checkpoint execution record, not a new ACT4 run
 - [External RISC-V test integration contract](verification/external-riscv-tests.md)

@@ -1,0 +1,68 @@
+{
+  "schema": "ruscv-stage6-mutation/1",
+  "source_commit": "5c1d031b2a66bc17d058b5a7355d88ebe80eb652",
+  "source_tree": "6f488e7788508f3a79a40f1d92e329c5eb26b8b5",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "method": "one exact test on baseline, isolated mutation, and restored source",
+  "unit": "u4",
+  "patch": "u4-reset-ir.patch",
+  "patch_sha256": "0d15b07daad765a12acf915d03d28b356a2de76d1fbd604d9cbff1fd1dd26558",
+  "source": "src/jtag/mod.rs",
+  "status": "verified",
+  "tests": [
+    {
+      "test": "bitbang_client_reads_idcode_after_test_logic_reset",
+      "baseline": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--all-features",
+          "--test",
+          "s6_u4_remote_bitbang",
+          "bitbang_client_reads_idcode_after_test_logic_reset",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "exit_status": 0,
+        "result": "ok. 1 passed; 0 failed",
+        "assertion": "test result: ok. 1 passed; 0 failed"
+      },
+      "mutated": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--all-features",
+          "--test",
+          "s6_u4_remote_bitbang",
+          "bitbang_client_reads_idcode_after_test_logic_reset",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "exit_status": 101,
+        "result": "FAILED. 0 passed; 1 failed",
+        "assertion": "thread 'bitbang_client_reads_idcode_after_test_logic_reset' (2292862) panicked at tests/s6_u4_remote_bitbang.rs:434:5:\nassertion `left == right` failed\n  left: 16\n right: 1\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest bitbang_client_reads_idcode_after_test_logic_reset ... FAILED"
+      },
+      "restored": {
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--all-features",
+          "--test",
+          "s6_u4_remote_bitbang",
+          "bitbang_client_reads_idcode_after_test_logic_reset",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "exit_status": 0,
+        "result": "ok. 1 passed; 0 failed",
+        "assertion": "test result: ok. 1 passed; 0 failed"
+      }
+    }
+  ]
+}
