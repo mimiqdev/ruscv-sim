@@ -1,16 +1,18 @@
 //! DMI-level Debug Module.
 //!
 //! Debug Specification 1.0, tag `5695c0a`, §3.1 and §3.14. Register reads and
-//! writes finish inside the call, so `abstractcs.busy` is 0. There is no
-//! DMI `op` result. That belongs to the transport (U4).
+//! writes finish inside the call, except a command with `postexec`. Its
+//! program-buffer words run one Hart grant per [`DebugModule::advance`] call,
+//! and `abstractcs.busy` is 1 until the last one ends. There is no DMI `op`
+//! result. That belongs to the transport (U4).
 //!
 //! The Machine owns one of these and admits each transaction at a Hart
 //! boundary. `ndmreset` is only a bit here. The Machine sees the rising edge
 //! and calls [`crate::machine::Machine::fresh_reset`]; this object is not
-//! rebuilt. U2 tests still pass a bare [`RiscvCore`] into the DMI methods and
-//! call [`RiscvCore::step_outcome`] themselves. The module does not own the
-//! hart, so a caller cannot resume, reset, or set `haltreq` through a handle
-//! this module hands out. `step_outcome` stays outside these methods: a
+//! rebuilt. Tests pass a bare [`RiscvCore`] into the DMI methods and drive the
+//! harness turn themselves. The module does not own the hart, so a caller
+//! cannot resume, reset, or set `haltreq` through a handle this module hands
+//! out. `step_outcome` stays outside these methods: a
 //! `haltreq` write must not run a hart turn inside the DM (Debug Spec 1.0 §3.5).
 
 mod abstract_cmd;
@@ -18,9 +20,12 @@ mod regs;
 
 use crate::core::RiscvCore;
 use regs::{
-    hartsel_field, hartsel_of, ABSTRACTCS, ACKHAVERESET, COMMAND, DATA0, DMACTIVE, DMCONTROL,
-    DMSTATUS, HALTREQ, HALTSUM0, HARTINFO, NDMRESET, RESUMEREQ,
+    hartsel_field, hartsel_of, ABSTRACTAUTO, ABSTRACTAUTO_MASK, ABSTRACTCS, ACKHAVERESET, COMMAND,
+    DATA0, DMACTIVE, DMCONTROL, DMSTATUS, HALTREQ, HALTSUM0, HARTINFO, IMPEBREAK, NDMRESET,
+    PROGBUF0, PROGBUF_LAST, PROGBUF_WORDS, RESUMEREQ,
 };
+
+const CMDERR_BUSY: u8 = 1;
 
 /// One hart's Debug Module, addressed by a 7-bit DMI register number.
 ///
@@ -37,6 +42,16 @@ pub struct DebugModule {
     /// `abstractcs.cmderr`, three bits.
     cmderr: u8,
     data: [u32; 4],
+    /// `progbuf0`, `progbuf1`. Not addressable by the Hart; only the DM reads
+    /// them as opcodes (contract D3).
+    progbuf: [u32; PROGBUF_WORDS],
+    /// `abstractauto`, masked to `ABSTRACTAUTO_MASK`.
+    abstractauto: u32,
+    /// Last `command` accepted while idle with `cmderr` 0. Autoexec repeats it.
+    last_command: Option<u32>,
+    /// Next program-buffer slot to run while `busy`. Slot `PROGBUF_WORDS` is
+    /// the implicit EBREAK. `None` is idle.
+    exec: Option<u8>,
     /// §3.5 allows the reset value 0 or 1. The hart is already running, so
     /// this module resets resume ack to 1.
     resumeack: bool,
@@ -72,6 +87,10 @@ impl DebugModule {
             haltreq: false,
             cmderr: 0,
             data: [0; 4],
+            progbuf: [0; PROGBUF_WORDS],
+            abstractauto: 0,
+            last_command: None,
+            exec: None,
             resumeack: true,
             havereset: true,
             version,
@@ -82,22 +101,36 @@ impl DebugModule {
     /// Read one DMI register. The address is the low 7 bits (§3.1, §3.14).
     ///
     /// While `dmactive` is 0 every read returns 0. Unimplemented addresses
-    /// also return 0, including `abstractauto`, `progbuf0`, `sbcs`, and
-    /// `data4`–`data11`.
-    pub fn dmi_read(&self, hart: &RiscvCore, addr: u8) -> u32 {
+    /// also return 0, including `sbcs` and `data4`–`data11`.
+    ///
+    /// A `data` or `progbuf` read can start the last command (`abstractauto`).
+    /// The returned value is captured before that command runs. The hart is
+    /// mutable for that reason (contract D9).
+    pub fn dmi_read(&mut self, hart: &mut RiscvCore, addr: u8) -> u32 {
         if !self.dmactive {
             return 0;
         }
         match addr & 0x7f {
-            addr @ DATA0..=0x07 => self
-                .data_slot(addr)
-                .map(|index| self.data[index])
-                .unwrap_or(0),
+            addr @ DATA0..=0x07 => match self.data_slot(addr) {
+                Some(index) => {
+                    let value = self.data[index];
+                    self.buffer_access(hart, index as u32);
+                    value
+                }
+                None => 0,
+            },
             DMCONTROL => self.read_dmcontrol(),
             DMSTATUS => self.read_dmstatus(hart),
             HARTINFO => self.read_hartinfo(),
             ABSTRACTCS => self.read_abstractcs(),
             COMMAND => 0,
+            ABSTRACTAUTO => self.abstractauto,
+            addr @ PROGBUF0..=PROGBUF_LAST => {
+                let index = usize::from(addr - PROGBUF0);
+                let value = self.progbuf[index];
+                self.buffer_access(hart, 16 + index as u32);
+                value
+            }
             HALTSUM0 => self.read_haltsum0(hart),
             _ => 0,
         }
@@ -108,6 +141,9 @@ impl DebugModule {
     /// A write that leaves `dmactive` at 0 is dropped. A 1-to-0 transition
     /// resets this module and leaves the hart halted. §3.5 leaves resume on
     /// DM reset UNSPECIFIED. A later `resumereq` is what calls `debug_resume`.
+    ///
+    /// A `data` or `progbuf` write stages its value, then can start the last
+    /// command (`abstractauto`).
     pub fn dmi_write(&mut self, hart: &mut RiscvCore, addr: u8, value: u32) {
         let addr = addr & 0x7f;
         if addr == DMCONTROL {
@@ -118,12 +154,11 @@ impl DebugModule {
             return;
         }
         match addr {
-            addr @ DATA0..=0x07 => {
-                if let Some(index) = self.data_slot(addr) {
-                    self.data[index] = value;
-                }
-            }
+            addr @ DATA0..=0x07 => self.write_data(hart, addr, value),
             ABSTRACTCS => {
+                if self.busy_error() {
+                    return;
+                }
                 // §3.14 `cmderr` is R/W1C. §1.3.3 leaves a partial write
                 // undefined. This module clears each bit that is written 1,
                 // which is Spike's behavior. `relaxedpriv` is hardwired 0.
@@ -131,8 +166,85 @@ impl DebugModule {
                 self.cmderr &= !clear;
             }
             COMMAND => self.write_command(hart, value),
+            ABSTRACTAUTO => self.write_abstractauto(value),
+            addr @ PROGBUF0..=PROGBUF_LAST => self.write_progbuf(hart, addr, value),
             _ => {}
         }
+    }
+
+    /// Stage a `data` write, then let `abstractauto` decide whether to start
+    /// the last command. A busy access stages nothing.
+    fn write_data(&mut self, hart: &mut RiscvCore, addr: u8, value: u32) {
+        if self.busy_error() {
+            return;
+        }
+        if let Some(index) = self.data_slot(addr) {
+            self.data[index] = value;
+            self.buffer_access(hart, index as u32);
+        }
+    }
+
+    /// Stage a `progbuf` write, then let `abstractauto` decide whether to
+    /// start the last command. A busy access stages nothing.
+    fn write_progbuf(&mut self, hart: &mut RiscvCore, addr: u8, value: u32) {
+        if self.busy_error() {
+            return;
+        }
+        let index = usize::from(addr - PROGBUF0);
+        self.progbuf[index] = value;
+        self.buffer_access(hart, 16 + index as u32);
+    }
+
+    /// `abstractauto`: only the implemented bits are writable, and a busy
+    /// access does not change them.
+    fn write_abstractauto(&mut self, value: u32) {
+        if !self.busy_error() {
+            self.abstractauto = value & ABSTRACTAUTO_MASK;
+        }
+    }
+
+    /// §3.14 `cmderr` 1: a register was accessed while a command ran. Only
+    /// written when `cmderr` is 0. Returns whether the access is ignored.
+    fn busy_error(&mut self) -> bool {
+        if self.exec.is_none() {
+            return false;
+        }
+        if self.cmderr == 0 {
+            self.cmderr = CMDERR_BUSY;
+        }
+        true
+    }
+
+    /// Tail of a `data` or `progbuf` access. `bit` is the `abstractauto` bit
+    /// that selects this register. A busy access is an error and never starts
+    /// a command. A nonzero `cmderr` also suppresses it.
+    fn buffer_access(&mut self, hart: &mut RiscvCore, bit: u32) {
+        if self.busy_error() || self.abstractauto & (1 << bit) == 0 || self.cmderr != 0 {
+            return;
+        }
+        if let Some(command) = self.last_command {
+            self.run_command(hart, command);
+        }
+    }
+
+    /// Whether a `data` or `progbuf` DMI access would start a command. The
+    /// Machine uses it to refuse such an access after unknown completion.
+    pub(crate) fn access_triggers_command(&self, addr: u8) -> bool {
+        let bit = match addr & 0x7f {
+            addr @ DATA0..=0x07 if self.data_slot(addr).is_some() => u32::from(addr - DATA0),
+            addr @ PROGBUF0..=PROGBUF_LAST => 16 + u32::from(addr - PROGBUF0),
+            _ => return false,
+        };
+        self.dmactive
+            && !self.busy()
+            && self.cmderr == 0
+            && self.abstractauto & (1 << bit) != 0
+            && self.last_command.is_some()
+    }
+
+    /// `abstractcs.busy`: a command is between its first and last grant.
+    pub fn busy(&self) -> bool {
+        self.exec.is_some()
     }
 
     fn write_dmcontrol(&mut self, hart: &mut RiscvCore, value: u32) {
@@ -156,11 +268,19 @@ impl DebugModule {
         }
         // resumereq is ignored when haltreq is set after this same write.
         // The call below sees the previous ndmreset. The new ndmreset bit
-        // is stored after that judgment (Debug Spec 1.0 §3.14).
-        if value & RESUMEREQ != 0 && !haltreq {
+        // is stored after that judgment (Debug Spec 1.0 §3.14). A resume
+        // cannot preempt an unfinished command: the command's completion or
+        // error must be visible first.
+        if value & RESUMEREQ != 0 && !haltreq && !self.busy() {
             self.resume_selected(hart);
         }
-        self.ndmreset = value & NDMRESET != 0;
+        let ndmreset = value & NDMRESET != 0;
+        if ndmreset && !self.ndmreset && self.exec.take().is_some() && self.cmderr == 0 {
+            // A non-DM reset aborts the active command. The buffer, data and
+            // autoexec bits survive.
+            self.cmderr = abstract_cmd::CMDERR_HALT_RESUME;
+        }
+        self.ndmreset = ndmreset;
     }
 
     fn reset_module(&mut self, hart: &mut RiscvCore) {
@@ -172,6 +292,10 @@ impl DebugModule {
         self.ndmreset = false;
         self.cmderr = 0;
         self.data = [0; 4];
+        self.progbuf = [0; PROGBUF_WORDS];
+        self.abstractauto = 0;
+        self.last_command = None;
+        self.exec = None;
         self.resumeack = true;
         self.set_haltreq(hart, false);
     }
@@ -215,9 +339,10 @@ impl DebugModule {
     }
 
     fn read_dmstatus(&self, hart: &RiscvCore) -> u32 {
-        // version is 3, authenticated is 1. impebreak, authbusy, hasresethaltreq,
-        // confstrptrvalid, and stickyunavail stay 0. The U5 mutation reports 4.
-        let mut value = u32::from(self.version) | (1 << 7);
+        // version is 3, authenticated is 1, impebreak is 1. authbusy,
+        // hasresethaltreq, confstrptrvalid, and stickyunavail stay 0. The U5
+        // mutation reports 4.
+        let mut value = u32::from(self.version) | (1 << 7) | IMPEBREAK;
         if self.ndmreset {
             value |= 1 << 24;
         }
@@ -254,9 +379,12 @@ impl DebugModule {
     }
 
     fn read_abstractcs(&self) -> u32 {
-        // progbufsize 0, busy 0, relaxedpriv 0. datacount is 4 unless the
-        // U5 mutation reports 2.
-        (u32::from(self.cmderr) << 8) | u32::from(self.datacount)
+        // progbufsize 2, relaxedpriv 0. datacount is 4 unless the U5
+        // mutation reports 2.
+        ((PROGBUF_WORDS as u32) << 24)
+            | (u32::from(self.busy()) << 12)
+            | (u32::from(self.cmderr) << 8)
+            | u32::from(self.datacount)
     }
 
     fn read_haltsum0(&self, hart: &RiscvCore) -> u32 {
@@ -381,21 +509,21 @@ mod tests {
         let mut dm = DebugModule::with_discovery(4, 2);
         let mut hart = hart();
         dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE);
-        assert_eq!(dm.dmi_read(&hart, DMSTATUS) & 0xf, 4);
-        assert_eq!(dm.dmi_read(&hart, ABSTRACTCS) & 0xf, 2);
+        assert_eq!(dm.dmi_read(&mut hart, DMSTATUS) & 0xf, 4);
+        assert_eq!(dm.dmi_read(&mut hart, ABSTRACTCS) & 0xf, 2);
         dm.dmi_write(&mut hart, DATA0, 0x1111_1111);
         dm.dmi_write(&mut hart, DATA0 + 1, 0x2222_2222);
         dm.dmi_write(&mut hart, DATA0 + 2, 0x3333_3333);
         dm.dmi_write(&mut hart, DATA0 + 3, 0x4444_4444);
-        assert_eq!(dm.dmi_read(&hart, DATA0), 0x1111_1111);
-        assert_eq!(dm.dmi_read(&hart, DATA0 + 1), 0x2222_2222);
+        assert_eq!(dm.dmi_read(&mut hart, DATA0), 0x1111_1111);
+        assert_eq!(dm.dmi_read(&mut hart, DATA0 + 1), 0x2222_2222);
         assert_eq!(
-            dm.dmi_read(&hart, DATA0 + 2),
+            dm.dmi_read(&mut hart, DATA0 + 2),
             0,
             "data2 is outside datacount 2"
         );
         assert_eq!(
-            dm.dmi_read(&hart, DATA0 + 3),
+            dm.dmi_read(&mut hart, DATA0 + 3),
             0,
             "data3 is outside datacount 2"
         );

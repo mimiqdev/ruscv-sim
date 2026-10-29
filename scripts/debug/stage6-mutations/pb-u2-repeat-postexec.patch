@@ -1,0 +1,13 @@
+--- a/src/dm/abstract_cmd.rs
++++ b/src/dm/abstract_cmd.rs
+@@ -108,8 +108,8 @@
+                 true
+             }
+             DebugExecOutcome::Ebreak => {
+-                self.exec = None;
+-                false
++                self.exec = Some(0);
++                true
+             }
+             DebugExecOutcome::Exception => {
+                 self.finish(CMDERR_EXCEPTION);

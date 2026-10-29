@@ -32,7 +32,10 @@ const DMSTATUS: u8 = 0x11;
 const DATA0: u8 = 0x04;
 const ABSTRACTCS: u8 = 0x16;
 const COMMAND: u8 = 0x17;
+const PROGBUF0: u8 = 0x20;
+const ABSTRACTCS_BUSY: u32 = 1 << 12;
 const DMACTIVE: u32 = 1;
+const RESUMEREQ: u32 = 1 << 30;
 const HALTREQ: u32 = 1 << 31;
 /// `jal x0, -4`.
 const JAL_BACK_4: u32 = 0xffdf_f06f;
@@ -71,7 +74,7 @@ impl ModuleBus {
 
 impl DmiBus for ModuleBus {
     fn dmi_read(&mut self, addr: u8) -> Result<u32, DmiFault> {
-        Ok(self.dm.dmi_read(&self.hart, addr))
+        Ok(self.dm.dmi_read(&mut self.hart, addr))
     }
 
     fn dmi_write(&mut self, addr: u8, value: u32) -> Result<(), DmiFault> {
@@ -605,6 +608,117 @@ fn flat_halted_stops_before_the_first_instruction() {
         .expect("flat run");
     assert_eq!(result.cycles, 0, "{result:?}");
     assert!(!result.timed_out, "{result:?}");
+    assert_eq!(result.error.as_deref(), Some("remote_bitbang closed"));
+}
+
+/// U2 §3: a `postexec` command started over the bitbang socket completes and
+/// stores 7 to `SIGNATURE`. The halted guest is a spin loop, so only the
+/// buffer store and the resume can change it. The silent-socket grant itself
+/// is proven by `executor::u3_tests::silent_bitbang_socket_does_not_block_a_busy_program_buffer_command`,
+/// which drives this same boundary with a connected client that never writes.
+const SIGNATURE: u64 = ENTRY + 0x400;
+
+/// Window with no DMI traffic: a synchronization margin before the single
+/// inspection. It is not what proves progress; the silent-socket test does.
+const NO_INPUT_WINDOW: Duration = Duration::from_millis(250);
+
+fn spinning_guest() -> Vec<u32> {
+    let mut code = vec![public_elf::addi(1, 1, 1), JAL_BACK_4];
+    code.extend(exit_from(8));
+    code
+}
+
+fn write_register<L: Link>(client: &mut Client<L>, regno: u32, value: u64) {
+    dmi_write(client, DATA0, value as u32);
+    dmi_write(client, DATA0 + 1, (value >> 32) as u32);
+    dmi_write(client, COMMAND, (3 << 20) | (1 << 17) | (1 << 16) | regno);
+    assert_eq!(
+        (dmi_read(client, ABSTRACTCS) >> 8) & 7,
+        0,
+        "cmderr writing {regno:#x}"
+    );
+}
+
+/// An Access Memory read of one 32-bit word, valid only while halted.
+fn read_memory_word<L: Link>(client: &mut Client<L>, address: u64) -> u32 {
+    dmi_write(client, DATA0 + 2, address as u32);
+    dmi_write(client, DATA0 + 3, (address >> 32) as u32);
+    dmi_write(client, COMMAND, (2 << 24) | (2 << 20));
+    assert_eq!((dmi_read(client, ABSTRACTCS) >> 8) & 7, 0, "cmderr reading");
+    dmi_read(client, DATA0)
+}
+
+fn postexec_store_without_input<L: Link>(client: &mut Client<L>) {
+    write_register(client, 0x1003, SIGNATURE);
+    dmi_write(client, PROGBUF0, 0x0070_0293); // addi x5, x0, 7
+    dmi_write(client, PROGBUF0 + 1, 0x0051_a023); // sw x5, 0(x3)
+    dmi_write(client, COMMAND, (3 << 20) | (1 << 18));
+
+    // The client sends nothing during the window. The inspection then reports
+    // completion, and the signature read proves the store landed.
+    thread::sleep(NO_INPUT_WINDOW);
+    let abstractcs = dmi_read(client, ABSTRACTCS);
+    assert_eq!(
+        abstractcs & ABSTRACTCS_BUSY,
+        0,
+        "the command did not complete without client input: {abstractcs:#x}"
+    );
+    assert_eq!((abstractcs >> 8) & 7, 0, "{abstractcs:#x}");
+    assert_eq!(
+        read_memory_word(client, SIGNATURE),
+        7,
+        "the buffer store did not land"
+    );
+}
+
+/// U2 §3: the flat run loop grants program-buffer work between boundaries.
+#[test]
+fn flat_postexec_completes_without_further_client_input() {
+    let mut sim = RiscVSimulator::new(0x4000);
+    sim.load_elf(&elf(&spinning_guest())).unwrap();
+    let (config, bound) = config(true);
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(
+            sim.run_debug(Some(5_000_000), config)
+                .map_err(|e| e.to_string()),
+        );
+    });
+    let port = wait_port(&bound);
+    let mut client = Client::connect(port);
+    dmi_write(&mut client, DMCONTROL, DMACTIVE | HALTREQ);
+    postexec_store_without_input(&mut client);
+    dmi_write(&mut client, DMCONTROL, DMACTIVE | RESUMEREQ);
+    drop(client);
+    let result = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("flat run did not finish")
+        .expect("flat run");
+    assert_eq!(result.error.as_deref(), Some("remote_bitbang closed"));
+}
+
+/// U2 §3: the native run loop grants program-buffer work between boundaries.
+#[test]
+fn native_postexec_completes_without_further_client_input() {
+    let bytes = elf(&spinning_guest());
+    let (config, bound) = config(true);
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(
+            ruscv_sim::load_and_run_with_debug(&bytes, Some(5_000_000), None, None, false, config)
+                .map_err(|e| e.to_string()),
+        );
+    });
+    let port = wait_port(&bound);
+    let mut client = Client::connect(port);
+    dmi_write(&mut client, DMCONTROL, DMACTIVE | HALTREQ);
+    postexec_store_without_input(&mut client);
+    dmi_write(&mut client, DMCONTROL, DMACTIVE | RESUMEREQ);
+    drop(client);
+    let result = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("native run did not finish")
+        .expect("native run");
     assert_eq!(result.error.as_deref(), Some("remote_bitbang closed"));
 }
 

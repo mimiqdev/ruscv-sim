@@ -1,0 +1,11 @@
+--- a/src/dm/abstract_cmd.rs
++++ b/src/dm/abstract_cmd.rs
+@@ -90,7 +90,7 @@
+             self.progbuf
+                 .get(usize::from(slot))
+                 .copied()
+-                .unwrap_or(EBREAK),
++                .unwrap_or(0),
+         )
+     }
+ 

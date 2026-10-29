@@ -1,0 +1,13 @@
+--- a/src/dm/mod.rs
++++ b/src/dm/mod.rs
+@@ -127,9 +127,7 @@
+             ABSTRACTAUTO => self.abstractauto,
+             addr @ PROGBUF0..=PROGBUF_LAST => {
+                 let index = usize::from(addr - PROGBUF0);
+-                let value = self.progbuf[index];
+-                self.buffer_access(hart, 16 + index as u32);
+-                value
++                self.progbuf[index]
+             }
+             HALTSUM0 => self.read_haltsum0(hart),
+             _ => 0,

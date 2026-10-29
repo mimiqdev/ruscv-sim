@@ -1,0 +1,11 @@
+--- a/src/core/mod.rs
++++ b/src/core/mod.rs
+@@ -1820,7 +1820,7 @@
+         tval: u64,
+         instruction: Option<u32>,
+     ) -> StepOutcome {
+-        if self.debug_word.is_some() {
++        if false {
+             // Program-buffer exception: no guest trap CSRs, PC or counters change.
+             return StepOutcome::TrapEntered(TrapEntered {
+                 cause: trap,

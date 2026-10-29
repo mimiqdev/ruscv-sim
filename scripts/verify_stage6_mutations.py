@@ -56,10 +56,14 @@ def run_unit(source: Path, unit: dict, environment: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--unit", action="append", choices=["u1", "u2", "u3", "u4"])
+    parser.add_argument("--unit", action="append")
     parser.add_argument("--source-ref", default="HEAD")
     args = parser.parse_args()
     cases = json.loads((CASES / "cases.json").read_text())
+    units = {case["unit"] for case in cases}
+    unknown = sorted(set(args.unit or ()) - units)
+    if unknown:
+        parser.error(f"unknown unit(s): {', '.join(unknown)}; choose from {', '.join(sorted(units))}")
     commit = subprocess.check_output(
         ["git", "-C", str(ROOT), "rev-parse", "--verify", "--end-of-options",
          f"{args.source_ref}^{{commit}}"], text=True).strip()

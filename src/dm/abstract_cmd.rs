@@ -4,12 +4,13 @@
 //! (`cmdtype` 2) run. The first failing check wins, and an unsupported
 //! option is reported before a not-halted hart (§3.7.1.1, §3.7.1.3).
 
+use super::regs::EBREAK;
 use super::DebugModule;
-use crate::core::{DebugMemFault, RiscvCore};
+use crate::core::{DebugExecOutcome, DebugMemFault, RiscvCore};
 
 const CMDERR_NOT_SUPPORTED: u8 = 2;
 const CMDERR_EXCEPTION: u8 = 3;
-const CMDERR_HALT_RESUME: u8 = 4;
+pub(super) const CMDERR_HALT_RESUME: u8 = 4;
 /// Debug Spec 1.0 §3.14: a simulator fault, not an M-mode exception.
 const CMDERR_OTHER: u8 = 7;
 
@@ -23,11 +24,19 @@ fn memory_cmderr(fault: DebugMemFault) -> u8 {
 
 impl DebugModule {
     pub(super) fn write_command(&mut self, hart: &mut RiscvCore, command: u32) {
-        // §3.14 `command`: ignored while `cmderr` is not zero. `busy` is
-        // never 1, so that half of the rule does not arise.
-        if self.cmderr != 0 {
+        // §3.14 `command` and `cmderr` 1: a write while busy is an error and
+        // does not replace the running command. A nonzero `cmderr` also
+        // ignores the write.
+        if self.busy_error() || self.cmderr != 0 {
             return;
         }
+        self.last_command = Some(command);
+        self.run_command(hart, command);
+    }
+
+    /// Validate and start one command. Called with `cmderr` 0 and idle, by
+    /// a `command` write or by `abstractauto`.
+    pub(super) fn run_command(&mut self, hart: &mut RiscvCore, command: u32) {
         if unsupported(command) {
             self.cmderr = CMDERR_NOT_SUPPORTED;
             return;
@@ -48,12 +57,95 @@ impl DebugModule {
         let size64 = ((command >> 20) & 0b111) == 3;
         let transfer = command & (1 << 17) != 0;
         let write = command & (1 << 16) != 0;
+        let postexec = command & (1 << 18) != 0;
         let regno = command & 0xffff;
-        // §3.7.1.1: transfer 0 skips the read or write and does not check regno.
-        if !transfer {
-            return;
+        // §3.7.1.1: transfer 0 skips the read or write and does not check
+        // regno. `transfer` completes before `postexec`, and an error in it
+        // skips the program buffer.
+        if transfer {
+            if let Err(code) = self.transfer_reg(hart, regno, write, size64) {
+                self.cmderr = code;
+                return;
+            }
         }
-        if let Err(code) = self.transfer_reg(hart, regno, write, size64) {
+        if postexec {
+            self.exec = Some(0);
+        }
+    }
+
+    /// Select the opcode for the next grant without running it.
+    ///
+    /// Slot `PROGBUF_WORDS` is the implicit EBREAK. A hart that left Debug
+    /// Mode or is held in `ndmreset` aborts the command with `cmderr` 4.
+    /// Callers that own a lock on this module release it before executing the
+    /// word and pass the result to [`Self::complete_grant`]: contract §3 keeps
+    /// no DM lock while the Hart executes or reaches a physical target.
+    pub fn next_word(&mut self, hart: &RiscvCore) -> Option<u32> {
+        let slot = self.exec?;
+        if self.ndmreset || !hart.in_debug_mode() {
+            self.finish(CMDERR_HALT_RESUME);
+            return None;
+        }
+        Some(
+            self.progbuf
+                .get(usize::from(slot))
+                .copied()
+                .unwrap_or(EBREAK),
+        )
+    }
+
+    /// Record the result of the word selected by [`Self::next_word`] and
+    /// return whether the command is still busy. An exception is `cmderr` 3.
+    /// A host or backend failure is `cmderr` 7; the Machine reads unknown
+    /// completion from the Hart.
+    pub fn complete_grant(&mut self, outcome: DebugExecOutcome) -> bool {
+        let Some(slot) = self.exec else {
+            return false;
+        };
+        match outcome {
+            DebugExecOutcome::Completed => {
+                self.exec = Some(slot + 1);
+                true
+            }
+            DebugExecOutcome::Ebreak => {
+                self.exec = None;
+                false
+            }
+            DebugExecOutcome::Exception => {
+                self.finish(CMDERR_EXCEPTION);
+                false
+            }
+            DebugExecOutcome::Failure(_) => {
+                self.finish(CMDERR_OTHER);
+                false
+            }
+        }
+    }
+
+    /// End an active command because the Machine refused further grants: a
+    /// non-DM reset, a quiesce, or a Machine that can no longer admit a turn.
+    /// Returns whether a command was active.
+    pub(crate) fn abort_command(&mut self) -> bool {
+        let active = self.exec.is_some();
+        self.finish(CMDERR_HALT_RESUME);
+        active
+    }
+
+    /// One complete grant for a caller that owns no external lock on this
+    /// module: select, run through the Hart, record.
+    pub fn advance(&mut self, hart: &mut RiscvCore) -> bool {
+        let Some(word) = self.next_word(hart) else {
+            return false;
+        };
+        let outcome = hart.debug_execute(word);
+        self.complete_grant(outcome)
+    }
+
+    /// End the active command with an error that is only recorded when
+    /// `cmderr` is 0.
+    fn finish(&mut self, code: u8) {
+        self.exec = None;
+        if self.cmderr == 0 {
             self.cmderr = code;
         }
     }
@@ -253,10 +345,7 @@ fn unsupported(command: u32) -> bool {
     match command >> 24 {
         0 => {
             let aarsize = (command >> 20) & 0b111;
-            command & (1 << 23) != 0
-                || !matches!(aarsize, 2 | 3)
-                || command & (1 << 19) != 0
-                || command & (1 << 18) != 0
+            command & (1 << 23) != 0 || !matches!(aarsize, 2 | 3) || command & (1 << 19) != 0
         }
         2 => {
             let aamsize = (command >> 20) & 0b111;

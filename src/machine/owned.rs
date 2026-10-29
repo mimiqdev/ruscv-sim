@@ -453,29 +453,20 @@ impl OwnedMachine {
                     "debug run ended before the transaction was admitted".into(),
                 ));
             }
-            let batch = {
-                let mut queue = self
-                    .control
-                    .inner
-                    .debug
-                    .queue()
-                    .lock()
-                    .map_err(|_| MachineError::Poisoned)?;
-                if queue.is_empty() {
-                    if !block {
-                        return Ok(());
-                    }
-                    let _waiting = self
-                        .control
-                        .inner
-                        .debug
-                        .wake()
-                        .wait(queue)
-                        .map_err(|_| MachineError::Poisoned)?;
-                    continue;
+            let batch = self.drain_debug_queue()?;
+            if batch.is_empty() {
+                // A started command advances without socket input. The caller
+                // re-enters here between grants, so DMI is serviced first at
+                // the next boundary.
+                if self.debug_command_busy()? {
+                    return self.advance_debug_command();
                 }
-                queue.drain(..).collect::<Vec<_>>()
-            };
+                if !block {
+                    return Ok(());
+                }
+                self.wait_for_debug_queue()?;
+                continue;
+            }
             for call in batch {
                 let result = self.apply_dmi(call.addr, call.write);
                 let _ = call.reply.send(result);
@@ -484,6 +475,98 @@ impl OwnedMachine {
                 return Ok(());
             }
         }
+    }
+
+    fn drain_debug_queue(&self) -> Result<Vec<super::debug_hub::DmiCall>, MachineError> {
+        let mut queue = self
+            .control
+            .inner
+            .debug
+            .queue()
+            .lock()
+            .map_err(|_| MachineError::Poisoned)?;
+        Ok(queue.drain(..).collect())
+    }
+
+    /// Wait for the next queued transaction. The queue predicate is rechecked
+    /// under the mutex, so a post or close that lands between an empty drain
+    /// and this wait is not lost.
+    fn wait_for_debug_queue(&self) -> Result<(), MachineError> {
+        let debug = &self.control.inner.debug;
+        let mut queue = debug.queue().lock().map_err(|_| MachineError::Poisoned)?;
+        while queue.is_empty() && !debug.closed() {
+            queue = debug
+                .wake()
+                .wait(queue)
+                .map_err(|_| MachineError::Poisoned)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn debug_command_busy(&self) -> Result<bool, MachineError> {
+        Ok(self
+            .control
+            .inner
+            .debug
+            .dm
+            .lock()
+            .map_err(|_| MachineError::Poisoned)?
+            .busy())
+    }
+
+    /// Run one program-buffer grant of the active command.
+    ///
+    /// The DM lock selects the opcode and records the result; it is released
+    /// while the Hart executes the word and reaches any physical target. A
+    /// Machine that cannot admit a Hart turn (quiesce, reset, failure, unknown
+    /// completion) ends the command instead of running another word.
+    pub(crate) fn advance_debug_command(&mut self) -> Result<(), MachineError> {
+        let hub = Arc::clone(&self.control.inner);
+        let Ok(lease) = Lease::hart(&hub.gate) else {
+            hub.debug
+                .dm
+                .lock()
+                .map_err(|_| MachineError::Poisoned)?
+                .abort_command();
+            return Ok(());
+        };
+        let word = {
+            let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
+            let core = &self
+                .installed
+                .as_ref()
+                .expect("exclusive installed Machine")
+                .core;
+            dm.next_word(core)
+        };
+        let Some(word) = word else {
+            lease.boundary(false, None)?;
+            return Ok(());
+        };
+        let (outcome, failure, uncertain) = {
+            let core = &mut self
+                .installed
+                .as_mut()
+                .expect("exclusive installed Machine")
+                .core;
+            let outcome = core.debug_execute(word);
+            let failure = match &outcome {
+                crate::core::DebugExecOutcome::Failure(failure) => Some(failure.clone()),
+                _ => None,
+            };
+            (
+                outcome,
+                failure,
+                core.unresolved_physical_access().is_some(),
+            )
+        };
+        hub.debug
+            .dm
+            .lock()
+            .map_err(|_| MachineError::Poisoned)?
+            .complete_grant(outcome);
+        lease.boundary(uncertain, failure)?;
+        Ok(())
     }
 
     pub(crate) fn dmi_read(&mut self, addr: u8) -> Result<u32, MachineError> {
@@ -509,7 +592,9 @@ impl OwnedMachine {
         let uncertain = lease.boundary_state()?.1;
         let (value, before, after, failure) = {
             let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
-            if uncertain && write.is_some_and(|value| !dm.terminal_write_allowed(addr, value)) {
+            let refused = dm.access_triggers_command(addr)
+                || write.is_some_and(|value| !dm.terminal_write_allowed(addr, value));
+            if uncertain && refused {
                 return Err(MachineError::UnknownCompletion);
             }
             let core = &mut self

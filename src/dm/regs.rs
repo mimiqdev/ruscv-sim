@@ -9,6 +9,9 @@ pub(super) const DMSTATUS: u8 = 0x11;
 pub(super) const HARTINFO: u8 = 0x12;
 pub(super) const ABSTRACTCS: u8 = 0x16;
 pub(super) const COMMAND: u8 = 0x17;
+pub(super) const ABSTRACTAUTO: u8 = 0x18;
+pub(super) const PROGBUF0: u8 = 0x20;
+pub(super) const PROGBUF_LAST: u8 = 0x21;
 pub(super) const HALTSUM0: u8 = 0x40;
 
 pub(super) const HALTREQ: u32 = 1 << 31;
@@ -16,6 +19,16 @@ pub(super) const RESUMEREQ: u32 = 1 << 30;
 pub(super) const ACKHAVERESET: u32 = 1 << 28;
 pub(super) const NDMRESET: u32 = 1 << 1;
 pub(super) const DMACTIVE: u32 = 1;
+
+/// Two writable program-buffer words (`progbufsize`).
+pub(super) const PROGBUF_WORDS: usize = 2;
+/// `abstractauto` implemented bits: `autoexecdata[3:0]` and
+/// `autoexecprogbuf[17:16]` (xml/dm_registers.xml `abstractauto`).
+pub(super) const ABSTRACTAUTO_MASK: u32 = 0x0003_000f;
+/// `dmstatus.impebreak`.
+pub(super) const IMPEBREAK: u32 = 1 << 22;
+/// Implicit EBREAK after the last program-buffer word.
+pub(super) const EBREAK: u32 = 0x0010_0073;
 
 pub(super) fn hartsel_of(value: u32) -> u32 {
     let lo = (value >> 16) & 0x3ff;

@@ -220,3 +220,66 @@ fn native_attached_wfi_waits_for_dmi() {
     assert!(result.error.is_none(), "{result:?}");
     assert_eq!(result.cycles, 5, "{result:?}");
 }
+
+/// U2 §3: a silent bitbang socket does not block a busy program-buffer
+/// command. The session branch grants one word before it waits for client
+/// input, so the command progresses while the client sends nothing.
+///
+/// The client connects and stays silent; a blocking poll instead of a grant
+/// would wait forever, which the watchdog reports.
+#[test]
+fn silent_bitbang_socket_does_not_block_a_busy_program_buffer_command() {
+    use super::{
+        hold_for_debugger, BitbangSession, MachineConfig, OwnedMachine, PlatformKind,
+        RemoteBitbangConfig, RunControl,
+    };
+    use std::net::TcpStream;
+    use std::sync::atomic::{AtomicU16, Ordering};
+    use std::sync::Arc;
+
+    let image = Arc::new(crate::elf::LoadImage::parse(&program(&[elf::nop()])).unwrap());
+    let mut machine = OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image).unwrap();
+    machine.dmi_write(DMCONTROL, DMACTIVE | HALTREQ).unwrap();
+    drop(machine.step(false).unwrap());
+    assert!(machine.hart_in_debug_mode());
+    // addi x1, x1, 1 in both words; the implicit EBREAK ends the command.
+    machine.dmi_write(0x20, 0x0010_8093).unwrap();
+    machine.dmi_write(0x21, 0x0010_8093).unwrap();
+    machine.dmi_write(COMMAND, (3 << 20) | (1 << 18)).unwrap();
+    assert!(machine.debug_command_busy().unwrap());
+
+    let bound = Arc::new(AtomicU16::new(0));
+    let handle = machine.attach_debugger();
+    let config = RemoteBitbangConfig {
+        port: 0,
+        halted: true,
+        bound_port: Some(Arc::clone(&bound)),
+    };
+    let session = BitbangSession::bind(&config, handle.clone()).unwrap();
+    let port = bound.load(Ordering::Acquire);
+    let _client =
+        TcpStream::connect(("127.0.0.1", port)).expect("client connects and stays silent");
+
+    let (tx, rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let mut machine = machine;
+        let mut control = RunControl::new(1000);
+        let mut session = session;
+        // Two grants: word 0 and word 1. A third call would wait for input.
+        for _ in 0..2 {
+            hold_for_debugger(&mut machine, &mut control, Some(&mut session), false).unwrap();
+        }
+        let _ = tx.send((
+            machine.state().regs[1],
+            machine.debug_command_busy().unwrap(),
+        ));
+    });
+    let (x1, busy) = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("a silent socket blocked the boundary instead of granting");
+    // The worker owns the machine, so the assertion uses the reported values.
+    drop(handle);
+    assert_eq!(x1, 2, "the command did not advance without client input");
+    assert!(busy, "the command should still await its implicit EBREAK");
+    let _ = worker.join();
+}

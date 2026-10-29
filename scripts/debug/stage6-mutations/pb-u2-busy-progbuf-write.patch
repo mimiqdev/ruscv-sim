@@ -1,0 +1,12 @@
+--- a/src/dm/mod.rs
++++ b/src/dm/mod.rs
+@@ -187,9 +187,6 @@
+     /// Stage a `progbuf` write, then let `abstractauto` decide whether to
+     /// start the last command. A busy access stages nothing.
+     fn write_progbuf(&mut self, hart: &mut RiscvCore, addr: u8, value: u32) {
+-        if self.busy_error() {
+-            return;
+-        }
+         let index = usize::from(addr - PROGBUF0);
+         self.progbuf[index] = value;
+         self.buffer_access(hart, 16 + index as u32);

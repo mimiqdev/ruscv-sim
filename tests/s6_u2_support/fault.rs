@@ -128,10 +128,10 @@ fn simulator_memory_fault_is_cmderr_7() {
         set_arg0(&mut dm, &mut hart, 0x11);
         set_arg1(&mut dm, &mut hart, RAM_BASE + 8);
         issue(&mut dm, &mut hart, access_memory(false, 2, true, true));
-        assert_eq!(cmderr(&dm, &hart), 7, "{fault:?}");
-        assert_eq!(arg0(&dm, &hart), 0x11, "the argument is unchanged");
+        assert_eq!(cmderr(&mut dm, &mut hart), 7, "{fault:?}");
+        assert_eq!(arg0(&mut dm, &mut hart), 0x11, "the argument is unchanged");
         assert_eq!(
-            arg1(&dm, &hart),
+            arg1(&mut dm, &mut hart),
             RAM_BASE + 8,
             "no postincrement on a simulator fault"
         );
@@ -166,8 +166,8 @@ fn simulator_memory_fault_is_cmderr_7() {
     hart.set_physical_access(instruction, data);
     set_arg1(&mut dm, &mut hart, RAM_BASE);
     issue(&mut dm, &mut hart, access_memory(false, 2, true, false));
-    assert_eq!(cmderr(&dm, &hart), 7, "poisoned data-port lock");
-    assert_eq!(arg1(&dm, &hart), RAM_BASE, "no postincrement");
+    assert_eq!(cmderr(&mut dm, &mut hart), 7, "poisoned data-port lock");
+    assert_eq!(arg1(&mut dm, &mut hart), RAM_BASE, "no postincrement");
     assert!(hart.in_debug_mode());
     assert!(hart.unresolved_physical_access().is_none());
 }
@@ -190,7 +190,7 @@ fn unknown_completion_latches_and_blocks_the_next_access() {
     set_arg0(&mut dm, &mut hart, 0x11);
     set_arg1(&mut dm, &mut hart, RAM_BASE + 8);
     issue(&mut dm, &mut hart, access_memory(false, 2, true, true));
-    assert_eq!(cmderr(&dm, &hart), 7);
+    assert_eq!(cmderr(&mut dm, &mut hart), 7);
     assert_eq!(*calls.lock().unwrap(), 1);
     let failure = hart
         .unresolved_physical_access()
@@ -207,13 +207,17 @@ fn unknown_completion_latches_and_blocks_the_next_access() {
     set_arg0(&mut dm, &mut hart, 0x22);
     set_arg1(&mut dm, &mut hart, RAM_BASE + 16);
     issue(&mut dm, &mut hart, access_memory(false, 2, true, true));
-    assert_eq!(cmderr(&dm, &hart), 7, "the latched access is still other");
+    assert_eq!(
+        cmderr(&mut dm, &mut hart),
+        7,
+        "the latched access is still other"
+    );
     assert_eq!(
         *calls.lock().unwrap(),
         1,
         "a second abstract access does not touch the port"
     );
-    assert_eq!(arg1(&dm, &hart), RAM_BASE + 16, "no postincrement");
+    assert_eq!(arg1(&mut dm, &mut hart), RAM_BASE + 16, "no postincrement");
     assert_eq!(ram.lock().unwrap().read_byte(0x20).unwrap(), 0xa5);
 
     let pc = hart.state().pc;
