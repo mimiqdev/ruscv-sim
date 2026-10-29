@@ -1,0 +1,11 @@
+--- a/src/dm/mod.rs
++++ b/src/dm/mod.rs
+@@ -381,7 +381,7 @@
+     fn read_abstractcs(&self) -> u32 {
+         // progbufsize 2, relaxedpriv 0. datacount is 4 unless the U5
+         // mutation reports 2.
+-        ((PROGBUF_WORDS as u32) << 24)
++        (1 << 24)
+             | (u32::from(self.busy()) << 12)
+             | (u32::from(self.cmderr) << 8)
+             | u32::from(self.datacount)

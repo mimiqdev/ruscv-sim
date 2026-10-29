@@ -32,6 +32,8 @@ const DMSTATUS: u8 = 0x11;
 const DATA0: u8 = 0x04;
 const ABSTRACTCS: u8 = 0x16;
 const COMMAND: u8 = 0x17;
+const PROGBUF0: u8 = 0x20;
+const ABSTRACTCS_BUSY: u32 = 1 << 12;
 const DMACTIVE: u32 = 1;
 const HALTREQ: u32 = 1 << 31;
 /// `jal x0, -4`.
@@ -606,6 +608,83 @@ fn flat_halted_stops_before_the_first_instruction() {
     assert_eq!(result.cycles, 0, "{result:?}");
     assert!(!result.timed_out, "{result:?}");
     assert_eq!(result.error.as_deref(), Some("remote_bitbang closed"));
+}
+
+/// U2 §3: a `postexec` command started over the bitbang socket completes with
+/// no further client input. `addi x5, x0, 7` in `progbuf0`, a nop in
+/// `progbuf1`, then the implicit EBREAK.
+fn assert_postexec_completes_without_input<L: Link>(client: &mut Client<L>) {
+    dmi_write(client, PROGBUF0, 0x0070_0293);
+    dmi_write(client, PROGBUF0 + 1, 0x0000_0013);
+    dmi_write(client, COMMAND, (3 << 20) | (1 << 18));
+    let start = Instant::now();
+    let mut abstractcs = dmi_read(client, ABSTRACTCS);
+    while abstractcs & ABSTRACTCS_BUSY != 0 {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "postexec never completed without further input: {abstractcs:#x}"
+        );
+        abstractcs = dmi_read(client, ABSTRACTCS);
+    }
+    assert_eq!((abstractcs >> 8) & 7, 0, "{abstractcs:#x}");
+    assert_eq!((abstractcs >> 24) & 0x1f, 2, "progbufsize {abstractcs:#x}");
+    assert_eq!(abstract_read(client, 0x1005), 7, "the buffer did not run");
+}
+
+/// U2 §3: the flat run loop grants program-buffer work between boundaries.
+#[test]
+fn flat_postexec_completes_without_further_client_input() {
+    let mut code = vec![public_elf::addi(1, 0, 1)];
+    code.extend(exit_from(4));
+    let mut sim = RiscVSimulator::new(0x4000);
+    sim.load_elf(&elf(&code)).unwrap();
+    let (config, bound) = config(true);
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(sim.run_debug(Some(1), config));
+    });
+    let port = wait_port(&bound);
+    let mut client = Client::connect(port);
+    dmi_write(&mut client, DMCONTROL, DMACTIVE | HALTREQ);
+    assert_postexec_completes_without_input(&mut client);
+    dmi_write(&mut client, DMCONTROL, DMACTIVE | HALTREQ);
+    drop(client);
+    let result = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("flat run did not finish")
+        .expect("flat run");
+    assert_eq!(result.cycles, 0, "{result:?}");
+}
+
+/// U2 §3: the native run loop grants program-buffer work between boundaries.
+#[test]
+fn native_postexec_completes_without_further_client_input() {
+    let mut code = vec![public_elf::addi(1, 0, 1)];
+    code.extend(exit_from(4));
+    let bytes = elf(&code);
+    let (config, bound) = config(true);
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(ruscv_sim::load_and_run_with_debug(
+            &bytes,
+            Some(1),
+            None,
+            None,
+            false,
+            config,
+        ));
+    });
+    let port = wait_port(&bound);
+    let mut client = Client::connect(port);
+    dmi_write(&mut client, DMCONTROL, DMACTIVE | HALTREQ);
+    assert_postexec_completes_without_input(&mut client);
+    dmi_write(&mut client, DMCONTROL, DMACTIVE | HALTREQ);
+    drop(client);
+    let result = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("native run did not finish")
+        .expect("native run");
+    assert_eq!(result.cycles, 0, "{result:?}");
 }
 
 /// §5. Native `--rbb-port --halted` stops at the same reset entry.

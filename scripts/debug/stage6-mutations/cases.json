@@ -5,9 +5,16 @@
     "patch": "u1-haltreq-dpc.patch",
     "tests": [
       {
-        "target": ["--test", "s6_u1_hart_debug"],
+        "target": [
+          "--test",
+          "s6_u1_hart_debug"
+        ],
         "test": "haltreq_stores_dpc_as_the_current_pc",
-        "failure": ["assertion `left == right` failed", "left:\\s+68", "right:\\s+64"]
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+68",
+          "right:\\s+64"
+        ]
       }
     ]
   },
@@ -17,14 +24,28 @@
     "patch": "u2-datacount.patch",
     "tests": [
       {
-        "target": ["--test", "s6_u2_debug_module"],
+        "target": [
+          "--test",
+          "s6_u2_debug_module"
+        ],
         "test": "datacount_is_4_and_address_uses_data3",
-        "failure": ["assertion `left == right` failed: datacount", "left:\\s+2", "right:\\s+4"]
+        "failure": [
+          "assertion `left == right` failed: datacount",
+          "left:\\s+2",
+          "right:\\s+4"
+        ]
       },
       {
-        "target": ["--test", "s6_u2_debug_module"],
+        "target": [
+          "--test",
+          "s6_u2_debug_module"
+        ],
         "test": "physical_read_ignores_mprv",
-        "failure": ["load from 0x80001000 aamsize 2", "left:\\s+3", "right:\\s+0"]
+        "failure": [
+          "load from 0x80001000 aamsize 2",
+          "left:\\s+3",
+          "right:\\s+0"
+        ]
       }
     ]
   },
@@ -34,9 +55,13 @@
     "patch": "u3-dmi-mid-instruction.patch",
     "tests": [
       {
-        "target": ["--lib"],
+        "target": [
+          "--lib"
+        ],
         "test": "machine::tests::dmi_haltreq_waits_until_the_instruction_boundary",
-        "failure": ["haltreq was accepted mid-instruction: direct DMI ran during the instruction"]
+        "failure": [
+          "haltreq was accepted mid-instruction: direct DMI ran during the instruction"
+        ]
       }
     ]
   },
@@ -46,9 +71,128 @@
     "patch": "u4-reset-ir.patch",
     "tests": [
       {
-        "target": ["--test", "s6_u4_remote_bitbang"],
+        "target": [
+          "--test",
+          "s6_u4_remote_bitbang"
+        ],
         "test": "bitbang_client_reads_idcode_after_test_logic_reset",
-        "failure": ["assertion `left == right` failed", "left:\\s+16", "right:\\s+1"]
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+16",
+          "right:\\s+1"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "pb-u2-progbufsize",
+    "source": "src/dm/mod.rs",
+    "patch": "pb-u2-progbufsize.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "pb_u2_dm_protocol"
+        ],
+        "test": "discovery_reports_two_words_and_an_implicit_ebreak",
+        "failure": [
+          "assertion `left == right` failed: progbufsize",
+          "left:\\s+1",
+          "right:\\s+2"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "pb-u2-no-implicit-ebreak",
+    "source": "src/dm/abstract_cmd.rs",
+    "patch": "pb-u2-no-implicit-ebreak.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "pb_u2_dm_protocol"
+        ],
+        "test": "postexec_runs_both_words_then_the_implicit_ebreak",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+3",
+          "right:\\s+0"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "pb-u2-repeat-postexec",
+    "source": "src/dm/abstract_cmd.rs",
+    "patch": "pb-u2-repeat-postexec.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "pb_u2_dm_protocol"
+        ],
+        "test": "postexec_runs_both_words_then_the_implicit_ebreak",
+        "failure": [
+          "the command ran more grants than two words plus the implicit EBREAK"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "pb-u2-accept-control-transfer",
+    "source": "src/core/mod.rs",
+    "patch": "pb-u2-accept-control-transfer.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "pb_u2_dm_protocol"
+        ],
+        "test": "control_transfers_and_auipc_are_cmderr_3",
+        "failure": [
+          "is forbidden in the buffer",
+          "left:\\s+0",
+          "right:\\s+3"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "pb-u2-guest-trap-on-buffer-exception",
+    "source": "src/core/mod.rs",
+    "patch": "pb-u2-guest-trap-on-buffer-exception.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "pb_u2_dm_protocol"
+        ],
+        "test": "buffer_exception_reports_cmderr_3_and_stops_before_the_next_word",
+        "failure": [
+          "a buffer exception must not enter a guest handler \\(mcause\\)",
+          "left:\\s+2",
+          "right:\\s+0"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "pb-u2-ignore-autoexec",
+    "source": "src/dm/mod.rs",
+    "patch": "pb-u2-ignore-autoexec.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "pb_u2_dm_protocol"
+        ],
+        "test": "cleared_autoexec_stops_repeats",
+        "failure": [
+          "no repeat after clearing the bit",
+          "left:\\s+67",
+          "right:\\s+153"
+        ]
       }
     ]
   }

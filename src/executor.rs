@@ -1541,8 +1541,18 @@ fn hold_for_debugger(
     session: Option<&mut BitbangSession>,
     wait_for_command: bool,
 ) -> Result<DebugHold, ExecutorError> {
+    // A started command advances one Hart grant per boundary with no further
+    // client input, so it never depends on socket traffic.
+    let busy = machine
+        .debug_command_busy()
+        .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
     if let Some(session) = session {
-        let block = wait_for_command || machine.debug_blocked();
+        if busy {
+            machine
+                .advance_debug_command()
+                .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+        }
+        let block = (wait_for_command || machine.debug_blocked()) && !busy;
         let closed = session
             .poll(&mut MachineDmi { machine }, block)
             .map_err(ExecutorError::ExecutionError)?;
@@ -1559,7 +1569,9 @@ fn hold_for_debugger(
     if !machine.debugger_attached() {
         return Ok(DebugHold::Run);
     }
-    let block = wait_for_command || machine.debug_blocked();
+    // The queued-DMI path grants inside `debug_boundary`, which drains the
+    // queue before the next word.
+    let block = (wait_for_command || machine.debug_blocked()) && !busy;
     machine
         .debug_boundary(block)
         .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;

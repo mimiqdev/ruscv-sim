@@ -73,27 +73,36 @@ impl DebugModule {
         }
     }
 
-    /// Run one program-buffer grant of the active command. Returns whether
-    /// the command is still busy. Slot `PROGBUF_WORDS` is the implicit EBREAK.
+    /// Select the opcode for the next grant without running it.
     ///
-    /// The Hart executes the word; this module only chooses it. An exception
-    /// is `cmderr` 3. A host or backend failure is `cmderr` 7; the Machine
-    /// reads unknown completion from the Hart. A hart that left Debug Mode or
-    /// is held in `ndmreset` aborts the command with `cmderr` 4.
-    pub fn advance(&mut self, hart: &mut RiscvCore) -> bool {
+    /// Slot `PROGBUF_WORDS` is the implicit EBREAK. A hart that left Debug
+    /// Mode or is held in `ndmreset` aborts the command with `cmderr` 4.
+    /// Callers that own a lock on this module release it before executing the
+    /// word and pass the result to [`Self::complete_grant`]: contract §3 keeps
+    /// no DM lock while the Hart executes or reaches a physical target.
+    pub fn next_word(&mut self, hart: &RiscvCore) -> Option<u32> {
+        let slot = self.exec?;
+        if self.ndmreset || !hart.in_debug_mode() {
+            self.finish(CMDERR_HALT_RESUME);
+            return None;
+        }
+        Some(
+            self.progbuf
+                .get(usize::from(slot))
+                .copied()
+                .unwrap_or(EBREAK),
+        )
+    }
+
+    /// Record the result of the word selected by [`Self::next_word`] and
+    /// return whether the command is still busy. An exception is `cmderr` 3.
+    /// A host or backend failure is `cmderr` 7; the Machine reads unknown
+    /// completion from the Hart.
+    pub fn complete_grant(&mut self, outcome: DebugExecOutcome) -> bool {
         let Some(slot) = self.exec else {
             return false;
         };
-        if self.ndmreset || !hart.in_debug_mode() {
-            self.finish(CMDERR_HALT_RESUME);
-            return false;
-        }
-        let word = self
-            .progbuf
-            .get(usize::from(slot))
-            .copied()
-            .unwrap_or(EBREAK);
-        match hart.debug_execute(word) {
+        match outcome {
             DebugExecOutcome::Completed => {
                 self.exec = Some(slot + 1);
                 true
@@ -111,6 +120,25 @@ impl DebugModule {
                 false
             }
         }
+    }
+
+    /// End an active command because the Machine refused further grants: a
+    /// non-DM reset, a quiesce, or a Machine that can no longer admit a turn.
+    /// Returns whether a command was active.
+    pub(crate) fn abort_command(&mut self) -> bool {
+        let active = self.exec.is_some();
+        self.finish(CMDERR_HALT_RESUME);
+        active
+    }
+
+    /// One complete grant for a caller that owns no external lock on this
+    /// module: select, run through the Hart, record.
+    pub fn advance(&mut self, hart: &mut RiscvCore) -> bool {
+        let Some(word) = self.next_word(hart) else {
+            return false;
+        };
+        let outcome = hart.debug_execute(word);
+        self.complete_grant(outcome)
     }
 
     /// End the active command with an error that is only recorded when

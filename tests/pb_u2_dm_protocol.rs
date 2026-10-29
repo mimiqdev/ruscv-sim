@@ -245,6 +245,52 @@ fn postexec_without_transfer_runs_the_buffer() {
     assert_eq!(h.reg(1), 5);
 }
 
+/// §2 D8: only the six implemented `abstractauto` bits are writable.
+#[test]
+fn abstractauto_reads_back_only_the_implemented_bits() {
+    let mut h = Harness::halted();
+    assert_eq!(h.dm.dmi_read(&mut h.hart, ABSTRACTAUTO), 0, "reset value");
+    h.autoexec(0xffff_ffff);
+    assert_eq!(
+        h.dm.dmi_read(&mut h.hart, ABSTRACTAUTO),
+        0x0003_000f,
+        "only autoexecdata[3:0] and autoexecprogbuf[1:0] are implemented"
+    );
+    h.autoexec(0xfffc_fff0);
+    assert_eq!(h.dm.dmi_read(&mut h.hart, ABSTRACTAUTO), 0);
+}
+
+/// §3: a program-buffer read also captures its value before triggering.
+#[test]
+fn progbuf_read_captures_the_word_before_triggering() {
+    let mut h = Harness::halted();
+    h.prog(0, addi(1, 1, 1));
+    h.autoexec(AUTOEXEC_PROGBUF[0]);
+    h.command(access_register(3, false, true, false, 0));
+    assert!(h.busy());
+    assert_eq!(h.prog_word(0), addi(1, 1, 1), "the read returns the word");
+    assert_eq!(h.reg(1), 0, "no word runs inside the read");
+    h.run_busy();
+    assert_eq!(h.reg(1), 1, "the read started the command");
+}
+
+/// §3: only the last accepted command is replayed.
+#[test]
+fn only_the_last_accepted_command_is_replayed() {
+    let mut h = Harness::halted();
+    h.data(0, 0x21);
+    h.run_command(access_register(3, true, false, true, 0x1001));
+    assert_eq!(h.reg(1), 0x21);
+    h.run_command(access_register(3, true, false, true, 0x1002));
+    assert_eq!(h.reg(2), 0x21);
+    h.autoexec(AUTOEXEC_DATA[0]);
+    h.set_reg(1, 0xdead);
+    h.set_reg(2, 0xbeef);
+    h.data(0, 0x22);
+    assert_eq!(h.reg(2), 0x22, "the last command replays");
+    assert_eq!(h.reg(1), 0xdead, "the replaced command does not");
+}
+
 /// §3: a buffer exception is `cmderr` 3, stops before the next word, keeps
 /// earlier effects, and does not enter a guest handler.
 #[test]
@@ -277,9 +323,21 @@ fn buffer_exception_reports_cmderr_3_and_stops_before_the_next_word() {
     assert!(h.hart.in_debug_mode());
     assert_eq!(h.hart.dpc(), dpc, "no guest handler ran");
     let csr = &h.hart.state().csr;
-    assert_eq!(csr.read_as_machine(csr::machine::MCAUSE).unwrap(), mcause);
-    assert_eq!(csr.read_as_machine(csr::machine::MTVAL).unwrap(), mtval);
-    assert_eq!(csr.read_as_machine(csr::machine::MEPC).unwrap(), mepc);
+    assert_eq!(
+        csr.read_as_machine(csr::machine::MCAUSE).unwrap(),
+        mcause,
+        "a buffer exception must not enter a guest handler (mcause)"
+    );
+    assert_eq!(
+        csr.read_as_machine(csr::machine::MTVAL).unwrap(),
+        mtval,
+        "a buffer exception must not enter a guest handler (mtval)"
+    );
+    assert_eq!(
+        csr.read_as_machine(csr::machine::MEPC).unwrap(),
+        mepc,
+        "a buffer exception must not enter a guest handler (mepc)"
+    );
 }
 
 /// §2 D6: control transfers and PC-dependent instructions are `cmderr` 3 in
@@ -531,8 +589,14 @@ fn dm_reset_clears_command_state_and_keeps_the_hart_halted() {
         0,
         "abstractauto is cleared"
     );
+    h.autoexec(AUTOEXEC_DATA[0]);
+    h.set_reg(1, 0x55);
     h.data(0, 1);
-    assert_eq!(h.reg(1), 0, "the accepted command is forgotten");
+    assert_eq!(
+        h.reg(1),
+        0x55,
+        "DM reset forgot the accepted command, so nothing replays"
+    );
 }
 
 /// §3: a non-DM reset aborts an active command with `cmderr` 4 and keeps the
