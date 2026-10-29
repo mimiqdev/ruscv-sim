@@ -195,5 +195,56 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "pb-u2-progbuf-read-no-trigger",
+    "source": "src/dm/mod.rs",
+    "patch": "pb-u2-progbuf-read-no-trigger.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "pb_u2_dm_protocol"
+        ],
+        "test": "progbuf_read_returns_the_word_then_starts_the_command",
+        "failure": [
+          "the program-buffer read started the command"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "pb-u2-busy-progbuf-write",
+    "source": "src/dm/mod.rs",
+    "patch": "pb-u2-busy-progbuf-write.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "pb_u2_dm_protocol"
+        ],
+        "test": "busy_shows_in_abstractcs_and_a_busy_access_is_cmderr_1",
+        "failure": [
+          "a busy-time program-buffer write does not alter the active words"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "pb-u2-reset-keeps-last-command",
+    "source": "src/dm/mod.rs",
+    "patch": "pb-u2-reset-keeps-last-command.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "pb_u2_dm_protocol"
+        ],
+        "test": "dm_reset_clears_command_state_and_keeps_the_hart_halted",
+        "failure": [
+          "DM reset forgot the accepted command, so nothing replays"
+        ]
+      }
+    ]
   }
 ]

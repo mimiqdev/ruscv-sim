@@ -452,11 +452,15 @@ run_negative_datacount() {
         echo "datacount mutation did not announce itself" >&2
         return 1
     fi
+    # This control proves that datacount 2 hides data2/data3 from abstract
+    # Access Memory. The two-word program buffer can also carry the write, so
+    # this session restricts memory access to abstract only.
     openocd \
         -l "${dir}/openocd.log" \
         -c "set RBB_PORT ${port}" \
         -c "set GDB_PORT ${gdb_port}" \
         -f "${CFG}" \
+        -c "riscv set_mem_access abstract" \
         >"${dir}/openocd.stdout" 2>&1 &
     local openocd_pid=$!
     PIDS+=("${openocd_pid}")

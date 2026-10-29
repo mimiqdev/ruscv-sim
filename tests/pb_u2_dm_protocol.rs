@@ -260,18 +260,29 @@ fn abstractauto_reads_back_only_the_implemented_bits() {
     assert_eq!(h.dm.dmi_read(&mut h.hart, ABSTRACTAUTO), 0);
 }
 
-/// §3: a program-buffer read also captures its value before triggering.
+/// §3: a program-buffer read returns the staged word and then starts the
+/// last command. The command must be idle first, or the access is the busy
+/// error that this test is not measuring.
 #[test]
-fn progbuf_read_captures_the_word_before_triggering() {
+fn progbuf_read_returns_the_word_then_starts_the_command() {
     let mut h = Harness::halted();
     h.prog(0, addi(1, 1, 1));
+    h.run_command(access_register(3, false, true, false, 0));
+    assert_eq!(h.reg(1), 1, "the explicit command ran once");
+    assert!(!h.busy());
+
+    h.set_reg(1, 0);
     h.autoexec(AUTOEXEC_PROGBUF[0]);
-    h.command(access_register(3, false, true, false, 0));
-    assert!(h.busy());
-    assert_eq!(h.prog_word(0), addi(1, 1, 1), "the read returns the word");
+    assert_eq!(h.reg(1), 0, "the autoexec bit alone runs nothing");
+    assert_eq!(
+        h.prog_word(0),
+        addi(1, 1, 1),
+        "the read returns the word from before the trigger"
+    );
+    assert!(h.busy(), "the program-buffer read started the command");
     assert_eq!(h.reg(1), 0, "no word runs inside the read");
     h.run_busy();
-    assert_eq!(h.reg(1), 1, "the read started the command");
+    assert_eq!(h.reg(1), 1, "the triggered command ran");
 }
 
 /// §3: only the last accepted command is replayed.
@@ -348,7 +359,7 @@ fn control_transfers_and_auipc_are_cmderr_3() {
         0x0000_006f, // jal x0, 0
         0xffdf_f06f, // jal x0, -4
         0x0000_0097, // auipc x1, 0
-        0x0000_0063, // beq x0, x0, 0 (not taken target, still forbidden)
+        0x0020_8063, // beq x1, x2, 0 with x1 != x2: not taken, still forbidden
         0x0000_0067, // jalr x0, 0(x0)
         0x3020_0073, // mret
         0x1020_0073, // sret
@@ -395,10 +406,16 @@ fn busy_shows_in_abstractcs_and_a_busy_access_is_cmderr_1() {
         addi(1, 0, 4),
         "the buffer words are unchanged"
     );
+    h.prog(0, addi(1, 0, 99));
+    assert_eq!(
+        h.prog_word(0),
+        addi(1, 0, 4),
+        "a busy-time program-buffer write does not alter the active words"
+    );
 
     h.run_busy();
     assert!(!h.busy());
-    assert_eq!(h.reg(1), 7, "the command completed");
+    assert_eq!(h.reg(1), 7, "the command completed with its own words");
     assert_eq!(h.data_word(0), 0, "the busy-time data write was ignored");
     h.clear_cmderr();
     assert_eq!(h.cmderr(), 0);
@@ -571,8 +588,10 @@ fn internal_buffer_and_data_updates_do_not_retrigger() {
 #[test]
 fn dm_reset_clears_command_state_and_keeps_the_hart_halted() {
     let mut h = Harness::halted();
-    h.prog(0, addi(1, 1, 1));
     h.data(0, 0x1234);
+    // An accepted command whose replay would be visible if it survived.
+    h.run_command(access_register(3, true, false, true, 0x1001));
+    assert_eq!(h.reg(1), 0x1234);
     h.autoexec(0x0003_000f);
     h.command(access_register(3, false, true, false, 0));
     assert!(h.busy());
@@ -592,11 +611,12 @@ fn dm_reset_clears_command_state_and_keeps_the_hart_halted() {
     h.autoexec(AUTOEXEC_DATA[0]);
     h.set_reg(1, 0x55);
     h.data(0, 1);
-    assert_eq!(
-        h.reg(1),
-        0x55,
+    assert!(
+        !h.busy(),
         "DM reset forgot the accepted command, so nothing replays"
     );
+    assert_eq!(h.reg(1), 0x55, "the forgotten command did not replay");
+    assert_eq!(h.cmderr(), 0);
 }
 
 /// §3: a non-DM reset aborts an active command with `cmderr` 4 and keeps the
