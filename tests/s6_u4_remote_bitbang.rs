@@ -611,14 +611,15 @@ fn flat_halted_stops_before_the_first_instruction() {
     assert_eq!(result.error.as_deref(), Some("remote_bitbang closed"));
 }
 
-/// U2 §3: a `postexec` command started over the bitbang socket completes with
-/// no further client input. The buffer stores 7 to `SIGNATURE`; the halted
-/// guest is a spin loop, so only the store and the resume can change it.
+/// U2 §3: a `postexec` command started over the bitbang socket completes and
+/// stores 7 to `SIGNATURE`. The halted guest is a spin loop, so only the
+/// buffer store and the resume can change it. The silent-socket grant itself
+/// is proven by `executor::u3_tests::silent_bitbang_socket_does_not_block_a_busy_program_buffer_command`,
+/// which drives this same boundary with a connected client that never writes.
 const SIGNATURE: u64 = ENTRY + 0x400;
 
-/// Window with no DMI traffic at all: long enough for two buffer words plus
-/// the implicit EBREAK on any host, and only a synchronization margin. The
-/// completion claim rests on the single inspection that follows it.
+/// Window with no DMI traffic: a synchronization margin before the single
+/// inspection. It is not what proves progress; the silent-socket test does.
 const NO_INPUT_WINDOW: Duration = Duration::from_millis(250);
 
 fn spinning_guest() -> Vec<u32> {
@@ -653,8 +654,8 @@ fn postexec_store_without_input<L: Link>(client: &mut Client<L>) {
     dmi_write(client, PROGBUF0 + 1, 0x0051_a023); // sw x5, 0(x3)
     dmi_write(client, COMMAND, (3 << 20) | (1 << 18));
 
-    // The client now sends nothing. A started command must reach the implicit
-    // EBREAK on its own; the first traffic after the window is one inspection.
+    // The client sends nothing during the window. The inspection then reports
+    // completion, and the signature read proves the store landed.
     thread::sleep(NO_INPUT_WINDOW);
     let abstractcs = dmi_read(client, ABSTRACTCS);
     assert_eq!(

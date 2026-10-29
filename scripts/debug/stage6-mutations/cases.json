@@ -246,5 +246,21 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "pb-u2-bitbang-blocks-when-busy",
+    "source": "src/executor.rs",
+    "patch": "pb-u2-bitbang-blocks-when-busy.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "executor::u3_tests::silent_bitbang_socket_does_not_block_a_busy_program_buffer_command",
+        "failure": [
+          "a silent socket blocked the boundary instead of granting"
+        ]
+      }
+    ]
   }
 ]

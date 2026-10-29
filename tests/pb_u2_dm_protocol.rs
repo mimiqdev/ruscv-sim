@@ -366,6 +366,8 @@ fn control_transfers_and_auipc_are_cmderr_3() {
         0x7b20_0073, // dret
     ] {
         let mut h = Harness::halted();
+        // x1 = 0 and x2 = 1, so `beq x1, x2, 0` is not taken.
+        h.set_reg(2, 1);
         h.prog(0, word);
         h.prog(1, addi(1, 0, 9));
         h.run_command(access_register(3, false, true, false, 0));
