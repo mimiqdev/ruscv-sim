@@ -62,6 +62,9 @@ end
 set {unsigned int}((char *)&s6_pb32 + 0) = 0x11223344
 printf "U4 recovery=written\n"
 
+# The markers were set before the transfers, so GDB holds them in its register
+# cache. Drop that cache to read what the target really holds.
+maintenance flush register-cache
 python
 import gdb
 

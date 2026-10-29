@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Stage 6 U5. One OpenOCD 0.12.0 + GDB session performs every §7 item 5 row
 # against `run --rbb-port --halted`, then the same session against Spike.
-# Two negative mutations follow: dmstatus.version 4, and datacount 2.
+# Two discovery mutations for that session follow: dmstatus.version 4 and
+# datacount 2.
 #
 # Program-buffer U4 adds a second session that forces OpenOCD's program-buffer
 # memory path by enabling no other method. It transfers four adjacent values at
@@ -829,6 +830,14 @@ run_negative_progbuf_capacity() {
         echo "${label}: GDB did not report the refused write" >&2
         cat "${dir}/gdb.log" >&2 || true
         return 1
+    fi
+    if kill -0 "${target_pid}" 2>/dev/null; then
+        kill "${target_pid}" 2>/dev/null || true
+        wait "${target_pid}" 2>/dev/null || true
+    fi
+    if kill -0 "${openocd_pid}" 2>/dev/null; then
+        kill "${openocd_pid}" 2>/dev/null || true
+        wait "${openocd_pid}" 2>/dev/null || true
     fi
     echo "${label}: forced program-buffer access failed closed"
 }
