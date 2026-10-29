@@ -3,6 +3,11 @@
 # software breakpoint on the second addi, writes a2 and steps that addi, then
 # parks the hart on s6_spin. After `monitor reset halt` the same image runs
 # from _start to the tohost word.
+#
+# s6_pb64 through s6_pb8 are the four-word, naturally aligned arrays of the
+# U4 program-buffer session. It fills each array through OpenOCD's forced
+# program-buffer memory path, then reads the addresses and values back
+# through abstract Access Memory.
 
 .section .text
 .globl _start
@@ -31,6 +36,18 @@ s6_exit:
 .globl s6_scratch
 s6_scratch:
     .dword  0
+.globl s6_pb64
+s6_pb64:
+    .dword  0, 0, 0, 0
+.globl s6_pb32
+s6_pb32:
+    .word   0, 0, 0, 0
+.globl s6_pb16
+s6_pb16:
+    .half   0, 0, 0, 0
+.globl s6_pb8
+s6_pb8:
+    .byte   0, 0, 0, 0
 
 .section .tohost
 .align 3
