@@ -1,8 +1,8 @@
 --- a/src/executor.rs
 +++ b/src/executor.rs
-@@ -1552,7 +1552,7 @@
-                 .advance_debug_command()
-                 .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+@@ -1555,7 +1555,7 @@
+                     .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?,
+             );
          }
 -        let block = (wait_for_command || machine.debug_blocked()) && !busy;
 +        let block = wait_for_command || machine.debug_blocked();
