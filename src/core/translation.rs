@@ -64,6 +64,8 @@ enum Walk {
     AccessFault,
     /// A simulator-side failure that must never become a guest trap.
     Failure(SimulatorFailureKind, String),
+    /// Unknown physical completion: the Hart latches the sticky quarantine.
+    Unresolved(String),
 }
 
 /// The step-9 atomic conditional update of one leaf PTE.
@@ -136,6 +138,9 @@ impl RiscvCore {
                 instruction,
             )),
             Walk::Failure(kind, message) => Err(self.simulator_failure(faulting_pc, kind, message)),
+            Walk::Unresolved(message) => {
+                Err(self.unresolved_physical_failure(faulting_pc, message))
+            }
         }
     }
 
@@ -399,10 +404,9 @@ fn classify_walk_read(error: PhysicalAccessError) -> Walk {
             SimulatorFailureKind::Invariant,
             format!("Sv39 walk read protocol failure: {error}"),
         ),
-        PhysicalAccessError::UnknownCompletion(unknown) => Walk::Failure(
-            SimulatorFailureKind::HostBackend,
-            format!("Sv39 walk read: {unknown}"),
-        ),
+        PhysicalAccessError::UnknownCompletion(unknown) => {
+            Walk::Unresolved(format!("Sv39 walk read: {unknown}"))
+        }
     }
 }
 
@@ -417,10 +421,9 @@ fn classify_ad_update(error: AtomicAccessError) -> Walk {
             SimulatorFailureKind::Invariant,
             format!("Sv39 A/D update protocol failure: {error}"),
         ),
-        AtomicAccessError::UnknownCompletion(unknown) => Walk::Failure(
-            SimulatorFailureKind::HostBackend,
-            format!("Sv39 A/D update: {unknown}"),
-        ),
+        AtomicAccessError::UnknownCompletion(unknown) => {
+            Walk::Unresolved(format!("Sv39 A/D update: {unknown}"))
+        }
     }
 }
 

@@ -64,7 +64,7 @@
 //! ### Fence Operations
 //! - `FENCE`: Memory ordering (all `pred`/`succ`/`fm` encodings, including
 //!   `FENCE.TSO` and HINTs), a no-op on this synchronous single-Hart machine.
-//!   `FENCE.I` is Zifencei and remains unimplemented.
+//!   `FENCE.I` is Zifencei and retires as a no-op.
 
 pub mod alu;
 pub mod branch;
@@ -94,7 +94,7 @@ pub use store::exec_store;
 pub use branch::exec_branch;
 
 // Re-export FENCE (MISC-MEM) functions
-pub use fence::exec_fence;
+pub use fence::{exec_fence, exec_fence_i};
 
 // Re-export jump functions
 pub use jump::{exec_jal, exec_jalr};
@@ -183,6 +183,9 @@ pub fn execute(
             }
         }
         Opcode::System => exec_system(instr, state, mem),
+        Opcode::MiscMem if instr.funct3.map(|f| f as u8) == Some(1) => {
+            exec_fence_i(instr, state, mem)
+        }
         Opcode::MiscMem => exec_fence(instr, state, mem),
         _ => Err(crate::execute::ExecuteError::InvalidOperation),
     }

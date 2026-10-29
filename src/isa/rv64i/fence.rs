@@ -59,6 +59,21 @@ pub fn exec_fence(
     Ok(())
 }
 
+/// Execute `FENCE.I` (Zifencei MISC-MEM, `funct3 = 0b001`).
+///
+/// On this synchronous single-Hart model every store is already visible
+/// before the next instruction fetch, so the instruction is a no-op aside
+/// from PC advancement. It remains required so self-modifying sequences
+/// are legal on the ordinary guest path and in Debug Mode.
+#[inline]
+pub fn exec_fence_i(
+    _instr: &DecodedInstruction,
+    _state: &mut CoreState,
+    _mem: &mut dyn MemoryInterface,
+) -> Result<(), ExecuteError> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,31 +194,9 @@ mod tests {
     }
 
     #[test]
-    fn fence_i_is_not_base_i_and_is_an_illegal_instruction() {
-        // FENCE.I (Zifencei, funct3 = 0b001) decodes, and the Hart raises
-        // illegal-instruction because the profile does not claim Zifencei.
+    fn fence_i_is_legal_and_advances_pc() {
         const FENCE_I: u32 = 0x0000_100f;
-        let decoded = InstructionDecoder::new().decode(FENCE_I).unwrap();
-        assert_eq!(decoded.opcode, Opcode::MiscMem);
-
-        let mem = Arc::new(Mutex::new(SimpleMemory::new(0x100)));
-        mem.lock().unwrap().write_word(0, FENCE_I).unwrap();
-        let mut core = RiscvCore::new(mem.clone(), mem);
-        core.state_mut()
-            .csr
-            .write(crate::csr::machine::MTVEC, 0x40)
-            .unwrap();
-        assert!(matches!(
-            core.step_outcome(),
-            crate::core::StepOutcome::TrapEntered(_)
-        ));
-        let csr = &core.state().csr;
-        assert_eq!(csr.read(crate::csr::machine::MCAUSE).unwrap(), 2);
-        assert_eq!(
-            csr.read(crate::csr::machine::MTVAL).unwrap(),
-            FENCE_I as u64
-        );
-        assert_eq!(csr.read(crate::csr::machine::MINSTRET).unwrap(), 0);
-        assert_eq!(core.state().pc, 0x40);
+        assert_fence_decode_and_execute_is_noop(FENCE_I);
+        assert_fence_steps_pc_by_4(FENCE_I);
     }
 }

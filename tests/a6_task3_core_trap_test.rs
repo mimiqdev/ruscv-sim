@@ -604,12 +604,12 @@ fn reserved_op32_and_misc_mem_encodings_enter_illegal_instruction_traps() {
 }
 
 #[test]
-fn fence_i_enters_illegal_instruction_without_retiring() {
-    let raw = 0x0000_100f;
+fn reserved_misc_mem_enters_illegal_instruction_without_retiring() {
+    let raw = 0x0000_200f;
     let (mut core, _) = core_with_program(&[(0, raw)]);
     let outcome = core.step_outcome();
     let StepOutcome::TrapEntered(fact) = outcome else {
-        panic!("FENCE.I must enter a trap")
+        panic!("reserved MISC-MEM must enter a trap")
     };
     assert_eq!(
         fact.cause,
