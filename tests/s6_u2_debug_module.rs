@@ -100,11 +100,11 @@ fn bit(word: u32, index: u32) -> bool {
     word & (1 << index) != 0
 }
 
-fn dmstatus(dm: &DebugModule, hart: &RiscvCore) -> u32 {
+fn dmstatus(dm: &mut DebugModule, hart: &mut RiscvCore) -> u32 {
     dm.dmi_read(hart, DMSTATUS)
 }
 
-fn cmderr(dm: &DebugModule, hart: &RiscvCore) -> u32 {
+fn cmderr(dm: &mut DebugModule, hart: &mut RiscvCore) -> u32 {
     (dm.dmi_read(hart, ABSTRACTCS) >> 8) & 0b111
 }
 
@@ -141,7 +141,7 @@ fn set_word(dm: &mut DebugModule, hart: &mut RiscvCore, index: u8, value: u32) {
     dm.dmi_write(hart, DATA0 + index, value);
 }
 
-fn word(dm: &DebugModule, hart: &RiscvCore, index: u8) -> u32 {
+fn word(dm: &mut DebugModule, hart: &mut RiscvCore, index: u8) -> u32 {
     dm.dmi_read(hart, DATA0 + index)
 }
 
@@ -150,7 +150,7 @@ fn set_arg0(dm: &mut DebugModule, hart: &mut RiscvCore, value: u64) {
     set_word(dm, hart, 1, (value >> 32) as u32);
 }
 
-fn arg0(dm: &DebugModule, hart: &RiscvCore) -> u64 {
+fn arg0(dm: &mut DebugModule, hart: &mut RiscvCore) -> u64 {
     u64::from(word(dm, hart, 0)) | (u64::from(word(dm, hart, 1)) << 32)
 }
 
@@ -159,7 +159,7 @@ fn set_arg1(dm: &mut DebugModule, hart: &mut RiscvCore, value: u64) {
     set_word(dm, hart, 3, (value >> 32) as u32);
 }
 
-fn arg1(dm: &DebugModule, hart: &RiscvCore) -> u64 {
+fn arg1(dm: &mut DebugModule, hart: &mut RiscvCore) -> u64 {
     u64::from(word(dm, hart, 2)) | (u64::from(word(dm, hart, 3)) << 32)
 }
 
@@ -216,13 +216,13 @@ fn ram_word(ram: &Mutex<SimpleMemory>, offset: u64) -> u32 {
 #[test]
 fn version_discovery_reads_dmstatus_version_3() {
     let (mut dm, mut hart, _) = harness();
-    assert_eq!(dm.dmi_read(&hart, DMCONTROL), 0);
-    assert_eq!(dm.dmi_read(&hart, DMSTATUS), 0, "dmactive 0 reads as 0");
+    assert_eq!(dm.dmi_read(&mut hart, DMCONTROL), 0);
+    assert_eq!(dm.dmi_read(&mut hart, DMSTATUS), 0, "dmactive 0 reads as 0");
 
     // §3.13: preserve hartsel, set dmactive, clear every other bit.
     let hartsel = 0x15;
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | hartsel_field(hartsel));
-    let control = dm.dmi_read(&hart, DMCONTROL);
+    let control = dm.dmi_read(&mut hart, DMCONTROL);
     assert_eq!(control & 1, 1, "dmactive");
     assert_eq!(hartsel_of(control), hartsel);
     assert_eq!(
@@ -231,10 +231,13 @@ fn version_discovery_reads_dmstatus_version_3() {
         "discovery clears haltreq, resumereq, and ndmreset"
     );
 
-    let status = dmstatus(&dm, &hart);
+    let status = dmstatus(&mut dm, &mut hart);
     assert_eq!(status & 0xf, 3, "version");
     assert!(bit(status, 7), "authenticated");
-    assert!(!bit(status, 22), "impebreak");
+    assert!(
+        bit(status, 22),
+        "impebreak: the implicit EBREAK is advertised"
+    );
 }
 
 /// §7 item 2: `aarsize` 4 returns `cmderr` 2. Also aarsize 0, 1, and 5–7,
@@ -250,7 +253,7 @@ fn aarsize_4_is_cmderr_2() {
         &mut hart,
         access_register(4, false, false, true, false, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 2);
+    assert_eq!(cmderr(&mut dm, &mut hart), 2);
     assert_eq!(hart.state().regs[1], before);
 
     clear_cmderr(&mut dm, &mut hart);
@@ -260,26 +263,9 @@ fn aarsize_4_is_cmderr_2() {
             &mut hart,
             access_register(size, false, false, true, true, 0x1001),
         );
-        assert_eq!(cmderr(&dm, &hart), 2, "aarsize {size}");
+        assert_eq!(cmderr(&mut dm, &mut hart), 2, "aarsize {size}");
         clear_cmderr(&mut dm, &mut hart);
     }
-}
-
-/// §7 item 2: `postexec` returns `cmderr` 2. `progbufsize` is 0, so 0 is the
-/// only supported value (Debug Spec 1.0 §3.7.1.1).
-#[test]
-fn postexec_is_cmderr_2() {
-    let (mut dm, mut hart, _) = ready();
-    enter_halt(&mut dm, &mut hart);
-    let pc = hart.state().pc;
-    issue(
-        &mut dm,
-        &mut hart,
-        access_register(3, false, true, false, false, 0x1001),
-    );
-    assert_eq!(cmderr(&dm, &hart), 2);
-    assert_eq!(hart.state().pc, pc);
-    assert!(hart.in_debug_mode());
 }
 
 /// `aarpostincrement` is optional and not implemented. Debug Spec 1.0 §3.7.1.1.
@@ -293,9 +279,13 @@ fn aarpostincrement_is_cmderr_2() {
         &mut hart,
         access_register(3, true, false, true, false, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 2);
+    assert_eq!(cmderr(&mut dm, &mut hart), 2);
     assert_eq!(hart.state().regs[1], 0x11);
-    assert_eq!(arg0(&dm, &hart), 0, "failed command does not write data");
+    assert_eq!(
+        arg0(&mut dm, &mut hart),
+        0,
+        "failed command does not write data"
+    );
 }
 
 /// §7 item 2: an FPR regno returns `cmderr` 3 because the register does not
@@ -310,7 +300,7 @@ fn fpr_regno_is_cmderr_3() {
             &mut hart,
             access_register(3, false, false, true, false, regno),
         );
-        assert_eq!(cmderr(&dm, &hart), 3, "regno {regno:#x}");
+        assert_eq!(cmderr(&mut dm, &mut hart), 3, "regno {regno:#x}");
         clear_cmderr(&mut dm, &mut hart);
     }
     issue(
@@ -318,7 +308,11 @@ fn fpr_regno_is_cmderr_3() {
         &mut hart,
         access_register(3, false, false, false, false, 0x1020),
     );
-    assert_eq!(cmderr(&dm, &hart), 0, "transfer 0 skips the regno check");
+    assert_eq!(
+        cmderr(&mut dm, &mut hart),
+        0,
+        "transfer 0 skips the regno check"
+    );
 }
 
 /// §7 item 2: `aamvirtual` 1 returns `cmderr` 2 (Debug Spec 1.0 §3.7.1.3).
@@ -334,13 +328,13 @@ fn aamvirtual_is_cmderr_2() {
     set_arg0(&mut dm, &mut hart, 0x1111_1111);
     set_arg1(&mut dm, &mut hart, RAM_BASE + 0x1000);
     issue(&mut dm, &mut hart, access_memory(true, 2, false, true));
-    assert_eq!(cmderr(&dm, &hart), 2);
+    assert_eq!(cmderr(&mut dm, &mut hart), 2);
     assert_eq!(ram_word(&ram, 0x1000), 0x89ab_cdef);
 
     clear_cmderr(&mut dm, &mut hart);
     for size in 4..8 {
         issue(&mut dm, &mut hart, access_memory(false, size, false, false));
-        assert_eq!(cmderr(&dm, &hart), 2, "aamsize {size}");
+        assert_eq!(cmderr(&mut dm, &mut hart), 2, "aamsize {size}");
         clear_cmderr(&mut dm, &mut hart);
     }
     // Bits 18:17 and 13:0 are defined 0. Bits 15:14 are target-specific
@@ -351,7 +345,7 @@ fn aamvirtual_is_cmderr_2() {
         &mut hart,
         access_memory(false, 2, false, false) | (1 << 17) | (1 << 14),
     );
-    assert_eq!(cmderr(&dm, &hart), 2, "defined-0 control bits");
+    assert_eq!(cmderr(&mut dm, &mut hart), 2, "defined-0 control bits");
 }
 
 /// A physical read with `MPRV` and Sv39 still uses the physical address.
@@ -390,22 +384,22 @@ fn access_memory_without_a_data_port_uses_the_legacy_hart_path() {
 
     set_arg1(&mut dm, &mut hart, 0x100);
     issue(&mut dm, &mut hart, access_memory(false, 2, false, false));
-    assert_eq!(cmderr(&dm, &hart), 0, "M-mode can read this word");
-    assert_eq!(arg0(&dm, &hart), 0xa5a5_5a5a);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0, "M-mode can read this word");
+    assert_eq!(arg0(&mut dm, &mut hart), 0xa5a5_5a5a);
 
     set_arg0(&mut dm, &mut hart, 0x1122_3344);
     issue(&mut dm, &mut hart, access_memory(false, 2, false, true));
-    assert_eq!(cmderr(&dm, &hart), 0, "M-mode can store this word");
+    assert_eq!(cmderr(&mut dm, &mut hart), 0, "M-mode can store this word");
     assert_eq!(mem.lock().unwrap().read_word(0x100).unwrap(), 0x1122_3344);
 
     set_arg1(&mut dm, &mut hart, 0x101);
     issue(&mut dm, &mut hart, access_memory(false, 2, true, true));
     assert_eq!(
-        cmderr(&dm, &hart),
+        cmderr(&mut dm, &mut hart),
         3,
         "a misaligned M-mode store still faults"
     );
-    assert_eq!(arg1(&dm, &hart), 0x101, "no postincrement");
+    assert_eq!(arg1(&mut dm, &mut hart), 0x101, "no postincrement");
     assert_eq!(mem.lock().unwrap().read_word(0x100).unwrap(), 0x1122_3344);
 }
 
@@ -424,7 +418,11 @@ fn supported_command_while_running_is_cmderr_4() {
         &mut hart,
         access_register(4, false, false, true, true, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 2, "unsupported wins over not-halted");
+    assert_eq!(
+        cmderr(&mut dm, &mut hart),
+        2,
+        "unsupported wins over not-halted"
+    );
     clear_cmderr(&mut dm, &mut hart);
 
     set_arg0(&mut dm, &mut hart, 0x99);
@@ -433,14 +431,14 @@ fn supported_command_while_running_is_cmderr_4() {
         &mut hart,
         access_register(3, false, false, true, true, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 4);
+    assert_eq!(cmderr(&mut dm, &mut hart), 4);
     assert_eq!(hart.state().regs[1], 0x55);
     clear_cmderr(&mut dm, &mut hart);
 
     set_arg0(&mut dm, &mut hart, 0x1111_1111);
     set_arg1(&mut dm, &mut hart, RAM_BASE + 0x1000);
     issue(&mut dm, &mut hart, access_memory(false, 2, false, true));
-    assert_eq!(cmderr(&dm, &hart), 4);
+    assert_eq!(cmderr(&mut dm, &mut hart), 4);
     assert_eq!(ram_word(&ram, 0x1000), 0x0102_0304);
 }
 
@@ -457,28 +455,32 @@ fn cmderr_w1c_clears_written_bits() {
         &mut hart,
         access_register(4, false, false, true, false, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 2);
+    assert_eq!(cmderr(&mut dm, &mut hart), 2);
     dm.dmi_write(&mut hart, ABSTRACTCS, 1 << 8);
-    assert_eq!(cmderr(&dm, &hart), 2, "bit 0 is already clear");
+    assert_eq!(cmderr(&mut dm, &mut hart), 2, "bit 0 is already clear");
     dm.dmi_write(&mut hart, ABSTRACTCS, 0);
-    assert_eq!(cmderr(&dm, &hart), 2, "writing 0 clears nothing");
+    assert_eq!(cmderr(&mut dm, &mut hart), 2, "writing 0 clears nothing");
     dm.dmi_write(&mut hart, ABSTRACTCS, 2 << 8);
-    assert_eq!(cmderr(&dm, &hart), 0, "writing the set bit clears it");
+    assert_eq!(
+        cmderr(&mut dm, &mut hart),
+        0,
+        "writing the set bit clears it"
+    );
 
     issue(
         &mut dm,
         &mut hart,
         access_register(3, false, false, true, false, 0x1020),
     );
-    assert_eq!(cmderr(&dm, &hart), 3);
+    assert_eq!(cmderr(&mut dm, &mut hart), 3);
     dm.dmi_write(&mut hart, ABSTRACTCS, 1 << 8);
     assert_eq!(
-        cmderr(&dm, &hart),
+        cmderr(&mut dm, &mut hart),
         2,
         "writing 1 clears only bit 0 of cmderr 3"
     );
     dm.dmi_write(&mut hart, ABSTRACTCS, 7 << 8);
-    assert_eq!(cmderr(&dm, &hart), 0);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
 
     clear_cmderr(&mut dm, &mut hart);
     // Drop out of Debug Mode is unnecessary: a running command needs the
@@ -489,11 +491,11 @@ fn cmderr_w1c_clears_written_bits() {
         &mut hart,
         access_register(3, false, false, true, false, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 4);
+    assert_eq!(cmderr(&mut dm, &mut hart), 4);
     dm.dmi_write(&mut hart, ABSTRACTCS, 1 << 8);
-    assert_eq!(cmderr(&dm, &hart), 4, "cmderr 4 has bit 0 clear");
+    assert_eq!(cmderr(&mut dm, &mut hart), 4, "cmderr 4 has bit 0 clear");
     dm.dmi_write(&mut hart, ABSTRACTCS, 7 << 8);
-    assert_eq!(cmderr(&dm, &hart), 0);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
 }
 
 /// §7 item 2: GPR and CSR round-trips honor WARL, including `misa`.
@@ -522,13 +524,13 @@ fn gpr_and_csr_round_trip_honors_warl() {
         &mut hart,
         access_register(3, false, false, true, true, 0x1005),
     );
-    assert_eq!(cmderr(&dm, &hart), 0);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
     issue(
         &mut dm,
         &mut hart,
         access_register(3, false, false, true, false, 0x1005),
     );
-    assert_eq!(arg0(&dm, &hart), gpr);
+    assert_eq!(arg0(&mut dm, &mut hart), gpr);
     assert_eq!(hart.state().regs[5], gpr);
 
     set_arg0(&mut dm, &mut hart, u64::MAX);
@@ -537,13 +539,13 @@ fn gpr_and_csr_round_trip_honors_warl() {
         &mut hart,
         access_register(3, false, false, true, true, 0x301),
     );
-    assert_eq!(cmderr(&dm, &hart), 0, "misa write retires");
+    assert_eq!(cmderr(&mut dm, &mut hart), 0, "misa write retires");
     issue(
         &mut dm,
         &mut hart,
         access_register(3, false, false, true, false, 0x301),
     );
-    assert_eq!(arg0(&dm, &hart), csr::MISA_VALUE);
+    assert_eq!(arg0(&mut dm, &mut hart), csr::MISA_VALUE);
 
     set_arg0(
         &mut dm,
@@ -555,13 +557,17 @@ fn gpr_and_csr_round_trip_honors_warl() {
         &mut hart,
         access_register(3, false, false, true, true, 0x300),
     );
-    assert_eq!(cmderr(&dm, &hart), 0, "mstatus write from U-mode halt");
+    assert_eq!(
+        cmderr(&mut dm, &mut hart),
+        0,
+        "mstatus write from U-mode halt"
+    );
     issue(
         &mut dm,
         &mut hart,
         access_register(3, false, false, true, false, 0x300),
     );
-    let mstatus_after = arg0(&dm, &hart);
+    let mstatus_after = arg0(&mut dm, &mut hart);
     assert_eq!(
         (mstatus_after & mstatus::MPP) >> mstatus::MPP_SHIFT,
         3,
@@ -574,7 +580,7 @@ fn gpr_and_csr_round_trip_honors_warl() {
         &mut hart,
         access_register(3, false, false, true, true, u32::from(supervisor::SSTATUS)),
     );
-    assert_eq!(cmderr(&dm, &hart), 0);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
     let merged = hart.state().csr.read_as_machine(machine::MSTATUS).unwrap();
     assert_ne!(merged & mstatus::SIE, 0, "sstatus merges into mstatus");
 
@@ -585,13 +591,13 @@ fn gpr_and_csr_round_trip_honors_warl() {
         &mut hart,
         access_register(3, false, false, true, true, 0x7b0),
     );
-    assert_eq!(cmderr(&dm, &hart), 0);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
     issue(
         &mut dm,
         &mut hart,
         access_register(3, false, false, true, false, 0x7b0),
     );
-    let dcsr_after = arg0(&dm, &hart);
+    let dcsr_after = arg0(&mut dm, &mut hart);
     assert_eq!(dcsr_after, dcsr | (1 << 15) | (1 << 2));
     assert_eq!(dcsr_after & 0b11, 0, "prv stays U");
     assert_eq!((dcsr_after >> 28) & 0xf, 4, "debugver");
@@ -602,14 +608,14 @@ fn gpr_and_csr_round_trip_honors_warl() {
         &mut hart,
         access_register(3, false, false, true, true, 0x7b1),
     );
-    assert_eq!(cmderr(&dm, &hart), 0);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
     issue(
         &mut dm,
         &mut hart,
         access_register(3, false, false, true, false, 0x7b1),
     );
     assert_eq!(
-        arg0(&dm, &hart),
+        arg0(&mut dm, &mut hart),
         RAM_BASE,
         "dpc bits 1:0 are read-only zero"
     );
@@ -620,7 +626,7 @@ fn gpr_and_csr_round_trip_honors_warl() {
         &mut hart,
         access_register(3, false, false, true, true, 0xf11),
     );
-    assert_eq!(cmderr(&dm, &hart), 3, "mvendorid is read-only");
+    assert_eq!(cmderr(&mut dm, &mut hart), 3, "mvendorid is read-only");
     clear_cmderr(&mut dm, &mut hart);
 
     assert_eq!(
@@ -648,12 +654,20 @@ fn plic_claim_read_consumes_the_claim() {
 
     set_arg1(&mut dm, &mut hart, PLIC_CLAIM0);
     issue(&mut dm, &mut hart, access_memory(false, 3, false, false));
-    assert_eq!(cmderr(&dm, &hart), 3, "8-byte claim address is misaligned");
+    assert_eq!(
+        cmderr(&mut dm, &mut hart),
+        3,
+        "8-byte claim address is misaligned"
+    );
     clear_cmderr(&mut dm, &mut hart);
 
     set_arg1(&mut dm, &mut hart, PLIC_CLAIM0);
     issue(&mut dm, &mut hart, access_memory(false, 0, false, false));
-    assert_eq!(cmderr(&dm, &hart), 3, "PLIC rejects a 1-byte access");
+    assert_eq!(
+        cmderr(&mut dm, &mut hart),
+        3,
+        "PLIC rejects a 1-byte access"
+    );
     clear_cmderr(&mut dm, &mut hart);
 
     assert_eq!(
@@ -689,9 +703,9 @@ fn misaligned_access_is_cmderr_3_and_does_not_trap() {
     set_arg0(&mut dm, &mut hart, 0xffff_ffff_ffff_ffff);
     set_arg1(&mut dm, &mut hart, RAM_BASE + 0x1004);
     issue(&mut dm, &mut hart, access_memory(false, 3, true, true));
-    assert_eq!(cmderr(&dm, &hart), 3);
+    assert_eq!(cmderr(&mut dm, &mut hart), 3);
     assert_eq!(
-        arg1(&dm, &hart),
+        arg1(&mut dm, &mut hart),
         RAM_BASE + 0x1004,
         "no postincrement on failure"
     );
@@ -699,7 +713,7 @@ fn misaligned_access_is_cmderr_3_and_does_not_trap() {
 
     set_arg1(&mut dm, &mut hart, RAM_BASE + 0x1001);
     issue(&mut dm, &mut hart, access_memory(false, 2, false, false));
-    assert_eq!(cmderr(&dm, &hart), 3);
+    assert_eq!(cmderr(&mut dm, &mut hart), 3);
 
     assert_eq!(
         ram.lock().unwrap().read_dword(0x1000).unwrap(),
@@ -740,7 +754,7 @@ fn hart_1_sets_anynonexistent_and_clears_other_status() {
         DMCONTROL,
         DMACTIVE | hartsel_field(1) | ACKHAVERESET | HALTREQ,
     );
-    let status = dmstatus(&dm, &hart);
+    let status = dmstatus(&mut dm, &mut hart);
     assert!(bit(status, 15) && bit(status, 14), "nonexistent");
     for index in [8, 9, 10, 11, 12, 13, 16, 17, 18, 19] {
         assert!(
@@ -752,7 +766,7 @@ fn hart_1_sets_anynonexistent_and_clears_other_status() {
     assert!(hart.in_debug_mode());
 
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE);
-    let back = dmstatus(&dm, &hart);
+    let back = dmstatus(&mut dm, &mut hart);
     assert!(
         bit(back, 18) && bit(back, 19),
         "ackhavereset for hart 1 does not clear hart 0"
@@ -760,7 +774,7 @@ fn hart_1_sets_anynonexistent_and_clears_other_status() {
     assert!(!bit(back, 14) && !bit(back, 15));
 
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | hartsel_field(1 << 10));
-    let high = dmstatus(&dm, &hart);
+    let high = dmstatus(&mut dm, &mut hart);
     assert!(bit(high, 14) && bit(high, 15), "any nonzero hartsel");
 }
 
@@ -774,25 +788,25 @@ fn hart_1_sets_anynonexistent_and_clears_other_status() {
 fn havereset_sticks_until_ackhavereset() {
     let (mut dm, mut hart, _) = ready();
     activate(&mut dm, &mut hart);
-    let status = dmstatus(&dm, &hart);
+    let status = dmstatus(&mut dm, &mut hart);
     assert!(bit(status, 18) && bit(status, 19));
-    assert!(bit(dmstatus(&dm, &hart), 18) && bit(dmstatus(&dm, &hart), 19));
+    assert!(bit(dmstatus(&mut dm, &mut hart), 18) && bit(dmstatus(&mut dm, &mut hart), 19));
 
     dm.dmi_write(&mut hart, DMCONTROL, 0);
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE);
     assert!(
-        bit(dmstatus(&dm, &hart), 18) && bit(dmstatus(&dm, &hart), 19),
+        bit(dmstatus(&mut dm, &mut hart), 18) && bit(dmstatus(&mut dm, &mut hart), 19),
         "dmactive edges do not clear or set havereset"
     );
 
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | ACKHAVERESET);
-    assert!(!bit(dmstatus(&dm, &hart), 18) && !bit(dmstatus(&dm, &hart), 19));
-    assert!(!bit(dmstatus(&dm, &hart), 18));
+    assert!(!bit(dmstatus(&mut dm, &mut hart), 18) && !bit(dmstatus(&mut dm, &mut hart), 19));
+    assert!(!bit(dmstatus(&mut dm, &mut hart), 18));
 
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | NDMRESET);
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE);
     assert!(
-        !bit(dmstatus(&dm, &hart), 18) && !bit(dmstatus(&dm, &hart), 19),
+        !bit(dmstatus(&mut dm, &mut hart), 18) && !bit(dmstatus(&mut dm, &mut hart), 19),
         "ndmreset falling edge does not set havereset"
     );
 }
@@ -803,13 +817,17 @@ fn havereset_sticks_until_ackhavereset() {
 fn datacount_is_4_and_address_uses_data3() {
     let (mut dm, mut hart, ram) = ready();
     enter_halt(&mut dm, &mut hart);
-    let abstractcs = dm.dmi_read(&hart, ABSTRACTCS);
+    let abstractcs = dm.dmi_read(&mut hart, ABSTRACTCS);
     assert_eq!(abstractcs & 0xf, 4, "datacount");
-    assert_eq!((abstractcs >> 24) & 0x1f, 0, "progbufsize");
+    assert_eq!((abstractcs >> 24) & 0x1f, 2, "progbufsize");
     assert!(!bit(abstractcs, 12), "busy");
     dm.dmi_write(&mut hart, ABSTRACTCS, 1 << 11);
-    assert_eq!(dm.dmi_read(&hart, ABSTRACTCS) & (1 << 11), 0, "relaxedpriv");
-    let info = dm.dmi_read(&hart, HARTINFO);
+    assert_eq!(
+        dm.dmi_read(&mut hart, ABSTRACTCS) & (1 << 11),
+        0,
+        "relaxedpriv"
+    );
+    let info = dm.dmi_read(&mut hart, HARTINFO);
     assert_eq!((info >> 20) & 0xf, 2, "nscratch");
     assert!(!bit(info, 16), "dataaccess");
 
@@ -818,14 +836,18 @@ fn datacount_is_4_and_address_uses_data3() {
     set_word(&mut dm, &mut hart, 3, 0);
     set_word(&mut dm, &mut hart, 0, 0);
     issue(&mut dm, &mut hart, access_memory(false, 2, false, false));
-    assert_eq!(cmderr(&dm, &hart), 0);
-    assert_eq!(word(&dm, &hart, 0), 0xa5a5_5a5a);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
+    assert_eq!(word(&mut dm, &mut hart, 0), 0xa5a5_5a5a);
 
     set_word(&mut dm, &mut hart, 3, 1);
     set_word(&mut dm, &mut hart, 0, 0);
     issue(&mut dm, &mut hart, access_memory(false, 2, false, false));
-    assert_ne!(word(&dm, &hart, 0), 0xa5a5_5a5a);
-    assert_eq!(cmderr(&dm, &hart), 3, "data3 selects a different address");
+    assert_ne!(word(&mut dm, &mut hart, 0), 0xa5a5_5a5a);
+    assert_eq!(
+        cmderr(&mut dm, &mut hart),
+        3,
+        "data3 selects a different address"
+    );
 }
 
 /// A `command` write is ignored while `cmderr` is not 0 (Debug Spec 1.0 §3.14).
@@ -838,7 +860,7 @@ fn command_is_ignored_while_cmderr_is_set() {
         &mut hart,
         access_register(4, false, false, true, false, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 2);
+    assert_eq!(cmderr(&mut dm, &mut hart), 2);
     hart.state_mut().regs[1] = 5;
     set_arg0(&mut dm, &mut hart, 99);
     issue(
@@ -846,32 +868,40 @@ fn command_is_ignored_while_cmderr_is_set() {
         &mut hart,
         access_register(3, false, false, true, true, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 2);
+    assert_eq!(cmderr(&mut dm, &mut hart), 2);
     assert_eq!(hart.state().regs[1], 5);
-    assert_eq!(arg0(&dm, &hart), 99);
+    assert_eq!(arg0(&mut dm, &mut hart), 99);
 }
 
 /// `abstractauto` is unimplemented. A `data0` access does not replay `command`.
+/// `abstractauto.autoexecdata[0]` replays the last command on a `data0`
+/// write. Only implemented bits are writable (Debug Spec 1.0 §3.14).
 #[test]
-fn abstractauto_is_unimplemented() {
+fn abstractauto_replays_the_last_command_on_data0() {
     let (mut dm, mut hart, _) = ready();
     enter_halt(&mut dm, &mut hart);
     hart.state_mut().regs[1] = 5;
     dm.dmi_write(&mut hart, ABSTRACTAUTO, 1);
-    assert_eq!(dm.dmi_read(&hart, ABSTRACTAUTO), 0);
+    assert_eq!(dm.dmi_read(&mut hart, ABSTRACTAUTO), 1);
     set_arg0(&mut dm, &mut hart, 99);
-    assert_eq!(arg0(&dm, &hart), 99);
-    assert_eq!(hart.state().regs[1], 5);
+    assert_eq!(arg0(&mut dm, &mut hart), 99);
+    assert_eq!(hart.state().regs[1], 5, "no command has been accepted yet");
 
     issue(
         &mut dm,
         &mut hart,
-        access_register(3, false, false, true, false, 0x1001),
+        access_register(3, false, false, true, true, 0x1001),
     );
-    assert_eq!(arg0(&dm, &hart), 5);
+    assert_eq!(hart.state().regs[1], 99, "the write command ran");
     set_arg0(&mut dm, &mut hart, 7);
-    assert_eq!(hart.state().regs[1], 5, "writing data0 does not replay");
-    assert_eq!(dm.dmi_read(&hart, DATA0), 7);
+    assert_eq!(hart.state().regs[1], 7, "writing data0 replays the command");
+    set_arg0(&mut dm, &mut hart, 8);
+    assert_eq!(
+        hart.state().regs[1],
+        8,
+        "the replay repeats on every access"
+    );
+    assert_eq!(dm.dmi_read(&mut hart, DATA0), 8);
 }
 
 /// Quick Access is `cmdtype` 1 and returns `cmderr` 2 (Debug Spec 1.0 §3.7.1).
@@ -881,13 +911,13 @@ fn quick_access_is_cmderr_2() {
     activate(&mut dm, &mut hart);
     hart.state_mut().regs[1] = 5;
     issue(&mut dm, &mut hart, 1 << 24);
-    assert_eq!(cmderr(&dm, &hart), 2);
+    assert_eq!(cmderr(&mut dm, &mut hart), 2);
     assert_eq!(hart.state().regs[1], 5);
     assert!(!hart.in_debug_mode());
     clear_cmderr(&mut dm, &mut hart);
     enter_halt(&mut dm, &mut hart);
     issue(&mut dm, &mut hart, 1 << 24);
-    assert_eq!(cmderr(&dm, &hart), 2);
+    assert_eq!(cmderr(&mut dm, &mut hart), 2);
     assert_eq!(hart.state().regs[1], 5);
 }
 
@@ -902,8 +932,8 @@ fn unimplemented_csr_is_cmderr_3() {
         &mut hart,
         access_register(3, false, false, true, false, 0x7a0),
     );
-    assert_eq!(cmderr(&dm, &hart), 3);
-    assert_eq!(arg0(&dm, &hart), 0);
+    assert_eq!(cmderr(&mut dm, &mut hart), 3);
+    assert_eq!(arg0(&mut dm, &mut hart), 0);
     assert_eq!(hart.state().pc, pc);
     assert!(hart.in_debug_mode());
     assert_eq!(hart.state().csr.read_as_machine(machine::MEPC).unwrap(), 0);
@@ -924,7 +954,7 @@ fn x0_read_is_zero_and_write_is_ignored() {
         &mut hart,
         access_register(3, false, false, true, true, 0x1000),
     );
-    assert_eq!(cmderr(&dm, &hart), 0);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
     assert_eq!(hart.state().regs[0], 0);
     set_arg0(&mut dm, &mut hart, 0xffff);
     issue(
@@ -932,7 +962,7 @@ fn x0_read_is_zero_and_write_is_ignored() {
         &mut hart,
         access_register(3, false, false, true, false, 0x1000),
     );
-    assert_eq!(arg0(&dm, &hart), 0);
+    assert_eq!(arg0(&mut dm, &mut hart), 0);
 }
 
 /// `aarsize` 2 updates bits 31:0 and preserves bits 63:32. The spec leaves
@@ -949,18 +979,18 @@ fn aarsize_2_preserves_high_half() {
         &mut hart,
         access_register(2, false, false, true, true, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 0);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
     assert_eq!(hart.state().regs[1], 0xaaaa_bbbb_1111_1111);
-    assert_eq!(word(&dm, &hart, 1), 0x7777_7777);
+    assert_eq!(word(&mut dm, &mut hart, 1), 0x7777_7777);
 
     issue(
         &mut dm,
         &mut hart,
         access_register(2, false, false, true, false, 0x1001),
     );
-    assert_eq!(word(&dm, &hart, 0), 0x1111_1111);
+    assert_eq!(word(&mut dm, &mut hart, 0), 0x1111_1111);
     assert_eq!(
-        word(&dm, &hart, 1),
+        word(&mut dm, &mut hart, 1),
         0x7777_7777,
         "a size-2 read leaves data1"
     );
@@ -976,14 +1006,14 @@ fn aampostincrement_advances_data2_only_on_success() {
     set_arg1(&mut dm, &mut hart, RAM_BASE + 0x1000);
     set_arg0(&mut dm, &mut hart, 0);
     issue(&mut dm, &mut hart, access_memory(false, 2, true, false));
-    assert_eq!(cmderr(&dm, &hart), 0);
-    assert_eq!(arg0(&dm, &hart), 0x0102_0304);
-    assert_eq!(arg1(&dm, &hart), RAM_BASE + 0x1004);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
+    assert_eq!(arg0(&mut dm, &mut hart), 0x0102_0304);
+    assert_eq!(arg1(&mut dm, &mut hart), RAM_BASE + 0x1004);
 
     set_arg1(&mut dm, &mut hart, RAM_BASE + 0x1001);
     issue(&mut dm, &mut hart, access_memory(false, 2, true, false));
-    assert_eq!(cmderr(&dm, &hart), 3);
-    assert_eq!(arg1(&dm, &hart), RAM_BASE + 0x1001);
+    assert_eq!(cmderr(&mut dm, &mut hart), 3);
+    assert_eq!(arg1(&mut dm, &mut hart), RAM_BASE + 0x1001);
 }
 
 /// `ndmreset` is stored. It does not reset the hart (that is U3).
@@ -1009,7 +1039,7 @@ fn ndmreset_does_not_change_the_hart() {
     );
     assert_eq!(ram_word(&ram, 0x1000), 0xabc);
     assert!(hart.in_debug_mode(), "the hart latch stays halted");
-    let status = dmstatus(&dm, &hart);
+    let status = dmstatus(&mut dm, &mut hart);
     assert!(bit(status, 24), "ndmresetpending");
     assert!(bit(status, 12) && bit(status, 13), "unavailable");
     assert!(
@@ -1022,11 +1052,11 @@ fn ndmreset_does_not_change_the_hart() {
         &mut hart,
         access_register(3, false, false, true, false, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 4);
+    assert_eq!(cmderr(&mut dm, &mut hart), 4);
     assert_eq!(hart.state().regs[1], 0x77);
 
     assert!(
-        bit(dmstatus(&dm, &hart), 16) && bit(dmstatus(&dm, &hart), 17),
+        bit(dmstatus(&mut dm, &mut hart), 16) && bit(dmstatus(&mut dm, &mut hart), 17),
         "resumeack is still the reset value before this write"
     );
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | NDMRESET | RESUMEREQ);
@@ -1036,14 +1066,17 @@ fn ndmreset_does_not_change_the_hart() {
     );
     // Debug Spec 1.0 §3.5: writing resumereq clears the selected hart's
     // resume ack even when the previous ndmreset bit blocks the resume.
-    assert!(!bit(dmstatus(&dm, &hart), 16) && !bit(dmstatus(&dm, &hart), 17));
+    assert!(!bit(dmstatus(&mut dm, &mut hart), 16) && !bit(dmstatus(&mut dm, &mut hart), 17));
 
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | HALTREQ);
     assert_eq!(hart.state().regs[1], 0x77);
     assert_eq!(hart.dpc(), RAM_BASE + 0x20);
     assert_eq!(ram_word(&ram, 0x1000), 0xabc);
-    assert!(!bit(dmstatus(&dm, &hart), 24));
-    assert!(bit(dmstatus(&dm, &hart), 8), "halted once ndmreset drops");
+    assert!(!bit(dmstatus(&mut dm, &mut hart), 24));
+    assert!(
+        bit(dmstatus(&mut dm, &mut hart), 8),
+        "halted once ndmreset drops"
+    );
 }
 
 /// `dmactive` 0 hides the version and drops a write that leaves it 0.
@@ -1051,7 +1084,7 @@ fn ndmreset_does_not_change_the_hart() {
 #[test]
 fn dmactive_low_hides_version_and_ignores_haltreq() {
     let (mut dm, mut hart, _) = ready();
-    assert_eq!(dmstatus(&dm, &hart) & 0xf, 0);
+    assert_eq!(dmstatus(&mut dm, &mut hart) & 0xf, 0);
     dm.dmi_write(&mut hart, DMCONTROL, HALTREQ);
     assert!(!hart.haltreq());
     let outcome = hart.step_outcome();
@@ -1065,18 +1098,18 @@ fn dmactive_low_hides_version_and_ignores_haltreq() {
         &mut hart,
         access_register(4, false, false, true, false, 0x1001),
     );
-    assert_eq!(cmderr(&dm, &hart), 2);
+    assert_eq!(cmderr(&mut dm, &mut hart), 2);
     dm.dmi_write(&mut hart, DMCONTROL, HALTREQ);
-    assert_eq!(dm.dmi_read(&hart, DMSTATUS), 0);
-    assert_eq!(dm.dmi_read(&hart, DATA0), 0);
-    assert_eq!(dm.dmi_read(&hart, DMCONTROL), 0);
+    assert_eq!(dm.dmi_read(&mut hart, DMSTATUS), 0);
+    assert_eq!(dm.dmi_read(&mut hart, DATA0), 0);
+    assert_eq!(dm.dmi_read(&mut hart, DMCONTROL), 0);
     assert!(!hart.haltreq(), "the reset clears the haltreq latch");
     assert!(hart.in_debug_mode(), "the hart stays halted");
 
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE);
-    assert_eq!(dmstatus(&dm, &hart) & 0xf, 3);
-    assert_eq!(cmderr(&dm, &hart), 0, "module reset clears cmderr");
-    assert_eq!(word(&dm, &hart, 0), 0);
+    assert_eq!(dmstatus(&mut dm, &mut hart) & 0xf, 3);
+    assert_eq!(cmderr(&mut dm, &mut hart), 0, "module reset clears cmderr");
+    assert_eq!(word(&mut dm, &mut hart, 0), 0);
     assert!(hart.in_debug_mode());
     assert!(!hart.haltreq());
 }
@@ -1088,7 +1121,7 @@ fn dmactive_low_hides_version_and_ignores_haltreq() {
 fn resume_requires_haltreq_clear_in_the_same_write() {
     let (mut dm, mut hart, _) = ready();
     activate(&mut dm, &mut hart);
-    let running = dmstatus(&dm, &hart);
+    let running = dmstatus(&mut dm, &mut hart);
     assert!(
         bit(running, 16) && bit(running, 17),
         "resumeack resets to 1"
@@ -1096,7 +1129,7 @@ fn resume_requires_haltreq_clear_in_the_same_write() {
     assert!(bit(running, 10) && bit(running, 11), "running");
 
     enter_halt(&mut dm, &mut hart);
-    assert!(bit(dmstatus(&dm, &hart), 8));
+    assert!(bit(dmstatus(&mut dm, &mut hart), 8));
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | HALTREQ | RESUMEREQ);
     assert!(
         hart.in_debug_mode(),
@@ -1104,7 +1137,7 @@ fn resume_requires_haltreq_clear_in_the_same_write() {
     );
     assert!(hart.haltreq());
     assert!(
-        bit(dmstatus(&dm, &hart), 16) && bit(dmstatus(&dm, &hart), 17),
+        bit(dmstatus(&mut dm, &mut hart), 16) && bit(dmstatus(&mut dm, &mut hart), 17),
         "haltreq in this write ignores resumereq, so the ack is not cleared"
     );
 
@@ -1112,7 +1145,7 @@ fn resume_requires_haltreq_clear_in_the_same_write() {
     assert!(!hart.in_debug_mode());
     assert!(!hart.haltreq());
     assert_eq!(hart.state().pc, RAM_BASE);
-    let resumed = dmstatus(&dm, &hart);
+    let resumed = dmstatus(&mut dm, &mut hart);
     assert!(bit(resumed, 16) && bit(resumed, 17), "resumeack");
     assert!(bit(resumed, 10) && bit(resumed, 11));
     assert!(!bit(resumed, 8) && !bit(resumed, 9));
@@ -1123,7 +1156,7 @@ fn resume_requires_haltreq_clear_in_the_same_write() {
     assert_eq!(hart.state().pc, pc, "a running hart ignores resumereq");
     // Debug Spec 1.0 §3.5: the write still clears resume ack. It is set
     // again only after an actual resume completes.
-    assert!(!bit(dmstatus(&dm, &hart), 16) && !bit(dmstatus(&dm, &hart), 17));
+    assert!(!bit(dmstatus(&mut dm, &mut hart), 16) && !bit(dmstatus(&mut dm, &mut hart), 17));
 }
 
 /// Within one `dmcontrol` write, `resumereq` is judged against the previous
@@ -1139,7 +1172,7 @@ fn resumereq_sees_previous_ndmreset_then_the_new_bit_is_stored() {
         !hart.in_debug_mode(),
         "resumereq saw the previous ndmreset of 0 and resumed"
     );
-    let rising = dmstatus(&dm, &hart);
+    let rising = dmstatus(&mut dm, &mut hart);
     assert!(
         bit(rising, 24),
         "the new ndmreset is stored after the resume"
@@ -1166,7 +1199,7 @@ fn resumereq_sees_previous_ndmreset_then_the_new_bit_is_stored() {
         hart.in_debug_mode(),
         "resumereq saw the previous ndmreset of 1 and did not resume"
     );
-    let falling = dmstatus(&dm, &hart);
+    let falling = dmstatus(&mut dm, &mut hart);
     assert!(
         !bit(falling, 24),
         "the new ndmreset 0 is stored after the check"
@@ -1181,33 +1214,46 @@ fn resumereq_sees_previous_ndmreset_then_the_new_bit_is_stored() {
 fn haltsum0_bit0_follows_hart_0_for_hartsel_below_32() {
     let (mut dm, mut hart, _) = ready();
     activate(&mut dm, &mut hart);
-    assert_eq!(dm.dmi_read(&hart, HALTSUM0), 0);
+    assert_eq!(dm.dmi_read(&mut hart, HALTSUM0), 0);
     enter_halt(&mut dm, &mut hart);
-    assert_eq!(dm.dmi_read(&hart, HALTSUM0), 1);
+    assert_eq!(dm.dmi_read(&mut hart, HALTSUM0), 1);
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | hartsel_field(1));
     assert_eq!(
-        dm.dmi_read(&hart, HALTSUM0),
+        dm.dmi_read(&mut hart, HALTSUM0),
         1,
         "hartsel 1 still covers hart 0"
     );
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | hartsel_field(32));
-    assert_eq!(dm.dmi_read(&hart, HALTSUM0), 0);
+    assert_eq!(dm.dmi_read(&mut hart, HALTSUM0), 0);
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | NDMRESET);
-    assert_eq!(dm.dmi_read(&hart, HALTSUM0), 0, "unavailable is not halted");
+    assert_eq!(
+        dm.dmi_read(&mut hart, HALTSUM0),
+        0,
+        "unavailable is not halted"
+    );
 }
 
-/// `sbcs` and `progbuf0` are absent, so they read 0 (Debug Spec 1.0 §3.14).
+/// `sbcs` is absent and reads 0. `progbuf0` is the first of two writable
+/// words (Debug Spec 1.0 §3.14).
 #[test]
-fn sbcs_and_progbuf0_read_zero() {
+fn sbcs_reads_zero_and_progbuf_words_round_trip() {
     let (mut dm, mut hart, _) = ready();
     activate(&mut dm, &mut hart);
     dm.dmi_write(&mut hart, SBCS, 0x1234_5678);
-    assert_eq!(dm.dmi_read(&hart, SBCS), 0);
+    assert_eq!(dm.dmi_read(&mut hart, SBCS), 0);
     dm.dmi_write(&mut hart, PROGBUF0, 0x00ab_cdef);
-    assert_eq!(dm.dmi_read(&hart, PROGBUF0), 0);
+    assert_eq!(dm.dmi_read(&mut hart, PROGBUF0), 0x00ab_cdef);
+    dm.dmi_write(&mut hart, PROGBUF0 + 1, 0x1234_5678);
+    assert_eq!(dm.dmi_read(&mut hart, PROGBUF0 + 1), 0x1234_5678);
+    dm.dmi_write(&mut hart, PROGBUF0 + 2, 0xffff_ffff);
+    assert_eq!(dm.dmi_read(&mut hart, PROGBUF0 + 2), 0, "progbufsize is 2");
     dm.dmi_write(&mut hart, 0x08, 0xffff_ffff);
-    assert_eq!(dm.dmi_read(&hart, 0x08), 0, "data4 is outside datacount 4");
-    assert_eq!(dm.dmi_read(&hart, COMMAND), 0, "command reads as 0");
+    assert_eq!(
+        dm.dmi_read(&mut hart, 0x08),
+        0,
+        "data4 is outside datacount 4"
+    );
+    assert_eq!(dm.dmi_read(&mut hart, COMMAND), 0, "command reads as 0");
 }
 
 /// Demo: discovery, halt, read `dpc` and a GPR, 64-bit memory round-trip,
@@ -1229,9 +1275,9 @@ fn debug_module_halts_reads_and_resumes_guest() {
     }
     hart.state_mut().pc = RAM_BASE;
 
-    assert_eq!(dm.dmi_read(&hart, DMSTATUS), 0);
+    assert_eq!(dm.dmi_read(&mut hart, DMSTATUS), 0);
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE);
-    assert_eq!(dmstatus(&dm, &hart) & 0xf, 3);
+    assert_eq!(dmstatus(&mut dm, &mut hart) & 0xf, 3);
 
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | HALTREQ);
     assert!(!hart.in_debug_mode());
@@ -1249,14 +1295,14 @@ fn debug_module_halts_reads_and_resumes_guest() {
         &mut hart,
         access_register(3, false, false, true, false, 0x7b1),
     );
-    assert_eq!(cmderr(&dm, &hart), 0);
-    assert_eq!(arg0(&dm, &hart), RAM_BASE, "dpc");
+    assert_eq!(cmderr(&mut dm, &mut hart), 0);
+    assert_eq!(arg0(&mut dm, &mut hart), RAM_BASE, "dpc");
     issue(
         &mut dm,
         &mut hart,
         access_register(3, false, false, true, false, 0x1005),
     );
-    assert_eq!(arg0(&dm, &hart), 0, "x5 has not executed");
+    assert_eq!(arg0(&mut dm, &mut hart), 0, "x5 has not executed");
 
     let pattern = 0x1122_3344_5566_7788;
     mem_write(&mut dm, &mut hart, RAM_BASE + 0x3000, 3, pattern);
@@ -1264,7 +1310,7 @@ fn debug_module_halts_reads_and_resumes_guest() {
     assert_eq!(ram.lock().unwrap().read_dword(0x3000).unwrap(), pattern);
 
     dm.dmi_write(&mut hart, DMCONTROL, DMACTIVE | RESUMEREQ);
-    let status = dmstatus(&dm, &hart);
+    let status = dmstatus(&mut dm, &mut hart);
     assert!(bit(status, 16) && bit(status, 17), "resumeack");
     assert!(!hart.in_debug_mode());
 

@@ -638,3 +638,121 @@ fn dmi_haltreq_waits_until_the_instruction_boundary() {
     assert!(owned.hart_haltreq());
     assert!(!owned.hart_in_debug_mode());
 }
+
+/// U2 §4 U3: a started command advances one Hart grant per boundary, and
+/// DMI is serviced between grants. No socket input is needed for progress.
+#[test]
+fn program_buffer_grants_are_bounded_and_interleave_with_dmi() {
+    for kind in [PlatformKind::Native, PlatformKind::Flat] {
+        let mut owned = OwnedMachine::new(MachineConfig::new(kind), image(elf::nop())).unwrap();
+        owned.dmi_write(0x10, (1 << 31) | 1).unwrap();
+        drop(owned.step(false).unwrap());
+        assert!(owned.hart_in_debug_mode());
+        // addi x1, x1, 1 in both words. The implicit EBREAK ends the command.
+        owned.dmi_write(0x20, 0x0010_8093).unwrap();
+        owned.dmi_write(0x21, 0x0010_8093).unwrap();
+        owned.dmi_write(0x17, (3 << 20) | (1 << 18)).unwrap();
+        assert!(owned.debug_command_busy().unwrap());
+        assert_eq!(owned.state().regs[1], 0, "the command write runs no word");
+
+        let busy = owned.dmi_read(0x16).unwrap();
+        assert_ne!(busy & (1 << 12), 0, "abstractcs.busy");
+        assert_eq!(busy & 0xf, 4, "datacount");
+
+        owned.debug_boundary(false).unwrap();
+        assert_eq!(owned.state().regs[1], 1, "one grant per boundary");
+        assert_ne!(owned.dmi_read(0x16).unwrap() & (1 << 12), 0);
+
+        owned.debug_boundary(false).unwrap();
+        assert_eq!(owned.state().regs[1], 2);
+        owned.debug_boundary(false).unwrap();
+        assert!(!owned.debug_command_busy().unwrap());
+        assert_eq!(owned.state().regs[1], 2, "the implicit EBREAK ran nothing");
+        assert_eq!((owned.dmi_read(0x16).unwrap() >> 8) & 7, 0);
+        assert!(owned.hart_in_debug_mode());
+    }
+}
+
+/// U2 §3: a resume request cannot preempt an unfinished command. Completion
+/// becomes visible first, and the resume then proceeds.
+#[test]
+fn resume_cannot_preempt_an_unfinished_program_buffer_command() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    owned.dmi_write(0x10, (1 << 31) | 1).unwrap();
+    drop(owned.step(false).unwrap());
+    owned.dmi_write(0x20, 0x0010_8093).unwrap();
+    owned.dmi_write(0x21, 0x0010_8093).unwrap();
+    owned.dmi_write(0x17, (3 << 20) | (1 << 18)).unwrap();
+    assert!(owned.debug_command_busy().unwrap());
+
+    owned.dmi_write(0x10, (1 << 30) | 1).unwrap();
+    assert!(
+        owned.hart_in_debug_mode(),
+        "a resume request preempted the unfinished command"
+    );
+    assert!(owned.debug_command_busy().unwrap());
+    assert_ne!(
+        owned.dmi_read(0x11).unwrap() & (1 << 8),
+        0,
+        "the hart stays halted while the command runs"
+    );
+
+    while owned.debug_command_busy().unwrap() {
+        owned.debug_boundary(false).unwrap();
+    }
+    assert_eq!(owned.state().regs[1], 2);
+    assert!((owned.dmi_read(0x16).unwrap() >> 8) & 7 == 0);
+
+    owned.dmi_write(0x10, (1 << 30) | 1).unwrap();
+    assert!(
+        !owned.hart_in_debug_mode(),
+        "the resume runs after completion"
+    );
+}
+
+/// U2 §3: an unresolved completion refuses a `data` access that would start
+/// an automatic command, and the refusal changes no Hart state.
+#[test]
+fn unknown_completion_refuses_a_triggering_autoexec_access() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    owned.dmi_write(0x10, (1 << 31) | 1).unwrap();
+    drop(owned.step(false).unwrap());
+    owned
+        .dmi_write(0x17, (3 << 20) | (1 << 17) | 0x1001)
+        .unwrap();
+    assert_eq!((owned.dmi_read(0x16).unwrap() >> 8) & 7, 0);
+    owned.dmi_write(0x18, 1).unwrap();
+
+    let pending = Arc::new(Mutex::new(None));
+    let requests = Arc::new(AtomicUsize::new(0));
+    let data = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(UnknownWrite {
+        actual: owned.test_data(),
+        pending,
+        calls: requests.clone(),
+        before: None,
+    })));
+    owned.test_replace_data(data);
+    owned.dmi_write(0x04, 77).unwrap();
+    owned.dmi_write(0x05, 0).unwrap();
+    owned.dmi_write(0x06, (elf::BASE + 0x200) as u32).unwrap();
+    owned.dmi_write(0x07, 0).unwrap();
+    owned
+        .dmi_write(0x17, (2 << 24) | (3 << 20) | (1 << 16))
+        .unwrap();
+    assert_eq!((owned.dmi_read(0x16).unwrap() >> 8) & 7, 7);
+    owned.dmi_write(0x16, 7 << 8).unwrap();
+    assert_eq!((owned.dmi_read(0x16).unwrap() >> 8) & 7, 0);
+
+    assert!(matches!(
+        owned.dmi_write(0x04, 0x55),
+        Err(MachineError::UnknownCompletion)
+    ));
+    assert!(matches!(
+        owned.dmi_read(0x04),
+        Err(MachineError::UnknownCompletion)
+    ));
+    assert!(!owned.debug_command_busy().unwrap());
+    assert_eq!(requests.load(Ordering::SeqCst), 1, "no second data request");
+}

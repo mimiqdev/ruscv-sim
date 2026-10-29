@@ -71,7 +71,7 @@ impl ModuleBus {
 
 impl DmiBus for ModuleBus {
     fn dmi_read(&mut self, addr: u8) -> Result<u32, DmiFault> {
-        Ok(self.dm.dmi_read(&self.hart, addr))
+        Ok(self.dm.dmi_read(&mut self.hart, addr))
     }
 
     fn dmi_write(&mut self, addr: u8, value: u32) -> Result<(), DmiFault> {
