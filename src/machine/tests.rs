@@ -1607,3 +1607,21 @@ fn ndmreset_after_a_committed_debug_event_keeps_the_event_fact() {
         DM_NDMRESET
     );
 }
+
+/// U3 §3: held debug effects belong to their generation. An explicit fresh
+/// image must not replay them; retention across a reset applies only inside a
+/// debug boundary that commits them first.
+#[test]
+fn explicit_fresh_generation_does_not_replay_held_debug_events() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    abstract_write_dword(&mut owned, crate::executor::SYSTEM_BUS_HTIF_BASE, 3);
+    owned.fresh_reset().unwrap();
+    let facts = owned.debug_boundary(false).unwrap();
+    assert!(
+        facts.events.is_empty(),
+        "a held effect survived a fresh generation"
+    );
+    assert!(facts.failure.is_none());
+}

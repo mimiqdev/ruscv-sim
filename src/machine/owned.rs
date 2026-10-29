@@ -384,6 +384,9 @@ impl OwnedMachine {
             .map_err(|_| MachineError::Poisoned)?
             .take();
         self.installed = installed;
+        // Held debug effects belong to the replaced generation. A reset
+        // inside a debug boundary retains them; an explicit new image does not.
+        self.debug_events.clear();
         self.memory = self.control.memory()?;
         self.edited = false;
         self.edit_reservation = None;
