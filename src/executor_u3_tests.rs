@@ -37,6 +37,19 @@ fn bit(word: u32, index: u32) -> bool {
     word & (1 << index) != 0
 }
 
+/// Wait until no command is active. Reading `abstractcs` is legal while busy
+/// and does not set `cmderr`, so this cannot disturb the command.
+fn wait_idle(port: &crate::machine::DebugPort) {
+    let start = Instant::now();
+    while bit(port.dmi_read(ABSTRACTCS).unwrap(), 12) {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "the program-buffer command never finished"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
 fn read_reg(port: &crate::machine::DebugPort, regno: u32) -> u64 {
     port.dmi_write(COMMAND, (3 << 20) | (1 << 17) | regno)
         .unwrap();
@@ -282,4 +295,332 @@ fn silent_bitbang_socket_does_not_block_a_busy_program_buffer_command() {
     assert_eq!(x1, 2, "the command did not advance without client input");
     assert!(busy, "the command should still await its implicit EBREAK");
     let _ = worker.join();
+}
+
+/// U3 §3: a started program-buffer command advances one grant per Hart
+/// boundary with no further client input. Debug work adds no guest turn,
+/// counter or clock charge, and completion precedes resume.
+#[test]
+fn native_started_command_advances_without_further_dmi_input() {
+    let mut code = vec![elf::addi(1, 1, 1), JAL_BACK_4];
+    code.extend(exit_from(8));
+    let bytes = program(&code);
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let publish = slot.clone();
+    let hooks = NativeHooks {
+        prepare: Some(Box::new(move |machine| {
+            *publish.lock().unwrap() = Some(machine.attach_debugger());
+        })),
+        ..NativeHooks::default()
+    };
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(super::run_native_inner(
+            &bytes,
+            Some(1_000_000),
+            None,
+            None,
+            false,
+            None,
+            hooks,
+        ));
+    });
+    let start = Instant::now();
+    let port = loop {
+        if let Some(port) = slot.lock().unwrap().take() {
+            break port;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    };
+    while port.completed_turns() <= 1000 {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+    port.dmi_write(DMCONTROL, DMACTIVE | HALTREQ).unwrap();
+    while !bit(port.dmi_read(DMSTATUS).unwrap(), 8) {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+    let frozen = (
+        read_reg(&port, u32::from(machine::MINSTRET)),
+        read_reg(&port, u32::from(machine::MCYCLE)),
+        read_reg(&port, u32::from(unprivileged::TIME)),
+        port.completed_turns(),
+    );
+    let dpc = read_reg(&port, 0x7b1);
+
+    // Two words and the implicit EBREAK. After the command write the client
+    // sends nothing until it reads the result.
+    port.dmi_write(0x20, elf::addi(9, 9, 1)).unwrap();
+    port.dmi_write(0x21, elf::addi(9, 9, 1)).unwrap();
+    port.dmi_write(COMMAND, (3 << 20) | (1 << 18)).unwrap();
+    thread::sleep(Duration::from_millis(100));
+    wait_idle(&port);
+
+    assert_eq!(read_reg(&port, 0x1009), 2, "the command did not advance");
+    let abstractcs = port.dmi_read(ABSTRACTCS).unwrap();
+    assert_eq!(abstractcs & (1 << 12), 0, "busy after the implicit EBREAK");
+    assert_eq!((abstractcs >> 8) & 7, 0);
+    assert_eq!(
+        (
+            read_reg(&port, u32::from(machine::MINSTRET)),
+            read_reg(&port, u32::from(machine::MCYCLE)),
+            read_reg(&port, u32::from(unprivileged::TIME)),
+            port.completed_turns(),
+        ),
+        frozen,
+        "debug work charged the guest profile"
+    );
+    assert_eq!(read_reg(&port, 0x7b1), dpc, "debug grants changed dpc");
+    assert!(rx.try_recv().is_err(), "the run stopped during debug work");
+
+    write_reg(&port, 0x7b1, ENTRY + 8);
+    port.dmi_write(DMCONTROL, DMACTIVE | RESUMEREQ).unwrap();
+    let result = rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_else(|error| {
+            drop(port);
+            panic!("native run did not finish: {error}");
+        })
+        .expect("native run");
+    assert_eq!(result.exit_code, 0, "{result:?}");
+    assert!(result.error.is_none(), "{result:?}");
+    assert_eq!(result.cycles, frozen.3 + 4, "{result:?}");
+}
+
+/// U3 §3 and ADR-0004: pending debug work at a WFI wait is admissible work.
+/// It advances without client input and the run does not report `NoProgress`.
+#[test]
+fn native_wfi_wait_advances_debug_work_instead_of_no_progress() {
+    let mut code = vec![WFI];
+    code.extend(exit_from(4));
+    let bytes = program(&code);
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let publish = slot.clone();
+    let hooks = NativeHooks {
+        prepare: Some(Box::new(move |machine| {
+            *publish.lock().unwrap() = Some(machine.attach_debugger());
+        })),
+        ..NativeHooks::default()
+    };
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(super::run_native_inner(
+            &bytes,
+            Some(100),
+            None,
+            None,
+            false,
+            None,
+            hooks,
+        ));
+    });
+    let start = Instant::now();
+    let port = loop {
+        if let Some(port) = slot.lock().unwrap().take() {
+            break port;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    };
+    while port.completed_turns() < 1 {
+        assert!(rx.try_recv().is_err(), "the WFI run stopped");
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+    thread::sleep(Duration::from_millis(50));
+    assert!(rx.try_recv().is_err(), "attached WFI returned NoProgress");
+    port.dmi_write(DMCONTROL, DMACTIVE | HALTREQ).unwrap();
+    while !bit(port.dmi_read(DMSTATUS).unwrap(), 8) {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    port.dmi_write(0x20, elf::addi(9, 9, 1)).unwrap();
+    port.dmi_write(0x21, elf::addi(9, 9, 1)).unwrap();
+    port.dmi_write(COMMAND, (3 << 20) | (1 << 18)).unwrap();
+    thread::sleep(Duration::from_millis(100));
+    wait_idle(&port);
+    assert_eq!(
+        read_reg(&port, 0x1009),
+        2,
+        "pending debug work did not advance"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "pending debug work was discarded as NoProgress"
+    );
+    assert_eq!((port.dmi_read(ABSTRACTCS).unwrap() >> 8) & 7, 0);
+
+    write_reg(&port, 0x7b1, ENTRY + 4);
+    port.dmi_write(DMCONTROL, DMACTIVE | RESUMEREQ).unwrap();
+    let result = rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_else(|error| {
+            drop(port);
+            panic!("native WFI run did not finish: {error}");
+        })
+        .expect("native WFI run");
+    assert_eq!(result.exit_code, 0, "{result:?}");
+    assert!(result.error.is_none(), "{result:?}");
+    assert_eq!(result.cycles, 5, "{result:?}");
+}
+
+/// U3 §3: a known simulator failure in a debug instruction is reported at its
+/// issuing boundary. The run stops with an execution error instead of waiting
+/// for DMI that can no longer complete the command.
+#[test]
+fn native_debug_grant_failure_is_reported_at_its_boundary() {
+    struct FailingData;
+
+    impl crate::physical::PhysicalBackend for FailingData {
+        fn transact(
+            &mut self,
+            _: &crate::physical::PhysicalRequest<'_>,
+        ) -> crate::physical::PhysicalBackendResult {
+            Err(crate::physical::PhysicalBackendError::host(
+                "injected debug store failure",
+            ))
+        }
+    }
+
+    impl crate::physical::AtomicBackend for FailingData {
+        fn transact_atomic(
+            &mut self,
+            _: &crate::physical::AtomicRequest<'_>,
+        ) -> crate::physical::AtomicBackendResult {
+            panic!("the failure probe must not issue an atomic envelope")
+        }
+    }
+
+    let bytes = program(&[elf::addi(1, 1, 1), JAL_BACK_4]);
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let publish = slot.clone();
+    let hooks = NativeHooks {
+        prepare: Some(Box::new(move |machine| {
+            let data = std::sync::Arc::new(std::sync::Mutex::new(
+                crate::physical::ValidatedPhysicalAccess::new(FailingData),
+            ));
+            machine.test_replace_data(data);
+            *publish.lock().unwrap() = Some(machine.attach_debugger());
+        })),
+        ..NativeHooks::default()
+    };
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(super::run_native_inner(
+            &bytes,
+            Some(1_000_000),
+            None,
+            None,
+            false,
+            None,
+            hooks,
+        ));
+    });
+    let start = Instant::now();
+    let port = loop {
+        if let Some(port) = slot.lock().unwrap().take() {
+            break port;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    };
+    while port.completed_turns() <= 100 {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+    port.dmi_write(DMCONTROL, DMACTIVE | HALTREQ).unwrap();
+    while !bit(port.dmi_read(DMSTATUS).unwrap(), 8) {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+    let cycles = port.completed_turns();
+    port.dmi_write(DATA0, (elf::BASE + 0x200) as u32).unwrap();
+    port.dmi_write(DATA0 + 1, 0).unwrap();
+    port.dmi_write(COMMAND, (3 << 20) | (1 << 17) | (1 << 16) | 0x1005)
+        .unwrap();
+    port.dmi_write(0x20, elf::sd(6, 5, 0)).unwrap();
+    port.dmi_write(0x21, elf::nop()).unwrap();
+    port.dmi_write(COMMAND, (3 << 20) | (1 << 18)).unwrap();
+
+    let result = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the run waited for DMI after the grant failed")
+        .expect("native run");
+    assert_eq!(result.exit_code, 1, "{result:?}");
+    assert!(!result.timed_out, "{result:?}");
+    let error = result
+        .error
+        .as_ref()
+        .expect("the debug failure was not reported");
+    assert!(error.contains("Execution error"), "{error}");
+    assert!(error.contains("injected debug store failure"), "{error}");
+    assert_eq!(result.cycles, cycles, "{result:?}");
+}
+
+/// U3 §3: a Platform exit committed by a debug instruction is classified by
+/// the Runner at that boundary. It does not invent a guest turn or charge the
+/// application cycle count.
+#[test]
+fn native_debug_platform_exit_is_classified_at_its_boundary() {
+    let bytes = program(&[elf::addi(1, 1, 1), JAL_BACK_4]);
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let publish = slot.clone();
+    let hooks = NativeHooks {
+        prepare: Some(Box::new(move |machine| {
+            *publish.lock().unwrap() = Some(machine.attach_debugger());
+        })),
+        ..NativeHooks::default()
+    };
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(super::run_native_inner(
+            &bytes,
+            Some(1_000_000),
+            None,
+            None,
+            false,
+            None,
+            hooks,
+        ));
+    });
+    let start = Instant::now();
+    let port = loop {
+        if let Some(port) = slot.lock().unwrap().take() {
+            break port;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    };
+    while port.completed_turns() <= 100 {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+    port.dmi_write(DMCONTROL, DMACTIVE | HALTREQ).unwrap();
+    while !bit(port.dmi_read(DMSTATUS).unwrap(), 8) {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+    let cycles = port.completed_turns();
+    // HTIF device 0, command 0, payload 3 decodes to exit code 1.
+    write_reg(&port, 0x1005, crate::executor::SYSTEM_BUS_HTIF_BASE);
+    write_reg(&port, 0x1006, 3);
+    port.dmi_write(0x20, elf::sd(6, 5, 0)).unwrap();
+    port.dmi_write(0x21, elf::nop()).unwrap();
+    port.dmi_write(COMMAND, (3 << 20) | (1 << 18)).unwrap();
+
+    let result = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the debug Platform exit did not stop the run")
+        .expect("native run");
+    assert_eq!(result.exit_code, 1, "{result:?}");
+    assert!(result.error.is_none(), "{result:?}");
+    assert!(!result.timed_out, "{result:?}");
+    assert_eq!(
+        result.cycles, cycles,
+        "a debug Platform effect completed a guest turn"
+    );
+    drop(port);
 }

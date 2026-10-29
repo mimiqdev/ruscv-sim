@@ -443,9 +443,14 @@ impl OwnedMachine {
     /// instruction stays queued: this returns without applying it.
     /// `block` waits for the next command while the hart is halted, held in
     /// `ndmreset`, or parked by the caller.
-    pub(crate) fn debug_boundary(&mut self, block: bool) -> Result<(), MachineError> {
+    ///
+    /// Platform effects and a simulator failure that belong to this debug
+    /// boundary are returned here. Debug work has no guest turn, so they are
+    /// not attached to a later instruction.
+    pub(crate) fn debug_boundary(&mut self, block: bool) -> Result<DebugBoundary, MachineError> {
+        let mut boundary = DebugBoundary::default();
         if self.control.inner.debug.in_instruction() {
-            return Ok(());
+            return Ok(boundary);
         }
         loop {
             if self.control.inner.debug.closed() {
@@ -459,10 +464,11 @@ impl OwnedMachine {
                 // re-enters here between grants, so DMI is serviced first at
                 // the next boundary.
                 if self.debug_command_busy()? {
-                    return self.advance_debug_command();
+                    boundary.merge(self.advance_debug_command()?);
+                    return Ok(boundary);
                 }
                 if !block {
-                    return Ok(());
+                    return Ok(boundary);
                 }
                 self.wait_for_debug_queue()?;
                 continue;
@@ -471,8 +477,11 @@ impl OwnedMachine {
                 let result = self.apply_dmi(call.addr, call.write);
                 let _ = call.reply.send(result);
             }
+            // Abstract Access Memory is a Platform port too. Its effects belong
+            // to this debug boundary, not to the next guest turn.
+            boundary.events.extend(self.take_debug_events()?);
             if !block || !self.debug_blocked() {
-                return Ok(());
+                return Ok(boundary);
             }
         }
     }
@@ -519,8 +528,10 @@ impl OwnedMachine {
     /// The DM lock selects the opcode and records the result; it is released
     /// while the Hart executes the word and reaches any physical target. A
     /// Machine that cannot admit a Hart turn (quiesce, reset, failure, unknown
-    /// completion) ends the command instead of running another word.
-    pub(crate) fn advance_debug_command(&mut self) -> Result<(), MachineError> {
+    /// completion) ends the command instead of running another word. Platform
+    /// effects and a simulator failure from this word are returned at this
+    /// boundary.
+    pub(crate) fn advance_debug_command(&mut self) -> Result<DebugBoundary, MachineError> {
         let hub = Arc::clone(&self.control.inner);
         let Ok(lease) = Lease::hart(&hub.gate) else {
             hub.debug
@@ -528,7 +539,7 @@ impl OwnedMachine {
                 .lock()
                 .map_err(|_| MachineError::Poisoned)?
                 .abort_command();
-            return Ok(());
+            return Ok(DebugBoundary::default());
         };
         let word = {
             let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
@@ -541,7 +552,7 @@ impl OwnedMachine {
         };
         let Some(word) = word else {
             lease.boundary(false, None)?;
-            return Ok(());
+            return Ok(DebugBoundary::default());
         };
         let (outcome, failure, uncertain) = {
             let core = &mut self
@@ -565,8 +576,17 @@ impl OwnedMachine {
             .lock()
             .map_err(|_| MachineError::Poisoned)?
             .complete_grant(outcome);
-        lease.boundary(uncertain, failure)?;
-        Ok(())
+        lease.boundary(uncertain, failure.clone())?;
+        Ok(DebugBoundary {
+            events: self.take_debug_events()?,
+            failure,
+        })
+    }
+
+    /// Platform effects committed since the caller's last debug boundary.
+    /// A guest turn drains its own effects, so these belong to debug work.
+    pub(crate) fn take_debug_events(&self) -> Result<Vec<PlatformEvent>, MachineError> {
+        self.domain().platform.take_events()
     }
 
     pub(crate) fn dmi_read(&mut self, addr: u8) -> Result<u32, MachineError> {
