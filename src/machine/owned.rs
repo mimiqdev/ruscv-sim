@@ -476,11 +476,12 @@ impl OwnedMachine {
             for call in batch {
                 let result = self.apply_dmi(call.addr, call.write);
                 let _ = call.reply.send(result);
+                // Abstract Access Memory is a Platform port too. Take each
+                // call's effects before a later call can replace the Platform,
+                // and return them now rather than after another wait.
+                boundary.events.extend(self.take_debug_events()?);
             }
-            // Abstract Access Memory is a Platform port too. Its effects belong
-            // to this debug boundary, not to the next guest turn.
-            boundary.events.extend(self.take_debug_events()?);
-            if !block || !self.debug_blocked() {
+            if !boundary.events.is_empty() || !block || !self.debug_blocked() {
                 return Ok(boundary);
             }
         }
@@ -554,6 +555,7 @@ impl OwnedMachine {
             lease.boundary(false, None)?;
             return Ok(DebugBoundary::default());
         };
+        self.sample_debug_inputs()?;
         let (outcome, failure, uncertain) = {
             let core = &mut self
                 .installed
@@ -606,9 +608,25 @@ impl OwnedMachine {
         self.apply_dmi(addr, write)
     }
 
+    /// Sample Platform inputs at a debug boundary. This mirrors the guest
+    /// pre-turn sample: `time` and the machine lines become current, but no
+    /// clock, counter or turn advances (contract §3, ADR-0004 amendment).
+    fn sample_debug_inputs(&mut self) -> Result<(), MachineError> {
+        let (mtime, lines) = {
+            let platform = &self.domain().platform;
+            (platform.read_mtime()?, platform.machine_interrupt_lines()?)
+        };
+        let csr = &mut self.domain_mut().core.state_mut().csr;
+        csr.set_time(mtime);
+        csr.set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
+        csr.set_seip_external(lines.seip);
+        Ok(())
+    }
+
     fn apply_dmi(&mut self, addr: u8, write: Option<u32>) -> Result<u32, MachineError> {
         let hub = Arc::clone(&self.control.inner);
         let lease = Lease::debug(&hub.gate)?;
+        self.sample_debug_inputs()?;
         let uncertain = lease.boundary_state()?.1;
         let (value, before, after, failure) = {
             let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;

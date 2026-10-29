@@ -964,6 +964,37 @@ fn abstract_write(owned: &mut OwnedMachine, address: u64, value: u32) {
     assert_eq!(cmderr_of(owned), 0, "Access Memory write to {address:#x}");
 }
 
+/// Access Memory, 8 bytes, write.
+fn abstract_write_dword(owned: &mut OwnedMachine, address: u64, value: u64) {
+    owned.dmi_write(DM_DATA0, value as u32).unwrap();
+    owned.dmi_write(DM_DATA0 + 1, (value >> 32) as u32).unwrap();
+    owned.dmi_write(DM_DATA0 + 2, address as u32).unwrap();
+    owned
+        .dmi_write(DM_DATA0 + 3, (address >> 32) as u32)
+        .unwrap();
+    owned
+        .dmi_write(DM_COMMAND, (2 << 24) | (3 << 20) | (1 << 16))
+        .unwrap();
+    assert_eq!(cmderr_of(owned), 0, "Access Memory write to {address:#x}");
+}
+
+/// Queue one DMI write for the next debug boundary, as the transport does.
+fn enqueue_dmi(owned: &OwnedMachine, addr: u8, value: u32) {
+    let (reply, _wait) = mpsc::channel();
+    owned
+        .test_control()
+        .inner
+        .debug
+        .queue()
+        .lock()
+        .unwrap()
+        .push_back(super::debug_hub::DmiCall {
+            addr,
+            write: Some(value),
+            reply,
+        });
+}
+
 fn cmderr_of(owned: &mut OwnedMachine) -> u32 {
     (owned.dmi_read(DM_ABSTRACTCS).unwrap() >> 8) & 7
 }
@@ -1213,18 +1244,41 @@ fn program_buffer_explicit_time_write_is_observable_at_its_boundary() {
     let mtime = crate::executor::SYSTEM_BUS_CLINT_BASE + 0xBFF8;
     write_gpr(&mut owned, 5, mtime);
     write_gpr(&mut owned, 6, 0x1234);
-    // Store, then read the same register back in the next grant.
-    postexec_buffer(&mut owned, [elf::sd(6, 5, 0), elf::ld(8, 5, 0)]);
+    // Store mtime, then read `time` in the next grant. The Hart boundary
+    // samples the Platform input without advancing the clock.
+    let read_time = (u32::from(crate::csr::unprivileged::TIME) << 20) | (2 << 12) | (8 << 7) | 0x73;
+    postexec_buffer(&mut owned, [elf::sd(6, 5, 0), read_time]);
     let facts = run_grants(&mut owned);
     assert!(facts.failure.is_none());
     assert!(
         facts.events.is_empty(),
         "a CLINT write is not an event queue fact"
     );
-    assert_eq!(owned.state().regs[8], 0x1234);
+    assert_eq!(
+        owned.state().regs[8],
+        0x1234,
+        "the next debug instruction did not observe the explicit time write"
+    );
     assert_eq!(cmderr_of(&mut owned), 0);
     assert_eq!(owned.state().csr.read(machine::MINSTRET).unwrap(), 0);
     assert_eq!(owned.state().csr.read(machine::MCYCLE).unwrap(), 0);
+
+    // The same sample makes a debugger Access Register read current.
+    abstract_write_dword(&mut owned, mtime, 0x5678);
+    owned
+        .dmi_write(
+            DM_COMMAND,
+            (3 << 20) | (1 << 17) | u32::from(crate::csr::unprivileged::TIME),
+        )
+        .unwrap();
+    assert_eq!(cmderr_of(&mut owned), 0);
+    let low = u64::from(owned.dmi_read(DM_DATA0).unwrap());
+    let high = u64::from(owned.dmi_read(DM_DATA0 + 1).unwrap());
+    assert_eq!(
+        low | (high << 32),
+        0x5678,
+        "a debugger read of time saw the stale sample"
+    );
 }
 
 /// U3 §3: an unresolved physical completion from a buffer store quarantines
@@ -1521,4 +1575,35 @@ fn program_buffer_mprv_sv39_load_uses_the_hart_page_table_path() {
     assert_eq!(cmderr_of(&mut owned), 0);
     assert_eq!(owned.dpc(), dpc);
     assert_eq!(owned.state().privilege, crate::core::PrivilegeMode::Machine);
+}
+
+/// U3 §3: a committed debugger Platform effect survives a reset that arrives
+/// in the same DMI boundary. Each call's facts are captured before a later
+/// reset can replace the Platform, and the reset still applies.
+#[test]
+fn ndmreset_after_a_committed_debug_event_keeps_the_event_fact() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    let htif = crate::executor::SYSTEM_BUS_HTIF_BASE;
+    owned.dmi_write(DM_DATA0, 3).unwrap();
+    owned.dmi_write(DM_DATA0 + 1, 0).unwrap();
+    owned.dmi_write(DM_DATA0 + 2, htif as u32).unwrap();
+    owned.dmi_write(DM_DATA0 + 3, (htif >> 32) as u32).unwrap();
+    enqueue_dmi(&owned, DM_COMMAND, (2 << 24) | (3 << 20) | (1 << 16));
+    enqueue_dmi(&owned, DM_DMCONTROL, DM_DMACTIVE | DM_NDMRESET | DM_HALTREQ);
+
+    let facts = owned.debug_boundary(false).unwrap();
+    assert_eq!(
+        facts.events,
+        [PlatformEvent::HtifWrite(3)],
+        "the committed debugger effect was discarded by a later reset"
+    );
+    assert!(facts.failure.is_none());
+    assert_eq!(owned.state().pc, elf::BASE);
+    assert!(!owned.hart_in_debug_mode());
+    assert_eq!(
+        owned.dmi_read(DM_DMCONTROL).unwrap() & DM_NDMRESET,
+        DM_NDMRESET
+    );
 }

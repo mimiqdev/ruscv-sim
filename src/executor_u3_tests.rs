@@ -624,3 +624,65 @@ fn native_debug_platform_exit_is_classified_at_its_boundary() {
     );
     drop(port);
 }
+
+/// U3 §3: an Abstract Access Memory Platform exit is classified at its DMI
+/// boundary. The run must deliver it instead of waiting for another request.
+#[test]
+fn native_debug_abstract_platform_exit_is_classified_at_its_boundary() {
+    let bytes = program(&[elf::addi(1, 1, 1), JAL_BACK_4]);
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let publish = slot.clone();
+    let hooks = NativeHooks {
+        prepare: Some(Box::new(move |machine| {
+            *publish.lock().unwrap() = Some(machine.attach_debugger());
+        })),
+        ..NativeHooks::default()
+    };
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(super::run_native_inner(
+            &bytes,
+            Some(1_000_000),
+            None,
+            None,
+            false,
+            None,
+            hooks,
+        ));
+    });
+    let start = Instant::now();
+    let port = loop {
+        if let Some(port) = slot.lock().unwrap().take() {
+            break port;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    };
+    while port.completed_turns() <= 100 {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+    port.dmi_write(DMCONTROL, DMACTIVE | HALTREQ).unwrap();
+    while !bit(port.dmi_read(DMSTATUS).unwrap(), 8) {
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
+    let cycles = port.completed_turns();
+    let htif = crate::executor::SYSTEM_BUS_HTIF_BASE;
+    port.dmi_write(DATA0, 3).unwrap();
+    port.dmi_write(DATA0 + 1, 0).unwrap();
+    port.dmi_write(DATA0 + 2, htif as u32).unwrap();
+    port.dmi_write(DATA0 + 3, (htif >> 32) as u32).unwrap();
+    port.dmi_write(COMMAND, (2 << 24) | (3 << 20) | (1 << 16))
+        .unwrap();
+
+    let result = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the debugger Platform exit waited for another DMI request")
+        .expect("native run");
+    assert_eq!(result.exit_code, 1, "{result:?}");
+    assert!(result.error.is_none(), "{result:?}");
+    assert!(!result.timed_out, "{result:?}");
+    assert_eq!(result.cycles, cycles, "{result:?}");
+    drop(port);
+}
