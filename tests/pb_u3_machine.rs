@@ -81,17 +81,14 @@ fn write_reg(port: &DebugPort, regno: u32, value: u64) {
     assert_eq!(cmderr(port), 0, "write regno {regno:#x}");
 }
 
-/// Wait until no command is active. Reading `abstractcs` is legal while busy
-/// and does not set `cmderr`, so this cannot disturb the command.
-fn wait_idle(port: &DebugPort) {
-    let start = Instant::now();
-    while bit(port.dmi_read(ABSTRACTCS).unwrap(), 12) {
-        assert!(
-            start.elapsed() < Duration::from_secs(10),
-            "the program-buffer command never finished"
-        );
-        thread::sleep(Duration::from_millis(1));
-    }
+/// One observation that the command already finished. Reading `abstractcs`
+/// while busy is legal and does not set `cmderr`, so this read cannot drive
+/// the command to completion.
+fn assert_idle(port: &DebugPort) {
+    assert!(
+        !bit(port.dmi_read(ABSTRACTCS).unwrap(), 12),
+        "the command had not finished without further client input"
+    );
 }
 
 fn wait_halted(port: &DebugPort) {
@@ -140,7 +137,7 @@ fn flat_started_command_advances_without_further_dmi_input() {
         .unwrap();
     port.dmi_write(COMMAND, (3 << 20) | (1 << 18)).unwrap();
     thread::sleep(Duration::from_millis(100));
-    wait_idle(&port);
+    assert_idle(&port);
 
     assert_eq!(read_reg(&port, 0x1009), 2, "the command did not advance");
     let abstractcs = port.dmi_read(ABSTRACTCS).unwrap();

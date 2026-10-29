@@ -29,6 +29,9 @@ pub(crate) struct OwnedMachine {
     memory: SharedMemory,
     edited: bool,
     edit_reservation: Option<crate::isa::rv64a::lr_sc::ReservationSet>,
+    /// Platform effects produced by debug work. Held until the next debug
+    /// boundary so a reset cannot discard an effect committed before it.
+    debug_events: Vec<PlatformEvent>,
     #[cfg(test)]
     before_drain: Option<Arc<dyn Fn() + Send + Sync>>,
     #[cfg(test)]
@@ -52,6 +55,7 @@ impl OwnedMachine {
             memory,
             edited: false,
             edit_reservation: None,
+            debug_events: Vec::new(),
             #[cfg(test)]
             before_drain: None,
             #[cfg(test)]
@@ -448,9 +452,8 @@ impl OwnedMachine {
     /// boundary are returned here. Debug work has no guest turn, so they are
     /// not attached to a later instruction.
     pub(crate) fn debug_boundary(&mut self, block: bool) -> Result<DebugBoundary, MachineError> {
-        let mut boundary = DebugBoundary::default();
         if self.control.inner.debug.in_instruction() {
-            return Ok(boundary);
+            return Ok(DebugBoundary::default());
         }
         loop {
             if self.control.inner.debug.closed() {
@@ -464,11 +467,13 @@ impl OwnedMachine {
                 // re-enters here between grants, so DMI is serviced first at
                 // the next boundary.
                 if self.debug_command_busy()? {
-                    boundary.merge(self.advance_debug_command()?);
-                    return Ok(boundary);
+                    return self.advance_debug_command();
                 }
-                if !block {
-                    return Ok(boundary);
+                if !block || !self.debug_events.is_empty() {
+                    return Ok(DebugBoundary {
+                        events: self.take_debug_events(),
+                        failure: None,
+                    });
                 }
                 self.wait_for_debug_queue()?;
                 continue;
@@ -476,13 +481,14 @@ impl OwnedMachine {
             for call in batch {
                 let result = self.apply_dmi(call.addr, call.write);
                 let _ = call.reply.send(result);
-                // Abstract Access Memory is a Platform port too. Take each
-                // call's effects before a later call can replace the Platform,
-                // and return them now rather than after another wait.
-                boundary.events.extend(self.take_debug_events()?);
             }
-            if !boundary.events.is_empty() || !block || !self.debug_blocked() {
-                return Ok(boundary);
+            // Return collected effects instead of waiting again: a terminal
+            // debugger effect must reach the Runner at this boundary.
+            if !self.debug_events.is_empty() || !block || !self.debug_blocked() {
+                return Ok(DebugBoundary {
+                    events: self.take_debug_events(),
+                    failure: None,
+                });
             }
         }
     }
@@ -578,17 +584,26 @@ impl OwnedMachine {
             .lock()
             .map_err(|_| MachineError::Poisoned)?
             .complete_grant(outcome);
+        self.capture_debug_events()?;
         lease.boundary(uncertain, failure.clone())?;
         Ok(DebugBoundary {
-            events: self.take_debug_events()?,
+            events: self.take_debug_events(),
             failure,
         })
     }
 
-    /// Platform effects committed since the caller's last debug boundary.
+    /// Platform effects produced by debug work since the last debug boundary.
     /// A guest turn drains its own effects, so these belong to debug work.
-    pub(crate) fn take_debug_events(&self) -> Result<Vec<PlatformEvent>, MachineError> {
-        self.domain().platform.take_events()
+    pub(crate) fn take_debug_events(&mut self) -> Vec<PlatformEvent> {
+        std::mem::take(&mut self.debug_events)
+    }
+
+    /// Move the Platform queue into the held debug events. Called before a
+    /// later operation can replace the Platform.
+    fn capture_debug_events(&mut self) -> Result<(), MachineError> {
+        self.debug_events
+            .extend(self.domain().platform.take_events()?);
+        Ok(())
     }
 
     pub(crate) fn dmi_read(&mut self, addr: u8) -> Result<u32, MachineError> {
@@ -655,6 +670,7 @@ impl OwnedMachine {
                 core.unresolved_physical_access().cloned(),
             )
         };
+        self.capture_debug_events()?;
         let receipt = lease.boundary(failure.is_some(), failure)?;
         let uncertain = receipt.boundary_state()?.1;
         if !before && after {

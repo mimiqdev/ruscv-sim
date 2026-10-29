@@ -1375,7 +1375,7 @@ fn started_debug_grant_drains_before_lifecycle_mutation() {
     halted_by_dmi(&mut owned);
     write_gpr(&mut owned, 5, crate::executor::SYSTEM_BUS_UART_BASE);
     write_gpr(&mut owned, 6, u64::from(b'B'));
-    postexec_buffer(&mut owned, [elf::sb(6, 5, 0), elf::nop()]);
+    postexec_buffer(&mut owned, [elf::sb(6, 5, 0), elf::addi(9, 9, 1)]);
 
     let control = owned.test_control();
     let generation = control.status().unwrap().generation;
