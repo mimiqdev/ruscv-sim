@@ -136,6 +136,26 @@ pub enum WaitSettlement {
     Deadline,
 }
 
+/// Facts from debug service at one Hart boundary.
+///
+/// Debug work has no guest turn, so these facts carry their own provenance:
+/// a Platform effect or simulator failure produced by a debug instruction, or
+/// by debugger DMI, since the previous Hart boundary. The Runner classifies a
+/// terminal effect without inventing guest retirement.
+#[derive(Debug, Default)]
+pub(crate) struct DebugBoundary {
+    pub(crate) events: Vec<PlatformEvent>,
+    pub(crate) failure: Option<crate::core::SimulatorFailure>,
+}
+impl DebugBoundary {
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.events.extend(other.events);
+        if self.failure.is_none() {
+            self.failure = other.failure;
+        }
+    }
+}
+
 /// A completed boundary. No mutable core/port/device capability escapes.
 /// Keep this receipt through sink delivery and causal accounting, then drop it
 /// before the next turn or drain acknowledgment. Historical fact copies are not

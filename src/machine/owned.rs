@@ -29,6 +29,9 @@ pub(crate) struct OwnedMachine {
     memory: SharedMemory,
     edited: bool,
     edit_reservation: Option<crate::isa::rv64a::lr_sc::ReservationSet>,
+    /// Platform effects produced by debug work. Held until the next debug
+    /// boundary so a reset cannot discard an effect committed before it.
+    debug_events: Vec<PlatformEvent>,
     #[cfg(test)]
     before_drain: Option<Arc<dyn Fn() + Send + Sync>>,
     #[cfg(test)]
@@ -52,6 +55,7 @@ impl OwnedMachine {
             memory,
             edited: false,
             edit_reservation: None,
+            debug_events: Vec::new(),
             #[cfg(test)]
             before_drain: None,
             #[cfg(test)]
@@ -380,6 +384,9 @@ impl OwnedMachine {
             .map_err(|_| MachineError::Poisoned)?
             .take();
         self.installed = installed;
+        // Held debug effects belong to the replaced generation. A reset
+        // inside a debug boundary retains them; an explicit new image does not.
+        self.debug_events.clear();
         self.memory = self.control.memory()?;
         self.edited = false;
         self.edit_reservation = None;
@@ -443,9 +450,13 @@ impl OwnedMachine {
     /// instruction stays queued: this returns without applying it.
     /// `block` waits for the next command while the hart is halted, held in
     /// `ndmreset`, or parked by the caller.
-    pub(crate) fn debug_boundary(&mut self, block: bool) -> Result<(), MachineError> {
+    ///
+    /// Platform effects and a simulator failure that belong to this debug
+    /// boundary are returned here. Debug work has no guest turn, so they are
+    /// not attached to a later instruction.
+    pub(crate) fn debug_boundary(&mut self, block: bool) -> Result<DebugBoundary, MachineError> {
         if self.control.inner.debug.in_instruction() {
-            return Ok(());
+            return Ok(DebugBoundary::default());
         }
         loop {
             if self.control.inner.debug.closed() {
@@ -461,8 +472,11 @@ impl OwnedMachine {
                 if self.debug_command_busy()? {
                     return self.advance_debug_command();
                 }
-                if !block {
-                    return Ok(());
+                if !block || !self.debug_events.is_empty() {
+                    return Ok(DebugBoundary {
+                        events: self.take_debug_events(),
+                        failure: None,
+                    });
                 }
                 self.wait_for_debug_queue()?;
                 continue;
@@ -471,8 +485,13 @@ impl OwnedMachine {
                 let result = self.apply_dmi(call.addr, call.write);
                 let _ = call.reply.send(result);
             }
-            if !block || !self.debug_blocked() {
-                return Ok(());
+            // Return collected effects instead of waiting again: a terminal
+            // debugger effect must reach the Runner at this boundary.
+            if !self.debug_events.is_empty() || !block || !self.debug_blocked() {
+                return Ok(DebugBoundary {
+                    events: self.take_debug_events(),
+                    failure: None,
+                });
             }
         }
     }
@@ -519,8 +538,10 @@ impl OwnedMachine {
     /// The DM lock selects the opcode and records the result; it is released
     /// while the Hart executes the word and reaches any physical target. A
     /// Machine that cannot admit a Hart turn (quiesce, reset, failure, unknown
-    /// completion) ends the command instead of running another word.
-    pub(crate) fn advance_debug_command(&mut self) -> Result<(), MachineError> {
+    /// completion) ends the command instead of running another word. Platform
+    /// effects and a simulator failure from this word are returned at this
+    /// boundary.
+    pub(crate) fn advance_debug_command(&mut self) -> Result<DebugBoundary, MachineError> {
         let hub = Arc::clone(&self.control.inner);
         let Ok(lease) = Lease::hart(&hub.gate) else {
             hub.debug
@@ -528,7 +549,7 @@ impl OwnedMachine {
                 .lock()
                 .map_err(|_| MachineError::Poisoned)?
                 .abort_command();
-            return Ok(());
+            return Ok(DebugBoundary::default());
         };
         let word = {
             let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
@@ -541,8 +562,9 @@ impl OwnedMachine {
         };
         let Some(word) = word else {
             lease.boundary(false, None)?;
-            return Ok(());
+            return Ok(DebugBoundary::default());
         };
+        self.sample_debug_inputs()?;
         let (outcome, failure, uncertain) = {
             let core = &mut self
                 .installed
@@ -565,7 +587,25 @@ impl OwnedMachine {
             .lock()
             .map_err(|_| MachineError::Poisoned)?
             .complete_grant(outcome);
-        lease.boundary(uncertain, failure)?;
+        self.capture_debug_events()?;
+        lease.boundary(uncertain, failure.clone())?;
+        Ok(DebugBoundary {
+            events: self.take_debug_events(),
+            failure,
+        })
+    }
+
+    /// Platform effects produced by debug work since the last debug boundary.
+    /// A guest turn drains its own effects, so these belong to debug work.
+    pub(crate) fn take_debug_events(&mut self) -> Vec<PlatformEvent> {
+        std::mem::take(&mut self.debug_events)
+    }
+
+    /// Move the Platform queue into the held debug events. Called before a
+    /// later operation can replace the Platform.
+    fn capture_debug_events(&mut self) -> Result<(), MachineError> {
+        self.debug_events
+            .extend(self.domain().platform.take_events()?);
         Ok(())
     }
 
@@ -586,9 +626,25 @@ impl OwnedMachine {
         self.apply_dmi(addr, write)
     }
 
+    /// Sample Platform inputs at a debug boundary. This mirrors the guest
+    /// pre-turn sample: `time` and the machine lines become current, but no
+    /// clock, counter or turn advances (contract §3, ADR-0004 amendment).
+    fn sample_debug_inputs(&mut self) -> Result<(), MachineError> {
+        let (mtime, lines) = {
+            let platform = &self.domain().platform;
+            (platform.read_mtime()?, platform.machine_interrupt_lines()?)
+        };
+        let csr = &mut self.domain_mut().core.state_mut().csr;
+        csr.set_time(mtime);
+        csr.set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
+        csr.set_seip_external(lines.seip);
+        Ok(())
+    }
+
     fn apply_dmi(&mut self, addr: u8, write: Option<u32>) -> Result<u32, MachineError> {
         let hub = Arc::clone(&self.control.inner);
         let lease = Lease::debug(&hub.gate)?;
+        self.sample_debug_inputs()?;
         let uncertain = lease.boundary_state()?.1;
         let (value, before, after, failure) = {
             let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
@@ -617,6 +673,7 @@ impl OwnedMachine {
                 core.unresolved_physical_access().cloned(),
             )
         };
+        self.capture_debug_events()?;
         let receipt = lease.boundary(failure.is_some(), failure)?;
         let uncertain = receipt.boundary_state()?.1;
         if !before && after {

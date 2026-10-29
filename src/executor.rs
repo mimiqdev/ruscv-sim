@@ -10,7 +10,7 @@ use crate::core::{
 };
 use crate::elf::{ElfError, LoadImage, SignatureInfo};
 use crate::jtag::{BitbangSession, DmiBus, DmiFault, RemoteBitbangConfig};
-use crate::machine::{MachineConfig, OwnedMachine, PlatformEvent, PlatformKind};
+use crate::machine::{DebugBoundary, MachineConfig, OwnedMachine, PlatformEvent, PlatformKind};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::{Clint, Plic, Uart16550, CLINT_SIZE, PLIC_SIZE};
 pub use crate::physical::NativeSystemBusBackend;
@@ -1540,50 +1540,84 @@ fn hold_for_debugger(
     control: &mut RunControl,
     session: Option<&mut BitbangSession>,
     wait_for_command: bool,
-) -> Result<DebugHold, ExecutorError> {
+) -> Result<(DebugHold, DebugBoundary), ExecutorError> {
     // A started command advances one Hart grant per boundary with no further
     // client input, so it never depends on socket traffic.
     let busy = machine
         .debug_command_busy()
         .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
     if let Some(session) = session {
+        let mut boundary = DebugBoundary::default();
         if busy {
-            machine
-                .advance_debug_command()
-                .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
+            boundary.merge(
+                machine
+                    .advance_debug_command()
+                    .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?,
+            );
         }
         let block = (wait_for_command || machine.debug_blocked()) && !busy;
         let closed = session
             .poll(&mut MachineDmi { machine }, block)
             .map_err(ExecutorError::ExecutionError)?;
+        // Direct DMI reached the DM at this boundary. A Platform effect it
+        // caused is debug work, not a later guest turn.
+        boundary.events.extend(machine.take_debug_events());
         machine.publish_completed_turns(control.cycles());
         if closed {
-            return Ok(DebugHold::Closed);
+            return Ok((DebugHold::Closed, boundary));
         }
-        return Ok(if machine.debug_blocked() {
+        let hold = if machine.debug_blocked() {
             DebugHold::Wait
         } else {
             DebugHold::Run
-        });
+        };
+        return Ok((hold, boundary));
     }
     if !machine.debugger_attached() {
-        return Ok(DebugHold::Run);
+        return Ok((DebugHold::Run, DebugBoundary::default()));
     }
     // The queued-DMI path grants inside `debug_boundary`, which drains the
     // queue before the next word.
     let block = (wait_for_command || machine.debug_blocked()) && !busy;
-    machine
+    let boundary = machine
         .debug_boundary(block)
         .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
     machine.publish_completed_turns(control.cycles());
     if wait_for_command {
-        return Ok(DebugHold::Run);
+        return Ok((DebugHold::Run, boundary));
     }
-    Ok(if machine.debug_blocked() {
+    let hold = if machine.debug_blocked() {
         DebugHold::Wait
     } else {
         DebugHold::Run
-    })
+    };
+    Ok((hold, boundary))
+}
+
+/// A debug boundary can end the run without a guest turn: a debug-word
+/// simulator failure, or an HTIF exit written by the debugger. The Runner
+/// keeps terminal classification and completes no turn, so `cycles` is
+/// unchanged.
+fn debug_stop(boundary: &DebugBoundary) -> Option<(u32, Option<String>)> {
+    if let Some(failure) = &boundary.failure {
+        return Some((
+            1,
+            Some(format!(
+                "Execution error at PC 0x{:016x}: {}",
+                failure.pc,
+                format_failure(failure.clone())
+            )),
+        ));
+    }
+    boundary
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            PlatformEvent::HtifWrite(value) => try_extract_exit_code(*value),
+            _ => None,
+        })
+        .find(|code| *code != u32::MAX)
+        .map(|code| (code, None))
 }
 
 fn open_bitbang(
@@ -1854,7 +1888,20 @@ fn run_native_inner(
             .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
     }
     while matches!(decision, RunDecision::Continue) {
-        match hold_for_debugger(&mut machine, &mut control, bitbang.as_mut(), false)? {
+        let (hold, boundary) =
+            hold_for_debugger(&mut machine, &mut control, bitbang.as_mut(), false)?;
+        if let Some((code, error)) = debug_stop(&boundary) {
+            return Ok(cli_result(
+                &machine,
+                &placement,
+                code,
+                control.cycles(),
+                machine.state().pc,
+                false,
+                error,
+            ));
+        }
+        match hold {
             DebugHold::Wait => continue,
             DebugHold::Closed => {
                 return Ok(cli_result(
@@ -1932,7 +1979,20 @@ fn run_native_inner(
             {
                 control.refund_uncompleted_slot();
                 drop(turn);
-                match hold_for_debugger(&mut machine, &mut control, bitbang.as_mut(), true)? {
+                let (hold, boundary) =
+                    hold_for_debugger(&mut machine, &mut control, bitbang.as_mut(), true)?;
+                if let Some((code, error)) = debug_stop(&boundary) {
+                    return Ok(cli_result(
+                        &machine,
+                        &placement,
+                        code,
+                        control.cycles(),
+                        machine.state().pc,
+                        false,
+                        error,
+                    ));
+                }
+                match hold {
                     DebugHold::Closed => {
                         return Ok(cli_result(
                             &machine,
@@ -2549,7 +2609,13 @@ impl RiscVSimulator {
                 .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
         }
         while matches!(decision, RunDecision::Continue) {
-            match hold_for_debugger(&mut self.machine, &mut control, bitbang.as_mut(), false)? {
+            let (hold, boundary) =
+                hold_for_debugger(&mut self.machine, &mut control, bitbang.as_mut(), false)?;
+            if let Some((code, error)) = debug_stop(&boundary) {
+                self.memory = self.machine.memory().clone();
+                return Ok(self.finish(control.cycles(), code, false, error));
+            }
+            match hold {
                 DebugHold::Wait => {
                     self.memory = self.machine.memory().clone();
                     continue;
@@ -2598,12 +2664,13 @@ impl RiscVSimulator {
                 {
                     control.refund_uncompleted_slot();
                     drop(turn);
-                    match hold_for_debugger(
-                        &mut self.machine,
-                        &mut control,
-                        bitbang.as_mut(),
-                        true,
-                    )? {
+                    let (hold, boundary) =
+                        hold_for_debugger(&mut self.machine, &mut control, bitbang.as_mut(), true)?;
+                    if let Some((code, error)) = debug_stop(&boundary) {
+                        self.memory = self.machine.memory().clone();
+                        return Ok(self.finish(control.cycles(), code, false, error));
+                    }
+                    match hold {
                         DebugHold::Closed => {
                             self.memory = self.machine.memory().clone();
                             return Ok(self.finish(
