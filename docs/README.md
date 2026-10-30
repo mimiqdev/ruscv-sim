@@ -4,13 +4,13 @@
 
 **Authority:** Normative navigation
 
-**Last reviewed:** 2026-10-28
+**Last reviewed:** 2026-10-30
 
 This index is the entry point for project decisions and technical documentation. Files under `archive/` preserve history but must not drive current implementation.
 
 ## Sources of truth
 
-1. [Milestone plan](dev-plan.md) — the sole Current contract. The owner-approved Program-buffer Debug Execution target replaces Stage 6 on this rotation merge; activation is not an implementation claim.
+1. [Milestone plan](dev-plan.md) — the sole Current contract. The owner-approved System Bus Access Debug target replaces Program-buffer Debug Execution on this rotation merge; activation is not an implementation claim.
 2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
 3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests, the [A8 assessment](verification/a8-closeout-assessment.md) for the atomic route, and the [A9 acceptance assessment](verification/a9-closeout-assessment.md) for Hart facts/Machine integration, separating historical checkpoint and final PR/merge-head evidence.
 4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
@@ -33,8 +33,10 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Program-buffer Debug Execution contract](dev-plan.md) — owner-approved D1–D9, sole Current on this rotation merge. Adds a bounded program-buffer target, necessary data autoexec and Zifencei; SBA remains later work.
-- [Approved program-buffer proposal entry](proposals/post-stage6-program-buffer-debug.md) — informational pointer to the sole normative contract.
+- [System Bus Access Debug contract](dev-plan.md) — owner-approved D1–D10, sole Current on this rotation merge. Adds DM-initiated physical memory access as the first inbound Platform master; TLM/SystemC and multi-hart work remain later directions.
+- [Approved SBA proposal entry](proposals/post-program-buffer-sba.md) — informational pointer to the sole normative contract.
+- [Entire approved Program-buffer Debug Execution contract](archive/milestones/program-buffer-debug-execution.md) — preserved in full with its bounded two-word program-buffer scope and limitations. Implementation is PR #114 through PR #118, completed 2026-10-30; historical on the SBA rotation merge.
+- [Approved program-buffer proposal entry](proposals/post-stage6-program-buffer-debug.md) — historical pointer to the completed contract.
 - [Entire approved Stage 6 contract](archive/milestones/stage6-riscv-debug-mode.md) — preserved in full with its single-hart abstract-command scope and limitations; historical on the successor rotation merge.
 - [Entire approved Stage 5 contract archive](archive/milestones/stage5-platform-interrupts-wfi-and-counters.md) — Platform interrupts, WFI, modeled time, and counters. Decisions D0–D9 were owner approved, recommended option, on 2026-10-16 13:08 CST. Implementation is PR #90 through PR #94. The full original body is preserved. Formal completion and archival took effect on the PR #96 activation merge.
 - [Entire approved Stage 4 contract archive](archive/milestones/stage4-virtual-memory-and-protection.md) — Virtual Memory and Protection. Decisions recorded by PR #75, owner-authorized activation 2026-10-11 UTC, implementation and review at PR #88. The full original body is preserved. Formal completion and archival take effect on the Stage 4 to Stage 5 rotation merge.

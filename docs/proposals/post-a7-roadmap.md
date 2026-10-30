@@ -658,7 +658,9 @@ U2 is the Debug Module. U3 is Machine integration. U4 is JTAG and the CLI.
 U5 is the OpenOCD and GDB attach. U6 removes `src/debug/` after that attach
 exists.
 
-**Approved successor on rotation, owner Tony, 2026-10-28:** the [Program-buffer Debug Execution contract](../dev-plan.md) selects the bounded program-buffer portion first, with D1–D9 approved. SBA remains a separate subsequent goal. Only that contract and its coordinated ADR amendments define the selected capacity, instruction-source exception, Zifencei, data-autoexec and component API changes. This roadmap does not activate or implement them.
+**Approved successor on rotation, owner Tony, 2026-10-28:** the [Program-buffer Debug Execution contract](../archive/milestones/program-buffer-debug-execution.md) selects the bounded program-buffer portion first, with D1–D9 approved. Its implementation completed 2026-10-30 at PR #118, and the contract is archived on the SBA rotation merge. Only that contract and its coordinated ADR amendments define the selected capacity, instruction-source exception, Zifencei, data-autoexec and component API changes. This roadmap does not activate or implement them.
+
+**Approved successor on rotation, owner Tony, 2026-10-30:** the [System Bus Access Debug contract](../dev-plan.md) completes this section's recorded Spike-style debug remainder, with D1–D10 approved. Only that contract and its coordinated ADR amendments define the register profile, inbound-master boundary, error taxonomy and tool verification. This roadmap does not activate or implement them.
 
 **Later complete debug direction, not Stage 6:** full Spike-style support still includes a program buffer, system bus access, and execution of instructions while the hart is in Debug Mode. The Stage 6 abstract-command module (`progbufsize` 0, `datacount` 4) was the temporary first implementation selected on 2026-10-19. Splitting the next delivery does not remove SBA from that direction.
 

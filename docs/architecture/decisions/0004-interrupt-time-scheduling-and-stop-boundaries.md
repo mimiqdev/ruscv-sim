@@ -18,6 +18,8 @@
 
 **2026-10-28 amendment:** The [program-buffer work amendment](#2026-10-28-amendment-program-buffer-work) extends this target for the owner-approved [successor contract](../../dev-plan.md). Normal guest grants, interrupt ordering and physical-delay ownership remain in force.
 
+**2026-10-30 amendment:** The [system-bus-access work amendment](#2026-10-30-amendment-system-bus-access-work) extends this target for the owner-approved [successor contract](../../dev-plan.md). Normal guest grants, interrupt ordering and physical-delay ownership remain in force.
+
 ## 1. Context and scope
 
 The first three accepted decisions establish the boundaries needed to evolve a
@@ -1401,6 +1403,18 @@ For the selected fixed stopcount/stoptime profile, debug work adds no automatic 
 Command completion/error, debug instruction effects, Platform events and simulator failure remain distinguishable and causally ordered. A buffer exception terminates the command without guest trap entry. Resume cannot preempt unfinished command work; completion facts precede any permitted guest resume. Reset stops new grants and drains started physical work before lifecycle mutation. Unknown completion remains non-resumable without adapter proof, regardless of command-error clear, DM reset or a reset request.
 
 Guest single-step, WFI, interrupt eligibility/priority and ordinary grant semantics remain unchanged. DRET remains illegal in the selected non-ROM design. SBA, triggers and additional harts remain deferred.
+
+## 2026-10-30 amendment: system bus access work
+
+The owner approved the System Bus Access Debug contract's D1–D10 scope on 2026-10-30. A Machine may admit DM-originated system bus transactions at coherent Hart boundaries while the Hart runs or is halted. This is control work distinct from an ordinary guest Hart-turn grant: completing it does not charge guest instruction attempts, retirement, a guest-turn budget slot, or framework `iss_tick`.
+
+SBA requests and responses carry ADR-0002 §7 delay metadata unchanged; consumption follows this ADR's existing physical-delay ownership and adds no guest counter, platform-clock, or application cycle charge in the selected profile. Explicit SBA writes to counter, CSR, or MMIO targets retain their defined device effects.
+
+The Machine services DMI and admits SBA between Hart boundaries without turning that admission into guest execution, interrupt entry, a WFI wait grant, or an idle jump. Pending SBA work is admissible work and cannot be discarded as NoProgress.
+
+SBA completion, error, and Platform effects remain distinguishable and causally ordered from guest retirement and trap entry. A reset request stops new grants and drains started physical work before lifecycle mutation. Unknown completion remains non-resumable without adapter proof, regardless of SBA error clear, DM reset, or a reset request.
+
+Guest single-step, WFI, interrupt eligibility/priority, and ordinary grant semantics remain unchanged. Additional masters, arbitration, and coherence remain deferred.
 
 ## 18. Source and test map
 
