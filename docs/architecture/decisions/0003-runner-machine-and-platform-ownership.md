@@ -17,6 +17,8 @@
 
 **2026-10-28 amendment:** The [program-buffer composition amendment](#2026-10-28-amendment-program-buffer-composition) extends this target for the owner-approved [successor contract](../../dev-plan.md). It changes no implementation claim or guest-execution ownership.
 
+**2026-10-30 amendment:** The [system-bus-access composition amendment](#2026-10-30-amendment-system-bus-access-composition) extends this target for the owner-approved [successor contract](../../dev-plan.md). It changes no implementation claim or guest-execution ownership.
+
 ## Context
 
 The product must provide a standalone instruction set simulator (ISS) now and a
@@ -704,6 +706,16 @@ Started debug work participates in existing lifecycle admission and completion r
 Do not hold the DM lock across Hart execution or physical callbacks. Command progress must not depend on another socket request when admitted work can advance. Completion/error and Platform effects return through the Machine with debug provenance; the Runner retains terminal classification and must not invent guest retirement to deliver them.
 
 The selected profile bounds commands and defines resume, abort and reset behavior. Public CLI/result shape remains unchanged. This amendment defines no FFI, SystemC, DMI cache, new master or multi-Hart protocol.
+
+## 2026-10-30 amendment: system bus access composition
+
+The owner approved the System Bus Access Debug contract's D1–D10 scope on 2026-10-30. The Machine admits DM-originated system-bus transactions at coherent Hart boundaries while the Hart runs or is halted; admission never preempts an in-flight instruction, abstract command, or program-buffer execution. The Platform owns physical routing, raw-byte and width rules, target side effects, and target-fault reporting for the inbound path, exactly as for Hart-issued transactions. The DM owns the SBA register block, busy and sticky error state, and the read-on-access/autoincrement protocol. The transport only carries DMI.
+
+The Hart is not involved: no fetch, translation, PMP, trap, retirement, or architectural register effect. No DM lock is held across a target access. Pending SBA work is admissible work and must not be mistaken for WFI or NoProgress, and must not cause an idle-time jump.
+
+A reset request stops new SBA grants and drains or rejects in-flight work under the existing reset policy. Sticky SBA errors survive non-DM reset like other DM error state; DM reset clears SBA command and busy state. Unknown completion retains the existing quarantine semantics. Committed MMIO effects remain Platform effects with debug-operation provenance; the Runner retains terminal classification and must not invent guest retirement to deliver them.
+
+The selected contract defines the register profile, error taxonomy, and tool verification. Public CLI and result shape remain unchanged. This amendment defines no DMA, coherence, watchpoint, additional-master, FFI, or SystemC protocol.
 
 ## Bounded deferrals and open questions
 

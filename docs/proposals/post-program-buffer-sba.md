@@ -1,8 +1,10 @@
 # System Bus Access debug proposal
 
-**Status:** Draft, awaiting owner approval. Approved selections move into the successor milestone contract on the rotation merge; this entry then becomes informational navigation like the program-buffer proposal.
+**Status:** Current approved proposal entry. Owner Tony approved the recommended D1–D10 scope on 2026-10-30.
 
-**Authority:** Informational proposal. It is not a milestone contract, does not replace [`docs/dev-plan.md`](../dev-plan.md), and makes no implementation claim. The Program-buffer Debug Execution contract remains the sole Current contract until the rotation merge.
+**Authority:** Informational navigation. This is not a second current contract or an implementation claim.
+
+The approved scope is maintained in the [System Bus Access Debug contract](../dev-plan.md), activated on the Program-buffer Debug Execution successor rotation merge. The [archived program-buffer contract](../archive/milestones/program-buffer-debug-execution.md) preserves the preceding scope.
 
 **Baseline:** `main` at merge commit `3085f9e` (PR #118), which completes program-buffer U1–U5. CI on that head is green (Quality and tests, Debug attach).
 

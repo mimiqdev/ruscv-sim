@@ -10,6 +10,8 @@
 
 **2026-10-28 amendment:** The selected program-buffer profile has a bounded, non-addressable instruction-source exception described [below](#2026-10-28-amendment-program-buffer-instruction-source). All ordinary guest fetch and data-access rules remain in force. This target amendment activates with the [successor contract](../../dev-plan.md).
 
+**2026-10-30 amendment:** The selected system-bus-access profile admits the first inbound Platform master under §9, described [below](#2026-10-30-amendment-system-bus-access-inbound-master). All Hart-initiator rules remain in force. This target amendment activates with the [successor contract](../../dev-plan.md).
+
 ## Context
 
 The target architecture has one Hart implementation for the standalone ISS and the
@@ -397,6 +399,14 @@ The exception is permitted only for the bounded buffer command while the Hart re
 Every guest physical fetch and every debug or guest data load/store, AMO, LR/SC and page-table transaction continues through PhysicalAccess with the existing raw-byte, fault, atomic, reservation and failure semantics. Supplying an opcode creates no permission to read guest memory through a host pointer or to bypass translation/PMP rules for data access.
 
 SBA and other inbound Platform masters remain deferred under §9. The instruction-source exception does not make the DM a physical initiator. Timing, ownership and debug control facts follow the coordinated ADR-0001/0003/0004 amendments and the selected contract. No concrete transport or Rust API is chosen here.
+
+## 2026-10-30 amendment: system bus access inbound master
+
+The owner approved the System Bus Access Debug contract's D1–D10 scope on 2026-10-30. The selected debug profile adds system bus access as the first inbound Platform master under §9. The DM originates physical read and write requests of 8, 16, 32, or 64 bits at an explicit physical address; the Platform routes them with the same raw-byte, width, routing, all-or-nothing, side-effect, and target-fault semantics as Hart-issued transactions. SBA performs no Hart translation, privilege, PMP, or architectural check, issues no atomic envelope, and never enters a guest trap or ISA execution path.
+
+A committed SBA write is a competing write for reservation visibility: the Platform reports it so an overlapping Hart reservation is invalidated under the existing Hart-owned architectural rule. A failed SBA transaction invalidates nothing. An SBA transaction must not expose an intermediate state of a Hart atomic operation.
+
+The normalized physical fault of §4 maps to the DM's SBA error taxonomy (bad address, alignment, unsupported size) at the DM boundary; simulator/internal failures retain their existing non-guest classification and unknown-completion quarantine. SBA requests and responses carry §7 delay metadata unchanged; ADR-0004 owns its consumption. The §9 DMI-range-invalidation rule is not applicable here: no direct-memory-interface mechanism exists in this profile, and the rule remains deferred with transport integration. This amendment selects no Rust API, transport encoding, arbitration, or multi-initiator ordering beyond the single-hart visibility rule above. DMA, coherence, watchpoints, and further masters remain deferred under §9.
 
 ## Bounded deferrals
 

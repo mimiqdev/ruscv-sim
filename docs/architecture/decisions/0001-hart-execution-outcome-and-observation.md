@@ -11,6 +11,8 @@
 
 **2026-10-28 amendment:** The owner-approved program-buffer profile extends the guest-execution boundary as specified [below](#2026-10-28-amendment-program-buffer-debug-execution). It activates with the [successor contract](../../dev-plan.md); it is not an implementation claim.
 
+**2026-10-30 amendment:** The owner-approved system-bus-access profile keeps the Hart uninvolved in DM-initiated physical transactions, as specified [below](#2026-10-30-amendment-system-bus-access-outcomes). It activates with the [successor contract](../../dev-plan.md); it is not an implementation claim.
+
 ## Context
 
 The target architecture requires one RISC-V Hart implementation to serve both the standalone ISS and the future Virtual Platform. The Hart owns architectural state, instruction semantics, privilege, traps, address translation, and retirement; the Runner and Platform drive it and observe its facts. This boundary is described in the [target architecture](../README.md) and [architecture principles](../principles.md), while the [current implementation inventory](../current-state.md) records that the boundary is not yet implemented.
@@ -270,6 +272,14 @@ Debug instruction completion, buffer exception, command completion, and simulato
 Required debug control facts exist independently of optional observation. Any materialized debug effects originate from the Hart transition that created them; a frontend must not reconstruct them through a second fetch or state-difference loop. Guest CommitRecord and TrapRecord semantics remain unchanged. This amendment does not prescribe new public Rust types or application result fields.
 
 The selected contract defines buffer instruction restrictions, saved `dpc`, counters and command completion. Trigger-module behavior remains deferred.
+
+## 2026-10-30 amendment: system bus access outcomes
+
+The owner approved the System Bus Access Debug contract's D1–D10 scope on 2026-10-30. For that selected profile, the debug module originates physical read and write transactions that never involve the Hart: no fetch, no instruction attempt, no translation, no trap entry, and no retirement.
+
+An SBA transaction therefore produces no Hart outcome of any kind. It must not fabricate a guest CommitRecord, TrapRecord, instruction-attempt, or retirement fact, and it does not change guest trap CSRs, privilege, or PC. Debug control facts—SBA busy, error, and completion—remain distinct from Hart control facts. Any materialized debug observation originates from the DM and Platform effects that created them; a frontend must not reconstruct them through a second access or state-difference loop.
+
+The physical-fault classification of [ADR-0002](0002-physical-access-transaction-and-fault.md) §4 maps to the DM's SBA error taxonomy at the DM boundary; it is never converted into a guest access-fault trap. Unknown completion retains the existing non-resumable failure boundary. Guest CommitRecord and TrapRecord semantics remain unchanged. This amendment prescribes no new public Rust types or application result fields.
 
 ## Source and test map
 

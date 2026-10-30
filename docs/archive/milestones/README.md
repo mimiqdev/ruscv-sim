@@ -2,7 +2,7 @@
 
 This directory preserves approved milestone contracts and explicitly superseded plans, including their scope and limitations. Clearly labeled preparation records do not claim completion.
 
-Archived files are not active plans. Consult the [sole current contract](../../dev-plan.md). The owner-approved Program-buffer Debug Execution target succeeds Stage 6 on the actual rotation merge. The [entire Stage 6 contract](stage6-riscv-debug-mode.md) is preserved here for historical scope; activation and completion do not claim implementation of the successor. CI and PR history retain execution and review outcomes.
+Archived files are not active plans. Consult the [sole current contract](../../dev-plan.md). The owner-approved System Bus Access Debug target succeeds Program-buffer Debug Execution on the actual rotation merge. The [entire Program-buffer Debug Execution contract](program-buffer-debug-execution.md) and the [entire Stage 6 contract](stage6-riscv-debug-mode.md) are preserved here for historical scope; activation and completion do not claim implementation of the successor. CI and PR history retain execution and review outcomes.
 
 ## Rolling process
 
@@ -16,6 +16,9 @@ Archived files are not active plans. Consult the [sole current contract](../../d
    technical planning context, not a second current contract.
 
 ## Records
+
+- [Program-buffer Debug Execution: Entire approved contract](program-buffer-debug-execution.md)
+  - Preserves owner-approved D1–D9, the two-word/implicit-EBREAK profile, the Zifencei addition, and the bounded debug-execution scope. Implementation is PR #114 through PR #118, completed 2026-10-30 at merge head `3085f9e`. Formal completion and archival take effect on the System Bus Access Debug rotation merge; no execution results are copied here.
 
 - [Stage 6: Entire approved RISC-V Debug Mode contract](stage6-riscv-debug-mode.md)
   - Preserves owner-approved D0–D15 and the temporary abstract-command profile. Formal completion and archival take effect on the Program-buffer Debug Execution rotation merge; no execution results are copied here.
