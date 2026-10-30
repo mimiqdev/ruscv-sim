@@ -495,6 +495,54 @@ fn autoexecdata_bits_repeat_the_last_command() {
     }
 }
 
+/// §2 D8 with §3: `autoexecdata[0]` carries a distinct-value bulk transfer.
+/// Each `data0` write stages its value, the replayed command transfers it to
+/// `a1`, and the buffer stores it at the address `a0` then advances `a0`.
+#[test]
+fn autoexecdata_bulk_transfer_writes_distinct_values() {
+    let mut h = Harness::halted();
+    let base = 0x200u64;
+    // `a0` walks the destination; `a1` receives each staged value.
+    h.set_reg(10, RAM_BASE + base - 4);
+    h.set_reg(11, 0);
+    h.prog(0, sw(11, 10, 0));
+    h.prog(1, addi(10, 10, 4));
+    h.data(0, 0);
+    h.run_command(access_register(3, true, true, true, 0x100b));
+    assert_eq!(h.cmderr(), 0);
+    assert_eq!(h.reg(10), RAM_BASE + base, "the setup store moved a0");
+    h.autoexec(AUTOEXEC_DATA[0]);
+
+    let values = [0x1111_1111u32, 0x2222_2222, 0x3333_3333, 0x4444_4444];
+    for (index, value) in values.iter().enumerate() {
+        // A value the transfer must replace, so a skipped replay cannot hide
+        // behind a coincidentally matching register.
+        h.set_reg(11, 0xdead_beef);
+        h.data(0, *value);
+        h.run_busy();
+        assert_eq!(h.cmderr(), 0);
+        assert_eq!(
+            h.ram
+                .lock()
+                .unwrap()
+                .read_word(base + 4 * index as u64)
+                .unwrap(),
+            *value,
+            "the staged data word did not reach RAM at element {index}"
+        );
+        assert_eq!(
+            h.reg(11),
+            u64::from(*value),
+            "the replayed command transferred data0 to a1 at element {index}"
+        );
+        assert_eq!(
+            h.reg(10),
+            RAM_BASE + base + 4 * (index as u64 + 1),
+            "the buffer advanced the destination after element {index}"
+        );
+    }
+}
+
 /// §2 D8: `autoexecprogbuf` bits repeat the command after the word is staged,
 /// so the buffer executes the newly written word.
 #[test]
