@@ -675,6 +675,43 @@ fn sberror_reports_a_bad_address_from_the_target() {
     assert_eq!(harness.target.peek(0, 4), 0x0a0b_0c0du32.to_le_bytes());
 }
 
+/// Contract §2 D5: a sticky error also suppresses the two read triggers.
+/// §3.14 starts a `sbreadonaddr` or `sbreadondata` read only while neither
+/// `sberror` nor `sbbusyerror` is set.
+#[test]
+fn a_sticky_error_suppresses_both_read_triggers() {
+    let mut harness = Harness::activated();
+    harness.write(SBCS, sbaccess(2));
+    harness.set_address(TARGET_BASE - 4);
+    harness.write(SBDATA0, 1);
+    harness.run();
+    assert_eq!(harness.error(), 2, "sberror 2 is a bad address");
+
+    // `sbreadonaddr` on the full block: the address still stages, and no
+    // read starts.
+    harness.write(SBCS, SBREADONADDR | sbaccess(2));
+    harness.set_address(TARGET_BASE);
+    assert_eq!(
+        harness.run(),
+        0,
+        "sbreadonaddr must not start a read while blocked"
+    );
+    assert!(!harness.busy());
+    assert_eq!(harness.address(), TARGET_BASE, "the address still stages");
+
+    // `sbreadondata` on the full block: the read samples, and no read starts.
+    harness.write(SBCS, SBREADONDATA | sbaccess(2));
+    let sampled = harness.read(SBDATA0);
+    assert_eq!(
+        harness.run(),
+        0,
+        "sbreadondata must not start a read while blocked"
+    );
+    assert!(!harness.busy());
+    assert_eq!(sampled, 1, "the read still returns the staged sbdata");
+    assert_eq!(harness.error(), 2, "sberror is still sticky");
+}
+
 /// Contract §2 D5: `sberror` 3 is an alignment error, decided before any
 /// target access.
 #[test]
