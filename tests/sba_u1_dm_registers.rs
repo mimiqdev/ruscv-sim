@@ -15,7 +15,7 @@ use ruscv_sim::physical::{
     AtomicAccess, AtomicAccessResult, AtomicRequest, PhysicalAccess, PhysicalAccessResult,
     PhysicalRequest,
 };
-use ruscv_sim::{DebugModule, SbaFault, SbaRequest};
+use ruscv_sim::{DebugModule, SbaAccessSize, SbaFault, SbaRequest};
 use std::sync::{Arc, Mutex};
 
 /// Debug Spec 1.0 §3.14 register addresses.
@@ -33,7 +33,6 @@ const SBDATA3: u8 = 0x3f;
 const DMACTIVE: u32 = 1;
 
 /// `sbcs` field positions (§3.14 `sbcs`).
-const SBVERSION: u32 = 1 << 29;
 const SBBUSYERROR: u32 = 1 << 22;
 const SBBUSY: u32 = 1 << 21;
 const SBREADONADDR: u32 = 1 << 20;
@@ -235,7 +234,8 @@ impl Harness {
 fn sbcs_advertises_version_size_and_width_capabilities() {
     let mut harness = Harness::activated();
     let cs = harness.cs();
-    assert_eq!(cs & SBVERSION, 1 << 29, "sbversion is 1");
+    assert_eq!((cs >> 29) & 0b111, 1, "sbversion is 1");
+    assert_eq!((cs >> 23) & 0b111_111, 0, "bits 28:23 are reserved 0");
     assert_eq!(
         (cs >> SBASIZE_SHIFT) & 0x7f,
         64,
@@ -496,10 +496,11 @@ fn sbbusyerror_blocks_new_accesses_until_w1c() {
     assert!(harness.busy_error());
     harness.run();
 
-    // Error set: a would-be write starts nothing and stages nothing.
+    // Error set: a would-be write starts nothing, though it still stages.
     harness.write(SBDATA0, 0x2222_2222);
     assert_eq!(harness.run(), 0, "no bus access starts while blocked");
-    assert_eq!(harness.read(SBDATA0), 0x1111_1111);
+    assert_eq!(harness.read(SBDATA0), 0x2222_2222);
+    assert_eq!(harness.target.peek(0, 4), 0x1111_1111u32.to_le_bytes());
 
     harness.write(SBCS, SBBUSYERROR | sbaccess(2));
     assert!(!harness.busy_error(), "W1C clears sbbusyerror");
@@ -510,6 +511,116 @@ fn sbbusyerror_blocks_new_accesses_until_w1c() {
         "the cleared error admits the access again"
     );
     assert_eq!(harness.target.peek(0, 4), 0x3333_3333u32.to_le_bytes());
+}
+
+/// Contract §2 D5: a read while busy sets `sbbusyerror`, and so does a
+/// `sbdata1` access, which has no trigger of its own.
+#[test]
+fn a_read_while_busy_sets_sbbusyerror() {
+    let mut harness = Harness::activated();
+    harness.write(SBCS, sbaccess(2));
+    harness.set_address(TARGET_BASE);
+    harness.write(SBDATA0, 0x1111_1111);
+    assert!(harness.busy());
+    assert!(!harness.busy_error());
+    harness.read(SBDATA0);
+    assert!(
+        harness.busy_error(),
+        "the read sampled sbdata while a read was in progress"
+    );
+    harness.run();
+
+    harness.write(SBCS, SBBUSYERROR | sbaccess(2));
+    harness.write(SBDATA0, 0x2222_2222);
+    assert!(harness.busy());
+    assert!(!harness.busy_error());
+    harness.read(SBDATA1);
+    assert!(
+        harness.busy_error(),
+        "an sbdata1 read while busy also sets it"
+    );
+}
+
+/// §3.14 leaves a `sbcs` write while `sbbusy` high undefined. This module
+/// drops it so a running access keeps its width and a sticky error cannot be
+/// cleared underneath it.
+#[test]
+fn sbcs_write_while_busy_is_dropped() {
+    let mut harness = Harness::activated();
+    harness.write(SBCS, sbaccess(2));
+    harness.set_address(TARGET_BASE);
+    harness.write(SBDATA0, 0x1111_2222);
+    assert!(harness.busy());
+
+    harness.write(SBCS, SBREADONDATA | SBAUTOINCREMENT | sbaccess(3));
+    assert_eq!(harness.access_width(), 2, "sbaccess is unchanged");
+    let cs = harness.cs();
+    assert_eq!(cs & (SBREADONDATA | SBAUTOINCREMENT), 0);
+
+    assert_eq!(harness.run(), 1);
+    assert_eq!(
+        harness.target.peek(0, 4),
+        0x1111_2222u32.to_le_bytes(),
+        "the running access kept its width"
+    );
+}
+
+/// The request a target receives carries only the bytes its `sbaccess` width
+/// covers, and a read result is masked the same way.
+#[test]
+fn the_request_and_result_carry_only_the_access_width() {
+    let mut harness = Harness::activated();
+    // A byte write with a full high half staged in `sbdata1`.
+    harness.write(SBCS, sbaccess(0));
+    harness.set_address(TARGET_BASE);
+    harness.write(SBDATA1, 0xffff_ffff);
+    harness.write(SBDATA0, 0xffff_ffab);
+    assert_eq!(
+        harness.dm.next_sba_request(),
+        Some(SbaRequest {
+            address: TARGET_BASE,
+            size: SbaAccessSize::Byte,
+            write: Some(0xab),
+        }),
+        "a byte write carries one byte"
+    );
+    harness.dm.complete_sba_access(Ok(0));
+
+    // A half-word read whose target answers with more than two bytes.
+    harness.write(SBCS, SBREADONADDR | sbaccess(1));
+    harness.set_address(TARGET_BASE + 2);
+    let request = harness.dm.next_sba_request().expect("one read request");
+    assert_eq!(request.size, SbaAccessSize::Half);
+    harness.dm.complete_sba_access(Ok(0xffff_ffff_ffff_beef));
+    assert_eq!(
+        harness.data(),
+        0xbeef,
+        "only the half word the access covers reaches sbdata"
+    );
+}
+
+/// A completion needs a request a target was actually given. One that was
+/// never handed out cannot clear `sbbusy` or fabricate a result.
+#[test]
+fn a_completion_needs_a_request_that_reached_a_target() {
+    let mut harness = Harness::activated();
+    harness.write(SBCS, SBAUTOINCREMENT | sbaccess(2));
+    harness.set_address(TARGET_BASE);
+    harness.write(SBDATA0, 0x1234_5678);
+    assert!(harness.busy());
+
+    harness.dm.complete_sba_access(Ok(0xdead_beef));
+    assert!(harness.busy(), "sbbusy survives a spurious completion");
+    assert_eq!(harness.data(), 0x1234_5678, "sbdata is unchanged");
+    assert_eq!(
+        harness.address(),
+        TARGET_BASE,
+        "sbaddress did not autoincrement"
+    );
+
+    assert_eq!(harness.run(), 1, "the real request still completes once");
+    assert!(!harness.busy());
+    assert_eq!(harness.address(), TARGET_BASE + 4);
 }
 
 /// Contract §2 D5 and §4 U1: `sberror` 2 is sticky until W1C and blocks new
@@ -536,20 +647,23 @@ fn sberror_reports_a_bad_address_from_the_target() {
     assert_eq!(harness.access_width(), 3, "a plain sbcs write still lands");
     harness.write(SBCS, sbaccess(2));
 
-    // Blocked: neither an address nor a data access starts a bus access.
+    // Blocked: the trigger is suppressed but the register update is not
+    // (§3.14 gates only the start on `sberror`, and so does the pinned
+    // Spike).
     harness.set_address(TARGET_BASE);
     assert_eq!(
         harness.read(SBADDRESS0),
-        (TARGET_BASE - 4) as u32,
-        "the blocked address write did nothing"
+        TARGET_BASE as u32,
+        "the address register still takes the value"
     );
     harness.write(SBDATA0, 0x0101_0101);
     assert_eq!(harness.run(), 0, "no bus access starts with sberror set");
     assert_eq!(
         harness.data(),
-        0xdead_beef,
-        "the blocked write staged nothing"
+        0x0101_0101,
+        "sbdata stages but starts nothing"
     );
+    assert_eq!(harness.error(), 2, "sberror stays set");
 
     // W1C recovery.
     harness.write(SBCS, sberror(2) | sbaccess(2));

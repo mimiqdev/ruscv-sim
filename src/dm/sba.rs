@@ -232,17 +232,17 @@ impl SbaState {
     }
 
     /// Write `sbaddress0` or `sbaddress1`. A busy manager sets
-    /// `sbbusyerror` and drops the write, and a sticky error drops it
-    /// silently, because neither state admits a new bus access.
+    /// `sbbusyerror` and drops the write.
     pub(super) fn write_address(&mut self, addr: u8, value: u32) {
-        if self.refuse() {
+        if self.busy_sets_error() {
             return;
         }
         let shift = if addr == SBADDRESS1 { 32 } else { 0 };
         let mask = u64::from(u32::MAX) << shift;
         self.address = (self.address & !mask) | (u64::from(value) << shift);
-        // Only `sbaddress0` triggers (§3.14 sbaddress0 and sbaddress1).
-        if addr == SBADDRESS0 && self.readonaddr {
+        // Only `sbaddress0` triggers (§3.14 sbaddress0 and sbaddress1), and
+        // only while no error is pending.
+        if addr == SBADDRESS0 && self.readonaddr && !self.access_blocked() {
             self.start(None);
         }
     }
@@ -255,7 +255,7 @@ impl SbaState {
             SBDATA1 => (self.data >> 32) as u32,
             _ => self.data as u32,
         };
-        if !self.refuse() && addr == SBDATA0 && self.readondata {
+        if !self.busy_sets_error() && addr == SBDATA0 && self.readondata && !self.access_blocked() {
             self.start(None);
         }
         value
@@ -265,28 +265,37 @@ impl SbaState {
     /// the new `sbdata`; `sbdata1` only stages the high half, so a debugger
     /// writes `sbdata0` last as §3.14 requires.
     pub(super) fn write_data(&mut self, addr: u8, value: u32) {
-        if self.refuse() {
+        if self.busy_sets_error() {
             return;
         }
         let shift = if addr == SBDATA1 { 32 } else { 0 };
         let mask = u64::from(u32::MAX) << shift;
         self.data = (self.data & !mask) | (u64::from(value) << shift);
-        if addr == SBDATA0 {
+        if addr == SBDATA0 && !self.access_blocked() {
             let data = self.data;
             self.start(Some(data));
         }
     }
 
-    /// Whether this access must not reach the register.
-    ///
-    /// A busy manager sets `sbbusyerror` and does nothing else (§3.14
-    /// `sbaddress0`, `sbdata0`, `sbdata1`). While either error is set the
-    /// access does nothing at all: no starting, no staging and no new error.
-    fn refuse(&mut self) -> bool {
+    /// A register access while the manager is busy sets `sbbusyerror` and
+    /// does nothing else (§3.14 `sbaddress0`, `sbdata0`, `sbdata1`). Returns
+    /// whether the access must be dropped.
+    fn busy_sets_error(&mut self) -> bool {
         if self.pending.is_some() {
             self.busy_error = true;
             return true;
         }
+        false
+    }
+
+    /// Whether a new bus access may start.
+    ///
+    /// §3.14 suppresses the *trigger* while `sberror` or `sbbusyerror` is
+    /// set, not the register update: `sbaddress0` initializes only when both
+    /// are 0, `sbdata0` starts a write only when none is set. The staged
+    /// value still lands, as it does in the pinned Spike, so the address and
+    /// data registers keep reading back what the debugger wrote.
+    fn access_blocked(&self) -> bool {
         self.error != 0 || self.busy_error
     }
 
@@ -327,13 +336,16 @@ impl SbaState {
 
     /// Record the target result and clear `sbbusy`.
     ///
-    /// A successful read updates `sbdata`; `sbautoincrement` advances
+    /// Only a request that [`Self::next_request`] handed out can complete: a
+    /// caller that never reached a target cannot report a result it does not
+    /// have. A successful read updates `sbdata`; `sbautoincrement` advances
     /// `sbaddress` by the access size, which also carries into
     /// `sbaddress1`. A failed access changes neither.
     pub(super) fn complete(&mut self, result: Result<u64, SbaFault>) {
-        let Some(pending) = self.pending.take() else {
+        let Some(pending) = self.pending.filter(|pending| pending.handed_out) else {
             return;
         };
+        self.pending = None;
         let request = pending.request;
         match result {
             Ok(value) => {
@@ -361,8 +373,8 @@ impl DebugModule {
     }
 
     /// Record the target result for the request taken by
-    /// [`Self::next_sba_request`] and clear `sbbusy`. A call with no
-    /// request in flight does nothing.
+    /// [`Self::next_sba_request`] and clear `sbbusy`. A call with no request
+    /// in flight, or with a request that was never taken, does nothing.
     pub fn complete_sba_access(&mut self, result: Result<u64, SbaFault>) {
         self.sba.complete(result);
     }
