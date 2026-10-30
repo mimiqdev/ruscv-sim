@@ -3,8 +3,11 @@
 //! Debug Specification 1.0, tag `5695c0a`, §3.1 and §3.14. Register reads and
 //! writes finish inside the call, except a command with `postexec`. Its
 //! program-buffer words run one Hart grant per [`DebugModule::advance`] call,
-//! and `abstractcs.busy` is 1 until the last one ends. There is no DMI `op`
-//! result. That belongs to the transport (U4).
+//! and `abstractcs.busy` is 1 until the last one ends. A system bus access is
+//! finished by the caller too: [`DebugModule::next_sba_request`] hands the
+//! physical request to a target and [`DebugModule::complete_sba_access`]
+//! records its result. There is no DMI `op` result. That belongs to the
+//! transport (U4).
 //!
 //! The Machine owns one of these and admits each transaction at a Hart
 //! boundary. `ndmreset` is only a bit here. The Machine sees the rising edge
@@ -17,13 +20,17 @@
 
 mod abstract_cmd;
 mod regs;
+mod sba;
 
 use crate::core::RiscvCore;
 use regs::{
     hartsel_field, hartsel_of, ABSTRACTAUTO, ABSTRACTAUTO_MASK, ABSTRACTCS, ACKHAVERESET, COMMAND,
     DATA0, DMACTIVE, DMCONTROL, DMSTATUS, HALTREQ, HALTSUM0, HARTINFO, IMPEBREAK, NDMRESET,
-    PROGBUF0, PROGBUF_LAST, PROGBUF_WORDS, RESUMEREQ,
+    PROGBUF0, PROGBUF_LAST, PROGBUF_WORDS, RESUMEREQ, SBADDRESS0, SBADDRESS1, SBCS, SBDATA0,
+    SBDATA1,
 };
+use sba::SbaState;
+pub use sba::{SbaAccessSize, SbaFault, SbaRequest};
 
 const CMDERR_BUSY: u8 = 1;
 
@@ -49,6 +56,8 @@ pub struct DebugModule {
     abstractauto: u32,
     /// Last `command` accepted while idle with `cmderr` 0. Autoexec repeats it.
     last_command: Option<u32>,
+    /// `sbcs`, `sbaddress`, `sbdata`, `sbbusy` and the sticky SBA errors.
+    sba: SbaState,
     /// Next program-buffer slot to run while `busy`. Slot `PROGBUF_WORDS` is
     /// the implicit EBREAK. `None` is idle.
     exec: Option<u8>,
@@ -90,6 +99,7 @@ impl DebugModule {
             progbuf: [0; PROGBUF_WORDS],
             abstractauto: 0,
             last_command: None,
+            sba: SbaState::default(),
             exec: None,
             resumeack: true,
             havereset: true,
@@ -101,11 +111,14 @@ impl DebugModule {
     /// Read one DMI register. The address is the low 7 bits (§3.1, §3.14).
     ///
     /// While `dmactive` is 0 every read returns 0. Unimplemented addresses
-    /// also return 0, including `sbcs` and `data4`–`data11`.
+    /// also return 0, including `data4`–`data11`, `sbaddress2`/`sbaddress3`
+    /// and `sbdata2`/`sbdata3`.
     ///
     /// A `data` or `progbuf` read can start the last command (`abstractauto`).
     /// The returned value is captured before that command runs. The hart is
-    /// mutable for that reason (contract D9).
+    /// mutable for that reason (contract D9). An SBA read can start a bus
+    /// access the same way: the value is sampled first, and `sbcs.sbbusy`
+    /// then stays set until [`Self::complete_sba_access`].
     pub fn dmi_read(&mut self, hart: &mut RiscvCore, addr: u8) -> u32 {
         if !self.dmactive {
             return 0;
@@ -131,6 +144,9 @@ impl DebugModule {
                 self.buffer_access(hart, 16 + index as u32);
                 value
             }
+            SBCS => self.sba.read_cs(),
+            addr @ (SBADDRESS0 | SBADDRESS1) => self.sba.read_address(addr),
+            addr @ (SBDATA0 | SBDATA1) => self.sba.read_data(addr),
             HALTSUM0 => self.read_haltsum0(hart),
             _ => 0,
         }
@@ -143,7 +159,8 @@ impl DebugModule {
     /// DM reset UNSPECIFIED. A later `resumereq` is what calls `debug_resume`.
     ///
     /// A `data` or `progbuf` write stages its value, then can start the last
-    /// command (`abstractauto`).
+    /// command (`abstractauto`). An SBA write updates `sbaddress` or `sbdata`
+    /// and can start a bus access.
     pub fn dmi_write(&mut self, hart: &mut RiscvCore, addr: u8, value: u32) {
         let addr = addr & 0x7f;
         if addr == DMCONTROL {
@@ -168,6 +185,9 @@ impl DebugModule {
             COMMAND => self.write_command(hart, value),
             ABSTRACTAUTO => self.write_abstractauto(value),
             addr @ PROGBUF0..=PROGBUF_LAST => self.write_progbuf(hart, addr, value),
+            SBCS => self.sba.write_cs(value),
+            addr @ (SBADDRESS0 | SBADDRESS1) => self.sba.write_address(addr, value),
+            addr @ (SBDATA0 | SBDATA1) => self.sba.write_data(addr, value),
             _ => {}
         }
     }
@@ -295,6 +315,7 @@ impl DebugModule {
         self.progbuf = [0; PROGBUF_WORDS];
         self.abstractauto = 0;
         self.last_command = None;
+        self.sba = SbaState::default();
         self.exec = None;
         self.resumeack = true;
         self.set_haltreq(hart, false);
