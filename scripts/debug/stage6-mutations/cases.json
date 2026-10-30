@@ -197,6 +197,25 @@
     ]
   },
   {
+    "unit": "pb-u2-disabled-autoexec-bulk",
+    "source": "src/dm/mod.rs",
+    "patch": "pb-u2-disabled-autoexec-bulk.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "pb_u2_dm_protocol"
+        ],
+        "test": "autoexecdata_bulk_transfer_writes_distinct_values",
+        "failure": [
+          "the staged data word did not reach RAM at element 0",
+          "left:\\s+0",
+          "right:\\s+286331153"
+        ]
+      }
+    ]
+  },
+  {
     "unit": "pb-u2-progbuf-read-no-trigger",
     "source": "src/dm/mod.rs",
     "patch": "pb-u2-progbuf-read-no-trigger.patch",

@@ -1,0 +1,13 @@
+diff --git a/src/dm/mod.rs b/src/dm/mod.rs
+index d647baa..7bb9c6e 100644
+--- a/src/dm/mod.rs
++++ b/src/dm/mod.rs
+@@ -219,7 +219,7 @@ impl DebugModule {
+     /// that selects this register. A busy access is an error and never starts
+     /// a command. A nonzero `cmderr` also suppresses it.
+     fn buffer_access(&mut self, hart: &mut RiscvCore, bit: u32) {
+-        if self.busy_error() || self.abstractauto & (1 << bit) == 0 || self.cmderr != 0 {
++        if self.busy_error() || self.abstractauto & (1 << bit) == 0 || self.abstractauto != 0 || self.cmderr != 0 {
+             return;
+         }
+         if let Some(command) = self.last_command {
