@@ -33,7 +33,6 @@ const ABSTRACTCS: u8 = 0x16;
 const COMMAND: u8 = 0x17;
 const ABSTRACTAUTO: u8 = 0x18;
 const PROGBUF0: u8 = 0x20;
-const SBCS: u8 = 0x38;
 const HALTSUM0: u8 = 0x40;
 
 const HALTREQ: u32 = 1 << 31;
@@ -1233,14 +1232,11 @@ fn haltsum0_bit0_follows_hart_0_for_hartsel_below_32() {
     );
 }
 
-/// `sbcs` is absent and reads 0. `progbuf0` is the first of two writable
-/// words (Debug Spec 1.0 §3.14).
+/// `progbuf0` is the first of two writable words (Debug Spec 1.0 §3.14).
 #[test]
-fn sbcs_reads_zero_and_progbuf_words_round_trip() {
+fn progbuf_words_round_trip_and_stop_at_progbufsize() {
     let (mut dm, mut hart, _) = ready();
     activate(&mut dm, &mut hart);
-    dm.dmi_write(&mut hart, SBCS, 0x1234_5678);
-    assert_eq!(dm.dmi_read(&mut hart, SBCS), 0);
     dm.dmi_write(&mut hart, PROGBUF0, 0x00ab_cdef);
     assert_eq!(dm.dmi_read(&mut hart, PROGBUF0), 0x00ab_cdef);
     dm.dmi_write(&mut hart, PROGBUF0 + 1, 0x1234_5678);

@@ -1,10 +1,10 @@
 --- a/src/dm/mod.rs
 +++ b/src/dm/mod.rs
-@@ -294,7 +294,6 @@
+@@ -314,7 +314,6 @@
          self.data = [0; 4];
          self.progbuf = [0; PROGBUF_WORDS];
          self.abstractauto = 0;
 -        self.last_command = None;
+         self.sba = SbaState::default();
          self.exec = None;
          self.resumeack = true;
-         self.set_haltreq(hart, false);

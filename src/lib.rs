@@ -32,6 +32,7 @@ pub use core::{
 pub use csr::{CsrAccess, CsrError, CsrFile};
 pub use decode::{DecodeError, DecodedInstruction, InstructionDecoder, InstructionFormat};
 pub use dm::DebugModule;
+pub use dm::{SbaAccessSize, SbaFault, SbaRequest};
 pub use execute::{ExecuteError, Executor};
 pub use executor::{
     load_and_run, load_and_run_file, load_and_run_file_with_debug, load_and_run_with_debug,

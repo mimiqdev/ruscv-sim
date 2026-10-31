@@ -1,6 +1,6 @@
 --- a/src/dm/mod.rs
 +++ b/src/dm/mod.rs
-@@ -127,9 +127,7 @@
+@@ -140,9 +140,7 @@
              ABSTRACTAUTO => self.abstractauto,
              addr @ PROGBUF0..=PROGBUF_LAST => {
                  let index = usize::from(addr - PROGBUF0);
@@ -9,5 +9,5 @@
 -                value
 +                self.progbuf[index]
              }
-             HALTSUM0 => self.read_haltsum0(hart),
-             _ => 0,
+             SBCS => self.sba.read_cs(),
+             addr @ (SBADDRESS0 | SBADDRESS1) => self.sba.read_address(addr),

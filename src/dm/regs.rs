@@ -12,6 +12,11 @@ pub(super) const COMMAND: u8 = 0x17;
 pub(super) const ABSTRACTAUTO: u8 = 0x18;
 pub(super) const PROGBUF0: u8 = 0x20;
 pub(super) const PROGBUF_LAST: u8 = 0x21;
+pub(super) const SBCS: u8 = 0x38;
+pub(super) const SBADDRESS0: u8 = 0x39;
+pub(super) const SBADDRESS1: u8 = 0x3a;
+pub(super) const SBDATA0: u8 = 0x3c;
+pub(super) const SBDATA1: u8 = 0x3d;
 pub(super) const HALTSUM0: u8 = 0x40;
 
 pub(super) const HALTREQ: u32 = 1 << 31;
