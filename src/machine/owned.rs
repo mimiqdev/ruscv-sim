@@ -174,6 +174,10 @@ impl OwnedMachine {
         self.domain().platform.data.clone()
     }
     #[cfg(test)]
+    pub(super) fn test_inbound(&self) -> &super::inbound::InboundPort {
+        &self.domain().platform.inbound
+    }
+    #[cfg(test)]
     pub(crate) fn test_control(&self) -> Machine {
         self.control.clone()
     }

@@ -1,0 +1,12 @@
+diff --git a/src/memory/mod.rs b/src/memory/mod.rs
+index 1561ba7..c04d79a 100644
+--- a/src/memory/mod.rs
++++ b/src/memory/mod.rs
+@@ -365,7 +365,6 @@ impl SimpleMemory {
+             .ok_or(MemoryError::InvalidAddress(addr))?;
+         let mut storage = self.storage.write().unwrap();
+         storage.data[index..end].copy_from_slice(bytes);
+-        storage.bookkeeping.commit(index as u64, bytes.len());
+         Ok(())
+     }
+ 

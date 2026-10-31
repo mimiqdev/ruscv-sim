@@ -6,6 +6,7 @@ mod admission;
 mod debug_hub;
 mod host_memory;
 mod host_port;
+mod inbound;
 mod owned;
 mod platform;
 use debug_hub::DebugHub;
