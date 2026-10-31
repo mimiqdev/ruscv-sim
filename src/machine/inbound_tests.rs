@@ -531,8 +531,11 @@ impl AtomicAccess for ForbiddenPort {
 }
 
 /// U2 §3/U2 §4: SBA performs no Hart translation, privilege, PMP or trap work.
-/// It still completes while both the Hart's own data port and the Platform's
-/// Hart-facing data port refuse every request, and it changes no Hart state.
+/// It still completes while both the Hart's installed data port and the
+/// Platform's installed Hart-facing data port refuse every request, and it
+/// changes no Hart state. The replacement covers the ports installed on the
+/// core and Platform after construction; constructor independence follows from
+/// the composition this test reaches through `Platform::sba_access`.
 #[test]
 fn a_system_bus_access_uses_only_the_platform_inbound_port() {
     let image = Arc::new(
@@ -571,6 +574,11 @@ fn a_system_bus_access_uses_only_the_platform_inbound_port() {
 /// backend signals when an SBA transaction has reached it, which is the last
 /// point before the shared storage/device lock; if the two paths share that
 /// lock, the SBA transaction cannot finish while the transform is active.
+/// The signal proves backend entry during the active transform. It does not
+/// prove that the reader reached the lock acquisition: a reader descheduled
+/// between the signal and the wrapped call can escape the observation window,
+/// so this is a coordinated concurrency regression test with that scheduling
+/// assumption, not an unconditional lock-contention proof.
 struct Probe {
     state: Mutex<ProbeState>,
     changed: Condvar,
@@ -652,6 +660,13 @@ impl Probe {
 /// It must then stay blocked until the AMO commits, and it must return that
 /// committed value; a transaction that completed inside the section is
 /// recorded as interposition and fails the test.
+///
+/// The test builds its own inbound view over the Platform's RAM object. For
+/// the native configuration that is the RAM the bus also targets, not the
+/// Platform's bus-backed inbound port; the shared-domain and reservation
+/// tests cover that composition. The join deadline below only bounds how long
+/// the parent waits before reporting; scope teardown still waits for a blocked
+/// reader, so a true deadlock is terminated by the outer test timeout.
 #[test]
 fn an_sba_transaction_cannot_interpose_inside_a_hart_atomic_envelope() {
     for kind in [PlatformKind::Flat, PlatformKind::Native] {
@@ -724,6 +739,8 @@ fn an_sba_transaction_cannot_interpose_inside_a_hart_atomic_envelope() {
                 previous.to_le_bytes().to_vec(),
                 "{kind:?}: the AMO returned the old value"
             );
+            // Diagnostic deadline only: it reports a reader that never
+            // completed, while scope teardown below still waits for it.
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             while !reader.is_finished() {
                 assert!(
@@ -819,8 +836,10 @@ impl DmHarness {
 }
 
 /// U2 §4: `sberror` 2/3/4 at the DM boundary. A target refusal is a bad
-/// address from the Platform; alignment and an unsupported `sbaccess` are
-/// decided in the DM before any target is reached.
+/// address from the same validated RAM backend the Platform uses; alignment
+/// and an unsupported `sbaccess` are decided in the DM before any target is
+/// reached. The harness drives a real `DebugModule`, not `Platform::build`;
+/// the Platform construction has its own tests above.
 #[test]
 fn dm_maps_the_platform_refusal_and_its_own_prechecks_to_sberror() {
     let (_, inbound) = ram_inbound();
