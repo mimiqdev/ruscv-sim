@@ -178,6 +178,10 @@ impl OwnedMachine {
         &self.domain().platform.inbound
     }
     #[cfg(test)]
+    pub(super) fn test_replace_platform_data(&mut self, data: crate::core::SharedDataAccess) {
+        self.domain_mut().platform.data = data;
+    }
+    #[cfg(test)]
     pub(crate) fn test_control(&self) -> Machine {
         self.control.clone()
     }

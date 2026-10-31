@@ -18,12 +18,13 @@ use crate::machine::{MachineConfig, OwnedMachine, PlatformEvent, PlatformKind};
 use crate::memory::{MemoryInterface, SimpleMemory};
 use crate::peripherals::Uart16550;
 use crate::physical::{
-    AtomicAccess, AtomicAccessResult, AtomicOrdering, AtomicRequest, ConditionalStatus,
-    NativeRamBackend, NativeSystemBusBackend, PhysicalAccess, PhysicalAccessResult,
-    PhysicalBackend, PhysicalBackendError, PhysicalBackendResult, PhysicalDataAccess,
-    PhysicalRequest, PhysicalResponse, PhysicalWidth, ValidatedPhysicalAccess,
+    AmoTransform, AmoWidth, AtomicAccess, AtomicAccessResult, AtomicOrdering, AtomicRequest,
+    ConditionalStatus, NativeRamBackend, NativeSystemBusBackend, PhysicalAccess,
+    PhysicalAccessResult, PhysicalBackend, PhysicalBackendError, PhysicalBackendResult,
+    PhysicalDataAccess, PhysicalRequest, PhysicalResponse, PhysicalWidth, ValidatedPhysicalAccess,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, LazyLock, Mutex};
+use std::time::Duration;
 
 /// Debug Spec 1.0 §3.14 register addresses.
 const DMCONTROL: u8 = 0x10;
@@ -273,6 +274,22 @@ fn refused_spans_are_bad_address_and_commit_nothing() {
         inspection.registers[0], 0,
         "the refused write did not reach an IER/THR register"
     );
+
+    // A refused read also performs no device read side effect: a queued byte
+    // stays queued, so the debugger cannot lose data through a failed access.
+    native.uart.lock().unwrap().receive_byte(0x41);
+    assert_eq!(
+        native
+            .inbound
+            .access(read(SYSTEM_BUS_UART_BASE, SbaAccessSize::Word)),
+        Err(bad_address()),
+        "the byte-only UART rejects a four-byte read"
+    );
+    assert_eq!(
+        native.uart.lock().unwrap().inspect().rx_fifo,
+        vec![0x41],
+        "the refused read consumed no receive byte"
+    );
 }
 
 /// Simulator-side failures keep their existing classification. None of them
@@ -412,25 +429,39 @@ fn committed_sba_write_invalidates_an_overlapping_hart_reservation() {
             "{kind:?}: the failed SC commits nothing and the SBA bytes stay"
         );
 
+        // A refused write that overlaps the reserved bytes is the dangerous
+        // case: if the backend recorded the write before rejecting it, the
+        // reservation would die and the SC would fail for the wrong reason.
+        let end_word = u64::try_from(platform.ram.lock().unwrap().size()).unwrap() - 4;
+        let end_address = platform_address(kind, end_word);
+        assert_eq!(
+            platform.sba_access(write(end_address, SbaAccessSize::Word, 0x1111_2222)),
+            Ok(0)
+        );
         let mut hart = platform.data.lock().unwrap();
-        let context = load_reserved(&mut *hart, address, PhysicalWidth::Word);
+        let context = load_reserved(&mut *hart, end_address, PhysicalWidth::Word);
         drop(hart);
         assert_eq!(
-            platform.sba_access(read(RAM_BASE - 8, SbaAccessSize::DoubleWord)),
+            platform.sba_access(write(end_address, SbaAccessSize::DoubleWord, 0)),
             Err(bad_address()),
-            "{kind:?}: an unmapped SBA access is refused"
+            "{kind:?}: a span crossing the end of RAM is refused"
+        );
+        assert_eq!(
+            platform.ram.lock().unwrap().read_word(end_word).unwrap(),
+            0x1111_2222,
+            "{kind:?}: the refused overlapping write committed no byte"
         );
         let mut hart = platform.data.lock().unwrap();
         assert_eq!(
             store_conditional(
                 &mut *hart,
-                address,
+                end_address,
                 PhysicalWidth::Word,
                 &0x5555_u32.to_le_bytes(),
                 context
             ),
             ConditionalStatus::Success,
-            "{kind:?}: a refused SBA access invalidates nothing"
+            "{kind:?}: a refused SBA write invalidates nothing"
         );
     }
 }
@@ -457,8 +488,9 @@ fn platform_inbound_path_shares_the_platform_domain() {
             Ok(0xfeed_face)
         );
         let _ = platform.take_events().unwrap();
+        let memory = u64::try_from(platform.ram.lock().unwrap().size()).unwrap();
         assert_eq!(
-            platform.sba_access(read(address + RAM_SIZE as u64, SbaAccessSize::Word)),
+            platform.sba_access(read(address + memory, SbaAccessSize::Word)),
             Err(bad_address())
         );
         assert!(
@@ -499,10 +531,10 @@ impl AtomicAccess for ForbiddenPort {
 }
 
 /// U2 §3/U2 §4: SBA performs no Hart translation, privilege, PMP or trap work.
-/// It still completes while the Hart's own data port refuses every request,
-/// and it changes no Hart state.
+/// It still completes while both the Hart's own data port and the Platform's
+/// Hart-facing data port refuse every request, and it changes no Hart state.
 #[test]
-fn a_system_bus_access_never_reaches_the_hart_data_port() {
+fn a_system_bus_access_uses_only_the_platform_inbound_port() {
     let image = Arc::new(
         LoadImage::parse(&elf::elf_with_code(&[elf::nop()], 0, true, false, 0x4000))
             .expect("fixture ELF"),
@@ -511,6 +543,7 @@ fn a_system_bus_access_never_reaches_the_hart_data_port() {
         OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image).expect("Machine");
     let before = (owned.state().pc, owned.state().privilege);
     owned.test_replace_data(Arc::new(Mutex::new(ForbiddenPort)));
+    owned.test_replace_platform_data(Arc::new(Mutex::new(ForbiddenPort)));
 
     let address = RAM_BASE + RAM_OFFSET;
     assert_eq!(
@@ -532,6 +565,140 @@ fn a_system_bus_access_never_reaches_the_hart_data_port() {
         before,
         "no trap, PC or privilege change"
     );
+}
+
+/// Coordination for the atomic-envelope exclusion test.
+///
+/// The transform runs inside the backend's critical section. If an SBA
+/// transaction could interpose, its access would complete while the transform
+/// still holds that section.
+struct Probe {
+    state: Mutex<ProbeState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct ProbeState {
+    entered: bool,
+    started: bool,
+    done: bool,
+    interposed: bool,
+}
+
+static PROBE: LazyLock<Probe> = LazyLock::new(|| Probe {
+    state: Mutex::new(ProbeState::default()),
+    changed: Condvar::new(),
+});
+
+impl Probe {
+    fn reset() {
+        *PROBE.state.lock().unwrap() = ProbeState::default();
+    }
+
+    /// `AmoTransform` body: announce the critical section, wait for the
+    /// inbound attempt, then record whether it finished inside the section.
+    fn interpose(_old: &[u8], operand: &[u8]) -> [u8; 8] {
+        let mut result = [0; 8];
+        result[..operand.len()].copy_from_slice(operand);
+        let mut state = PROBE.state.lock().unwrap();
+        state.entered = true;
+        PROBE.changed.notify_all();
+        state = PROBE
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(5), |state| !state.started)
+            .unwrap()
+            .0;
+        // A conforming transaction cannot finish here: this transform holds
+        // the storage/device critical section. The bounded wait keeps a broken
+        // implementation from hanging the test.
+        state = PROBE
+            .changed
+            .wait_timeout_while(state, Duration::from_millis(250), |state| !state.done)
+            .unwrap()
+            .0;
+        state.interposed = state.done;
+        PROBE.changed.notify_all();
+        result
+    }
+}
+
+/// U2 §3 and ADR-0002 §6: an SBA transaction must not observe or expose the
+/// intermediate state of a Hart AMO/SC. The AMO transform below runs inside
+/// the backend's critical section and waits for an SBA read to be attempted;
+/// a conforming read stays blocked until the AMO commits, so it returns the
+/// committed value and never completes inside the section.
+#[test]
+fn an_sba_transaction_cannot_interpose_inside_a_hart_atomic_envelope() {
+    for kind in [PlatformKind::Flat, PlatformKind::Native] {
+        Probe::reset();
+        let platform = platform(kind);
+        let address = platform_address(kind, RAM_OFFSET);
+        let previous = 0x0bad_f00d_u32;
+        let written = 0xcafe_1234_u32;
+        assert_eq!(
+            platform.sba_access(write(address, SbaAccessSize::Word, u64::from(previous))),
+            Ok(0)
+        );
+
+        let inbound = std::thread::scope(|scope| {
+            let reader = scope.spawn(|| {
+                let mut state = PROBE.state.lock().unwrap();
+                state = PROBE
+                    .changed
+                    .wait_timeout_while(state, Duration::from_secs(5), |state| !state.entered)
+                    .unwrap()
+                    .0;
+                state.started = true;
+                PROBE.changed.notify_all();
+                drop(state);
+                let value = platform.sba_access(read(address, SbaAccessSize::Word));
+                let mut state = PROBE.state.lock().unwrap();
+                state.done = true;
+                PROBE.changed.notify_all();
+                value
+            });
+
+            let operand = written.to_le_bytes();
+            let request = AtomicRequest::rmw(
+                address,
+                PhysicalWidth::Word,
+                ORDERING,
+                &operand,
+                AmoTransform::new(AmoWidth::Word, Probe::interpose),
+            )
+            .expect("valid RMW envelope");
+            let response = platform
+                .data
+                .lock()
+                .unwrap()
+                .access_atomic(request)
+                .expect("AMO completes");
+            assert_eq!(
+                response.old_bytes().unwrap().to_vec(),
+                previous.to_le_bytes().to_vec(),
+                "{kind:?}: the AMO returned the old value"
+            );
+            reader.join().unwrap()
+        });
+
+        assert_eq!(
+            inbound,
+            Ok(u64::from(written)),
+            "{kind:?}: the blocked SBA read observed the committed AMO result"
+        );
+        let state = PROBE.state.lock().unwrap();
+        assert!(
+            !state.interposed,
+            "{kind:?}: an SBA read completed inside the AMO critical section"
+        );
+        assert!(state.done, "{kind:?}: the SBA read completed after the AMO");
+        drop(state);
+        assert_eq!(
+            platform.ram.lock().unwrap().read_word(RAM_OFFSET).unwrap(),
+            written,
+            "{kind:?}: the AMO committed exactly once"
+        );
+    }
 }
 
 /// One active DM over a Hart whose physical ports fail the test if used.
