@@ -547,7 +547,7 @@ fn a_system_bus_access_uses_only_the_platform_inbound_port() {
 
     let address = RAM_BASE + RAM_OFFSET;
     assert_eq!(
-        owned.test_inbound().access(write(
+        owned.test_sba_access(write(
             address,
             SbaAccessSize::DoubleWord,
             0x1234_5678_9abc_def0
@@ -555,9 +555,7 @@ fn a_system_bus_access_uses_only_the_platform_inbound_port() {
         Ok(0)
     );
     assert_eq!(
-        owned
-            .test_inbound()
-            .access(read(address, SbaAccessSize::DoubleWord)),
+        owned.test_sba_access(read(address, SbaAccessSize::DoubleWord)),
         Ok(0x1234_5678_9abc_def0)
     );
     assert_eq!(
@@ -569,9 +567,10 @@ fn a_system_bus_access_uses_only_the_platform_inbound_port() {
 
 /// Coordination for the atomic-envelope exclusion test.
 ///
-/// The transform runs inside the backend's critical section. If an SBA
-/// transaction could interpose, its access would complete while the transform
-/// still holds that section.
+/// The AMO transform runs inside the backend's critical section. The inbound
+/// backend signals when an SBA transaction has reached it, which is the last
+/// point before the shared storage/device lock; if the two paths share that
+/// lock, the SBA transaction cannot finish while the transform is active.
 struct Probe {
     state: Mutex<ProbeState>,
     changed: Condvar,
@@ -580,7 +579,7 @@ struct Probe {
 #[derive(Default)]
 struct ProbeState {
     entered: bool,
-    started: bool,
+    reached: bool,
     done: bool,
     interposed: bool,
 }
@@ -590,32 +589,54 @@ static PROBE: LazyLock<Probe> = LazyLock::new(|| Probe {
     changed: Condvar::new(),
 });
 
+/// An inbound backend that signals when one SBA transaction reaches it.
+///
+/// The signal is emitted immediately before the wrapped backend acquires the
+/// shared storage/device lock, so the transform can distinguish "the SBA
+/// transaction is at the contested boundary" from "the reader thread has not
+/// run yet".
+struct SignalEntry<B> {
+    backend: B,
+}
+
+impl<B: PhysicalBackend> PhysicalBackend for SignalEntry<B> {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        let mut state = PROBE.state.lock().unwrap();
+        state.reached = true;
+        PROBE.changed.notify_all();
+        drop(state);
+        self.backend.transact(request)
+    }
+}
+
 impl Probe {
     fn reset() {
         *PROBE.state.lock().unwrap() = ProbeState::default();
     }
 
-    /// `AmoTransform` body: announce the critical section, wait for the
-    /// inbound attempt, then record whether it finished inside the section.
+    /// `AmoTransform` body: hold the critical section open for the SBA reader.
+    ///
+    /// Coordination failures are hard failures, not silent passes. The
+    /// non-completion wait is the evidence: if the SBA transaction shares the
+    /// domain, it cannot set `done` until this transform returns.
     fn interpose(_old: &[u8], operand: &[u8]) -> [u8; 8] {
         let mut result = [0; 8];
         result[..operand.len()].copy_from_slice(operand);
         let mut state = PROBE.state.lock().unwrap();
         state.entered = true;
         PROBE.changed.notify_all();
-        state = PROBE
+        let (state, reached) = PROBE
             .changed
-            .wait_timeout_while(state, Duration::from_secs(5), |state| !state.started)
-            .unwrap()
-            .0;
-        // A conforming transaction cannot finish here: this transform holds
-        // the storage/device critical section. The bounded wait keeps a broken
-        // implementation from hanging the test.
-        state = PROBE
+            .wait_timeout_while(state, Duration::from_secs(5), |state| !state.reached)
+            .unwrap();
+        assert!(
+            !reached.timed_out(),
+            "the SBA transaction never reached the inbound backend"
+        );
+        let (mut state, _) = PROBE
             .changed
             .wait_timeout_while(state, Duration::from_millis(250), |state| !state.done)
-            .unwrap()
-            .0;
+            .unwrap();
         state.interposed = state.done;
         PROBE.changed.notify_all();
         result
@@ -623,14 +644,17 @@ impl Probe {
 }
 
 /// U2 §3 and ADR-0002 §6: an SBA transaction must not observe or expose the
-/// intermediate state of a Hart AMO/SC. The AMO transform below runs inside
-/// the backend's critical section and waits for an SBA read to be attempted;
-/// a conforming read stays blocked until the AMO commits, so it returns the
-/// committed value and never completes inside the section.
+/// intermediate state of a Hart AMO/SC.
+///
+/// The AMO runs through the Platform data port and its transform holds the
+/// critical section open. The reader reaches an inbound port over the same
+/// RAM storage domain and signals from the last point before the shared lock.
+/// It must then stay blocked until the AMO commits, and it must return that
+/// committed value; a transaction that completed inside the section is
+/// recorded as interposition and fails the test.
 #[test]
 fn an_sba_transaction_cannot_interpose_inside_a_hart_atomic_envelope() {
     for kind in [PlatformKind::Flat, PlatformKind::Native] {
-        Probe::reset();
         let platform = platform(kind);
         let address = platform_address(kind, RAM_OFFSET);
         let previous = 0x0bad_f00d_u32;
@@ -640,18 +664,40 @@ fn an_sba_transaction_cannot_interpose_inside_a_hart_atomic_envelope() {
             Ok(0)
         );
 
+        // The test wraps its own inbound view over the Platform's RAM object.
+        // That is the same storage lock domain the Platform's inbound port
+        // uses, and it is the only place where the "reached the boundary"
+        // signal can be emitted without product-only test hooks.
+        let ram = platform.ram.clone();
+        let size = ram.lock().unwrap().size();
+        let base = match kind {
+            PlatformKind::Native => RAM_BASE,
+            PlatformKind::Flat => 0,
+        };
+        let inbound_port = {
+            let backend = SignalEntry {
+                backend: NativeRamBackend::new(ram, base, size),
+            };
+            let port: SharedPhysicalAccess =
+                Arc::new(Mutex::new(ValidatedPhysicalAccess::new(backend)));
+            InboundPort::new(port)
+        };
+
+        Probe::reset();
         let inbound = std::thread::scope(|scope| {
+            let inbound_port = &inbound_port;
             let reader = scope.spawn(|| {
-                let mut state = PROBE.state.lock().unwrap();
-                state = PROBE
+                let state = PROBE.state.lock().unwrap();
+                let (state, entered) = PROBE
                     .changed
                     .wait_timeout_while(state, Duration::from_secs(5), |state| !state.entered)
-                    .unwrap()
-                    .0;
-                state.started = true;
-                PROBE.changed.notify_all();
+                    .unwrap();
+                assert!(
+                    !entered.timed_out(),
+                    "the AMO never entered its critical section"
+                );
                 drop(state);
-                let value = platform.sba_access(read(address, SbaAccessSize::Word));
+                let value = inbound_port.access(read(address, SbaAccessSize::Word));
                 let mut state = PROBE.state.lock().unwrap();
                 state.done = true;
                 PROBE.changed.notify_all();
@@ -678,6 +724,14 @@ fn an_sba_transaction_cannot_interpose_inside_a_hart_atomic_envelope() {
                 previous.to_le_bytes().to_vec(),
                 "{kind:?}: the AMO returned the old value"
             );
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !reader.is_finished() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "{kind:?}: the SBA read never completed after the AMO"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
             reader.join().unwrap()
         });
 
