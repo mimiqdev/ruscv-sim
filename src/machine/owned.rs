@@ -174,6 +174,17 @@ impl OwnedMachine {
         self.domain().platform.data.clone()
     }
     #[cfg(test)]
+    pub(super) fn test_sba_access(
+        &self,
+        request: crate::dm::SbaRequest,
+    ) -> Result<u64, super::inbound::SbaAccessError> {
+        self.domain().platform.sba_access(request)
+    }
+    #[cfg(test)]
+    pub(super) fn test_replace_platform_data(&mut self, data: crate::core::SharedDataAccess) {
+        self.domain_mut().platform.data = data;
+    }
+    #[cfg(test)]
     pub(crate) fn test_control(&self) -> Machine {
         self.control.clone()
     }

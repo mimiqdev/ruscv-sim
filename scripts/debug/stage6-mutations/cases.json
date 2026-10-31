@@ -281,5 +281,23 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "sba-u2-skip-reservation-invalidation",
+    "source": "src/memory/mod.rs",
+    "patch": "sba-u2-skip-reservation-invalidation.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::inbound::tests::committed_sba_write_invalidates_an_overlapping_hart_reservation",
+        "failure": [
+          "a committed SBA write invalidates the overlapping reservation",
+          "left:\\s+Success",
+          "right:\\s+Failure"
+        ]
+      }
+    ]
   }
 ]

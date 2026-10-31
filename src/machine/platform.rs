@@ -1,4 +1,5 @@
 //! Existing Platform configurations and placement, without run-stop policy.
+use super::inbound::InboundPort;
 use super::{MachineConfig, MachineError, PlatformKind};
 use crate::core::{SharedDataAccess, SharedPhysicalAccess};
 use crate::elf::LoadImage;
@@ -25,6 +26,10 @@ pub(super) struct Platform {
     pub typed: SharedMemory,
     pub fetch: SharedPhysicalAccess,
     pub data: SharedDataAccess,
+    /// The DM's inbound physical port (ADR-0002 §9). A separate validated
+    /// view over the same RAM/device backend as `data`, never the Hart's own
+    /// port: no translation, PMP, trap or atomic envelope.
+    pub inbound: InboundPort,
     pub form: AddressForm,
     pub placement: ImagePlacement,
     pub selected_tohost: u64,
@@ -123,6 +128,18 @@ impl Platform {
                 (bus.clone(), port(), port(), Some(uart), Some(bus))
             }
         };
+        // The inbound master is the DM, not the Hart. It shares the routing,
+        // raw-byte and side-effect semantics through the same backend object
+        // and lock domain, but it gets its own port so no Hart fetch/data
+        // capability (translation delta, host admission) can serve it.
+        let inbound_port: SharedPhysicalAccess = match &bus {
+            Some(bus) => Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+                SystemBus::physical_backend(bus.clone()),
+            ))),
+            None => Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+                NativeRamBackend::new(ram.clone(), 0, image.memory_size()),
+            ))),
+        };
         let offset = match config.platform {
             PlatformKind::Native => selected_tohost.checked_sub(image.base_addr()),
             PlatformKind::Flat => Some(selected_tohost),
@@ -134,6 +151,7 @@ impl Platform {
             typed,
             fetch,
             data,
+            inbound: InboundPort::new(inbound_port),
             form,
             placement,
             selected_tohost,
@@ -143,6 +161,20 @@ impl Platform {
             bus,
             flat_mtime: 0,
         })
+    }
+
+    /// One DM-originated system bus access through the inbound port.
+    ///
+    /// U3 calls this when it services the DM's request at a coherent Hart
+    /// boundary. The DM lock is not held here; this method only reaches the
+    /// Platform's target. A target refusal is `sberror` material, while a
+    /// simulator-side failure must keep its own classification.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn sba_access(
+        &self,
+        request: crate::dm::SbaRequest,
+    ) -> Result<u64, super::inbound::SbaAccessError> {
+        self.inbound.access(request)
     }
 
     pub(super) fn read_mtime(&self) -> Result<u64, MachineError> {
