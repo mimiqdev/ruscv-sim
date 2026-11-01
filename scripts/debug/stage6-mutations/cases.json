@@ -312,9 +312,9 @@
         ],
         "test": "sberror_reports_an_unsupported_size",
         "failure": [
-          "sberror 4 is an unsupported size",
-          "left:\\s+[04]",
-          "right:\\s+4"
+          "no bus access starts",
+          "left:\\s+1",
+          "right:\\s+0"
         ]
       }
     ]
