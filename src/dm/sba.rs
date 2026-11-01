@@ -14,11 +14,11 @@
 //! started it. And contract §3 forbids holding a DM lock across a physical
 //! target access, so the caller must reach the target between the two calls.
 //!
-//! The Platform owns that target (U2) and the Machine owns admission at a
-//! coherent Hart boundary (U3). Until U3 lands, `Machine` admits DMI but
-//! drives no SBA request, so a system bus access started through
-//! `Machine::dmi_write` stays busy until a DM reset. Direct DM callers such as
-//! the U1 tests complete every request they start.
+//! The Platform owns that target (U2). `Machine` owns admission: at a
+//! coherent Hart boundary it takes a staged request, reaches the target
+//! without the DM lock, and records the result (U3). A request stays pending
+//! while an abstract command or program-buffer execution is active, and a
+//! quiesced Machine grants no new access.
 
 use super::regs::{SBADDRESS0, SBADDRESS1, SBDATA0, SBDATA1};
 use super::DebugModule;
