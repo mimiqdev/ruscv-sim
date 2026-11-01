@@ -653,6 +653,12 @@ assert_sysbus_session() {
         echo "${name}: a hart register changed during system-bus access" >&2
         return 1
     fi
+    # 0x2004080f is the D2 reset profile (sbversion 1, sbasize 64, widths
+    # 8-64, sbaccess 2). The asserted value reads sbaccess 0: this row is
+    # taken at the end of the session, after OpenOCD's last word access, so
+    # it also pins that session residue. The contract bits are the high
+    # groups; the sbaccess field is OpenOCD state, and an OpenOCD bump may
+    # legitimately change it without a simulator regression.
     if [[ "$(field "${named}" sbcs_profile)" != "0x2000080f" ]]; then
         echo "${name}: the sbcs profile is $(field "${named}" sbcs_profile), expected 0x2000080f" >&2
         return 1
@@ -754,6 +760,9 @@ TABLE
             return 1
         fi
     done
+    # 1 bulk transfer + 4+4+4 element stores at 4/2/1 bytes + 1 recovery =
+    # 14 successful sysbus writes; the fault write is the single failure
+    # asserted separately.
     if [[ "$(grep -ac -- 'Succeeded to write memory via system bus' "${log}")" != 14 ]]; then
         echo "${name}: the successful system-bus write count is not 14" >&2
         return 1
