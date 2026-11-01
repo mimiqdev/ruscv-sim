@@ -299,5 +299,95 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "sba-u1-accept-sbaccess128",
+    "source": "src/dm/sba.rs",
+    "patch": "sba-u1-accept-sbaccess128.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "sba_u1_dm_registers"
+        ],
+        "test": "sberror_reports_an_unsupported_size",
+        "failure": [
+          "sberror 4 is an unsupported size",
+          "left:\\s+[04]",
+          "right:\\s+4"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "sba-u1-busyerror-does-not-block",
+    "source": "src/dm/sba.rs",
+    "patch": "sba-u1-busyerror-does-not-block.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "sba_u1_dm_registers"
+        ],
+        "test": "sbbusyerror_blocks_new_accesses_until_w1c",
+        "failure": [
+          "no bus access starts while blocked",
+          "left:\\s+1",
+          "right:\\s+0"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "sba-u1-no-sbaddress1-carry",
+    "source": "src/dm/sba.rs",
+    "patch": "sba-u1-no-sbaddress1-carry.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "sba_u1_dm_registers"
+        ],
+        "test": "sbautoincrement_carries_into_sbaddress1",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+0",
+          "right:\\s+1"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "sba-u2-hart-data-port",
+    "source": "src/machine/platform.rs",
+    "patch": "sba-u2-hart-data-port.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::inbound::tests::a_system_bus_access_uses_only_the_platform_inbound_port",
+        "failure": [
+          "a system bus access reached the Hart's physical port"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "sba-u3-mid-instruction",
+    "source": "src/machine/owned.rs",
+    "patch": "u3-dmi-mid-instruction.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::sba_is_admitted_only_at_a_hart_boundary",
+        "failure": [
+          "an SBA trigger was accepted mid-instruction",
+          "Err\\(MachineError::Debug"
+        ]
+      }
+    ]
   }
 ]
