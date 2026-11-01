@@ -862,6 +862,20 @@ fn program_buffer_grant_holds_no_dm_lock_and_records_a_known_failure() {
         !owned.test_control().status().unwrap().uncertain,
         "a known failure is not unknown completion"
     );
+
+    // A failed Machine admits no new system bus access: the re-staged
+    // transfer stays busy and commits nothing until a fresh reset (criterion
+    // 4, ADR-0004 §12.2).
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x1144_2277).unwrap();
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "a failed Machine granted a new system bus access"
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(storage_read(&owned, SBA_OFFSET), 0);
 }
 
 // ---- Program-buffer U3: Machine scheduling, lifecycle and physical access ----
@@ -1624,4 +1638,766 @@ fn explicit_fresh_generation_does_not_replay_held_debug_events() {
         "a held effect survived a fresh generation"
     );
     assert!(facts.failure.is_none());
+}
+
+// ---- System Bus Access U3: Machine admission, lifecycle and scheduling ----
+
+const DM_SBCS: u8 = 0x38;
+const DM_SBADDRESS0: u8 = 0x39;
+const DM_SBADDRESS1: u8 = 0x3a;
+const DM_SBDATA0: u8 = 0x3c;
+const DM_SBDATA1: u8 = 0x3d;
+
+const SBBUSY: u32 = 1 << 21;
+const SBBUSYERROR: u32 = 1 << 22;
+const SBREADONADDR: u32 = 1 << 20;
+const SBACCESS_SHIFT: u32 = 17;
+const SBERROR_SHIFT: u32 = 12;
+/// `sbaccess` 2: a four-byte access, which is also the `sbcs` reset value.
+const SBACCESS_WORD: u32 = 2 << SBACCESS_SHIFT;
+
+/// A RAM offset outside the placed image sections.
+const SBA_OFFSET: u64 = 0x800;
+
+/// Power up the DM as a debugger does before its first register access.
+fn dm_active(owned: &mut OwnedMachine) {
+    owned.dmi_write(DM_DMCONTROL, DM_DMACTIVE).unwrap();
+}
+
+/// `sberror` as `sbcs` reports it.
+fn sberror_of(owned: &mut OwnedMachine) -> u32 {
+    (owned.dmi_read(DM_SBCS).unwrap() >> SBERROR_SHIFT) & 7
+}
+
+/// The physical address of one RAM offset in this Platform's address form.
+fn sba_address(kind: PlatformKind, offset: u64) -> u64 {
+    match kind {
+        PlatformKind::Native => elf::BASE + offset,
+        PlatformKind::Flat => offset,
+    }
+}
+
+fn sba_set_address(owned: &mut OwnedMachine, address: u64) {
+    owned.dmi_write(DM_SBADDRESS0, address as u32).unwrap();
+    owned
+        .dmi_write(DM_SBADDRESS1, (address >> 32) as u32)
+        .unwrap();
+}
+
+/// One four-byte system bus write through `sbdata0`. Returns the resulting
+/// `sbcs`.
+fn sba_write_word(owned: &mut OwnedMachine, address: u64, value: u32) -> u32 {
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(owned, address);
+    owned.dmi_write(DM_SBDATA0, value).unwrap();
+    owned.dmi_read(DM_SBCS).unwrap()
+}
+
+/// One four-byte system bus read. `sbreadonaddr` triggers the access on the
+/// `sbaddress0` write, so the following `sbdata0` read reports its value.
+fn sba_read_word(owned: &mut OwnedMachine, address: u64) -> u32 {
+    owned
+        .dmi_write(DM_SBCS, SBACCESS_WORD | SBREADONADDR)
+        .unwrap();
+    owned
+        .dmi_write(DM_SBADDRESS1, (address >> 32) as u32)
+        .unwrap();
+    owned.dmi_write(DM_SBADDRESS0, address as u32).unwrap();
+    owned.dmi_read(DM_SBDATA0).unwrap()
+}
+
+/// `minstret`, `mcycle` and `time`, which SBA must never charge.
+fn guest_counters(owned: &OwnedMachine) -> (u64, u64, u64) {
+    (
+        owned.state().csr.read(machine::MINSTRET).unwrap(),
+        owned.state().csr.read(machine::MCYCLE).unwrap(),
+        owned
+            .state()
+            .csr
+            .read(crate::csr::unprivileged::TIME)
+            .unwrap(),
+    )
+}
+
+/// One inbound target that cannot prove whether the access committed. It
+/// counts every target call, so a test can prove that no further access
+/// reached it.
+struct UnknownSba {
+    calls: Arc<AtomicUsize>,
+}
+impl PhysicalBackend for UnknownSba {
+    fn transact(&mut self, _: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(PhysicalBackendError::unknown(
+            "SBA target may have committed the access",
+        ))
+    }
+}
+
+/// U3 §4 and D4: an access completes at a coherent Hart boundary whether the
+/// Hart is running or halted, and the DM never holds `sbbusy` afterwards.
+#[test]
+fn sba_completes_while_the_hart_runs_and_while_halted() {
+    for kind in [PlatformKind::Native, PlatformKind::Flat] {
+        let mut owned = OwnedMachine::new(MachineConfig::new(kind), image(elf::nop())).unwrap();
+        dm_active(&mut owned);
+        let address = sba_address(kind, SBA_OFFSET);
+        let turn = owned.step(false).unwrap();
+        assert!(
+            matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)),
+            "{kind:?}: the fixture Hart must be running here"
+        );
+        drop(turn);
+
+        let sbcs = sba_write_word(&mut owned, address, 0xdead_beef);
+        assert_eq!(
+            sbcs & SBBUSY,
+            0,
+            "{kind:?}: a running-Hart access is still busy"
+        );
+        assert_eq!(sberror_of(&mut owned), 0, "{kind:?}");
+        assert_eq!(
+            storage_read(&owned, SBA_OFFSET) as u32,
+            0xdead_beef,
+            "{kind:?}: the committed write is not visible to the Hart's RAM"
+        );
+        assert_eq!(
+            sba_read_word(&mut owned, address),
+            0xdead_beef,
+            "{kind:?}: the read did not return the committed value"
+        );
+
+        halted_by_dmi(&mut owned);
+        let frozen = guest_counters(&owned);
+        let sbcs = sba_write_word(&mut owned, address, 0x0bad_f00d);
+        assert_eq!(sbcs & SBBUSY, 0, "{kind:?}: a halted access is still busy");
+        assert_eq!(sberror_of(&mut owned), 0, "{kind:?}");
+        assert_eq!(storage_read(&owned, SBA_OFFSET) as u32, 0x0bad_f00d);
+        assert_eq!(sba_read_word(&mut owned, address), 0x0bad_f00d, "{kind:?}");
+        assert_eq!(
+            guest_counters(&owned),
+            frozen,
+            "{kind:?}: SBA charged the guest profile"
+        );
+    }
+}
+
+/// U3 §4 negative control: an access is admitted only at a Hart boundary.
+/// A DMI transaction that arrives mid-instruction is refused, so no target
+/// access happens outside a coherent boundary.
+#[test]
+fn sba_is_admitted_only_at_a_hart_boundary() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    dm_active(&mut owned);
+    let address = sba_address(PlatformKind::Native, SBA_OFFSET);
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, address);
+    owned.set_in_instruction_for_test(true);
+    let refused = owned.dmi_write(DM_SBDATA0, 0x1111_2222);
+    owned.set_in_instruction_for_test(false);
+    assert!(
+        matches!(refused, Err(MachineError::Debug(_))),
+        "an SBA trigger was accepted mid-instruction: {refused:?}"
+    );
+    let sbcs = owned.dmi_read(DM_SBCS).unwrap();
+    assert_eq!(sbcs & SBBUSY, 0, "the refused trigger started an access");
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(
+        storage_read(&owned, SBA_OFFSET),
+        0,
+        "a refused trigger wrote"
+    );
+
+    // The same write at the next boundary completes normally.
+    owned.dmi_write(DM_SBDATA0, 0x1111_2222).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, 0);
+    assert_eq!(storage_read(&owned, SBA_OFFSET) as u32, 0x1111_2222);
+}
+
+/// U3 §3 and the 2026-10-30 ADR-0002 §9 amendment: no DM lock is held while
+/// the inbound target carries out the access.
+#[test]
+fn sba_target_access_holds_no_dm_lock() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    let inner = Arc::clone(&owned.test_control().inner);
+    let unlocked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let probe = unlocked.clone();
+    owned.test_before_sba(Arc::new(move || {
+        probe.store(inner.debug.dm.try_lock().is_ok(), Ordering::SeqCst);
+    }));
+
+    let sbcs = sba_write_word(
+        &mut owned,
+        sba_address(PlatformKind::Native, SBA_OFFSET),
+        0x5a5a_1234,
+    );
+    assert!(
+        unlocked.load(Ordering::SeqCst),
+        "the DM lock was held across the target access"
+    );
+    assert_eq!(sbcs & SBBUSY, 0);
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(storage_read(&owned, SBA_OFFSET) as u32, 0x5a5a_1234);
+}
+
+/// U3 §3: an active program-buffer execution is not disturbed, and the staged
+/// system bus access waits for it instead of failing or interleaving.
+#[test]
+fn sba_waits_for_an_active_program_buffer_command() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    postexec_buffer(&mut owned, [elf::addi(9, 9, 1), elf::addi(9, 9, 1)]);
+
+    let sbcs = sba_write_word(
+        &mut owned,
+        sba_address(PlatformKind::Native, SBA_OFFSET),
+        0x1234_5678,
+    );
+    assert_ne!(
+        sbcs & SBBUSY,
+        0,
+        "the system bus access did not wait for the active command"
+    );
+    assert_eq!(
+        sberror_of(&mut owned),
+        0,
+        "the access reported a false error"
+    );
+
+    let facts = run_grants(&mut owned);
+    assert!(facts.failure.is_none(), "{facts:?}");
+    assert_eq!(
+        owned.state().regs[9],
+        2,
+        "the pending SBA disturbed the command"
+    );
+    assert_eq!(cmderr_of(&mut owned), 0, "the command reported an error");
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        0,
+        "the deferred access never completed"
+    );
+    assert_eq!(storage_read(&owned, SBA_OFFSET) as u32, 0x1234_5678);
+}
+
+/// U3 §3: a sticky `sberror` is DM state only. It does not disturb an abstract
+/// command, and it survives until W1C regardless of that command.
+#[test]
+fn sba_sticky_error_does_not_disturb_an_abstract_command() {
+    for kind in [PlatformKind::Native, PlatformKind::Flat] {
+        let mut owned = OwnedMachine::new(MachineConfig::new(kind), image(elf::nop())).unwrap();
+        halted_by_dmi(&mut owned);
+        let ram_end = u64::try_from(owned.image().memory_size()).unwrap();
+        let unmapped = sba_address(kind, ram_end);
+        let sbcs = sba_write_word(&mut owned, unmapped, 1);
+        assert_eq!(sberror_of(&mut owned), 2, "{kind:?}: no bad-address error");
+        assert_eq!(sbcs & SBBUSY, 0, "{kind:?}: a failed access stayed busy");
+
+        write_gpr(&mut owned, 3, 0x55);
+        assert_eq!(cmderr_of(&mut owned), 0, "{kind:?}: the command failed");
+        assert_eq!(owned.state().regs[3], 0x55, "{kind:?}");
+        assert_eq!(
+            sberror_of(&mut owned),
+            2,
+            "{kind:?}: the abstract command cleared a sticky SBA error"
+        );
+
+        // A staging write under the sticky error is stored without starting an
+        // access; W1C then allows the next trigger to use it (§3.14).
+        owned.dmi_write(DM_SBDATA0, 0x0f0f_0f0f).unwrap();
+        assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, 0);
+        owned
+            .dmi_write(DM_SBCS, SBACCESS_WORD | (2 << SBERROR_SHIFT))
+            .unwrap();
+        assert_eq!(sberror_of(&mut owned), 0, "{kind:?}: W1C did not clear");
+        let good = sba_address(kind, SBA_OFFSET);
+        sba_set_address(&mut owned, good);
+        owned.dmi_write(DM_SBDATA0, 0x0f0f_0f0f).unwrap();
+        assert_eq!(sberror_of(&mut owned), 0, "{kind:?}");
+        assert_eq!(
+            storage_read(&owned, SBA_OFFSET) as u32,
+            0x0f0f_0f0f,
+            "{kind:?}: the recovered access did not commit"
+        );
+    }
+}
+
+/// U3 §3 and D9: a reset request stops new grants and lets the started access
+/// finish before lifecycle mutation.
+#[test]
+fn reset_drains_in_flight_sba_before_lifecycle_mutation() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    let control = owned.test_control();
+    let generation = control.status().unwrap().generation;
+    halted_by_dmi(&mut owned);
+    let address = sba_address(PlatformKind::Native, SBA_OFFSET);
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, address);
+    owned.test_before_sba(Arc::new(move || {
+        entered_tx.send(()).unwrap();
+        release_rx.lock().unwrap().recv().unwrap();
+    }));
+
+    let worker = thread::spawn(move || {
+        let result = owned.dmi_write(DM_SBDATA0, 0xabcd_ef01);
+        (owned, result)
+    });
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("the SBA never reached its target");
+    assert_eq!(
+        control.status().unwrap().work.hart,
+        1,
+        "the in-flight access is not admitted work"
+    );
+    control.request_quiesce().unwrap();
+    assert!(
+        matches!(control.try_drain(), Err(MachineError::Busy)),
+        "in-flight SBA work was acknowledged as drained"
+    );
+    assert!(matches!(control.fresh_reset(), Err(MachineError::Busy)));
+    assert!(matches!(control.teardown(), Err(MachineError::Busy)));
+    assert_eq!(control.status().unwrap().generation, generation);
+
+    release_tx.send(()).unwrap();
+    let (mut owned, result) = worker.join().unwrap();
+    result.unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, 0);
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(
+        storage_read(&owned, SBA_OFFSET) as u32,
+        0xabcd_ef01,
+        "the drained access did not commit"
+    );
+
+    // A quiesced Machine grants no new system bus access.
+    sba_set_address(&mut owned, address);
+    owned.dmi_write(DM_SBDATA0, 0x5).unwrap();
+    assert_ne!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        0,
+        "a reset request allowed a new SBA grant"
+    );
+    owned.quiesce().unwrap();
+}
+
+/// U3 §3 and D9: a sticky `sberror` survives a non-DM reset like other DM
+/// error state, while DM reset clears the SBA command and busy state.
+#[test]
+fn ndmreset_keeps_sticky_sba_errors_and_dm_reset_clears_sba_state() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    let ram_end = u64::try_from(owned.image().memory_size()).unwrap();
+    sba_write_word(&mut owned, sba_address(PlatformKind::Native, ram_end), 1);
+    assert_eq!(sberror_of(&mut owned), 2);
+    owned.dmi_write(DM_SBDATA0, 0x1122_3344).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, 0);
+
+    owned
+        .dmi_write(DM_DMCONTROL, DM_DMACTIVE | DM_NDMRESET | DM_HALTREQ)
+        .unwrap();
+    assert_eq!(
+        sberror_of(&mut owned),
+        2,
+        "a non-DM reset cleared a sticky SBA error"
+    );
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, 0);
+
+    owned.dmi_write(DM_DMCONTROL, 0).unwrap();
+    owned.dmi_write(DM_DMCONTROL, DM_DMACTIVE).unwrap();
+    let sbcs = owned.dmi_read(DM_SBCS).unwrap();
+    assert_eq!(sberror_of(&mut owned), 0, "DM reset kept the SBA error");
+    assert_eq!(
+        sbcs & (SBBUSY | SBBUSYERROR),
+        0,
+        "DM reset kept the SBA command state"
+    );
+    assert_eq!(owned.dmi_read(DM_SBADDRESS0).unwrap(), 0);
+    assert_eq!(owned.dmi_read(DM_SBDATA0).unwrap(), 0);
+
+    // A staged-but-ungranted request is DM command state too. Staged behind
+    // an active command here, it is pending with `sbbusy` 1; a DM reset
+    // clears it instead of granting it later. The DM reset above cleared the
+    // halt request with the rest of the module, so halt the reloaded hart
+    // again for the command.
+    halted_by_dmi(&mut owned);
+    postexec_buffer(&mut owned, [elf::addi(9, 9, 1), elf::addi(9, 9, 1)]);
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x2233_4455).unwrap();
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "the request was not staged behind the active command"
+    );
+    owned.dmi_write(DM_DMCONTROL, 0).unwrap();
+    owned.dmi_write(DM_DMCONTROL, DM_DMACTIVE).unwrap();
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & (SBBUSY | SBBUSYERROR),
+        0,
+        "DM reset kept a pending SBA request"
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(
+        storage_read(&owned, SBA_OFFSET),
+        0,
+        "a pending request was granted across a DM reset"
+    );
+}
+
+/// U3 §3: an unresolved completion keeps the quarantine of ADR-0002 §4. No
+/// completion or `sberror` is invented, and W1C, DM reset and `ndmreset`
+/// cannot clear it.
+#[test]
+fn sba_unknown_completion_resists_w1c_dm_reset_and_ndmreset() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    let calls = Arc::new(AtomicUsize::new(0));
+    owned.test_replace_inbound(Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        UnknownSba {
+            calls: calls.clone(),
+        },
+    ))));
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 7).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "exactly one target access");
+
+    let control = owned.test_control();
+    let status = control.status().unwrap();
+    assert!(
+        status.uncertain && status.failed,
+        "unknown completion did not quarantine the Machine: {status:?}"
+    );
+    let sbcs = owned.dmi_read(DM_SBCS).unwrap();
+    assert_eq!(
+        sbcs & SBBUSY,
+        SBBUSY,
+        "a completion was recorded without proof"
+    );
+    assert_eq!(
+        sberror_of(&mut owned),
+        0,
+        "an sberror was fabricated for a simulator failure"
+    );
+
+    owned
+        .dmi_write(DM_SBCS, SBBUSYERROR | (7 << SBERROR_SHIFT))
+        .unwrap();
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "W1C cleared an unproven completion"
+    );
+    assert!(matches!(
+        owned.dmi_write(DM_DMCONTROL, DM_DMACTIVE | DM_NDMRESET | DM_HALTREQ),
+        Err(MachineError::UnknownCompletion)
+    ));
+    // DM reset clears the DM's own SBA registers; it cannot clear the
+    // quarantine, which is Machine state.
+    owned.dmi_write(DM_DMCONTROL, 0).unwrap();
+    owned.dmi_write(DM_DMCONTROL, DM_DMACTIVE).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, 0);
+
+    // A quarantined Machine grants no new system bus access either: the
+    // re-staged transfer stays busy, commits nothing, and never reaches the
+    // target again (ADR-0004 §12.2).
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x5566_7788).unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "a quarantined Machine reached the target with a new access"
+    );
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "a quarantined Machine granted a new system bus access"
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(storage_read(&owned, SBA_OFFSET), 0);
+    assert!(matches!(
+        control.resume(),
+        Err(MachineError::UnknownCompletion)
+    ));
+    assert!(matches!(
+        control.fresh_reset(),
+        Err(MachineError::UnknownCompletion)
+    ));
+    assert!(matches!(
+        control.teardown(),
+        Err(MachineError::UnknownCompletion)
+    ));
+    assert!(control.status().unwrap().uncertain);
+}
+
+/// U3 §3 and ADR-0004: pending SBA is admissible work at a WFI wait. It is not
+/// reported as WFI or NoProgress, and it adds no guest counter, clock or
+/// application cycle charge.
+#[test]
+fn pending_sba_is_not_wfi_no_progress_and_adds_no_charge() {
+    const WFI: u32 = 0x1050_0073;
+    for kind in [PlatformKind::Native, PlatformKind::Flat] {
+        let mut owned = OwnedMachine::new(MachineConfig::new(kind), image(WFI)).unwrap();
+        dm_active(&mut owned);
+        // WFI retires on its own turn; the next turn reports the wait.
+        let retired = owned.step(false).unwrap();
+        assert!(matches!(
+            retired.hart().outcome,
+            StepOutcome::InstructionRetired(_)
+        ));
+        drop(retired);
+        let turn = owned.step(false).unwrap();
+        assert!(
+            matches!(turn.hart().outcome, StepOutcome::Waiting),
+            "{kind:?}: the fixture Hart must be waiting"
+        );
+        drop(turn);
+        assert_eq!(
+            owned.test_settle_wait(),
+            WaitSettlement::NoProgress,
+            "{kind:?}: the fixture must have no future platform event"
+        );
+
+        let frozen = guest_counters(&owned);
+        let sbcs = sba_write_word(&mut owned, sba_address(kind, SBA_OFFSET), 0xfeed_face);
+        assert_eq!(sbcs & SBBUSY, 0, "{kind:?}: the access did not complete");
+        assert_eq!(sberror_of(&mut owned), 0, "{kind:?}");
+        assert_eq!(storage_read(&owned, SBA_OFFSET) as u32, 0xfeed_face);
+        assert_eq!(
+            guest_counters(&owned),
+            frozen,
+            "{kind:?}: the SBA charged the guest profile or jumped time"
+        );
+
+        // The wait is unchanged: it is still NoProgress, not SBA progress.
+        assert_eq!(
+            owned.test_settle_wait(),
+            WaitSettlement::NoProgress,
+            "{kind:?}: pending SBA was mistaken for progress"
+        );
+        let again = owned.step(false).unwrap();
+        assert!(matches!(again.hart().outcome, StepOutcome::Waiting));
+        assert_eq!(guest_counters(&owned), frozen, "{kind:?}");
+    }
+}
+
+/// U3 §3 and ADR-0004 §12.2: a grant that fails or cannot be proven complete
+/// does not grant the system bus access deferred behind it. The request waits
+/// out the recorded failure instead of running on a poisoned boundary.
+#[test]
+fn a_failing_grant_does_not_grant_the_sba_deferred_behind_it() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    // The buffer store fails on the probed data port; the deferred system bus
+    // write uses the separate inbound port and would otherwise commit.
+    let unlocked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let probe = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(DmLockProbe {
+        inner: Arc::clone(&owned.test_control().inner),
+        unlocked,
+    })));
+    owned.test_replace_data(probe);
+    write_gpr(&mut owned, 5, elf::BASE + 0x200);
+    write_gpr(&mut owned, 6, 77);
+    postexec_buffer(&mut owned, [elf::sd(6, 5, 0), elf::nop()]);
+
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x3344_5566).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, SBBUSY);
+
+    let facts = run_grants(&mut owned);
+    assert!(
+        facts.failure.is_some(),
+        "the failing grant was not reported"
+    );
+    assert_eq!(cmderr_of(&mut owned), 7);
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "the failing boundary granted the deferred system bus access"
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(storage_read(&owned, SBA_OFFSET), 0);
+}
+
+/// U3 §3 and D9: a rising `ndmreset` rejects the system bus request staged
+/// behind an active command instead of granting it during the reset. A
+/// request already reaching its target finishes inside its own boundary.
+#[test]
+fn an_ndmreset_request_rejects_the_sba_deferred_behind_a_command() {
+    let (accessed_tx, accessed_rx) = mpsc::channel();
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    owned.test_before_sba(Arc::new(move || {
+        accessed_tx.send(()).unwrap();
+    }));
+    postexec_buffer(&mut owned, [elf::addi(9, 9, 1), elf::addi(9, 9, 1)]);
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x6655_4433).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, SBBUSY);
+
+    owned
+        .dmi_write(DM_DMCONTROL, DM_DMACTIVE | DM_NDMRESET | DM_HALTREQ)
+        .unwrap();
+    assert_eq!(
+        cmderr_of(&mut owned),
+        4,
+        "the reset request did not abort the command"
+    );
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        0,
+        "the staged request was neither rejected nor completed"
+    );
+    assert!(
+        accessed_rx.try_recv().is_err(),
+        "the reset request granted the deferred system bus access"
+    );
+    assert_eq!(owned.state().pc, elf::BASE, "the reset did not reload");
+    owned.quiesce().unwrap();
+}
+
+/// U3 §3 and D8: a committed SBA MMIO write is a Platform effect returned at
+/// its debug boundary, with no guest counter or clock charge.
+#[test]
+fn sba_mmio_effect_is_a_platform_event_at_its_boundary() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    let frozen = guest_counters(&owned);
+
+    // The HTIF endpoint takes one complete eight-byte transfer.
+    owned.dmi_write(DM_SBCS, 3 << SBACCESS_SHIFT).unwrap();
+    sba_set_address(&mut owned, crate::executor::SYSTEM_BUS_HTIF_BASE);
+    owned.dmi_write(DM_SBDATA1, 0).unwrap();
+    owned.dmi_write(DM_SBDATA0, 3).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, 0);
+    assert_eq!(sberror_of(&mut owned), 0);
+
+    let facts = owned.debug_boundary(false).unwrap();
+    assert_eq!(
+        facts.events,
+        [PlatformEvent::HtifWrite(3)],
+        "the committed MMIO write was not a Platform effect at its boundary"
+    );
+    assert!(facts.failure.is_none());
+    assert_eq!(
+        guest_counters(&owned),
+        frozen,
+        "the MMIO write charged the guest profile"
+    );
+}
+
+/// A system bus target that fails on the simulator side.
+struct HostErrorSba;
+impl PhysicalBackend for HostErrorSba {
+    fn transact(&mut self, _: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        Err(PhysicalBackendError::host("injected SBA backend failure"))
+    }
+}
+
+/// U3 §3 and D5: a system bus access that fails on the simulator side keeps
+/// the existing non-guest classification. No `sberror` is fabricated, no
+/// completion is recorded, and the failure is reported at a debug boundary.
+#[test]
+fn sba_simulator_failure_keeps_its_classification_and_is_reported() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    owned.test_replace_inbound(Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        HostErrorSba,
+    ))));
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 9).unwrap();
+
+    assert_eq!(
+        sberror_of(&mut owned),
+        0,
+        "a host failure was fabricated as sberror"
+    );
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "a completion was recorded for a failed access"
+    );
+
+    let facts = owned.debug_boundary(false).unwrap();
+    assert!(
+        facts.failure.is_some(),
+        "the SBA failure was not reported at a boundary"
+    );
+    let status = owned.test_control().status().unwrap();
+    assert!(
+        status.failed && !status.uncertain,
+        "a known host failure is not unknown completion: {status:?}"
+    );
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "the failed access lost its busy state"
+    );
+}
+
+/// U3 §3 and D9: a reset request that lands while a command holds a deferred
+/// system bus request aborts the command and rejects the ungranted request.
+/// Neither runs during or after the quiesce.
+#[test]
+fn quiesce_during_a_command_rejects_the_sba_deferred_behind_it() {
+    let (accessed_tx, accessed_rx) = mpsc::channel();
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    owned.test_before_sba(Arc::new(move || {
+        accessed_tx.send(()).unwrap();
+    }));
+    postexec_buffer(&mut owned, [elf::addi(9, 9, 1), elf::addi(9, 9, 1)]);
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x7788_9900).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, SBBUSY);
+
+    owned.test_control().request_quiesce().unwrap();
+    owned.debug_boundary(false).unwrap();
+    assert_eq!(
+        cmderr_of(&mut owned),
+        4,
+        "the quiesce did not abort the command"
+    );
+    assert!(!owned.debug_command_busy().unwrap());
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        0,
+        "the deferred request was neither rejected nor completed"
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert!(
+        accessed_rx.try_recv().is_err(),
+        "the quiesced Machine granted the deferred system bus access"
+    );
+    assert_eq!(
+        storage_read(&owned, SBA_OFFSET),
+        0,
+        "the deferred request committed"
+    );
+    assert!(
+        owned.test_control().try_drain().is_ok(),
+        "the aborted command held work open"
+    );
 }

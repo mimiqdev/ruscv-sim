@@ -23,6 +23,15 @@ struct SignalHooks {
     after_clear: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
+/// What servicing a staged system bus access produced at a debug boundary.
+#[derive(Default)]
+struct SbaService {
+    /// A failure the DM cannot express as `sberror` (contract D5).
+    failure: Option<crate::core::SimulatorFailure>,
+    /// The Machine cannot prove whether the transaction committed.
+    uncertain: bool,
+}
+
 pub(crate) struct OwnedMachine {
     control: Machine,
     installed: Option<Installed>,
@@ -32,6 +41,10 @@ pub(crate) struct OwnedMachine {
     /// Platform effects produced by debug work. Held until the next debug
     /// boundary so a reset cannot discard an effect committed before it.
     debug_events: Vec<PlatformEvent>,
+    /// A simulator failure produced by debug work. Held the same way so a
+    /// boundary reports it instead of blocking for DMI that cannot finish the
+    /// affected work.
+    debug_failure: Option<crate::core::SimulatorFailure>,
     #[cfg(test)]
     before_drain: Option<Arc<dyn Fn() + Send + Sync>>,
     #[cfg(test)]
@@ -56,6 +69,7 @@ impl OwnedMachine {
             edited: false,
             edit_reservation: None,
             debug_events: Vec::new(),
+            debug_failure: None,
             #[cfg(test)]
             before_drain: None,
             #[cfg(test)]
@@ -181,6 +195,14 @@ impl OwnedMachine {
         self.domain().platform.sba_access(request)
     }
     #[cfg(test)]
+    pub(super) fn test_before_sba(&mut self, hook: Arc<dyn Fn() + Send + Sync>) {
+        self.domain_mut().platform.inbound.set_before(hook);
+    }
+    #[cfg(test)]
+    pub(super) fn test_replace_inbound(&mut self, port: crate::core::SharedPhysicalAccess) {
+        self.domain_mut().platform.inbound = super::inbound::InboundPort::new(port);
+    }
+    #[cfg(test)]
     pub(super) fn test_replace_platform_data(&mut self, data: crate::core::SharedDataAccess) {
         self.domain_mut().platform.data = data;
     }
@@ -200,6 +222,10 @@ impl OwnedMachine {
     #[cfg(test)]
     pub(crate) fn test_before_turn(&mut self, hook: Arc<dyn Fn() + Send + Sync>) {
         self.domain_mut().before_turn = Some(hook);
+    }
+    #[cfg(test)]
+    pub(crate) fn test_settle_wait(&mut self) -> WaitSettlement {
+        self.domain_mut().settle_wait()
     }
     #[cfg(test)]
     pub(crate) fn test_before_host(&self, hook: Arc<dyn Fn() + Send + Sync>) {
@@ -398,6 +424,7 @@ impl OwnedMachine {
         // Held debug effects belong to the replaced generation. A reset
         // inside a debug boundary retains them; an explicit new image does not.
         self.debug_events.clear();
+        self.debug_failure = None;
         self.memory = self.control.memory()?;
         self.edited = false;
         self.edit_reservation = None;
@@ -483,11 +510,15 @@ impl OwnedMachine {
                 if self.debug_command_busy()? {
                     return self.advance_debug_command();
                 }
-                if !block || !self.debug_events.is_empty() {
-                    return Ok(DebugBoundary {
-                        events: self.take_debug_events(),
-                        failure: None,
-                    });
+                // An idle transport still makes progress on a system bus
+                // access the DM already staged: it is admissible debug work,
+                // not a reason to wait or to end the run.
+                self.service_pending_sba()?;
+                if self.has_debug_facts() {
+                    return Ok(self.take_debug_boundary());
+                }
+                if !block {
+                    return Ok(DebugBoundary::default());
                 }
                 self.wait_for_debug_queue()?;
                 continue;
@@ -498,11 +529,8 @@ impl OwnedMachine {
             }
             // Return collected effects instead of waiting again: a terminal
             // debugger effect must reach the Runner at this boundary.
-            if !self.debug_events.is_empty() || !block || !self.debug_blocked() {
-                return Ok(DebugBoundary {
-                    events: self.take_debug_events(),
-                    failure: None,
-                });
+            if self.has_debug_facts() || !block || !self.debug_blocked() {
+                return Ok(self.take_debug_boundary());
             }
         }
     }
@@ -555,11 +583,11 @@ impl OwnedMachine {
     pub(crate) fn advance_debug_command(&mut self) -> Result<DebugBoundary, MachineError> {
         let hub = Arc::clone(&self.control.inner);
         let Ok(lease) = Lease::hart(&hub.gate) else {
-            hub.debug
-                .dm
-                .lock()
-                .map_err(|_| MachineError::Poisoned)?
-                .abort_command();
+            let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
+            dm.abort_command();
+            // The refused grant also rejects staged-but-ungranted system bus
+            // work: a Machine that admits no Hart turn grants no access.
+            dm.reject_pending_sba();
             return Ok(DebugBoundary::default());
         };
         let word = {
@@ -598,18 +626,128 @@ impl OwnedMachine {
             .lock()
             .map_err(|_| MachineError::Poisoned)?
             .complete_grant(outcome);
+        // The grant may have been the command's last, so a staged system bus
+        // access is serviced here instead of waiting for further DMI — unless
+        // this grant already failed or cannot be proven complete: a failing
+        // boundary admits no further deterministic work, so the request waits
+        // out the recorded failure.
+        let sba = if failure.is_none() && !uncertain {
+            self.service_sba()?
+        } else {
+            SbaService::default()
+        };
         self.capture_debug_events()?;
-        lease.boundary(uncertain, failure.clone())?;
+        let failure = sba.failure.or(failure);
+        lease.boundary(uncertain || sba.uncertain, failure.clone())?;
         Ok(DebugBoundary {
-            events: self.take_debug_events(),
+            events: std::mem::take(&mut self.debug_events),
             failure,
         })
     }
 
-    /// Platform effects produced by debug work since the last debug boundary.
-    /// A guest turn drains its own effects, so these belong to debug work.
-    pub(crate) fn take_debug_events(&mut self) -> Vec<PlatformEvent> {
-        std::mem::take(&mut self.debug_events)
+    /// Service one staged system bus access at this coherent boundary.
+    ///
+    /// The request is taken under the DM lock, the target access runs without
+    /// it, and the result is recorded under a second acquisition. Contract §3
+    /// forbids holding a DM lock across a target access.
+    ///
+    /// The Machine grants no access while it is quiesced, while a previous
+    /// boundary recorded a failure, or while completion is unresolved: a
+    /// quarantined Machine admits no new deterministic work (ADR-0004 §12.2).
+    /// A refused request stays pending until the debugger clears it with a
+    /// DM reset. An active abstract command or program-buffer execution is
+    /// not disturbed: while `abstractcs.busy` the staged request stays
+    /// pending and is serviced after the command's last grant.
+    fn service_sba(&mut self) -> Result<SbaService, MachineError> {
+        let status = self.control.status()?;
+        if status.uncertain || status.failed || status.lifecycle != Lifecycle::Running {
+            return Ok(SbaService::default());
+        }
+        let hub = Arc::clone(&self.control.inner);
+        let request = {
+            let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
+            if dm.busy() {
+                return Ok(SbaService::default());
+            }
+            dm.next_sba_request()
+        };
+        let Some(request) = request else {
+            return Ok(SbaService::default());
+        };
+        // The DM lock is released above; only the Platform's target is reached.
+        let result = self.domain().platform.sba_access(request);
+        let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
+        match result {
+            Ok(value) => {
+                dm.complete_sba_access(Ok(value));
+                Ok(SbaService::default())
+            }
+            // A target refusal is `sberror`: sticky in the DM, and a debugger
+            // retries after W1C.
+            Err(super::inbound::SbaAccessError::Target(fault)) => {
+                dm.complete_sba_access(Err(fault));
+                Ok(SbaService::default())
+            }
+            // The Debug specification has no non-guest `sberror` for a host or
+            // protocol failure, and contract D5 forbids inventing one. The
+            // request keeps `sbbusy` set and the Machine keeps its own failure
+            // classification.
+            Err(super::inbound::SbaAccessError::Simulator(message)) => Ok(SbaService {
+                failure: Some(self.sba_failure(message)),
+                uncertain: false,
+            }),
+            // Unknown completion is the non-resumable quarantine of ADR-0002
+            // §4: no completion is recorded and no error is fabricated.
+            Err(super::inbound::SbaAccessError::UnknownCompletion(message)) => Ok(SbaService {
+                failure: Some(self.sba_failure(message)),
+                uncertain: true,
+            }),
+        }
+    }
+
+    /// Service a staged system bus access under its own debug admission.
+    ///
+    /// Used when the transport is idle: the DM already holds a request that no
+    /// target received, and a blocking wait must not strand it.
+    fn service_pending_sba(&mut self) -> Result<(), MachineError> {
+        let hub = Arc::clone(&self.control.inner);
+        let lease = Lease::debug(&hub.gate)?;
+        let sba = self.service_sba()?;
+        self.capture_debug_events()?;
+        self.hold_debug_failure(sba.failure.clone());
+        lease.boundary(sba.uncertain, sba.failure)?;
+        Ok(())
+    }
+
+    /// Classify a system bus access failure that has no guest or `sberror` form.
+    fn sba_failure(&self, message: String) -> crate::core::SimulatorFailure {
+        crate::core::SimulatorFailure {
+            pc: self.domain().core.state().pc,
+            kind: crate::core::SimulatorFailureKind::HostBackend,
+            message: format!("system bus access: {message}"),
+        }
+    }
+
+    /// Platform effects and a simulator failure produced by debug work since
+    /// the last debug boundary. A guest turn drains its own effects, so these
+    /// belong to debug work. The caller consumes them once.
+    pub(crate) fn take_debug_boundary(&mut self) -> DebugBoundary {
+        DebugBoundary {
+            events: std::mem::take(&mut self.debug_events),
+            failure: self.debug_failure.take(),
+        }
+    }
+
+    /// Whether this boundary already holds debug-work facts to report.
+    fn has_debug_facts(&self) -> bool {
+        !self.debug_events.is_empty() || self.debug_failure.is_some()
+    }
+
+    /// Hold this boundary's debug-work facts for the next debug boundary.
+    fn hold_debug_failure(&mut self, failure: Option<crate::core::SimulatorFailure>) {
+        if failure.is_some() && self.debug_failure.is_none() {
+            self.debug_failure.clone_from(&failure);
+        }
     }
 
     /// Move the Platform queue into the held debug events. Called before a
@@ -677,15 +815,37 @@ impl OwnedMachine {
                 }
                 None => dm.dmi_read(core, addr),
             };
+            let after = dm.ndmreset();
+            if !before && after {
+                // The reset request rejects staged-but-ungranted system bus
+                // work (contract D9). A request already reaching its target
+                // finishes inside its own boundary and is drained there.
+                dm.reject_pending_sba();
+            }
             (
                 value,
                 before,
-                dm.ndmreset(),
+                after,
                 core.unresolved_physical_access().cloned(),
             )
         };
+        // The DM lock is released above. A system bus access this transaction
+        // staged reaches its target here, at this boundary, without that lock
+        // — unless this boundary already ended the current machine state: a
+        // failing or quarantined boundary admits no new deterministic work,
+        // and a rising `ndmreset` stops new grants.
+        let sba = if failure.is_none() && !uncertain && !(!before && after) {
+            self.service_sba()?
+        } else {
+            SbaService::default()
+        };
         self.capture_debug_events()?;
-        let receipt = lease.boundary(failure.is_some(), failure)?;
+        self.hold_debug_failure(sba.failure.clone());
+        // A DMI-path failure is only ever an unresolved physical completion,
+        // so it is unknown completion; an SBA host failure is not.
+        let unknown = failure.is_some() || sba.uncertain;
+        let failure = sba.failure.or(failure);
+        let receipt = lease.boundary(unknown, failure)?;
         let uncertain = receipt.boundary_state()?.1;
         if !before && after {
             drop(receipt);

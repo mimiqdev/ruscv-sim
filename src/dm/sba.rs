@@ -14,11 +14,11 @@
 //! started it. And contract §3 forbids holding a DM lock across a physical
 //! target access, so the caller must reach the target between the two calls.
 //!
-//! The Platform owns that target (U2) and the Machine owns admission at a
-//! coherent Hart boundary (U3). Until U3 lands, `Machine` admits DMI but
-//! drives no SBA request, so a system bus access started through
-//! `Machine::dmi_write` stays busy until a DM reset. Direct DM callers such as
-//! the U1 tests complete every request they start.
+//! The Platform owns that target (U2). `Machine` owns admission: at a
+//! coherent Hart boundary it takes a staged request, reaches the target
+//! without the DM lock, and records the result (U3). A request stays pending
+//! while an abstract command or program-buffer execution is active, and a
+//! quiesced Machine grants no new access.
 
 use super::regs::{SBADDRESS0, SBADDRESS1, SBDATA0, SBDATA1};
 use super::DebugModule;
@@ -334,6 +334,23 @@ impl SbaState {
         Some(pending.request)
     }
 
+    /// Drop a request the Machine has not handed out.
+    ///
+    /// The Machine calls this when a reset request rejects staged but
+    /// ungranted work (contract D9): the request never reached a target, so
+    /// dropping it commits nothing and clears `sbbusy`. A request that was
+    /// handed out stays until its result is recorded.
+    pub(super) fn reject_pending(&mut self) -> bool {
+        let Some(pending) = self.pending else {
+            return false;
+        };
+        if pending.handed_out {
+            return false;
+        }
+        self.pending = None;
+        true
+    }
+
     /// Record the target result and clear `sbbusy`.
     ///
     /// Only a request that [`Self::next_request`] handed out can complete: a
@@ -377,5 +394,13 @@ impl DebugModule {
     /// in flight, or with a request that was never taken, does nothing.
     pub fn complete_sba_access(&mut self, result: Result<u64, SbaFault>) {
         self.sba.complete(result);
+    }
+
+    /// Reject the staged system bus access the Machine has not handed out.
+    /// Called when a reset request stops new grants (contract D9); the
+    /// request never reached a target, so dropping it commits nothing.
+    /// Returns whether a request was dropped.
+    pub(crate) fn reject_pending_sba(&mut self) -> bool {
+        self.sba.reject_pending()
     }
 }

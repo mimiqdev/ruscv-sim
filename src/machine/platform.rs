@@ -165,11 +165,10 @@ impl Platform {
 
     /// One DM-originated system bus access through the inbound port.
     ///
-    /// U3 calls this when it services the DM's request at a coherent Hart
+    /// [`crate::machine::Machine`]'s hart owner calls this at a coherent Hart
     /// boundary. The DM lock is not held here; this method only reaches the
     /// Platform's target. A target refusal is `sberror` material, while a
     /// simulator-side failure must keep its own classification.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn sba_access(
         &self,
         request: crate::dm::SbaRequest,

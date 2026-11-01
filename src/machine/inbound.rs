@@ -17,13 +17,9 @@
 //! or device lock covers a Hart AMO/SC, so an SBA transaction can neither
 //! observe nor expose the intermediate state of one.
 //!
-//! Machine admission and lifecycle belong to U3. A caller reaches the target
-//! between [`crate::dm::DebugModule::next_sba_request`] and
-//! [`crate::dm::DebugModule::complete_sba_access`] without holding the DM lock.
-//!
-//! U3 wires this path into Machine admission; until then only the U2 tests
-//! exercise it, so a non-test build has no caller yet.
-#![cfg_attr(not(test), allow(dead_code))]
+//! Machine admission and life cycle are U3: a request is taken from the DM
+//! and its result recorded between two DM lock acquisitions, so no DM lock is
+//! held across the target access.
 
 use crate::core::SharedPhysicalAccess;
 use crate::dm::{SbaAccessSize, SbaFault, SbaRequest};
@@ -50,6 +46,10 @@ pub(super) enum SbaAccessError {
 /// The Platform-owned inbound port the DM initiates physical requests through.
 pub(super) struct InboundPort {
     port: SharedPhysicalAccess,
+    /// Runs at the start of one target access. The U3 tests observe the DM lock
+    /// or hold an access open; production builds have no hook.
+    #[cfg(test)]
+    before: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl InboundPort {
@@ -58,7 +58,16 @@ impl InboundPort {
     /// The port must be a view over the same backend as Hart-issued
     /// transactions; the Platform owns that construction.
     pub(super) const fn new(port: SharedPhysicalAccess) -> Self {
-        Self { port }
+        Self {
+            port,
+            #[cfg(test)]
+            before: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_before(&mut self, hook: std::sync::Arc<dyn Fn() + Send + Sync>) {
+        self.before = Some(hook);
     }
 
     /// Submits one system bus access and returns the raw read value, or `0`
@@ -69,6 +78,10 @@ impl InboundPort {
     /// target refusal is a bad address for `sberror`; a failed transaction
     /// commits nothing, so it also invalidates no reservation.
     pub(super) fn access(&self, request: SbaRequest) -> Result<u64, SbaAccessError> {
+        #[cfg(test)]
+        if let Some(before) = &self.before {
+            before();
+        }
         let width = match request.size {
             SbaAccessSize::Byte => PhysicalWidth::Byte,
             SbaAccessSize::Half => PhysicalWidth::Halfword,

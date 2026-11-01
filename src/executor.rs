@@ -1561,7 +1561,7 @@ fn hold_for_debugger(
             .map_err(ExecutorError::ExecutionError)?;
         // Direct DMI reached the DM at this boundary. A Platform effect it
         // caused is debug work, not a later guest turn.
-        boundary.events.extend(machine.take_debug_events());
+        boundary.merge(machine.take_debug_boundary());
         machine.publish_completed_turns(control.cycles());
         if closed {
             return Ok((DebugHold::Closed, boundary));
