@@ -1719,10 +1719,15 @@ fn guest_counters(owned: &OwnedMachine) -> (u64, u64, u64) {
     )
 }
 
-/// One inbound target that cannot prove whether the access committed.
-struct UnknownSba;
+/// One inbound target that cannot prove whether the access committed. It
+/// counts every target call, so a test can prove that no further access
+/// reached it.
+struct UnknownSba {
+    calls: Arc<AtomicUsize>,
+}
 impl PhysicalBackend for UnknownSba {
     fn transact(&mut self, _: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.calls.fetch_add(1, Ordering::SeqCst);
         Err(PhysicalBackendError::unknown(
             "SBA target may have committed the access",
         ))
@@ -2057,12 +2062,16 @@ fn sba_unknown_completion_resists_w1c_dm_reset_and_ndmreset() {
     let mut owned =
         OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
     halted_by_dmi(&mut owned);
+    let calls = Arc::new(AtomicUsize::new(0));
     owned.test_replace_inbound(Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-        UnknownSba,
+        UnknownSba {
+            calls: calls.clone(),
+        },
     ))));
     owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
     sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
     owned.dmi_write(DM_SBDATA0, 7).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "exactly one target access");
 
     let control = owned.test_control();
     let status = control.status().unwrap();
@@ -2102,10 +2111,16 @@ fn sba_unknown_completion_resists_w1c_dm_reset_and_ndmreset() {
     assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, 0);
 
     // A quarantined Machine grants no new system bus access either: the
-    // re-staged transfer stays busy and commits nothing (ADR-0004 §12.2).
+    // re-staged transfer stays busy, commits nothing, and never reaches the
+    // target again (ADR-0004 §12.2).
     owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
     sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
     owned.dmi_write(DM_SBDATA0, 0x5566_7788).unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "a quarantined Machine reached the target with a new access"
+    );
     assert_eq!(
         owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
         SBBUSY,
@@ -2337,5 +2352,52 @@ fn sba_simulator_failure_keeps_its_classification_and_is_reported() {
         owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
         SBBUSY,
         "the failed access lost its busy state"
+    );
+}
+
+/// U3 §3 and D9: a reset request that lands while a command holds a deferred
+/// system bus request aborts the command and rejects the ungranted request.
+/// Neither runs during or after the quiesce.
+#[test]
+fn quiesce_during_a_command_rejects_the_sba_deferred_behind_it() {
+    let (accessed_tx, accessed_rx) = mpsc::channel();
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    owned.test_before_sba(Arc::new(move || {
+        accessed_tx.send(()).unwrap();
+    }));
+    postexec_buffer(&mut owned, [elf::addi(9, 9, 1), elf::addi(9, 9, 1)]);
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x7788_9900).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, SBBUSY);
+
+    owned.test_control().request_quiesce().unwrap();
+    owned.debug_boundary(false).unwrap();
+    assert_eq!(
+        cmderr_of(&mut owned),
+        4,
+        "the quiesce did not abort the command"
+    );
+    assert!(!owned.debug_command_busy().unwrap());
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        0,
+        "the deferred request was neither rejected nor completed"
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert!(
+        accessed_rx.try_recv().is_err(),
+        "the quiesced Machine granted the deferred system bus access"
+    );
+    assert_eq!(
+        storage_read(&owned, SBA_OFFSET),
+        0,
+        "the deferred request committed"
+    );
+    assert!(
+        owned.test_control().try_drain().is_ok(),
+        "the aborted command held work open"
     );
 }
