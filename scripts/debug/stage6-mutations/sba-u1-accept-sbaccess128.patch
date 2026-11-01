@@ -1,0 +1,12 @@
+diff --git a/src/dm/sba.rs b/src/dm/sba.rs
+index cf4cc63..e810dce 100644
+--- a/src/dm/sba.rs
++++ b/src/dm/sba.rs
+@@ -84,6 +84,7 @@ impl SbaAccessSize {
+             1 => Some(Self::Half),
+             2 => Some(Self::Word),
+             3 => Some(Self::DoubleWord),
++            4 => Some(Self::DoubleWord),
+             _ => None,
+         }
+     }
