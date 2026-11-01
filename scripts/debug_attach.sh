@@ -11,6 +11,17 @@
 # session with matching capacity, implicit EBREAK, and datacount, plus two
 # capacity controls that must make the session fail closed.
 #
+# System-bus U4 adds a third session that forces OpenOCD's system-bus memory
+# path the same way. It transfers four adjacent values at all four supported
+# widths, reads the bulk array back through the system bus, faults on an
+# unmapped store with sberror 2, recovers, reads every address back through
+# abstract Access Memory, and records the sbcs profile and the sberror
+# taxonomy over raw DMI. Spike runs the same session with --dm-sba=64. Two
+# raw-DMI rows are the pre-identified pinned-Spike deviations: Spike reports
+# sberror 3, not the specification's 4, for an unsupported sbaccess size, and
+# performs no alignment check, so its misaligned word load traps as a bad
+# address (sberror 2).
+#
 # Named outputs are the S6 and U4 lines in the GDB logs. The comparisons are
 # those values, not a hash. dmstatus.version is not one of them. dcsr is
 # compared after setting aside two documented differences: D5 forces
@@ -26,6 +37,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CFG="${ROOT}/scripts/debug/openocd-remote-bitbang.cfg"
 GDB_SCRIPT="${ROOT}/scripts/debug/s6-u5-session.gdb"
 GDB_PROGBUF_SCRIPT="${ROOT}/scripts/debug/s6-u4-progbuf.gdb"
+GDB_SYSBUS_SCRIPT="${ROOT}/scripts/debug/s6-u4-sysbus.gdb"
 GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64i/s6_u5_attach.S"
 LINKER="${ROOT}/tests/bare-metal-riscv-test/linker.ld"
 
@@ -319,9 +331,22 @@ start_session() {
         cat "${openocd_log}" >&2 || true
         return 1
     fi
-    # Give OpenOCD a moment to notice the socket drop.
-    sleep 0.5
-    if ! grep -E -q 'Connection reset by peer|Broken pipe|remote_bitbang_fill_buf' "${openocd_log}" "${dir}/openocd.stdout"; then
+    # Wait for OpenOCD to notice the socket drop. It either logs the
+    # disconnect or, when the scan hits the dead socket between handlers,
+    # aborts (Debug Spec sessions end by the target exiting first, so the
+    # SIGABRT after the named outputs is that known 0.12.0 shutdown race).
+    local tries
+    for ((tries = 0; tries < 50; tries++)); do
+        if grep -E -q 'Connection reset by peer|Broken pipe|remote_bitbang_fill_buf' "${openocd_log}" "${dir}/openocd.stdout"; then
+            break
+        fi
+        if ! kill -0 "${openocd_pid}" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+    if ! grep -E -q 'Connection reset by peer|Broken pipe|remote_bitbang_fill_buf' "${openocd_log}" "${dir}/openocd.stdout" \
+        && kill -0 "${openocd_pid}" 2>/dev/null; then
         echo "${name}: OpenOCD log does not show the target going away" >&2
         cat "${openocd_log}" >&2 || true
         return 1
@@ -548,6 +573,243 @@ s6_pb8 1
 TABLE
 }
 
+# The system-bus session's named outputs, in the order the session prints
+# them. The raw-DMI rows join their keys with underscores and are folded in
+# by extract_dmi_named below.
+u4_sysbus_keys() {
+    printf 'connect bulk64 width32 width16 width8 sysbus_readback fault recovery s0 s1 halt_pc reset_pc'
+    local array index
+    for array in s6_pb64 s6_pb32 s6_pb16 s6_pb8; do
+        for index in 0 1 2 3; do
+            printf ' %s_%s' "${array}" "${index}"
+        done
+    done
+}
+
+# The raw-DMI rows print as U4SBCS_* and U4SBERROR_*: GDB's monitor path
+# drops the connection on spaced output, so those echo lines cannot carry
+# the "U4 key" shape. Fold them into the named file under their session
+# keys.
+extract_dmi_named() {
+    local named="$1" gdb_log="$2" pair
+    local value
+    for pair in sbcs_profile:U4SBCS_PROFILE sberror_misaligned:U4SBERROR_MISALIGNED \
+        sberror_badaddr:U4SBERROR_BADADDR sberror_unsupported:U4SBERROR_UNSUPPORTED; do
+        value="$(awk -F= -v key="${pair##*:}" '$1 == key { print substr($0, index($0, "=") + 1); exit }' "${gdb_log}")"
+        if [[ -z "${value}" ]]; then
+            echo "U4 raw-DMI: missing ${pair##*:}" >&2
+            cat "${gdb_log}" >&2 || true
+            return 1
+        fi
+        printf '%s=%s\n' "${pair%%:*}" "${value}" >>"${named}"
+    done
+}
+
+# The forced system-bus session. OpenOCD has no other memory-access method,
+# so a transfer it reports here cannot have used abstract memory or the
+# program buffer.
+run_sysbus_session() {
+    local name="$1"
+    local named="$3"
+    start_session "${name}" "$2" "${GDB_SYSBUS_SCRIPT}" 'U4 reset_pc=' \
+        -d3 -c "riscv set_mem_access sysbus" || return 1
+    local keys=()
+    read -r -a keys <<<"$(u4_sysbus_keys)"
+    extract_named "${named}" "${WORK}/${name}/gdb.log" U4 raw "${keys[@]}" || return 1
+    extract_dmi_named "${named}" "${WORK}/${name}/gdb.log" || return 1
+    assert_sysbus_session "${name}" "${named}" || return 1
+    assert_sysbus_dmi "${name}" "${named}" || return 1
+    assert_sysbus_evidence "${name}" "${WORK}/${name}" || return 1
+    echo "${name}: system-bus session ok (target exit 0)"
+}
+
+# Each readback value is checked at its own symbol-derived address against
+# the constants the GDB script wrote, so a repeated value, a stale value, or
+# a wrong increment fails. The raw-DMI profile row must advertise the
+# contract's D2 profile.
+assert_sysbus_session() {
+    local name="$1" named="$2"
+    if [[ "$(field "${named}" connect)" != "ok" ]]; then
+        echo "${name}: system-bus session did not connect" >&2
+        return 1
+    fi
+    local key
+    for key in bulk64 width32 width16 width8 recovery; do
+        if [[ "$(field "${named}" "${key}")" != "written" ]]; then
+            echo "${name}: the ${key} transfer did not complete" >&2
+            return 1
+        fi
+    done
+    if [[ "$(field "${named}" sysbus_readback)" != "0x1111111111111111" ]]; then
+        echo "${name}: the system-bus read of the bulk array is $(field "${named}" sysbus_readback)" >&2
+        return 1
+    fi
+    if [[ "$(field "${named}" fault)" != "refused" ]]; then
+        echo "${name}: an unmapped system-bus write was not refused" >&2
+        return 1
+    fi
+    if [[ "$(field "${named}" s0)" != "0x5a5a5a5a5a5a5a5a" \
+        || "$(field "${named}" s1)" != "0xa5a5a5a5a5a5a5a5" ]]; then
+        echo "${name}: a hart register changed during system-bus access" >&2
+        return 1
+    fi
+    # 0x2004080f is the D2 reset profile (sbversion 1, sbasize 64, widths
+    # 8-64, sbaccess 2). The asserted value reads sbaccess 0: this row is
+    # taken at the end of the session, after OpenOCD's last word access, so
+    # it also pins that session residue. The contract bits are the high
+    # groups; the sbaccess field is OpenOCD state, and an OpenOCD bump may
+    # legitimately change it without a simulator regression.
+    if [[ "$(field "${named}" sbcs_profile)" != "0x2000080f" ]]; then
+        echo "${name}: the sbcs profile is $(field "${named}" sbcs_profile), expected 0x2000080f" >&2
+        return 1
+    fi
+    local symbol width values value
+    while read -r symbol width values; do
+        local base index=0
+        base="$(symbol "${symbol}")"
+        for value in ${values}; do
+            local address want got
+            address="$(printf '0x%x' "$((0x${base} + index * width))")"
+            want="${value}@${address}"
+            got="$(field "${named}" "${symbol}_${index}")"
+            if [[ "${got}" != "${want}" ]]; then
+                echo "${name}: ${symbol}_${index} is ${got}, expected ${want}" >&2
+                return 1
+            fi
+            index=$((index + 1))
+        done
+    done <<'TABLE'
+s6_pb64 8 0x1111111111111111 0x2222222222222222 0x3333333333333333 0x4444444444444444
+s6_pb32 4 0x11223344 0x55667788 0x99aabbcc 0xddeeff00
+s6_pb16 2 0x1234 0x5678 0x9abc 0xdef0
+s6_pb8 1 0x5a 0xa5 0x3c 0xc3
+TABLE
+    assert_eq "${name}" "$(field "${named}" halt_pc)" "${SPIN_AT}" "halt PC" || return 1
+    if [[ "${name}" == spike-* ]]; then
+        assert_eq "${name}" "$(field "${named}" reset_pc)" "1000" "reset PC" || return 1
+    else
+        assert_eq "${name}" "$(field "${named}" reset_pc)" "${ENTRY}" "reset PC" || return 1
+    fi
+}
+
+# The sberror taxonomy over raw DMI. The profile row is checked with the
+# session; these two rows carry the pre-identified pinned-Spike deviations:
+# the contract follows the specification on both, and the expectation names
+# Spike's behavior where the targets differ.
+assert_sysbus_dmi() {
+    local name="$1" named="$2"
+    if [[ "${name}" == spike-* ]]; then
+        assert_eq "${name}" "$(field "${named}" sberror_misaligned)" "2" "sberror for a misaligned word" \
+            || return 1
+        assert_eq "${name}" "$(field "${named}" sberror_unsupported)" "3" "sberror for an unsupported sbaccess" \
+            || return 1
+    else
+        assert_eq "${name}" "$(field "${named}" sberror_misaligned)" "3" "sberror for a misaligned word" \
+            || return 1
+        assert_eq "${name}" "$(field "${named}" sberror_unsupported)" "4" "sberror for an unsupported sbaccess" \
+            || return 1
+    fi
+    assert_eq "${name}" "$(field "${named}" sberror_badaddr)" "2" "sberror for an unmapped word" || return 1
+}
+
+# The OpenOCD log must record a system-bus burst for every written address,
+# the 64-bit value markers of the bulk-transfer readback, a single failed
+# write for the fault word with sberror 2 at that address, no abstract or
+# program-buffer transfer before the readback switch, and an abstract read
+# for every checked address after it. GDB hands the bulk transfer to OpenOCD
+# as one buffer, so the 64-bit array is asserted at its base: OpenOCD bursts
+# it whole on this simulator and per 8-byte word on Spike, and both chunk
+# the element stores of the narrower arrays.
+assert_sysbus_evidence() {
+    local name="$1" dir="$2"
+    local log="${dir}/openocd.log"
+    if ! grep -aq "transferring burst starting at address $(printf '0x%x' "0x$(symbol s6_pb64)")" "${log}"; then
+        echo "${name}: OpenOCD log lacks a system-bus burst for the bulk array" >&2
+        return 1
+    fi
+    local symbol width index address
+    while read -r symbol width; do
+        local base
+        base="$(symbol "${symbol}")"
+        for index in 0 1 2 3; do
+            address="$(printf '0x%x' "$((0x${base} + index * width))")"
+            if ! grep -aq "transferring burst starting at address ${address}" "${log}"; then
+                echo "${name}: OpenOCD log lacks a system-bus burst at ${address}" >&2
+                return 1
+            fi
+        done
+    done <<'TABLE'
+s6_pb32 4
+s6_pb16 2
+s6_pb8 1
+TABLE
+    local bulk
+    bulk="$(printf '0x%x' "0x$(symbol s6_pb64)")"
+    for pattern in \
+        'Succeeded to write memory via system bus' \
+        'Succeeded to read memory via system bus' \
+        "M[${bulk}] reads 0x11111111" \
+        "M[$(printf '0x%x' "$((0x${bulk#0x} + 4))")] reads 0x11111111" \
+        'System bus access failed with sberror=2 (sbaddress=0x7ffffff0)' \
+        'Failed to write memory (addr=0x7ffffff0)'
+    do
+        # Fixed strings: the address rows contain bracket expressions that
+        # a regex grep would read as character classes.
+        if ! grep -aqF -- "${pattern}" "${log}"; then
+            echo "${name}: OpenOCD log lacks [${pattern}]" >&2
+            return 1
+        fi
+    done
+    # 1 bulk transfer + 4+4+4 element stores at 4/2/1 bytes + 1 recovery =
+    # 14 successful sysbus writes; the fault write is the single failure
+    # asserted separately.
+    if [[ "$(grep -ac -- 'Succeeded to write memory via system bus' "${log}")" != 14 ]]; then
+        echo "${name}: the successful system-bus write count is not 14" >&2
+        return 1
+    fi
+    if [[ "$(grep -ac -- 'Failed to write memory via system bus' "${log}")" != 1 ]]; then
+        echo "${name}: the deliberate system-bus failure is not the only one" >&2
+        return 1
+    fi
+    # The two-word program buffer is disabled in this session; no transfer
+    # may use it.
+    if grep -aq 'write_memory_progbuf' "${log}"; then
+        echo "${name}: a transfer used the disabled program buffer" >&2
+        return 1
+    fi
+    local switch
+    switch="$(grep -an -- 'command - riscv set_mem_access abstract$' "${log}" | head -1 | cut -d: -f1)"
+    if [[ -z "${switch}" ]]; then
+        echo "${name}: OpenOCD log does not show the switch to abstract memory" >&2
+        return 1
+    fi
+    local line
+    while read -r line; do
+        if [[ "${line}" -lt "${switch}" ]]; then
+            echo "${name}: a transfer succeeded through abstract memory before the switch" >&2
+            return 1
+        fi
+    done < <(grep -an -- 'Succeeded to write memory via abstract access' "${log}" | cut -d: -f1)
+    while read -r symbol width; do
+        local base
+        base="$(symbol "${symbol}")"
+        for index in 0 1 2 3; do
+            address="$(printf '0x%x' "$((0x${base} + index * width))")"
+            if ! awk -v start="${switch}" \
+                -v pattern="read_memory_abstract(): reading 1 words of ${width} bytes from ${address}" \
+                'NR > start && index($0, pattern) { found = 1 } END { exit found ? 0 : 1 }' "${log}"; then
+                echo "${name}: no abstract read of ${width} bytes at ${address}" >&2
+                return 1
+            fi
+        done
+    done <<'TABLE'
+s6_pb64 8
+s6_pb32 4
+s6_pb16 2
+s6_pb8 1
+TABLE
+}
+
 ruscv_cmd() {
     local port="$1"
     exec "${RUSCV_SIM}" run "${WORK}/guest.elf" --rbb-port "${port}" --halted --max-cycles 100000000
@@ -560,7 +822,8 @@ spike_available() {
     grep -q -- '--dm-datacount' <<<"${help}" \
         && grep -q -- '--halted' <<<"${help}" \
         && grep -q -- '--dm-progsize' <<<"${help}" \
-        && grep -q -- '--dm-no-impebreak' <<<"${help}"
+        && grep -q -- '--dm-no-impebreak' <<<"${help}" \
+        && grep -q -- '--dm-sba' <<<"${help}"
 }
 
 spike_cmd() {
@@ -589,6 +852,23 @@ spike_progbuf_cmd() {
         --pc="0x${ENTRY}" \
         --dm-progsize=2 \
         --dm-datacount=4 \
+        --rbb-port="${port}" \
+        "${WORK}/guest.elf"
+}
+
+# The U4 system-bus comparison target: --dm-sba=64 enables Spike's SBA block
+# at the contract's sbasize. progbufsize stays 0 because this session never
+# uses the program buffer, and datacount stays at this profile's four.
+spike_sysbus_cmd() {
+    local port="$1"
+    exec spike --halted \
+        --isa=rv64ima_zicsr \
+        --priv=msu \
+        --pc="0x${ENTRY}" \
+        --dm-progsize=0 \
+        --dm-no-impebreak \
+        --dm-datacount=4 \
+        --dm-sba=64 \
         --rbb-port="${port}" \
         "${WORK}/guest.elf"
 }
@@ -766,6 +1046,36 @@ compare_progbuf_named() {
         "monitor reset halt returns Spike to its boot ROM. This profile's ndmreset reloads the image and halts at the ELF entry."
 }
 
+# The U4 system-bus comparison: the same addresses, values, and sberror
+# taxonomy on both targets. reset_pc differs for the same reason as the
+# abstract session. The two raw-DMI rows are the contract's pre-identified
+# pinned-Spike deviations; compare_progbuf_named's equality loop would fail
+# them, so they are compared as named divergences here.
+compare_sysbus_named() {
+    local left="$1" right="$2"
+    local keys=()
+    read -r -a keys <<<"$(u4_sysbus_keys)"
+    local key a b
+    for key in "${keys[@]}"; do
+        if [[ "${key}" == "reset_pc" ]]; then
+            continue
+        fi
+        a="$(field "${left}" "${key}")"
+        b="$(field "${right}" "${key}")"
+        if [[ "${a}" != "${b}" ]]; then
+            echo "Spike comparison mismatch on ${key}: simulator ${a}, spike ${b}" >&2
+            return 1
+        fi
+        printf 'match %s=%s\n' "${key}" "${a}"
+    done
+    note_divergence "${left}" "${right}" reset_pc "$(printf '0x%x' "$((0x${ENTRY}))")" 0x1000 \
+        "monitor reset halt returns Spike to its boot ROM. This profile's ndmreset reloads the image and halts at the ELF entry."
+    note_divergence "${left}" "${right}" sberror_misaligned 3 2 \
+        "The contract follows the specification: a misaligned system-bus access is not performed and reports sberror 3. The pinned Spike performs no alignment check, so its misaligned word load traps in the memory system and lands as sberror 2."
+    note_divergence "${left}" "${right}" sberror_unsupported 4 3 \
+        "The contract follows the specification: an unsupported sbaccess size reports sberror 4. The pinned Spike reports 3 for it."
+}
+
 # A target with two effective program-buffer slots cannot host OpenOCD's
 # three-slot memory programs. The forced session must then fail closed:
 # OpenOCD skips its only enabled method and reports that the buffer is too
@@ -896,6 +1206,7 @@ echo "GDB: $(gdb-multiarch --version | head -1)"
 
 run_session ruscv ruscv_cmd "${WORK}/ruscv.named"
 run_progbuf_session ruscv-progbuf ruscv_cmd "${WORK}/ruscv-progbuf.named"
+run_sysbus_session ruscv-sysbus ruscv_cmd "${WORK}/ruscv-sysbus.named"
 run_negative_version
 run_negative_datacount
 
@@ -908,6 +1219,9 @@ elif spike_available; then
         | tee "${WORK}/progbuf-comparison.txt"
     run_negative_progbuf_capacity negative-progbufsize spike_one_word_progbuf
     run_negative_progbuf_capacity negative-impebreak spike_no_implicit_ebreak
+    run_sysbus_session spike-sysbus spike_sysbus_cmd "${WORK}/spike-sysbus.named"
+    compare_sysbus_named "${WORK}/ruscv-sysbus.named" "${WORK}/spike-sysbus.named" \
+        | tee "${WORK}/sysbus-comparison.txt"
     run_session spike spike_cmd "${WORK}/spike.named"
     compare_named "${WORK}/ruscv.named" "${WORK}/spike.named" | tee "${WORK}/comparison.txt"
 else
