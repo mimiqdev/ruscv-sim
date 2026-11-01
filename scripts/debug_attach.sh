@@ -331,9 +331,22 @@ start_session() {
         cat "${openocd_log}" >&2 || true
         return 1
     fi
-    # Give OpenOCD a moment to notice the socket drop.
-    sleep 0.5
-    if ! grep -E -q 'Connection reset by peer|Broken pipe|remote_bitbang_fill_buf' "${openocd_log}" "${dir}/openocd.stdout"; then
+    # Wait for OpenOCD to notice the socket drop. It either logs the
+    # disconnect or, when the scan hits the dead socket between handlers,
+    # aborts (Debug Spec sessions end by the target exiting first, so the
+    # SIGABRT after the named outputs is that known 0.12.0 shutdown race).
+    local tries
+    for ((tries = 0; tries < 50; tries++)); do
+        if grep -E -q 'Connection reset by peer|Broken pipe|remote_bitbang_fill_buf' "${openocd_log}" "${dir}/openocd.stdout"; then
+            break
+        fi
+        if ! kill -0 "${openocd_pid}" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+    if ! grep -E -q 'Connection reset by peer|Broken pipe|remote_bitbang_fill_buf' "${openocd_log}" "${dir}/openocd.stdout" \
+        && kill -0 "${openocd_pid}" 2>/dev/null; then
         echo "${name}: OpenOCD log does not show the target going away" >&2
         cat "${openocd_log}" >&2 || true
         return 1
