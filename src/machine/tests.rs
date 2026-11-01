@@ -862,6 +862,20 @@ fn program_buffer_grant_holds_no_dm_lock_and_records_a_known_failure() {
         !owned.test_control().status().unwrap().uncertain,
         "a known failure is not unknown completion"
     );
+
+    // A failed Machine admits no new system bus access: the re-staged
+    // transfer stays busy and commits nothing until a fresh reset (criterion
+    // 4, ADR-0004 §12.2).
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x1144_2277).unwrap();
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "a failed Machine granted a new system bus access"
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(storage_read(&owned, SBA_OFFSET), 0);
 }
 
 // ---- Program-buffer U3: Machine scheduling, lifecycle and physical access ----
@@ -1632,6 +1646,7 @@ const DM_SBCS: u8 = 0x38;
 const DM_SBADDRESS0: u8 = 0x39;
 const DM_SBADDRESS1: u8 = 0x3a;
 const DM_SBDATA0: u8 = 0x3c;
+const DM_SBDATA1: u8 = 0x3d;
 
 const SBBUSY: u32 = 1 << 21;
 const SBBUSYERROR: u32 = 1 << 22;
@@ -2003,6 +2018,35 @@ fn ndmreset_keeps_sticky_sba_errors_and_dm_reset_clears_sba_state() {
     );
     assert_eq!(owned.dmi_read(DM_SBADDRESS0).unwrap(), 0);
     assert_eq!(owned.dmi_read(DM_SBDATA0).unwrap(), 0);
+
+    // A staged-but-ungranted request is DM command state too. Staged behind
+    // an active command here, it is pending with `sbbusy` 1; a DM reset
+    // clears it instead of granting it later. The DM reset above cleared the
+    // halt request with the rest of the module, so halt the reloaded hart
+    // again for the command.
+    halted_by_dmi(&mut owned);
+    postexec_buffer(&mut owned, [elf::addi(9, 9, 1), elf::addi(9, 9, 1)]);
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x2233_4455).unwrap();
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "the request was not staged behind the active command"
+    );
+    owned.dmi_write(DM_DMCONTROL, 0).unwrap();
+    owned.dmi_write(DM_DMCONTROL, DM_DMACTIVE).unwrap();
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & (SBBUSY | SBBUSYERROR),
+        0,
+        "DM reset kept a pending SBA request"
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(
+        storage_read(&owned, SBA_OFFSET),
+        0,
+        "a pending request was granted across a DM reset"
+    );
 }
 
 /// U3 §3: an unresolved completion keeps the quarantine of ADR-0002 §4. No
@@ -2056,6 +2100,19 @@ fn sba_unknown_completion_resists_w1c_dm_reset_and_ndmreset() {
     owned.dmi_write(DM_DMCONTROL, 0).unwrap();
     owned.dmi_write(DM_DMCONTROL, DM_DMACTIVE).unwrap();
     assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, 0);
+
+    // A quarantined Machine grants no new system bus access either: the
+    // re-staged transfer stays busy and commits nothing (ADR-0004 §12.2).
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x5566_7788).unwrap();
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "a quarantined Machine granted a new system bus access"
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(storage_read(&owned, SBA_OFFSET), 0);
     assert!(matches!(
         control.resume(),
         Err(MachineError::UnknownCompletion)
@@ -2120,4 +2177,165 @@ fn pending_sba_is_not_wfi_no_progress_and_adds_no_charge() {
         assert!(matches!(again.hart().outcome, StepOutcome::Waiting));
         assert_eq!(guest_counters(&owned), frozen, "{kind:?}");
     }
+}
+
+/// U3 §3 and ADR-0004 §12.2: a grant that fails or cannot be proven complete
+/// does not grant the system bus access deferred behind it. The request waits
+/// out the recorded failure instead of running on a poisoned boundary.
+#[test]
+fn a_failing_grant_does_not_grant_the_sba_deferred_behind_it() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    // The buffer store fails on the probed data port; the deferred system bus
+    // write uses the separate inbound port and would otherwise commit.
+    let unlocked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let probe = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(DmLockProbe {
+        inner: Arc::clone(&owned.test_control().inner),
+        unlocked,
+    })));
+    owned.test_replace_data(probe);
+    write_gpr(&mut owned, 5, elf::BASE + 0x200);
+    write_gpr(&mut owned, 6, 77);
+    postexec_buffer(&mut owned, [elf::sd(6, 5, 0), elf::nop()]);
+
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x3344_5566).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, SBBUSY);
+
+    let facts = run_grants(&mut owned);
+    assert!(
+        facts.failure.is_some(),
+        "the failing grant was not reported"
+    );
+    assert_eq!(cmderr_of(&mut owned), 7);
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "the failing boundary granted the deferred system bus access"
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(storage_read(&owned, SBA_OFFSET), 0);
+}
+
+/// U3 §3 and D9: a rising `ndmreset` rejects the system bus request staged
+/// behind an active command instead of granting it during the reset. A
+/// request already reaching its target finishes inside its own boundary.
+#[test]
+fn an_ndmreset_request_rejects_the_sba_deferred_behind_a_command() {
+    let (accessed_tx, accessed_rx) = mpsc::channel();
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    owned.test_before_sba(Arc::new(move || {
+        accessed_tx.send(()).unwrap();
+    }));
+    postexec_buffer(&mut owned, [elf::addi(9, 9, 1), elf::addi(9, 9, 1)]);
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 0x6655_4433).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, SBBUSY);
+
+    owned
+        .dmi_write(DM_DMCONTROL, DM_DMACTIVE | DM_NDMRESET | DM_HALTREQ)
+        .unwrap();
+    assert_eq!(
+        cmderr_of(&mut owned),
+        4,
+        "the reset request did not abort the command"
+    );
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        0,
+        "the staged request was neither rejected nor completed"
+    );
+    assert!(
+        accessed_rx.try_recv().is_err(),
+        "the reset request granted the deferred system bus access"
+    );
+    assert_eq!(owned.state().pc, elf::BASE, "the reset did not reload");
+    owned.quiesce().unwrap();
+}
+
+/// U3 §3 and D8: a committed SBA MMIO write is a Platform effect returned at
+/// its debug boundary, with no guest counter or clock charge.
+#[test]
+fn sba_mmio_effect_is_a_platform_event_at_its_boundary() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    let frozen = guest_counters(&owned);
+
+    // The HTIF endpoint takes one complete eight-byte transfer.
+    owned.dmi_write(DM_SBCS, 3 << SBACCESS_SHIFT).unwrap();
+    sba_set_address(&mut owned, crate::executor::SYSTEM_BUS_HTIF_BASE);
+    owned.dmi_write(DM_SBDATA1, 0).unwrap();
+    owned.dmi_write(DM_SBDATA0, 3).unwrap();
+    assert_eq!(owned.dmi_read(DM_SBCS).unwrap() & SBBUSY, 0);
+    assert_eq!(sberror_of(&mut owned), 0);
+
+    let facts = owned.debug_boundary(false).unwrap();
+    assert_eq!(
+        facts.events,
+        [PlatformEvent::HtifWrite(3)],
+        "the committed MMIO write was not a Platform effect at its boundary"
+    );
+    assert!(facts.failure.is_none());
+    assert_eq!(
+        guest_counters(&owned),
+        frozen,
+        "the MMIO write charged the guest profile"
+    );
+}
+
+/// A system bus target that fails on the simulator side.
+struct HostErrorSba;
+impl PhysicalBackend for HostErrorSba {
+    fn transact(&mut self, _: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        Err(PhysicalBackendError::host("injected SBA backend failure"))
+    }
+}
+
+/// U3 §3 and D5: a system bus access that fails on the simulator side keeps
+/// the existing non-guest classification. No `sberror` is fabricated, no
+/// completion is recorded, and the failure is reported at a debug boundary.
+#[test]
+fn sba_simulator_failure_keeps_its_classification_and_is_reported() {
+    let mut owned =
+        OwnedMachine::new(MachineConfig::new(PlatformKind::Native), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    owned.test_replace_inbound(Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+        HostErrorSba,
+    ))));
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    sba_set_address(&mut owned, sba_address(PlatformKind::Native, SBA_OFFSET));
+    owned.dmi_write(DM_SBDATA0, 9).unwrap();
+
+    assert_eq!(
+        sberror_of(&mut owned),
+        0,
+        "a host failure was fabricated as sberror"
+    );
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "a completion was recorded for a failed access"
+    );
+
+    let facts = owned.debug_boundary(false).unwrap();
+    assert!(
+        facts.failure.is_some(),
+        "the SBA failure was not reported at a boundary"
+    );
+    let status = owned.test_control().status().unwrap();
+    assert!(
+        status.failed && !status.uncertain,
+        "a known host failure is not unknown completion: {status:?}"
+    );
+    assert_eq!(
+        owned.dmi_read(DM_SBCS).unwrap() & SBBUSY,
+        SBBUSY,
+        "the failed access lost its busy state"
+    );
 }

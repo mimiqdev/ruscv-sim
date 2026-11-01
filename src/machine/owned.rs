@@ -583,11 +583,11 @@ impl OwnedMachine {
     pub(crate) fn advance_debug_command(&mut self) -> Result<DebugBoundary, MachineError> {
         let hub = Arc::clone(&self.control.inner);
         let Ok(lease) = Lease::hart(&hub.gate) else {
-            hub.debug
-                .dm
-                .lock()
-                .map_err(|_| MachineError::Poisoned)?
-                .abort_command();
+            let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
+            dm.abort_command();
+            // The refused grant also rejects staged-but-ungranted system bus
+            // work: a Machine that admits no Hart turn grants no access.
+            dm.reject_pending_sba();
             return Ok(DebugBoundary::default());
         };
         let word = {
@@ -627,8 +627,15 @@ impl OwnedMachine {
             .map_err(|_| MachineError::Poisoned)?
             .complete_grant(outcome);
         // The grant may have been the command's last, so a staged system bus
-        // access is serviced here instead of waiting for further DMI.
-        let sba = self.service_sba(&lease)?;
+        // access is serviced here instead of waiting for further DMI — unless
+        // this grant already failed or cannot be proven complete: a failing
+        // boundary admits no further deterministic work, so the request waits
+        // out the recorded failure.
+        let sba = if failure.is_none() && !uncertain {
+            self.service_sba()?
+        } else {
+            SbaService::default()
+        };
         self.capture_debug_events()?;
         let failure = sba.failure.or(failure);
         lease.boundary(uncertain || sba.uncertain, failure.clone())?;
@@ -644,13 +651,16 @@ impl OwnedMachine {
     /// it, and the result is recorded under a second acquisition. Contract §3
     /// forbids holding a DM lock across a target access.
     ///
-    /// An active abstract command or program-buffer execution is not
-    /// disturbed: while `abstractcs.busy` the staged request stays pending and
-    /// is serviced after the command's last grant. A quiesced Machine grants no
-    /// new system bus access, so a reset request stops new work while a started
-    /// transaction finishes inside its own boundary.
-    fn service_sba(&mut self, _admitted: &Lease) -> Result<SbaService, MachineError> {
-        if self.control.status()?.lifecycle != Lifecycle::Running {
+    /// The Machine grants no access while it is quiesced, while a previous
+    /// boundary recorded a failure, or while completion is unresolved: a
+    /// quarantined Machine admits no new deterministic work (ADR-0004 §12.2).
+    /// A refused request stays pending until the debugger clears it with a
+    /// DM reset. An active abstract command or program-buffer execution is
+    /// not disturbed: while `abstractcs.busy` the staged request stays
+    /// pending and is serviced after the command's last grant.
+    fn service_sba(&mut self) -> Result<SbaService, MachineError> {
+        let status = self.control.status()?;
+        if status.uncertain || status.failed || status.lifecycle != Lifecycle::Running {
             return Ok(SbaService::default());
         }
         let hub = Arc::clone(&self.control.inner);
@@ -702,7 +712,7 @@ impl OwnedMachine {
     fn service_pending_sba(&mut self) -> Result<(), MachineError> {
         let hub = Arc::clone(&self.control.inner);
         let lease = Lease::debug(&hub.gate)?;
-        let sba = self.service_sba(&lease)?;
+        let sba = self.service_sba()?;
         self.capture_debug_events()?;
         self.hold_debug_failure(sba.failure.clone());
         lease.boundary(sba.uncertain, sba.failure)?;
@@ -805,16 +815,30 @@ impl OwnedMachine {
                 }
                 None => dm.dmi_read(core, addr),
             };
+            let after = dm.ndmreset();
+            if !before && after {
+                // The reset request rejects staged-but-ungranted system bus
+                // work (contract D9). A request already reaching its target
+                // finishes inside its own boundary and is drained there.
+                dm.reject_pending_sba();
+            }
             (
                 value,
                 before,
-                dm.ndmreset(),
+                after,
                 core.unresolved_physical_access().cloned(),
             )
         };
         // The DM lock is released above. A system bus access this transaction
-        // staged reaches its target here, at this boundary, without that lock.
-        let sba = self.service_sba(&lease)?;
+        // staged reaches its target here, at this boundary, without that lock
+        // — unless this boundary already ended the current machine state: a
+        // failing or quarantined boundary admits no new deterministic work,
+        // and a rising `ndmreset` stops new grants.
+        let sba = if failure.is_none() && !uncertain && !(!before && after) {
+            self.service_sba()?
+        } else {
+            SbaService::default()
+        };
         self.capture_debug_events()?;
         self.hold_debug_failure(sba.failure.clone());
         // A DMI-path failure is only ever an unresolved physical completion,

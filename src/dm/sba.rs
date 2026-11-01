@@ -334,6 +334,23 @@ impl SbaState {
         Some(pending.request)
     }
 
+    /// Drop a request the Machine has not handed out.
+    ///
+    /// The Machine calls this when a reset request rejects staged but
+    /// ungranted work (contract D9): the request never reached a target, so
+    /// dropping it commits nothing and clears `sbbusy`. A request that was
+    /// handed out stays until its result is recorded.
+    pub(super) fn reject_pending(&mut self) -> bool {
+        let Some(pending) = self.pending else {
+            return false;
+        };
+        if pending.handed_out {
+            return false;
+        }
+        self.pending = None;
+        true
+    }
+
     /// Record the target result and clear `sbbusy`.
     ///
     /// Only a request that [`Self::next_request`] handed out can complete: a
@@ -377,5 +394,13 @@ impl DebugModule {
     /// in flight, or with a request that was never taken, does nothing.
     pub fn complete_sba_access(&mut self, result: Result<u64, SbaFault>) {
         self.sba.complete(result);
+    }
+
+    /// Reject the staged system bus access the Machine has not handed out.
+    /// Called when a reset request stops new grants (contract D9); the
+    /// request never reached a target, so dropping it commits nothing.
+    /// Returns whether a request was dropped.
+    pub(crate) fn reject_pending_sba(&mut self) -> bool {
+        self.sba.reject_pending()
     }
 }
