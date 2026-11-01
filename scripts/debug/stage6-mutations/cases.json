@@ -385,7 +385,7 @@
         "test": "machine::tests::sba_is_admitted_only_at_a_hart_boundary",
         "failure": [
           "an SBA trigger was accepted mid-instruction",
-          "Err\\(MachineError::Debug"
+          "Ok\\(\\(\\)\\)"
         ]
       }
     ]
