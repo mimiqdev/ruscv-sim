@@ -23,7 +23,7 @@
 
 use crate::core::SharedPhysicalAccess;
 use crate::dm::{SbaAccessSize, SbaFault, SbaRequest};
-use crate::physical::{PhysicalAccessError, PhysicalRequest, PhysicalWidth};
+use crate::physical::{PhysicalAccess, PhysicalAccessError, PhysicalRequest, PhysicalWidth};
 
 /// Why the Platform could not complete a DM system bus access.
 ///
@@ -82,35 +82,42 @@ impl InboundPort {
         if let Some(before) = &self.before {
             before();
         }
-        let width = match request.size {
-            SbaAccessSize::Byte => PhysicalWidth::Byte,
-            SbaAccessSize::Half => PhysicalWidth::Halfword,
-            SbaAccessSize::Word => PhysicalWidth::Word,
-            SbaAccessSize::DoubleWord => PhysicalWidth::Doubleword,
-        };
-        // `sbdata` holds the value little-endian, and this platform profile is
-        // little-endian (ADR-0002 §2). The DM masks the value to the access
-        // size, so only the low bytes of the staged word are transferred.
-        let payload = request.write.map(u64::to_le_bytes);
-        let transfer = match &payload {
-            Some(bytes) => {
-                PhysicalRequest::data_write(request.address, width, &bytes[..width.bytes()])
-            }
-            None => PhysicalRequest::data_read(request.address, width),
-        }
-        .map_err(|error| SbaAccessError::Simulator(error.to_string()))?;
-
         let mut port = self
             .port
             .lock()
             .map_err(|_| SbaAccessError::Simulator("poisoned SBA inbound port".into()))?;
-        let response = port.access(transfer).map_err(map_access_error)?;
-        match request.write {
-            Some(_) => Ok(0),
-            None => response.read_bytes().map(read_le).ok_or_else(|| {
-                SbaAccessError::Simulator("validated port returned no read bytes".into())
-            }),
-        }
+        submit(&mut *port, &request)
+    }
+}
+
+/// Translate one system bus request into a validated port transaction,
+/// submit it through `port`, and decode the response.
+pub(super) fn submit(
+    port: &mut dyn PhysicalAccess,
+    request: &SbaRequest,
+) -> Result<u64, SbaAccessError> {
+    let width = match request.size {
+        SbaAccessSize::Byte => PhysicalWidth::Byte,
+        SbaAccessSize::Half => PhysicalWidth::Halfword,
+        SbaAccessSize::Word => PhysicalWidth::Word,
+        SbaAccessSize::DoubleWord => PhysicalWidth::Doubleword,
+    };
+    // `sbdata` holds the value little-endian, and this platform profile is
+    // little-endian (ADR-0002 §2). The DM masks the value to the access
+    // size, so only the low bytes of the staged word are transferred.
+    let payload = request.write.map(u64::to_le_bytes);
+    let transfer = match &payload {
+        Some(bytes) => PhysicalRequest::data_write(request.address, width, &bytes[..width.bytes()]),
+        None => PhysicalRequest::data_read(request.address, width),
+    }
+    .map_err(|error| SbaAccessError::Simulator(error.to_string()))?;
+
+    let response = port.access(transfer).map_err(map_access_error)?;
+    match request.write {
+        Some(_) => Ok(0),
+        None => response.read_bytes().map(read_le).ok_or_else(|| {
+            SbaAccessError::Simulator("validated port returned no read bytes".into())
+        }),
     }
 }
 
