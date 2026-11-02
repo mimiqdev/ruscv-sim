@@ -8,6 +8,7 @@
 //! unchanged behavior is proven by the existing suites running unmodified;
 //! the assertions here pin the profile boundary.
 
+use assert_cmd::cargo::cargo_bin_cmd;
 use ruscv_sim::core::commits::CommitLogger;
 use ruscv_sim::core::observation::Observation;
 use ruscv_sim::core::{
@@ -178,6 +179,67 @@ fn flat_facade_reports_imac_misa() {
     );
 }
 
+#[test]
+fn cli_selects_the_profile_through_isa() {
+    let elf = compressed_exit_elf();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("imac.elf");
+    std::fs::write(&path, &elf).unwrap();
+
+    // `run --isa rv64imac` executes the compressed guest to its tohost exit.
+    let output = cargo_bin_cmd!("ruscv-sim")
+        .arg("run")
+        .arg(&path)
+        .arg("--isa")
+        .arg("rv64imac")
+        .arg("--max-cycles")
+        .arg("10000")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Status:     SUCCESS"),
+        "rv64imac run must exit through tohost: {stdout}"
+    );
+    assert!(output.status.success());
+
+    // The default profile (`--isa rv64ima`, explicit) cannot execute the
+    // compressed stream and never exits.
+    for args in [
+        vec!["--isa", "rv64ima"],
+        vec![], // default is rv64ima
+    ] {
+        let output = cargo_bin_cmd!("ruscv-sim")
+            .arg("run")
+            .arg(&path)
+            .args(&args)
+            .arg("--max-cycles")
+            .arg("2000")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("Status:     SUCCESS"),
+            "rv64ima must not run the compressed guest: {stdout}"
+        );
+    }
+
+    // An unapproved profile name is rejected at the CLI boundary.
+    let output = cargo_bin_cmd!("ruscv-sim")
+        .arg("run")
+        .arg(&path)
+        .arg("--isa")
+        .arg("rv64gc")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid ISA profile"),
+        "invalid profile names report the approved set: {stderr}"
+    );
+}
+
 const RAM_SIZE: usize = 0x1_0000;
 const BASE: u64 = 0x8000_0000;
 const PAGE: u64 = 0x1000;
@@ -189,7 +251,8 @@ const C_EBREAK: u16 = 0x9002; // ebreak
 const C_JALR_X16: u16 = 0x9802; // c.jalr x16 -> jalr x1, x16, 0
 const C_BEQZ_X8_P4: u16 = 0xc011; // c.beqz x8, +4 -> beq x8, x0, +4
 const C_BNEZ_X8_M4: u16 = 0xfc75; // c.bnez x8, -4 -> bne x8, x0, -4
-const C_ADDIW_X1_0: u16 = 0x2081; // c.addiw x1, 0 -> addiw x1, x1, 0 (HINT rd!=0 imm=0)
+const C_ADDIW_X1_0: u16 = 0x2081; // c.addiw x1, 0 -> addiw x1, x1, 0 (legal expansion, ref class E)
+const C_NOP_8: u16 = 0x0021; // c.nop 8 -> slli x0, x0, 3 (D2 HINT: nonzero immediate)
 
 fn addi(rd: u32, rs1: u32, imm: u32) -> u32 {
     (imm << 20) | (rs1 << 15) | (rd << 7) | 0x13
@@ -776,7 +839,7 @@ fn commit_log_formats_16bit_instruction_as_4_hex_digits() {
 }
 
 #[test]
-fn commit_log_keeps_8_digit_format_for_32bit_under_imac() {
+fn commit_log_keeps_8_digit_format_for_32bit_under_ima() {
     let (mut ima, ram, _) = {
         let (mut c, r, cl) = traced_imac_core(RAM_SIZE);
         c.set_isa_profile(IsaProfile::Rv64ima);
@@ -814,17 +877,33 @@ fn reserved_and_fp_parcels_trap_with_parcel_tval() {
 #[test]
 fn hint_parcels_retire_with_no_effect() {
     let (mut core, ram, _) = traced_imac_core(RAM_SIZE);
-    // c.addiw x1, 0: HINT (rd!=0, imm=0) retires with no effect (D2).
-    write16(&ram, 0, C_ADDIW_X1_0);
+    // c.nop 8 is a D2 HINT (nonzero immediate): it retires with no
+    // architectural effect, unlike the all-zero reserved parcel.
+    write16(&ram, 0, C_NOP_8);
+    let retired = retire(&mut core);
+    assert_eq!(retired.instruction_length, 2);
+    assert_eq!(retired.instruction, u32::from(C_NOP_8));
+    assert_eq!(core.state().pc, BASE + 2);
+    assert!(core
+        .state()
+        .regs
+        .iter()
+        .enumerate()
+        .all(|(i, v)| i == 0 || *v == 0));
+
+    // c.addiw x1, 0 is an ordinary legal expansion (reference class E),
+    // not a HINT: it executes its real effect.
+    write16(&ram, 2, C_ADDIW_X1_0);
+    core.state_mut().pc = BASE + 2;
     core.state_mut().regs[1] = 0xdead_beef;
     let retired = retire(&mut core);
     assert_eq!(retired.instruction_length, 2);
     assert_eq!(
         core.state().regs[1],
         0xffff_ffff_dead_beef,
-        "the addiw x1,x1,0 HINT form keeps the sign-extended value"
+        "the addiw expansion keeps its sign-extended result"
     );
-    assert_eq!(core.state().pc, BASE + 2);
+    assert_eq!(core.state().pc, BASE + 4);
 }
 
 #[test]
