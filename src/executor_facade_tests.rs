@@ -170,6 +170,7 @@ fn actual_native_runner_callback_then_observer_receipt_block_lifecycle_mutation(
                 assert!(turn.boundary().reporting_error.is_some());
             })),
             debug: None,
+            isa: IsaProfile::default(),
         };
         let worker = thread::spawn(move || {
             run_native_inner(&bytes, Some(1), None, None, false, None, hooks).unwrap()
@@ -326,6 +327,7 @@ fn native_public_unknown_callback_never_fabricates_commit_exit_budget_or_retry()
             pending.lock().unwrap().take().unwrap()(); // causal late callback, not safe recovery
         })),
         debug: None,
+        isa: IsaProfile::default(),
     };
     let result = run_native_inner(&bytes, Some(1), None, None, false, None, hooks).unwrap();
     assert_eq!(

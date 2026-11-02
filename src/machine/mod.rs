@@ -32,11 +32,67 @@ pub enum PlatformKind {
     Flat,
 }
 
+/// Selectable Machine ISA profile (contract D3).
+///
+/// The profile is Machine composition configuration fixed for the Machine's
+/// lifetime. The Hart applies every profile-dependent rule: parcel fetch,
+/// IALIGN, `misa`, and `xepc`/`dpc` legality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IsaProfile {
+    /// RV64IMA/Zicsr + Zifencei, IALIGN=32, `misa` `0x8000000000141101`.
+    #[default]
+    Rv64ima,
+    /// The `rv64ima` profile plus Zca, IALIGN=16, `misa` `0x8000000000141105`.
+    Rv64imac,
+}
+
+impl IsaProfile {
+    /// Read-only `misa` for this profile (contract D3).
+    pub fn misa_value(self) -> u64 {
+        match self {
+            Self::Rv64ima => crate::csr::MISA_VALUE,
+            Self::Rv64imac => crate::csr::MISA_VALUE | crate::csr::MISA_C_BIT,
+        }
+    }
+
+    /// IALIGN in bytes: 4 for `rv64ima`, 2 for `rv64imac` (contract D5).
+    pub fn ialign_bytes(self) -> u64 {
+        match self {
+            Self::Rv64ima => 4,
+            Self::Rv64imac => 2,
+        }
+    }
+
+    /// True only for the IALIGN=16 (`rv64imac`) profile.
+    pub fn allows_compressed(self) -> bool {
+        matches!(self, Self::Rv64imac)
+    }
+
+    /// Parse the approved CLI/facade profile name (contract D3).
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "rv64ima" => Some(Self::Rv64ima),
+            "rv64imac" => Some(Self::Rv64imac),
+            _ => None,
+        }
+    }
+
+    /// The profile's canonical name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rv64ima => "rv64ima",
+            Self::Rv64imac => "rv64imac",
+        }
+    }
+}
+
 /// Static topology is restricted to the existing native bus or flat RAM.
 /// Callbacks are synchronous host connections, not asynchronous transports.
 #[derive(Clone)]
 pub struct MachineConfig {
     pub platform: PlatformKind,
+    /// Machine-owned ISA profile; the Hart applies it at construction.
+    pub isa: IsaProfile,
     pub verbose: bool,
     /// Native guest/bus address; flat storage offset used only without ELF tohost.
     pub tohost_override: Option<u64>,
@@ -47,6 +103,7 @@ impl MachineConfig {
     pub fn new(platform: PlatformKind) -> Self {
         Self {
             platform,
+            isa: IsaProfile::default(),
             verbose: false,
             tohost_override: None,
             uart_output: None,
@@ -244,6 +301,9 @@ impl Installed {
             platform.fetch.clone(),
             platform.data.clone(),
         );
+        // The Machine owns the ISA profile and passes it to the Hart at
+        // construction (contract D3, ADR-0003 2026-11-03).
+        core.set_isa_profile(config.isa);
         if config.platform == PlatformKind::Native {
             core.set_physical_storage_alignment(image.base_addr(), image.memory_size());
         }

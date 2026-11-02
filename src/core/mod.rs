@@ -52,8 +52,11 @@ pub struct InstructionRetired {
     pub pc: u64,
     /// Architectural PC after retirement.
     pub next_pc: u64,
-    /// Instruction word fetched by the Hart.
+    /// Instruction bits fetched by the Hart: the original 16-bit parcel for
+    /// a compressed instruction, never its 32-bit expansion (contract D7).
     pub instruction: u32,
+    /// Retired instruction length in bytes: 2 or 4 (contract D7).
+    pub instruction_length: u8,
     /// Privilege in which the instruction started.
     pub privilege: PrivilegeMode,
     /// Privilege after retirement (different for a legal `MRET`).
@@ -81,8 +84,11 @@ pub struct TrapEntered {
     pub handler_privilege: PrivilegeMode,
     /// Explicit continuation policy consumed by the Runner.
     pub continuation: TrapContinuationPolicy,
-    /// Instruction word when fetch/decode made it available.
+    /// Instruction bits when fetch/decode made them available: the original
+    /// 16-bit parcel for a compressed instruction (contract D7).
     pub instruction: Option<u32>,
+    /// Length in bytes of `instruction`, 2 or 4 when it is present.
+    pub instruction_length: Option<u8>,
 }
 
 /// Typed simulator-side failure.  This is never converted into guest trap
@@ -198,6 +204,10 @@ pub struct CoreState {
     pub mtval: u64,
     /// Track if last instruction was a taken branch (used to skip pc += 4)
     pub branch_taken: bool,
+    /// Length in bytes of the instruction the Hart is executing (2 or 4).
+    /// JAL/JALR link `pc + length` under the selected profile (contract D5).
+    /// Architectural code outside a Hart step always sees 4.
+    pub instruction_length: u8,
     /// The Hart's single atomic reservation record (dev-plan §5.4, C16/C23).
     ///
     /// A successful LR replaces it, an executed SC consumes it, and reset or
@@ -221,6 +231,7 @@ impl Default for CoreState {
             mcause: 0,
             mtval: 0,
             branch_taken: false,
+            instruction_length: 4,
             reservation: None,
         }
     }
@@ -279,6 +290,12 @@ pub struct RiscvCore {
     /// the fetch and retirement would abandon the instruction.
     #[cfg(test)]
     inject_haltreq_after_fetch: bool,
+    /// Machine-selected ISA profile, fixed for this Hart's lifetime
+    /// (contract D3, §3). It selects IALIGN, `misa`, and compressed decode.
+    isa: crate::machine::IsaProfile,
+    /// Length of the instruction executing this step, in bytes: 2 for a
+    /// compressed instruction, otherwise 4. Links and fall-through add it.
+    current_instruction_length: u8,
 }
 
 /// Memory adapter for virtual to physical address translation
@@ -828,7 +845,20 @@ impl RiscvCore {
             debug_word: None,
             #[cfg(test)]
             inject_haltreq_after_fetch: false,
+            isa: crate::machine::IsaProfile::default(),
+            current_instruction_length: 4,
         }
+    }
+
+    /// Install the Machine-selected ISA profile (contract D3).
+    ///
+    /// The Machine calls this at Hart construction, before any reset or
+    /// step. It selects `misa`, the `xepc`/`dpc` legality mask, parcel fetch,
+    /// and compressed decode for the Hart's lifetime; `reset` preserves it.
+    pub fn set_isa_profile(&mut self, isa: crate::machine::IsaProfile) {
+        self.isa = isa;
+        self.debug.compressed = isa.allows_compressed();
+        self.state.csr.set_isa(isa);
     }
 
     pub(crate) fn verbose(&self) -> bool {
@@ -1365,7 +1395,7 @@ impl RiscvCore {
         self.debug.halted = true;
         self.debug.cause = Some(cause);
         self.debug.prv = self.state.privilege;
-        self.debug.dpc = debug_mode::legal_dpc(dpc);
+        self.debug.dpc = debug_mode::legal_dpc(dpc, self.isa.allows_compressed());
         self.state.reservation = None;
         self.wfi_wait = false;
         StepOutcome::DebugHalted {
@@ -1425,12 +1455,112 @@ impl RiscvCore {
             .map(|(_, cause)| cause)
     }
 
+    /// One parcel fetch's raw bytes. `va`/`paddr` are the same address
+    /// before and after translation; the typed compatibility route converts
+    /// `va` by the configured base while the raw port takes `paddr`.
+    fn fetch_parcel(
+        &mut self,
+        va: u64,
+        paddr: u64,
+        width: PhysicalWidth,
+    ) -> Result<u64, MemoryError> {
+        if let Some(access) = self.instruction_access.as_ref() {
+            let mut port = access
+                .lock()
+                .map_err(|_| MemoryError::Backend("failed to lock instruction access".into()))?;
+            let adapter = self.physical_adapter(&mut *port, None);
+            let raw = adapter.read_raw(paddr, width, PhysicalAccessKind::Fetch)?;
+            Ok(u64::from_le_bytes(raw))
+        } else {
+            let offset = va
+                .checked_sub(self.base_addr)
+                .ok_or(MemoryError::InvalidAddress(va))?;
+            let mem = self
+                .instruction_mem
+                .lock()
+                .map_err(|_| MemoryError::Backend("failed to lock instruction memory".into()))?;
+            match width {
+                PhysicalWidth::Halfword => mem.read_half(offset).map(u64::from),
+                PhysicalWidth::Word => mem.read_word(offset).map(u64::from),
+                _ => unreachable!("instruction fetch is a halfword or word parcel"),
+            }
+        }
+    }
+
+    /// One complete fetch attempt: the parcels this instruction occupies.
+    ///
+    /// Contract D4. Under `rv64ima` this is the single aligned 4-byte
+    /// transaction. Under `rv64imac` it is the 16-bit parcel at `pc`, plus a
+    /// second parcel at `pc + 2` only when the first's low two bits are
+    /// `0b11`. Each parcel is translated separately, so a straddling
+    /// instruction's second parcel can fault on another page while the
+    /// first already arrived.
+    ///
+    /// On success the returned bits are what the Hart decodes — the
+    /// original parcel for a compressed instruction — and the length is 2
+    /// or 4. A parcel failure is surfaced as the step's fetch fault with
+    /// `tval` set to that parcel's virtual address; the first parcel's
+    /// fault is reached before the second fetch is ever issued, so
+    /// first-parcel priority is structural.
+    fn fetch_parcels(&mut self, pc_before: u64) -> Result<(u32, u8), StepOutcome> {
+        let width = if self.isa.allows_compressed() {
+            PhysicalWidth::Halfword
+        } else {
+            PhysicalWidth::Word
+        };
+        let first =
+            self.translate_address(pc_before, translation::AccessKind::Fetch, pc_before, None)?;
+        let first_bits = match self.fetch_parcel(pc_before, first, width) {
+            Ok(bits) => bits,
+            Err(error) => return Err(self.fetch_fault(pc_before, pc_before, error)),
+        };
+        if !self.isa.allows_compressed() || first_bits & 0b11 != 0b11 {
+            // rv64ima: the fetched word is the instruction (D4, unchanged).
+            // rv64imac: a compressed instruction occupies only its first
+            // parcel.
+            return Ok((first_bits as u32, width.bytes() as u8));
+        }
+        let second_va = pc_before.wrapping_add(2);
+        let second =
+            self.translate_address(second_va, translation::AccessKind::Fetch, pc_before, None)?;
+        let second_bits = match self.fetch_parcel(second_va, second, PhysicalWidth::Halfword) {
+            Ok(bits) => bits,
+            // A second-parcel fault reports `tval` as that parcel's
+            // virtual address while `xepc` is the instruction's pc (D4).
+            Err(error) => return Err(self.fetch_fault(pc_before, second_va, error)),
+        };
+        Ok(((second_bits << 16 | first_bits) as u32, 4))
+    }
+
+    /// Classify a raw fetch transaction failure. Rejection, misalignment and
+    /// out-of-bounds are an instruction access fault at `tval_va`; backend
+    /// and protocol completions are simulator failures and `Unknown` latches
+    /// the sticky quarantine — never a guest trap.
+    fn fetch_fault(&mut self, pc_before: u64, tval_va: u64, error: MemoryError) -> StepOutcome {
+        match error {
+            MemoryError::InvalidAddress(_)
+            | MemoryError::Misaligned(_, _)
+            | MemoryError::OutOfBounds => self.enter_trap(
+                Trap::Exception(ExceptionCause::InstructionAccessFault),
+                pc_before,
+                tval_va,
+                None,
+            ),
+            MemoryError::Backend(message) | MemoryError::Protocol(message) => {
+                self.simulator_failure(pc_before, SimulatorFailureKind::HostBackend, message)
+            }
+            MemoryError::Unknown(message) => self.unresolved_physical_failure(pc_before, message),
+        }
+    }
+
     fn execute_instruction(&mut self) -> StepOutcome {
         let pc_before = self.state.pc;
         self.state.branch_taken = false;
+        self.current_instruction_length = 4;
 
-        // Fixed IALIGN=32 is checked before the instruction-memory transaction.
-        if self.debug_word.is_none() && pc_before & 0b11 != 0 {
+        // The misaligned fetch check uses bit 0 under IALIGN=16 and bits
+        // 1:0 under IALIGN=32 (contract D5), before any fetch transaction.
+        if self.debug_word.is_none() && pc_before & (self.isa.ialign_bytes() - 1) != 0 {
             return self.enter_trap(
                 Trap::Exception(ExceptionCause::InstructionAddressMisaligned),
                 pc_before,
@@ -1439,109 +1569,60 @@ impl RiscvCore {
             );
         }
 
-        // Instruction fetch translation. Sv39 translates the fetch effective
-        // address through the data port walk before the instruction port
-        // sees the resulting guest-physical address (D2, D3). The walk
-        // itself runs on the data port; the instruction-memory transaction
-        // keeps its Fetch category.
-        let fetch_paddr = if self.debug_word.is_some() {
-            0
+        // Instruction fetch. Under `rv64imac` the Hart fetches per 16-bit
+        // parcel (contract D4, ADR-0002 2026-11-03); under `rv64ima` the
+        // one aligned 4-byte transaction is unchanged. A fault in either
+        // parcel retires nothing and leaves no partial effect.
+        let (instruction, instruction_length) = if let Some(word) = self.debug_word {
+            (word, 4u8)
         } else {
-            match self.translate_address(pc_before, translation::AccessKind::Fetch, pc_before, None)
-            {
-                Ok(paddr) => paddr,
+            match self.fetch_parcels(pc_before) {
+                Ok(fetched) => {
+                    // The fetch has completed and the instruction has not
+                    // retired. `haltreq` is not sampled again until the
+                    // next Hart boundary.
+                    #[cfg(test)]
+                    if self.inject_haltreq_after_fetch {
+                        self.debug.haltreq = true;
+                    }
+                    fetched
+                }
                 Err(outcome) => return outcome,
             }
         };
+        self.current_instruction_length = instruction_length;
 
-        // Fetch keeps the guest PC in the architectural address space.  A
-        // migrated core submits one raw Fetch request; the typed view performs
-        // the single configured base conversion.  Compatibility callers keep
-        // the historical typed instruction-memory route.
-        let fetch_result = if let Some(word) = self.debug_word {
-            Ok(word)
-        } else if let Some(access) = self.instruction_access.as_ref() {
-            let mut port = match access.lock() {
-                Ok(port) => port,
+        let decoded = if instruction_length == 2 {
+            match crate::isa::rv64c::CompressedDecoder::new().decode_16bit(instruction as u16) {
+                Ok(decoded) => decoded,
                 Err(_) => {
-                    return self.simulator_failure(
-                        pc_before,
-                        SimulatorFailureKind::HostBackend,
-                        "failed to lock physical instruction access",
-                    )
-                }
-            };
-            let adapter = self.physical_adapter(&mut *port, None);
-            adapter.fetch_word(fetch_paddr)
-        } else {
-            let instruction_addr = match pc_before.checked_sub(self.base_addr) {
-                Some(address) => address,
-                None => {
                     return self.enter_trap(
-                        Trap::Exception(ExceptionCause::InstructionAccessFault),
+                        Trap::Exception(ExceptionCause::IllegalInstruction),
                         pc_before,
-                        pc_before,
-                        None,
+                        u64::from(instruction),
+                        Some(instruction),
                     )
                 }
-            };
-            let mem = match self.instruction_mem.lock() {
-                Ok(mem) => mem,
-                Err(_) => {
-                    return self.simulator_failure(
-                        pc_before,
-                        SimulatorFailureKind::HostBackend,
-                        "failed to lock instruction memory",
-                    )
-                }
-            };
-            mem.read_word(instruction_addr)
-        };
-        let instruction = match fetch_result {
-            Ok(instruction) => {
-                // The fetch has completed and the instruction has not retired.
-                // `haltreq` is not sampled again until the next Hart boundary.
-                #[cfg(test)]
-                if self.inject_haltreq_after_fetch {
-                    self.debug.haltreq = true;
-                }
-                instruction
             }
-            Err(error) => {
-                return match error {
-                    MemoryError::InvalidAddress(_)
-                    | MemoryError::Misaligned(_, _)
-                    | MemoryError::OutOfBounds => self.enter_trap(
-                        Trap::Exception(ExceptionCause::InstructionAccessFault),
-                        pc_before,
-                        pc_before,
-                        None,
-                    ),
-                    MemoryError::Backend(message) | MemoryError::Protocol(message) => self
-                        .simulator_failure(pc_before, SimulatorFailureKind::HostBackend, message),
-                    MemoryError::Unknown(message) => {
-                        self.unresolved_physical_failure(pc_before, message)
-                    }
-                }
-            }
-        };
-
-        let decoded = match self.decoder.decode(instruction) {
-            Ok(decoded) => decoded,
-            Err(error) => {
-                return match error {
-                    DecodeError::InvalidInstruction(_) | DecodeError::ReservedInstruction => self
-                        .enter_trap(
-                            Trap::Exception(ExceptionCause::IllegalInstruction),
+        } else {
+            match self.decoder.decode(instruction) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    return match error {
+                        DecodeError::InvalidInstruction(_) | DecodeError::ReservedInstruction => {
+                            self.enter_trap(
+                                Trap::Exception(ExceptionCause::IllegalInstruction),
+                                pc_before,
+                                instruction as u64,
+                                Some(instruction),
+                            )
+                        }
+                        DecodeError::UnimplementedInstruction => self.simulator_failure(
                             pc_before,
-                            instruction as u64,
-                            Some(instruction),
+                            SimulatorFailureKind::UnsupportedLegalInstruction,
+                            "decoded legal instruction is not implemented",
                         ),
-                    DecodeError::UnimplementedInstruction => self.simulator_failure(
-                        pc_before,
-                        SimulatorFailureKind::UnsupportedLegalInstruction,
-                        "decoded legal instruction is not implemented",
-                    ),
+                    }
                 }
             }
         };
@@ -1606,11 +1687,12 @@ impl RiscvCore {
             }
         }
 
-        // Taken control-flow targets are checked before the executor can write a
-        // link register or mutate PC.  JALR clears only bit 0; fixed IALIGN=32
-        // still rejects a resulting target with bit 1 set.
+        // Taken control-flow targets are checked before the executor can
+        // write a link register or mutate PC. JALR clears only bit 0; the
+        // profile's IALIGN mask decides which remaining bits must be zero
+        // (contract D5).
         if let Some(target) = Self::control_target(&decoded, &self.state) {
-            if target & 0b11 != 0 {
+            if target & (self.isa.ialign_bytes() - 1) != 0 {
                 return self.enter_trap(
                     Trap::Exception(ExceptionCause::InstructionAddressMisaligned),
                     pc_before,
@@ -1627,6 +1709,7 @@ impl RiscvCore {
         // GPR/CSR/PC/privilege effects without pretending that external MMIO is
         // rollback-able.
         let mut staged = self.state.clone();
+        staged.instruction_length = instruction_length;
         staged.csr.begin_observation(self.observation_demand);
         staged.fpr.begin_observation(self.observation_demand);
         let physical_access = self.data_access.clone();
@@ -1721,9 +1804,10 @@ impl RiscvCore {
         }
 
         // Executor-owned taken branches/jumps/returns leave PC in place;
-        // ordinary instructions receive their fall-through PC here.
+        // ordinary instructions receive their `pc + length` fall-through
+        // (contract D5).
         if !staged.branch_taken {
-            staged.pc = staged.pc.wrapping_add(4);
+            staged.pc = staged.pc.wrapping_add(u64::from(instruction_length));
         }
         staged.regs[0] = 0;
 
@@ -1768,6 +1852,7 @@ impl RiscvCore {
             pc: pc_before,
             next_pc,
             instruction,
+            instruction_length,
             privilege,
             next_privilege,
             minstret,
@@ -1831,6 +1916,7 @@ impl RiscvCore {
                 handler_privilege: self.state.privilege,
                 continuation: TrapContinuationPolicy::ContinueToGuestHandler,
                 instruction,
+                instruction_length: instruction.map(|_| self.current_instruction_length),
             });
         }
         let source_privilege = self.state.privilege;
@@ -1868,6 +1954,7 @@ impl RiscvCore {
             handler_privilege,
             continuation: TrapContinuationPolicy::ContinueToGuestHandler,
             instruction,
+            instruction_length: instruction.map(|_| self.current_instruction_length),
         })
     }
 
@@ -2234,9 +2321,15 @@ impl RiscvCore {
     pub fn reset(&mut self, entry_point: u64, base_addr: u64) {
         self.state = CoreState::default();
         self.state.pc = entry_point;
+        // The selected ISA profile is fixed for the Hart's lifetime, so a
+        // fresh architectural state reinstates its `misa` and IALIGN mask.
+        self.state.csr.set_isa(self.isa);
         self.base_addr = base_addr;
         self.wfi_wait = false;
-        self.debug = debug_mode::HartDebug::default();
+        self.debug = debug_mode::HartDebug {
+            compressed: self.isa.allows_compressed(),
+            ..debug_mode::HartDebug::default()
+        };
         self.trap_handler = TrapHandler::new();
     }
 

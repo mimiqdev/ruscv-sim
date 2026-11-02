@@ -335,10 +335,11 @@ pub fn exec_mret(
     state.privilege = return_privilege;
     state.csr.set_privilege(return_privilege);
 
-    // MEPC is WARL-masked by CsrFile on every write.  Mask defensively at the
-    // architectural boundary as well so this helper remains aligned if the CSR
-    // backing implementation changes.
-    Ok(mepc & !0b11)
+    // MEPC is WARL-masked by CsrFile on every write: bit 0 always, bit 1
+    // only under IALIGN=32 (contract D5). Mask defensively at the
+    // architectural boundary with the same profile rule so this helper
+    // remains aligned if the CSR backing implementation changes.
+    Ok(mepc & !ialign_mask(state))
 }
 
 /// SRET - Return from Supervisor mode trap
@@ -386,7 +387,18 @@ pub fn exec_sret(
 
     state.privilege = return_privilege;
     state.csr.set_privilege(return_privilege);
-    Ok(sepc & !0b11)
+    Ok(sepc & !ialign_mask(state))
+}
+
+/// The `xepc` return mask: bit 0 always, bit 1 only under IALIGN=32
+/// (`misa.C` clear). Under IALIGN=16 the mask clears only bit 0
+/// (contract D5).
+fn ialign_mask(state: &CoreState) -> u64 {
+    if state.csr.architectural_value(crate::csr::machine::MISA) & crate::csr::MISA_C_BIT != 0 {
+        0b1
+    } else {
+        0b11
+    }
 }
 
 /// URET - Return from User mode trap

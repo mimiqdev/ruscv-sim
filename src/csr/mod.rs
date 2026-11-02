@@ -137,6 +137,8 @@ pub mod mstatus {
 
 /// `misa` for RV64IMA plus S and U.  No bit is writable.
 pub const MISA_VALUE: u64 = 0x8000_0000_0014_1101;
+/// `misa` bit for the C extension (Zca under the `rv64imac` profile).
+pub const MISA_C_BIT: u64 = 1 << 2;
 
 /// Supervisor bits of `mip` and `mie`: SSIP/SSIE, STIP/STIE, SEIP/SEIE.
 pub const SUPERVISOR_INTERRUPTS: u64 = 0x222;
@@ -212,6 +214,9 @@ pub struct CsrFile {
     time: u64,
     /// Supervisor PLIC context line. ORed into SEIP on read. Not the software bit.
     seip_external: bool,
+    /// IALIGN=32 mask rule for `mepc`/`sepc`. The `rv64imac` profile clears
+    /// this flag so only bit 0 is masked on write (contract D5).
+    epc_ialign32: bool,
 }
 
 impl CsrFile {
@@ -254,6 +259,24 @@ impl CsrFile {
             hart_id,
             time: 0,
             seip_external: false,
+            epc_ialign32: true,
+        }
+    }
+
+    /// Install the Machine-selected ISA profile. `rv64imac` sets `misa.C`
+    /// and relaxes `mepc`/`sepc` to the IALIGN=16 (bit-0-only) write mask.
+    /// `misa` remains read-only; the profile never changes at run time.
+    pub(crate) fn set_isa(&mut self, isa: crate::machine::IsaProfile) {
+        self.epc_ialign32 = !isa.allows_compressed();
+        self.csrs.insert(machine::MISA, isa.misa_value());
+    }
+
+    /// The mask `mepc` and `sepc` apply to a written value (contract D5).
+    fn epc_mask(&self) -> u64 {
+        if self.epc_ialign32 {
+            !0b11
+        } else {
+            !0b1
         }
     }
 
@@ -329,7 +352,7 @@ impl CsrFile {
                 (machine::MSTATUS, Self::legal_mstatus(current, merged))
             }
             // No extension can be disabled, and none can be enabled.
-            machine::MISA => (addr, MISA_VALUE),
+            machine::MISA => (addr, old),
             // No trap delegation (M1), and both counter-enable registers are
             // read-only zero in this profile.
             machine::MEDELEG | machine::MIDELEG | machine::MCOUNTEREN | supervisor::SCOUNTEREN => {
@@ -350,8 +373,9 @@ impl CsrFile {
                 let current = self.stored(target);
                 (target, (current & !delegated) | (value & delegated))
             }
-            // IALIGN is fixed at 32, so bits 1:0 of both EPCs read zero.
-            machine::MEPC | supervisor::SEPC => (addr, value & !0b11),
+            // xepc clears bit 0 always, and bit 1 only under IALIGN=32
+            // (contract D5).
+            machine::MEPC | supervisor::SEPC => (addr, value & self.epc_mask()),
             machine::MTVEC | supervisor::STVEC => {
                 // MODE is WARL over Direct (0) and Vectored (1).
                 let mode = if value & 0b11 <= 1 {
