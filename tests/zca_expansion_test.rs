@@ -313,5 +313,5 @@ fn immediate_bit_layouts() {
     assert_eq!(decode(0x7101), 0xE0010113); // c.addi16sp -512 (min)
                                             // C.LUI signed extremes: nzimm[17|16:12] <- p[12|6:2]
     assert_eq!(decode(0x60FD), 0x0001F0B7); // c.lui x1, 0x1F (max positive)
-    assert_eq!(decode(0x71FD), 0xFFFFF1B7); // c.lui x1, -1 (sign extreme)
+    assert_eq!(decode(0x71FD), 0xFFFFF1B7); // c.lui x3, -1 (sign extreme)
 }
