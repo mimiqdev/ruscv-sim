@@ -1,18 +1,20 @@
-//! RV64C Compressed Instruction Extension
+//! RV64 Zca Compressed Instruction Extension
 //!
-//! This module implements the RISC-V Compressed (C) extension for RV64.
-//! Compressed instructions are 16-bit versions of common 32-bit RV64I operations.
+//! This module implements the RISC-V Zca compressed-instruction extension for
+//! RV64: it classifies 16-bit parcels and expands each legal instruction to
+//! its equivalent 32-bit form, which executes through the existing execution
+//! engine (contract D6, one execution engine).
 //!
 //! ## Overview
 //!
-//! The C extension reduces code size by providing 16-bit encodings for frequently
-//! used instructions. It is divided into three quadrants:
+//! The C extension reduces code size by providing 16-bit encodings for
+//! frequently used instructions. It is divided into three quadrants:
 //!
 //! - **C0 (00)**: Load/Store operations, stack pointer relative operations
 //! - **C1 (01)**: Arithmetic, logic, branches, and jumps
 //! - **C2 (10)**: Register-based operations and stack pointer memory access
 //!
-//! ## Implemented Instructions
+//! ## Instructions
 //!
 //! ### C0 Quadrant
 //! - `C.ADDI4SPN` - Add immediate to stack pointer (x2), scaled by 4
@@ -51,7 +53,7 @@
 //! - `C.SDSP` - Store doubleword to stack pointer (RV64)
 //! - `C.MV` - Move register
 //! - `C.ADD` - Add registers
-//! - `C.EBREAK` - Environment breakpoint
+//! - `C.EBREAK` - Environment break
 //!
 //! ## Usage
 //!
@@ -59,14 +61,13 @@
 //! use ruscv_sim::isa::rv64c::CompressedDecoder;
 //!
 //! let decoder = CompressedDecoder::new();
-//! let compressed_inst: u16 = 0x6105; // Example: c.addi x2, -32
-//! match decoder.decode_16bit(compressed_inst) {
+//! let parcel: u16 = 0x0111; // c.addi x2, 4
+//! match decoder.decode_16bit(parcel) {
 //!     Ok(decoded) => println!("Decoded: {:?}", decoded),
 //!     Err(e) => println!("Decode error: {:?}", e),
 //! }
 //! ```
 
-pub mod c0_float;
 pub mod c0_quadw;
 pub mod c1_addiw;
 pub mod c1_arith;
@@ -78,7 +79,22 @@ pub mod c2_move;
 pub mod c2_stack;
 pub mod decoder_16bit;
 
-pub use decoder_16bit::{COpcode, CQuadrant, CompressedDecoder};
+pub use decoder_16bit::{COpcode, CQuadrant, CompressedDecoder, ZcaClass};
+
+// Standalone execution helpers kept for the component tests. They are not an
+// execution path (contract D6); the decoder expands to 32-bit forms instead.
+pub use c0_quadw::{exec_c_addi4spn, exec_c_ld, exec_c_lw, exec_c_sd, exec_c_sw};
+pub use c1_addiw::{exec_c_addiw, exec_c_addw, exec_c_subw};
+pub use c1_arith::{
+    exec_c_add, exec_c_addi, exec_c_addi16sp, exec_c_and, exec_c_andi, exec_c_li, exec_c_lui,
+    exec_c_mv, exec_c_or, exec_c_sub, exec_c_xor,
+};
+pub use c1_branch::{exec_c_beqz, exec_c_bnez};
+pub use c1_jump::exec_c_j;
+pub use c1_shift::{exec_c_srai, exec_c_srli};
+pub use c1_zero::exec_c_nop;
+pub use c2_move::{exec_c_ebreak, exec_c_jalr, exec_c_jr};
+pub use c2_stack::{exec_c_ldsp, exec_c_lwsp, exec_c_sdsp, exec_c_slli, exec_c_swsp};
 
 /// Check if an instruction is compressed (16-bit)
 pub fn is_compressed(instruction: u32) -> bool {
@@ -88,39 +104,6 @@ pub fn is_compressed(instruction: u32) -> bool {
 /// Get the instruction length in bits
 pub fn instruction_length(instruction: u32) -> u8 {
     decoder_16bit::CompressedDecoder::instruction_length(instruction)
-}
-
-/// Re-export execution functions for compressed instructions
-pub use c0_float::{exec_c_fld, exec_c_flw, exec_c_fsd, exec_c_fsw};
-pub use c0_quadw::{exec_c_addi4spn, exec_c_ld, exec_c_lw, exec_c_sd, exec_c_sw};
-pub use c1_addiw::{exec_c_addiw, exec_c_addw, exec_c_subw};
-pub use c1_arith::{
-    exec_c_add, exec_c_addi, exec_c_addi16sp, exec_c_and, exec_c_andi, exec_c_li, exec_c_lui,
-    exec_c_mv, exec_c_or, exec_c_sub, exec_c_xor,
-};
-pub use c1_branch::{exec_c_beqz, exec_c_bnez};
-pub use c1_jump::{exec_c_j, exec_c_jal};
-pub use c1_shift::{exec_c_srai, exec_c_srli};
-pub use c1_zero::exec_c_nop;
-pub use c2_move::{exec_c_ebreak, exec_c_jalr, exec_c_jr};
-pub use c2_stack::{exec_c_ldsp, exec_c_lwsp, exec_c_sdsp, exec_c_slli, exec_c_swsp};
-
-/// Execute a decoded compressed instruction
-///
-/// This is a convenience function that decodes and executes a 16-bit
-/// compressed instruction in one step.
-pub fn execute_compressed(
-    inst: u16,
-    state: &mut crate::core::CoreState,
-    mem: &mut dyn crate::memory::MemoryInterface,
-) -> Result<(), crate::execute::ExecuteError> {
-    let decoder = CompressedDecoder::new();
-    let decoded = decoder
-        .decode_16bit(inst)
-        .map_err(|_| crate::execute::ExecuteError::InvalidOperation)?;
-
-    let mut executor = crate::execute::Executor::new();
-    executor.execute(&decoded, state, mem)
 }
 
 #[cfg(test)]
