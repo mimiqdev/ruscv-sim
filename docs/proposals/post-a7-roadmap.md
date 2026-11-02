@@ -660,7 +660,7 @@ exists.
 
 **Approved successor on rotation, owner Tony, 2026-10-28:** the [Program-buffer Debug Execution contract](../archive/milestones/program-buffer-debug-execution.md) selects the bounded program-buffer portion first, with D1–D9 approved. Its implementation completed 2026-10-30 at PR #118, and the contract is archived on the SBA rotation merge. Only that contract and its coordinated ADR amendments define the selected capacity, instruction-source exception, Zifencei, data-autoexec and component API changes. This roadmap does not activate or implement them.
 
-**Approved successor on rotation, owner Tony, 2026-10-30:** the [System Bus Access Debug contract](../dev-plan.md) completes this section's recorded Spike-style debug remainder, with D1–D10 approved. Only that contract and its coordinated ADR amendments define the register profile, inbound-master boundary, error taxonomy and tool verification. This roadmap does not activate or implement them.
+**Approved successor on rotation, owner Tony, 2026-10-30:** the [System Bus Access Debug contract](../archive/milestones/system-bus-access-debug.md) completes this section's recorded Spike-style debug remainder, with D1–D10 approved. Its implementation completed 2026-11-02 at PR #130, and the contract is archived on the Zca rotation merge. Only that contract and its coordinated ADR amendments define the register profile, inbound-master boundary, error taxonomy and tool verification. This roadmap does not activate or implement them.
 
 **Later complete debug direction, not Stage 6:** full Spike-style support still includes a program buffer, system bus access, and execution of instructions while the hart is in Debug Mode. The Stage 6 abstract-command module (`progbufsize` 0, `datacount` 4) was the temporary first implementation selected on 2026-10-19. Splitting the next delivery does not remove SBA from that direction.
 
@@ -669,6 +669,8 @@ of the old GDB stub is not that exit.
 
 **Cost/risk:** high. `StepOutcome` gains a variant. OpenOCD's acceptance of
 `dmstatus.version` 3 is a source fact until U5 runs it.
+
+**Successor after the debug direction, 2026-11-03:** the [Selectable Zca Compressed-Instruction Profile contract](../dev-plan.md), approved under the owner's delegated planning authority, is an ISA-profile increment outside this roadmap's numbered stages. It does not start Stage 7 or Stage 8, both of which still require a concrete consumer.
 
 ### Stage 7 — native ↔ Rust TLM ↔ SystemC and DMI (conditional integration)
 
