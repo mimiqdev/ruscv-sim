@@ -1,0 +1,14 @@
+diff --git a/src/dm/sba.rs b/src/dm/sba.rs
+index cf4cc63..299cdab 100644
+--- a/src/dm/sba.rs
++++ b/src/dm/sba.rs
+@@ -370,7 +370,8 @@ impl SbaState {
+                     self.data = value & request.size.mask();
+                 }
+                 if self.autoincrement {
+-                    self.address = self.address.wrapping_add(u64::from(request.size.bytes()));
++                    let low = (self.address as u32).wrapping_add(request.size.bytes());
++                    self.address = (self.address & !0xffff_ffff) | u64::from(low);
+                 }
+             }
+             Err(SbaFault::BadAddress) => self.error = SBERROR_BAD_ADDRESS,

@@ -1,0 +1,16 @@
+diff --git a/src/machine/platform.rs b/src/machine/platform.rs
+index e5c0583..09303d6 100644
+--- a/src/machine/platform.rs
++++ b/src/machine/platform.rs
+@@ -173,7 +173,10 @@ impl Platform {
+         &self,
+         request: crate::dm::SbaRequest,
+     ) -> Result<u64, super::inbound::SbaAccessError> {
+-        self.inbound.access(request)
++        let mut data = self.data.lock().map_err(|_| {
++            super::inbound::SbaAccessError::Simulator("poisoned Hart data port".into())
++        })?;
++        super::inbound::submit(&mut *data, &request)
+     }
+ 
+     pub(super) fn read_mtime(&self) -> Result<u64, MachineError> {

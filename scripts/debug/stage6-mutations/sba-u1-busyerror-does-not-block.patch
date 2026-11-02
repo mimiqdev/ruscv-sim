@@ -1,0 +1,13 @@
+diff --git a/src/dm/sba.rs b/src/dm/sba.rs
+index cf4cc63..d9b0ae6 100644
+--- a/src/dm/sba.rs
++++ b/src/dm/sba.rs
+@@ -296,7 +296,7 @@ impl SbaState {
+     /// value still lands, as it does in the pinned Spike, so the address and
+     /// data registers keep reading back what the debugger wrote.
+     fn access_blocked(&self) -> bool {
+-        self.error != 0 || self.busy_error
++        self.error != 0
+     }
+ 
+     /// Start one access at the current `sbaddress`.
