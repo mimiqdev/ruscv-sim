@@ -277,31 +277,41 @@ fn immediate_bit_layouts() {
     assert_eq!(decode(0x40C4), 0x0044A483); // c.lw x9, 4(x9)  (p6->imm2)
     assert_eq!(decode(0x4484), 0x0084A483); // c.lw x9, 8(x9)  (p10->imm3)
     assert_eq!(decode(0x40A4), 0x0404A483); // c.lw x9, 64(x9) (p5->imm6)
+    assert_eq!(decode(0x5CE4), 0x07C4A483); // c.lw x9, 124(x9) (max)
     assert_eq!(decode(0xC484), 0x0094A423); // c.sw x9, 8(x9)
+    assert_eq!(decode(0xDCE4), 0x0694AE23); // c.sw x9, 124(x9) (max)
                                             // C.LD/C.SD: uimm[5:3|7:6] <- p[12:10|6:5]
     assert_eq!(decode(0x60A4), 0x0404B483); // c.ld x9, 64(x9)  (p5->imm6)
     assert_eq!(decode(0x60C4), 0x0804B483); // c.ld x9, 128(x9) (p6->imm7)
+    assert_eq!(decode(0x7CE4), 0x0F84B483); // c.ld x9, 248(x9) (max)
     assert_eq!(decode(0xE0C4), 0x0894B023); // c.sd x9, 128(x9)
+    assert_eq!(decode(0xFCE4), 0x0E94BC23); // c.sd x9, 248(x9) (max)
                                             // C.LWSP: uimm[5|4:2|7:6] <- p[12|6:4|3:2]
     assert_eq!(decode(0x4092), 0x00412083); // c.lwsp x1, 4(x2)   (p4->imm2)
     assert_eq!(decode(0x4086), 0x04012083); // c.lwsp x1, 64(x2)  (p2->imm6)
     assert_eq!(decode(0x408A), 0x08012083); // c.lwsp x1, 128(x2) (p3->imm7)
     assert_eq!(decode(0x5082), 0x02012083); // c.lwsp x1, 32(x2)  (p12->imm5)
+    assert_eq!(decode(0x50FE), 0x0FC12083); // c.lwsp x1, 252(x2) (max)
                                             // C.LDSP: uimm[5|4:3|8:6] <- p[12|6:5|4:2]
     assert_eq!(decode(0x60A2), 0x00813083); // c.ldsp x1, 8(x2)   (p5->imm3)
     assert_eq!(decode(0x6086), 0x04013083); // c.ldsp x1, 64(x2)  (p2->imm6)
     assert_eq!(decode(0x6092), 0x10013083); // c.ldsp x1, 256(x2) (p4->imm8)
+    assert_eq!(decode(0x70FE), 0x1F813083); // c.ldsp x1, 504(x2) (max)
                                             // C.SWSP: uimm[5:2|7:6] <- p[12:9|8:7]
     assert_eq!(decode(0xC206), 0x00112223); // c.swsp x1, 4(x2)   (p9->imm2)
+    assert_eq!(decode(0xC086), 0x04112023); // c.swsp x1, 64(x2)  (p7->imm6)
+    assert_eq!(decode(0xC106), 0x08112023); // c.swsp x1, 128(x2) (p8->imm7)
     assert_eq!(decode(0xC806), 0x00112823); // c.swsp x1, 16(x2)  (p11->imm4)
+    assert_eq!(decode(0xDF86), 0x0E112E23); // c.swsp x1, 252(x2) (max)
                                             // C.SDSP: uimm[5:3|8:6] <- p[12:10|9:7]
     assert_eq!(decode(0xE406), 0x00113423); // c.sdsp x1, 8(x2)   (p10->imm3)
     assert_eq!(decode(0xE086), 0x04113023); // c.sdsp x1, 64(x2)  (p7->imm6)
     assert_eq!(decode(0xE206), 0x10113023); // c.sdsp x1, 256(x2) (p9->imm8)
+    assert_eq!(decode(0xFF86), 0x1E113C23); // c.sdsp x1, 504(x2) (max)
                                             // C.ADDI16SP signed extremes: nzuimm[9|4|6|8:7|5] <- p[12|6|5|4:3|2]
     assert_eq!(decode(0x617D), 0x1F010113); // c.addi16sp +496 (max)
     assert_eq!(decode(0x7101), 0xE0010113); // c.addi16sp -512 (min)
                                             // C.LUI signed extremes: nzimm[17|16:12] <- p[12|6:2]
-    assert_eq!(decode(0x60FD), 0x0001F0B7); // c.lui x3, 0x1F (max positive)
-    assert_eq!(decode(0x71FD), 0xFFFFF1B7); // c.lui x3, -1 (sign extreme)
+    assert_eq!(decode(0x60FD), 0x0001F0B7); // c.lui x1, 0x1F (max positive)
+    assert_eq!(decode(0x71FD), 0xFFFFF1B7); // c.lui x1, -1 (sign extreme)
 }
