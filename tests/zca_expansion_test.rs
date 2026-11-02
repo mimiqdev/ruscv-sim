@@ -21,6 +21,7 @@ fn decode(parcel: u16) -> u32 {
 #[test]
 fn exhaustive_classification_matches_pinned_reference() {
     let decoder = CompressedDecoder::new();
+    let mut line_count = 0usize;
     for (line_no, line) in include_str!("../tools/zca/zca-reference-v1.tsv")
         .lines()
         .enumerate()
@@ -28,6 +29,11 @@ fn exhaustive_classification_matches_pinned_reference() {
         let mut fields = line.split('\t');
         let parcel = u16::from_str_radix(fields.next().unwrap().trim_start_matches("0x"), 16)
             .unwrap_or_else(|_| panic!("bad parcel on line {}", line_no + 1));
+        assert_eq!(
+            parcel as usize, line_no,
+            "reference rows must be complete and in parcel order"
+        );
+        line_count += 1;
         let cls = fields.next().unwrap();
         let expansion = fields.next().unwrap();
         let actual = decoder.classify_16bit(parcel);
@@ -62,6 +68,10 @@ fn exhaustive_classification_matches_pinned_reference() {
             _ => panic!("bad class on line {}", line_no + 1),
         }
     }
+    assert_eq!(
+        line_count, 0x10000,
+        "reference must cover all 65536 parcels, got {line_count}"
+    );
 }
 
 // ============== Defect regressions (issue #132) ==============
@@ -237,7 +247,7 @@ fn boundary_immediates() {
 
     // C.LUI boundary: imm[17]=1 sign-extends to the high bits.
     // c.lui x3, imm[17:12]=0x3F: bit12=1, nzimm[16:12]=0x1F -> 0x71FD
-    assert_eq!(decode(0x71FD), 0xFFFFF1B7); // lui x3, 0xFFFFF (nzimm=-1)
+    assert_eq!(decode(0x71FD), 0xFFFFF1B7); // lui x3, -1 (sign extreme)
 
     // C.ADDI16SP boundary: imm=-512 (bit12=1, others 0): 0x7101.
     // nzuimm[9]=1 -> sext -> -512; parcel funct3=011 rd=2 bit12=1 -> 0x7101
@@ -253,4 +263,45 @@ fn boundary_immediates() {
     // C.BEQZ range: offset=-256 -> 0xD001 (rs1'=000 -> x8); offset=+254 -> 0xCC7D.
     assert_eq!(decode(0xD001), 0xF00400E3); // beq x8, x0, -256
     assert_eq!(decode(0xCC7D), 0x0E040F63, "c.beqz x8, 254");
+}
+
+/// The reference generator computes these constants from its bit-layout
+/// tables; each case exercises one immediate bit position or range extreme so
+/// a shuffled or dropped source bit cannot slip through.
+#[test]
+fn immediate_bit_layouts() {
+    // C.ADDI4SPN: nzuimm[5:4|9:6|3|2] <- p[12:11|10:7|5|6]
+    assert_eq!(decode(0x0044), 0x00410493); // c.addi4spn x9, 4 (p6->imm2)
+    assert_eq!(decode(0x1FE0), 0x3FC10413); // c.addi4spn x8, 1020 (max)
+                                            // C.LW/C.SW: uimm[5:3|2|6] <- p[12:10|6|5]
+    assert_eq!(decode(0x40C4), 0x0044A483); // c.lw x9, 4(x9)  (p6->imm2)
+    assert_eq!(decode(0x4484), 0x0084A483); // c.lw x9, 8(x9)  (p10->imm3)
+    assert_eq!(decode(0x40A4), 0x0404A483); // c.lw x9, 64(x9) (p5->imm6)
+    assert_eq!(decode(0xC484), 0x0094A423); // c.sw x9, 8(x9)
+                                            // C.LD/C.SD: uimm[5:3|7:6] <- p[12:10|6:5]
+    assert_eq!(decode(0x60A4), 0x0404B483); // c.ld x9, 64(x9)  (p5->imm6)
+    assert_eq!(decode(0x60C4), 0x0804B483); // c.ld x9, 128(x9) (p6->imm7)
+    assert_eq!(decode(0xE0C4), 0x0894B023); // c.sd x9, 128(x9)
+                                            // C.LWSP: uimm[5|4:2|7:6] <- p[12|6:4|3:2]
+    assert_eq!(decode(0x4092), 0x00412083); // c.lwsp x1, 4(x2)   (p4->imm2)
+    assert_eq!(decode(0x4086), 0x04012083); // c.lwsp x1, 64(x2)  (p2->imm6)
+    assert_eq!(decode(0x408A), 0x08012083); // c.lwsp x1, 128(x2) (p3->imm7)
+    assert_eq!(decode(0x5082), 0x02012083); // c.lwsp x1, 32(x2)  (p12->imm5)
+                                            // C.LDSP: uimm[5|4:3|8:6] <- p[12|6:5|4:2]
+    assert_eq!(decode(0x60A2), 0x00813083); // c.ldsp x1, 8(x2)   (p5->imm3)
+    assert_eq!(decode(0x6086), 0x04013083); // c.ldsp x1, 64(x2)  (p2->imm6)
+    assert_eq!(decode(0x6092), 0x10013083); // c.ldsp x1, 256(x2) (p4->imm8)
+                                            // C.SWSP: uimm[5:2|7:6] <- p[12:9|8:7]
+    assert_eq!(decode(0xC206), 0x00112223); // c.swsp x1, 4(x2)   (p9->imm2)
+    assert_eq!(decode(0xC806), 0x00112823); // c.swsp x1, 16(x2)  (p11->imm4)
+                                            // C.SDSP: uimm[5:3|8:6] <- p[12:10|9:7]
+    assert_eq!(decode(0xE406), 0x00113423); // c.sdsp x1, 8(x2)   (p10->imm3)
+    assert_eq!(decode(0xE086), 0x04113023); // c.sdsp x1, 64(x2)  (p7->imm6)
+    assert_eq!(decode(0xE206), 0x10113023); // c.sdsp x1, 256(x2) (p9->imm8)
+                                            // C.ADDI16SP signed extremes: nzuimm[9|4|6|8:7|5] <- p[12|6|5|4:3|2]
+    assert_eq!(decode(0x617D), 0x1F010113); // c.addi16sp +496 (max)
+    assert_eq!(decode(0x7101), 0xE0010113); // c.addi16sp -512 (min)
+                                            // C.LUI signed extremes: nzimm[17|16:12] <- p[12|6:2]
+    assert_eq!(decode(0x60FD), 0x0001F0B7); // c.lui x3, 0x1F (max positive)
+    assert_eq!(decode(0x71FD), 0xFFFFF1B7); // c.lui x3, -1 (sign extreme)
 }

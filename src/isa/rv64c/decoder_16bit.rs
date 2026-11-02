@@ -144,10 +144,9 @@ impl CompressedDecoder {
         let p = parcel as u32;
         match (p >> 13) & 0b111 {
             0b000 => {
-                // C.ADDI4SPN: addi rd', x2, nzuimm. nzuimm=0 is reserved; the
-                // rd'=x0 form with nonzero immediate is not one of D2's HINT
-                // classes and expands to addi x0, x2, nzuimm, so it stays a
-                // legal expansion.
+                // C.ADDI4SPN: addi rd', x2, nzuimm. nzuimm=0 is reserved.
+                // The compact rd' field selects x8..x15, so every nonzero
+                // immediate yields a legal expansion.
                 let nzuimm = c_addi4spn_imm(p);
                 if nzuimm == 0 {
                     return ZcaClass::Reserved;

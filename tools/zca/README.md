@@ -9,9 +9,12 @@ The generator is an independent Python implementation of the RV64 Zca
 encoding space, written from the RISC-V ISA Unprivileged Specification
 version 20250508 (Chapter "C") and the Selectable Zca
 Compressed-Instruction Profile contract (`docs/dev-plan.md` decisions
-D2 and D6, activation merge `9db1bed`). It does not share code or a common
-reference with the Rust decoder in `src/isa/rv64c/decoder_16bit.rs`, so a
-defect in one implementation produces a diff against the other.
+D2 and D6, activation merge `9db1bed`). It is deliberately structured
+unlike the Rust decoder in `src/isa/rv64c/decoder_16bit.rs`: compressed
+encodings are declarative table rows (selector bits, class predicate, a
+generic immediate bit-field map) walked by one evaluator, instead of
+per-quadrant hand-written classify functions, so a defect in one
+implementation produces a diff against the other.
 
 Each output row is `parcel class expansion` where:
 

@@ -3,326 +3,340 @@
 
 Classifies every 16-bit parcel as legal expansion / HINT / reserved /
 FP-compressed illegal and emits one `parcel class expansion` TSV row each,
-deterministically, on stdout. Written from the RISC-V ISA Unprivileged
-Specification version 20250508 Chapter "C" and the Selectable Zca
-Compressed-Instruction Profile contract (docs/dev-plan.md D2/D6, merge
-9db1bed). Independent of src/isa/rv64c/decoder_16bit.rs.
+deterministically, on stdout.
 
-Contract-D2 reading: C.ADDI4SPN with rd'=x0 and a nonzero immediate is not
-one of the listed HINT classes and not listed as reserved, so it is a legal
-expansion (addi x0, x2, nzuimm) here and in the Rust decoder.
+This generator is deliberately written in a different style from
+src/isa/rv64c/decoder_16bit.rs: each compressed encoding is described by a
+declarative table row (which parcel bits select it, its class predicate,
+and a generic immediate field map), and one evaluator walks the table,
+instead of per-quadrant hand-written classify functions with custom shift
+chains. Written from the RISC-V ISA Unprivileged Specification version
+20250508 Chapter "C" and the Selectable Zca Compressed-Instruction Profile
+contract (docs/dev-plan.md D2/D6, merge 9db1bed).
 """
 
-# 32-bit opcode and funct3 encodings (not shared with the Rust tables).
-OP_LOAD, OP_LOAD_FP = 0b0000011, 0b0000111
-OP_STORE, OP_STORE_FP = 0b0100011, 0b0100111
+from dataclasses import dataclass
+from typing import Callable, Optional
+
+OP_LOAD, OP_STORE = 0b0000011, 0b0100011
 OP_OP_IMM, OP_OP_IMM_32 = 0b0010011, 0b0011011
 OP_OP, OP_OP_32 = 0b0110011, 0b0111011
-OP_LUI, OP_AUIPC = 0b0110111, 0b0010111
+OP_LUI = 0b0110111
 OP_BRANCH, OP_JALR, OP_JAL = 0b1100011, 0b1100111, 0b1101111
 OP_SYSTEM = 0b1110011
 F3_ADDSUB, F3_SLL, F3_SLT, F3_SLTU = 0, 1, 2, 3
 F3_XOR, F3_SRLSRA, F3_OR, F3_AND = 4, 5, 6, 7
 
+E, H, R, F = "E", "H", "R", "F"
+
 
 def sext(value: int, bits: int) -> int:
-    if value & (1 << (bits - 1)):
-        return value | ~((1 << bits) - 1)
-    return value
+    """Sign-extend `value` (assembled bits) from `bits` wide to 32 bits."""
+    return (value | ~((1 << bits) - 1)) & 0xFFFFFFFF if value & (1 << (bits - 1)) else value
 
 
-def i_type(op: int, rd: int, rs1: int, f3: int, imm: int) -> int:
-    return (
-        ((imm & 0xFFF) << 20)
-        | ((rs1 & 0x1F) << 15)
-        | ((f3 & 7) << 12)
-        | ((rd & 0x1F) << 7)
-        | op
-    ) & 0xFFFFFFFF
+@dataclass
+class ImmField:
+    """imm[dest_hi:dest_lo] <- parcel[src_hi:src_lo]."""
+
+    dest_hi: int
+    dest_lo: int
+    src_hi: int
+    src_lo: int
 
 
-def r_type(op: int, rd: int, rs1: int, rs2: int, f3: int, f7: int) -> int:
-    return (
-        ((f7 & 0x7F) << 25)
-        | ((rs2 & 0x1F) << 20)
-        | ((rs1 & 0x1F) << 15)
-        | ((f3 & 7) << 12)
-        | ((rd & 0x1F) << 7)
-        | op
-    ) & 0xFFFFFFFF
+def gather(parcel: int, fields: tuple) -> int:
+    imm = 0
+    for f in fields:
+        width = f.src_hi - f.src_lo + 1
+        imm |= (((parcel >> f.src_lo) & ((1 << width) - 1)) << f.dest_lo)
+    return imm
 
 
-def s_type(op: int, rs1: int, rs2: int, f3: int, imm: int) -> int:
+# Immediate layouts as destination-bit <- parcel-bit maps from the spec's
+# per-format diagrams.
+I_ADDI4SPN = (  # nzuimm[5:4|9:6|3|2] <- p[12:11|10:7|5|6]
+    ImmField(5, 4, 12, 11),
+    ImmField(9, 6, 10, 7),
+    ImmField(3, 3, 5, 5),
+    ImmField(2, 2, 6, 6),
+)
+I_LW = (  # uimm[5:3|2|6] <- p[12:10|6|5]
+    ImmField(5, 3, 12, 10),
+    ImmField(2, 2, 6, 6),
+    ImmField(6, 6, 5, 5),
+)
+I_LD = (  # uimm[5:3|7:6] <- p[12:10|6:5]
+    ImmField(5, 3, 12, 10),
+    ImmField(7, 6, 6, 5),
+)
+I_CI = (  # imm[5|4:0] <- p[12|6:2]
+    ImmField(5, 5, 12, 12),
+    ImmField(4, 0, 6, 2),
+)
+I_LUI = (  # nzimm[17|16:12] <- p[12|6:2]
+    ImmField(17, 17, 12, 12),
+    ImmField(16, 12, 6, 2),
+)
+I_ADDI16SP = (  # nzimm[9|4|6|8:7|5] <- p[12|6|5|4:3|2]
+    ImmField(9, 9, 12, 12),
+    ImmField(4, 4, 6, 6),
+    ImmField(6, 6, 5, 5),
+    ImmField(8, 7, 4, 3),
+    ImmField(5, 5, 2, 2),
+)
+I_J = (  # imm[11|4|9:8|10|6|7|3:1|5] <- p[12|11|10:9|8|7|6|5:3|2]
+    ImmField(11, 11, 12, 12),
+    ImmField(4, 4, 11, 11),
+    ImmField(9, 8, 10, 9),
+    ImmField(10, 10, 8, 8),
+    ImmField(6, 6, 7, 7),
+    ImmField(7, 7, 6, 6),
+    ImmField(3, 1, 5, 3),
+    ImmField(5, 5, 2, 2),
+)
+I_B = (  # imm[8|4:3|7:6|2:1|5] <- p[12|11:10|6:5|4:3|2]
+    ImmField(8, 8, 12, 12),
+    ImmField(4, 3, 11, 10),
+    ImmField(7, 6, 6, 5),
+    ImmField(2, 1, 4, 3),
+    ImmField(5, 5, 2, 2),
+)
+I_LWSP = (  # uimm[5|4:2|7:6] <- p[12|6:4|3:2]
+    ImmField(5, 5, 12, 12),
+    ImmField(4, 2, 6, 4),
+    ImmField(7, 6, 3, 2),
+)
+I_LDSP = (  # uimm[5|4:3|8:6] <- p[12|6:5|4:2]
+    ImmField(5, 5, 12, 12),
+    ImmField(4, 3, 6, 5),
+    ImmField(8, 6, 4, 2),
+)
+I_SWSP = (  # uimm[5:2|7:6] <- p[12:9|8:7]
+    ImmField(5, 2, 12, 9),
+    ImmField(7, 6, 8, 7),
+)
+I_SDSP = (  # uimm[5:3|8:6] <- p[12:10|9:7]
+    ImmField(5, 3, 12, 10),
+    ImmField(8, 6, 9, 7),
+)
+
+
+def i_type(op, rd, rs1, f3, imm):
+    return ((imm & 0xFFF) << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
+
+
+def r_type(op, rd, rs1, rs2, f3, f7):
+    return (f7 << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
+
+
+def s_type(op, rs1, rs2, f3, imm):
     return (
         (((imm >> 5) & 0x7F) << 25)
-        | ((rs2 & 0x1F) << 20)
-        | ((rs1 & 0x1F) << 15)
-        | ((f3 & 7) << 12)
+        | (rs2 << 20)
+        | (rs1 << 15)
+        | (f3 << 12)
         | ((imm & 0x1F) << 7)
         | op
-    ) & 0xFFFFFFFF
+    )
 
 
-def b_type(op: int, rs1: int, rs2: int, f3: int, imm: int) -> int:
+def b_type(op, rs1, rs2, f3, imm):
     return (
         (((imm >> 12) & 1) << 31)
         | (((imm >> 5) & 0x3F) << 25)
-        | ((rs2 & 0x1F) << 20)
-        | ((rs1 & 0x1F) << 15)
-        | ((f3 & 7) << 12)
+        | (rs2 << 20)
+        | (rs1 << 15)
+        | (f3 << 12)
         | (((imm >> 1) & 0xF) << 8)
         | (((imm >> 11) & 1) << 7)
         | op
-    ) & 0xFFFFFFFF
+    )
 
 
-def u_type(op: int, rd: int, imm: int) -> int:
-    return ((imm & 0xFFFFF000) | ((rd & 0x1F) << 7) | op) & 0xFFFFFFFF
+def u_type(op, rd, imm):
+    return (imm & 0xFFFFF000) | (rd << 7) | op
 
 
-def j_type(op: int, rd: int, imm: int) -> int:
+def j_type(op, rd, imm):
     return (
         (((imm >> 20) & 1) << 31)
         | (((imm >> 12) & 0xFF) << 12)
         | (((imm >> 11) & 1) << 20)
         | (((imm >> 1) & 0x3FF) << 21)
-        | ((rd & 0x1F) << 7)
+        | (rd << 7)
         | op
-    ) & 0xFFFFFFFF
-
-
-# Immediate extractors, mirroring the specification tables.
-def ci_imm(p: int) -> int:  # C.ADDI/C.LI/C.ANDI/C.ADDIW
-    return sext(((p >> 12) & 1) << 5 | ((p >> 2) & 0x1F), 6)
-
-
-def c_lui_imm(p: int) -> int:  # already positioned at bit 17..12
-    return sext(((p >> 12) & 1) << 17 | ((p >> 2) & 0x1F) << 12, 18)
-
-
-def c_addi16sp_imm(p: int) -> int:
-    return sext(
-        ((p >> 12) & 1) << 9
-        | ((p >> 6) & 1) << 4
-        | ((p >> 5) & 1) << 6
-        | ((p >> 3) & 3) << 7
-        | ((p >> 2) & 1) << 5,
-        10,
     )
 
 
-def c_addi4spn_imm(p: int) -> int:
-    return (
-        ((p >> 11) & 3) << 4
-        | ((p >> 7) & 0xF) << 6
-        | ((p >> 5) & 1) << 3
-        | ((p >> 6) & 1) << 2
-    )
+def _rd(p):
+    return (p >> 7) & 0x1F
 
 
-def c_lw_imm(p: int) -> int:  # also C.SW
-    return ((p >> 10) & 7) << 3 | ((p >> 6) & 1) << 2 | ((p >> 5) & 1) << 6
+def _rs2(p):
+    return (p >> 2) & 0x1F
 
 
-def c_ld_imm(p: int) -> int:  # also C.SD
-    return ((p >> 10) & 7) << 3 | ((p >> 5) & 3) << 6
+def _rdp(p):  # compact rd' field, x8..x15
+    return 8 + ((p >> 2) & 7)
 
 
-def c_lwsp_imm(p: int) -> int:
-    return ((p >> 12) & 1) << 5 | ((p >> 4) & 7) << 2 | ((p >> 2) & 3) << 6
+def _r1p(p):  # compact rs1' field, x8..x15
+    return 8 + ((p >> 7) & 7)
 
 
-def c_ldsp_imm(p: int) -> int:
-    return ((p >> 12) & 1) << 5 | ((p >> 5) & 3) << 3 | ((p >> 2) & 7) << 6
+def _r2p(p):
+    return 8 + ((p >> 2) & 7)
 
 
-def c_swsp_imm(p: int) -> int:
-    return ((p >> 9) & 0xF) << 2 | ((p >> 7) & 3) << 6
+def _sub(p):
+    return (p >> 10) & 3
 
 
-def c_sdsp_imm(p: int) -> int:
-    return ((p >> 10) & 7) << 3 | ((p >> 7) & 7) << 6
+def _f2(p):
+    return (p >> 5) & 3
 
 
-def c_j_imm(p: int) -> int:
-    return sext(
-        ((p >> 12) & 1) << 11
-        | ((p >> 11) & 1) << 4
-        | ((p >> 9) & 3) << 8
-        | ((p >> 8) & 1) << 10
-        | ((p >> 7) & 1) << 6
-        | ((p >> 6) & 1) << 7
-        | ((p >> 3) & 7) << 1
-        | ((p >> 2) & 1) << 5,
-        12,
-    )
+def _b12(p):
+    return (p >> 12) & 1
 
 
-def c_b_imm(p: int) -> int:  # C.BEQZ/C.BNEZ
-    return sext(
-        ((p >> 12) & 1) << 8
-        | ((p >> 10) & 3) << 3
-        | ((p >> 5) & 3) << 6
-        | ((p >> 3) & 3) << 1
-        | ((p >> 2) & 1) << 5,
-        9,
-    )
+@dataclass
+class Row:
+    """One compressed encoding.
+
+    sel:   (quadrant, funct3)
+    match: extra parcel-bit conditions identifying this row within the slot
+    kind:  (parcel, imm) -> 'E'|'H'|'R'|'F'
+    build: (parcel, imm) -> 32-bit expansion, for E/H rows
+    imm_layout / imm_bits: generic immediate assembly + sign width
+    """
+
+    sel: tuple
+    name: str
+    match: Callable[[int], bool]
+    kind: Callable[[int, int], str]
+    build: Optional[Callable[[int, int], int]] = None
+    imm_layout: tuple = ()
+    imm_bits: int = 0
 
 
-def c_shamt(p: int) -> int:
-    return ((p >> 12) & 1) << 5 | ((p >> 2) & 0x1F)
+ROWS = [
+    # ---- Quadrant 0 ----
+    Row((0b00, 0b000), "c.addi4spn", lambda p: True,
+        lambda p, i: R if i == 0 else E,
+        lambda p, i: i_type(OP_OP_IMM, _rdp(p), 2, F3_ADDSUB, i), I_ADDI4SPN),
+    Row((0b00, 0b001), "c.fld", lambda p: True, lambda p, i: F),
+    Row((0b00, 0b010), "c.lw", lambda p: True, lambda p, i: E,
+        lambda p, i: i_type(OP_LOAD, _rdp(p), _r1p(p), F3_SLT, i), I_LW),
+    Row((0b00, 0b011), "c.ld", lambda p: True, lambda p, i: E,  # RV64 slot
+        lambda p, i: i_type(OP_LOAD, _rdp(p), _r1p(p), F3_SLTU, i), I_LD),
+    Row((0b00, 0b100), "reserved", lambda p: True, lambda p, i: R),
+    Row((0b00, 0b101), "c.fsd", lambda p: True, lambda p, i: F),
+    Row((0b00, 0b110), "c.sw", lambda p: True, lambda p, i: E,
+        lambda p, i: s_type(OP_STORE, _r1p(p), _r2p(p), F3_SLT, i), I_LW),
+    Row((0b00, 0b111), "c.sd", lambda p: True, lambda p, i: E,  # RV64 slot
+        lambda p, i: s_type(OP_STORE, _r1p(p), _r2p(p), F3_SLTU, i), I_LD),
+    # ---- Quadrant 1 ----
+    Row((0b01, 0b000), "c.addi/c.nop", lambda p: True,
+        lambda p, i: H if (_rd(p) == 0) != (i == 0) else E,
+        lambda p, i: i_type(OP_OP_IMM, _rd(p), _rd(p), F3_ADDSUB, i), I_CI, 6),
+    Row((0b01, 0b001), "c.addiw", lambda p: True,
+        lambda p, i: R if _rd(p) == 0 else E,
+        lambda p, i: i_type(OP_OP_IMM_32, _rd(p), _rd(p), F3_ADDSUB, i), I_CI, 6),
+    Row((0b01, 0b010), "c.li", lambda p: True,
+        lambda p, i: H if _rd(p) == 0 else E,
+        lambda p, i: i_type(OP_OP_IMM, _rd(p), 0, F3_ADDSUB, i), I_CI, 6),
+    Row((0b01, 0b011), "c.addi16sp", lambda p: _rd(p) == 2,
+        lambda p, i: R if i == 0 else E,
+        lambda p, i: i_type(OP_OP_IMM, 2, 2, F3_ADDSUB, i), I_ADDI16SP, 10),
+    Row((0b01, 0b011), "c.lui", lambda p: _rd(p) != 2,
+        lambda p, i: R if i == 0 else (H if _rd(p) == 0 else E),
+        lambda p, i: u_type(OP_LUI, _rd(p), i), I_LUI, 18),
+    Row((0b01, 0b100), "c.srli", lambda p: _sub(p) == 0b00,
+        lambda p, i: H if gather(p, I_CI) == 0 else E,
+        lambda p, i: i_type(OP_OP_IMM, _r1p(p), _r1p(p), F3_SRLSRA, i), I_CI),
+    Row((0b01, 0b100), "c.srai", lambda p: _sub(p) == 0b01,
+        lambda p, i: H if gather(p, I_CI) == 0 else E,
+        lambda p, i: i_type(OP_OP_IMM, _r1p(p), _r1p(p), F3_SRLSRA, i | 0x400), I_CI),
+    Row((0b01, 0b100), "c.andi", lambda p: _sub(p) == 0b10, lambda p, i: E,
+        lambda p, i: i_type(OP_OP_IMM, _r1p(p), _r1p(p), F3_AND, i), I_CI, 6),
+    Row((0b01, 0b100), "c.sub", lambda p: _sub(p) == 0b11 and _b12(p) == 0 and _f2(p) == 0,
+        lambda p, i: E,
+        lambda p, i: r_type(OP_OP, _r1p(p), _r1p(p), _r2p(p), F3_ADDSUB, 0x20)),
+    Row((0b01, 0b100), "c.xor", lambda p: _sub(p) == 0b11 and _b12(p) == 0 and _f2(p) == 1,
+        lambda p, i: E,
+        lambda p, i: r_type(OP_OP, _r1p(p), _r1p(p), _r2p(p), F3_XOR, 0)),
+    Row((0b01, 0b100), "c.or", lambda p: _sub(p) == 0b11 and _b12(p) == 0 and _f2(p) == 2,
+        lambda p, i: E,
+        lambda p, i: r_type(OP_OP, _r1p(p), _r1p(p), _r2p(p), F3_OR, 0)),
+    Row((0b01, 0b100), "c.and", lambda p: _sub(p) == 0b11 and _b12(p) == 0 and _f2(p) == 3,
+        lambda p, i: E,
+        lambda p, i: r_type(OP_OP, _r1p(p), _r1p(p), _r2p(p), F3_AND, 0)),
+    Row((0b01, 0b100), "c.subw", lambda p: _sub(p) == 0b11 and _b12(p) == 1 and _f2(p) == 0,
+        lambda p, i: E,
+        lambda p, i: r_type(OP_OP_32, _r1p(p), _r1p(p), _r2p(p), F3_ADDSUB, 0x20)),
+    Row((0b01, 0b100), "c.addw", lambda p: _sub(p) == 0b11 and _b12(p) == 1 and _f2(p) == 1,
+        lambda p, i: E,
+        lambda p, i: r_type(OP_OP_32, _r1p(p), _r1p(p), _r2p(p), F3_ADDSUB, 0)),
+    Row((0b01, 0b100), "rv64-reserved", lambda p: _sub(p) == 0b11 and _b12(p) == 1 and _f2(p) >= 2,
+        lambda p, i: R),
+    Row((0b01, 0b101), "c.j", lambda p: True, lambda p, i: E,
+        lambda p, i: j_type(OP_JAL, 0, i), I_J, 12),
+    Row((0b01, 0b110), "c.beqz", lambda p: True, lambda p, i: E,
+        lambda p, i: b_type(OP_BRANCH, _r1p(p), 0, F3_ADDSUB, i), I_B, 9),
+    Row((0b01, 0b111), "c.bnez", lambda p: True, lambda p, i: E,
+        lambda p, i: b_type(OP_BRANCH, _r1p(p), 0, F3_SLL, i), I_B, 9),
+    # ---- Quadrant 2 ----
+    Row((0b10, 0b000), "c.slli", lambda p: True,
+        lambda p, i: H if _rd(p) == 0 or gather(p, I_CI) == 0 else E,
+        lambda p, i: i_type(OP_OP_IMM, _rd(p), _rd(p), F3_SLL, i), I_CI),
+    Row((0b10, 0b001), "c.fldsp", lambda p: True, lambda p, i: F),
+    Row((0b10, 0b010), "c.lwsp", lambda p: True,
+        lambda p, i: R if _rd(p) == 0 else E,
+        lambda p, i: i_type(OP_LOAD, _rd(p), 2, F3_SLT, i), I_LWSP),
+    Row((0b10, 0b011), "c.ldsp", lambda p: True,  # RV64 slot
+        lambda p, i: R if _rd(p) == 0 else E,
+        lambda p, i: i_type(OP_LOAD, _rd(p), 2, F3_SLTU, i), I_LDSP),
+    Row((0b10, 0b100), "c.jr", lambda p: _b12(p) == 0 and _rs2(p) == 0,
+        lambda p, i: R if _rd(p) == 0 else E,
+        lambda p, i: i_type(OP_JALR, 0, _rd(p), F3_ADDSUB, 0)),
+    Row((0b10, 0b100), "c.mv", lambda p: _b12(p) == 0 and _rs2(p) != 0,
+        lambda p, i: H if _rd(p) == 0 else E,
+        lambda p, i: r_type(OP_OP, _rd(p), 0, _rs2(p), F3_ADDSUB, 0)),
+    Row((0b10, 0b100), "c.ebreak", lambda p: _b12(p) == 1 and _rd(p) == 0 and _rs2(p) == 0,
+        lambda p, i: E,
+        lambda p, i: i_type(OP_SYSTEM, 0, 0, F3_ADDSUB, 1)),
+    Row((0b10, 0b100), "c.jalr", lambda p: _b12(p) == 1 and _rd(p) != 0 and _rs2(p) == 0,
+        lambda p, i: E,
+        lambda p, i: i_type(OP_JALR, 1, _rd(p), F3_ADDSUB, 0)),
+    Row((0b10, 0b100), "c.add", lambda p: _b12(p) == 1 and _rs2(p) != 0,
+        lambda p, i: H if _rd(p) == 0 else E,
+        lambda p, i: r_type(OP_OP, _rd(p), _rd(p), _rs2(p), F3_ADDSUB, 0)),
+    Row((0b10, 0b101), "c.fsdsp", lambda p: True, lambda p, i: F),
+    Row((0b10, 0b110), "c.swsp", lambda p: True, lambda p, i: E,
+        lambda p, i: s_type(OP_STORE, 2, _rs2(p), F3_SLT, i), I_SWSP),
+    Row((0b10, 0b111), "c.sdsp", lambda p: True, lambda p, i: E,  # RV64 slot
+        lambda p, i: s_type(OP_STORE, 2, _rs2(p), F3_SLTU, i), I_SDSP),
+]
 
-
-E, H, R, F = "E", "H", "R", "F"
-
-
-def classify_c0(p: int):
-    funct3 = (p >> 13) & 7
-    rd = 8 + ((p >> 2) & 7)
-    rs1 = 8 + ((p >> 7) & 7)
-    rs2 = 8 + ((p >> 2) & 7)
-    if funct3 == 0b000:
-        imm = c_addi4spn_imm(p)
-        if imm == 0:
-            return R, None
-        return E, i_type(OP_OP_IMM, rd, 2, F3_ADDSUB, imm)
-    if funct3 in (0b001, 0b101):
-        return F, None  # C.FLD / C.FSD
-    if funct3 == 0b010:
-        return E, i_type(OP_LOAD, rd, rs1, F3_SLT, c_lw_imm(p))
-    if funct3 == 0b011:
-        return E, i_type(OP_LOAD, rd, rs1, F3_SLTU, c_ld_imm(p))  # RV64: C.LD
-    if funct3 == 0b100:
-        return R, None
-    if funct3 == 0b110:
-        return E, s_type(OP_STORE, rs1, rs2, F3_SLT, c_lw_imm(p))
-    return E, s_type(OP_STORE, rs1, rs2, F3_SLTU, c_ld_imm(p))  # RV64: C.SD
-
-
-def classify_c1(p: int):
-    funct3 = (p >> 13) & 7
-    rd = (p >> 7) & 0x1F
-    if funct3 == 0b000:
-        imm = ci_imm(p)
-        if (rd == 0) != (imm == 0):
-            return H, i_type(OP_OP_IMM, rd, rd, F3_ADDSUB, imm)
-        return E, i_type(OP_OP_IMM, rd, rd, F3_ADDSUB, imm)
-    if funct3 == 0b001:
-        if rd == 0:
-            return R, None
-        return E, i_type(OP_OP_IMM_32, rd, rd, F3_ADDSUB, ci_imm(p))
-    if funct3 == 0b010:
-        if rd == 0:
-            return H, i_type(OP_OP_IMM, rd, 0, F3_ADDSUB, ci_imm(p))
-        return E, i_type(OP_OP_IMM, rd, 0, F3_ADDSUB, ci_imm(p))
-    if funct3 == 0b011:
-        if rd == 2:
-            imm = c_addi16sp_imm(p)
-            if imm == 0:
-                return R, None
-            return E, i_type(OP_OP_IMM, 2, 2, F3_ADDSUB, imm)
-        imm = c_lui_imm(p)
-        if imm == 0:
-            return R, None
-        if rd == 0:
-            return H, u_type(OP_LUI, rd, imm)
-        return E, u_type(OP_LUI, rd, imm)
-    if funct3 == 0b100:
-        return classify_c1_alu(p)
-    if funct3 == 0b101:
-        return E, j_type(OP_JAL, 0, c_j_imm(p))
-    if funct3 == 0b110:
-        return E, b_type(OP_BRANCH, 8 + ((p >> 7) & 7), 0, F3_ADDSUB, c_b_imm(p))
-    return E, b_type(OP_BRANCH, 8 + ((p >> 7) & 7), 0, F3_SLL, c_b_imm(p))
-
-
-def classify_c1_alu(p: int):
-    rd = 8 + ((p >> 7) & 7)
-    rs2 = 8 + ((p >> 2) & 7)
-    sub = (p >> 10) & 3
-    if sub == 0b00:
-        shamt = c_shamt(p)
-        if shamt == 0:
-            return H, i_type(OP_OP_IMM, rd, rd, F3_SRLSRA, shamt)
-        return E, i_type(OP_OP_IMM, rd, rd, F3_SRLSRA, shamt)
-    if sub == 0b01:
-        shamt = c_shamt(p)
-        enc = i_type(OP_OP_IMM, rd, rd, F3_SRLSRA, shamt | 0x400)
-        return (H, enc) if shamt == 0 else (E, enc)
-    if sub == 0b10:
-        return E, i_type(OP_OP_IMM, rd, rd, F3_AND, ci_imm(p))
-    funct2 = (p >> 5) & 3
-    w = (p >> 12) & 1
-    if w == 0:
-        f3f7 = [
-            (F3_ADDSUB, 0x20),
-            (F3_XOR, 0),
-            (F3_OR, 0),
-            (F3_AND, 0),
-        ][funct2]
-        return E, r_type(OP_OP, rd, rd, rs2, f3f7[0], f3f7[1])
-    if funct2 == 0:
-        return E, r_type(OP_OP_32, rd, rd, rs2, F3_ADDSUB, 0x20)
-    if funct2 == 1:
-        return E, r_type(OP_OP_32, rd, rd, rs2, F3_ADDSUB, 0)
-    return R, None  # RV64-reserved C.SUBW/C.ADDW-group encodings
-
-
-def classify_c2(p: int):
-    funct3 = (p >> 13) & 7
-    rd = (p >> 7) & 0x1F
-    rs2 = (p >> 2) & 0x1F
-    if funct3 == 0b000:
-        shamt = c_shamt(p)
-        enc = i_type(OP_OP_IMM, rd, rd, F3_SLL, shamt)
-        return (H, enc) if (rd == 0 or shamt == 0) else (E, enc)
-    if funct3 == 0b001:
-        return F, None  # C.FLDSP
-    if funct3 == 0b011:
-        if rd == 0:
-            return R, None
-        return E, i_type(OP_LOAD, rd, 2, F3_SLTU, c_ldsp_imm(p))  # RV64: C.LDSP
-    if funct3 == 0b010:
-        if rd == 0:
-            return R, None
-        return E, i_type(OP_LOAD, rd, 2, F3_SLT, c_lwsp_imm(p))
-    if funct3 == 0b100:
-        return classify_c2_mv_add(p)
-    if funct3 == 0b101:
-        return F, None  # C.FSDSP
-    if funct3 == 0b110:
-        return E, s_type(OP_STORE, 2, rs2, F3_SLT, c_swsp_imm(p))
-    return E, s_type(OP_STORE, 2, rs2, F3_SLTU, c_sdsp_imm(p))  # RV64: C.SDSP
-
-
-def classify_c2_mv_add(p: int):
-    rd = (p >> 7) & 0x1F
-    rs2 = (p >> 2) & 0x1F
-    if ((p >> 12) & 1) == 0:
-        if rs2 == 0:
-            if rd == 0:
-                return R, None  # C.JR with rs1=0
-            return E, i_type(OP_JALR, 0, rd, F3_ADDSUB, 0)
-        if rd == 0:
-            return H, r_type(OP_OP, rd, 0, rs2, F3_ADDSUB, 0)
-        return E, r_type(OP_OP, rd, 0, rs2, F3_ADDSUB, 0)
-    if rs2 == 0 and rd == 0:
-        return E, i_type(OP_SYSTEM, 0, 0, F3_ADDSUB, 1)  # C.EBREAK
-    if rs2 == 0:
-        return E, i_type(OP_JALR, 1, rd, F3_ADDSUB, 0)
-    if rd == 0:
-        return H, r_type(OP_OP, rd, rd, rs2, F3_ADDSUB, 0)
-    return E, r_type(OP_OP, rd, rd, rs2, F3_ADDSUB, 0)
+INDEX = {}
+for row in ROWS:
+    INDEX.setdefault(row.sel, []).append(row)
 
 
 def classify(p: int):
-    quadrant = p & 3
-    if quadrant == 0:
-        return classify_c0(p)
-    if quadrant == 1:
-        return classify_c1(p)
-    if quadrant == 2:
-        return classify_c2(p)
+    rows = INDEX.get((p & 3, (p >> 13) & 7), ())
+    for row in rows:
+        if not row.match(p):
+            continue
+        imm = gather(p, row.imm_layout)
+        if row.imm_bits:
+            imm = sext(imm, row.imm_bits)
+        cls = row.kind(p, imm)
+        if cls in (R, F):
+            return cls, None
+        return cls, row.build(p, imm)
     return R, None
 
 
