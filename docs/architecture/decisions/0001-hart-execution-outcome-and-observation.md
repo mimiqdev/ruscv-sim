@@ -13,6 +13,8 @@
 
 **2026-10-30 amendment:** The owner-approved system-bus-access profile keeps the Hart uninvolved in DM-initiated physical transactions, as specified [below](#2026-10-30-amendment-system-bus-access-outcomes). It activates with the [successor contract](../../dev-plan.md); it is not an implementation claim.
 
+**2026-11-03 amendment:** The approved compressed-instruction profile gives retired and trapping instructions a length of 2 or 4, as specified [below](#2026-11-03-amendment-compressed-instruction-length). It activates with the [successor contract](../../dev-plan.md); it is not an implementation claim.
+
 ## Context
 
 The target architecture requires one RISC-V Hart implementation to serve both the standalone ISS and the future Virtual Platform. The Hart owns architectural state, instruction semantics, privilege, traps, address translation, and retirement; the Runner and Platform drive it and observe its facts. This boundary is described in the [target architecture](../README.md) and [architecture principles](../principles.md), while the [current implementation inventory](../current-state.md) records that the boundary is not yet implemented.
@@ -280,6 +282,12 @@ The owner approved the System Bus Access Debug contract's D1–D10 scope on 2026
 An SBA transaction therefore produces no Hart outcome of any kind. It must not fabricate a guest CommitRecord, TrapRecord, instruction-attempt, or retirement fact, and it does not change guest trap CSRs, privilege, or PC. Debug control facts—SBA busy, error, and completion—remain distinct from Hart control facts. Any materialized debug observation originates from the DM and Platform effects that created them; a frontend must not reconstruct them through a second access or state-difference loop.
 
 The physical-fault classification of [ADR-0002](0002-physical-access-transaction-and-fault.md) §4 maps to the DM's SBA error taxonomy at the DM boundary; it is never converted into a guest access-fault trap. Unknown completion retains the existing non-resumable failure boundary. Guest CommitRecord and TrapRecord semantics remain unchanged. This amendment prescribes no new public Rust types or application result fields.
+
+## 2026-11-03 amendment: compressed instruction length
+
+The Selectable Zca Compressed-Instruction Profile contract's D1–D10 scope was approved on 2026-11-03 under the owner's delegation of planning authority. Under its `rv64imac` profile, an instruction is 2 or 4 bytes. The `CommitRecord` instruction identity carries the bits the Hart fetched (a 16-bit parcel for a compressed instruction, never its 32-bit expansion) and its length. `after_pc` fall-through is `before_pc` plus that length.
+
+A compressed instruction retires or traps exactly once like any other instruction; length does not change retirement, trap-entry, counter or turn accounting. A fault in either parcel of a straddling 32-bit instruction is one `TrapEntered` for that instruction with no partial effect, and its trap observation identifies the faulting parcel's address as the selected contract specifies. Observers still must not re-fetch instruction bits. Under the default `rv64ima` profile every outcome remains as before. This amendment selects no Rust API.
 
 ## Source and test map
 

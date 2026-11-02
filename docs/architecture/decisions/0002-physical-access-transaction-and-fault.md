@@ -12,6 +12,8 @@
 
 **2026-10-30 amendment:** The selected system-bus-access profile admits the first inbound Platform master under §9, described [below](#2026-10-30-amendment-system-bus-access-inbound-master). All Hart-initiator rules remain in force. This target amendment activates with the [successor contract](../../dev-plan.md).
 
+**2026-11-03 amendment:** The selected compressed-instruction profile fetches instructions as one or two 16-bit parcels, described [below](#2026-11-03-amendment-compressed-instruction-fetch). All other transaction rules remain in force. This target amendment activates with the [successor contract](../../dev-plan.md).
+
 ## Context
 
 The target architecture has one Hart implementation for the standalone ISS and the
@@ -407,6 +409,12 @@ The owner approved the System Bus Access Debug contract's D1–D10 scope on 2026
 A committed SBA write is a competing write for reservation visibility: the Platform reports it so an overlapping Hart reservation is invalidated under the existing Hart-owned architectural rule. A failed SBA transaction invalidates nothing. An SBA transaction must not expose an intermediate state of a Hart atomic operation.
 
 The normalized physical fault of §4 maps to the DM's SBA error taxonomy (bad address, alignment, unsupported size) at the DM boundary; simulator/internal failures retain their existing non-guest classification and unknown-completion quarantine. SBA requests and responses carry §7 delay metadata unchanged; ADR-0004 owns its consumption. The §9 DMI-range-invalidation rule is not applicable here: no direct-memory-interface mechanism exists in this profile, and the rule remains deferred with transport integration. This amendment selects no Rust API, transport encoding, arbitration, or multi-initiator ordering beyond the single-hart visibility rule above. DMA, coherence, watchpoints, and further masters remain deferred under §9.
+
+## 2026-11-03 amendment: compressed instruction fetch
+
+The Selectable Zca Compressed-Instruction Profile contract's D1–D10 scope was approved on 2026-11-03 under the owner's delegation of planning authority. Under its `rv64imac` profile the Hart issues instruction fetches per 2-byte parcel: one for a compressed instruction, and two for a 32-bit instruction, the second at the next parcel address only after the first identifies a 32-bit length. Each parcel fetch is an ordinary fetch transaction with the existing raw-byte, width, routing, rejection and fault semantics, and is translated separately by the Hart when it lies on another page.
+
+The instruction, not the transaction, is the Hart's unit of completion. A fault on either parcel ends the step in one instruction fetch fault, with the first parcel's fault taking priority. Fetch transactions have no committed side effects, so a failed second parcel leaves nothing to roll back. The Hart may combine parcels into one transaction only where the result is observably identical, including fault and region-end behavior. The Platform gains no knowledge of instruction length or compression. Under the default `rv64ima` profile fetch remains one aligned 4-byte transaction. This amendment selects no Rust API.
 
 ## Bounded deferrals
 

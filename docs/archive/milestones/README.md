@@ -2,7 +2,7 @@
 
 This directory preserves approved milestone contracts and explicitly superseded plans, including their scope and limitations. Clearly labeled preparation records do not claim completion.
 
-Archived files are not active plans. Consult the [sole current contract](../../dev-plan.md). The owner-approved System Bus Access Debug target succeeds Program-buffer Debug Execution on the actual rotation merge. The [entire Program-buffer Debug Execution contract](program-buffer-debug-execution.md) and the [entire Stage 6 contract](stage6-riscv-debug-mode.md) are preserved here for historical scope; activation and completion do not claim implementation of the successor. CI and PR history retain execution and review outcomes.
+Archived files are not active plans. Consult the [sole current contract](../../dev-plan.md). The approved Selectable Zca Compressed-Instruction Profile target succeeds System Bus Access Debug on the actual rotation merge. The [entire System Bus Access Debug contract](system-bus-access-debug.md), the [entire Program-buffer Debug Execution contract](program-buffer-debug-execution.md) and the [entire Stage 6 contract](stage6-riscv-debug-mode.md) are preserved here for historical scope; activation and completion do not claim implementation of the successor. CI and PR history retain execution and review outcomes.
 
 ## Rolling process
 
@@ -16,6 +16,9 @@ Archived files are not active plans. Consult the [sole current contract](../../d
    technical planning context, not a second current contract.
 
 ## Records
+
+- [System Bus Access Debug: Entire approved contract](system-bus-access-debug.md)
+  - Preserves owner-approved D1–D10, the `sbcs` v1 64-bit-address profile, the first inbound Platform master and its pinned-Spike justified differences. Implementation is PR #126 through PR #130, completed 2026-11-02 at merge head `42ed9a2`. Formal completion and archival take effect on the Zca rotation merge; no execution results are copied here.
 
 - [Program-buffer Debug Execution: Entire approved contract](program-buffer-debug-execution.md)
   - Preserves owner-approved D1–D9, the two-word/implicit-EBREAK profile, the Zifencei addition, and the bounded debug-execution scope. Implementation is PR #114 through PR #118, completed 2026-10-30 at merge head `3085f9e`. Formal completion and archival take effect on the System Bus Access Debug rotation merge; no execution results are copied here.
