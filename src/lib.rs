@@ -35,15 +35,17 @@ pub use dm::DebugModule;
 pub use dm::{SbaAccessSize, SbaFault, SbaRequest};
 pub use execute::{ExecuteError, Executor};
 pub use executor::{
-    load_and_run, load_and_run_file, load_and_run_file_with_debug, load_and_run_with_debug,
-    ExecutionResult, ExecutorError, PresentedInterruptLines, RiscVSimulator, SYSTEM_BUS_CLINT_BASE,
-    SYSTEM_BUS_CLINT_SIZE, SYSTEM_BUS_HTIF_BASE, SYSTEM_BUS_HTIF_SIZE, SYSTEM_BUS_PLIC_BASE,
-    SYSTEM_BUS_PLIC_GATEWAY, SYSTEM_BUS_PLIC_SIZE, SYSTEM_BUS_UART_BASE, SYSTEM_BUS_UART_WINDOW,
+    load_and_run, load_and_run_file, load_and_run_file_with_debug,
+    load_and_run_file_with_debug_isa, load_and_run_file_with_isa, load_and_run_with_debug,
+    load_and_run_with_debug_isa, load_and_run_with_isa, ExecutionResult, ExecutorError,
+    PresentedInterruptLines, RiscVSimulator, SYSTEM_BUS_CLINT_BASE, SYSTEM_BUS_CLINT_SIZE,
+    SYSTEM_BUS_HTIF_BASE, SYSTEM_BUS_HTIF_SIZE, SYSTEM_BUS_PLIC_BASE, SYSTEM_BUS_PLIC_GATEWAY,
+    SYSTEM_BUS_PLIC_SIZE, SYSTEM_BUS_UART_BASE, SYSTEM_BUS_UART_WINDOW,
 };
 pub use fpu::{Fcsr, Fpr, FpuRegisterFile};
 pub use hart_amods::{AmoArithmeticError, AmoOperation};
 pub use jtag::{BitbangReply, DmiBus, DmiFault, JtagDtm, RemoteBitbangConfig, TapState};
-pub use machine::DebugPort;
+pub use machine::{DebugPort, IsaProfile};
 pub use memory::{MemoryError, MemoryInterface, SimpleMemory};
 pub use mmu::{
     AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TlbEntry, TlbStats, TranslationMode,

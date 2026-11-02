@@ -4,7 +4,8 @@
 
 use clap::{Parser, Subcommand};
 use ruscv_sim::{
-    load_and_run_file, load_and_run_file_with_debug, ExecutionResult, RemoteBitbangConfig,
+    load_and_run_file_with_debug_isa, load_and_run_file_with_isa, ExecutionResult, IsaProfile,
+    RemoteBitbangConfig,
 };
 use std::path::PathBuf;
 
@@ -58,7 +59,24 @@ enum Commands {
         /// Halt before the first instruction. Requires `--rbb-port`
         #[arg(long)]
         halted: bool,
+
+        /// Machine ISA profile: `rv64ima` (default) or `rv64imac`
+        #[arg(long, value_name = "PROFILE", default_value = "rv64ima")]
+        isa: IsaProfileArg,
     },
+}
+
+/// Approved `--isa` profile names (contract D3). No ELF inference applies.
+#[derive(Debug, Clone, Copy)]
+struct IsaProfileArg(IsaProfile);
+
+impl std::str::FromStr for IsaProfileArg {
+    type Err = String;
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        IsaProfile::parse(name)
+            .map(Self)
+            .ok_or_else(|| format!("invalid ISA profile '{name}': expected rv64ima or rv64imac"))
+    }
 }
 
 fn main() {
@@ -73,6 +91,7 @@ fn main() {
             log_commits,
             rbb_port,
             halted,
+            isa,
         } => {
             if halted && rbb_port.is_none() {
                 eprintln!("error: --halted requires --rbb-port");
@@ -96,12 +115,15 @@ fn main() {
 
             match run_elf(
                 &elf,
-                max_cycles,
-                tohost,
-                log_commits,
-                verbose,
-                rbb_port,
-                halted,
+                RunOptions {
+                    max_cycles,
+                    tohost,
+                    log_commits,
+                    verbose,
+                    rbb_port,
+                    halted,
+                    isa: isa.0,
+                },
             ) {
                 Ok(result) => {
                     print_result(&result);
@@ -116,26 +138,37 @@ fn main() {
     }
 }
 
-fn run_elf(
-    elf_path: &std::path::Path,
+/// Optional run knobs beyond the ELF path.
+struct RunOptions {
     max_cycles: Option<u64>,
     tohost: Option<u64>,
     log_commits: Option<PathBuf>,
     verbose: bool,
     rbb_port: Option<u16>,
     halted: bool,
-) -> Result<ExecutionResult, String> {
+    isa: IsaProfile,
+}
+
+fn run_elf(elf_path: &std::path::Path, options: RunOptions) -> Result<ExecutionResult, String> {
     let path = elf_path.to_str().unwrap();
-    match rbb_port {
-        Some(port) => load_and_run_file_with_debug(
+    match options.rbb_port {
+        Some(port) => load_and_run_file_with_debug_isa(
             path,
-            max_cycles,
-            tohost,
-            log_commits,
-            verbose,
-            RemoteBitbangConfig::listen(port).halted(halted),
+            options.max_cycles,
+            options.tohost,
+            options.log_commits,
+            options.verbose,
+            RemoteBitbangConfig::listen(port).halted(options.halted),
+            options.isa,
         ),
-        None => load_and_run_file(path, max_cycles, tohost, log_commits, verbose),
+        None => load_and_run_file_with_isa(
+            path,
+            options.max_cycles,
+            options.tohost,
+            options.log_commits,
+            options.verbose,
+            options.isa,
+        ),
     }
     .map_err(|e| format!("Execution failed: {}", e))
 }

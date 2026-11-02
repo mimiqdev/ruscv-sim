@@ -138,13 +138,22 @@ impl CommitLogger {
     /// presentation. Rich memory/CSR/FPR facts remain available to other sinks;
     /// this compatibility text deliberately omits them. Equal-value writes
     /// are facts, but remain omitted in this presentation.
+    ///
+    /// The opcode field follows pinned Spike's `commit_log_print_insn`:
+    /// the fetched bits zero-padded to `length / 4` hex digits — `(0x0001)`
+    /// for a 16-bit parcel, `(0x00000093)` for a 32-bit instruction
+    /// (contract D7).
     pub fn log_record(&mut self, record: &super::observation::CommitRecord) -> io::Result<()> {
         let retired = record.retired;
         write!(
             self.output,
-            "core   {}: {} {:#018x} ({:#010x})",
-            record.hart_id, retired.privilege as u8, retired.pc, retired.instruction
+            "core   {}: {} {:#018x} (",
+            record.hart_id, retired.privilege as u8, retired.pc
         )?;
+        match record.instruction_length {
+            2 => write!(self.output, "0x{:04x})", retired.instruction)?,
+            _ => write!(self.output, "0x{:08x})", retired.instruction)?,
+        };
         for write in &record.effects.gpr {
             if write.before != write.after {
                 write!(self.output, " x{}  {:#018x}", write.index, write.after)?;

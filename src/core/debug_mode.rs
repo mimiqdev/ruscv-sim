@@ -48,6 +48,9 @@ pub(crate) struct HartDebug {
     pub(crate) dpc: u64,
     pub(crate) dscratch0: u64,
     pub(crate) dscratch1: u64,
+    /// Selected profile has IALIGN=16 (`rv64imac`). `dpc` then clears only
+    /// bit 0 on write (contract D5/D8).
+    pub(crate) compressed: bool,
 }
 
 const DEBUGVER: u64 = 4 << 28;
@@ -66,9 +69,15 @@ const STEP: u64 = 1 << 2;
 const CAUSE_SHIFT: u32 = 6;
 const FIXED_ZERO: u64 = EBREAKVS | EBREAKVU | STEPIE | V | NMIP;
 
-/// Privileged §3.1.14 `mepc` IALIGN=32. `dpc` drops bits 1:0.
-pub(crate) fn legal_dpc(value: u64) -> u64 {
-    value & !0b11
+/// Privileged §3.1.14: `dpc` follows the `xepc` IALIGN mask for the
+/// selected profile (contract D5). IALIGN=32 drops bits 1:0; IALIGN=16
+/// clears only bit 0.
+pub(crate) fn legal_dpc(value: u64, compressed: bool) -> u64 {
+    if compressed {
+        value & !0b1
+    } else {
+        value & !0b11
+    }
 }
 
 /// Debug 1.0 `dcsr.prv`. Encodings 0, 1, and 3 are stored. Encoding 2 keeps
@@ -96,6 +105,7 @@ impl Default for HartDebug {
             dpc: 0,
             dscratch0: 0,
             dscratch1: 0,
+            compressed: false,
         }
     }
 }
@@ -150,9 +160,10 @@ impl HartDebug {
         self.prv = legal_prv(self.prv, value);
     }
 
-    /// `dpc` uses the `mepc` IALIGN=32 rule. Privileged §3.1.14.
+    /// `dpc` uses the selected profile's `xepc` legality mask.
+    /// Privileged §3.1.14.
     pub(crate) fn write_dpc(&mut self, value: u64) -> u64 {
-        self.dpc = legal_dpc(value);
+        self.dpc = legal_dpc(value, self.compressed);
         self.dpc
     }
 }

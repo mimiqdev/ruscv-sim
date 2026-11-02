@@ -10,7 +10,9 @@ use crate::core::{
 };
 use crate::elf::{ElfError, LoadImage, SignatureInfo};
 use crate::jtag::{BitbangSession, DmiBus, DmiFault, RemoteBitbangConfig};
-use crate::machine::{DebugBoundary, MachineConfig, OwnedMachine, PlatformEvent, PlatformKind};
+use crate::machine::{
+    DebugBoundary, IsaProfile, MachineConfig, OwnedMachine, PlatformEvent, PlatformKind,
+};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::{Clint, Plic, Uart16550, CLINT_SIZE, PLIC_SIZE};
 pub use crate::physical::NativeSystemBusBackend;
@@ -1717,13 +1719,39 @@ pub fn load_and_run(
     log_commits: Option<&Path>,
     verbose: bool,
 ) -> Result<ExecutionResult, ExecutorError> {
-    run_native(
+    load_and_run_with_isa(
+        elf_data,
+        max_cycles,
+        tohost_addr,
+        log_commits,
+        verbose,
+        IsaProfile::default(),
+    )
+}
+
+/// [`load_and_run`] under an explicit Machine ISA profile (contract D3).
+///
+/// The profile is Machine composition configuration; no ELF metadata
+/// changes it. `rv64ima` is the default and is bit-for-bit unchanged.
+pub fn load_and_run_with_isa(
+    elf_data: &[u8],
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<&Path>,
+    verbose: bool,
+    isa: IsaProfile,
+) -> Result<ExecutionResult, ExecutorError> {
+    run_native_inner(
         elf_data,
         max_cycles,
         tohost_addr,
         log_commits,
         verbose,
         None,
+        NativeHooks {
+            isa,
+            ..NativeHooks::default()
+        },
     )
 }
 
@@ -1739,8 +1767,31 @@ pub fn load_and_run_with_debug(
     verbose: bool,
     debug: RemoteBitbangConfig,
 ) -> Result<ExecutionResult, ExecutorError> {
+    load_and_run_with_debug_isa(
+        elf_data,
+        max_cycles,
+        tohost_addr,
+        log_commits,
+        verbose,
+        debug,
+        IsaProfile::default(),
+    )
+}
+
+/// [`load_and_run_with_debug`] under an explicit Machine ISA profile
+/// (contract D3).
+pub fn load_and_run_with_debug_isa(
+    elf_data: &[u8],
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<&Path>,
+    verbose: bool,
+    debug: RemoteBitbangConfig,
+    isa: IsaProfile,
+) -> Result<ExecutionResult, ExecutorError> {
     let hooks = NativeHooks {
         debug: Some(debug),
+        isa,
         ..NativeHooks::default()
     };
     run_native_inner(
@@ -1766,9 +1817,12 @@ struct NativeHooks {
     #[cfg(test)]
     config: Option<MachineConfig>,
     debug: Option<RemoteBitbangConfig>,
+    /// Machine-owned ISA profile forwarded into `MachineConfig` (contract D3).
+    isa: IsaProfile,
 }
 
 // Same native Runner with bounded internal test seams; no alternate engine.
+#[cfg(test)]
 fn run_native(
     elf_data: &[u8],
     max_cycles: Option<u64>,
@@ -1816,6 +1870,7 @@ fn run_native_inner(
         .or(placement.tohost(AddressForm::Bus)?)
         .unwrap_or(DEFAULT_TOHOST);
     let mut config = MachineConfig::new(PlatformKind::Native);
+    config.isa = hooks.isa;
     config.verbose = verbose;
     config.tohost_override = tohost_addr;
     config.uart_output = Some(Arc::new(|byte| print!("{}", byte as char)));
@@ -2256,16 +2311,37 @@ pub fn load_and_run_file(
     log_commits: Option<PathBuf>,
     verbose: bool,
 ) -> Result<ExecutionResult, ExecutorError> {
+    load_and_run_file_with_isa(
+        elf_path,
+        max_cycles,
+        tohost_addr,
+        log_commits,
+        verbose,
+        IsaProfile::default(),
+    )
+}
+
+/// [`load_and_run_file`] under an explicit Machine ISA profile
+/// (contract D3). The profile is not inferred from ELF `e_flags`.
+pub fn load_and_run_file_with_isa(
+    elf_path: &str,
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<PathBuf>,
+    verbose: bool,
+    isa: IsaProfile,
+) -> Result<ExecutionResult, ExecutorError> {
     // Read ELF file
     let elf_data = std::fs::read(elf_path)
         .map_err(|e| ExecutorError::ElfLoadError(ElfError::IoError(e.to_string())))?;
 
-    load_and_run(
+    load_and_run_with_isa(
         &elf_data,
         max_cycles,
         tohost_addr,
         log_commits.as_deref(),
         verbose,
+        isa,
     )
 }
 
@@ -2278,15 +2354,38 @@ pub fn load_and_run_file_with_debug(
     verbose: bool,
     debug: RemoteBitbangConfig,
 ) -> Result<ExecutionResult, ExecutorError> {
+    load_and_run_file_with_debug_isa(
+        elf_path,
+        max_cycles,
+        tohost_addr,
+        log_commits,
+        verbose,
+        debug,
+        IsaProfile::default(),
+    )
+}
+
+/// [`load_and_run_file_with_debug`] under an explicit Machine ISA profile
+/// (contract D3).
+pub fn load_and_run_file_with_debug_isa(
+    elf_path: &str,
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<PathBuf>,
+    verbose: bool,
+    debug: RemoteBitbangConfig,
+    isa: IsaProfile,
+) -> Result<ExecutionResult, ExecutorError> {
     let elf_data = std::fs::read(elf_path)
         .map_err(|e| ExecutorError::ElfLoadError(ElfError::IoError(e.to_string())))?;
-    load_and_run_with_debug(
+    load_and_run_with_debug_isa(
         &elf_data,
         max_cycles,
         tohost_addr,
         log_commits.as_deref(),
         verbose,
         debug,
+        isa,
     )
 }
 
@@ -2358,11 +2457,18 @@ pub struct RiscVSimulator {
 impl RiscVSimulator {
     /// Create new simulator with memory
     pub fn new(mem_size: usize) -> Self {
-        let machine = OwnedMachine::new(
-            MachineConfig::new(PlatformKind::Flat),
-            Arc::new(LoadImage::blank(mem_size)),
-        )
-        .expect("flat compatibility constructor");
+        Self::new_with_isa(mem_size, IsaProfile::default())
+    }
+
+    /// [`Self::new`] under an explicit Machine ISA profile (contract D3).
+    ///
+    /// The profile is Machine composition configuration fixed for the
+    /// Machine's lifetime; it is not inferred from any loaded ELF.
+    pub fn new_with_isa(mem_size: usize, isa: IsaProfile) -> Self {
+        let mut config = MachineConfig::new(PlatformKind::Flat);
+        config.isa = isa;
+        let machine = OwnedMachine::new(config, Arc::new(LoadImage::blank(mem_size)))
+            .expect("flat compatibility constructor");
         let memory = machine.memory().clone();
         Self {
             machine,

@@ -24,7 +24,9 @@ pub fn exec_jal(
     _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     if let (Some(rd), Some(imm)) = (instr.rd, instr.imm) {
-        let return_addr = state.pc.wrapping_add(4);
+        // Link is pc + the fetched instruction length: 2 for a compressed
+        // expansion, 4 for a 32-bit JAL (contract D5).
+        let return_addr = state.pc.wrapping_add(u64::from(state.instruction_length));
         // J-type immediate is 21 bits (bits 0-20 of encoded instruction)
         // Stored as: imm[20|10:1|11|19:12] in decoder's imm field
         // Sign-extend: shift left 11 bits (move bit 20 to bit 31), then arithmetic right shift 11 bits
@@ -61,7 +63,7 @@ pub fn exec_jalr(
     _mem: &mut dyn crate::memory::MemoryInterface,
 ) -> Result<(), ExecuteError> {
     if let (Some(rd), Some(rs1), Some(imm)) = (instr.rd, instr.rs1, instr.imm) {
-        let return_addr = state.pc.wrapping_add(4);
+        let return_addr = state.pc.wrapping_add(u64::from(state.instruction_length));
         // Sign-extend the 12-bit immediate to 64 bits
         let imm_sext = ((imm as i32) << 20 >> 20) as i64 as u64;
         let target = (state.regs[rs1 as usize].wrapping_add(imm_sext)) & !1u64;

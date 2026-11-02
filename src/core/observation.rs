@@ -76,7 +76,8 @@ pub struct ArchitecturalEffects {
     pub reservation: Option<ReservationChange>,
 }
 
-/// Exactly one retired instruction; this Hart currently has fixed IALIGN=32.
+/// Exactly one retired instruction. `instruction_length` is the fetched
+/// length in bytes: 2 or 4 under the profile's IALIGN (contract D7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitRecord {
     pub hart_id: u64,
@@ -180,7 +181,7 @@ pub(crate) fn build(
         StepOutcome::InstructionRetired(retired) => Some(Observation::Commit(CommitRecord {
             hart_id,
             retired: *retired,
-            instruction_length: 4,
+            instruction_length: retired.instruction_length,
             effects,
         })),
         StepOutcome::TrapEntered(trap) => Some(Observation::Trap(TrapRecord {
@@ -193,7 +194,7 @@ pub(crate) fn build(
                     crate::csr::supervisor::SEPC
                 },
             ),
-            instruction_length: trap.instruction.map(|_| 4),
+            instruction_length: trap.instruction_length,
             effects,
         })),
         StepOutcome::SimulatorFailure(_)
