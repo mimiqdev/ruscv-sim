@@ -61,7 +61,7 @@
 //! use ruscv_sim::isa::rv64c::CompressedDecoder;
 //!
 //! let decoder = CompressedDecoder::new();
-//! let parcel: u16 = 0x1141; // c.addi x2, 4
+//! let parcel: u16 = 0x0111; // c.addi x2, 4
 //! match decoder.decode_16bit(parcel) {
 //!     Ok(decoded) => println!("Decoded: {:?}", decoded),
 //!     Err(e) => println!("Decode error: {:?}", e),

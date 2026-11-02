@@ -213,14 +213,14 @@ fn fp_compressed_and_reserved_classes() {
     assert_eq!(decoder.classify_16bit(0x0000), ZcaClass::Reserved);
     assert_eq!(decoder.classify_16bit(0x0004), ZcaClass::Reserved); // c.addi4spn imm=0
     assert_eq!(decoder.classify_16bit(0x6081), ZcaClass::Reserved); // c.lui imm=0
-    assert_eq!(decoder.classify_16bit(0x6181), ZcaClass::Reserved); // c.addi16sp imm=0
+    assert_eq!(decoder.classify_16bit(0x6101), ZcaClass::Reserved); // c.addi16sp imm=0
     assert_eq!(decoder.classify_16bit(0x4002), ZcaClass::Reserved); // c.lwsp rd=0
     assert_eq!(decoder.classify_16bit(0x6002), ZcaClass::Reserved); // c.ldsp rd=0
     assert_eq!(decoder.classify_16bit(0x8002), ZcaClass::Reserved); // c.jr rs1=0
     assert_eq!(decoder.classify_16bit(0x2001), ZcaClass::Reserved); // c.addiw rd=0
                                                                     // All decode as errors.
     for parcel in [
-        0x0000u16, 0x0004, 0x6081, 0x6181, 0x4002, 0x6002, 0x8002, 0x2001, 0x2480, 0xA904, 0x2002,
+        0x0000u16, 0x0004, 0x6081, 0x6101, 0x4002, 0x6002, 0x8002, 0x2001, 0x2480, 0xA904, 0x2002,
         0xA002,
     ] {
         assert!(
