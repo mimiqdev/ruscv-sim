@@ -160,6 +160,61 @@ class RunnerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(audit["unsupported"])
 
+    def test_compressed_opcode_gate_and_name_gate(self):
+        # A Zca-allowed mnemonic passes only with its mapped quadrant; C.FLD
+        # shares quadrant 0 with C.LW and stays name-rejected, and a 32-bit
+        # word printed as 4 hex digits fails closed.
+        from linked_audit import audit as linked_audit
+
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = pathlib.Path(directory)
+            objdump = "80000000: 0001 c.nop\n80000002: 2000 c.fld\n"
+            symbols = "0000000080001000 d signature_base"
+            def fake_run(command, **_):
+                return symbols if "nm" in command[0] else objdump
+            original = subprocess.check_output
+            subprocess.check_output = fake_run
+            with self.assertRaises(ValueError) as caught:
+                linked_audit("elf", evidence,
+                             allowed_compressed={"c.nop": 1, "c.lw": 0})
+            data = json.loads((evidence / "audit.json").read_text())
+            self.assertEqual(data["compressed_parcels"], 2)
+            self.assertEqual(data["unsupported"], [["2000", "c.fld"]])
+            self.assertIn("c.fld", str(caught.exception))
+            # The second call accepts a different quadrant-0 mnemonic, so the
+            # same quadrant passes only when the name matches: the mnemonic
+            # key, not the quadrant, is what keeps the FP form out.
+            objdump = "80000000: 0001 c.nop\n80000002: 4080 c.lw\n"
+            linked_audit("elf", evidence, allowed_compressed={"c.nop": 1, "c.lw": 0})
+            data = json.loads((evidence / "audit.json").read_text())
+            self.assertEqual(data["unsupported"], [])
+
+    def test_malformed_word_length_fails_closed(self):
+        # 5-7 hex-digit words cannot come from a real objdump line; the audit
+        # must keep rejecting them instead of treating them as 32-bit.
+        from linked_audit import audit as linked_audit
+
+        for word in ("00013", "0000013", "0000001"):
+            with tempfile.TemporaryDirectory() as directory:
+                evidence = pathlib.Path(directory)
+                objdump = f"80000000: {word} addi\n"
+                symbols = "0000000080001000 d signature_base"
+                def fake_run(command, **_):
+                    return symbols if "nm" in command[0] else objdump
+                original = subprocess.check_output
+                subprocess.check_output = fake_run
+                try:
+                    with self.assertRaises(ValueError):
+                        linked_audit("elf", evidence)
+                finally:
+                    subprocess.check_output = original
+                report = json.loads((evidence / "audit.json").read_text())
+                self.assertEqual(report["unsupported"], [[word, "addi"]])
+
+    def test_four_digit_thirty_two_bit_word_fails_closed(self):
+        result, _, _ = self.probe(instruction="00000013 addi\n80000004: 0013 addi")
+        self.assertNotEqual(result.returncode, 0)
+
     def test_embedded_data_requires_mapping_symbol(self):
         instruction = "00000013 addi\n80000004: deadbeef .word\n80000008: 00000013 addi"
         result, _, _ = self.probe(instruction=instruction)

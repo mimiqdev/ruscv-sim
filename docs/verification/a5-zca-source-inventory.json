@@ -1,0 +1,538 @@
+{
+  "schema_version": 1,
+  "status": "approved-frozen",
+  "act4_commit": "a7c99303516f4e668f7488f172043392e23b9dfd",
+  "scope": "all tracked tests/rv64i/Zca/**/*.S at the pinned revision",
+  "profile": "a5-rv64imac-zca-nontrapping-proposal-v1",
+  "profile_document": "docs/verification/a5-zca-source-inventory.json",
+  "counts": {
+    "required-zca": 32
+  },
+  "sources": [
+    {
+      "source": "tests/rv64i/Zca/Zca-c.add-00.S",
+      "sha256": "64d31d49b2f5216e02e88678088d4b0ace1d5369eb1f0fcfea1863318311dfa7",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.add-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.addi-00.S",
+      "sha256": "daa9a53b8c3d806c28492e34a569f89b0a8a0f9074c65d7ba081fe3c65c94da4",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.addi-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.addi16sp-00.S",
+      "sha256": "87d421a4f590dd9563e67f2af363a18629f12277a4f429bce7a4922a3fa9ffa2",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.addi16sp-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.addi4spn-00.S",
+      "sha256": "0709d4b4606fc07ff8715725197e0316da0b920cda2f30e8f05ff04ae9fa8b90",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.addi4spn-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.addiw-00.S",
+      "sha256": "6a8ad672b58149eb27ccfd491588d065ad91f04f6648d121c89a5794cfe24891",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.addiw-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.addw-00.S",
+      "sha256": "a65f1a8d7023c70899018ca82132419127067d13144cdaff4950cf35db6a1fe8",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.addw-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.and-00.S",
+      "sha256": "6211799b6e5b211b5f81b7ddf2a3024de278010e4910530ac89653be3fed13b4",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.and-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.andi-00.S",
+      "sha256": "4652218b50de83b22cd4c7f706536df696df1114ca553cf98146937d326cba11",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.andi-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.beqz-00.S",
+      "sha256": "002037e7935642d162bb79319274d6f7a00eb84776d6668b96a56748aa02cd4f",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.beqz-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.bnez-00.S",
+      "sha256": "f5e6e1aa30b65b10e6dff808756c9960965545d3008c3ced91a2ac2e5be63665",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.bnez-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.j-00.S",
+      "sha256": "1040b18e98a5daf0e757fe68527dbe2b98da1c552965822800c8c307cb819545",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.j-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.jalr-00.S",
+      "sha256": "986f648ea4e2a5b0356cc5724b4885e7de1cd65edf11ed4759a051ae28e25f5e",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.jalr-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.jr-00.S",
+      "sha256": "44060022dbca61ff24cbf9f8a43015f57d567fbf701c11f733215946e87befba",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.jr-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.ld-00.S",
+      "sha256": "0a94d9d65923dffe31cabf7cf1bbd6dcef3e173d9c15dc4b414f70f1c6a7363a",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.ld-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.ldsp-00.S",
+      "sha256": "6fa637c3544e765dd149ce39eea9b7a6423da494f793df0696891a5c799abb96",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.ldsp-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.li-00.S",
+      "sha256": "3d731b844be73bbb0cd84c8424fc1b813ffa3b6b96de72404232663d56e1b638",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.li-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.lui-00.S",
+      "sha256": "526485473f82a2aae6f884750b3c4e3bbaea15cf33e7a34599e33d23e9c1986b",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.lui-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.lw-00.S",
+      "sha256": "a7646f9becb34cfe1cc7815e9df09868855d0c0f8d15b0fd2e23c416e33878d7",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.lw-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.lwsp-00.S",
+      "sha256": "96e0c73c437ba55ee184a3562c36e97d49ff26cd4daec0815e8dcde7e300b70c",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.lwsp-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.mv-00.S",
+      "sha256": "58df63af44c2c7ec6a348e66f3cd16afbf908926533e400cc493e00686bfe8ee",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.mv-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.nop-00.S",
+      "sha256": "f0a8780bc6e4eaad1d031ce8deb77e54023e73d060b5df141ebb8aefe37b70a0",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.nop-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.or-00.S",
+      "sha256": "216461d46cc68874427f476d7b74015dd8325bdddad1979c4ba7639acdba7444",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.or-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.sd-00.S",
+      "sha256": "2082302c5be35f3500cf9e62bf956ad83ecd865abe7e15cb3fe467a0e36440fb",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.sd-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.sdsp-00.S",
+      "sha256": "90ff4053949c41bb734b85296885b4897de557f06ed829258d76bc79f67df102",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.sdsp-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.slli-00.S",
+      "sha256": "9c0aecb2a1eaa0cf3d35cbff6af3ec981cc4de7536f2d40ae84c7240d5a50260",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.slli-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.srai-00.S",
+      "sha256": "97789514f616d2a1ad34cabdf0348a2f8b251279b4ef3a11de638a4d729a764e",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.srai-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.srli-00.S",
+      "sha256": "19d77fb82db6b041c5495aaa65c900ed205bf4a22a67a16c0002a358e814b196",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.srli-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.sub-00.S",
+      "sha256": "44902991a8bfd384c92d99b3abedb527c589792d2c9b7e9a454b866c2b2cf3cb",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.sub-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.subw-00.S",
+      "sha256": "550624a4d4c9233b212944dd268bbc9ee70da61996319f181a3949ddcd1f541a",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.subw-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.sw-00.S",
+      "sha256": "04d8c7abb31adf6119465679e7a3b4abf6d76bdf97144e21d024d4bbece6dbc7",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.sw-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.swsp-00.S",
+      "sha256": "9a5b2d757d2d9de4d6b5bb8025b22c7ab027febc3b28a1fa7b7c8c1199baf8aa",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.swsp-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zca/Zca-c.xor-00.S",
+      "sha256": "d2b45d9dd670e9f9b52b0735704ccead3d724110d7d090fdd2b993291c17f012",
+      "required_extensions": [
+        "I",
+        "Zca"
+      ],
+      "purpose": "Zca: Zca-c.xor-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64i_zicsr_zca",
+      "disposition": "include",
+      "reason": "required-zca",
+      "coverage_consequence": "Nontrapping RV64 Zca compressed-instruction coverage under --isa rv64imac; failure remains a blocker."
+    }
+  ],
+  "environment_headers": {
+    "tests/env/check_defines.h": "57f089a930a52c906eddf538bce0ad6f8ddc8392ee9a443dfa2200770020beb5",
+    "tests/env/encoding.h": "a1047813971b83fcce4b6701b244a0d9552287e53a21774defc1aa96e31820dc",
+    "tests/env/failure_code.h": "416d42f3d6129015025454e909f7182ecd2503a8efbbe59c60616a09644e453c",
+    "tests/env/riscv_arch_test.h": "deead01d29e9216cbe3d92f2c686d49dd2d3663566292a3d17cc81e1961d3cca",
+    "tests/env/rvtest_macros.h": "c007f14d1e5df88ff3efe70600aa4d9eea7a8a3c3f71790b3506c310ee8777b4",
+    "tests/env/rvtest_macros_vector.h": "240878019e1e47c46811ff03fd3236654c4a71dd6cec3ce366cbfc092d03e125",
+    "tests/env/rvtest_setup.h": "6b9f163d7e8741c43a98553061ba7ea1eab689501879913f3740c6c7ed8b4739",
+    "tests/env/rvtest_trap_handler.h": "6dc137ba404caeccc65fbcbb852c93f70d247941bf960820b4210521a4cf012f",
+    "tests/env/sail_macros.h": "90ccc71bce5a5c17f2d4bd163e90b0cbd007bdf24d4e0e7cdae19a9b3f66d796",
+    "tests/env/signature.h": "d76ab68bc1a13bd2bf1f845ef93cb0869f3ec39ffdd4efb488b3db2bb98891b9",
+    "tests/env/utils.h": "46771e8bce240d0bc85ef238df5d44d01eb7be35fbb2d3b1fd0c3563e6a94a81"
+  }
+}

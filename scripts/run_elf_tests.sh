@@ -149,6 +149,14 @@ for required in s6_ebreak s6_debug_csr; do
     fi
 done
 
+# Zca U4 compressed guests are required members of the same suite.
+for required in zca_ctrl_flow zca_link_values zca_straddle_fetch zca_ebreak_trap zca_hints; do
+    if [ ! -f "${OUTDIR}/rv64i/${required}.elf" ]; then
+        echo -e "${RED}Error: required Zca guest missing: ${required}.elf${NC}" >&2
+        exit 2
+    fi
+done
+
 # Stage 4 guests and the Stage 5 U1 through U4 guests live under rv64i and
 # are linked with linker-s4.ld. The suite fails if any of them is missing.
 for required in \
@@ -175,12 +183,18 @@ for elf in "${ELF_FILES[@]}"; do
     name="$(basename "${elf}" .elf)"
     echo -e "${YELLOW}Test ${number}/${#ELF_FILES[@]}: ${name}.elf${NC}"
     echo "  File: ${elf}"
+    # Zca U4 compressed guests select the rv64imac profile; every existing
+    # guest runs unchanged under the default rv64ima.
+    isa_args=( )
+    case "${name}" in
+        zca_*) isa_args=(--isa rv64imac) ;;
+    esac
     if ! check_entry "${elf}"; then
         failed=$((failed + 1))
         continue
     fi
 
-    output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" 2>&1)
+    output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" "${isa_args[@]}" 2>&1)
     status=$?
     printf '%s\n' "${output}"
     # s5_wfi_none has no future platform event. D4 says that run stops with

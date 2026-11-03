@@ -1,0 +1,10 @@
+$schema: config_schema.json#
+kind: architecture configuration
+type: fully configured
+name: ruscv-rv64imac-zca
+description: Nontrapping RV64I+Zca smoke selection only; not a complete machine capability claim.
+implemented_extensions:
+  - { name: I, version: "= 2.1.0" }
+  - { name: Zca, version: "= 1.0.0" }
+params:
+  MXLEN: 64

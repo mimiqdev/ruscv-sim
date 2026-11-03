@@ -1,6 +1,15 @@
 name: A5 ACT4 selected compatibility
 on:
   workflow_dispatch:
+    inputs:
+      selection:
+        description: "Frozen selection to run: proposal (51-case RV64I) or zca (32-source rv64i/Zca)"
+        required: false
+        default: proposal
+        type: choice
+        options:
+          - proposal
+          - zca
 permissions:
   contents: read
 concurrency:
@@ -11,7 +20,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
-      A5_SELECTION: proposal
+      A5_SELECTION: ${{ inputs.selection || 'proposal' }}
       UV_CACHE_DIR: ${{ github.workspace }}/.a5/cache/uv
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.a5/tools/python
       BUNDLE_USER_HOME: ${{ github.workspace }}/.a5/cache/bundle
@@ -40,7 +49,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: a5-feasibility-${{ github.sha }}
+          name: a5-${{ inputs.selection || 'proposal' }}-${{ github.sha }}
           path: |
             .a5/evidence
             .a5/work

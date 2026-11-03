@@ -64,6 +64,10 @@ done
 linker_script_for() {
     case "$(basename "$1")" in
         s4_*|s5_*) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
+        # The compressed Sv39 guest carries page tables and translated pages in
+        # .text, so its tohost word must sit on its own page after the image
+        # (linker.ld would place it inside .text at 0x80001000).
+        zca_straddle_fetch.S) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
         *) printf '%s' "${TESTS_DIR}/linker.ld" ;;
     esac
 }
@@ -80,6 +84,8 @@ fi
 
 # Keep the historical RV64I/RV64M guest order intact; append the A8 RV64A
 # atomic guests as a distinct addition rather than renumbering the original set.
+# Zca U4 compressed guests build with Zifencei added to the assembler
+# permission set; they run only under `--isa rv64imac` in run_elf_tests.sh.
 mapfile -t SOURCES < <(
     find "${TESTS_DIR}/rv64i" "${TESTS_DIR}/rv64m" -type f -name '*.S' -print | sort
     find "${TESTS_DIR}/rv64a" -type f -name '*.S' -print | sort
@@ -99,7 +105,13 @@ for source in "${SOURCES[@]}"; do
     mkdir -p "$(dirname "${object}")"
 
     echo -e "${BLUE}Compiling ${relative}${NC}"
-    if ! "${AS}" -march=rv64ima_zicsr -mabi=lp64 "${source}" -o "${object}"; then
+    # Zca guests (rv64i/zca_*.S) assemble with Zifencei; every existing guest
+    # keeps its frozen -march=rv64ima_zicsr flags unchanged.
+    march=rv64ima_zicsr
+    case "$(basename "${source}")" in
+        zca_*) march=rv64imac_zicsr_zifencei ;;
+    esac
+    if ! "${AS}" -march=${march} -mabi=lp64 "${source}" -o "${object}"; then
         echo -e "${RED}  [FAIL] assembly: ${relative}${NC}" >&2
         failed=$((failed + 1))
         continue

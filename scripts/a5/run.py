@@ -1,11 +1,13 @@
 """Audit linked instructions and run intact/corrupt ACT4 ELFs via the public CLI."""
 import hashlib
 import json
+import os
 import pathlib
 import re
 import struct
 import subprocess
 
+from accounting import a5_allowed_compressed
 from cli_result import classify
 from linked_audit import audit
 
@@ -14,7 +16,7 @@ evidence = root / ".a5/evidence"
 elfs = list((root / ".a5/work").glob("**/elfs/**/*.elf"))
 assert len(elfs) == 1, elfs
 elf = elfs[0]
-symbols = audit(elf, evidence)
+symbols = audit(elf, evidence, allowed_compressed=a5_allowed_compressed())
 # Flip the first actual expected result, after the initial signature canary.
 # Find signature_base using the linked symbol table, then map its VA through
 # PT_LOAD rather than guessing file offsets. Code and exit hooks stay intact.
