@@ -1,0 +1,14 @@
+diff --git i/src/isa/rv64i/jump.rs w/src/isa/rv64i/jump.rs
+index 90043b1..7359a8f 100644
+--- i/src/isa/rv64i/jump.rs
++++ w/src/isa/rv64i/jump.rs
+@@ -63,8 +63,7 @@ pub fn exec_jalr(
+     _mem: &mut dyn crate::memory::MemoryInterface,
+ ) -> Result<(), ExecuteError> {
+     if let (Some(rd), Some(rs1), Some(imm)) = (instr.rd, instr.rs1, instr.imm) {
+-        let return_addr = state.pc.wrapping_add(u64::from(state.instruction_length));
+-        // Sign-extend the 12-bit immediate to 64 bits
++        let return_addr = state.pc.wrapping_add(4);
+         let imm_sext = ((imm as i32) << 20 >> 20) as i64 as u64;
+         let target = (state.regs[rs1 as usize].wrapping_add(imm_sext)) & !1u64;
+ 

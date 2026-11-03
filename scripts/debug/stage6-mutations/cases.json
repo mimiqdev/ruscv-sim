@@ -389,5 +389,168 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "zca-clw-as-lh",
+    "source": "src/isa/rv64c/decoder_16bit.rs",
+    "patch": "zca-clw-as-lh.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "zca_expansion_test"
+        ],
+        "test": "c_lw_and_c_sw_expand_as_word_not_halfword",
+        "failure": [
+          "C\\.LW must expand to lw",
+          "left:\\s+300035",
+          "right:\\s+304131"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "zca-straddle-first-parcel",
+    "source": "src/core/mod.rs",
+    "patch": "zca-straddle-first-parcel.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "zca_u2_hart_profile"
+        ],
+        "test": "straddling_second_parcel_page_fault_reports_second_va",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+Exception\\(InstructionAccessFault\\)",
+          "right:\\s+Exception\\(InstructionPageFault\\)"
+        ]
+      },
+      {
+        "target": [
+          "--test",
+          "zca_u2_hart_profile"
+        ],
+        "test": "straddling_instruction_both_parcels_translated",
+        "failure": [
+          "expected retirement, got TrapEntered",
+          "mtval: 4096"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "zca-cjalr-link-pc4",
+    "source": "src/isa/rv64i/jump.rs",
+    "patch": "zca-cjalr-link-pc4.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "zca_u2_hart_profile"
+        ],
+        "test": "compressed_fallthrough_and_link_are_pc_plus_2",
+        "failure": [
+          "c\\.jalr link is pc\\+2",
+          "left:\\s+2147483652",
+          "right:\\s+2147483650"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "zca-mepc-mask-2bit",
+    "source": "src/csr/mod.rs",
+    "patch": "zca-mepc-mask-2bit.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "zca_u2_hart_profile"
+        ],
+        "test": "mepc_and_sepc_clear_only_bit0_under_imac",
+        "failure": [
+          "IALIGN=16 keeps bit 1",
+          "left:\\s+4660",
+          "right:\\s+4662"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "zca-default-misa-c",
+    "source": "src/machine/mod.rs",
+    "patch": "zca-default-misa-c.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "zca_u2_hart_profile"
+        ],
+        "test": "misa_reports_the_selected_profile_and_stays_read_only",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+9223372036856090885",
+          "right:\\s+9223372036856090881"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "zca-cebreak-dpc-mask",
+    "source": "src/core/debug_mode.rs",
+    "patch": "zca-cebreak-dpc-mask.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "zca_u3_debug"
+        ],
+        "test": "c_ebreak_with_ebreakm_enters_debug_with_cause_1_and_dpc_at_its_address",
+        "failure": [
+          "dpc is the c\\.ebreak address, bit 1 kept",
+          "left:\\s+2147483648",
+          "right:\\s+2147483650"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "zca-progbuf-accepts-cj",
+    "source": "src/core/mod.rs",
+    "patch": "zca-progbuf-accepts-cj.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "zca_u3_debug"
+        ],
+        "test": "compressed_control_transfers_are_cmderr_3",
+        "failure": [
+          "c\\.j is forbidden in the buffer",
+          "left:\\s+0",
+          "right:\\s+3"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "zca-cnop-reserved",
+    "source": "src/isa/rv64c/decoder_16bit.rs",
+    "patch": "zca-cnop-reserved.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "zca_expansion_test"
+        ],
+        "test": "c_nop_and_hint_forms_are_not_reserved",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+Reserved",
+          "right:\\s+Expansion"
+        ]
+      }
+    ]
   }
 ]

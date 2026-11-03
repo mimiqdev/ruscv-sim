@@ -1,0 +1,14 @@
+diff --git i/src/isa/rv64c/decoder_16bit.rs w/src/isa/rv64c/decoder_16bit.rs
+index 0b8fd33..f8f4d04 100644
+--- i/src/isa/rv64c/decoder_16bit.rs
++++ w/src/isa/rv64c/decoder_16bit.rs
+@@ -209,6 +209,9 @@ impl CompressedDecoder {
+                 let rd = (p >> 7) & 0b11111;
+                 let imm = ci_imm(p);
+                 let instruction = build_i_type(Opcode::OpImm, rd, rd, Funct3::AddSub, imm);
++                if rd == 0 && imm == 0 {
++                    return ZcaClass::Reserved;
++                }
+                 if (rd == 0) != (imm == 0) {
+                     // C.NOP with a nonzero immediate, or C.ADDI with a zero
+                     // immediate, is a D2 HINT; C.NOP itself is an ordinary NOP.

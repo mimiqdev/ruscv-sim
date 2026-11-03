@@ -1,0 +1,14 @@
+diff --git i/src/core/mod.rs w/src/core/mod.rs
+index f420136..0245445 100644
+--- i/src/core/mod.rs
++++ w/src/core/mod.rs
+@@ -1527,8 +1527,7 @@ impl RiscvCore {
+             return Ok((first_bits as u32, width.bytes() as u8));
+         }
+         let second_va = pc_before.wrapping_add(2);
+-        let second =
+-            self.translate_address(second_va, translation::AccessKind::Fetch, pc_before, None)?;
++        let second = second_va;
+         let second_bits = match self.fetch_parcel(second_va, second, PhysicalWidth::Halfword) {
+             Ok(bits) => bits,
+             // A second-parcel fault reports `tval` as that parcel's

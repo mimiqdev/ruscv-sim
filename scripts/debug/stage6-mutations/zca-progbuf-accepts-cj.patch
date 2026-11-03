@@ -1,0 +1,13 @@
+diff --git i/src/core/mod.rs w/src/core/mod.rs
+index f420136..e890172 100644
+--- i/src/core/mod.rs
++++ w/src/core/mod.rs
+@@ -1644,7 +1644,7 @@ impl RiscvCore {
+         if Self::is_illegal_encoding(&decoded)
+             || self
+                 .debug_word
+-                .is_some_and(|_| Self::debug_forbidden(&decoded))
++                .is_some_and(|_| instruction_length == 4 && Self::debug_forbidden(&decoded))
+         {
+             return self.enter_trap(
+                 Trap::Exception(ExceptionCause::IllegalInstruction),
