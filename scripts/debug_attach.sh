@@ -31,6 +31,13 @@
 # --isa=rv64imafdc_zicsr. The only named difference is the connect PC:
 # Spike halts in its boot ROM, this profile at the ELF entry.
 #
+# RV64GC U3 binds every session to its profile under contract D7/D3. The
+# abstract, program-buffer and system-bus sessions (and the two negative
+# controls) run the simulator under explicit `--isa rv64ima`, the Zca session
+# under `--isa rv64imac`, and the F/D session under FDC_ISA_ARGS, the single
+# flag that U1 or U5 removes once the default flips to rv64imafdc. Every
+# Spike side keeps its existing --isa string, and no named result changes.
+#
 # Named outputs are the S6, U4, Z5 and U6 lines in the GDB logs. The
 # comparisons are those values, not a hash. dmstatus.version is not one of them. dcsr is
 # compared after setting aside two documented differences: D5 forces
@@ -1311,7 +1318,8 @@ compare_fd_named() {
 
 ruscv_cmd() {
     local port="$1"
-    exec "${RUSCV_SIM}" run "${WORK}/guest.elf" --rbb-port "${port}" --halted --max-cycles 100000000
+    exec "${RUSCV_SIM}" run "${WORK}/guest.elf" --isa rv64ima \
+        --rbb-port "${port}" --halted --max-cycles 100000000
 }
 
 # The Zca U5 target: the compressed guest under the rv64imac profile.
@@ -1321,10 +1329,15 @@ ruscv_zca_cmd() {
         --rbb-port "${port}" --halted --max-cycles 100000000
 }
 
-# The F/D U6 target: the FP session guest under rv64imafdc.
+# The F/D U6 target: the FP session guest under the rv64imafdc profile.
+# FDC_ISA_ARGS is the D7 default-proof switch: while the default is still
+# rv64ima it holds the explicit profile; the RV64GC U1 or U5 follow-up
+# empties it (`FDC_ISA_ARGS=()`) once the default is rv64imafdc, so the
+# F/D session then runs with no --isa and proves the default.
+FDC_ISA_ARGS=(--isa rv64imafdc)
 ruscv_fdc_cmd() {
     local port="$1"
-    exec "${RUSCV_SIM}" run "${WORK}/fdc-guest.elf" --isa rv64imafdc \
+    exec "${RUSCV_SIM}" run "${WORK}/fdc-guest.elf" "${FDC_ISA_ARGS[@]+"${FDC_ISA_ARGS[@]}"}" \
         --rbb-port "${port}" --halted --max-cycles 100000000
 }
 
@@ -1450,7 +1463,8 @@ run_negative_version() {
     local port
     port="$(free_port)"
     RUSCV_S6_DMSTATUS_VERSION=4 \
-        "${RUSCV_SIM}" run "${WORK}/guest.elf" --rbb-port "${port}" --halted --max-cycles 100000000 \
+        "${RUSCV_SIM}" run "${WORK}/guest.elf" --isa rv64ima \
+        --rbb-port "${port}" --halted --max-cycles 100000000 \
         >"${dir}/target.log" 2>&1 &
     local target_pid=$!
     PIDS+=("${target_pid}")
@@ -1497,7 +1511,8 @@ run_negative_datacount() {
     port="$(free_port)"
     gdb_port="$(free_port)"
     RUSCV_S6_DATACOUNT=2 \
-        "${RUSCV_SIM}" run "${WORK}/guest.elf" --rbb-port "${port}" --halted --max-cycles 100000000 \
+        "${RUSCV_SIM}" run "${WORK}/guest.elf" --isa rv64ima \
+        --rbb-port "${port}" --halted --max-cycles 100000000 \
         >"${dir}/target.log" 2>&1 &
     local target_pid=$!
     PIDS+=("${target_pid}")
