@@ -233,9 +233,34 @@ impl DebugModule {
                 }
                 Ok(())
             }
-            // §3.7.1.1: a register that does not exist returns cmderr 3.
-            // misa has F and D clear, so f0–f31 do not exist.
-            0x1020..=0x103f => Err(CMDERR_EXCEPTION),
+            // §3.7.1.1: f0–f31 exist only under an FP profile. Under
+            // `rv64ima`/`rv64imac` they do not exist, so the access stays
+            // `cmderr` 3 (contract D10). A 32-bit write is NaN-boxed and a
+            // 32-bit read returns the raw low 32 bits (contract D5/D10).
+            0x1020..=0x103f => {
+                let index = (regno - 0x1020) as u8;
+                if write {
+                    let exists = if size64 {
+                        hart.debug_write_fpr64(index, self.arg0())
+                    } else {
+                        hart.debug_write_fpr32(index, self.data[0])
+                    };
+                    if !exists {
+                        return Err(CMDERR_EXCEPTION);
+                    }
+                } else {
+                    let value = if size64 {
+                        hart.debug_read_fpr64(index)
+                    } else {
+                        hart.debug_read_fpr32(index).map(u64::from)
+                    };
+                    let Some(value) = value else {
+                        return Err(CMDERR_EXCEPTION);
+                    };
+                    self.set_arg0(value, size64);
+                }
+                Ok(())
+            }
             0x7b0 => self.transfer_dcsr(hart, write, size64),
             0x7b1 => self.transfer_dpc(hart, write, size64),
             0x7b2 => self.transfer_dscratch(hart, 0, write, size64),
@@ -298,22 +323,12 @@ impl DebugModule {
         size64: bool,
     ) -> Result<(), u8> {
         if write {
-            let previous = hart
-                .state()
-                .csr
-                .read_as_machine(addr)
-                .map_err(|_| CMDERR_EXCEPTION)?;
+            let previous = hart.debug_read_csr(addr).map_err(|_| CMDERR_EXCEPTION)?;
             let value = self.written_low(size64, previous);
-            hart.state_mut()
-                .csr
-                .write_as_machine(addr, value)
+            hart.debug_write_csr(addr, value)
                 .map_err(|_| CMDERR_EXCEPTION)
         } else {
-            let value = hart
-                .state()
-                .csr
-                .read_as_machine(addr)
-                .map_err(|_| CMDERR_EXCEPTION)?;
+            let value = hart.debug_read_csr(addr).map_err(|_| CMDERR_EXCEPTION)?;
             self.set_arg0(value, size64);
             Ok(())
         }
