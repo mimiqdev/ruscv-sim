@@ -383,7 +383,7 @@ def validate(path, reader, expected_digest=None, sealed=True):
             producer=next(item['producer'] for item in report['fixtures'] if item['id']==f['id'])
             elf=producer['argv_ld'][-1]
             log=str(Path(elf).parent.parent/(stem+'.log'))
-            expected_argv=[report['binaries']['cli']['path'],'run',elf,'--max-cycles',str(f['turns']+16)] if raw['route']=='cli' else [report['binaries']['driver']['path'],'probe-library',raw['route'],elf,str(f['turns']+16)]
+            expected_argv=[report['binaries']['cli']['path'],'run',elf,'--max-cycles',str(f['turns']+16),'--isa','rv64ima'] if raw['route']=='cli' else [report['binaries']['driver']['path'],'probe-library',raw['route'],elf,str(f['turns']+16)]
             if raw['mode']=='file':
                 if raw['route']=='cli':expected_argv.append('--log-commits')
                 expected_argv.append(log)

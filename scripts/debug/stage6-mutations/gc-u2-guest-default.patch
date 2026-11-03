@@ -1,0 +1,11 @@
+--- a/scripts/run_elf_tests.sh
++++ b/scripts/run_elf_tests.sh
+@@ -204,7 +204,7 @@
+     # rv64imafdc.
+     isa_args=( )
+     case "${name}" in
+-        s4_*) isa_args=(--isa rv64ima) ;;
++        s4_*) isa_args=( ) ;;
+         zca_*) isa_args=(--isa rv64imac) ;;
+         fd_*) isa_args=(--isa rv64imafd) ;;
+         zcd_*|fdc_*) isa_args=(--isa rv64imafdc) ;;

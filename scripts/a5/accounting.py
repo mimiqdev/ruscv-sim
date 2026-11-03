@@ -36,14 +36,15 @@ def plan_path():
 
 
 def run_isa():
-    """The selected DUT profile for executed guests, or None for the default.
+    """The selected DUT profile for executed guests.
 
     The Zca selection runs under --isa rv64imac, the F/D selection under
     --isa rv64imafd and the Zcd selection under --isa rv64imafdc (contract
-    D2/D11); the RV64I selection keeps the unchanged default rv64ima command
-    line.
+    D6); the RV64I selection runs under the explicit rv64ima profile, so
+    every frozen selection binds its DUT profile instead of relying on the
+    CLI default.
     """
-    return os.environ.get("A5_RUN_ISA") or None
+    return os.environ.get("A5_RUN_ISA") or "rv64ima"
 
 
 # RV64 Zca mnemonics, mapped to their parcel quadrant. C.ADDI4SPN, C.LW,
@@ -189,8 +190,9 @@ def generation(plan, work, returncode):
 
 def execute(binary, elf, diagnostics, *, max_cycles=1000000, timeout=60, isa=None):
     command = [str(binary.resolve()), "run", str(elf.resolve()), "--max-cycles", str(max_cycles)]
-    if isa:
-        command.extend(["--isa", isa])
+    # Every selection passes an explicit profile; the `isa` argument is a
+    # test seam for negative controls, never a way back to the default.
+    command.extend(["--isa", isa or run_isa()])
     timed_out = False
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout)

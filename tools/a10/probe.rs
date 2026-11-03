@@ -1,5 +1,6 @@
 //! P0 library-output transport; not a measurement driver or semantics engine.
-use ruscv_sim::executor::{load_and_run, load_and_run_file};
+use ruscv_sim::executor::{load_and_run_file_with_isa, load_and_run_with_isa};
+use ruscv_sim::machine::IsaProfile;
 use std::path::Path;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
@@ -9,10 +10,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log = args.get(4).map(Path::new);
     let budget = Some(args[3].parse()?);
     let r = match args[1].as_str() {
-        "native-bytes" => load_and_run(&std::fs::read(&args[2])?, budget, None, log, false)?,
-        "native-file" => {
-            load_and_run_file(&args[2], budget, None, log.map(Path::to_path_buf), false)?
-        }
+        "native-bytes" => load_and_run_with_isa(
+            &std::fs::read(&args[2])?,
+            budget,
+            None,
+            log,
+            false,
+            IsaProfile::Rv64ima,
+        )?,
+        "native-file" => load_and_run_file_with_isa(
+            &args[2],
+            budget,
+            None,
+            log.map(Path::to_path_buf),
+            false,
+            IsaProfile::Rv64ima,
+        )?,
         _ => return Err("unknown library route".into()),
     };
     // UART output precedes the delimiter. No library stdout is suppressed or
