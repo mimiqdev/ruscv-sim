@@ -37,6 +37,8 @@ use ruscv_sim::IsaProfile;
 use std::sync::{Arc, Mutex};
 
 const RAM_SIZE: usize = 0x10_0000;
+/// Base of the flat ELF fixtures from `tests/common/public_elf.rs`.
+const BASE: u64 = 0x8000_0000;
 /// Data offset inside the loaded fixture image.
 const ELF_DATA: u64 = 0x7f8;
 
@@ -644,5 +646,69 @@ fn commit_log_does_not_print_csr_facts_other_than_fcsr() {
     assert_eq!(
         commit_log_text(&turn),
         format!("core   0: 3 0x0000000000000000 (0x{write:08x})\n")
+    );
+}
+
+#[test]
+fn the_public_executor_delivers_fp_effects_to_the_commit_log() {
+    // The whole path — ELF guest, FP execution, commit fact, observation
+    // sink, log text — under `rv64imafdc`; no helper is called directly.
+    fn fmv_w_x(rd: u32, rs1: u32) -> u32 {
+        op_fp(0x78, 0, rs1, 0, rd)
+    }
+    let code = [
+        addi(5, 0, 3),
+        slli(5, 5, 13), // mstatus.FS = Dirty
+        csrw(machine::MSTATUS, 5),
+        fixture::lui(6, 0x3f800), // 1.0f
+        fmv_w_x(1, 6),
+        fixture::lui(7, 0x40000), // 2.0f
+        fmv_w_x(2, 7),
+        op_fp(0x00, 2, 1, 0, 3), // fadd.s f3, f1, f2
+    ];
+    let elf = fixture::elf_with_code(&code, 0, false, false, 0x4000);
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    let result = load_and_run_with_isa(
+        &elf,
+        Some(code.len() as u64),
+        None,
+        Some(temp.path()),
+        false,
+        IsaProfile::Rv64imafdc,
+    )
+    .expect("the guest executes");
+    assert_eq!(result.cycles, code.len() as u64);
+    let text = std::fs::read_to_string(temp.path()).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), code.len());
+    // `mstatus` adds no segment (only `fcsr` is printed among CSRs); the FMV
+    // transfers log their NaN-boxed FPR writes; `fadd.s` without flags adds
+    // no `fcsr` segment.
+    for (index, line) in lines.iter().enumerate().take(code.len() - 1) {
+        assert_eq!(
+            *line,
+            format!(
+                "core   0: 3 {:#018x} ({:#010x}){}",
+                BASE + index as u64 * 4,
+                code[index],
+                match index {
+                    0 => " x5  0x0000000000000003",
+                    1 => " x5  0x0000000000006000",
+                    3 => " x6  0x000000003f800000",
+                    4 => " f1  0xffffffff3f800000",
+                    5 => " x7  0x0000000040000000",
+                    6 => " f2  0xffffffff40000000",
+                    _ => "",
+                }
+            )
+        );
+    }
+    assert_eq!(
+        lines[code.len() - 1],
+        format!(
+            "core   0: 3 {:#018x} ({:#010x}) f3  0xffffffff40400000",
+            BASE + (code.len() - 1) as u64 * 4,
+            code[code.len() - 1]
+        )
     );
 }
