@@ -11,7 +11,7 @@ pub mod trap;
 use crate::csr::{machine, mstatus, CsrFile};
 use crate::decode::{DecodeError, DecodedInstruction, InstructionDecoder, Opcode};
 use crate::execute::{ExecuteError, Executor};
-use crate::fpu::{Fcsr, FpuRegisterFile};
+use crate::fpu::{Fcsr, Fpr, FpuRegisterFile};
 use crate::isa::rv64a::ReservationSet;
 use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
 use crate::physical::{
@@ -263,14 +263,9 @@ impl CoreState {
     /// Read `fflags`, `frm` or `fcsr` out of the single architectural `fcsr`
     /// (contract D5).  Reserved `fcsr` bits read zero.
     pub(crate) fn read_fp_csr(&self, addr: u16) -> Result<u64, crate::csr::CsrError> {
-        use crate::csr::unprivileged;
         self.check_fp_csr(addr)?;
-        Ok(match addr {
-            unprivileged::FFLAGS => u64::from(self.fcsr.flags_bits()),
-            unprivileged::FRM => u64::from(self.fcsr.frm_bits()),
-            unprivileged::FCSR => u64::from(self.fcsr.read()),
-            _ => return Err(crate::csr::CsrError::InvalidAddress(addr)),
-        })
+        self.fp_csr_value(addr)
+            .ok_or(crate::csr::CsrError::InvalidAddress(addr))
     }
 
     /// Write `fflags`, `frm` or `fcsr`, then set `mstatus.FS` to Dirty
@@ -282,11 +277,8 @@ impl CoreState {
     ) -> Result<(), crate::csr::CsrError> {
         use crate::csr::unprivileged;
         self.check_fp_csr(addr)?;
-        match addr {
-            unprivileged::FFLAGS => self.fcsr.write_flags_bits(value as u8),
-            unprivileged::FRM => self.fcsr.write_frm_bits(value as u8),
-            unprivileged::FCSR => self.fcsr.write(value as u32),
-            _ => return Err(crate::csr::CsrError::InvalidAddress(addr)),
+        if !self.set_fp_csr_value(addr, value) {
+            return Err(crate::csr::CsrError::InvalidAddress(addr));
         }
         // Contract D9: pinned Spike logs the underlying CSRs, so an `fcsr`
         // write is both an `frm` and an `fflags` write, and an equal-value
@@ -308,6 +300,74 @@ impl CoreState {
         // CSRRSI/CSRRCI with a zero immediate never reach this method.
         self.mark_fs_dirty();
         Ok(())
+    }
+
+    /// The architectural value of the three floating-point CSRs, without the
+    /// profile or `mstatus.FS` legality check.  `None` for any other address.
+    fn fp_csr_value(&self, addr: u16) -> Option<u64> {
+        use crate::csr::unprivileged;
+        match addr {
+            unprivileged::FFLAGS => Some(u64::from(self.fcsr.flags_bits())),
+            unprivileged::FRM => Some(u64::from(self.fcsr.frm_bits())),
+            unprivileged::FCSR => Some(u64::from(self.fcsr.read())),
+            _ => None,
+        }
+    }
+
+    /// Store the architectural `fflags`, `frm` or `fcsr` bits without the
+    /// legality check and without the D6 FS-Dirty side effect.  Returns
+    /// whether `addr` is one of the three.
+    fn set_fp_csr_value(&mut self, addr: u16, value: u64) -> bool {
+        use crate::csr::unprivileged;
+        match addr {
+            unprivileged::FFLAGS => self.fcsr.write_flags_bits(value as u8),
+            unprivileged::FRM => self.fcsr.write_frm_bits(value as u8),
+            unprivileged::FCSR => self.fcsr.write(value as u32),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Abstract-register read of a CSR for the Debug Module (contract D10,
+    /// Debug Spec 1.0 §3.7.1.1).
+    ///
+    /// `fflags`, `frm` and `fcsr` exist under an FP profile regardless of
+    /// `mstatus.FS`, and this path leaves FS unchanged.  Every other address
+    /// has the ordinary M-mode abstract CSR semantics.
+    pub(crate) fn debug_read_csr(&self, addr: u16) -> Result<u64, crate::csr::CsrError> {
+        use crate::csr::CsrError;
+        if crate::csr::is_fp_csr(addr) {
+            if !self.fp_state_enabled() {
+                return Err(CsrError::InvalidAddress(addr));
+            }
+            return self
+                .fp_csr_value(addr)
+                .ok_or(CsrError::InvalidAddress(addr));
+        }
+        self.csr.read_as_machine(addr)
+    }
+
+    /// Abstract-register write of a CSR for the Debug Module (contract D10,
+    /// Debug Spec 1.0 §3.7.1.1).
+    ///
+    /// A write to `fflags`, `frm` or `fcsr` takes effect under an FP profile
+    /// regardless of `mstatus.FS` and, following pinned Spike, leaves FS
+    /// unchanged: it does not run the D6 FS-Dirty transition that the same
+    /// write as a guest CSR instruction performs.
+    pub(crate) fn debug_write_csr(
+        &mut self,
+        addr: u16,
+        value: u64,
+    ) -> Result<(), crate::csr::CsrError> {
+        use crate::csr::CsrError;
+        if crate::csr::is_fp_csr(addr) {
+            if !self.fp_state_enabled() {
+                return Err(CsrError::InvalidAddress(addr));
+            }
+            self.set_fp_csr_value(addr, value);
+            return Ok(());
+        }
+        self.csr.write_as_machine(addr, value)
     }
 
     /// Set `mstatus.FS` to Dirty as a Hart-owned transition (contract D6).
@@ -1132,6 +1192,73 @@ impl RiscvCore {
         true
     }
 
+    /// Debugger abstract 64-bit read of `f0`–`f31` (`aarsize` 3).
+    ///
+    /// `None` when the selected profile has no FP state: the register does
+    /// not exist, which the DM reports as `cmderr` 3 (contract D10, Debug
+    /// Spec 1.0 §3.7.1.1).
+    pub fn debug_read_fpr64(&self, index: u8) -> Option<u64> {
+        self.state
+            .csr
+            .has_fp()
+            .then(|| self.state.fpr.read(usize::from(index)).bits())
+    }
+
+    /// Debugger abstract 32-bit read of `f0`–`f31` (`aarsize` 2).
+    ///
+    /// The raw low 32 bits are returned unchanged, as the ISA Manual
+    /// specifies for a narrow transfer out of the register (contract D5,
+    /// D10).  `None` when the selected profile has no FP state.
+    pub fn debug_read_fpr32(&self, index: u8) -> Option<u32> {
+        self.state
+            .csr
+            .has_fp()
+            .then(|| self.state.fpr.read_raw_u32(usize::from(index)))
+    }
+
+    /// Debugger abstract 64-bit write of `f0`–`f31` (`aarsize` 3).
+    ///
+    /// Returns whether the register exists. `f0` is an ordinary register
+    /// (contract D5).
+    pub fn debug_write_fpr64(&mut self, index: u8, value: u64) -> bool {
+        if !self.state.csr.has_fp() {
+            return false;
+        }
+        self.state
+            .fpr
+            .write(usize::from(index), Fpr::from_bits(value));
+        true
+    }
+
+    /// Debugger abstract 32-bit write of `f0`–`f31` (`aarsize` 2).
+    ///
+    /// The value is stored NaN-boxed: the upper 32 bits become ones (contract
+    /// D5, D10).  Returns whether the register exists.
+    pub fn debug_write_fpr32(&mut self, index: u8, value: u32) -> bool {
+        if !self.state.csr.has_fp() {
+            return false;
+        }
+        self.state.fpr.write_u32(usize::from(index), value);
+        true
+    }
+
+    /// Debugger abstract read of a CSR (contract D10).
+    ///
+    /// Under an FP profile `fflags`, `frm` and `fcsr` are readable whether
+    /// `mstatus.FS` is Off or not. Every other address keeps the ordinary
+    /// M-mode abstract CSR semantics.
+    pub fn debug_read_csr(&self, addr: u16) -> Result<u64, crate::csr::CsrError> {
+        self.state.debug_read_csr(addr)
+    }
+
+    /// Debugger abstract write of a CSR (contract D10).
+    ///
+    /// A write to `fflags`, `frm` or `fcsr` takes effect under an FP profile
+    /// regardless of `mstatus.FS` and leaves FS unchanged.
+    pub fn debug_write_csr(&mut self, addr: u16, value: u64) -> Result<(), crate::csr::CsrError> {
+        self.state.debug_write_csr(addr, value)
+    }
+
     /// Physical load for Abstract Access Memory.
     ///
     /// Debug Spec 1.0 §3.7.1.3. The access uses this hart's data port with
@@ -1393,6 +1520,7 @@ impl RiscvCore {
             )
         });
         self.state.csr.begin_observation(false);
+        self.state.csr.begin_fp_csr_observation(false);
         self.state.fpr.begin_observation(false);
         self.observation_demand = false;
         self.gpr_destination = None;
