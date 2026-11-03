@@ -1,0 +1,17 @@
+diff --git i/src/csr/mod.rs w/src/csr/mod.rs
+index 51150bc..3d7ff07 100644
+--- i/src/csr/mod.rs
++++ w/src/csr/mod.rs
+@@ -273,11 +273,7 @@ impl CsrFile {
+ 
+     /// The mask `mepc` and `sepc` apply to a written value (contract D5).
+     fn epc_mask(&self) -> u64 {
+-        if self.epc_ialign32 {
+-            !0b11
+-        } else {
+-            !0b1
+-        }
++        !0b11
+     }
+ 
+     /// Publish the platform `mtime` for this instruction's `time` read.

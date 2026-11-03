@@ -1,0 +1,13 @@
+diff --git i/src/core/debug_mode.rs w/src/core/debug_mode.rs
+index bd18cb3..7dd704b 100644
+--- i/src/core/debug_mode.rs
++++ w/src/core/debug_mode.rs
+@@ -74,7 +74,7 @@ const FIXED_ZERO: u64 = EBREAKVS | EBREAKVU | STEPIE | V | NMIP;
+ /// clears only bit 0.
+ pub(crate) fn legal_dpc(value: u64, compressed: bool) -> u64 {
+     if compressed {
+-        value & !0b1
++        value & !0b11
+     } else {
+         value & !0b11
+     }

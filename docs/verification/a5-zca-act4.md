@@ -40,9 +40,11 @@ Zcmop directories are never copied into that directory and stay excluded.
 
 `scripts/a5/linked_audit.py` accepts 16-bit parcels only when the caller's
 mnemonic-keyed mapping allows them. The Zca selection allows exactly the RV64
-Zca mnemonics; `C.ADDI4SPN` and the Zcmop names stay out even though they share
-quadrants with allowed neighbours. The RV64I flow passes no mapping, so its
-audit behavior is unchanged.
+Zca mnemonics, `C.ADDI4SPN` included; only its zero-immediate encoding is
+reserved, which is a decode-level rule the audit cannot express as a
+mnemonic gate. The Zcmop names stay out even though they share quadrants
+with allowed neighbours. The RV64I flow passes no mapping, so its audit
+behavior is unchanged.
 
 ## Running it
 

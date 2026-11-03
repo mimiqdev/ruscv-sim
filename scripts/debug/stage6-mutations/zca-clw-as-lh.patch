@@ -1,0 +1,13 @@
+diff --git i/src/isa/rv64c/decoder_16bit.rs w/src/isa/rv64c/decoder_16bit.rs
+index 0b8fd33..b35c247 100644
+--- i/src/isa/rv64c/decoder_16bit.rs
++++ w/src/isa/rv64c/decoder_16bit.rs
+@@ -163,7 +163,7 @@ impl CompressedDecoder {
+                 let rs1 = 8 + ((p >> 7) & 0b111);
+                 let rd = 8 + ((p >> 2) & 0b111);
+                 ZcaClass::Expansion {
+-                    instruction: build_i_type(Opcode::Load, rd, rs1, Funct3::Slt, imm),
++                    instruction: build_i_type(Opcode::Load, rd, rs1, Funct3::Sll, imm),
+                 }
+             }
+             0b011 => {
