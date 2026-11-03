@@ -14,15 +14,15 @@ import json
 import pathlib
 import sys
 
-gem, root = map(pathlib.Path, sys.argv[1:])
+gem, root = map(pathlib.Path, sys.argv[1:3])
+name = sys.argv[3] if len(sys.argv) > 3 else "ruscv-rv64i-smoke"
 source = gem / ".data/spec/std/isa/param/MXLEN.yaml"
 original = source.read_bytes()
 expected = {
     "ruscv-rv64i-smoke": "2de45bf488b72952ab339ba335bf8a95f760918840d776b1f30e6df0bfadc368",
     "ruscv-rv64imac-zca": "2de45bf488b72952ab339ba335bf8a95f760918840d776b1f30e6df0bfadc368",
 }
-config = root / f".a5/config/{sys.argv[3] if len(sys.argv) > 3 else 'ruscv-rv64i-smoke'}.yaml"
-name = sys.argv[3] if len(sys.argv) > 3 else "ruscv-rv64i-smoke"
+config = root / f".a5/config/{name}.yaml"
 assert original.count(b"    name: Sm\n") == 1
 assert hashlib.sha256(original).hexdigest() == expected[name], "UDB schema changed"
 adapted = original.replace(b"    name: Sm\n", b"    name: I\n")
