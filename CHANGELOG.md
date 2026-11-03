@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GC U1: 默认 profile 切换为 `rv64imafdc`（issue #162）**
+  - `IsaProfile::default()`、`MachineConfig::new`、`run --isa` 的默认值以及 native
+    （`load_and_run`、`load_and_run_file` 及其 debug 变体）与 flat（`RiscVSimulator::new`）
+    facade 均选择 `rv64imafdc`（`misa` `0x800000000014112D`，IALIGN=16，FP 状态使能）；
+    需要旧默认的调用方必须显式选择 `rv64ima`
+  - 原始 `RiscvCore` 兼容构造器（`new`、`new_with_memory`、`new_with_physical_access`、
+    `new_with_physical_ports`）显式保持 `rv64ima`，且构造完成即具备与 profile 一致的
+    CSR 状态（`misa`、`epc_ialign32`、FP 使能），不再依赖首次 `reset()`
+  - `tests/gc_u1_default_profile.rs` 通过真实 CLI、`MachineConfig::new` 与两个 facade 证明新默认；
+    `zca_u2_hart_profile` 的 profile 相关断言改显式 `rv64ima` 绑定（flat facade 与 CLI 各一处断言默认本身的用例已按合同 D3 命名并改为显式选择）
+  - 新增两条负控制：`gc-default-stays-ima`（Machine 默认仍为 `rv64ima`）与
+    `gc-cli-default-diverges`（CLI 默认与 `MachineConfig::new` 分叉）；既有
+    `zca-default-misa-c`、`fd-default-misa-f` 控制保留
+
 - **F/D U7: 累积 CI 验证与负控制（issue #151）**
   - 契约要求的十三条 F/D 负控制全部按现有 mutation-runner 模式注册（`scripts/debug/stage6-mutations`），每条指向必须失败的已提交测试：舍入到格式而非整数、忽略静态 `rm`、RMM 视为 RNE、FMA 两次舍入、`f0` 硬连线为零、未 box 的单精度读取、FS Off 仍接受 FP 指令、FPR 写入不置 Dirty、FEQ 对 quiet NaN 置 NV、FCVT.WU.S 负值不饱和到 0、C.FLD 在 `rv64imac`/`rv64imafd` 下被接受、`frm` 为 5–7 时接受动态 `rm`、默认 profile 宣告 F
   - `rv64imafd` 下低两位不是 `0b11` 的非法编码，`mtval` 改为该 16-bit parcel 零扩展，与 pinned Spike 读取首个 parcel 的行为及 archived Zca D2 一致；`rv64ima`/`rv64imac` 保持原值，`fd_zcd_absent` guest 使用非零高半字验证该规则

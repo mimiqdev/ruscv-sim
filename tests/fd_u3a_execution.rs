@@ -8,7 +8,7 @@
 //! Sv39 and access faults; malformed encodings trapping instead of a
 //! `SimulatorFailure`; and commit facts carrying FPR and `fcsr` effects.
 //!
-//! The default `rv64ima` and `rv64imac` profiles are proven unchanged by the
+//! The `rv64ima` and `rv64imac` profiles are proven unchanged by the
 //! existing suites; the controls below pin that every FP encoding still
 //! traps there and that no FP state changes.
 
