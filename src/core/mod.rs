@@ -957,6 +957,12 @@ impl RiscvCore {
         self.wfi_wait
     }
 
+    /// The selected profile admits Zca (IALIGN=16). The DM reads this to
+    /// walk the program buffer as a parcel stream (contract D8).
+    pub fn allows_compressed(&self) -> bool {
+        self.isa.allows_compressed()
+    }
+
     /// Get core state (read-only)
     pub fn state(&self) -> &CoreState {
         &self.state
@@ -1574,7 +1580,15 @@ impl RiscvCore {
         // one aligned 4-byte transaction is unchanged. A fault in either
         // parcel retires nothing and leaves no partial effect.
         let (instruction, instruction_length) = if let Some(word) = self.debug_word {
-            (word, 4u8)
+            // Contract D8: under IALIGN=16 a program-buffer grant is the
+            // 16-bit parcel the DM sliced from the buffer stream whenever
+            // its low two bits are not `0b11`; otherwise it is a whole
+            // word. IALIGN=32 grants stay whole words.
+            if self.isa.allows_compressed() && word & 0b11 != 0b11 {
+                (word & 0xffff, 2u8)
+            } else {
+                (word, 4u8)
+            }
         } else {
             match self.fetch_parcels(pc_before) {
                 Ok(fetched) => {

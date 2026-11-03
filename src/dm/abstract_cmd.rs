@@ -14,6 +14,11 @@ pub(super) const CMDERR_HALT_RESUME: u8 = 4;
 /// Debug Spec 1.0 §3.14: a simulator fault, not an M-mode exception.
 const CMDERR_OTHER: u8 = 7;
 
+/// Halfwords in the two buffer words plus the implicit EBREAK stream.
+const STREAM_HALFWORDS: u8 = (super::regs::PROGBUF_WORDS as u8) * 2;
+/// Cursor value naming the implicit EBREAK after the buffer words.
+const IMPLICIT_EBREAK_CURSOR: u8 = STREAM_HALFWORDS;
+
 /// §3.7.1.3 cmderr 3 is an M-mode exception. §3.14 cmderr 7 is other.
 fn memory_cmderr(fault: DebugMemFault) -> u8 {
     match fault {
@@ -75,23 +80,74 @@ impl DebugModule {
 
     /// Select the opcode for the next grant without running it.
     ///
-    /// Slot `PROGBUF_WORDS` is the implicit EBREAK. A hart that left Debug
-    /// Mode or is held in `ndmreset` aborts the command with `cmderr` 4.
-    /// Callers that own a lock on this module release it before executing the
-    /// word and pass the result to [`Self::complete_grant`]: contract §3 keeps
-    /// no DM lock while the Hart executes or reaches a physical target.
+    /// Under IALIGN=16 the cursor walks the two buffer words as one
+    /// contiguous 8-byte parcel stream followed by the implicit EBREAK
+    /// (contract D8): a compressed parcel grant is that halfword, a 32-bit
+    /// grant is the word its two stream parcels compose — including one
+    /// starting in the high half of `progbuf0`, whose second parcel is the
+    /// low half of `progbuf1`. A 32-bit instruction whose second parcel
+    /// would extend past `progbuf1` is `cmderr` 3 with no effect. Under
+    /// IALIGN=32 the cursor only ever sits on a word boundary, so grants
+    /// stay whole words — slot 0, slot 1, then the implicit EBREAK,
+    /// exactly as before.
+    ///
+    /// A hart that left Debug Mode or is held in `ndmreset` aborts the
+    /// command with `cmderr` 4. Callers that own a lock on this module
+    /// release it before executing the word and pass the result to
+    /// [`Self::complete_grant`]: contract §3 keeps no DM lock while the
+    /// Hart executes or reaches a physical target.
     pub fn next_word(&mut self, hart: &RiscvCore) -> Option<u32> {
-        let slot = self.exec?;
+        let cursor = self.exec?;
         if self.ndmreset || !hart.in_debug_mode() {
             self.finish(CMDERR_HALT_RESUME);
             return None;
         }
-        Some(
-            self.progbuf
-                .get(usize::from(slot))
-                .copied()
-                .unwrap_or(EBREAK),
-        )
+        if cursor >= IMPLICIT_EBREAK_CURSOR {
+            self.grant_halves = 2;
+            return Some(EBREAK);
+        }
+        if !hart.allows_compressed() {
+            // IALIGN=32: one whole buffer word per grant (contract D8;
+            // unchanged behavior).
+            self.grant_halves = 2;
+            return Some(
+                self.progbuf
+                    .get(usize::from(cursor / 2))
+                    .copied()
+                    .unwrap_or(EBREAK),
+            );
+        }
+        let Some(first) = self.parcel_at(cursor) else {
+            // The cursor is below the implicit EBREAK, so a missing parcel
+            // is a command error rather than a valid grant.
+            self.finish(CMDERR_EXCEPTION);
+            return None;
+        };
+        if first & 0b11 != 0b11 {
+            // A compressed instruction occupies only its first parcel.
+            self.grant_halves = 1;
+            return Some(first);
+        }
+        // A 32-bit instruction takes the next stream halfword; one that
+        // would reach past `progbuf1` fails the command with no effect.
+        let Some(second) = self.parcel_at(cursor + 1) else {
+            self.finish(CMDERR_EXCEPTION);
+            return None;
+        };
+        self.grant_halves = 2;
+        Some((second << 16) | first)
+    }
+
+    /// One 16-bit parcel of the contiguous buffer stream (contract D8).
+    /// The stream is `progbuf0` low half, high half, then `progbuf1`; a
+    /// cursor past it is `None`.
+    fn parcel_at(&self, cursor: u8) -> Option<u32> {
+        let word = self.progbuf.get(usize::from(cursor / 2)).copied()?;
+        Some(if cursor.is_multiple_of(2) {
+            word & 0xffff
+        } else {
+            word >> 16
+        })
     }
 
     /// Record the result of the word selected by [`Self::next_word`] and
@@ -99,12 +155,14 @@ impl DebugModule {
     /// A host or backend failure is `cmderr` 7; the Machine reads unknown
     /// completion from the Hart.
     pub fn complete_grant(&mut self, outcome: DebugExecOutcome) -> bool {
-        let Some(slot) = self.exec else {
+        let Some(cursor) = self.exec else {
             return false;
         };
+        let advance = self.grant_halves;
+        self.grant_halves = 2;
         match outcome {
             DebugExecOutcome::Completed => {
-                self.exec = Some(slot + 1);
+                self.exec = Some(cursor + advance);
                 true
             }
             DebugExecOutcome::Ebreak => {

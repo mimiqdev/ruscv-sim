@@ -58,9 +58,16 @@ pub struct DebugModule {
     last_command: Option<u32>,
     /// `sbcs`, `sbaddress`, `sbdata`, `sbbusy` and the sticky SBA errors.
     sba: SbaState,
-    /// Next program-buffer slot to run while `busy`. Slot `PROGBUF_WORDS` is
-    /// the implicit EBREAK. `None` is idle.
+    /// Next program-buffer grant cursor while `busy`. It counts 16-bit
+    /// parcels across the two buffer words: under IALIGN=32 it only ever
+    /// sits on a word boundary (one whole word per grant), under IALIGN=16
+    /// it walks the contiguous 8-byte parcel stream (contract D8). Cursor
+    /// `PROGBUF_WORDS * 2` is the implicit EBREAK. `None` is idle.
     exec: Option<u8>,
+    /// Halfwords occupied by the grant [`Self::next_word`] selected last:
+    /// 1 for a compressed parcel, 2 for a whole word. The grant only
+    /// advances the cursor when it completes.
+    grant_halves: u8,
     /// §3.5 allows the reset value 0 or 1. The hart is already running, so
     /// this module resets resume ack to 1.
     resumeack: bool,
@@ -101,6 +108,7 @@ impl DebugModule {
             last_command: None,
             sba: SbaState::default(),
             exec: None,
+            grant_halves: 2,
             resumeack: true,
             havereset: true,
             version,
