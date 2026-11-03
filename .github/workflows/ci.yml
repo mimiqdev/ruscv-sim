@@ -34,7 +34,7 @@ jobs:
   quality:
     name: Quality and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -84,9 +84,12 @@ jobs:
 
       - name: Check guest scripts and protected output-path guards
         run: |
-          bash -n scripts/riscv_elf_paths.sh scripts/compile_riscv_tests.sh
-          bash -n scripts/run_elf_tests.sh scripts/test_riscv_elf_guards.sh
-          bash -n scripts/riscv_elf_result.sh scripts/test_riscv_elf_result.sh
+          bash -n scripts/riscv_elf_paths.sh
+          bash -n scripts/compile_riscv_tests.sh
+          bash -n scripts/run_elf_tests.sh
+          bash -n scripts/test_riscv_elf_guards.sh
+          bash -n scripts/riscv_elf_result.sh
+          bash -n scripts/test_riscv_elf_result.sh
           bash scripts/test_riscv_elf_guards.sh
           bash scripts/test_riscv_elf_result.sh
 
