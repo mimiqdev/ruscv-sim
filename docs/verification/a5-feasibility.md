@@ -28,8 +28,7 @@ same public CLI.
 The job runs only for relevant pushes to this experimental branch (not again
 on PR events), has a selection-dependent timeout — 30 minutes for the
 proposal and Zca selections, 150 minutes for the fd and zcd selections —
-read-only permissions and 14-day
-artifacts. Standard CI is unchanged. Workspaces, not the developer's host,
+read-only permissions and 14-day artifacts. Standard CI is unchanged. Workspaces, not the developer's host,
 hold tool archives and caches. No generated-ELF cache is used.
 
 ## Actual successful Linux evidence
