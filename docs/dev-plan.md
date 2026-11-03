@@ -10,7 +10,7 @@
 
 ## 1. Objective and inherited profile
 
-Make ordinary RV64GC toolchain output run without any option: `rv64imafdc` becomes the default ISA profile for `run`, the Machine configuration and both library facades. Every existing profile stays selectable by name with unchanged behavior. All evidence whose expectations belong to a specific profile (the A10 oracle, the frozen ACT4 selections, profile-specific guests, Rust tests and debug sessions) is bound to that profile by an explicit selection, so no recorded expectation changes.
+Make ordinary RV64GC toolchain output run without any option: `rv64imafdc` becomes the default ISA profile for `run`, `MachineConfig::new` and both library facades. Every existing profile stays selectable by name with unchanged behavior. All evidence whose expectations belong to a specific profile (the A10 oracle, the frozen ACT4 selections, profile-specific guests, Rust tests and debug sessions) is bound to that profile by an explicit selection, so no recorded expectation changes.
 
 The inherited profile is everything delivered through the completed F/D contract: RV64IMA/Zicsr/Zifencei, Zca, F, D and Zcd as selectable profiles, M/S/U, the Stage 5 platform rules, Debug Specification 1.0 with program buffer and SBA, and zero-entry PMP plus Sv39. This contract adds no ISA extension, profile name or alias, writable `misa`, second hart, SBI, Linux target or TLM/SystemC integration.
 
@@ -25,14 +25,14 @@ Every decision below was approved on 2026-11-04 under the delegation recorded ab
 | Decision | Accepted selection |
 | --- | --- |
 | D1. Delivery | The default switch is the next single bounded milestone. TLM/SystemC integration is the owner-selected direction after it, under its own contract; nothing of it is carried into this one. |
-| D2. Default | `IsaProfile`'s default, `MachineConfig::default`, `run --isa`'s default, the native (`load_and_run` and related) and flat (`RiscVSimulator::new`) facades all select `rv64imafdc` (`misa` `0x800000000014112D`). `rv64ima`, `rv64imac`, `rv64imafd` and `rv64imafdc` remain the only names, each with unchanged behavior when selected explicitly. No alias, no ELF inference, `misa` read-only. |
+| D2. Default | `IsaProfile::default()`, `MachineConfig::new`, `run --isa`'s default, and the native (`load_and_run`, `load_and_run_file` and their debug variants) and flat (`RiscVSimulator::new`) facades all select `rv64imafdc` (`misa` `0x800000000014112D`). The raw `RiscvCore::new` and `RiscvCore::new_with_physical_ports` compatibility constructors stay `rv64ima` by explicit selection, and every core's CSR state (`misa`, `epc_ialign32`, FP enablement) and debug capabilities match its profile from construction, not only after `reset()`. `rv64ima`, `rv64imac`, `rv64imafd` and `rv64imafdc` remain the only names, each with unchanged behavior when selected explicitly. No alias, no ELF inference, `misa` read-only. |
 | D3. Pinning, not rewriting | A test, guest, fixture or session whose expectations depend on the profile (for example `misa`, FP absence, IALIGN=32 masks or compressed parcels being illegal) is bound to its profile by an explicit selection with its assertions unchanged. Changing an existing assertion is allowed only where it asserted the default itself, and each such change is named in the PR. |
 | D4. Guest suite | Every guest declares its profile. Existing guests whose expectations are profile-independent run under the new default with no `--isa`. Profile-dependent guests (including `s4_fp_absent`, `s4_csr_policy` and the Zca/F/D guests) run with their explicit profile. Guest build flags are unchanged. |
-| D5. A10 | The A10 driver, baseline and perf scripts invoke the CLI with an explicit `--isa rv64ima`. `tools/a10/public-v1.json` and its fixtures are byte-identical; the oracle is not re-derived and no new suite is added. |
-| D6. ACT4 | Each frozen selection runs with its explicit profile: RV64I (51) under `rv64ima`, Zca (32) under `rv64imac`, F/D (196) under `rv64imafd`, Zcd (4) under `rv64imafdc`. Selections, inventories and replay validators are unchanged. |
+| D5. A10 | Every A10 route selects `rv64ima` explicitly: the CLI route and the baseline/perf scripts pass `--isa rv64ima`; the `native-bytes`, `native-file`, `flat`, `machine-native` and `machine-flat` routes use the `*_with_isa`, `new_with_isa` or `MachineConfig` profile selection. The exact-argv check in `tools/a10/report_schema.py` is updated to the new pinned CLI argv. `tools/a10/public-v1.json` and its fixtures are byte-identical; the oracle is not re-derived and no new suite is added. |
+| D6. ACT4 | Each frozen selection runs with its explicit profile, including the RV64I flow (`SELECTED_ISA` in `scripts/a5/experiment.sh`, `run_isa()` in `scripts/a5/accounting.py`) and the smoke path (`scripts/a5/run.py`): RV64I (51) under `rv64ima`, Zca (32) under `rv64imac`, F/D (196) under `rv64imafd`, Zcd (4) under `rv64imafdc`. Selections, inventories and replay validators are unchanged. |
 | D7. Debug sessions | Every existing OpenOCD/GDB session passes its explicit `--isa` and keeps its Spike ISA string. The F/D session runs with no `--isa` to prove the default, still compared with Spike `--isa=rv64imafdc_zicsr`. |
 | D8. Observation | Under the default, commit facts and the commit log follow the `rv64imafdc` rules already delivered. Under explicit `rv64ima` the log text is unchanged. |
-| D9. Documentation | README (both languages), CLI help, CHANGELOG and verification docs state the new default and how to select `rv64ima`. Stale current-milestone statements in the top-level README are corrected. |
+| D9. Documentation | The top-level README, CLI help, CHANGELOG and verification docs state the new default and how to select `rv64ima`. Stale current-milestone statements in the top-level README are corrected. |
 | D10. CI hygiene (owner wrap-up) | Split combined `bash -n a b` lines in `.github/workflows/ci.yml` into one check per file, since `bash -n` with several arguments parses only the first. Raise the `Quality and tests` timeout from 30 to 45 minutes; observed runs reach 22–26 minutes and the toolchain install alone has taken 17.5. Correct the stale flat 30-minute A5 bound in `docs/verification/a5-feasibility.md` to match the workflow. No other CI behavior changes. |
 
 ## 3. Ownership and semantics
@@ -45,8 +45,8 @@ These are requirements for subsequent implementation. Activating this contract d
 
 | Unit | Required observable proof |
 | --- | --- |
-| U1. Default switch | Change the default per D2. Prove through `run` with no `--isa`, `MachineConfig::default` and both facades that the default is `rv64imafdc`, and that each explicit name keeps its `misa` and behavior. Pin profile-dependent Rust tests per D3. Retarget the `zca-default-misa-c` and `fd-default-misa-f` mutation controls to explicit `rv64ima`, keeping their intended defects. Update D9 docs. |
-| U2. Guest, A10 and ACT4 binding | Per D4–D6: per-guest profile declarations in the guest suite, explicit `--isa rv64ima` in the A10 tooling with `public-v1.json` byte-identical, and explicit profiles for every ACT4 selection. Run all four ACT4 selections through the pinned flow on the PR head and record them in PR history. The fresh guest suite passes with each guest under its declared profile. |
+| U1. Default switch | Change the default per D2. Prove through `run` with no `--isa`, `MachineConfig::new` and both facades that the default is `rv64imafdc`, that the raw-core constructors stay `rv64ima`, that every core's CSR state matches its profile at construction, and that each explicit name keeps its `misa` and behavior. Pin profile-dependent Rust tests per D3. The existing `zca-default-misa-c` and `fd-default-misa-f` controls already target explicit `rv64ima` and are retained. Update D9 docs. |
+| U2. Guest, A10 and ACT4 binding | Per D4–D6: per-guest profile declarations in the guest suite, explicit `rv64ima` on every A10 route with the `report_schema.py` argv check updated and `public-v1.json` byte-identical, and explicit profiles for every ACT4 selection. Run all four ACT4 selections through the pinned flow on the PR head and record them in PR history. The fresh guest suite passes with each guest under its declared profile. |
 | U3. Debug sessions | Per D7: explicit `--isa` on every existing session, and the F/D session under the default. `scripts/debug_attach.sh --require-spike` passes in the live debug-attach CI job with all existing named results unchanged. |
 | U4. CI hygiene | Per D10, with each split `bash -n` check proven to parse its file (a deliberately broken file fails it). |
 | U5. Exit | CI runs the full Rust quality gate, the guest suite, the tool script and the mutation runner. Obtain an independent review of the final committed PR head. The A10 oracle and certification deferral remain unchanged. |
@@ -56,10 +56,12 @@ Dependencies: U1 first. U2 and U3 require U1 and may proceed in parallel. U4 is 
 Required negative controls:
 
 - the default profile remaining `rv64ima`;
-- the CLI default diverging from `MachineConfig::default`;
-- explicit `rv64ima` advertising C;
-- explicit `rv64ima` advertising F;
-- a profile-pinned guest (for example `s4_fp_absent`) run under the default without detection, where the guest-suite tooling can express it.
+- the CLI default diverging from `MachineConfig::new`;
+- a raw `RiscvCore::new` core whose CSR `misa` disagrees with its profile before `reset()`;
+- an A10 library or Machine route left on the default;
+- a profile-pinned guest (for example `s4_fp_absent`) run under the default without detection.
+
+Explicit `rv64ima` advertising C or F is already covered by the retained `zca-default-misa-c` and `fd-default-misa-f` controls.
 
 Keep their small patches, commands and expected assertions under the existing mutation-runner pattern. The standard gate and the no-ledger rule are unchanged.
 
