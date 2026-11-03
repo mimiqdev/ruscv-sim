@@ -1,0 +1,11 @@
+diff --git i/src/core/mod.rs w/src/core/mod.rs
+--- i/src/core/mod.rs
++++ w/src/core/mod.rs
+@@ -1000,7 +1000,7 @@
+             isa: crate::machine::IsaProfile::Rv64ima,
+             current_instruction_length: 4,
+         };
+-        core.set_isa_profile(crate::machine::IsaProfile::Rv64ima);
++        core.set_isa_profile(crate::machine::IsaProfile::Rv64imafdc);
+         core
+     }

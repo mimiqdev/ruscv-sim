@@ -859,5 +859,24 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "gc-u2-raw-core-ima",
+    "source": "src/core/mod.rs",
+    "patch": "gc-u2-raw-core-ima.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "gc_u1_default_profile"
+        ],
+        "test": "raw_core_constructors_stay_rv64ima",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+9223372036856090925",
+          "right:\\s+9223372036856090881"
+        ]
+      }
+    ]
   }
 ]
