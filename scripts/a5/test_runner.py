@@ -160,6 +160,39 @@ class RunnerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(audit["unsupported"])
 
+    def test_compressed_opcode_gate_and_name_gate(self):
+        # A Zca-allowed mnemonic passes only with its mapped quadrant;
+        # C.ADDI4SPN shares quadrant 0 with C.LW and stays name-rejected, and
+        # a 32-bit word printed as 4 hex digits fails closed.
+        from linked_audit import audit as linked_audit
+
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = pathlib.Path(directory)
+            objdump = "80000000: 0001 c.nop\n80000002: 0080 c.addi4spn\n"
+            symbols = "0000000080001000 d signature_base"
+            def fake_run(command, **_):
+                return symbols if "nm" in command[0] else objdump
+            original = subprocess.check_output
+            subprocess.check_output = fake_run
+            with self.assertRaises(ValueError) as caught:
+                linked_audit("elf", evidence,
+                             allowed_compressed={"c.nop": 1, "c.addi4spn": None})
+            data = json.loads((evidence / "audit.json").read_text())
+            self.assertEqual(data["compressed_parcels"], 2)
+            self.assertEqual(data["unsupported"], [["0080", "c.addi4spn"]])
+            self.assertIn("c.addi4spn", str(caught.exception))
+            # The second call rewrites the parcel to an accepted mnemonic, so
+            # the same quadrant is accepted only when the name matches: the
+            # mnemonic key, not the quadrant, is what keeps C.ADDI4SPN out.
+            objdump = "80000000: 0001 c.nop\n80000002: 8801 c.andi\n"
+            linked_audit("elf", evidence, allowed_compressed={"c.nop": 1, "c.andi": 1})
+            data = json.loads((evidence / "audit.json").read_text())
+            self.assertEqual(data["unsupported"], [])
+
+    def test_four_digit_thirty_two_bit_word_fails_closed(self):
+        result, _, _ = self.probe(instruction="00000013 addi\n80000004: 0013 addi")
+        self.assertNotEqual(result.returncode, 0)
+
     def test_embedded_data_requires_mapping_symbol(self):
         instruction = "00000013 addi\n80000004: deadbeef .word\n80000008: 00000013 addi"
         result, _, _ = self.probe(instruction=instruction)
