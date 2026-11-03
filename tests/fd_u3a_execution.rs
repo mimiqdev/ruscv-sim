@@ -926,6 +926,232 @@ fn fclass_distinguishes_quiet_and_signaling_nan_on_the_path() {
     }
 }
 
+#[test]
+fn min_max_and_sign_injection_match_the_isa_rules() {
+    let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
+    set_fs(&mut core, mstatus::FS_CLEAN);
+    let one_s = boxed_single(1.0f32.to_bits());
+    let two_s = boxed_single(2.0f32.to_bits());
+    let pos_zero_s = boxed_single(0);
+    let neg_zero_s = boxed_single(0x8000_0000);
+    let qnan_s = boxed_single(CANONICAL_NAN_F32);
+    let snan_s = boxed_single(0x7f80_0001);
+    let one_d = 1.0f64.to_bits();
+    let two_d = 2.0f64.to_bits();
+    let pos_zero_d = 0u64;
+    let neg_zero_d = 0x8000_0000_0000_0000u64;
+    let qnan_d = 0x7ff8_0000_0000_0000u64;
+    let snan_d = 0x7ff0_0000_0000_0001u64;
+
+    // FMIN/FMAX version 2.2: -0 < +0, one NaN returns the other operand,
+    // two NaNs return the canonical NaN, and only a signaling NaN raises NV.
+    let cases = [
+        ("fmin.s", op_fp(0x14, 2, 1, 0, 3), one_s, two_s, one_s, 0),
+        ("fmax.s", op_fp(0x14, 2, 1, 1, 3), one_s, two_s, two_s, 0),
+        (
+            "fmin.s -0,+0",
+            op_fp(0x14, 2, 1, 0, 3),
+            neg_zero_s,
+            pos_zero_s,
+            neg_zero_s,
+            0,
+        ),
+        (
+            "fmax.s -0,+0",
+            op_fp(0x14, 2, 1, 1, 3),
+            neg_zero_s,
+            pos_zero_s,
+            pos_zero_s,
+            0,
+        ),
+        (
+            "fmin.s qnan,one",
+            op_fp(0x14, 2, 1, 0, 3),
+            qnan_s,
+            one_s,
+            one_s,
+            0,
+        ),
+        (
+            "fmax.s qnan,one",
+            op_fp(0x14, 2, 1, 1, 3),
+            qnan_s,
+            one_s,
+            one_s,
+            0,
+        ),
+        (
+            "fmin.s one,qnan",
+            op_fp(0x14, 2, 1, 0, 3),
+            one_s,
+            qnan_s,
+            one_s,
+            0,
+        ),
+        (
+            "fmin.s qnan,qnan",
+            op_fp(0x14, 2, 1, 0, 3),
+            qnan_s,
+            qnan_s,
+            qnan_s,
+            0,
+        ),
+        (
+            "fmin.s snan,one",
+            op_fp(0x14, 2, 1, 0, 3),
+            snan_s,
+            one_s,
+            one_s,
+            0x10,
+        ),
+        (
+            "fmax.s snan,one",
+            op_fp(0x14, 2, 1, 1, 3),
+            snan_s,
+            one_s,
+            one_s,
+            0x10,
+        ),
+        ("fmin.d", op_fp(0x15, 2, 1, 0, 3), one_d, two_d, one_d, 0),
+        ("fmax.d", op_fp(0x15, 2, 1, 1, 3), one_d, two_d, two_d, 0),
+        (
+            "fmin.d -0,+0",
+            op_fp(0x15, 2, 1, 0, 3),
+            neg_zero_d,
+            pos_zero_d,
+            neg_zero_d,
+            0,
+        ),
+        (
+            "fmax.d -0,+0",
+            op_fp(0x15, 2, 1, 1, 3),
+            neg_zero_d,
+            pos_zero_d,
+            pos_zero_d,
+            0,
+        ),
+        (
+            "fmin.d qnan,one",
+            op_fp(0x15, 2, 1, 0, 3),
+            qnan_d,
+            one_d,
+            one_d,
+            0,
+        ),
+        (
+            "fmax.d qnan,one",
+            op_fp(0x15, 2, 1, 1, 3),
+            qnan_d,
+            one_d,
+            one_d,
+            0,
+        ),
+        (
+            "fmin.d qnan,qnan",
+            op_fp(0x15, 2, 1, 0, 3),
+            qnan_d,
+            qnan_d,
+            qnan_d,
+            0,
+        ),
+        (
+            "fmin.d snan,one",
+            op_fp(0x15, 2, 1, 0, 3),
+            snan_d,
+            one_d,
+            one_d,
+            0x10,
+        ),
+        // FSGNJ/FSGNJN/FSGNJX: magnitude from rs1, sign from rs2 (or its
+        // inverse / the xor of both signs). No flags.
+        (
+            "fsgnj.s",
+            op_fp(0x10, 2, 1, 0, 3),
+            boxed_single(1.5f32.to_bits()),
+            boxed_single((-1.0f32).to_bits()),
+            boxed_single(0xbfc0_0000),
+            0,
+        ),
+        (
+            "fsgnjn.s",
+            op_fp(0x10, 2, 1, 1, 3),
+            boxed_single(1.5f32.to_bits()),
+            boxed_single((-1.0f32).to_bits()),
+            boxed_single(0x3fc0_0000),
+            0,
+        ),
+        (
+            "fsgnjx.s",
+            op_fp(0x10, 2, 1, 2, 3),
+            boxed_single(1.5f32.to_bits()),
+            boxed_single((-1.0f32).to_bits()),
+            boxed_single(0xbfc0_0000),
+            0,
+        ),
+        (
+            "fsgnj.d",
+            op_fp(0x11, 2, 1, 0, 3),
+            1.5f64.to_bits(),
+            (-1.0f64).to_bits(),
+            0xbff8_0000_0000_0000,
+            0,
+        ),
+        (
+            "fsgnjn.d",
+            op_fp(0x11, 2, 1, 1, 3),
+            1.5f64.to_bits(),
+            (-1.0f64).to_bits(),
+            0x3ff8_0000_0000_0000,
+            0,
+        ),
+        (
+            "fsgnjx.d",
+            op_fp(0x11, 2, 1, 2, 3),
+            1.5f64.to_bits(),
+            (-1.0f64).to_bits(),
+            0xbff8_0000_0000_0000,
+            0,
+        ),
+    ];
+    for (label, raw, a, b, expected, flags) in cases {
+        core.state_mut().fpr.write(1, ruscv_sim::Fpr::from_bits(a));
+        core.state_mut().fpr.write(2, ruscv_sim::Fpr::from_bits(b));
+        core.state_mut().fcsr.clear_flags();
+        write_word(&ram, 0, raw);
+        core.state_mut().pc = 0;
+        retire(&mut core);
+        assert_eq!(fpr_bits(&core, 3), expected, "{label} destination");
+        assert_eq!(core.state().fcsr.flags_bits(), flags, "{label} flags");
+    }
+}
+
+#[test]
+fn fclass_d_distinguishes_every_class() {
+    let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
+    set_fs(&mut core, mstatus::FS_CLEAN);
+    for (bits, expected) in [
+        (0xfff0_0000_0000_0000u64, 1u64 << 0), // -infinity
+        (0xbff0_0000_0000_0000, 1u64 << 1),    // -normal
+        (0x8000_0000_0000_0001, 1u64 << 2),    // -subnormal
+        (0x8000_0000_0000_0000, 1u64 << 3),    // -0
+        (0x0000_0000_0000_0000, 1u64 << 4),    // +0
+        (0x0000_0000_0000_0001, 1u64 << 5),    // +subnormal
+        (0x3ff0_0000_0000_0000, 1u64 << 6),    // +normal
+        (0x7ff0_0000_0000_0000, 1u64 << 7),    // +infinity
+        (0x7ff0_0000_0000_0001, 1u64 << 8),    // signaling NaN
+        (0x7ff8_0000_0000_0000, 1u64 << 9),    // quiet NaN
+    ] {
+        core.state_mut()
+            .fpr
+            .write(1, ruscv_sim::Fpr::from_bits(bits));
+        write_word(&ram, 0, op_fp(0x71, 0, 1, 1, 4));
+        core.state_mut().pc = 0;
+        retire(&mut core);
+        assert_eq!(core.state().regs[4], expected, "{bits:#018x}");
+        assert_eq!(fs_of(&core), mstatus::FS_CLEAN, "{bits:#018x}");
+    }
+}
+
 // ============== FP loads and stores on the physical path ==============
 
 type SharedRam = Arc<Mutex<SimpleMemory>>;
