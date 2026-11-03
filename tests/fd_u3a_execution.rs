@@ -1113,6 +1113,7 @@ fn min_max_and_sign_injection_match_the_isa_rules() {
             0,
         ),
     ];
+
     for (label, raw, a, b, expected, flags) in cases {
         core.state_mut().fpr.write(1, ruscv_sim::Fpr::from_bits(a));
         core.state_mut().fpr.write(2, ruscv_sim::Fpr::from_bits(b));
@@ -1122,6 +1123,72 @@ fn min_max_and_sign_injection_match_the_isa_rules() {
         retire(&mut core);
         assert_eq!(fpr_bits(&core, 3), expected, "{label} destination");
         assert_eq!(core.state().fcsr.flags_bits(), flags, "{label} flags");
+    }
+
+    // Sign injection is defined bit for bit: the magnitude comes from rs1
+    // and the sign comes from rs2 (FSGNJ), the inverse of rs2's sign
+    // (FSGNJN), or the XOR of both signs (FSGNJX). All four sign
+    // combinations distinguish the three operations; a positive rs1 alone
+    // does not distinguish FSGNJX from FSGNJ.
+    // (sign of rs1, sign of rs2, FSGNJ, FSGNJN, FSGNJX)
+    let sign_rules = [
+        (false, false, false, true, false),
+        (false, true, true, false, true),
+        (true, false, false, true, true),
+        (true, true, true, false, false),
+    ];
+    for (single, funct7, sign_bit, magnitude, sign_source) in [
+        (
+            true,
+            0x10u32,
+            0x8000_0000u64,
+            0x3fc0_0000u64, // 1.5f32
+            0x3f80_0000u64, // 1.0f32
+        ),
+        (
+            false,
+            0x11,
+            1u64 << 63,
+            0x3ff8_0000_0000_0000, // 1.5f64
+            0x3ff0_0000_0000_0000, // 1.0f64
+        ),
+    ] {
+        for (sign_a, sign_b, sgnj, sgnjn, sgnjx) in sign_rules {
+            let a = magnitude | if sign_a { sign_bit } else { 0 };
+            let b = sign_source | if sign_b { sign_bit } else { 0 };
+            for (selector, name, result_sign) in [
+                (0u32, "fsgnj", sgnj),
+                (1, "fsgnjn", sgnjn),
+                (2, "fsgnjx", sgnjx),
+            ] {
+                let a = if single { boxed_single(a as u32) } else { a };
+                let b = if single { boxed_single(b as u32) } else { b };
+                let expected = magnitude | if result_sign { sign_bit } else { 0 };
+                let expected = if single {
+                    boxed_single(expected as u32)
+                } else {
+                    expected
+                };
+                core.state_mut().fpr.write(1, ruscv_sim::Fpr::from_bits(a));
+                core.state_mut().fpr.write(2, ruscv_sim::Fpr::from_bits(b));
+                core.state_mut().fcsr.clear_flags();
+                let raw = op_fp(funct7, 2, 1, selector, 3);
+                write_word(&ram, 0, raw);
+                core.state_mut().pc = 0;
+                retire(&mut core);
+                let format = if single { "s" } else { "d" };
+                assert_eq!(
+                    fpr_bits(&core, 3),
+                    expected,
+                    "{name}.{format} sign_a={sign_a} sign_b={sign_b} destination"
+                );
+                assert_eq!(
+                    core.state().fcsr.flags_bits(),
+                    0,
+                    "{name}.{format} sign_a={sign_a} sign_b={sign_b} flags"
+                );
+            }
+        }
     }
 }
 

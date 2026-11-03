@@ -13,8 +13,9 @@
 //! - an instruction that writes an FPR, or accrues any nonzero flag set,
 //!   leaves `mstatus.FS` Dirty (contract D6).
 //!
-//! The Hart checks the profile, `mstatus.FS` and the rounding mode before
-//! this module runs. Any error returned here is a defensive
+//! The Hart checks the profile and `mstatus.FS` before this module runs.
+//! This module owns the rounding-mode rule (contract D5) and validates it
+//! before writing any architectural state. Any error returned here is an
 //! illegal-instruction trap, never a [`crate::core::SimulatorFailure`].
 
 use crate::core::CoreState;
@@ -289,8 +290,10 @@ pub fn execute(
 
 /// Resolve the instruction's `rm` field to an implemented rounding mode.
 ///
-/// The Hart already validated this as part of FP legality; the defensive
-/// error here is an illegal-instruction trap, never a simulator failure.
+/// This is the single D5 rounding-mode check: the Hart's pre-check covers
+/// profile, `mstatus.FS` and the format only. The error here is an
+/// illegal-instruction trap, never a simulator failure; because the caller
+/// runs on staged Hart state, the trap leaves no architectural effect.
 fn resolve_rounding(
     fp: &FpInstruction,
     state: &CoreState,

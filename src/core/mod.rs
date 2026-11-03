@@ -2379,9 +2379,10 @@ impl RiscvCore {
                 _ => true,
             },
             // F and D instruction execution is on the public path under an
-            // FP profile (contract U3a).  The profile, `mstatus.FS` and the
-            // rounding mode are checked here, before alignment, translation
-            // and staging, so a trapping FP instruction leaves no FPR,
+            // FP profile (contract U3a). The profile, `mstatus.FS` and the
+            // format are checked here, before alignment, translation and
+            // staging. The FP engine validates the rounding mode before it
+            // writes any state, so a trapping FP instruction leaves no FPR,
             // `fcsr`, FS or memory effect.
             Opcode::LoadFp
             | Opcode::StoreFp

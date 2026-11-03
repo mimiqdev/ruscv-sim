@@ -641,5 +641,22 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "fd-fsgnjx-as-fsgnj",
+    "source": "src/isa/fd/mod.rs",
+    "patch": "fd-fsgnjx-as-fsgnj.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "fd_u3a_execution"
+        ],
+        "test": "min_max_and_sign_injection_match_the_isa_rules",
+        "failure": [
+          "fsgnjx.s sign_a=true sign_b=false destination"
+        ]
+      }
+    ]
   }
 ]
