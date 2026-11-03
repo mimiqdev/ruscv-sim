@@ -18,6 +18,7 @@
 //! before writing any architectural state. Any error returned here is an
 //! illegal-instruction trap, never a [`crate::core::SimulatorFailure`].
 
+use crate::core::observation::FpCsrAlias;
 use crate::core::CoreState;
 use crate::decode::{DecodedInstruction, FpFormat, FpInstruction, FpOp, IntWidth};
 use crate::execute::ExecuteError;
@@ -336,7 +337,9 @@ fn write_double(state: &mut CoreState, rd: u8, result: u64) {
 ///
 /// Flags are sticky. A nonzero accrual marks FS Dirty even when every
 /// raised flag was already set, so the write cannot be inferred from a
-/// `fcsr` value change.
+/// `fcsr` value change. Pinned Spike logs the `fflags` CSR write for a
+/// nonzero accrual even when no bit changes, so the fact is recorded as a
+/// write (contract D9).
 fn accrue(state: &mut CoreState, flags: FpFlags) {
     if flags.is_empty() {
         return;
@@ -344,6 +347,8 @@ fn accrue(state: &mut CoreState, flags: FpFlags) {
     state
         .fcsr
         .write_flags_bits(state.fcsr.flags_bits() | flags.bits());
+    let raised = u64::from(state.fcsr.flags_bits());
+    state.csr.observe_fp_csr_write(FpCsrAlias::Fflags, raised);
     state.mark_fs_dirty();
 }
 

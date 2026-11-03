@@ -1,0 +1,11 @@
+--- a/src/isa/rv64c/decoder_16bit.rs
++++ b/src/isa/rv64c/decoder_16bit.rs
+@@ -134,7 +134,7 @@
+ 
+     /// True when the Zcd parcels expand instead of staying FP-illegal.
+     fn zcd(&self) -> bool {
+-        self.profile == ZcaProfile::Zcd
++        true
+     }
+ 
+     /// Classify a 16-bit parcel under the selected compressed profile.

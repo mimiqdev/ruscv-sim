@@ -5,6 +5,7 @@
 //! - Supervisor mode (S)
 //! - User mode (U)
 
+use crate::core::observation::{FpCsrAlias, FpCsrWrite};
 use crate::core::PrivilegeMode;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -246,6 +247,9 @@ pub struct CsrFile {
     csrs: HashMap<u16, u64>,
     /// Internal subscribed transition journal; absent during ordinary execution.
     observed_writes: Option<Vec<CsrAccess>>,
+    /// Aliased `fflags`/`frm` writes of the current instruction, collected
+    /// only while observation is demanded (contract D9).
+    observed_fp_csr_writes: Option<Vec<FpCsrWrite>>,
     /// Current privilege mode
     privilege: PrivilegeMode,
     /// Hart ID (hardware thread ID)
@@ -300,6 +304,7 @@ impl CsrFile {
         Self {
             csrs,
             observed_writes: None,
+            observed_fp_csr_writes: None,
             privilege: PrivilegeMode::Machine,
             hart_id,
             time: 0,
@@ -655,6 +660,24 @@ impl CsrFile {
 
     pub(crate) fn take_observed_writes(&mut self) -> Vec<CsrAccess> {
         self.observed_writes.take().unwrap_or_default()
+    }
+
+    /// Start or stop collecting the aliased FP-CSR writes of the current
+    /// instruction (contract D9).
+    pub(crate) fn begin_fp_csr_observation(&mut self, enabled: bool) {
+        self.observed_fp_csr_writes = enabled.then(Vec::new);
+    }
+
+    /// Take this instruction's aliased FP-CSR writes.
+    pub(crate) fn take_observed_fp_csr_writes(&mut self) -> Vec<FpCsrWrite> {
+        self.observed_fp_csr_writes.take().unwrap_or_default()
+    }
+
+    /// Record one alias write with its resulting CSR value.
+    pub(crate) fn observe_fp_csr_write(&mut self, alias: FpCsrAlias, value: u64) {
+        if let Some(writes) = &mut self.observed_fp_csr_writes {
+            writes.push(FpCsrWrite { alias, value });
+        }
     }
 
     pub(crate) fn hart_id(&self) -> u64 {

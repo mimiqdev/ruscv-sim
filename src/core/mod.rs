@@ -21,7 +21,9 @@ use crate::physical::{
 use crate::tlm::TlmInterface;
 use anyhow::Result;
 pub use debug_mode::DebugCause;
-use observation::{AtomicEffect, ControlFacts, HartTransition, MemoryEffect, MemoryJournal};
+use observation::{
+    AtomicEffect, ControlFacts, FpCsrAlias, HartTransition, MemoryEffect, MemoryJournal,
+};
 use observed_memory::ObservedMemory;
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
@@ -273,9 +275,25 @@ impl CoreState {
         addr: u16,
         value: u64,
     ) -> Result<(), crate::csr::CsrError> {
+        use crate::csr::unprivileged;
         self.check_fp_csr(addr)?;
         if !self.set_fp_csr_value(addr, value) {
             return Err(crate::csr::CsrError::InvalidAddress(addr));
+        }
+        // Contract D9: pinned Spike logs the underlying CSRs, so an `fcsr`
+        // write is both an `frm` and an `fflags` write, and an equal-value
+        // write is still a write.
+        let (flags, frm) = (
+            u64::from(self.fcsr.flags_bits()),
+            u64::from(self.fcsr.frm_bits()),
+        );
+        match addr {
+            unprivileged::FFLAGS => self.csr.observe_fp_csr_write(FpCsrAlias::Fflags, flags),
+            unprivileged::FRM => self.csr.observe_fp_csr_write(FpCsrAlias::Frm, frm),
+            _ => {
+                self.csr.observe_fp_csr_write(FpCsrAlias::Fflags, flags);
+                self.csr.observe_fp_csr_write(FpCsrAlias::Frm, frm);
+            }
         }
         // D6: an instruction that writes `fflags`/`frm`/`fcsr` sets FS to
         // Dirty.  CSRRW/CSRRWI always write; CSRRS/CSRRC with rs1=x0 and
@@ -1502,6 +1520,7 @@ impl RiscvCore {
             )
         });
         self.state.csr.begin_observation(false);
+        self.state.csr.begin_fp_csr_observation(false);
         self.state.fpr.begin_observation(false);
         self.observation_demand = false;
         self.gpr_destination = None;
@@ -1799,7 +1818,17 @@ impl RiscvCore {
         self.current_instruction_length = instruction_length;
 
         let decoded = if instruction_length == 2 {
-            match crate::isa::rv64c::CompressedDecoder::new().decode_16bit(instruction as u16) {
+            // Contract D8: only the profile that also implements Zcd expands
+            // the four FP-compressed parcels. Every other compressed profile
+            // keeps them FP-illegal, so they trap with the parcel in `tval`.
+            let compressed = if self.isa.has_zcd() {
+                crate::isa::rv64c::CompressedDecoder::with_profile(
+                    crate::isa::rv64c::ZcaProfile::Zcd,
+                )
+            } else {
+                crate::isa::rv64c::CompressedDecoder::new()
+            };
+            match compressed.decode_16bit(instruction as u16) {
                 Ok(decoded) => decoded,
                 Err(_) => {
                     return self.enter_trap(
@@ -1917,6 +1946,7 @@ impl RiscvCore {
         let mut staged = self.state.clone();
         staged.instruction_length = instruction_length;
         staged.csr.begin_observation(self.observation_demand);
+        staged.csr.begin_fp_csr_observation(self.observation_demand);
         staged.fpr.begin_observation(self.observation_demand);
         let physical_access = self.data_access.clone();
         let execution_result = if let (Opcode::Amo, Some(access)) =
@@ -2128,6 +2158,7 @@ impl RiscvCore {
         let source_privilege = self.state.privilege;
         let mut staged = self.state.clone();
         staged.csr.begin_observation(self.observation_demand);
+        staged.csr.begin_fp_csr_observation(self.observation_demand);
         staged.fpr.begin_observation(self.observation_demand);
         staged.branch_taken = false;
         let mtval = match trap {

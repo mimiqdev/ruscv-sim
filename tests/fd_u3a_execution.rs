@@ -12,7 +12,7 @@
 //! existing suites; the controls below pin that every FP encoding still
 //! traps there and that no FP state changes.
 
-use ruscv_sim::core::observation::Observation;
+use ruscv_sim::core::observation::{FpCsrAlias, FpCsrWrite, Observation};
 use ruscv_sim::core::{
     ExceptionCause, PrivilegeMode, RiscvCore, SimulatorFailureKind, StepOutcome, Trap,
 };
@@ -1486,6 +1486,15 @@ fn commit_facts_carry_fpr_and_fcsr_effects() {
     assert_eq!(write.before, 0);
     assert_eq!(write.after, boxed_single(0x3f80_0000));
     assert_eq!(record.effects.fcsr, Some((0b0000_0000, 0b0000_0001)));
+    // The accrued write is also a write fact (contract D9): pinned Spike
+    // logs the `fflags` CSR even when the value would not change.
+    assert_eq!(
+        record.effects.fp_csr_writes,
+        vec![FpCsrWrite {
+            alias: FpCsrAlias::Fflags,
+            value: 1,
+        }]
+    );
     assert_eq!(record.effects.gpr, Vec::new());
     assert_eq!(fs_of(&core), mstatus::FS_DIRTY);
 }

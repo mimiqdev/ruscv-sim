@@ -658,5 +658,22 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "zcd-ignores-profile",
+    "patch": "zca-zcd-ignores-profile.patch",
+    "source": "src/isa/rv64c/decoder_16bit.rs",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "fd_u3b_zcd_log"
+        ],
+        "test": "the_zca_profile_keeps_every_zcd_parcel_fp_illegal",
+        "failure": [
+          "must stay FP-illegal under Zca"
+        ]
+      }
+    ]
   }
 ]
