@@ -5,7 +5,7 @@ use ruscv_sim::core::observation::{Observation, ObservationSink};
 use ruscv_sim::csr::machine::{MCYCLE, MINSTRET};
 use ruscv_sim::elf::LoadImage;
 use ruscv_sim::executor::ExecutionResult;
-use ruscv_sim::machine::{Machine, MachineConfig, PlatformEvent, PlatformKind};
+use ruscv_sim::machine::{IsaProfile, Machine, MachineConfig, PlatformEvent, PlatformKind};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -719,6 +719,8 @@ pub fn machine_config(kind: PlatformKind) -> (MachineConfig, UartCapture) {
     let uart = Arc::new(Mutex::new(Vec::new()));
     let captured = uart.clone();
     let mut config = MachineConfig::new(kind);
+    // Every A10 route selects rv64ima explicitly (contract D5).
+    config.isa = IsaProfile::Rv64ima;
     config.uart_output = Some(Arc::new(move |b| captured.lock().unwrap().push(b)));
     (config, uart)
 }

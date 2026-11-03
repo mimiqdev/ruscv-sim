@@ -4,8 +4,8 @@ pub mod affinity;
 #[path = "digest.rs"]
 pub mod digest;
 use crate::support::*;
-use ruscv_sim::executor::{load_and_run, load_and_run_file, RiscVSimulator};
-use ruscv_sim::machine::{Machine, MachineConfig, PlatformEvent, PlatformKind};
+use ruscv_sim::executor::{load_and_run_file_with_isa, load_and_run_with_isa, RiscVSimulator};
+use ruscv_sim::machine::{IsaProfile, Machine, MachineConfig, PlatformEvent, PlatformKind};
 use ruscv_sim::{csr::machine::MINSTRET, elf::LoadImage};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -696,13 +696,21 @@ pub fn library_probe(
     let start = meter.start();
     meter.event(Op::NativeCall);
     let result = match route {
-        "native-bytes" => load_and_run(bytes.as_ref().unwrap(), Some(budget), None, log, false),
-        "native-file" => load_and_run_file(
+        "native-bytes" => load_and_run_with_isa(
+            bytes.as_ref().unwrap(),
+            Some(budget),
+            None,
+            log,
+            false,
+            IsaProfile::Rv64ima,
+        ),
+        "native-file" => load_and_run_file_with_isa(
             elf_text,
             Some(budget),
             None,
             log.map(Path::to_path_buf),
             false,
+            IsaProfile::Rv64ima,
         ),
         _ => return Err("unsupported library route".into()),
     };
@@ -751,7 +759,10 @@ fn capture_child<C: Clock>(
             .arg("run")
             .arg(&elf)
             .arg("--max-cycles")
-            .arg((f.turns + 16).to_string());
+            .arg((f.turns + 16).to_string())
+            // Every A10 route selects rv64ima explicitly (contract D5).
+            .arg("--isa")
+            .arg("rv64ima");
     }
     if record.mode == "file" {
         if !library {
@@ -920,7 +931,7 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
         if phase == "execute_only" {
             if route == "flat" {
                 meter.event(Op::Construct);
-                let mut owner = RiscVSimulator::new(1);
+                let mut owner = RiscVSimulator::new_with_isa(1, IsaProfile::Rv64ima);
                 meter.event(Op::Install);
                 owner.load_elf(bytes).map_err(|e| e.to_string())?;
                 flat = Some(owner);
@@ -1053,7 +1064,7 @@ pub fn measure_stream<C: Clock, R: RepetitionController>(
                 } else {
                     let start = meter.start();
                     meter.event(Op::Construct);
-                    let mut owner = RiscVSimulator::new(1);
+                    let mut owner = RiscVSimulator::new_with_isa(1, IsaProfile::Rv64ima);
                     let captured = (|| -> Result<(), String> {
                         meter.event(Op::Install);
                         owner.load_elf(bytes).map_err(|e| e.to_string())?;

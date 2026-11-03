@@ -804,5 +804,24 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "gc-u2-guest-default",
+    "source": "scripts/run_elf_tests.sh",
+    "patch": "gc-u2-guest-default.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "gc_u2_guest_profiles"
+        ],
+        "test": "every_guest_declares_its_profile",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+\"\"",
+          "right:\\s+\"--isa rv64ima\""
+        ]
+      }
+    ]
   }
 ]

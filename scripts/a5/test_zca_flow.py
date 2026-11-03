@@ -116,7 +116,10 @@ class ExecutionProfileTests(ZcaEnv):
             self.assertEqual(result["isa"], "rv64imac")
             self.assertIn("--isa rv64imac", log.read_text())
             execute(script, Path(directory) / "g.elf", Path(directory) / "d")
-            self.assertNotIn("--isa", log.read_text())
+            # No explicit isa argument still produces an explicit profile:
+            # execute() binds the selected run_isa() profile (rv64ima here,
+            # since ZcaEnv clears A5_RUN_ISA) instead of the CLI default.
+            self.assertIn("--isa rv64ima", log.read_text())
 
     def test_compressed_audit_gate_is_zca_only(self):
         os.environ.pop("A5_CONFIG", None)
