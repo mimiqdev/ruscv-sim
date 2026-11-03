@@ -118,47 +118,44 @@ trap cleanup EXIT
 "${LD}" -T "${LINKER}" "${WORK}/guest.o" -o "${WORK}/guest.elf"
 
 # Zca U5. The compressed guest is a separate image because it needs the
-# rv64imac profile. A binutils too old for Zca skips the compressed session
-# with a message; the live CI image (binutils 2.40) always builds it.
-ZCA_ENABLED=0
-if "${AS}" -march=rv64imac_zicsr_zifencei -mabi=lp64 "${ZCA_GUEST_SRC}" -o "${WORK}/zca-guest.o" 2>"${WORK}/zca-assemble.err"; then
-    "${LD}" -T "${LINKER}" "${WORK}/zca-guest.o" -o "${WORK}/zca-guest.elf"
-    ZCA_ENABLED=1
-else
-    echo "riscv64 binutils cannot assemble the compressed guest; compressed session skipped" >&2
+# rv64imac profile. The compressed session is mandatory, so a binutils that
+# cannot assemble the image fails the run instead of silently skipping it.
+if ! "${AS}" -march=rv64imac_zicsr_zifencei -mabi=lp64 "${ZCA_GUEST_SRC}" -o "${WORK}/zca-guest.o" \
+    2>"${WORK}/zca-assemble.err"; then
+    echo "failed to assemble the compressed guest (riscv64 binutils with Zca is required)" >&2
     cat "${WORK}/zca-assemble.err" >&2 || true
+    exit 1
 fi
+"${LD}" -T "${LINKER}" "${WORK}/zca-guest.o" -o "${WORK}/zca-guest.elf"
 
 zca_symbol() {
     local name="$1"
     "${NM}" "${WORK}/zca-guest.elf" | awk -v name="${name}" '$3 == name { print $1; exit }'
 }
 
-if [[ "${ZCA_ENABLED}" -eq 1 ]]; then
-    ZCA_ENTRY="$(zca_symbol _start)"
-    ZCA_LEN2="$(zca_symbol zca_len2)"
-    ZCA_LEN4="$(zca_symbol zca_len4)"
-    ZCA_LINK="$(zca_symbol zca_link)"
-    ZCA_SECOND_LINK="$(zca_symbol zca_second_link)"
-    ZCA_HINT="$(zca_symbol zca_hint)"
-    ZCA_SPIN="$(zca_symbol zca_spin)"
-    ZCA_EXIT="$(zca_symbol zca_exit)"
-    if [[ -z "${ZCA_ENTRY}" || -z "${ZCA_LEN2}" || -z "${ZCA_LEN4}" \
-        || -z "${ZCA_LINK}" || -z "${ZCA_SECOND_LINK}" || -z "${ZCA_HINT}" || -z "${ZCA_SPIN}" || -z "${ZCA_EXIT}" ]]; then
-        echo "compressed guest is missing one of its fixed labels" >&2
-        exit 1
-    fi
-    # The fixed instruction mix is a guest invariant: the 2-byte instruction
-    # and, per contract D10, the 4-byte breakpoint target both start at
-    # pc % 4 == 2 in this image.
-    if (( 0x${ZCA_LEN2} % 4 != 2 )); then
-        echo "zca_len2 (0x${ZCA_LEN2}) is not at pc % 4 == 2" >&2
-        exit 1
-    fi
-    if (( 0x${ZCA_LEN4} % 4 != 2 )); then
-        echo "zca_len4 (0x${ZCA_LEN4}) is not at pc % 4 == 2" >&2
-        exit 1
-    fi
+ZCA_ENTRY="$(zca_symbol _start)"
+ZCA_LEN2="$(zca_symbol zca_len2)"
+ZCA_LEN4="$(zca_symbol zca_len4)"
+ZCA_LINK="$(zca_symbol zca_link)"
+ZCA_SECOND_LINK="$(zca_symbol zca_second_link)"
+ZCA_HINT="$(zca_symbol zca_hint)"
+ZCA_SPIN="$(zca_symbol zca_spin)"
+ZCA_EXIT="$(zca_symbol zca_exit)"
+if [[ -z "${ZCA_ENTRY}" || -z "${ZCA_LEN2}" || -z "${ZCA_LEN4}" \
+    || -z "${ZCA_LINK}" || -z "${ZCA_SECOND_LINK}" || -z "${ZCA_HINT}" || -z "${ZCA_SPIN}" || -z "${ZCA_EXIT}" ]]; then
+    echo "compressed guest is missing one of its fixed labels" >&2
+    exit 1
+fi
+# The fixed instruction mix is a guest invariant: the 2-byte instruction
+# and, per contract D10, the 4-byte breakpoint target both start at
+# pc % 4 == 2 in this image.
+if (( 0x${ZCA_LEN2} % 4 != 2 )); then
+    echo "zca_len2 (0x${ZCA_LEN2}) is not at pc % 4 == 2" >&2
+    exit 1
+fi
+if (( 0x${ZCA_LEN4} % 4 != 2 )); then
+    echo "zca_len4 (0x${ZCA_LEN4}) is not at pc % 4 == 2" >&2
+    exit 1
 fi
 
 symbol() {
@@ -1469,9 +1466,7 @@ echo "GDB: $(gdb-multiarch --version | head -1)"
 run_session ruscv ruscv_cmd "${WORK}/ruscv.named"
 run_progbuf_session ruscv-progbuf ruscv_cmd "${WORK}/ruscv-progbuf.named"
 run_sysbus_session ruscv-sysbus ruscv_cmd "${WORK}/ruscv-sysbus.named"
-if [[ "${ZCA_ENABLED}" -eq 1 ]]; then
-    run_zca_session ruscv-zca ruscv_zca_cmd "${WORK}/ruscv-zca.named"
-fi
+run_zca_session ruscv-zca ruscv_zca_cmd "${WORK}/ruscv-zca.named"
 run_negative_version
 run_negative_datacount
 
@@ -1487,11 +1482,9 @@ elif spike_available; then
     run_sysbus_session spike-sysbus spike_sysbus_cmd "${WORK}/spike-sysbus.named"
     compare_sysbus_named "${WORK}/ruscv-sysbus.named" "${WORK}/spike-sysbus.named" \
         | tee "${WORK}/sysbus-comparison.txt"
-    if [[ "${ZCA_ENABLED}" -eq 1 ]]; then
-        run_zca_session spike-zca spike_zca_cmd "${WORK}/spike-zca.named"
-        compare_zca_named "${WORK}/ruscv-zca.named" "${WORK}/spike-zca.named" \
-            | tee "${WORK}/zca-comparison.txt"
-    fi
+    run_zca_session spike-zca spike_zca_cmd "${WORK}/spike-zca.named"
+    compare_zca_named "${WORK}/ruscv-zca.named" "${WORK}/spike-zca.named" \
+        | tee "${WORK}/zca-comparison.txt"
     run_session spike spike_cmd "${WORK}/spike.named"
     compare_named "${WORK}/ruscv.named" "${WORK}/spike.named" | tee "${WORK}/comparison.txt"
 else
@@ -1505,7 +1498,8 @@ fi
 if [[ -n "${EVIDENCE}" ]]; then
     mkdir -p "${EVIDENCE}"
     # The script rebuilds the guest. Keep logs and named values only.
-    tar -C "${WORK}" -cf - --exclude='guest.o' --exclude='guest.elf' . \
+    tar -C "${WORK}" -cf - --exclude='guest.o' --exclude='guest.elf' \
+        --exclude='zca-guest.o' --exclude='zca-guest.elf' . \
         | tar -C "${EVIDENCE}" -xf -
     echo "evidence copied to ${EVIDENCE}"
 fi
