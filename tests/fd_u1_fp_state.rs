@@ -13,7 +13,7 @@ use common::public_elf as fixture;
 use ruscv_sim::core::{ExceptionCause, RiscvCore, StepOutcome, Trap};
 use ruscv_sim::csr::{self, machine, mstatus, supervisor, unprivileged, CsrError};
 use ruscv_sim::executor::RiscVSimulator;
-use ruscv_sim::fpu::{Fcsr, Fpr, FpuRegisterFile, CANONICAL_NAN_F32, NAN_BOX_MASK};
+use ruscv_sim::fpu::{Fcsr, FpFlags, Fpr, FpuRegisterFile, CANONICAL_NAN_F32, NAN_BOX_MASK};
 use ruscv_sim::memory::{MemoryInterface, SimpleMemory};
 use ruscv_sim::IsaProfile;
 use std::sync::{Arc, Mutex};
@@ -395,7 +395,9 @@ fn fp_csrs_alias_one_fcsr_through_csr_instructions() {
     load(
         &ram,
         &[
-            fixture::addi(5, 0, 0xE5), // fcsr = 0b1110_0101: frm = 5, fflags = 0b11100
+            // fcsr = 0b1011_0101: frm = 5 (bits 7:5), fflags = 0b1_0101
+            // (bits 4:0: NX, OF and NV).
+            fixture::addi(5, 0, 0xB5),
             csrw(unprivileged::FCSR, 5),
             csrr(6, unprivileged::FFLAGS),
             csrr(7, unprivileged::FRM),
@@ -407,12 +409,19 @@ fn fp_csrs_alias_one_fcsr_through_csr_instructions() {
     }
 
     let state = core.state();
-    assert_eq!(state.fcsr.read(), 0xE5);
+    assert_eq!(state.fcsr.read(), 0xB5);
     assert_eq!(state.fcsr.frm_bits(), 5);
-    assert_eq!(state.fcsr.flags_bits(), 0b1_1100);
-    assert_eq!(state.regs[6], 0b1_1100, "fflags is fcsr bits 7:3");
-    assert_eq!(state.regs[7], 5, "frm is fcsr bits 2:0");
-    assert_eq!(state.regs[8], 0xE5, "fcsr is fcsr bits 7:0");
+    assert_eq!(state.fcsr.flags_bits(), 0b1_0101);
+    assert_eq!(state.regs[6], 0b1_0101, "fflags is fcsr bits 4:0");
+    assert_eq!(state.regs[7], 5, "frm is fcsr bits 7:5");
+    assert_eq!(state.regs[8], 0xB5, "fcsr is fcsr bits 7:0");
+    // The architectural flag order: NX bit 0 through NV bit 4.
+    let flags = state.fcsr.flags();
+    assert!(flags.contains(FpFlags::NX));
+    assert!(flags.contains(FpFlags::OF));
+    assert!(flags.contains(FpFlags::NV));
+    assert!(!flags.contains(FpFlags::UF));
+    assert!(!flags.contains(FpFlags::DZ));
     // A retired write to an FP CSR sets FS to Dirty (contract D6).
     assert_eq!(
         read_csr(&core, machine::MSTATUS) & mstatus::FS,
@@ -442,7 +451,8 @@ fn fp_csr_member_writes_change_only_their_own_bits() {
     let state = core.state();
     assert_eq!(state.fcsr.frm_bits(), 2);
     assert_eq!(state.fcsr.flags_bits(), 1);
-    assert_eq!(state.regs[9], 0b0_1000 | 0b010);
+    // frm = 2 in bits 7:5, fflags = 1 in bits 4:0.
+    assert_eq!(state.regs[9], 2 << 5 | 1);
 }
 
 #[test]
@@ -471,10 +481,11 @@ fn fcsr_reserved_bits_read_zero_and_ignore_writes() {
     assert_eq!(state.regs[6], u64::from(Fcsr::MASK));
     assert_eq!(state.regs[7], u64::from(Fcsr::FFLAGS_MASK));
     assert_eq!(state.regs[8], u64::from(0xBu8 & Fcsr::FRM_MASK));
-    assert_eq!(state.regs[9], u64::from(Fcsr::FFLAGS_MASK) << 3 | 0b011);
+    // frm = 3 in bits 7:5, the five flags in bits 4:0.
+    assert_eq!(state.regs[9], 3 << 5 | u64::from(Fcsr::FFLAGS_MASK));
     assert_eq!(
         u64::from(state.fcsr.read()),
-        u64::from(Fcsr::FFLAGS_MASK) << 3 | 0b011
+        3 << 5 | u64::from(Fcsr::FFLAGS_MASK)
     );
 }
 

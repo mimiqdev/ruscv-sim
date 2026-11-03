@@ -1,51 +1,60 @@
 //! FCSR (Floating-Point Control and Status Register)
 //!
-//! RISC-V FCSR contains the floating-point dynamic rounding mode,
-//! floating-point exception flags, and accrued exception flags.
+//! RISC-V FCSR holds the dynamic rounding mode and the five accrued
+//! exception flags (unprivileged specification 20250508, "F" chapter).
 //!
-//! FCSR layout (for RV64):
-/// |  31:8   |  7  |  6  |  5  |  4  |  3  |  2  |  1  |  0  |
-/// |  NZOQA  | NX  | OF  | UF  | DZ  | NV  | 0   | Rounding Mode (frm) |
-///
-/// Accrued Exception Flags (read-only, sticky):
-/// - NV: Invalid Operation
-/// - DZ: Divide by Zero
-/// - OF: Overflow
-/// - UF: Underflow
-/// - NX: Inexact
-///
-/// Dynamic Rounding Mode (frm):
-/// - 000: RNE (Round to Nearest, ties to Even)
-/// - 001: RTZ (Round Towards Zero)
-/// - 010: RDN (Round Down, towards -∞)
-/// - 011: RUP (Round Up, towards +∞)
-/// - 100: RMM (Round to Nearest, ties to Max Magnitude)
-/// - 101-111: Reserved (raise invalid operation exception)
+//! FCSR layout (RV64):
+//!
+//! ```text
+//! | 63:8 |  7  |  6  |  5  |  4  |  3  |  2  |  1  |  0  |
+//! | zero |    frm    | NV  | DZ  | OF  | UF  | NX  |
+//! ```
+//!
+//! `frm` occupies bits 7:5 and `fflags` bits 4:0.  Within `fflags` the
+//! architectural order is `NX` (bit 0), `UF` (bit 1), `OF` (bit 2), `DZ`
+//! (bit 3) and `NV` (bit 4).  Bits 63:8 are reserved: they read zero and
+//! ignore writes (contract D5).
+//!
+//! Accrued Exception Flags (sticky):
+//! - NX (bit 0): Inexact
+//! - UF (bit 1): Underflow
+//! - OF (bit 2): Overflow
+//! - DZ (bit 3): Divide by Zero
+//! - NV (bit 4): Invalid Operation
+//!
+//! Dynamic Rounding Mode (`fcsr` bits 7:5, `frm` CSR bits 2:0):
+//! - 000: RNE (Round to Nearest, ties to Even)
+//! - 001: RTZ (Round Towards Zero)
+//! - 010: RDN (Round Down, towards -∞)
+//! - 011: RUP (Round Up, towards +∞)
+//! - 100: RMM (Round to Nearest, ties to Max Magnitude)
+//! - 101-111: Reserved (raise invalid operation exception)
 use bitflags::bitflags;
 use std::fmt;
 
 bitflags! {
-    /// Floating-Point Exception Flags
+    /// Floating-point accrued exception flags, in architectural `fflags` bit
+    /// order (F: `fflags[0]` is NX through `fflags[4]` NV).
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct FpFlags: u8 {
-        const NV = 1 << 0;  // Invalid Operation
-        const DZ = 1 << 1;  // Divide by Zero
+        const NX = 1 << 0;  // Inexact
+        const UF = 1 << 1;  // Underflow
         const OF = 1 << 2;  // Overflow
-        const UF = 1 << 3;  // Underflow
-        const NX = 1 << 4;  // Inexact
+        const DZ = 1 << 3;  // Divide by Zero
+        const NV = 1 << 4;  // Invalid Operation
     }
 }
 
 /// FCSR Register
 ///
-/// `fcsr` is eight architectural bits: `frm` (2:0) and the five accrued
-/// exception flags `fflags` (7:3).  Bits 63:8 are reserved, read zero, and
+/// `fcsr` is eight architectural bits: `frm` (7:5) and the five accrued
+/// exception flags `fflags` (4:0).  Bits 63:8 are reserved, read zero, and
 /// ignore writes (contract D5), so they have no storage here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fcsr {
-    /// Rounding mode (bits 2:0)
+    /// Rounding mode, the `frm` CSR value (2:0)
     frm: u8,
-    /// Accrued exception flags (bits 7:3)
+    /// Accrued exception flags, the `fflags` CSR value (4:0)
     flags: FpFlags,
 }
 
@@ -65,6 +74,8 @@ impl Fcsr {
     pub const FFLAGS_MASK: u8 = 0x1F;
     /// Mask of the three rounding-mode bits.
     pub const FRM_MASK: u8 = 0x7;
+    /// `frm` starts at bit 5 of `fcsr`.
+    const FRM_SHIFT: u32 = 5;
 
     /// Create a new FCSR with default values
     pub fn new() -> Self {
@@ -127,19 +138,26 @@ impl Fcsr {
         !self.flags.is_empty()
     }
 
-    /// Read the architectural `fcsr` value (bits 7:0).
+    /// Read the architectural `fcsr` value: `frm` in bits 7:5 and `fflags`
+    /// in bits 4:0.
     ///
     /// Bits 63:8 are reserved and read zero.
     pub fn read(&self) -> u32 {
-        u32::from(self.flags.bits()) << 3 | u32::from(self.frm)
+        u32::from(self.frm) << Self::FRM_SHIFT | u32::from(self.flags.bits())
     }
 
-    /// Write the `fcsr` address: `frm` takes bits 2:0 and `fflags` bits 7:3.
+    /// Write the `fcsr` address: `frm` takes bits 7:5 and `fflags` bits 4:0.
     /// Every bit above 7 is reserved and ignored.
     pub fn write(&mut self, value: u32) {
         let value = (value & Self::MASK) as u8;
-        self.frm = value & Self::FRM_MASK;
-        self.flags = FpFlags::from_bits_truncate(value >> 3);
+        self.frm = (value >> Self::FRM_SHIFT) & Self::FRM_MASK;
+        self.flags = FpFlags::from_bits_truncate(value & Self::FFLAGS_MASK);
+    }
+
+    /// The default NaN for operations: the canonical NaN, NaN boxed for
+    /// single precision (contract D4/D5).
+    pub fn default_nan(&self) -> u64 {
+        crate::fpu::nan_boxing::canonical_nan_f32()
     }
 }
 
@@ -289,18 +307,53 @@ mod tests {
     #[test]
     fn test_fcsr_aliases_members() {
         let mut fcsr = Fcsr::new();
-        // `frm` is bits 2:0 of `fcsr`.
+        // `frm` is bits 7:5 of `fcsr`.
         fcsr.write_frm_bits(0b1111_1010);
         assert_eq!(fcsr.frm_bits(), 0b010);
-        assert_eq!(fcsr.read(), 0b010);
-        // `fflags` is bits 4:0, stored in `fcsr` bits 7:3.
+        assert_eq!(fcsr.read(), 0b010 << 5);
+        // `fflags` is bits 4:0 of `fcsr`.
         fcsr.write_flags_bits(0b1111_1110);
         assert_eq!(fcsr.flags_bits(), 0b1_1110);
-        assert_eq!(fcsr.read(), 0b1_1110 << 3 | 0b010);
+        assert_eq!(fcsr.read(), 0b010 << 5 | 0b1_1110);
         // Writing one view leaves the other unchanged.
         fcsr.write(0);
         assert_eq!(fcsr.frm_bits(), 0);
         assert_eq!(fcsr.flags_bits(), 0);
+    }
+
+    #[test]
+    fn test_fcsr_field_layout_and_flag_order() {
+        // Architectural layout: `frm` 7:5, `fflags` 4:0, and the flags from
+        // NX at bit 0 to NV at bit 4.
+        assert_eq!(FpFlags::NX.bits(), 1 << 0);
+        assert_eq!(FpFlags::UF.bits(), 1 << 1);
+        assert_eq!(FpFlags::OF.bits(), 1 << 2);
+        assert_eq!(FpFlags::DZ.bits(), 1 << 3);
+        assert_eq!(FpFlags::NV.bits(), 1 << 4);
+        assert_eq!(FpFlags::all().bits(), Fcsr::FFLAGS_MASK);
+
+        let mut fcsr = Fcsr::new();
+        fcsr.write_frm_bits(5);
+        fcsr.write_flags_bits(FpFlags::NX.bits() | FpFlags::OF.bits() | FpFlags::NV.bits());
+        assert_eq!(fcsr.read(), 0b101 << 5 | 0b1_0101);
+
+        // Reading `fcsr` back recovers each field and each named flag.
+        let mut restored = Fcsr::new();
+        restored.write(fcsr.read());
+        assert_eq!(restored.frm_bits(), 5);
+        assert!(restored.flags().contains(FpFlags::NX));
+        assert!(restored.flags().contains(FpFlags::OF));
+        assert!(restored.flags().contains(FpFlags::NV));
+        assert!(!restored.flags().contains(FpFlags::UF));
+        assert!(!restored.flags().contains(FpFlags::DZ));
+    }
+
+    #[test]
+    fn test_fcsr_default_nan_is_the_boxed_canonical_nan() {
+        let nan = Fcsr::new().default_nan();
+        assert_eq!(nan, crate::fpu::nan_boxing::canonical_nan_f32());
+        assert_eq!(nan as u32, crate::fpu::nan_boxing::CANONICAL_NAN_F32);
+        assert!(crate::fpu::nan_boxing::is_nan_boxed(nan));
     }
 
     #[test]

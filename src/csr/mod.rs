@@ -89,9 +89,10 @@ pub mod supervisor {
 ///
 /// `fflags`, `frm` and `fcsr` are the floating-point CSRs (unprivileged
 /// specification 20250508, "F" chapter).  They alias one architectural
-/// `fcsr`: `fflags` is its bits 4:0, `frm` its bits 2:0, and `fcsr` its bits
-/// 7:0.  Bits 63:8 read zero and ignore writes.  They exist only under an FP
-/// profile and only while `mstatus.FS` is not Off (contract D5/D6).
+/// `fcsr`: the `fflags` CSR is `fcsr` bits 4:0, the `frm` CSR is `fcsr` bits
+/// 7:5 (and reads in its own bits 2:0), and `fcsr` is bits 7:0.  Bits 63:8
+/// read zero and ignore writes.  They exist only under an FP profile and
+/// only while `mstatus.FS` is not Off (contract D5/D6).
 pub mod unprivileged {
     pub const CYCLE: u16 = 0xC00;
     pub const TIME: u16 = 0xC01;

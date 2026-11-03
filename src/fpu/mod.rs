@@ -63,6 +63,13 @@ impl Fpr {
         self.0 as u32
     }
 
+    /// Get lower 32 bits, unchanged (contract D5).
+    ///
+    /// Compatibility alias of [`Self::raw_low_u32`].
+    pub fn lower(&self) -> u32 {
+        self.raw_low_u32()
+    }
+
     /// Get raw bits (NaN boxed)
     pub fn bits(&self) -> u64 {
         self.0
@@ -77,6 +84,12 @@ impl Fpr {
     /// precision (contract D4/D5).
     pub fn canonical_nan() -> Self {
         Self(NAN_BOX_MASK | u64::from(CANONICAL_NAN_F32))
+    }
+
+    /// The default NaN an arithmetic operation produces: the canonical NaN
+    /// (contract D4/D5).
+    pub fn default_nan() -> Self {
+        Self::canonical_nan()
     }
 }
 
@@ -168,6 +181,14 @@ impl FpuRegisterFile {
         self.read(reg).raw_low_u32()
     }
 
+    /// Raw low 32 bits of a register.
+    ///
+    /// Compatibility alias of [`Self::read_raw_u32`]: it is the transfer
+    /// read, not the computational single-precision read.
+    pub fn read_u32(&self, reg: usize) -> u32 {
+        self.read_raw_u32(reg)
+    }
+
     /// Check if register is valid (0-31)
     pub fn is_valid_reg(reg: u32) -> bool {
         reg < 32
@@ -238,6 +259,11 @@ mod tests {
     }
 
     #[test]
+    fn test_fpr_default_nan_is_the_canonical_nan() {
+        assert_eq!(Fpr::default_nan().bits(), Fpr::canonical_nan().bits());
+    }
+
+    #[test]
     fn test_fpr_default_is_architectural_zero() {
         let fpr = Fpr::default();
         assert_eq!(fpr.bits(), 0);
@@ -256,6 +282,7 @@ mod tests {
         // A transfer read keeps the low 32 bits unchanged.
         assert_eq!(fpr.raw_low_u32(), 0);
         assert_eq!(fpr.raw_low_u32(), 0);
+        assert_eq!(fpr.lower(), 0);
         assert_eq!(fpr.bits(), 0x3FF0_0000_0000_0000);
     }
 
@@ -334,6 +361,7 @@ mod tests {
         frf.write(3, Fpr::new(2.0f32));
         let val = frf.read_raw_u32(3);
         assert_eq!(val, 2.0f32.to_bits());
+        assert_eq!(frf.read_u32(3), val);
         assert_eq!(frf.read_single_bits(3), 2.0f32.to_bits());
     }
 
