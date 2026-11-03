@@ -64,9 +64,11 @@ set $ft10.double = 30.5
 set $ft11.double = 31.5
 set $fcsr = 0x7b
 
-# Read every FPR back through the debugger before the guest runs. The flush
-# makes GDB request the register file instead of reusing the values from the
-# set commands.
+# Read every FPR back through the debugger before the guest runs. OpenOCD
+# caches FPR values after a write, so a GDB-side flush alone would return that
+# cache. `monitor halt` invalidates OpenOCD's register cache even when the
+# hart is already halted; the flush then makes GDB request each value.
+monitor halt
 maintenance flush register-cache
 printf "U6 f0="
 output/x $ft0.double

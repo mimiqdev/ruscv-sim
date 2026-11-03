@@ -1232,8 +1232,11 @@ assert_fd_session() {
 }
 
 # The OpenOCD 0.12.0 log must show the FP profile's misa, a 4-byte software
-# breakpoint at each FP stop, abstract FPR and fcsr transfers, and no fallback
-# from abstract FPR access to the program buffer.
+# breakpoint at each FP stop, a written value for f0/f31 and fcsr, a fresh DM
+# read of every written FPR, and no fallback from abstract FPR access to the
+# program buffer. OpenOCD caches FPRs after a write; the FPR read rows prove
+# the session's `monitor halt` invalidated that cache and every readback came
+# from the target.
 assert_fd_evidence() {
     local name="$1" dir="$2"
     local log="${dir}/openocd.log"
@@ -1252,14 +1255,27 @@ assert_fd_evidence() {
     local pattern
     for pattern in \
         'register_write_direct(): {0} fpr0 <- 0x3fe0000000000000' \
-        'register_read_direct(): {0} fpr0 = 0x3fe0000000000000' \
         'register_write_direct(): {0} fpr31 <- 0x403f800000000000' \
-        'register_read_direct(): {0} fpr31 = 0x403f800000000000' \
         'write 0x000000000000007b to fcsr' \
         'wrote 0x7b to fcsr'
     do
         if ! grep -aqF -- "${pattern}" "${log}"; then
             echo "${name}: OpenOCD log lacks [${pattern}]" >&2
+            return 1
+        fi
+    done
+    local index bits register
+    for ((index = 0; index < 32; index++)); do
+        bits="$(fd_expected_bits "${index}.5")"
+        if (( index == 0 )); then
+            register="fpr0"
+        elif (( index == 31 )); then
+            register="fpr31"
+        else
+            register="f${index}"
+        fi
+        if ! grep -aqF -- "register_read_direct(): {0} ${register} = 0x${bits}" "${log}"; then
+            echo "${name}: no fresh DM read of f${index} (0x${bits})" >&2
             return 1
         fi
     done
