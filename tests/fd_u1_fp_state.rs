@@ -3,7 +3,7 @@
 //!
 //! These assertions pin the profile boundary and the floating-point state.
 //! FP instruction execution is U3a, so every F/D/Zcd encoding still raises
-//! illegal-instruction here.  The default `rv64ima` and `rv64imac`
+//! illegal-instruction here.  The `rv64ima` and `rv64imac`
 //! profiles are proven unchanged by the existing suites running unmodified;
 //! the controls below pin their hard-wired `FS`/`SD` and absent FP CSRs.
 

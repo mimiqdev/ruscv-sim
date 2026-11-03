@@ -74,7 +74,7 @@ and the F/D U5 additions through the public CLI. The five A6 trap guests, the
 five Zca U4 compressed guests, the eight F/D U5 guests and the U6 FP attach
 guest remain required members; the Zca guests run with `--isa rv64imac`, the
 `fd_*` guests with `--isa rv64imafd`, `zcd_transfer` and `fdc_u6_attach` with
-`--isa rv64imafdc`, and every other guest runs under the default `rv64ima`. The path guard
+`--isa rv64imafdc`, and every other guest runs under the default `rv64imafdc`. The path guard
 rejects source directories, parent aliases, and symlinked roots; its regression
 cases run with `bash scripts/test_riscv_elf_guards.sh`.
 When a bind-mounted worktree cannot resolve its host-side `.git` file, pass the

@@ -60,9 +60,9 @@ enum Commands {
         #[arg(long)]
         halted: bool,
 
-        /// Machine ISA profile: `rv64ima` (default), `rv64imac`, `rv64imafd`
-        /// or `rv64imafdc`
-        #[arg(long, value_name = "PROFILE", default_value = "rv64ima")]
+        /// Machine ISA profile: `rv64imafdc` (default), `rv64ima`,
+        /// `rv64imac` or `rv64imafd`
+        #[arg(long, value_name = "PROFILE", default_value = "rv64imafdc")]
         isa: IsaProfileArg,
     },
 }

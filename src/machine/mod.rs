@@ -37,18 +37,21 @@ pub enum PlatformKind {
 /// The profile is Machine composition configuration fixed for the Machine's
 /// lifetime. The Hart applies every profile-dependent rule: parcel fetch,
 /// IALIGN, `misa`, `xepc`/`dpc` legality, and the floating-point state and
-/// CSR rules (contract D5/D6).
+/// CSR rules (contract D5/D6). The Machine-level default is `rv64imafdc`
+/// (ADR-0003 2026-11-04 default-profile amendment, contract D2); the raw
+/// `RiscvCore` compatibility constructors stay `rv64ima` by explicit
+/// selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IsaProfile {
     /// RV64IMA/Zicsr + Zifencei, IALIGN=32, `misa` `0x8000000000141101`.
-    #[default]
     Rv64ima,
     /// The `rv64ima` profile plus Zca, IALIGN=16, `misa` `0x8000000000141105`.
     Rv64imac,
     /// RV64IMA + F + D, IALIGN=32, `misa` `0x8000000000141129`.
     Rv64imafd,
     /// `rv64imafd` plus Zca and Zcd, IALIGN=16, `misa`
-    /// `0x800000000014112D`.
+    /// `0x800000000014112D`. The Machine composition default (contract D2).
+    #[default]
     Rv64imafdc,
 }
 
@@ -152,6 +155,7 @@ impl MachineConfig {
     pub fn new(platform: PlatformKind) -> Self {
         Self {
             platform,
+            // Machine composition default is `rv64imafdc` (contract D2).
             isa: IsaProfile::default(),
             verbose: false,
             tohost_override: None,

@@ -4,7 +4,7 @@
 //! page-boundary straddle, first-parcel priority, region end, MMIO
 //! rejection), D5 (IALIGN=16 links, fall-through, xepc/dpc masks, MRET/SRET)
 //! and D7 (original fetched bits and length in commit facts and the
-//! pinned-Spike commit-log format). The default `rv64ima` profile's
+//! pinned-Spike commit-log format). The `rv64ima` profile's
 //! unchanged behavior is proven by the existing suites running unmodified;
 //! the assertions here pin the profile boundary.
 
@@ -144,7 +144,7 @@ fn native_facade_runs_compressed_guest_under_imac_only() {
     assert_eq!(result.exit_code, 0, "{result:?}");
     assert!(!result.timed_out);
 
-    // The same guest under the default profile cannot run: its first parcel
+    // The same guest under explicit rv64ima cannot run: its first parcel
     // is not a legal rv64ima instruction stream, so it never exits.
     let result =
         ruscv_sim::load_and_run_with_isa(&elf, Some(5_000), None, None, false, IsaProfile::Rv64ima)
@@ -163,7 +163,9 @@ fn flat_facade_runs_compressed_guest_under_imac_only() {
     assert_eq!(result.exit_code, 0, "{result:?}");
     assert!(!result.timed_out);
 
-    let mut sim = ruscv_sim::RiscVSimulator::new(1);
+    // Explicit rv64ima keeps the profile-pinned expectation: the compressed
+    // guest never exits under IALIGN=32.
+    let mut sim = ruscv_sim::RiscVSimulator::new_with_isa(1, IsaProfile::Rv64ima);
     sim.load_elf(&elf).unwrap();
     sim.set_tohost(TOHOST_OFF);
     let result = sim.run(Some(5_000)).unwrap();
@@ -203,26 +205,22 @@ fn cli_selects_the_profile_through_isa() {
     );
     assert!(output.status.success());
 
-    // The default profile (`--isa rv64ima`, explicit) cannot execute the
-    // compressed stream and never exits.
-    for args in [
-        vec!["--isa", "rv64ima"],
-        vec![], // default is rv64ima
-    ] {
-        let output = cargo_bin_cmd!("ruscv-sim")
-            .arg("run")
-            .arg(&path)
-            .args(&args)
-            .arg("--max-cycles")
-            .arg("2000")
-            .output()
-            .unwrap();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            !stdout.contains("Status:     SUCCESS"),
-            "rv64ima must not run the compressed guest: {stdout}"
-        );
-    }
+    // The `rv64ima` profile cannot execute the compressed stream and never
+    // exits. The default is `rv64imafdc` (contract D2), so an explicit
+    // `--isa rv64ima` is what pins the non-compressed expectation.
+    let output = cargo_bin_cmd!("ruscv-sim")
+        .arg("run")
+        .arg(&path)
+        .args(["--isa", "rv64ima"])
+        .arg("--max-cycles")
+        .arg("2000")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("Status:     SUCCESS"),
+        "rv64ima must not run the compressed guest: {stdout}"
+    );
 
     // An unapproved profile name is rejected at the CLI boundary.
     let output = cargo_bin_cmd!("ruscv-sim")

@@ -1,0 +1,19 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -44,6 +44,7 @@
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+ pub enum IsaProfile {
+     /// RV64IMA/Zicsr + Zifencei, IALIGN=32, `misa` `0x8000000000141101`.
++    #[default]
+     Rv64ima,
+     /// The `rv64ima` profile plus Zca, IALIGN=16, `misa` `0x8000000000141105`.
+     Rv64imac,
+@@ -51,7 +52,6 @@
+     Rv64imafd,
+     /// `rv64imafd` plus Zca and Zcd, IALIGN=16, `misa`
+     /// `0x800000000014112D`. The Machine composition default (contract D2).
+-    #[default]
+     Rv64imafdc,
+ }
+ 

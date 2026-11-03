@@ -23,8 +23,13 @@
 //! ECALL back to M reads as 0; the control is MRET with MPP = M, which
 //! keeps MPRV = 1.  SRET from S clearing MPRV is not guest-observable,
 //! since MPRV is already 0 in S and sstatus does not expose it.
+//!
+//! These guests assert rv64ima expectations (`s4_fp_absent` and
+//! `s4_csr_policy` read the exact `0x8000_0000_0014_1101` `misa`), so every
+//! route here selects `rv64ima` explicitly (contract D3).
 
-use ruscv_sim::executor::{load_and_run, RiscVSimulator};
+use ruscv_sim::executor::{load_and_run_with_isa, RiscVSimulator};
+use ruscv_sim::IsaProfile;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -139,8 +144,11 @@ fn s4_profile_guests_pass_through_cli_library_and_flat_facade() {
         );
         let elf_data = std::fs::read(&elf).expect("fresh guest ELF");
 
+        // Every route selects rv64ima explicitly (contract D3): these
+        // guests assert the rv64ima misa and FP-absent rules.
         let cli_result = Command::new(&cli)
             .args(["run", elf.to_str().expect("UTF-8 guest path")])
+            .args(["--isa", "rv64ima"])
             .args(["--max-cycles", &MAX_CYCLES.to_string()])
             .output()
             .unwrap_or_else(|error| panic!("failed to run CLI for {name}: {error}"));
@@ -152,8 +160,15 @@ fn s4_profile_guests_pass_through_cli_library_and_flat_facade() {
             String::from_utf8_lossy(&cli_result.stderr)
         );
 
-        let library_result = load_and_run(&elf_data, Some(MAX_CYCLES), None, None, false)
-            .unwrap_or_else(|error| panic!("load_and_run failed for {name}: {error}"));
+        let library_result = load_and_run_with_isa(
+            &elf_data,
+            Some(MAX_CYCLES),
+            None,
+            None,
+            false,
+            IsaProfile::Rv64ima,
+        )
+        .unwrap_or_else(|error| panic!("load_and_run_with_isa failed for {name}: {error}"));
         assert_eq!(library_result.exit_code, 0, "library route: {name}");
         assert!(!library_result.timed_out, "library route timed out: {name}");
         assert!(
@@ -162,7 +177,7 @@ fn s4_profile_guests_pass_through_cli_library_and_flat_facade() {
             library_result.error
         );
 
-        let mut flat = RiscVSimulator::new(0x20_000);
+        let mut flat = RiscVSimulator::new_with_isa(0x20_000, IsaProfile::Rv64ima);
         flat.load_elf(&elf_data)
             .unwrap_or_else(|error| panic!("flat facade load failed for {name}: {error}"));
         let flat_result = flat

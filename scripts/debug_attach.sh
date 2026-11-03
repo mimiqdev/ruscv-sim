@@ -34,8 +34,9 @@
 # RV64GC U3 binds every session to its profile under contract D7/D3. The
 # abstract, program-buffer and system-bus sessions (and the two negative
 # controls) run the simulator under explicit `--isa rv64ima`, the Zca session
-# under `--isa rv64imac`, and the F/D session under FDC_ISA_ARGS, the single
-# flag that U1 or U5 removes once the default flips to rv64imafdc. Every
+# under `--isa rv64imac`, and the F/D session with no `--isa` at all: since the
+# RV64GC U1 default flip it runs under the rv64imafdc default and proves it
+# (contract D7). Every
 # Spike side keeps its existing --isa string, and no named result changes.
 #
 # Named outputs are the S6, U4, Z5 and U6 lines in the GDB logs. The
@@ -1330,11 +1331,10 @@ ruscv_zca_cmd() {
 }
 
 # The F/D U6 target: the FP session guest under the rv64imafdc profile.
-# FDC_ISA_ARGS is the D7 default-proof switch: while the default is still
-# rv64ima it holds the explicit profile; the RV64GC U1 or U5 follow-up
-# empties it (`FDC_ISA_ARGS=()`) once the default is rv64imafdc, so the
-# F/D session then runs with no --isa and proves the default.
-FDC_ISA_ARGS=(--isa rv64imafdc)
+# This is the D7 default-proof session: the default is rv64imafdc since the
+# RV64GC U1 flip, so the F/D session runs with no --isa and proves the
+# default (contract D7). The Spike side keeps its explicit profile string.
+FDC_ISA_ARGS=()
 ruscv_fdc_cmd() {
     local port="$1"
     exec "${RUSCV_SIM}" run "${WORK}/fdc-guest.elf" "${FDC_ISA_ARGS[@]+"${FDC_ISA_ARGS[@]}"}" \

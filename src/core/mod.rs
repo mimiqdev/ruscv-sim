@@ -962,11 +962,17 @@ impl RiscvCore {
     /// labeled non-conforming adapter: it cannot provide indivisible physical
     /// envelopes or committed-write visibility. Standard facades install
     /// validated physical ports instead.
+    ///
+    /// The raw compatibility constructors stay `rv64ima` by explicit
+    /// selection (contract D2); the Machine-level `rv64imafdc` default does
+    /// not reach this path. The selected profile's CSR state (`misa`,
+    /// `epc_ialign32`, FP enablement) is installed at construction, not only
+    /// after `reset()`.
     pub fn new(
         instruction_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
         data_mem: Arc<Mutex<dyn MemoryInterface + Send + Sync>>,
     ) -> Self {
-        Self {
+        let mut core = Self {
             state: CoreState::default(),
             instruction_mem,
             data_mem,
@@ -988,9 +994,13 @@ impl RiscvCore {
             debug_word: None,
             #[cfg(test)]
             inject_haltreq_after_fetch: false,
-            isa: crate::machine::IsaProfile::default(),
+            // The compatibility default before set_isa_profile below runs;
+            // the explicit assignment is what makes the selection explicit.
+            isa: crate::machine::IsaProfile::Rv64ima,
             current_instruction_length: 4,
-        }
+        };
+        core.set_isa_profile(crate::machine::IsaProfile::Rv64ima);
+        core
     }
 
     /// Install the Machine-selected ISA profile (contract D3).
@@ -1778,7 +1788,7 @@ impl RiscvCore {
     /// reads the first parcel before it knows the length and reports that
     /// parcel zero-extended, and the D8 Zcd controls require the same value
     /// under `rv64imafd`. `rv64imac` fetches parcels directly, so this value
-    /// is already the parcel there. The default `rv64ima` profile keeps its
+    /// is already the parcel there. The `rv64ima` profile keeps its
     /// pre-milestone full-word value (contract §1: unchanged, bit for bit).
     fn illegal_word_tval(&self, instruction: u32) -> u64 {
         if self.isa.has_fp() && instruction & 0b11 != 0b11 {

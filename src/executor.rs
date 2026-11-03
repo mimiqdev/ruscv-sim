@@ -1732,7 +1732,8 @@ pub fn load_and_run(
 /// [`load_and_run`] under an explicit Machine ISA profile (contract D3).
 ///
 /// The profile is Machine composition configuration; no ELF metadata
-/// changes it. `rv64ima` is the default and is bit-for-bit unchanged.
+/// changes it. The unpinned facade uses the `rv64imafdc` Machine default
+/// (contract D2); explicit `rv64ima` is bit-for-bit unchanged.
 pub fn load_and_run_with_isa(
     elf_data: &[u8],
     max_cycles: Option<u64>,

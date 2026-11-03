@@ -7,8 +7,8 @@
 //! lengths and C.EBREAK termination, compressed forbidden control transfers
 //! with `cmderr=3`, the straddle past `progbuf1`, the DM `misa` read under
 //! both profiles, and the `rv64ima` controls. Existing abstract,
-//! program-buffer and SBA tests pass unchanged under `rv64ima`; the default
-//! profile here is exercised by those suites and pinned by the controls in
+//! program-buffer and SBA tests pass unchanged under `rv64ima`; that
+//! profile is exercised by those suites and pinned by the controls in
 //! this file.
 
 use ruscv_sim::core::{DebugCause, RiscvCore, StepOutcome};

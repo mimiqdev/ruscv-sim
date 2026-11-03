@@ -787,6 +787,42 @@
     ]
   },
   {
+    "unit": "gc-default-stays-ima",
+    "source": "src/machine/mod.rs",
+    "patch": "gc-default-stays-ima.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "gc_u1_default_profile"
+        ],
+        "test": "isa_profile_default_is_rv64imafdc",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+Rv64ima",
+          "right:\\s+Rv64imafdc"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "gc-cli-default-diverges",
+    "source": "src/main.rs",
+    "patch": "gc-cli-default-diverges.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "gc_u1_default_profile"
+        ],
+        "test": "cli_default_is_rv64imafdc",
+        "failure": [
+          "default/ rv64imafdc run must exit through tohost"
+        ]
+      }
+    ]
+  },
+  {
     "unit": "fd-default-misa-f",
     "patch": "fd-default-misa-f.patch",
     "source": "src/machine/mod.rs",
