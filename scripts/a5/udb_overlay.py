@@ -27,7 +27,9 @@ assert original.count(b"    name: Sm\n") == 1
 assert hashlib.sha256(original).hexdigest() == expected[name], "UDB schema changed"
 adapted = original.replace(b"    name: Sm\n", b"    name: I\n")
 overlay = root / ".a5/config/overlay"
-(overlay / "param").mkdir(parents=True)
+# Both checked-in configs share one overlay directory; the second adaptation
+# in a run must reuse it instead of failing on the existing path.
+(overlay / "param").mkdir(parents=True, exist_ok=True)
 (overlay / "param/MXLEN.yaml").write_bytes(adapted)
 with config.open("a") as stream:
     stream.write(f"arch_overlay: {json.dumps(str(overlay))}\n")
