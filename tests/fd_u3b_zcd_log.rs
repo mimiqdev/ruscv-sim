@@ -402,30 +402,56 @@ fn zcd_obeys_the_fs_off_illegal_instruction_rule() {
 }
 
 #[test]
-fn zcd_stays_illegal_under_imac_and_is_aligned_away_under_imafd() {
-    // rv64imac: the parcel is FP-illegal and traps with no architectural
-    // effect. The F/D guard would also reject the expansion; the decoder's
-    // profile dimension is what classifies the parcel (contract D8).
-    let (mut core, ram) = ported_core(IsaProfile::Rv64imac);
-    write64(&ram, 0x100, SENTINEL);
-    core.state_mut().fcsr.write(0);
-    core.state_mut().regs[8] = 0x100;
-    write16(&ram, 0, c_fld(0, 0, 0));
-    let entered = trap(&mut core);
-    assert_eq!(
-        entered.cause,
-        Trap::Exception(ExceptionCause::IllegalInstruction)
-    );
-    assert_eq!(entered.mtval, u64::from(c_fld(0, 0, 0)));
-    assert_eq!(fpr_bits(&core, 8), 0);
-    assert_eq!(read64(&ram, 0x100), SENTINEL);
-    assert_eq!(fs_of(core.state()), mstatus::FS_OFF);
+fn zcd_stays_illegal_under_imac_and_has_no_path_under_imafd() {
+    let parcels = [c_fld(0, 0, 0), c_fsd(0, 0, 0), c_fldsp(1, 0), c_fsdsp(1, 0)];
 
-    // rv64imafd has IALIGN=32, so a 2-byte-aligned parcel is misaligned
-    // before any decode and never executes as C.FLD.
+    // rv64imac: every Zcd parcel at an aligned PC traps illegal-instruction
+    // with the parcel in `tval` and no architectural or memory effect.
+    for parcel in parcels {
+        let (mut core, ram) = ported_core(IsaProfile::Rv64imac);
+        core.state_mut().regs[2] = 0x100; // sp base for the SP forms
+        core.state_mut().regs[8] = 0x100; // compact base for the C0 forms
+        write64(&ram, 0x100, SENTINEL);
+        write16(&ram, 0, parcel);
+        let entered = trap(&mut core);
+        assert_eq!(
+            entered.cause,
+            Trap::Exception(ExceptionCause::IllegalInstruction),
+            "{parcel:#06x}"
+        );
+        assert_eq!(entered.mtval, u64::from(parcel), "{parcel:#06x}");
+        assert_eq!(entered.instruction, Some(u32::from(parcel)));
+        assert_eq!(fpr_bits(&core, 8), 0);
+        assert_eq!(read64(&ram, 0x100), SENTINEL);
+        assert_eq!(fs_of(core.state()), mstatus::FS_OFF);
+    }
+
+    // rv64imafd has IALIGN=32 and no Zcd. With `mstatus.FS` on — so the FS
+    // rule is not what rejects the instruction — an aligned word holding a
+    // Zcd parcel still never executes one: the 32-bit encoding is reserved.
+    for parcel in parcels {
+        let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
+        set_fs(&mut core, mstatus::FS_DIRTY);
+        core.state_mut().regs[2] = 0x100;
+        core.state_mut().regs[8] = 0x100;
+        write64(&ram, 0x100, SENTINEL);
+        write16(&ram, 0, parcel); // low half of the aligned word
+        let entered = trap(&mut core);
+        assert_eq!(
+            entered.cause,
+            Trap::Exception(ExceptionCause::IllegalInstruction),
+            "{parcel:#06x}"
+        );
+        assert_eq!(entered.mtval, u64::from(parcel), "{parcel:#06x}");
+        assert_eq!(fpr_bits(&core, 8), 0, "{parcel:#06x}");
+        assert_eq!(read64(&ram, 0x100), SENTINEL, "{parcel:#06x}");
+        assert_eq!(fs_of(core.state()), mstatus::FS_DIRTY, "{parcel:#06x}");
+    }
+
+    // A 2-byte-aligned PC is an instruction-address-misaligned fetch before
+    // any decode under IALIGN=32.
     let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
-    write64(&ram, 0x100, SENTINEL);
-    core.state_mut().regs[8] = 0x100;
+    set_fs(&mut core, mstatus::FS_DIRTY);
     write16(&ram, 2, c_fld(0, 0, 0));
     core.state_mut().pc = 2;
     let entered = trap(&mut core);
@@ -472,7 +498,7 @@ fn a_loaded_rv64imafdc_guest_executes_zcd() {
 // ============== D9: Spike-format FP commit log ==============
 
 #[test]
-fn commit_log_prints_an_fpr_write_and_an_fcsr_write_in_spike_format() {
+fn commit_log_prints_fflags_and_fpr_writes_in_spike_format() {
     let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
     set_fs(&mut core, mstatus::FS_CLEAN);
     core.state_mut().fpr.write_u32(1, 1.0f32.to_bits());
@@ -480,13 +506,14 @@ fn commit_log_prints_an_fpr_write_and_an_fcsr_write_in_spike_format() {
     let fadd = op_fp(0x00, 2, 1, 0, 3);
     write32(&ram, 0, fadd);
     let turn = traced_step(&mut core);
-    // Spike: `" %c%-2d "` at FLEN then `0x%016` (execute.cc), and the CSR
-    // segment after the register bucket of CSR 0x003.
+    // Pinned Spike calls `raise_fp_exceptions`, which writes the `fflags` CSR
+    // (`c1_fflags` at key 0x14) and logs the FPR write (`" %c%-2d "` at FLEN,
+    // key 0x31), so the flag write prints first.
     assert_eq!(
         commit_log_text(&turn),
         format!(
             "core   0: 3 0x0000000000000000 (0x{fadd:08x}) \
-             f3  {:#018x} c3_fcsr 0x0000000000000001\n",
+             c1_fflags 0x0000000000000001 f3  {:#018x}\n",
             boxed_single(0x3f80_0000)
         )
     );
@@ -510,7 +537,11 @@ fn commit_log_fpr_segment_uses_flen_width_and_spike_padding() {
 }
 
 #[test]
-fn commit_log_prints_a_csr_fcsr_write_named_fcsr() {
+fn commit_log_prints_an_fcsr_write_as_its_two_underlying_csrs() {
+    // Pinned Spike's `fcsr` is a `composite_csr_t`: writing it writes `frm`
+    // and `fflags`, and the composite suppresses its own log entry
+    // (`composite_csr_t::unlogged_write`), so neither a `c3_fcsr` segment
+    // nor its key exists.
     let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
     set_fs(&mut core, mstatus::FS_CLEAN);
     core.state_mut().regs[5] = 5;
@@ -519,20 +550,49 @@ fn commit_log_prints_a_csr_fcsr_write_named_fcsr() {
     let turn = traced_step(&mut core);
     assert_eq!(
         commit_log_text(&turn),
-        format!("core   0: 3 0x0000000000000000 (0x{write:08x}) c3_fcsr 0x0000000000000005\n")
+        format!(
+            "core   0: 3 0x0000000000000000 (0x{write:08x}) \
+             c1_fflags 0x0000000000000005 c2_frm 0x0000000000000000\n"
+        )
     );
     assert_eq!(core.state().fcsr.read(), 5);
     assert_eq!(fs_of(core.state()), mstatus::FS_DIRTY);
 }
 
 #[test]
+fn commit_log_prints_an_frm_only_write_as_c2_frm() {
+    let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
+    set_fs(&mut core, mstatus::FS_CLEAN);
+    core.state_mut().regs[5] = 2; // RDN
+    let write = csrw(0x002, 5);
+    write32(&ram, 0, write);
+    let turn = traced_step(&mut core);
+    assert_eq!(
+        commit_log_text(&turn),
+        format!("core   0: 3 0x0000000000000000 (0x{write:08x}) c2_frm 0x0000000000000002\n")
+    );
+    // `csrrs frm, x0` does not write (D6), so it adds no segment.
+    let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
+    set_fs(&mut core, mstatus::FS_CLEAN);
+    core.state_mut().fcsr.write_frm_bits(3);
+    let csrrs = (0x002u32 << 20) | (2 << 12) | (6 << 7) | 0x73;
+    write32(&ram, 0, csrrs);
+    let turn = traced_step(&mut core);
+    assert!(commit_record(&turn).effects.fp_csr_writes.is_empty());
+    assert_eq!(
+        commit_log_text(&turn),
+        format!("core   0: 3 0x0000000000000000 (0x{csrrs:08x}) x6  0x0000000000000003\n")
+    );
+}
+
+#[test]
 fn commit_log_orders_effects_like_spikes_log_reg_write_map() {
-    // FCVT.W.D of +inf writes x<rd> and raises NV. Spike keys x1 at 0x10 and
-    // x5 at 0x50 against the fcsr CSR at 0x34, so x1 prints before the fcsr
-    // segment and x5 after it.
+    // FCVT.W.D of +inf writes x<rd> and raises NV, which Spike logs as an
+    // `fflags` write at key 0x14. x1 is key 0x10 and x5 is key 0x50, so x1
+    // prints before the flag write and x5 after it.
     for (rd, expected) in [
-        (1u32, "x1  0x000000007fffffff c3_fcsr 0x0000000000000010"),
-        (5u32, "c3_fcsr 0x0000000000000010 x5  0x000000007fffffff"),
+        (1u32, "x1  0x000000007fffffff c1_fflags 0x0000000000000010"),
+        (5u32, "c1_fflags 0x0000000000000010 x5  0x000000007fffffff"),
     ] {
         let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
         set_fs(&mut core, mstatus::FS_CLEAN);
@@ -547,6 +607,47 @@ fn commit_log_orders_effects_like_spikes_log_reg_write_map() {
             format!("core   0: 3 0x0000000000000000 (0x{fcvt:08x}) {expected}\n")
         );
     }
+}
+
+#[test]
+fn commit_log_prints_equal_value_fp_csr_writes() {
+    // Spike logs a CSR write, not a CSR change: an already-set flag is
+    // written again, and a `fflags` write of the value already held still
+    // prints. The value delta is absent in both cases, so the write fact is
+    // what the log consumes.
+    let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
+    set_fs(&mut core, mstatus::FS_CLEAN);
+    core.state_mut().fpr.write_u32(1, 1.0f32.to_bits());
+    core.state_mut().fpr.write_u32(2, 0x3380_0000); // 2^-24 forces NX
+    let fadd = op_fp(0x00, 2, 1, 0, 3);
+    write32(&ram, 0, fadd);
+    write32(&ram, 4, fadd);
+    traced_step(&mut core);
+    assert_eq!(core.state().fcsr.flags_bits(), 0b1);
+    let turn = traced_step(&mut core);
+    let record = commit_record(&turn);
+    assert_eq!(record.effects.fcsr, None, "the flag value did not change");
+    assert_eq!(record.effects.fp_csr_writes.len(), 1);
+    assert_eq!(
+        commit_log_text(&turn),
+        format!(
+            "core   0: 3 0x0000000000000004 (0x{fadd:08x}) \
+             c1_fflags 0x0000000000000001 f3  0xffffffff3f800000\n"
+        )
+    );
+
+    // `csrw fflags, x0` on an already-zero `fflags` is still a write.
+    let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
+    set_fs(&mut core, mstatus::FS_CLEAN);
+    let write = csrw(0x001, 0);
+    write32(&ram, 0, write);
+    let turn = traced_step(&mut core);
+    let record = commit_record(&turn);
+    assert_eq!(record.effects.fcsr, None);
+    assert_eq!(
+        commit_log_text(&turn),
+        format!("core   0: 3 0x0000000000000000 (0x{write:08x}) c1_fflags 0x0000000000000000\n")
+    );
 }
 
 #[test]

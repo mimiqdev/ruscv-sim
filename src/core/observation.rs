@@ -71,9 +71,39 @@ pub struct ArchitecturalEffects {
     /// Explicit and implicit accepted CSR writes in execution order. MINSTRET
     /// is included here rather than invented by outer budget accounting.
     pub csr: Vec<CsrAccess>,
+    /// `fcsr` (the aliased `fflags`/`frm` byte) before and after the
+    /// instruction, present when the byte's value changed.
     pub fcsr: Option<(u32, u32)>,
+    /// The aliased FP-CSR writes this instruction performed, as pinned
+    /// Spike's commit log names them (contract D9).
+    ///
+    /// Contract D5 aliases `fflags`, `frm` and `fcsr` on one byte, but pinned
+    /// Spike logs the *underlying* CSRs: flag accrual writes `fflags`, an
+    /// explicit `fcsr` write writes both `frm` and `fflags`, and each is
+    /// logged even when its value does not change. This fact therefore
+    /// carries the write, not just the value delta above, and no observer
+    /// re-derives it.
+    pub fp_csr_writes: Vec<FpCsrWrite>,
     pub memory: Vec<MemoryEffect>,
     pub reservation: Option<ReservationChange>,
+}
+
+/// One write of an aliased FP CSR by one instruction (contract D9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FpCsrWrite {
+    /// Which underlying CSR the write targeted.
+    pub alias: FpCsrAlias,
+    /// The CSR's value after the write: the value pinned Spike logs.
+    pub value: u64,
+}
+
+/// The underlying CSR numbers behind the aliased `fcsr` byte (contract D5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FpCsrAlias {
+    /// CSR `0x001`, `fcsr` bits 4:0.
+    Fflags,
+    /// CSR `0x002`, `fcsr` bits 7:5.
+    Frm,
 }
 
 /// Exactly one retired instruction. `instruction_length` is the fetched
@@ -170,6 +200,7 @@ pub(crate) fn build(
         csr: after.csr.take_observed_writes(),
         fcsr: (before.fcsr.read() != after.fcsr.read())
             .then(|| (before.fcsr.read(), after.fcsr.read())),
+        fp_csr_writes: after.csr.take_observed_fp_csr_writes(),
         memory,
         reservation: (before.reservation != after.reservation).then(|| ReservationChange {
             before: before.reservation.clone(),

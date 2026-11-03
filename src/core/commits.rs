@@ -3,6 +3,7 @@
 //! This module provides functionality to output commit logs that are
 //! compatible with Spike's --log-commits format.
 
+use super::observation::FpCsrAlias;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
@@ -14,9 +15,12 @@ use std::path::Path;
 /// 4 for a CSR, which is why each register index prints its integer write
 /// before its floating-point write.
 const SPIKE_CSR_KIND: u64 = 4;
-/// CSR number of `fcsr`; contract D5 aliases `fflags`, `frm` and `fcsr` on
-/// this one architectural byte.
-const FCSR_CSR: u64 = 0x003;
+/// CSR numbers of the aliased `fflags`/`frm` CSRs (contract D5). Pinned
+/// Spike's `fcsr` is a composite of these two, so its commit log names them:
+/// `fflags` prints as `c1_fflags` at map key `0x14` and `frm` as `c2_frm` at
+/// `0x24`, in the register buckets of CSR numbers 1 and 2.
+const FFLAGS_CSR: u64 = 0x001;
+const FRM_CSR: u64 = 0x002;
 
 /// Pinned Spike's `log_reg_write` map key for one effect.
 fn spike_effect_key(index: u64, kind: u64) -> u64 {
@@ -161,10 +165,13 @@ impl CommitLogger {
     /// (contract D7).
     ///
     /// Floating-point effects follow the same pinned function (contract D9):
-    /// an FPR write prints as ` f<rd>  <FLEN hex>` and an `fcsr` write as
-    /// ` c3_fcsr <XLEN hex>`, in the ascending `(index << 4) | kind` key
-    /// order of Spike's `log_reg_write` map. Under `rv64ima`/`rv64imac` no
-    /// FPR or `fcsr` fact exists, so the text is unchanged.
+    /// an FPR write prints as ` f<rd>  <FLEN hex>`, and the aliased FP-CSR
+    /// writes as ` c1_fflags <XLEN hex>` / ` c2_frm <XLEN hex>` — Spike logs
+    /// the CSRs behind its composite `fcsr`, so an `fcsr` write prints both
+    /// and an equal-value write still prints. Everything follows the
+    /// ascending `(index << 4) | kind` key order of Spike's `log_reg_write`
+    /// map. Under `rv64ima`/`rv64imac` no FPR or FP-CSR fact exists, so the
+    /// text is unchanged.
     pub fn log_record(&mut self, record: &super::observation::CommitRecord) -> io::Result<()> {
         let retired = record.retired;
         write!(
@@ -177,10 +184,10 @@ impl CommitLogger {
             _ => write!(self.output, "0x{:08x})", retired.instruction)?,
         };
         // Reproduce Spike's map order: for each register index the integer
-        // write (kind 0) precedes the floating-point write (kind 1), and the
-        // `fcsr` CSR write (kind 4) sorts into the bucket of CSR number 3,
-        // between `f3` and `x4`.
-        let fcsr_bucket = (spike_effect_key(FCSR_CSR, SPIKE_CSR_KIND) >> 4) as u8;
+        // write (kind 0) precedes the floating-point write (kind 1), and each
+        // FP-CSR write (kind 4) sorts into the bucket of its CSR number —
+        // `fflags` (bucket 1) after `f1` and before `x2`, `frm` (bucket 2)
+        // after `f2` and before `x3`.
         for index in 0..32u8 {
             let gpr = record
                 .effects
@@ -195,15 +202,21 @@ impl CommitLogger {
                 // Spike prints `" %c%-2d "` at FLEN and `0x%016` hex digits.
                 write!(self.output, " f{:<2} {:#018x}", write.index, write.after)?;
             }
-            if index == fcsr_bucket {
-                if let Some((_, after)) = record.effects.fcsr {
+            for (csr, name, alias) in [
+                (FFLAGS_CSR, "fflags", FpCsrAlias::Fflags),
+                (FRM_CSR, "frm", FpCsrAlias::Frm),
+            ] {
+                if (spike_effect_key(csr, SPIKE_CSR_KIND) >> 4) as u8 != index {
+                    continue;
+                }
+                let write = record
+                    .effects
+                    .fp_csr_writes
+                    .iter()
+                    .find(|write| write.alias == alias);
+                if let Some(write) = write {
                     // Spike prints `" c%d_%s "` at XLEN for a CSR write.
-                    write!(
-                        self.output,
-                        " c{}_fcsr {:#018x}",
-                        FCSR_CSR,
-                        u64::from(after)
-                    )?;
+                    write!(self.output, " c{}_{} {:#018x}", csr, name, write.value)?;
                 }
             }
         }

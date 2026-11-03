@@ -93,7 +93,7 @@ cargo run -- run path/to/program.elf --max-cycles 100000
 
 Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在 Runner 中比较寄存器快照。
 文本格式保留原有的 GPR 展示与省略规则；FP profile 下另按 pinned Spike 的 `f`/`c<csr>_<name>`
-段打印 FPR 与 `fcsr` 写入，仍不是完整的内存或其它 CSR 效果导出。
+段打印 FPR 写入与 `fflags`/`frm` 写入（`f<rd>`、`c1_fflags`、`c2_frm`），仍不是完整的内存或其它 CSR 效果导出。
 未启用日志时不构造每条指令的观察记录。日志写入失败会在运行结果的 `error`
 中报告，但不会撤销已退休指令、存储或已识别的客户退出码。
 即使客户退出码为 0，CLI 也将日志报告错误显示为 `FAILED` 并以非零状态退出；

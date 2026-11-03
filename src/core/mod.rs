@@ -21,7 +21,9 @@ use crate::physical::{
 use crate::tlm::TlmInterface;
 use anyhow::Result;
 pub use debug_mode::DebugCause;
-use observation::{AtomicEffect, ControlFacts, HartTransition, MemoryEffect, MemoryJournal};
+use observation::{
+    AtomicEffect, ControlFacts, FpCsrAlias, HartTransition, MemoryEffect, MemoryJournal,
+};
 use observed_memory::ObservedMemory;
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
@@ -285,6 +287,21 @@ impl CoreState {
             unprivileged::FRM => self.fcsr.write_frm_bits(value as u8),
             unprivileged::FCSR => self.fcsr.write(value as u32),
             _ => return Err(crate::csr::CsrError::InvalidAddress(addr)),
+        }
+        // Contract D9: pinned Spike logs the underlying CSRs, so an `fcsr`
+        // write is both an `frm` and an `fflags` write, and an equal-value
+        // write is still a write.
+        let (flags, frm) = (
+            u64::from(self.fcsr.flags_bits()),
+            u64::from(self.fcsr.frm_bits()),
+        );
+        match addr {
+            unprivileged::FFLAGS => self.csr.observe_fp_csr_write(FpCsrAlias::Fflags, flags),
+            unprivileged::FRM => self.csr.observe_fp_csr_write(FpCsrAlias::Frm, frm),
+            _ => {
+                self.csr.observe_fp_csr_write(FpCsrAlias::Fflags, flags);
+                self.csr.observe_fp_csr_write(FpCsrAlias::Frm, frm);
+            }
         }
         // D6: an instruction that writes `fflags`/`frm`/`fcsr` sets FS to
         // Dirty.  CSRRW/CSRRWI always write; CSRRS/CSRRC with rs1=x0 and
@@ -1801,6 +1818,7 @@ impl RiscvCore {
         let mut staged = self.state.clone();
         staged.instruction_length = instruction_length;
         staged.csr.begin_observation(self.observation_demand);
+        staged.csr.begin_fp_csr_observation(self.observation_demand);
         staged.fpr.begin_observation(self.observation_demand);
         let physical_access = self.data_access.clone();
         let execution_result = if let (Opcode::Amo, Some(access)) =
@@ -2012,6 +2030,7 @@ impl RiscvCore {
         let source_privilege = self.state.privilege;
         let mut staged = self.state.clone();
         staged.csr.begin_observation(self.observation_demand);
+        staged.csr.begin_fp_csr_observation(self.observation_demand);
         staged.fpr.begin_observation(self.observation_demand);
         staged.branch_taken = false;
         let mtval = match trap {
