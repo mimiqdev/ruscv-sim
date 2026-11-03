@@ -3,6 +3,7 @@
 //! Implements 32 floating-point registers (f0-f31) for RV64F extension.
 //! Uses NaN boxing: 32-bit float stored in lower 32 bits, upper 32 bits set to all 1s.
 
+pub mod arith;
 pub mod d_register;
 pub mod fcsr;
 pub mod nan_boxing;
