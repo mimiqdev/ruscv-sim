@@ -994,6 +994,8 @@ impl RiscvCore {
             debug_word: None,
             #[cfg(test)]
             inject_haltreq_after_fetch: false,
+            // The compatibility default before set_isa_profile below runs;
+            // the explicit assignment is what makes the selection explicit.
             isa: crate::machine::IsaProfile::Rv64ima,
             current_instruction_length: 4,
         };

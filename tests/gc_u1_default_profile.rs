@@ -56,8 +56,9 @@ fn misa_read_then_exit() -> Vec<u32> {
 
 /// A compressed guest built on the shared word fixture: every 32-bit word
 /// packs two 16-bit parcels. Under IALIGN=16 it reads `misa`, exits 0, then
-/// falls into an infinite `jal 0`; under rv64ima the first word decodes as
-/// the tail of an illegal 32-bit stream and the run never exits.
+/// falls into an infinite `jal 0`; under rv64ima its first packed compressed
+/// word (index 4, low two bits `0b01`) is an illegal 32-bit encoding, so the
+/// run never exits.
 fn compressed_exit_elf() -> Vec<u8> {
     let c_li_a0_7 = 0x451du32; // c.li a0, 7
     let c_nop = 0x0001u32;
@@ -143,7 +144,7 @@ fn flat_facade_default_reports_and_executes_rv64imafdc() {
 #[test]
 fn native_facades_default_to_rv64imafdc() {
     // The compressed Zca guest exits under the rv64imafdc default; under
-    // rv64ima its first parcel is not a legal instruction stream.
+    // rv64ima its first packed compressed word is an illegal encoding.
     let elf = compressed_exit_elf();
     let result = load_and_run(&elf, Some(10_000), None, None, false).unwrap();
     assert_eq!(result.exit_code, 0, "{result:?}");
