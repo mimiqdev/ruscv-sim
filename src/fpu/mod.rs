@@ -1,7 +1,10 @@
 //! FPU Register File
 //!
-//! Implements 32 floating-point registers (f0-f31) for RV64F extension.
-//! Uses NaN boxing: 32-bit float stored in lower 32 bits, upper 32 bits set to all 1s.
+//! Implements the 32 floating-point registers (`f0`-`f31`) of an FP profile.
+//! Every register is an ordinary 64-bit register; a 32-bit write sets the
+//! upper 32 bits to all ones (NaN boxing), and a computational
+//! single-precision read of a value that is not boxed yields the canonical
+//! NaN (contract D5).
 
 pub mod d_register;
 pub mod fcsr;
@@ -10,19 +13,24 @@ pub mod nan_boxing;
 use std::fmt;
 
 pub use fcsr::{Fcsr, FpFlags, RoundingMode};
+pub use nan_boxing::{CANONICAL_NAN_F32, NAN_BOX_MASK};
 
 /// Floating point register type (f0-f31)
+///
+/// Every FPR is an ordinary 64-bit register; `f0` has no special role
+/// (contract D5).  The register holds an f64 bit pattern, or an f32 value in
+/// the low 32 bits with the upper 32 bits set to all ones (NaN boxing).
 #[derive(Clone, Copy)]
 pub struct Fpr(u64);
 
 impl Fpr {
-    /// NaN box marker: upper 32 bits set to all 1s
-    const NAN_BOX_MASK: u64 = 0xFFFF_FFFF_0000_0000u64;
+    /// Architectural reset value of every FPR (contract §3: "FPRs zero").
+    pub const ZERO: Self = Self(0);
 
     /// Create a new FPR with NaN-boxed value
     pub fn new(value: f32) -> Self {
         // NaN box the 32-bit float: store in lower 32 bits, set upper 32 bits to 1s
-        let bits = Self::NAN_BOX_MASK | value.to_bits() as u64;
+        let bits = NAN_BOX_MASK | value.to_bits() as u64;
         Self(bits)
     }
 
@@ -31,10 +39,28 @@ impl Fpr {
         Self(bits)
     }
 
-    /// Get the 32-bit float value, handling NaN boxing
+    /// Computational single-precision read (contract D5).
+    ///
+    /// Every non-transfer single-precision operand read yields the canonical
+    /// NaN `0x7fc00000` when the upper 32 bits of the register are not all
+    /// ones.  Sign injection preserves the payload of a correctly boxed
+    /// operand, which this read returns bit for bit.
     pub fn get(&self) -> f32 {
-        // Extract lower 32 bits
-        f32::from_bits(self.0 as u32)
+        f32::from_bits(self.as_single_bits())
+    }
+
+    /// Computational single-precision read as bits (contract D5).
+    pub fn as_single_bits(&self) -> u32 {
+        nan_boxing::unbox_single_bits(self.0)
+    }
+
+    /// Raw low 32 bits, unchanged (contract D5).
+    ///
+    /// This is the transfer read used by FSW, FMV.X.W and a 32-bit debugger
+    /// read.  It does not apply NaN-boxing: a value that is not boxed keeps
+    /// whatever the low 32 bits hold.
+    pub fn raw_low_u32(&self) -> u32 {
+        self.0 as u32
     }
 
     /// Get raw bits (NaN boxed)
@@ -42,32 +68,21 @@ impl Fpr {
         self.0
     }
 
-    /// Get lower 32 bits
-    pub fn lower(&self) -> u32 {
-        self.0 as u32
-    }
-
     /// Check if NaN boxed (upper 32 bits all 1s)
     pub fn is_nan_boxed(&self) -> bool {
-        (self.0 >> 32) == 0xFFFF_FFFF
+        nan_boxing::is_nan_boxed(self.0)
     }
 
-    /// Get the canonical NaN (for NaN propagation)
+    /// Get the canonical NaN (for NaN propagation), NaN boxed for single
+    /// precision (contract D4/D5).
     pub fn canonical_nan() -> Self {
-        // IEEE 754 canonical NaN: quiet NaN with MSB of significand set
-        // NaN boxed: upper 32 bits = 0xFFFF_FFFF, lower 32 bits = 0x7FC0_0000
-        Self::from_bits((0xFFFF_FFFFu64 << 32) | 0x7FC0_0000u64)
-    }
-
-    /// Get the default NaN (for addition/multiplication)
-    pub fn default_nan() -> Self {
-        Self::canonical_nan()
+        Self(NAN_BOX_MASK | u64::from(CANONICAL_NAN_F32))
     }
 }
 
 impl Default for Fpr {
     fn default() -> Self {
-        Self(Self::NAN_BOX_MASK)
+        Self::ZERO
     }
 }
 
@@ -87,17 +102,18 @@ pub struct FpuRegisterFile {
 }
 
 impl FpuRegisterFile {
-    /// Create a new FPU register file
+    /// Create a new FPU register file.  Every FPR is architecturally zero
+    /// until software writes it (contract §3).
     pub fn new() -> Self {
         Self {
-            regs: [Fpr::default(); 32],
+            regs: [Fpr::ZERO; 32],
             observed_writes: None,
         }
     }
 
-    /// Reset all registers to default (NaN boxed 0.0)
+    /// Reset all registers to the architectural reset value, zero.
     pub fn reset(&mut self) {
-        self.regs = [Fpr::default(); 32];
+        self.regs = [Fpr::ZERO; 32];
         self.observed_writes = None;
     }
 
@@ -115,44 +131,41 @@ impl FpuRegisterFile {
         }
     }
 
-    /// Read a floating-point register
+    /// Read a floating-point register.  `f0` is an ordinary register and has
+    /// no hard-wired value (contract D5).
     pub fn read(&self, reg: usize) -> Fpr {
         self.regs[reg & 0x1F]
     }
 
-    /// Write to a floating-point register
-    /// Note: f0 is hardwired to 0 (reads always return 0, writes are ignored)
+    /// Write a 64-bit floating-point register value.
+    ///
+    /// `f0` is an ordinary register; the write is not ignored and is
+    /// observed like any other (contract D5).
     pub fn write(&mut self, reg: usize, value: Fpr) {
         let reg = reg & 0x1F;
-        if reg != 0 {
-            self.observe_write(reg);
-            self.regs[reg] = value;
-        }
+        self.observe_write(reg);
+        self.regs[reg] = value;
     }
 
-    /// Write lower 32 bits only (for FLW)
+    /// Write a 32-bit value: every 32-bit write NaN-boxes (contract D5).
     pub fn write_u32(&mut self, reg: usize, value: u32) {
-        let reg = reg & 0x1F;
-        if reg != 0 {
-            self.observe_write(reg);
-            // NaN box the 32-bit value
-            self.regs[reg] = Fpr::from_bits(value as u64 | 0xFFFF_FFFF_0000_0000u64);
-        }
+        self.write(reg, Fpr::from_bits(NAN_BOX_MASK | u64::from(value)));
     }
 
-    /// Read as u32 (for FSW)
-    pub fn read_u32(&self, reg: usize) -> u32 {
-        self.read(reg).lower()
+    /// Computational single-precision read (contract D5).
+    ///
+    /// An FPR whose upper 32 bits are not all ones yields the canonical NaN
+    /// `0x7fc00000`.
+    pub fn read_single_bits(&self, reg: usize) -> u32 {
+        self.read(reg).as_single_bits()
     }
 
-    /// Get mutable reference to FCSR field for rounding mode
-    pub fn fcsr(&self) -> &Fcsr {
-        unimplemented!("FCSR is stored in CoreState, not FpuRegisterFile")
-    }
-
-    /// Get mutable reference to FCSR field
-    pub fn fcsr_mut(&mut self) -> &mut Fcsr {
-        unimplemented!("FCSR is stored in CoreState, not FpuRegisterFile")
+    /// Raw low 32 bits, unchanged (contract D5).
+    ///
+    /// Used by FSW, FMV.X.W and a 32-bit debugger read, which move the low
+    /// half of the register without applying NaN boxing.
+    pub fn read_raw_u32(&self, reg: usize) -> u32 {
+        self.read(reg).raw_low_u32()
     }
 
     /// Check if register is valid (0-31)
@@ -213,7 +226,7 @@ mod tests {
     #[test]
     fn test_fpr_lower() {
         let fpr = Fpr::new(1.0f32);
-        let lower = fpr.lower();
+        let lower = fpr.raw_low_u32();
         assert_eq!(lower, 1.0f32.to_bits());
     }
 
@@ -225,15 +238,33 @@ mod tests {
     }
 
     #[test]
-    fn test_fpr_default_nan() {
-        let nan = Fpr::default_nan();
-        assert!(nan.get().is_nan());
+    fn test_fpr_default_is_architectural_zero() {
+        let fpr = Fpr::default();
+        assert_eq!(fpr.bits(), 0);
+        // Zero is not a NaN box, so a computational single read yields the
+        // canonical NaN (contract D5).
+        assert_eq!(fpr.as_single_bits(), CANONICAL_NAN_F32);
+        assert_eq!(fpr.raw_low_u32(), 0);
     }
 
     #[test]
-    fn test_fpr_default() {
-        let fpr = Fpr::default();
-        assert!(fpr.is_nan_boxed());
+    fn test_fpr_unboxed_computational_read_yields_canonical_nan() {
+        let fpr = Fpr::from_bits(0x3FF0_0000_0000_0000); // 1.0 as an f64
+        assert!(!fpr.is_nan_boxed());
+        assert_eq!(fpr.get().to_bits(), CANONICAL_NAN_F32);
+        assert_eq!(fpr.as_single_bits(), CANONICAL_NAN_F32);
+        // A transfer read keeps the low 32 bits unchanged.
+        assert_eq!(fpr.raw_low_u32(), 0);
+        assert_eq!(fpr.raw_low_u32(), 0);
+        assert_eq!(fpr.bits(), 0x3FF0_0000_0000_0000);
+    }
+
+    #[test]
+    fn test_fpr_boxed_computational_read_preserves_payload() {
+        // A NaN-boxed signaling NaN keeps its payload on a computational read.
+        let fpr = Fpr::from_bits(NAN_BOX_MASK | 0x7F80_0001);
+        assert_eq!(fpr.as_single_bits(), 0x7F80_0001);
+        assert_eq!(fpr.raw_low_u32(), 0x7F80_0001);
     }
 
     #[test]
@@ -246,17 +277,20 @@ mod tests {
     #[test]
     fn test_fpu_register_file_new() {
         let frf = FpuRegisterFile::new();
-        let val = frf.read(1);
-        assert!(val.is_nan_boxed());
+        // Architectural reset state is zero for every FPR (contract §3).
+        for reg in 0..32 {
+            assert_eq!(frf.read(reg).bits(), 0, "f{reg}");
+        }
     }
 
     #[test]
     fn test_fpu_register_file_reset() {
         let mut frf = FpuRegisterFile::new();
         frf.write(5, Fpr::new(42.0f32));
+        frf.write_u32(0, 0x3F80_0000);
         frf.reset();
-        let val = frf.read(5);
-        assert_eq!(val.get(), 0.0f32);
+        assert_eq!(frf.read(5).bits(), 0);
+        assert_eq!(frf.read(0).bits(), 0);
     }
 
     #[test]
@@ -268,11 +302,12 @@ mod tests {
     }
 
     #[test]
-    fn test_fpu_register_file_f0_hardwired() {
+    fn test_fpu_register_file_f0_is_ordinary() {
         let mut frf = FpuRegisterFile::new();
         frf.write(0, Fpr::new(42.0f32));
-        let val = frf.read(0);
-        assert_eq!(val.get(), 0.0f32); // f0 should still be 0
+        assert_eq!(frf.read(0).get(), 42.0f32);
+        frf.write_u32(0, 0x3F80_0000);
+        assert_eq!(frf.read(0).get(), 1.0f32);
     }
 
     #[test]
@@ -288,16 +323,18 @@ mod tests {
     fn test_fpu_register_file_write_u32_f0() {
         let mut frf = FpuRegisterFile::new();
         frf.write_u32(0, 0x3F800000u32);
-        let val = frf.read_u32(0);
-        assert_eq!(val, 0u32); // f0 is hardwired to 0
+        let val = frf.read_raw_u32(0);
+        assert_eq!(val, 0x3F80_0000); // f0 is an ordinary register
+        assert!(frf.read(0).is_nan_boxed());
     }
 
     #[test]
     fn test_fpu_register_file_read_u32() {
         let mut frf = FpuRegisterFile::new();
         frf.write(3, Fpr::new(2.0f32));
-        let val = frf.read_u32(3);
+        let val = frf.read_raw_u32(3);
         assert_eq!(val, 2.0f32.to_bits());
+        assert_eq!(frf.read_single_bits(3), 2.0f32.to_bits());
     }
 
     #[test]
@@ -319,8 +356,7 @@ mod tests {
     #[test]
     fn test_fpu_register_file_default() {
         let frf = FpuRegisterFile::default();
-        let val = frf.read(1);
-        assert!(val.is_nan_boxed());
+        assert_eq!(frf.read(1).bits(), 0);
     }
 
     #[test]

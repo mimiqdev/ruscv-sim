@@ -60,7 +60,8 @@ enum Commands {
         #[arg(long)]
         halted: bool,
 
-        /// Machine ISA profile: `rv64ima` (default) or `rv64imac`
+        /// Machine ISA profile: `rv64ima` (default), `rv64imac`, `rv64imafd`
+        /// or `rv64imafdc`
         #[arg(long, value_name = "PROFILE", default_value = "rv64ima")]
         isa: IsaProfileArg,
     },
@@ -73,9 +74,11 @@ struct IsaProfileArg(IsaProfile);
 impl std::str::FromStr for IsaProfileArg {
     type Err = String;
     fn from_str(name: &str) -> Result<Self, Self::Err> {
-        IsaProfile::parse(name)
-            .map(Self)
-            .ok_or_else(|| format!("invalid ISA profile '{name}': expected rv64ima or rv64imac"))
+        IsaProfile::parse(name).map(Self).ok_or_else(|| {
+            format!(
+                "invalid ISA profile '{name}': expected rv64ima, rv64imac, rv64imafd or rv64imafdc"
+            )
+        })
     }
 }
 

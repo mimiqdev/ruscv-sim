@@ -115,11 +115,14 @@ fn test_extract_boxed_f32_zero() {
 }
 
 #[test]
-fn test_extract_double_precision() {
+fn test_extract_unboxed_value_yields_canonical_nan() {
+    // A raw double bit pattern is not a NaN-boxed single.  A computational
+    // single read yields the canonical NaN instead of reinterpreting the low
+    // half as a float (contract D5).
     let val: f64 = std::f64::consts::PI;
     let bits = val.to_bits();
     let extracted = extract_boxed_f32(bits);
-    assert!((extracted as f64 - val).abs() < 1e-6);
+    assert_eq!(extracted.to_bits(), canonical_nan_f32() as u32);
 }
 
 #[test]

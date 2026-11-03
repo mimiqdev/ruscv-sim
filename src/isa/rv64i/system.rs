@@ -51,6 +51,15 @@ pub fn exec_system_with_csr_access(
     // Check funct3 to determine instruction type.
     let funct3 = ((instr.raw >> 12) & 0b111) as u8;
 
+    // The FP CSRs are Hart state outside `CsrFile`, so their six CSR
+    // instructions resolve through the dedicated path (contract D5/D6).
+    if matches!(funct3, 0b001..=0b011 | 0b101..=0b111) {
+        let csr_addr = (imm & 0xFFF) as u16;
+        if crate::csr::is_fp_csr(csr_addr) {
+            return exec_fp_csr(instr, state, csr_addr, funct3);
+        }
+    }
+
     match funct3 {
         0b000 => {
             let fixed = matches!(
@@ -115,6 +124,68 @@ pub fn exec_system_with_csr_access(
         0b111 => exec_csrrci(instr, state, imm).map(Some),
         _ => Err(ExecuteError::InvalidOperation),
     }
+}
+
+/// Resolve a CSR instruction that targets `fflags`, `frm` or `fcsr`.
+///
+/// The three FP CSRs alias one architectural `fcsr` that the Hart keeps
+/// beside `CsrFile` (contract D5), so their accesses are resolved here rather
+/// than inside [`crate::csr::CsrFile`].  The write classification is part of
+/// the architectural rule (D6): CSRRW/CSRRWI always write, CSRRS/CSRRC write
+/// iff `rs1 != x0`, and CSRRSI/CSRRCI write iff the immediate is non-zero.
+fn exec_fp_csr(
+    instr: &DecodedInstruction,
+    state: &mut CoreState,
+    csr_addr: u16,
+    funct3: u8,
+) -> Result<Option<CsrAccess>, ExecuteError> {
+    let rs1 = instr.rs1.ok_or(ExecuteError::InvalidOperation)? as usize;
+    let rd = instr.rd.ok_or(ExecuteError::InvalidOperation)? as usize;
+    // The immediate forms encode the 5-bit unsigned immediate in the `rs1`
+    // field; the register forms read `x[rs1]`.
+    let source = match funct3 {
+        0b101..=0b111 => rs1 as u64,
+        _ => state.regs[rs1],
+    };
+
+    // Read (and legalize) before any write, so an FS-Off access traps with
+    // no `fcsr` or `mstatus.FS` effect.
+    let old_value = state
+        .read_fp_csr(csr_addr)
+        .map_err(ExecuteError::CsrError)?;
+
+    let (perform_write, candidate) = match funct3 {
+        0b001 => (true, source),                     // CSRRW
+        0b010 => (rs1 != 0, old_value | source),     // CSRRS
+        0b011 => (rs1 != 0, old_value & !source),    // CSRRC
+        0b101 => (true, source),                     // CSRRWI
+        0b110 => (source != 0, old_value | source),  // CSRRSI
+        0b111 => (source != 0, old_value & !source), // CSRRCI
+        _ => return Err(ExecuteError::InvalidOperation),
+    };
+
+    if perform_write {
+        state
+            .write_fp_csr(csr_addr, candidate)
+            .map_err(ExecuteError::CsrError)?;
+    }
+    let new_value = if perform_write {
+        state
+            .read_fp_csr(csr_addr)
+            .map_err(ExecuteError::CsrError)?
+    } else {
+        old_value
+    };
+
+    if rd != 0 {
+        state.regs[rd] = old_value;
+    }
+    Ok(Some(CsrAccess {
+        addr: csr_addr,
+        old_value,
+        new_value,
+        wrote: perform_write,
+    }))
 }
 
 /// CSRRW - CSR Read-Write

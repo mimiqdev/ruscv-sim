@@ -18,6 +18,8 @@ pub enum CsrError {
     PrivilegeViolation(u16),
     #[error("CSR {0:#x} is read-only")]
     ReadOnly(u16),
+    #[error("floating-point CSR {0:#x} is inaccessible while mstatus.FS is Off")]
+    FpStateDisabled(u16),
 }
 
 /// CSR address constants (Machine Mode)
@@ -84,10 +86,28 @@ pub mod supervisor {
 /// platform `mtime` (privileged specification 20250508 §3.2.1).  The three
 /// together are Zicntr.  `mcounteren` stays 0, so S-mode and U-mode still
 /// trap on all three.
+///
+/// `fflags`, `frm` and `fcsr` are the floating-point CSRs (unprivileged
+/// specification 20250508, "F" chapter).  They alias one architectural
+/// `fcsr`: `fflags` is its bits 4:0, `frm` its bits 2:0, and `fcsr` its bits
+/// 7:0.  Bits 63:8 read zero and ignore writes.  They exist only under an FP
+/// profile and only while `mstatus.FS` is not Off (contract D5/D6).
 pub mod unprivileged {
     pub const CYCLE: u16 = 0xC00;
     pub const TIME: u16 = 0xC01;
     pub const INSTRET: u16 = 0xC02;
+
+    pub const FFLAGS: u16 = 0x001;
+    pub const FRM: u16 = 0x002;
+    pub const FCSR: u16 = 0x003;
+}
+
+/// True when `addr` is one of the three floating-point CSRs.
+pub const fn is_fp_csr(addr: u16) -> bool {
+    matches!(
+        addr,
+        unprivileged::FFLAGS | unprivileged::FRM | unprivileged::FCSR
+    )
 }
 
 /// Hypervisor (VS) CSR address constants.
@@ -106,7 +126,8 @@ pub mod virtualization {
     pub const VSATP: u16 = 0x280;
 }
 
-/// `mstatus` field masks for the Stage 4 RV64 M/S/U profile.
+/// `mstatus` field masks for the Stage 4 RV64 M/S/U profile, extended by the
+/// floating-point fields under an FP profile (contract D6).
 pub mod mstatus {
     pub const SIE: u64 = 1 << 1;
     pub const MIE: u64 = 1 << 3;
@@ -115,30 +136,49 @@ pub mod mstatus {
     pub const SPP: u64 = 1 << 8;
     pub const MPP: u64 = 0b11 << 11;
     pub const MPP_SHIFT: u32 = 11;
+    /// Floating-point state, bits 14:13: Off (0), Initial (1), Clean (2),
+    /// Dirty (3).  Writable only under an FP profile; Off on reset.
+    pub const FS: u64 = 0b11 << 13;
+    pub const FS_OFF: u64 = 0;
+    pub const FS_INITIAL: u64 = 1 << 13;
+    pub const FS_CLEAN: u64 = 2 << 13;
+    pub const FS_DIRTY: u64 = 3 << 13;
     pub const MPRV: u64 = 1 << 17;
     pub const SUM: u64 = 1 << 18;
     pub const MXR: u64 = 1 << 19;
     pub const TVM: u64 = 1 << 20;
     pub const TW: u64 = 1 << 21;
     pub const TSR: u64 = 1 << 22;
+    /// `SD`, bit 63.  Read-only and, under an FP profile, set exactly when
+    /// `FS == Dirty` (contract D6).  Hard-wired 0 otherwise.
+    pub const SD: u64 = 1 << 63;
     /// UXL = 2 (bits 33:32) and SXL = 2 (bits 35:34), both read-only.
     pub const XLEN_FIELDS: u64 = 0x0000_000A_0000_0000;
-    /// Every field software can change through the `mstatus` address.
+    /// Every field software can change through the `mstatus` address under a
+    /// profile without floating-point state.
     pub const WRITABLE: u64 =
         SIE | MIE | SPIE | MPIE | SPP | MPP | MPRV | SUM | MXR | TVM | TW | TSR;
+    /// [`WRITABLE`] plus the floating-point state field (contract D6).
+    pub const WRITABLE_FP: u64 = WRITABLE | FS;
     /// Fields of the SXLEN-64 `sstatus` layout: SIE, SPIE, UBE, SPP, VS, FS,
     /// XS, SUM, MXR, UXL, and SD.
     pub const SSTATUS_VIEW: u64 = 0x8000_0003_000D_E762;
-    /// `sstatus` fields that are writable in this profile.
+    /// `sstatus` fields that are writable without floating-point state.
     pub const SSTATUS_WRITABLE: u64 = SIE | SPIE | SPP | SUM | MXR;
+    /// [`SSTATUS_WRITABLE`] plus the floating-point state field (contract D6).
+    pub const SSTATUS_WRITABLE_FP: u64 = SSTATUS_WRITABLE | FS;
     /// Reset value: everything 0 except the read-only SXL and UXL.
     pub const RESET: u64 = XLEN_FIELDS;
 }
 
 /// `misa` for RV64IMA plus S and U.  No bit is writable.
 pub const MISA_VALUE: u64 = 0x8000_0000_0014_1101;
-/// `misa` bit for the C extension (Zca under the `rv64imac` profile).
+/// `misa` bit for the C extension (Zca under the compressed profiles).
 pub const MISA_C_BIT: u64 = 1 << 2;
+/// `misa` bit for the D extension (contract D3).
+pub const MISA_D_BIT: u64 = 1 << 3;
+/// `misa` bit for the F extension (contract D3).
+pub const MISA_F_BIT: u64 = 1 << 5;
 
 /// Supervisor bits of `mip` and `mie`: SSIP/SSIE, STIP/STIE, SEIP/SEIE.
 pub const SUPERVISOR_INTERRUPTS: u64 = 0x222;
@@ -217,6 +257,9 @@ pub struct CsrFile {
     /// IALIGN=32 mask rule for `mepc`/`sepc`. The `rv64imac` profile clears
     /// this flag so only bit 0 is masked on write (contract D5).
     epc_ialign32: bool,
+    /// True when the selected profile has architectural floating-point state.
+    /// It makes `mstatus.FS`/`SD` writable and observable (contract D6).
+    fp_enabled: bool,
 }
 
 impl CsrFile {
@@ -260,15 +303,48 @@ impl CsrFile {
             time: 0,
             seip_external: false,
             epc_ialign32: true,
+            fp_enabled: false,
         }
     }
 
     /// Install the Machine-selected ISA profile. `rv64imac` sets `misa.C`
-    /// and relaxes `mepc`/`sepc` to the IALIGN=16 (bit-0-only) write mask.
-    /// `misa` remains read-only; the profile never changes at run time.
+    /// and relaxes `mepc`/`sepc` to the IALIGN=16 (bit-0-only) write mask. The
+    /// FP profiles add `misa.F`/`misa.D` and make `mstatus.FS`/`SD` live
+    /// (contract D3/D6). `misa` remains read-only; the profile never changes at
+    /// run time.
     pub(crate) fn set_isa(&mut self, isa: crate::machine::IsaProfile) {
         self.epc_ialign32 = !isa.allows_compressed();
+        self.fp_enabled = isa.has_fp();
         self.csrs.insert(machine::MISA, isa.misa_value());
+        // A profile installed on live state (a fresh Hart, or a test helper
+        // that rebuilds the profile) must not keep `FS`/`SD` bits the new
+        // profile does not implement (contract D6).
+        let status = self.stored(machine::MSTATUS);
+        self.csrs
+            .insert(machine::MSTATUS, self.legal_mstatus(status, status));
+    }
+
+    /// True when the selected profile has architectural floating-point state.
+    pub(crate) fn has_fp(&self) -> bool {
+        self.fp_enabled
+    }
+
+    /// `mstatus` fields software can change in the selected profile.
+    fn writable_mstatus(&self) -> u64 {
+        if self.fp_enabled {
+            mstatus::WRITABLE_FP
+        } else {
+            mstatus::WRITABLE
+        }
+    }
+
+    /// `sstatus` fields software can change in the selected profile.
+    fn writable_sstatus(&self) -> u64 {
+        if self.fp_enabled {
+            mstatus::SSTATUS_WRITABLE_FP
+        } else {
+            mstatus::SSTATUS_WRITABLE
+        }
     }
 
     /// The mask `mepc` and `sepc` apply to a written value (contract D5).
@@ -344,12 +420,12 @@ impl CsrFile {
     fn legalize(&self, addr: u16, value: u64) -> (u16, u64) {
         let old = self.stored(addr);
         match addr {
-            machine::MSTATUS => (machine::MSTATUS, Self::legal_mstatus(old, value)),
+            machine::MSTATUS => (machine::MSTATUS, self.legal_mstatus(old, value)),
             supervisor::SSTATUS => {
                 let current = self.stored(machine::MSTATUS);
-                let merged =
-                    (current & !mstatus::SSTATUS_WRITABLE) | (value & mstatus::SSTATUS_WRITABLE);
-                (machine::MSTATUS, Self::legal_mstatus(current, merged))
+                let writable = self.writable_sstatus();
+                let merged = (current & !writable) | (value & writable);
+                (machine::MSTATUS, self.legal_mstatus(current, merged))
             }
             // No extension can be disabled, and none can be enabled.
             machine::MISA => (addr, old),
@@ -397,14 +473,28 @@ impl CsrFile {
     }
 
     /// Apply the `mstatus` WARL rules to a candidate value.
-    fn legal_mstatus(old: u64, value: u64) -> u64 {
-        let mut next = value & mstatus::WRITABLE;
+    ///
+    /// Without floating-point state `FS`/`SD` are not writable and stay 0.
+    /// Under an FP profile `FS` is a writable two-bit field and `SD` is
+    /// recomputed as `FS == Dirty`; `SD` itself is never writable
+    /// (contract D6).
+    fn legal_mstatus(&self, old: u64, value: u64) -> u64 {
+        let mut next = value & self.writable_mstatus();
         // MPP holds U (0), S (1), or M (3); 2 is reserved and keeps the
         // previous legal value.
         if (value & mstatus::MPP) >> mstatus::MPP_SHIFT == 2 {
             next = (next & !mstatus::MPP) | (old & mstatus::MPP);
         }
-        next | mstatus::XLEN_FIELDS
+        next | mstatus::XLEN_FIELDS | Self::sd_field(self.fp_enabled, next)
+    }
+
+    /// The read-only `SD` bit implied by the legal `FS` value.
+    fn sd_field(fp_enabled: bool, value: u64) -> u64 {
+        if fp_enabled && value & mstatus::FS == mstatus::FS_DIRTY {
+            mstatus::SD
+        } else {
+            0
+        }
     }
 
     /// Get current privilege mode
@@ -488,7 +578,7 @@ impl CsrFile {
     /// applying the field rules but not the current privilege view.
     pub(crate) fn set_mstatus(&mut self, value: u64) {
         let old_value = self.stored(machine::MSTATUS);
-        let new_value = Self::legal_mstatus(old_value, value);
+        let new_value = self.legal_mstatus(old_value, value);
         self.csrs.insert(machine::MSTATUS, new_value);
         if let Some(writes) = &mut self.observed_writes {
             writes.push(CsrAccess {

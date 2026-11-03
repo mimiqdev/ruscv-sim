@@ -36,7 +36,8 @@ pub enum PlatformKind {
 ///
 /// The profile is Machine composition configuration fixed for the Machine's
 /// lifetime. The Hart applies every profile-dependent rule: parcel fetch,
-/// IALIGN, `misa`, and `xepc`/`dpc` legality.
+/// IALIGN, `misa`, `xepc`/`dpc` legality, and the floating-point state and
+/// CSR rules (contract D5/D6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IsaProfile {
     /// RV64IMA/Zicsr + Zifencei, IALIGN=32, `misa` `0x8000000000141101`.
@@ -44,6 +45,11 @@ pub enum IsaProfile {
     Rv64ima,
     /// The `rv64ima` profile plus Zca, IALIGN=16, `misa` `0x8000000000141105`.
     Rv64imac,
+    /// RV64IMA + F + D, IALIGN=32, `misa` `0x8000000000141129`.
+    Rv64imafd,
+    /// `rv64imafd` plus Zca (and Zcd once U3b lands), IALIGN=16, `misa`
+    /// `0x800000000014112D`.
+    Rv64imafdc,
 }
 
 impl IsaProfile {
@@ -52,20 +58,49 @@ impl IsaProfile {
         match self {
             Self::Rv64ima => crate::csr::MISA_VALUE,
             Self::Rv64imac => crate::csr::MISA_VALUE | crate::csr::MISA_C_BIT,
+            Self::Rv64imafd => {
+                crate::csr::MISA_VALUE | crate::csr::MISA_F_BIT | crate::csr::MISA_D_BIT
+            }
+            Self::Rv64imafdc => {
+                crate::csr::MISA_VALUE
+                    | crate::csr::MISA_F_BIT
+                    | crate::csr::MISA_D_BIT
+                    | crate::csr::MISA_C_BIT
+            }
         }
     }
 
-    /// IALIGN in bytes: 4 for `rv64ima`, 2 for `rv64imac` (contract D5).
+    /// IALIGN in bytes: 4 for `rv64ima`/`rv64imafd`, 2 for the compressed
+    /// profiles (contract D5).
     pub fn ialign_bytes(self) -> u64 {
-        match self {
-            Self::Rv64ima => 4,
-            Self::Rv64imac => 2,
+        if self.allows_compressed() {
+            2
+        } else {
+            4
         }
     }
 
-    /// True only for the IALIGN=16 (`rv64imac`) profile.
+    /// True for the IALIGN=16 profiles (`rv64imac`, `rv64imafdc`).
     pub fn allows_compressed(self) -> bool {
-        matches!(self, Self::Rv64imac)
+        matches!(self, Self::Rv64imac | Self::Rv64imafdc)
+    }
+
+    /// True for the profiles with the F extension (contract D2/D3).
+    ///
+    /// This is an explicit capability check, not an inference from
+    /// compression.
+    pub fn has_f(self) -> bool {
+        matches!(self, Self::Rv64imafd | Self::Rv64imafdc)
+    }
+
+    /// True for the profiles with the D extension (contract D2/D3).
+    pub fn has_d(self) -> bool {
+        matches!(self, Self::Rv64imafd | Self::Rv64imafdc)
+    }
+
+    /// True for the profiles with architectural floating-point state (D5/D6).
+    pub fn has_fp(self) -> bool {
+        self.has_f() && self.has_d()
     }
 
     /// Parse the approved CLI/facade profile name (contract D3).
@@ -73,6 +108,8 @@ impl IsaProfile {
         match name {
             "rv64ima" => Some(Self::Rv64ima),
             "rv64imac" => Some(Self::Rv64imac),
+            "rv64imafd" => Some(Self::Rv64imafd),
+            "rv64imafdc" => Some(Self::Rv64imafdc),
             _ => None,
         }
     }
@@ -82,6 +119,8 @@ impl IsaProfile {
         match self {
             Self::Rv64ima => "rv64ima",
             Self::Rv64imac => "rv64imac",
+            Self::Rv64imafd => "rv64imafd",
+            Self::Rv64imafdc => "rv64imafdc",
         }
     }
 }

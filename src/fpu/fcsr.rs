@@ -37,17 +37,35 @@ bitflags! {
 }
 
 /// FCSR Register
-#[derive(Debug, Clone, Copy)]
+///
+/// `fcsr` is eight architectural bits: `frm` (2:0) and the five accrued
+/// exception flags `fflags` (7:3).  Bits 63:8 are reserved, read zero, and
+/// ignore writes (contract D5), so they have no storage here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fcsr {
     /// Rounding mode (bits 2:0)
     frm: u8,
     /// Accrued exception flags (bits 7:3)
     flags: FpFlags,
-    /// Non-standard reserved bits (bits 31:8)
-    reserved: u32,
+}
+
+impl Default for Fcsr {
+    fn default() -> Self {
+        Self {
+            frm: 0,
+            flags: FpFlags::empty(),
+        }
+    }
 }
 
 impl Fcsr {
+    /// Mask of the architectural `fcsr` bits.
+    pub const MASK: u32 = 0xFF;
+    /// Mask of the five accrued exception flags.
+    pub const FFLAGS_MASK: u8 = 0x1F;
+    /// Mask of the three rounding-mode bits.
+    pub const FRM_MASK: u8 = 0x7;
+
     /// Create a new FCSR with default values
     pub fn new() -> Self {
         Self::default()
@@ -57,7 +75,6 @@ impl Fcsr {
     pub fn reset(&mut self) {
         self.frm = 0; // Default to RNE
         self.flags = FpFlags::empty();
-        self.reserved = 0;
     }
 
     /// Get rounding mode
@@ -67,7 +84,27 @@ impl Fcsr {
 
     /// Set rounding mode
     pub fn set_rounding_mode(&mut self, frm: u8) {
-        self.frm = frm & 0x7;
+        self.frm = frm & Self::FRM_MASK;
+    }
+
+    /// Architectural `frm` bits (2:0).
+    pub fn frm_bits(&self) -> u8 {
+        self.frm
+    }
+
+    /// Write the architectural `frm` bits (2:0); reserved bits ignore value.
+    pub fn write_frm_bits(&mut self, value: u8) {
+        self.frm = value & Self::FRM_MASK;
+    }
+
+    /// Architectural `fflags` bits (4:0).
+    pub fn flags_bits(&self) -> u8 {
+        self.flags.bits()
+    }
+
+    /// Write the architectural `fflags` bits (4:0); reserved bits are dropped.
+    pub fn write_flags_bits(&mut self, value: u8) {
+        self.flags = FpFlags::from_bits_truncate(value & Self::FFLAGS_MASK);
     }
 
     /// Get exception flags
@@ -90,32 +127,19 @@ impl Fcsr {
         !self.flags.is_empty()
     }
 
-    /// Read FCSR value
+    /// Read the architectural `fcsr` value (bits 7:0).
+    ///
+    /// Bits 63:8 are reserved and read zero.
     pub fn read(&self) -> u32 {
-        let flags: u8 = self.flags.bits();
-        self.reserved << 8 | (flags as u32) << 3 | (self.frm as u32)
+        u32::from(self.flags.bits()) << 3 | u32::from(self.frm)
     }
 
-    /// Write FCSR value
+    /// Write the `fcsr` address: `frm` takes bits 2:0 and `fflags` bits 7:3.
+    /// Every bit above 7 is reserved and ignored.
     pub fn write(&mut self, value: u32) {
-        self.frm = (value & 0x7) as u8;
-        self.flags = FpFlags::from_bits((value >> 3) as u8).expect("Invalid FCSR flags");
-        self.reserved = value >> 8;
-    }
-
-    /// Get NaN boxed default value for operations
-    pub fn default_nan(&self) -> u64 {
-        0x7FC0_0000_FFFF_FFFFu64
-    }
-}
-
-impl Default for Fcsr {
-    fn default() -> Self {
-        Self {
-            frm: 0,
-            flags: FpFlags::empty(),
-            reserved: 0,
-        }
+        let value = (value & Self::MASK) as u8;
+        self.frm = value & Self::FRM_MASK;
+        self.flags = FpFlags::from_bits_truncate(value >> 3);
     }
 }
 
@@ -250,10 +274,33 @@ mod tests {
     }
 
     #[test]
-    fn test_fcsr_default_nan() {
-        let fcsr = Fcsr::new();
-        let nan = fcsr.default_nan();
-        assert_eq!(nan, 0x7FC0_0000_FFFF_FFFFu64);
+    fn test_fcsr_reserved_bits_read_zero_and_ignore_writes() {
+        let mut fcsr = Fcsr::new();
+        // Bits above 7 are reserved: they neither round-trip nor panic.
+        fcsr.write(0xFFFF_FFFF);
+        assert_eq!(fcsr.read(), Fcsr::MASK);
+        assert_eq!(fcsr.frm_bits(), Fcsr::FRM_MASK);
+        assert_eq!(fcsr.flags_bits(), Fcsr::FFLAGS_MASK);
+
+        fcsr.write(Fcsr::MASK | 0x8000_0000);
+        assert_eq!(fcsr.read(), Fcsr::MASK);
+    }
+
+    #[test]
+    fn test_fcsr_aliases_members() {
+        let mut fcsr = Fcsr::new();
+        // `frm` is bits 2:0 of `fcsr`.
+        fcsr.write_frm_bits(0b1111_1010);
+        assert_eq!(fcsr.frm_bits(), 0b010);
+        assert_eq!(fcsr.read(), 0b010);
+        // `fflags` is bits 4:0, stored in `fcsr` bits 7:3.
+        fcsr.write_flags_bits(0b1111_1110);
+        assert_eq!(fcsr.flags_bits(), 0b1_1110);
+        assert_eq!(fcsr.read(), 0b1_1110 << 3 | 0b010);
+        // Writing one view leaves the other unchanged.
+        fcsr.write(0);
+        assert_eq!(fcsr.frm_bits(), 0);
+        assert_eq!(fcsr.flags_bits(), 0);
     }
 
     #[test]

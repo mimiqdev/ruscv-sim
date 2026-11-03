@@ -18,8 +18,10 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 - 另有 Sv39 MMU/TLB、TLM 总线和 CLINT/PLIC
 
 公开 CLI 目前只有 `run`。默认 `rv64ima` profile 按 32 位指令取指；`--isa rv64imac`
-启用可选 Zca 压缩指令 profile（16-bit parcel 取指、IALIGN=16、`misa.C`，见下）。页表翻译和
-TLM 外设总线还没有全部接到这条路径。
+启用可选 Zca 压缩指令 profile（16-bit parcel 取指、IALIGN=16、`misa.C`，见下）；
+`--isa rv64imafd` / `rv64imafdc` 启用 F/D 浮点 profile（32 个普通 64-bit FPR、
+`fflags`/`frm`/`fcsr` 与可写 `mstatus.FS`）。F/D/Zcd 指令本身仍按非法指令陷入，见下。
+页表翻译和 TLM 外设总线还没有全部接到这条路径。
 
 外部验证已有 [A7 有界能力证据](docs/verification/a7-capability-assessment.md)：
 A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七个项目原子 guest，
@@ -82,7 +84,7 @@ cargo run -- run path/to/program.elf --max-cycles 100000
 | `--log-commits <FILE>` | 写出 Spike 兼容的 commit log |
 | `--rbb-port <PORT>` | 在该 TCP 端口上提供 OpenOCD `remote_bitbang`。不带此选项时，运行循环保持 Stage 5 / 未连接调试器的行为 |
 | `--halted` | 复位后、第一条指令之前进入 Debug Mode（`dpc` 为入口，`minstret` 为 0）。必须与 `--rbb-port` 同时给出 |
-| `--isa <rv64ima\|rv64imac>` | 选择 Machine ISA profile。`rv64ima`（默认）固定 IALIGN=32、`misa` `0x8000000000141101`；`rv64imac` 启用 Zca：16-bit parcel 取指、IALIGN=16、`misa` `0x8000000000141105`。profile 不会从 ELF `e_flags` 推断，运行期间不可改变 |
+| `--isa <PROFILE>` | 选择 Machine ISA profile：`rv64ima`（默认，IALIGN=32、`misa` `0x8000000000141101`）、`rv64imac`（Zca：16-bit parcel 取指、IALIGN=16、`misa` `0x8000000000141105`）、`rv64imafd`（+F/D、IALIGN=32、`misa` `0x8000000000141129`）、`rv64imafdc`（+F/D+Zca、IALIGN=16、`misa` `0x800000000014112D`）。FP profile 提供 32 个普通 64-bit FPR、`fflags`/`frm`/`fcsr` 和可写 `mstatus.FS`/`SD`；F/D/Zcd 指令执行仍按非法指令陷入。profile 不会从 ELF `e_flags` 推断，运行期间不可改变 |
 
 Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在 Runner 中比较寄存器快照。
 文本格式保留原有的 GPR 展示与省略规则，并非完整的 FPR/CSR/内存效果导出。
