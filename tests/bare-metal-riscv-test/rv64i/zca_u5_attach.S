@@ -4,7 +4,7 @@
 # Every instruction below has a fixed length, so each named symbol keeps its
 # length and its `pc % 4` residue. The compressed forms are written with their
 # C mnemonics (the assembler here does not shorten the 32-bit spellings), and
-# the 4-byte forms sit inside `.option arch, -c` where relaxation could
+# the 4-byte forms sit inside `.option norvc` where relaxation could
 # otherwise shorten them. The offsets are pinned by the assertions in
 # scripts/debug_attach.sh.
 #
@@ -29,6 +29,9 @@
 # to the tohost word without a breakpoint.
 
 .section .text
+.option push
+.option norelax
+.option rvc
 .globl _start
 .globl zca_len2
 .globl zca_len4
@@ -38,7 +41,7 @@
 .globl zca_spin
 .globl zca_exit
 
-.option arch, +c
+.option rvc
 _start:
     c.li    a0, 0x1f
     c.addi  a1, 1
@@ -46,22 +49,22 @@ _start:
 zca_len2:
     c.addi  a0, 1
     c.nop
-.option arch, -c
+.option norvc
 zca_len4:
     jal     x0, zca_link
 zca_link:
     jal     s0, zca_hint
-.option arch, +c
+.option rvc
 zca_second_link:
     c.nop
     c.nop
     c.nop
     c.nop
-.option arch, -c
+.option norvc
 zca_hint:
     addi    x0, x0, 0x5a
     jal     x0, zca_exit
-.option arch, +c
+.option rvc
 
 zca_spin:
     c.j     zca_spin
@@ -70,6 +73,7 @@ zca_exit:
     la      t1, tohost
     sd      t0, 0(t1)
     c.j     zca_exit
+.option pop
 
 .section .tohost
 .align 3
