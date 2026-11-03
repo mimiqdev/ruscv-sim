@@ -38,7 +38,9 @@ CFG="${ROOT}/scripts/debug/openocd-remote-bitbang.cfg"
 GDB_SCRIPT="${ROOT}/scripts/debug/s6-u5-session.gdb"
 GDB_PROGBUF_SCRIPT="${ROOT}/scripts/debug/s6-u4-progbuf.gdb"
 GDB_SYSBUS_SCRIPT="${ROOT}/scripts/debug/s6-u4-sysbus.gdb"
+GDB_ZCA_SCRIPT="${ROOT}/scripts/debug/zca-u5-session.gdb"
 GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64i/s6_u5_attach.S"
+ZCA_GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64i/zca_u5_attach.S"
 LINKER="${ROOT}/tests/bare-metal-riscv-test/linker.ld"
 
 EVIDENCE=""
@@ -114,6 +116,47 @@ trap cleanup EXIT
 
 "${AS}" -march=rv64ima_zicsr -mabi=lp64 "${GUEST_SRC}" -o "${WORK}/guest.o"
 "${LD}" -T "${LINKER}" "${WORK}/guest.o" -o "${WORK}/guest.elf"
+
+# Zca U5. The compressed guest is a separate image because it needs the
+# rv64imac profile. The compressed session is mandatory, so a binutils that
+# cannot assemble the image fails the run instead of silently skipping it.
+if ! "${AS}" -march=rv64imac_zicsr_zifencei -mabi=lp64 "${ZCA_GUEST_SRC}" -o "${WORK}/zca-guest.o" \
+    2>"${WORK}/zca-assemble.err"; then
+    echo "failed to assemble the compressed guest (riscv64 binutils with Zca is required)" >&2
+    cat "${WORK}/zca-assemble.err" >&2 || true
+    exit 1
+fi
+"${LD}" -T "${LINKER}" "${WORK}/zca-guest.o" -o "${WORK}/zca-guest.elf"
+
+zca_symbol() {
+    local name="$1"
+    "${NM}" "${WORK}/zca-guest.elf" | awk -v name="${name}" '$3 == name { print $1; exit }'
+}
+
+ZCA_ENTRY="$(zca_symbol _start)"
+ZCA_LEN2="$(zca_symbol zca_len2)"
+ZCA_LEN4="$(zca_symbol zca_len4)"
+ZCA_LINK="$(zca_symbol zca_link)"
+ZCA_SECOND_LINK="$(zca_symbol zca_second_link)"
+ZCA_HINT="$(zca_symbol zca_hint)"
+ZCA_SPIN="$(zca_symbol zca_spin)"
+ZCA_EXIT="$(zca_symbol zca_exit)"
+if [[ -z "${ZCA_ENTRY}" || -z "${ZCA_LEN2}" || -z "${ZCA_LEN4}" \
+    || -z "${ZCA_LINK}" || -z "${ZCA_SECOND_LINK}" || -z "${ZCA_HINT}" || -z "${ZCA_SPIN}" || -z "${ZCA_EXIT}" ]]; then
+    echo "compressed guest is missing one of its fixed labels" >&2
+    exit 1
+fi
+# The fixed instruction mix is a guest invariant: the 2-byte instruction
+# and, per contract D10, the 4-byte breakpoint target both start at
+# pc % 4 == 2 in this image.
+if (( 0x${ZCA_LEN2} % 4 != 2 )); then
+    echo "zca_len2 (0x${ZCA_LEN2}) is not at pc % 4 == 2" >&2
+    exit 1
+fi
+if (( 0x${ZCA_LEN4} % 4 != 2 )); then
+    echo "zca_len4 (0x${ZCA_LEN4}) is not at pc % 4 == 2" >&2
+    exit 1
+fi
 
 symbol() {
     local name="$1"
@@ -210,8 +253,9 @@ wait_for() {
 
 # Start one target, attach OpenOCD and GDB, run $3 until its log shows $4,
 # and stop GDB once the target exits. $2 is a function that execs the target
-# and takes the remote_bitbang port. Logs stay in ${WORK}/$1. Remaining
-# arguments go to OpenOCD after the config file.
+# and takes the remote_bitbang port. Logs stay in ${WORK}/$1. GDB loads
+# ${WORK}/guest.elf unless the caller sets SESSION_ELF for a different image.
+# Remaining arguments go to OpenOCD after the config file.
 start_session() {
     local name="$1"
     local starter="$2"
@@ -228,6 +272,7 @@ start_session() {
     local target_log="${dir}/target.log"
     local openocd_log="${dir}/openocd.log"
     local gdb_log="${dir}/gdb.log"
+    local gdb_elf="${SESSION_ELF:-${WORK}/guest.elf}"
 
     "${starter}" "${rbb}" >"${target_log}" 2>&1 &
     local target_pid=$!
@@ -256,7 +301,7 @@ start_session() {
         -ex "set pagination off" \
         -ex "set confirm off" \
         -ex "set architecture riscv:rv64" \
-        -ex "file ${WORK}/guest.elf" \
+        -ex "file ${gdb_elf}" \
         -ex "target remote :${gdb_port}" \
         -x "${gdb_script}" \
         >"${gdb_log}" 2>&1 &
@@ -810,9 +855,207 @@ s6_pb8 1
 TABLE
 }
 
+# The Zca U5 named outputs, in the order the session prints them.
+zca_u5_keys() {
+    printf 'connect pc gpr dcsr break2_pc break2_dpc break2_dcsr break2_a0 break2_a1'
+    printf ' step2_pc step2_a0 step2_a1 break4_pc break4_dpc break4_dcsr break4_s0'
+    printf ' step4_pc step4_s0 link_pc link_s0 hint_before_a1 hint_pc hint_after_a1'
+    printf ' halt_pc halt_dpc reset_pc'
+}
+
+# The compressed session. Contract D10: the same target and debugger path as
+# the abstract session, against a mixed-length rv64imac guest. OpenOCD's
+# -d3 log carries the breakpoint writes, so the evidence check can prove the
+# 2-byte instruction received the 2-byte C.EBREAK write and that a 4-byte
+# breakpoint was added at the 4-byte instruction.
+run_zca_session() {
+    local name="$1"
+    local named="$3"
+    local SESSION_ELF="${WORK}/zca-guest.elf"
+    start_session "${name}" "$2" "${GDB_ZCA_SCRIPT}" 'Z5 reset_pc=' -d3 || return 1
+    local keys=()
+    read -r -a keys <<<"$(zca_u5_keys)"
+    extract_named "${named}" "${WORK}/${name}/gdb.log" Z5 norm "${keys[@]}" || return 1
+    append_dcsr_fields "${named}" || return 1
+    assert_zca_session "${name}" "${named}" || return 1
+    assert_zca_evidence "${name}" "${WORK}/${name}" || return 1
+    echo "${name}: compressed session ok (target exit 0)"
+}
+
+# Exact stops of the fixed guest. A wrong width, a wrong link value, or a
+# stale PC fails here. The dcsr cause after each breakpoint is 1 (EBREAK),
+# which is the C.EBREAK path for the 2-byte stop.
+assert_zca_session() {
+    local name="$1" named="$2"
+    assert_eq "${name}" "$(field "${named}" connect)" "ok" "connect" || return 1
+    if [[ "${name}" == "spike-zca" ]]; then
+        assert_eq "${name}" "$(field "${named}" pc)" "1000" "connect PC" || return 1
+    else
+        assert_eq "${name}" "$(field "${named}" pc)" "${ZCA_ENTRY}" "connect PC" || return 1
+    fi
+    assert_eq "${name}" "$(field "${named}" gpr)" "0" "connect GPR" || return 1
+
+    local len2 len4 hint
+    len2="$(printf '%x' "$((0x${ZCA_LEN2}))")"
+    len4="$(printf '%x' "$((0x${ZCA_LEN4}))")"
+    hint="$(printf '%x' "$((0x${ZCA_HINT}))")"
+
+    assert_eq "${name}" "$(field "${named}" break2_pc)" "${len2}" "2-byte breakpoint PC" || return 1
+    assert_eq "${name}" "$(field "${named}" break2_dpc)" "${len2}" "2-byte breakpoint dpc" || return 1
+    assert_eq "${name}" "$(field "${named}" break2_a0)" "0x1f" "a0 at the 2-byte breakpoint" || return 1
+    assert_eq "${name}" "$(field "${named}" break2_a1)" "1" "a1 at the 2-byte breakpoint" || return 1
+    # C.EBREAK is EBREAK (contract D8): dcsr.cause is 1 at the 2-byte stop.
+    assert_eq "${name}" "$(( (0x$(field "${named}" break2_dcsr) >> 6) & 7 ))" "1" \
+        "dcsr.cause at the 2-byte breakpoint" || return 1
+    assert_eq "${name}" "$(field "${named}" step2_pc)" "$(printf '%x' "$((0x${ZCA_LEN2} + 2))")" \
+        "single-step PC over the 2-byte instruction" || return 1
+    assert_eq "${name}" "$(field "${named}" step2_a0)" "0x20" "a0 after stepping the 2-byte instruction" \
+        || return 1
+    assert_eq "${name}" "$(field "${named}" step2_a1)" "7" "a1 survived the 2-byte step" || return 1
+
+    assert_eq "${name}" "$(field "${named}" break4_pc)" "${len4}" "4-byte breakpoint PC" || return 1
+    assert_eq "${name}" "$(field "${named}" break4_dpc)" "${len4}" "4-byte breakpoint dpc" || return 1
+    assert_eq "${name}" "$(field "${named}" break4_s0)" "0" "s0 before the link" || return 1
+    assert_eq "${name}" "$(( (0x$(field "${named}" break4_dcsr) >> 6) & 7 ))" "1" \
+        "dcsr.cause at the 4-byte breakpoint" || return 1
+    assert_eq "${name}" "$(field "${named}" step4_pc)" "${ZCA_LINK}" \
+        "single-step PC over the 4-byte instruction at pc % 4 == 2" || return 1
+    assert_eq "${name}" "$(field "${named}" step4_s0)" "0" \
+        "s0 is untouched by the 4-byte jump" || return 1
+
+    assert_eq "${name}" "$(field "${named}" link_pc)" "${hint}" \
+        "single-step PC over the 4-byte link" || return 1
+    assert_eq "${name}" "$(field "${named}" link_s0)" "${ZCA_SECOND_LINK}" \
+        "4-byte link value" || return 1
+    assert_eq "${name}" "$(field "${named}" hint_before_a1)" "7" "a1 before the HINT" || return 1
+    assert_eq "${name}" "$(field "${named}" hint_pc)" "$(printf '%x' "$((0x${ZCA_HINT} + 4))")" \
+        "single-step PC over the HINT" || return 1
+    assert_eq "${name}" "$(field "${named}" hint_after_a1)" "7" "HINT left a1 unchanged" || return 1
+
+    assert_eq "${name}" "$(field "${named}" halt_pc)" "${ZCA_SPIN}" "halt PC" || return 1
+    assert_eq "${name}" "$(field "${named}" halt_dpc)" "${ZCA_SPIN}" "halt dpc" || return 1
+    if [[ "${name}" == "spike-zca" ]]; then
+        assert_eq "${name}" "$(field "${named}" reset_pc)" "1000" "reset PC" || return 1
+    else
+        assert_eq "${name}" "$(field "${named}" reset_pc)" "${ZCA_ENTRY}" "reset PC" || return 1
+    fi
+    assert_eq "${name}" "$(field "${named}" dcsr_debugver)" "4" "dcsr.debugver" || return 1
+    assert_eq "${name}" "$(field "${named}" dcsr_prv)" "3" "dcsr.prv" || return 1
+}
+
+# The debugger writes the breakpoint itself: a 2-byte software breakpoint
+# where the guest has a 2-byte instruction, which only a compressed-capable
+# target accepts as C.EBREAK, and a 4-byte software breakpoint where the guest
+# has a 4-byte instruction at pc % 4 == 2. The successful "added software
+# breakpoint" row is the authoritative evidence for both, because the pinned
+# Spike refuses a multi-word abstract write: it reaches the 4-byte breakpoint
+# through an aligned 8-byte read-modify-write, while this profile writes the
+# two 2-byte parcels directly. Both end with the same breakpoint in memory.
+assert_zca_evidence() {
+    local name="$1" dir="$2"
+    local log="${dir}/openocd.log"
+    local len2 len4
+    len2="$(printf '0x%x' "0x$(zca_symbol zca_len2)")"
+    len4="$(printf '0x%x' "0x$(zca_symbol zca_len4)")"
+    if ! grep -aqF "added software breakpoint at ${len2} of length 0x00000002" "${log}"; then
+        echo "${name}: no 2-byte software breakpoint at ${len2}" >&2
+        return 1
+    fi
+    if ! grep -aqF "added software breakpoint at ${len4} of length 0x00000004" "${log}"; then
+        echo "${name}: no 4-byte software breakpoint at ${len4}" >&2
+        return 1
+    fi
+    if ! grep -aqF "writing 1 words of 2 bytes from ${len2}" "${log}"; then
+        echo "${name}: no 2-byte C.EBREAK write at ${len2}" >&2
+        return 1
+    fi
+    if grep -aq 'Failed to write 2-byte breakpoint instruction' "${log}" \
+        || grep -aq 'Failed to write 4-byte breakpoint instruction' "${log}"; then
+        echo "${name}: a breakpoint write was rejected" >&2
+        return 1
+    fi
+    if ! grep -aq 'Examined RISC-V core' "${log}"; then
+        echo "${name}: OpenOCD did not examine the compressed hart" >&2
+        return 1
+    fi
+}
+
+# The D10 comparison: the same named behavior on both targets. Spike runs its
+# existing ISA string plus `c` (rv64imac_zicsr). Only the reset entry
+# point and the dcsr fields the abstract session already documents differ.
+# The per-stop dcsr rows differ only in those same D5 bits, so they are
+# compared with stopcount, stoptime, and mprven masked out.
+compare_zca_named() {
+    local left="$1" right="$2"
+    local keys=()
+    read -r -a keys <<<"$(zca_u5_keys)"
+    local key a b
+    for key in "${keys[@]}"; do
+        case "${key}" in
+            pc|reset_pc|dcsr|break2_dcsr|break4_dcsr) continue ;;
+        esac
+        a="$(field "${left}" "${key}")"
+        b="$(field "${right}" "${key}")"
+        if [[ "${a}" != "${b}" ]]; then
+            echo "Spike comparison mismatch on ${key}: simulator ${a}, spike ${b}" >&2
+            return 1
+        fi
+        printf 'match %s=%s\n' "${key}" "${a}"
+    done
+    for key in break2_dcsr break4_dcsr; do
+        a="$(zca_dcsr_common "$(field "${left}" "${key}")")"
+        b="$(zca_dcsr_common "$(field "${right}" "${key}")")"
+        if [[ "${a}" != "${b}" ]]; then
+            echo "Spike comparison mismatch on ${key} without the D5 bits: simulator ${a}, spike ${b}" >&2
+            return 1
+        fi
+        printf 'match %s=%s (D5 bits masked)\n' "${key}" "${a}"
+    done
+    for key in dcsr_debugver dcsr_ebreakm dcsr_ebreaks dcsr_ebreaku dcsr_step dcsr_prv \
+        dcsr_common; do
+        a="$(field "${left}" "${key}")"
+        b="$(field "${right}" "${key}")"
+        if [[ "${a}" != "${b}" ]]; then
+            echo "Spike comparison mismatch on ${key}: simulator ${a}, spike ${b}" >&2
+            return 1
+        fi
+        printf 'match %s=%s\n' "${key}" "${a}"
+    done
+    note_divergence "${left}" "${right}" pc "$(norm "${ZCA_ENTRY}")" 1000 \
+        "Spike --halted stops at its boot ROM (0x1000). This profile has no boot ROM and stops at the ELF entry. The GDB script then writes PC to _start before the guest operations."
+    note_divergence "${left}" "${right}" reset_pc "$(norm "${ZCA_ENTRY}")" 1000 \
+        "monitor reset halt returns Spike to that boot ROM. This profile's ndmreset reloads the image and halts at the ELF entry."
+    note_divergence "${left}" "${right}" dcsr_stopcount 1 0 \
+        "D5 fixes stopcount to 1. Spike hardwires stopcount to 0."
+    note_divergence "${left}" "${right}" dcsr_stoptime 1 0 \
+        "D5 fixes stoptime to 1. Spike hardwires stoptime to 0."
+    note_divergence "${left}" "${right}" dcsr_mprven 1 0 \
+        "D5 fixes mprven to 1. Spike resets mprven to 0 and leaves it writable."
+    note_divergence "${left}" "${right}" dcsr_cause 3 5 \
+        "This profile's --halted is haltreq (cause 3). Spike --halted uses DCSR_CAUSE_HALT (5), which Debug Spec 1.0 calls resethaltreq. D11 leaves resethaltreq unimplemented."
+    echo "dcsr raw: simulator $(field "${left}" dcsr), spike $(field "${right}" dcsr)"
+}
+
+# The dcsr value with the D5-only bits removed, for the per-stop rows. cause,
+# debugver, ebreak* and prv stay because both targets must agree on them.
+zca_dcsr_common() {
+    python3 - "$1" <<'PY'
+import sys
+value = int(sys.argv[1], 16)
+print(hex(value & ~((1 << 10) | (1 << 9) | (1 << 4))))
+PY
+}
+
 ruscv_cmd() {
     local port="$1"
     exec "${RUSCV_SIM}" run "${WORK}/guest.elf" --rbb-port "${port}" --halted --max-cycles 100000000
+}
+
+# The Zca U5 target: the compressed guest under the rv64imac profile.
+ruscv_zca_cmd() {
+    local port="$1"
+    exec "${RUSCV_SIM}" run "${WORK}/zca-guest.elf" --isa rv64imac \
+        --rbb-port "${port}" --halted --max-cycles 100000000
 }
 
 spike_available() {
@@ -871,6 +1114,22 @@ spike_sysbus_cmd() {
         --dm-sba=64 \
         --rbb-port="${port}" \
         "${WORK}/guest.elf"
+}
+
+# The Zca U5 comparison target: the compressed guest under the rv64imac
+# profile. Spike's grammar keeps single-letter extensions before the
+# underscore, so its existing rv64ima_zicsr string plus `c` is rv64imac_zicsr.
+spike_zca_cmd() {
+    local port="$1"
+    exec spike --halted \
+        --isa=rv64imac_zicsr \
+        --priv=msu \
+        --pc="0x${ZCA_ENTRY}" \
+        --dm-progsize=0 \
+        --dm-no-impebreak \
+        --dm-datacount=4 \
+        --rbb-port="${port}" \
+        "${WORK}/zca-guest.elf"
 }
 
 # One writable word plus the implicit EBREAK is two slots; OpenOCD needs three.
@@ -1207,6 +1466,7 @@ echo "GDB: $(gdb-multiarch --version | head -1)"
 run_session ruscv ruscv_cmd "${WORK}/ruscv.named"
 run_progbuf_session ruscv-progbuf ruscv_cmd "${WORK}/ruscv-progbuf.named"
 run_sysbus_session ruscv-sysbus ruscv_cmd "${WORK}/ruscv-sysbus.named"
+run_zca_session ruscv-zca ruscv_zca_cmd "${WORK}/ruscv-zca.named"
 run_negative_version
 run_negative_datacount
 
@@ -1222,6 +1482,9 @@ elif spike_available; then
     run_sysbus_session spike-sysbus spike_sysbus_cmd "${WORK}/spike-sysbus.named"
     compare_sysbus_named "${WORK}/ruscv-sysbus.named" "${WORK}/spike-sysbus.named" \
         | tee "${WORK}/sysbus-comparison.txt"
+    run_zca_session spike-zca spike_zca_cmd "${WORK}/spike-zca.named"
+    compare_zca_named "${WORK}/ruscv-zca.named" "${WORK}/spike-zca.named" \
+        | tee "${WORK}/zca-comparison.txt"
     run_session spike spike_cmd "${WORK}/spike.named"
     compare_named "${WORK}/ruscv.named" "${WORK}/spike.named" | tee "${WORK}/comparison.txt"
 else
@@ -1235,7 +1498,8 @@ fi
 if [[ -n "${EVIDENCE}" ]]; then
     mkdir -p "${EVIDENCE}"
     # The script rebuilds the guest. Keep logs and named values only.
-    tar -C "${WORK}" -cf - --exclude='guest.o' --exclude='guest.elf' . \
+    tar -C "${WORK}" -cf - --exclude='guest.o' --exclude='guest.elf' \
+        --exclude='zca-guest.o' --exclude='zca-guest.elf' . \
         | tar -C "${EVIDENCE}" -xf -
     echo "evidence copied to ${EVIDENCE}"
 fi
