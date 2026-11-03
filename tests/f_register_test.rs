@@ -31,7 +31,7 @@ fn test_fpr_lower_bits() {
     let value: f32 = 1.5;
     let fpr = Fpr::new(value);
 
-    assert_eq!(fpr.lower(), value.to_bits());
+    assert_eq!(fpr.raw_low_u32(), value.to_bits());
 }
 
 #[test]
@@ -54,11 +54,14 @@ fn test_fpr_canonical_nan() {
 fn test_fpu_register_file_new() {
     let fpr = FpuRegisterFile::new();
 
-    // All registers should default to 0 (NaN boxed)
+    // Architectural reset state is zero for every FPR (contract §3), and zero
+    // is not a NaN box, so a computational single read yields the canonical
+    // NaN (contract D5).
     for i in 0..32 {
         let val = fpr.read(i);
-        assert_eq!(val.get(), 0.0f32);
-        assert!(val.is_nan_boxed());
+        assert_eq!(val.bits(), 0);
+        assert!(!val.is_nan_boxed());
+        assert_eq!(val.as_single_bits(), ruscv_sim::fpu::CANONICAL_NAN_F32);
     }
 }
 
@@ -86,21 +89,36 @@ fn test_fpu_register_file_read_u32() {
     let mut fpr = FpuRegisterFile::new();
 
     fpr.write(3, Fpr::new(7.0));
-    let bits = fpr.read_u32(3);
+    let bits = fpr.read_raw_u32(3);
 
     assert_eq!(bits, 7.0f32.to_bits());
 }
 
 #[test]
-fn test_fpu_register_file_f0_hardwired_zero() {
+fn test_fpu_register_file_computational_and_raw_single_reads() {
     let mut fpr = FpuRegisterFile::new();
 
-    // f0 should always read as 0
-    assert_eq!(fpr.read(0).get(), 0.0f32);
+    // A write that is not a 32-bit write can leave the register unboxed.
+    fpr.write(4, Fpr::from_bits(0x0000_0000_0040_0049));
+    // The computational read substitutes the canonical NaN.
+    assert_eq!(fpr.read_single_bits(4), ruscv_sim::fpu::CANONICAL_NAN_F32);
+    // The raw read used by FSW/FMV.X.W/32-bit debug keeps the low 32 bits.
+    assert_eq!(fpr.read_raw_u32(4), 0x0040_0049);
+}
 
-    // Writing to f0 should be ignored
+#[test]
+fn test_fpu_register_file_f0_is_ordinary() {
+    let mut fpr = FpuRegisterFile::new();
+
+    // f0 is an ordinary 64-bit register (contract D5).
+    assert_eq!(fpr.read(0).bits(), 0);
+
     fpr.write(0, Fpr::new(999.0));
-    assert_eq!(fpr.read(0).get(), 0.0f32);
+    assert_eq!(fpr.read(0).get(), 999.0f32);
+
+    fpr.write_u32(0, 0x3F80_0000); // 1.0
+    assert_eq!(fpr.read(0).get(), 1.0f32);
+    assert!(fpr.read(0).is_nan_boxed());
 }
 
 #[test]
@@ -112,8 +130,8 @@ fn test_fpu_register_file_reset() {
 
     fpr.reset();
 
-    assert_eq!(fpr.read(1).get(), 0.0f32);
-    assert_eq!(fpr.read(2).get(), 0.0f32);
+    assert_eq!(fpr.read(1).bits(), 0);
+    assert_eq!(fpr.read(2).bits(), 0);
 }
 
 #[test]

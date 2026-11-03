@@ -52,8 +52,9 @@ pub fn exec_fsw(
     let base = state.regs[rs1 as usize];
     let addr = (base as i64).wrapping_add(imm as i64) as u64;
 
-    // Read lower 32 bits from FPR and store to memory
-    let value = state.fpr.read_u32(rs2 as usize);
+    // Read lower 32 bits from FPR and store to memory.  FSW is a transfer
+    // read: it does not apply NaN-boxing (contract D5).
+    let value = state.fpr.read_raw_u32(rs2 as usize);
     mem.write_word(addr, value)?;
 
     Ok(())
@@ -170,12 +171,15 @@ mod tests {
     }
 
     #[test]
-    fn test_fsw_zero_register() {
+    fn test_fsw_reads_low_32_bits_of_f0() {
         let mut mem = SimpleMemory::new(0x1000);
         let mut state = CoreState::default();
         state.regs[1] = 0x100;
 
-        // Writing to f0 should be ignored (it's hardwired to 0)
+        // f0 is an ordinary 64-bit register (contract D5).  FSW moves its low
+        // 32 bits unchanged.
+        state.fpr.write_u32(0, 0x4000_0000); // 2.0f32
+
         let decoded = DecodedInstruction {
             raw: 0,
             format: InstructionFormat::SType,
@@ -192,7 +196,6 @@ mod tests {
 
         exec_fsw(&decoded, &mut state, &mut mem).unwrap();
 
-        // Memory should still be 0 (not written)
-        assert_eq!(mem.read_word(0x100).unwrap(), 0);
+        assert_eq!(mem.read_word(0x100).unwrap(), 0x4000_0000);
     }
 }

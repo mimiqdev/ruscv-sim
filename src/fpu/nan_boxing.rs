@@ -108,20 +108,28 @@ pub fn validate_nan_boxing(value: u64) -> NanBoxingResult {
     NanBoxingResult::Invalid
 }
 
-/// Extract 32-bit value from NaN boxed representation
+/// Extract a single-precision value from an FPR (contract D5).
 ///
-/// # Safety
-/// This function assumes the value is properly NaN boxed or is a valid double.
-/// Use `validate_nan_boxing` first to check validity.
+/// Every non-transfer single-precision operand read is a computational read:
+/// unless the upper 32 bits are all ones, the read yields the canonical NaN.
+/// A correctly boxed value is returned bit for bit, so sign injection and
+/// non-arithmetic moves preserve NaN payloads.
 #[inline]
 pub fn extract_boxed_f32(value: u64) -> f32 {
-    // First check if it's NaN boxed - if so, extract lower 32 bits
-    if is_nan_boxed(value) {
-        return f32::from_bits(value as u32);
-    }
+    f32::from_bits(unbox_single_bits(value))
+}
 
-    // It's a double precision value - convert to f32
-    f64::from_bits(value) as f32
+/// The bits of a computational single-precision read (contract D5).
+///
+/// A value whose upper 32 bits are not all ones is not a NaN-boxed single, so
+/// the read yields the canonical NaN rather than reinterpreting the bits.
+#[inline]
+pub fn unbox_single_bits(value: u64) -> u32 {
+    if is_nan_boxed(value) {
+        value as u32
+    } else {
+        CANONICAL_NAN_F32
+    }
 }
 
 /// NaN box a 32-bit float value
@@ -308,11 +316,13 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_double_precision() {
-        let val: f64 = std::f64::consts::PI;
-        let bits = val.to_bits();
-        let extracted = extract_boxed_f32(bits);
-        assert!((extracted as f64 - val).abs() < 1e-6);
+    fn test_extract_unboxed_value_yields_canonical_nan() {
+        // A value whose upper 32 bits are not all ones is not a NaN-boxed
+        // single.  A computational single read yields the canonical NaN
+        // rather than reinterpreting it as a double (contract D5).
+        let unboxed = 0x3FF0_0000_0000_0000u64; // 1.0 as an f64
+        let extracted = extract_boxed_f32(unboxed);
+        assert_eq!(extracted.to_bits(), CANONICAL_NAN_F32);
     }
 
     #[test]

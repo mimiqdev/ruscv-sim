@@ -1,16 +1,12 @@
 diff --git i/src/machine/mod.rs w/src/machine/mod.rs
-index d084dfd..82ed855 100644
 --- i/src/machine/mod.rs
 +++ w/src/machine/mod.rs
-@@ -50,8 +50,9 @@ impl IsaProfile {
+@@ -56,7 +56,7 @@
      /// Read-only `misa` for this profile (contract D3).
      pub fn misa_value(self) -> u64 {
          match self {
 -            Self::Rv64ima => crate::csr::MISA_VALUE,
--            Self::Rv64imac => crate::csr::MISA_VALUE | crate::csr::MISA_C_BIT,
-+            Self::Rv64ima | Self::Rv64imac => {
-+                crate::csr::MISA_VALUE | crate::csr::MISA_C_BIT
-+            }
-         }
-     }
- 
++            Self::Rv64ima => crate::csr::MISA_VALUE | crate::csr::MISA_C_BIT,
+             Self::Rv64imac => crate::csr::MISA_VALUE | crate::csr::MISA_C_BIT,
+             Self::Rv64imafd => {
+                 crate::csr::MISA_VALUE | crate::csr::MISA_F_BIT | crate::csr::MISA_D_BIT

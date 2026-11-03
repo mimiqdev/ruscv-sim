@@ -237,6 +237,72 @@ impl Default for CoreState {
     }
 }
 
+impl CoreState {
+    /// The selected profile has architectural floating-point state.
+    fn fp_state_enabled(&self) -> bool {
+        self.csr.has_fp()
+    }
+
+    /// The D6 legality rule for `fflags`/`frm`/`fcsr`.
+    ///
+    /// The three CSRs exist only under an FP profile.  Under an FP profile
+    /// every access is illegal-instruction while `mstatus.FS` is Off.
+    fn check_fp_csr(&self, addr: u16) -> Result<(), crate::csr::CsrError> {
+        use crate::csr::CsrError;
+        if !self.fp_state_enabled() {
+            return Err(CsrError::InvalidAddress(addr));
+        }
+        if self.csr.mstatus() & crate::csr::mstatus::FS == crate::csr::mstatus::FS_OFF {
+            return Err(CsrError::FpStateDisabled(addr));
+        }
+        Ok(())
+    }
+
+    /// Read `fflags`, `frm` or `fcsr` out of the single architectural `fcsr`
+    /// (contract D5).  Reserved `fcsr` bits read zero.
+    pub(crate) fn read_fp_csr(&self, addr: u16) -> Result<u64, crate::csr::CsrError> {
+        use crate::csr::unprivileged;
+        self.check_fp_csr(addr)?;
+        Ok(match addr {
+            unprivileged::FFLAGS => u64::from(self.fcsr.flags_bits()),
+            unprivileged::FRM => u64::from(self.fcsr.frm_bits()),
+            unprivileged::FCSR => u64::from(self.fcsr.read()),
+            _ => return Err(crate::csr::CsrError::InvalidAddress(addr)),
+        })
+    }
+
+    /// Write `fflags`, `frm` or `fcsr`, then set `mstatus.FS` to Dirty
+    /// (contract D5/D6).  The caller decides whether the operation writes.
+    pub(crate) fn write_fp_csr(
+        &mut self,
+        addr: u16,
+        value: u64,
+    ) -> Result<(), crate::csr::CsrError> {
+        use crate::csr::unprivileged;
+        self.check_fp_csr(addr)?;
+        match addr {
+            unprivileged::FFLAGS => self.fcsr.write_flags_bits(value as u8),
+            unprivileged::FRM => self.fcsr.write_frm_bits(value as u8),
+            unprivileged::FCSR => self.fcsr.write(value as u32),
+            _ => return Err(crate::csr::CsrError::InvalidAddress(addr)),
+        }
+        // D6: an instruction that writes `fflags`/`frm`/`fcsr` sets FS to
+        // Dirty.  CSRRW/CSRRWI always write; CSRRS/CSRRC with rs1=x0 and
+        // CSRRSI/CSRRCI with a zero immediate never reach this method.
+        self.mark_fs_dirty();
+        Ok(())
+    }
+
+    /// Set `mstatus.FS` to Dirty as a Hart-owned transition (contract D6).
+    fn mark_fs_dirty(&mut self) {
+        let mstatus = self.csr.mstatus();
+        if mstatus & crate::csr::mstatus::FS != crate::csr::mstatus::FS_DIRTY {
+            self.csr
+                .set_mstatus(mstatus | crate::csr::mstatus::FS_DIRTY);
+        }
+    }
+}
+
 /// RISC-V core
 pub struct RiscvCore {
     /// core state
@@ -2312,9 +2378,11 @@ impl RiscvCore {
                 Some(1 | 2 | 3 | 5 | 6 | 7) => false,
                 _ => true,
             },
-            // F and D are not implemented (misa F = D = 0).  Every LOAD-FP,
-            // STORE-FP, and OP-FP encoding is illegal, and this check runs
-            // before alignment, translation, and any data request.
+            // F and D instruction execution is not on the public path yet
+            // (contract U3a, issue #147).  Every LOAD-FP, STORE-FP and OP-FP
+            // encoding is illegal-instruction under every profile, including
+            // the FP profiles, and this check runs before alignment,
+            // translation, and any data request.
             Opcode::LoadFp | Opcode::StoreFp | Opcode::OpFp => true,
             // Base FENCE and Zifencei FENCE.I (funct3 0 and 1). Other MISC-MEM
             // funct3 values are reserved.
