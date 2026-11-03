@@ -6,30 +6,32 @@
 # encoding trap and not an FS-Off trap. The parcels are emitted with `.half`
 # so the assembler never needs compressed double-precision support.
 #
-# `mtval` for a two-byte illegal encoding carries the faulting fetch word, so
-# only its low 16 bits (the parcel itself) are compared here. That keeps the
-# check independent of whatever halfword follows the parcel.
+# `mtval` for an aligned word whose low half is a 16-bit illegal encoding
+# carries that parcel zero-extended to XLEN, not the whole 32-bit fetch word
+# (archived Zca contract D2; pinned Spike reports the first parcel it reads).
+# Each word below therefore has a nonzero upper halfword, so the check fails
+# if the whole word is reported.
 #
 # Each check increments s2 first, so a failure reports its own number.
 
     .equ CAUSE_ILLEGAL, 2
     .equ FS_DIRTY, 0x6000
 
-# The parcel traps with illegal-instruction and mtval whose low 16 bits are the
-# parcel, then execution resumes at `resume`. Reaching `j unexpected` means it
-# did not trap, which is a failure.
+# The word traps with illegal-instruction and `mtval` equal to the parcel,
+# then execution resumes at `resume`. Reaching `j unexpected` means it did not
+# trap, which is a failure.
 #
 # The parcel lives in the low half of an aligned 32-bit slot: rv64imafd has no
-# C, so IALIGN is 32, the following instruction and the resume address must
-# stay 4-byte aligned, and the faulting fetch word then carries the parcel with
-# a zero upper half.
-.macro EXPECT_ILLEGAL_HALF parcel, resume
+# C, so IALIGN is 32 and the resume address must stay 4-byte aligned. The
+# following halfword is nonzero so the trap word differs from the parcel.
+.macro EXPECT_ILLEGAL_PARCEL parcel, resume
     addi    s2, s2, 1
     li      s5, CAUSE_ILLEGAL
     li      s6, \parcel
     la      s7, \resume
     .balign 4
-    .word   \parcel
+    .half   \parcel
+    .half   0xffff
     j       unexpected
 \resume:
 .endm
@@ -50,10 +52,10 @@ _start:
     la      a0, scratch
     li      sp, 0
 
-    EXPECT_ILLEGAL_HALF 0x2500, after_c_fld       # c.fld f8, 8(a0)
-    EXPECT_ILLEGAL_HALF 0xa580, after_c_fsd       # c.fsd f8, 8(a1)
-    EXPECT_ILLEGAL_HALF 0x24a2, after_c_fldsp     # c.fldsp f9, 8(sp)
-    EXPECT_ILLEGAL_HALF 0xa426, after_c_fsdsp     # c.fsdsp f9, 8(sp)
+    EXPECT_ILLEGAL_PARCEL 0x2500, after_c_fld       # c.fld f8, 8(a0)
+    EXPECT_ILLEGAL_PARCEL 0xa580, after_c_fsd       # c.fsd f8, 8(a1)
+    EXPECT_ILLEGAL_PARCEL 0x24a2, after_c_fldsp     # c.fldsp f9, 8(sp)
+    EXPECT_ILLEGAL_PARCEL 0xa426, after_c_fsdsp     # c.fsdsp f9, 8(sp)
 
     # FS was already Dirty, so the traps changed nothing about it.
     csrr    t1, mstatus
@@ -95,8 +97,6 @@ trap_handler:
     li      t4, -1
     beq     s5, t4, unexpected
     bne     t0, s5, mismatch
-    slli    t1, t1, 48
-    srli    t1, t1, 48
     bne     t1, s6, mismatch
     li      s5, -1
     csrw    mepc, s7

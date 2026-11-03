@@ -1,0 +1,16 @@
+diff --git i/src/fpu/arith/single.rs w/src/fpu/arith/single.rs
+index aafd7f8..7bb9353 100644
+--- i/src/fpu/arith/single.rs
++++ w/src/fpu/arith/single.rs
+@@ -472,7 +472,10 @@ pub fn sqrt(a: u32, rm: Rounding) -> (u32, FpFlags) {
+ /// negated product or addend; [`fmsub`], [`fnmsub`] and [`fnmadd`] apply the
+ /// required sign changes.
+ pub fn fmadd(a: u32, b: u32, c: u32, rm: Rounding) -> (u32, FpFlags) {
+-    mul_add(a, b, c, rm)
++    let (product, mut flags) = mul(a, b, rm);
++    let (sum, add_flags) = add(product, c, rm);
++    flags |= add_flags;
++    (sum, flags)
+ }
+ 
+ /// `FMSUB.S`: `a * b - c`, fused with a single rounding.

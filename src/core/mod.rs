@@ -1770,6 +1770,24 @@ impl RiscvCore {
         }
     }
 
+    /// The `mtval` an illegal fetch reports for `instruction` (archived Zca
+    /// contract D2; F/D contract D8).
+    ///
+    /// A fetched word whose low two bits are not `0b11` does not encode a
+    /// 32-bit instruction: its low half is a 16-bit encoding. Pinned Spike
+    /// reads the first parcel before it knows the length and reports that
+    /// parcel zero-extended, and the D8 Zcd controls require the same value
+    /// under `rv64imafd`. `rv64imac` fetches parcels directly, so this value
+    /// is already the parcel there. The default `rv64ima` profile keeps its
+    /// pre-milestone full-word value (contract §1: unchanged, bit for bit).
+    fn illegal_word_tval(&self, instruction: u32) -> u64 {
+        if self.isa.has_fp() && instruction & 0b11 != 0b11 {
+            u64::from(instruction & 0xffff)
+        } else {
+            u64::from(instruction)
+        }
+    }
+
     fn execute_instruction(&mut self) -> StepOutcome {
         let pc_before = self.state.pc;
         self.state.branch_taken = false;
@@ -1848,7 +1866,7 @@ impl RiscvCore {
                             self.enter_trap(
                                 Trap::Exception(ExceptionCause::IllegalInstruction),
                                 pc_before,
-                                instruction as u64,
+                                self.illegal_word_tval(instruction),
                                 Some(instruction),
                             )
                         }
@@ -1870,7 +1888,7 @@ impl RiscvCore {
             return self.enter_trap(
                 Trap::Exception(ExceptionCause::IllegalInstruction),
                 pc_before,
-                instruction as u64,
+                self.illegal_word_tval(instruction),
                 Some(instruction),
             );
         }

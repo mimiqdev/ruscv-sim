@@ -1,0 +1,13 @@
+diff --git i/src/fpu/arith/common.rs w/src/fpu/arith/common.rs
+index d511d2c..57dd7ce 100644
+--- i/src/fpu/arith/common.rs
++++ w/src/fpu/arith/common.rs
+@@ -198,7 +198,7 @@ impl IntSat {
+     pub(crate) const fn negative(self) -> u64 {
+         match self {
+             Self::I32 => 0xffff_ffff_8000_0000,
+-            Self::Ui32 => 0,
++            Self::Ui32 => u64::MAX,
+             Self::I64 => 0x8000_0000_0000_0000,
+             Self::Ui64 => 0,
+         }
