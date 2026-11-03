@@ -5,6 +5,13 @@
 //! exception flags. NaN results of arithmetic, square root, fused
 //! multiply-add and conversion are the canonical NaN; sign injection,
 //! classification and comparisons preserve or inspect payloads.
+//!
+//! Portions of this module are a Rust port of Berkeley SoftFloat Release 3e
+//! ("This C source file is part of the SoftFloat IEEE Floating-Point
+//! Arithmetic Package, Release 3e, by John R. Hauser"; Copyright 2011-2018 The
+//! Regents of the University of California). See
+//! `tools/fpu/SOFTFLOAT-LICENSE.txt` for the copyright notice, conditions and
+//! disclaimer.
 
 use super::common::*;
 
@@ -697,7 +704,12 @@ fn min_max(a: u32, b: u32, is_min: bool) -> (u32, FpFlags) {
     if let Some(z) = z {
         return (z, flags);
     }
-    // Equal values; only the signed zeros are bitwise different.
+    if a & !SIGN != 0 {
+        // Equal non-zero operands, including equal infinities: either operand
+        // is the result. Only the zero pair below is special.
+        return (a, flags);
+    }
+    // Equal zeros; only the sign is bitwise different.
     let both_neg = sign(a) && sign(b);
     let any_neg = sign(a) || sign(b);
     let negative = if is_min { any_neg } else { both_neg };

@@ -30,16 +30,18 @@ fn rounding_encodings_and_flag_layouts() {
     assert_eq!(Rounding::from_encoding(2), Some(Rounding::Rdn));
     assert_eq!(Rounding::from_encoding(3), Some(Rounding::Rup));
     assert_eq!(Rounding::from_encoding(4), Some(Rounding::Rmm));
-    // Reserved static `rm` / dynamic `frm` values 5-7.
+    // Reserved resolved mode values 5-7. A static `rm` of 7 selects the
+    // dynamic mode and must be resolved through `frm` before this call.
     for reserved in 5..=7 {
         assert_eq!(Rounding::from_encoding(reserved), None);
     }
-    // The flag layout is the RISC-V `fflags` layout.
-    assert_eq!(FpFlags::NV.bits(), 1 << 0);
-    assert_eq!(FpFlags::DZ.bits(), 1 << 1);
+    // The flag layout is the architectural `fflags` layout: bit 0 NX through
+    // bit 4 NV (F: "Floating-point control and status register").
+    assert_eq!(FpFlags::NX.bits(), 1 << 0);
+    assert_eq!(FpFlags::UF.bits(), 1 << 1);
     assert_eq!(FpFlags::OF.bits(), 1 << 2);
-    assert_eq!(FpFlags::UF.bits(), 1 << 3);
-    assert_eq!(FpFlags::NX.bits(), 1 << 4);
+    assert_eq!(FpFlags::DZ.bits(), 1 << 3);
+    assert_eq!(FpFlags::NV.bits(), 1 << 4);
 }
 
 #[test]
@@ -122,6 +124,28 @@ fn fmin_fmax_use_version_2_2_rules() {
     assert_eq!(double::max(dsnan, done), (done, NV));
     assert_eq!(double::min(dqnan_payload, dsnan), (QNAN64, NV));
     assert_eq!(double::max(dqnan_payload, dqnan_payload), (QNAN64, ZERO));
+}
+
+#[test]
+fn min_max_equal_operands_return_the_operand() {
+    // Equal non-zero values (not just zeros) must be returned unchanged.
+    let one = 0x3f80_0000u32;
+    let neg_one = 0xbf80_0000u32;
+    let inf = 0x7f80_0000u32;
+    let neg_inf = 0xff80_0000u32;
+    let min_sub = 0x0000_0001u32;
+    for value in [one, neg_one, inf, neg_inf, min_sub, 0x0080_0000] {
+        assert_eq!(single::min(value, value), (value, ZERO));
+        assert_eq!(single::max(value, value), (value, ZERO));
+    }
+    let done = 0x3ff0_0000_0000_0000u64;
+    let dneg_one = 0xbff0_0000_0000_0000u64;
+    let dinf = 0x7ff0_0000_0000_0000u64;
+    let dmin_sub = 0x0000_0000_0000_0001u64;
+    for value in [done, dneg_one, dinf, dmin_sub, 0x0010_0000_0000_0000] {
+        assert_eq!(double::min(value, value), (value, ZERO));
+        assert_eq!(double::max(value, value), (value, ZERO));
+    }
 }
 
 #[test]
@@ -252,6 +276,63 @@ fn fused_multiply_add_rounds_once() {
         ),
         (QNAN64, NV)
     );
+}
+
+#[test]
+fn fma_keeps_a_subnormal_addend_when_the_product_is_zero() {
+    // Regression: the addend-is-zero test must inspect the full fraction; a
+    // truncated 32-bit test misreads subnormals whose low word is zero.
+    let addend = 0x8000_0001_0000_0000u64;
+    let one = 0x3ff0_0000_0000_0000u64;
+    for rm in [
+        Rounding::Rne,
+        Rounding::Rtz,
+        Rounding::Rdn,
+        Rounding::Rup,
+        Rounding::Rmm,
+    ] {
+        assert_eq!(double::fmadd(0, one, addend, rm), (addend, ZERO));
+        assert_eq!(
+            double::fmsub(0, one, addend ^ 0x8000_0000_0000_0000, rm),
+            (addend, ZERO)
+        );
+    }
+    let addend32 = 0x0000_0001u32;
+    for rm in [Rounding::Rne, Rounding::Rdn, Rounding::Rmm] {
+        assert_eq!(
+            single::fmadd(0, 0x3f80_0000, addend32, rm),
+            (addend32, ZERO)
+        );
+    }
+}
+
+#[test]
+fn architectural_flag_bits_are_reported_in_behavior() {
+    // The reviewer-facing table: the flag set is returned in architectural
+    // `fflags` bit positions (NX=1, UF=2, OF=4, DZ=8, NV=16).
+    let one = 0x3f80_0000u32;
+    assert_eq!(single::div(one, 0x0000_0000, Rounding::Rne).1.bits(), 0x08);
+    assert_eq!(
+        single::div(0x0000_0000, 0x0000_0000, Rounding::Rne)
+            .1
+            .bits(),
+        0x10
+    );
+    assert_eq!(single::add(one, 0x3380_0000, Rounding::Rne).1.bits(), 0x01);
+    assert_eq!(
+        single::mul(0x7f7f_ffff, 0x4000_0000, Rounding::Rne)
+            .1
+            .bits(),
+        0x05
+    );
+    assert_eq!(
+        single::mul(0x0080_0000, 0x3f7f_ffff, Rounding::Rne)
+            .1
+            .bits(),
+        0x03
+    );
+    assert_eq!(single::add(0x7fc0_0001, one, Rounding::Rne).1.bits(), 0x00);
+    assert_eq!(single::add(SNAN32, one, Rounding::Rne).1.bits(), 0x10);
 }
 
 #[test]

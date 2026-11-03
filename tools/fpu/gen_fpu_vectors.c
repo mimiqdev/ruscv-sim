@@ -8,7 +8,8 @@
  * `op` names the operation, `rm` is RNE/RTZ/RDN/RUP/RMM (or `-` for the
  * comparisons), operands are the format-width hexadecimal bit patterns (`-`
  * when absent) and `result`/`flags` are what the RISC-V F/D instruction must
- * produce. Flags use `fflags` bit order (NV=1, DZ=2, OF=4, UF=8, NX=16).
+ * produce. Flags use architectural `fflags` bit order
+ * (NX=1, UF=2, OF=4, DZ=8, NV=16).
  *
  * RISC-V adjustments applied on top of SoftFloat, both documented in
  * `tools/fpu/README.md`:
@@ -21,7 +22,9 @@
  *     32-bit destinations are sign-extended into the 64-bit result.
  *
  * Build and run (see `tools/fpu/gen_fpu_vectors.sh`), with the pinned
- * SoftFloat 3e tree extracted next to TestFloat 3e.
+ * SoftFloat 3e tree extracted next to TestFloat 3e. This generator is our own
+ * code; it calls Berkeley SoftFloat Release 3e, whose copyright notice,
+ * conditions and disclaimer are in `tools/fpu/SOFTFLOAT-LICENSE.txt`.
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -45,15 +48,16 @@ static const uint8_t rm_val[] = {
     softfloat_round_max, softfloat_round_near_maxMag
 };
 
-/* RISC-V fflags bit order. */
+/* RISC-V fflags bit order: NX=1, UF=2, OF=4, DZ=8, NV=16. SoftFloat's own
+   flag constants already use these positions; map explicitly anyway. */
 static unsigned rv_flags(void)
 {
     unsigned sf = softfloat_exceptionFlags, f = 0;
-    if (sf & softfloat_flag_invalid)   f |= 1;
-    if (sf & softfloat_flag_infinite)  f |= 2;
-    if (sf & softfloat_flag_overflow)  f |= 4;
-    if (sf & softfloat_flag_underflow) f |= 8;
-    if (sf & softfloat_flag_inexact)   f |= 16;
+    if (sf & softfloat_flag_inexact)   f |= 1 << 0;
+    if (sf & softfloat_flag_underflow) f |= 1 << 1;
+    if (sf & softfloat_flag_overflow)  f |= 1 << 2;
+    if (sf & softfloat_flag_infinite)  f |= 1 << 3;
+    if (sf & softfloat_flag_invalid)   f |= 1 << 4;
     return f;
 }
 
@@ -342,6 +346,23 @@ static void gen_fma(int w)
                 z.f = f32_mulAdd(a.f, b.f, c.f);
                 row("f32_fmadd", rm_name[m], 8, a.ui, b.ui, c.ui, canon32(z.ui), rv_flags());
             }
+            /* Zero product with subnormal addends, exact cancellation and
+               opposite infinities. */
+            {
+                static const uint32_t triples[][3] = {
+                    {0x00000000u, 0x3f800000u, 0x00000001u},
+                    {0x00000000u, 0x3f800000u, 0x007fffffu},
+                    {0x3f800000u, 0x3f800000u, 0xbf800000u},
+                    {0x7f800000u, 0x3f800000u, 0xff800000u},
+                };
+                for (unsigned t = 0; t < sizeof triples / sizeof triples[0]; t++) {
+                    union { uint32_t ui; float32_t f; } a = {triples[t][0]},
+                        b = {triples[t][1]}, c = {triples[t][2]}, z;
+                    softfloat_exceptionFlags = 0;
+                    z.f = f32_mulAdd(a.f, b.f, c.f);
+                    row("f32_fmadd", rm_name[m], 8, a.ui, b.ui, c.ui, canon32(z.ui), rv_flags());
+                }
+            }
         } else {
             for (unsigned i = 0; i < NFMA64; i++)
                 for (unsigned j = 0; j < NFMA64; j++) {
@@ -368,6 +389,25 @@ static void gen_fma(int w)
                 row("f64_fmadd", rm_name[m], 16, a.ui, b.ui, c.ui,
                     canon64(z.ui), rv_flags());
             }
+            /* Subnormal addends whose low fraction word is zero, exact
+               cancellation and opposite infinities. */
+            {
+                static const uint64_t triples[][3] = {
+                    {0x0000000000000000ULL, 0x3ff0000000000000ULL, 0x8000000100000000ULL},
+                    {0x0000000000000000ULL, 0x3ff0000000000000ULL, 0x0000000100000000ULL},
+                    {0x0000000000000000ULL, 0x3ff0000000000000ULL, 0x800fffffffffffffULL},
+                    {0x3ff0000000000000ULL, 0x3ff0000000000000ULL, 0xbff0000000000000ULL},
+                    {0x7ff0000000000000ULL, 0x3ff0000000000000ULL, 0xfff0000000000000ULL},
+                };
+                for (unsigned t = 0; t < sizeof triples / sizeof triples[0]; t++) {
+                    union { uint64_t ui; float64_t f; } a = {triples[t][0]},
+                        b = {triples[t][1]}, c = {triples[t][2]}, z;
+                    softfloat_exceptionFlags = 0;
+                    z.f = f64_mulAdd(a.f, b.f, c.f);
+                    row("f64_fmadd", rm_name[m], 16, a.ui, b.ui, c.ui,
+                        canon64(z.ui), rv_flags());
+                }
+            }
         }
     }
 }
@@ -380,7 +420,7 @@ static void gen_fma(int w)
 static uint64_t rv_int_result(uint64_t sf_result, unsigned flags, bool sign,
                               bool is_nan, int width, bool is_signed)
 {
-    if (flags & 1) {
+    if (flags & (1 << 4)) {
         if (is_nan) sign = false;
         if (width == 32) {
             if (!is_signed) return sign ? 0 : 0xffffffffffffffffULL;

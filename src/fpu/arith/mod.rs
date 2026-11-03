@@ -6,8 +6,9 @@
 //! RISC-V-mandated results that SoftFloat leaves to its platform layer:
 //!
 //! * every operation takes an explicit [`Rounding`] mode and returns the
-//!   result bits together with the exact [`FpFlags`] set (`NV`, `DZ`, `OF`,
-//!   `UF`, `NX`), with tininess detected after rounding;
+//!   result bits together with the exact [`FpFlags`] set in architectural
+//!   `fflags` bit order (`NX=1`, `UF=2`, `OF=4`, `DZ=8`, `NV=16`), with
+//!   tininess detected after rounding;
 //! * NaN results of arithmetic, square root, fused multiply-add, conversion
 //!   and `FMIN`/`FMAX` are the canonical NaN (`0x7fc00000` / `0x7ff8000000000000`);
 //! * sign injection, classification and the comparisons take and return raw
@@ -22,6 +23,11 @@
 //! The module is a Hart-internal component. It has no CSR, register-file or
 //! decode dependency; `single`/`double` take and return format bit patterns
 //! and the caller owns NaN-boxing, `mstatus.FS` and `fcsr` accrual.
+//!
+//! Portions of this module are a Rust port of Berkeley SoftFloat Release 3e
+//! (Copyright 2011-2018 The Regents of the University of California). See
+//! `tools/fpu/SOFTFLOAT-LICENSE.txt` for the copyright notice, conditions and
+//! disclaimer.
 //!
 //! [Berkeley SoftFloat Release 3e]: http://www.jhauser.us/arithmetic/SoftFloat.html
 

@@ -5,6 +5,13 @@
 //! `softfloat_countLeadingZeros*`, the 128-bit add/sub/shift primitives and
 //! `softfloat_roundToI32`/`I64`/`UI32`/`UI64`). Keep them structurally close
 //! to the reference so a reviewer can diff them.
+//!
+//! Portions of this module are a Rust port of Berkeley SoftFloat Release 3e
+//! ("This C source file is part of the SoftFloat IEEE Floating-Point
+//! Arithmetic Package, Release 3e, by John R. Hauser"; Copyright 2011-2018 The
+//! Regents of the University of California). See
+//! `tools/fpu/SOFTFLOAT-LICENSE.txt` for the copyright notice, conditions and
+//! disclaimer.
 
 use bitflags::bitflags;
 
@@ -24,10 +31,13 @@ pub enum Rounding {
 }
 
 impl Rounding {
-    /// Decode a 3-bit RISC-V `rm`/`frm` value.
+    /// Decode a resolved 3-bit rounding-mode value.
     ///
-    /// Returns `None` for the reserved encodings 5, 6 and 7, which the caller
-    /// must decode as illegal-instruction (contract D5).
+    /// Returns `None` for encodings 5, 6 and 7. Callers must resolve a static
+    /// `rm` first: `rm = 7` selects the dynamic mode from `frm`, so it never
+    /// reaches this function as 7. Contract D5 makes a reserved static `rm`
+    /// (5 or 6) and a dynamic mode whose `frm` holds 5, 6 or 7 an
+    /// illegal-instruction.
     pub const fn from_encoding(bits: u8) -> Option<Self> {
         match bits {
             0 => Some(Self::Rne),
@@ -41,22 +51,23 @@ impl Rounding {
 }
 
 bitflags! {
-    /// The five IEEE 754 exception flags, in RISC-V `fflags` bit positions.
+    /// The five IEEE 754 exception flags, in architectural `fflags` bit
+    /// order (F: `fflags[0]` is `NX` through `fflags[4]` `NV`).
     ///
     /// The bit layout deliberately matches `fflags`/`fcsr[4:0]`, so the
     /// execution layer can accrue [`FpFlags::bits()`] directly.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     pub struct FpFlags: u8 {
-        /// Invalid operation.
-        const NV = 1 << 0;
-        /// Divide by zero.
-        const DZ = 1 << 1;
+        /// Inexact.
+        const NX = 1 << 0;
+        /// Underflow.
+        const UF = 1 << 1;
         /// Overflow.
         const OF = 1 << 2;
-        /// Underflow.
-        const UF = 1 << 3;
-        /// Inexact.
-        const NX = 1 << 4;
+        /// Divide by zero.
+        const DZ = 1 << 3;
+        /// Invalid operation.
+        const NV = 1 << 4;
     }
 }
 
