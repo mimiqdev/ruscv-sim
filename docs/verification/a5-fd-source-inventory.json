@@ -1,0 +1,3277 @@
+{
+  "schema_version": 1,
+  "status": "approved-frozen",
+  "act4_commit": "a7c99303516f4e668f7488f172043392e23b9dfd",
+  "scope": "all tracked tests/rv64i/F and tests/rv64i/D **/*.S at the pinned revision",
+  "profile": "a5-rv64imafd-nontrapping-proposal-v1",
+  "profile_document": "docs/verification/a5-fd-source-inventory.json",
+  "counts": {
+    "required-d": 114,
+    "required-f": 82
+  },
+  "sources": [
+    {
+      "source": "tests/rv64i/D/D-fadd.d-00.S",
+      "sha256": "c99a73f9bfc646f074c3c15b3950bfb8d2272f3689157752b0598d9a572d6aaa",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fadd.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fadd.d-01.S",
+      "sha256": "2570a6311e7e7e61a30f2890fd54736ae7e86c9aefb8f21a64fb891b00a73e86",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fadd.d-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fadd.d-02.S",
+      "sha256": "ad008982a7d579fccc6cec39bbe36c7c8a7a0b679adc8053e98244057ad1cae8",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fadd.d-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fadd.d-03.S",
+      "sha256": "20fc8cf10732fa526e543399f8baf3f4e136c1f174feb1e21df733fe984907e0",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fadd.d-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fadd.d-04.S",
+      "sha256": "4e77be2f65465994a454ed34e2da60fd0f7e7a234a6f38965c8c34ed6076eaf0",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fadd.d-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fadd.s-00.S",
+      "sha256": "6b565519117f8adb61ab6d3cdf4700650c22d335717c537f5488a2dd9dcc34e4",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fadd.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fclass.d-00.S",
+      "sha256": "c6bb820d867c89292d64415bceb52f25d318e076d83c1503fd3ecfe323fa54ff",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fclass.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fclass.s-00.S",
+      "sha256": "a70fdf4b5394a2e28dc43dde457b4beab2e3a9ee8e9e8b861f5356cea903e4b1",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fclass.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.d.l-00.S",
+      "sha256": "fd707ba895a0e6090b0b73886119e197a4ce919eaae79d08c6e6f21b150e1274",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.d.l-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.d.lu-00.S",
+      "sha256": "a5594a9b3d69127f480cc1f9a1a3fb69f6c243916e8a9290b5f109961e9edfe3",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.d.lu-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.d.s-00.S",
+      "sha256": "455ec5e50c0d486242ebfe946ddba0b0d30cf688886a96ddc648b8e924e58ea0",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.d.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.d.w-00.S",
+      "sha256": "3e94248050464d1fe99ee93cdc48f40d7db554802edb8ddfcf2a86f4d99bbb8c",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.d.w-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.d.wu-00.S",
+      "sha256": "ad347b9b5e4cd675116ff06c3e023cfb29e1fd7ad16f58ba4a550368601e857c",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.d.wu-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.l.d-00.S",
+      "sha256": "cf9889285b7adf424f05f2f0307c68cd49ca1398f43521c0a516879df5d53600",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.l.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.l.s-00.S",
+      "sha256": "a2cf46fd8d3cd92cabfcac5c54518bb336b2595bf99cc02bef604083d4183774",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.l.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.lu.d-00.S",
+      "sha256": "121cfee87bde2d04edb88cef36f8a9df3cc19092e7fa8e3cd9a1b740cb632462",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.lu.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.lu.s-00.S",
+      "sha256": "14b8cb29427b80109c64b00eac8f5f580c516dc470bd7acc087a8f5671a0afec",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.lu.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.s.d-00.S",
+      "sha256": "99d1acd759a120c17c232fb0cd706ad34cff8699b3909796e25b3f59c6028cd1",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.s.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.s.l-00.S",
+      "sha256": "0857db167c1881f51188861a5905501c3defead69a811519e68cc4ae020ed0b5",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.s.l-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.s.lu-00.S",
+      "sha256": "3e011b0b28518748fb91c08a7b382d0bc13253a914ec6f1884ab4d5589cdb709",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.s.lu-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.s.w-00.S",
+      "sha256": "d65bd7e7d260642fc99e610a1268e8c583f7f850d996996ee0ea738c1b5cb2cc",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.s.w-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.s.wu-00.S",
+      "sha256": "a71c98a6b91b744c16153dc7ed5a6b763937463d98a6237e6a74d39ede2f0857",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.s.wu-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.w.d-00.S",
+      "sha256": "1d4ad5b233ea33fcf5e64c7d18cca1af66dd126004c2fe14dad7973b8c6e28f2",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.w.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.w.s-00.S",
+      "sha256": "2b6f2f86ccdd91ec62cc90e83a943dff4d845f7c878c7ba1af4f2bec314000fe",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.w.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.wu.d-00.S",
+      "sha256": "9ad5272f59ae1d63a181bdd0f1a26e3a63355cf4ed48a77632720c324e6f919a",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.wu.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fcvt.wu.s-00.S",
+      "sha256": "d7be52b15179565075b3453421b54da6ccf7d83d11957d01cbce6fd3e0d740a5",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fcvt.wu.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fdiv.d-00.S",
+      "sha256": "6774258ff635ed1ac0ea767a51ac1892e18219b0a41c6af239867b54fa5ee3c0",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fdiv.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fdiv.d-01.S",
+      "sha256": "200e1649a5b882ee829edf2b1e04ca2b0e6df65eb2ed7f3180911e752fac410a",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fdiv.d-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fdiv.d-02.S",
+      "sha256": "cd6a5e8a33e2bf0a5591205aee3c9ffd9666b05c90a724204ea8b715383af5f8",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fdiv.d-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fdiv.d-03.S",
+      "sha256": "23682ef9c248f7c77babd817aa03487ab1f9741669391915aae47ec976a8cf16",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fdiv.d-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fdiv.d-04.S",
+      "sha256": "d9423f005f67c33e3ac98497798076d86d11b811ffa1cfeeeb2a92b2c6319ae4",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fdiv.d-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fdiv.s-00.S",
+      "sha256": "bca207bb294ea1983daf33e4aa88a8ae9c4cc7bac973bffff67e6fd9c06d457d",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fdiv.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-feq.d-00.S",
+      "sha256": "b6817d38afc5c52085ffcbc00d0710fd1b8c944d0ab41f736a73956e64d38f31",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-feq.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-feq.s-00.S",
+      "sha256": "b7ec9d964624323cb122cc20decca6ee23fec316b374265ebe58c5a0d9eb296a",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-feq.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fld-00.S",
+      "sha256": "9a2d6c99420e6cec17fd49245437d28b6ac7a3838628f3bef4b7a4adb9f89678",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fld-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fle.d-00.S",
+      "sha256": "86752e99f1446145a5b3c115762674b4a4be4bb40ec10d992f8afa6f6d03ed30",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fle.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fle.s-00.S",
+      "sha256": "fef755ff2980af86f74854bebc97a352ab652a61208022782a8cd9a7962c8678",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fle.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-flt.d-00.S",
+      "sha256": "8209f66a6880cfac2143addf9461aa9eae2260d3b849ae40f26c0fd54f175ce4",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-flt.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-flt.s-00.S",
+      "sha256": "6546d5e06b84a5d0db3a91a40811a30f48cca4f53e8b98b0ff02315e9d461885",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-flt.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-flw-00.S",
+      "sha256": "d67d548db006cc3096bed59c5d3082cd1ccfd826bad10430508d26fa4bc8147c",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-flw-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.d-00.S",
+      "sha256": "92954461206d92dc52069935b546cf173f33e0da3a05f5ca026b1334a3195e04",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.d-01.S",
+      "sha256": "34d3a58b8995f8ac4932087b17dc82cf28695a45f4cbc80b55f2426742a43406",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.d-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.d-02.S",
+      "sha256": "0183966791879299283797b4e9511f9ec7bf43055451071b957196f62cb818df",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.d-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.d-03.S",
+      "sha256": "0be5d4780c51eed10018516c27759d2bca9ec4b4ecf37c1fa3e79856077137cd",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.d-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.d-04.S",
+      "sha256": "605e92500b542b958d6d2f12a04c5cd4190399130de69e1796988609154897da",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.d-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.d-05.S",
+      "sha256": "3b8d1e969ec97ab6732ffa91b07a874f082e565af41621ea00dd76b424849ebd",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.d-05",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.d-06.S",
+      "sha256": "c2a388b1f8dc1e52039ddbe686e2f9b40610d8ca4b9852b67a9c1b5c626776c8",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.d-06",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.d-07.S",
+      "sha256": "87b59e142be053d0fe33dbb18c9041551fcc6c5e172d0e04a36d4de8bbf68d3e",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.d-07",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.d-08.S",
+      "sha256": "18dde3bbe019d20296414b2874260a75374e3555988399b7225604973bd23bd3",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.d-08",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.d-09.S",
+      "sha256": "1fb9cbfbf04b98ae6748f5c0c540fab62d2477e10e8214f31236b76b4e8eef7d",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.d-09",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmadd.s-00.S",
+      "sha256": "1d5b0fdd6d45a689093b4ab9c7707d0bb0fd1b8e0693c37224f6667b203b3e41",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmadd.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmax.d-00.S",
+      "sha256": "a275278bf46bdab32c3924817e5b9a1fb15662b8e7f3b8e92d9582d9fdbde20b",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmax.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmax.s-00.S",
+      "sha256": "9ed98e0669253cc2b1b49e7c2c6e78c511307ec4a82c71917a52ce3ac700075f",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmax.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmin.d-00.S",
+      "sha256": "e3249acbdcfe571bc1dd67ee228deb4f835f3b05b1d3bcb90744f04d8838a17d",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmin.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmin.s-00.S",
+      "sha256": "b41e903ddfc639c8d19f7937a0fea700c6c03b5ff72b30cdaea5ee67e73f2162",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmin.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.d-00.S",
+      "sha256": "411777abe4741c784b9cbfe857f2405a46128b85fd5279da5bf1e615969cb0c7",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.d-01.S",
+      "sha256": "776e4013e9bf9b147bf8fed9f099e9707395c72737e3071b1a2b057f9c2d580a",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.d-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.d-02.S",
+      "sha256": "7500989290353b005afa1c87d1aa11abc9ec83d29dccdd553747aab74c165d47",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.d-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.d-03.S",
+      "sha256": "65fbfc3dd36e7b9dfb0bdc6220f45091089926e18090238d2b2da51deba80660",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.d-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.d-04.S",
+      "sha256": "86b3fb80331e676a6cd1989d3384430c49a69796e0eff06bb4f09d6173ea0ef8",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.d-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.d-05.S",
+      "sha256": "b2fe36e359aaee6cd2a0a8554396ee9351ee3e95113fb3a6dbbfbc8698826cc8",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.d-05",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.d-06.S",
+      "sha256": "30d6e7312df8022f683e8c5c17118ed918de99d5f2d7fad9ad99cf8dc8bfdf42",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.d-06",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.d-07.S",
+      "sha256": "84763584bc4c4b8ba3b313344c8eb2636d510e4f021b3ec9f2145773838508ce",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.d-07",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.d-08.S",
+      "sha256": "f113b4c6f2c5707a5609970fd35b4319cd7bc28fce5eff70a0eb6517a94be035",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.d-08",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.d-09.S",
+      "sha256": "970207d3b8c4562d60568f4fff02687b08c24a02017b9adc9efd0bef400be8d7",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.d-09",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmsub.s-00.S",
+      "sha256": "0ca11d8318b4d676e8041e0bfecee48f24b56e0863dd7e82fcdb97b0e05848f3",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmsub.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmul.d-00.S",
+      "sha256": "bb3fc044155c625329729eb12ab58d7c1812bdf149635d5a7f21b629336fe362",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmul.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmul.d-01.S",
+      "sha256": "2cbb07595c3f15baf972b9422f04dd2bdb79bae0bc9e9d94ff1ce2d65169c8fc",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmul.d-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmul.d-02.S",
+      "sha256": "b1a61393f0a163a815d1a1100d550df534b4af473a525dbd7d04ebe60e45dde6",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmul.d-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmul.d-03.S",
+      "sha256": "1b087a6de84d525b5045001361fbad829500f0833f5a478041a32546a32f1063",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmul.d-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmul.d-04.S",
+      "sha256": "85373abcc26d18a03cd0a7730cf2468b315b6a49c75342179804cfd5a9a10198",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmul.d-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmul.s-00.S",
+      "sha256": "c71df4e51ac0630a1bd2a258c9740a47b9f0475e2fabcfdc68463b9b6d994d0c",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmul.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmv.d.x-00.S",
+      "sha256": "3f8f94a9427290898c68502468e58dd06789de4316360e6641b47e350527ed24",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmv.d.x-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmv.w.x-00.S",
+      "sha256": "aefa6a887d20e7bb446979ad2023fa37768bd879db760d44fe23655371528fc2",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmv.w.x-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmv.x.d-00.S",
+      "sha256": "e8c6a992ec924cfac28d7d1a9defdc1913e0e27bd838ebd8901bd6769d4cf6e0",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmv.x.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fmv.x.w-00.S",
+      "sha256": "17bce24bb0c22b3f3d2faad09cd2623744a100ff4ede9772b18755d6b1d4213a",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fmv.x.w-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.d-00.S",
+      "sha256": "b161365eb9887d2c0f0195b8e2e8d2ddeb655bcd9d5e6b6f66f8d553edbdacf8",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.d-01.S",
+      "sha256": "da1fd8066e42958e39ff44b7b891ea1c9c22076d1d7763eee592fe5437aef260",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.d-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.d-02.S",
+      "sha256": "fd114333ab0e36df476c9dfbb1596ca61b9ccfaf3bcaf9fcec16c005a4c74474",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.d-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.d-03.S",
+      "sha256": "322a80378b6e5e546afe496210a778ef025477daf17415f73f0d5d490f134c00",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.d-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.d-04.S",
+      "sha256": "913fcd9a1f488f9a74114cbaf268f4f92ba5df2aeef9d79bcad684cec995a114",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.d-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.d-05.S",
+      "sha256": "bf3f5ddc1db24857d715bd7ae7739f6b1ed2ab7d306072b799df391f40714e79",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.d-05",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.d-06.S",
+      "sha256": "86954ccd92cdf8648dc4263b10a2d7bda206c8361e47f97ec854ef58452eb465",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.d-06",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.d-07.S",
+      "sha256": "493d320044e9b59e1d3be97ecdcdbb5a91a327ba5d526db35e0858f51a901d02",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.d-07",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.d-08.S",
+      "sha256": "446543caf930035e265fd99ab68b18befcc20cfe819df09c568454b54ce24cb5",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.d-08",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.d-09.S",
+      "sha256": "249ac5154417b96e1e64b6981422c2cffb17d7b338bc857f89dfa159d332ef3f",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.d-09",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmadd.s-00.S",
+      "sha256": "6925bc88a07cea9ef13269732d21f20ac677f2e646e699c9f29845bf5e067670",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmadd.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.d-00.S",
+      "sha256": "e300df34d84d64eb2a3544d7f0342114cb14c9f92bc2f97ece82083bd0924307",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.d-01.S",
+      "sha256": "682cc0757c134291a209a32bc6f8d4052da77d8da174c0d3b1f7f5c2cfa2afe4",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.d-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.d-02.S",
+      "sha256": "6fb6d004babd4ab76e8ff6b46a5a85ed7a871af942841fd23127151f863139e4",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.d-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.d-03.S",
+      "sha256": "dfef3624e11260d767a7df16b4ea900b7c36299f5bd0163a812e86615a92efef",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.d-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.d-04.S",
+      "sha256": "e9cf142dfc9c155ddace6b6e1eee2c0109cca60fbc4ece59fd33303dd94b08b7",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.d-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.d-05.S",
+      "sha256": "1b88cddfe2496eb7148210bd0000fa4ccee377e353924cb608e196dd3780abab",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.d-05",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.d-06.S",
+      "sha256": "56d11eaeac5a4e530351f0f22fe51cd1b98929bee7a49b5aab3badc74ad67619",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.d-06",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.d-07.S",
+      "sha256": "665810b6943b0c1906c5bf1d950d92c6682a78c5ec7c63c3c0e5c49b850e84f8",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.d-07",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.d-08.S",
+      "sha256": "b0046e92cab0f9322e895c5d0d8e0edb80d79f69dae58ed21e3b86600558714d",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.d-08",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.d-09.S",
+      "sha256": "c68cfaa749c9f85e89011baa75ac9054c318696cefd43ce2f859ce410182328e",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.d-09",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fnmsub.s-00.S",
+      "sha256": "5453684aa72bbf5139e136153a01912c43868f0ab7cfbca98323f9a480671746",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fnmsub.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsd-00.S",
+      "sha256": "29053df1637ed891a893ad9e405649d2d898b17671e741d120791ceea08f7b16",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsd-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsgnj.d-00.S",
+      "sha256": "fa2d27cd277a5fea839d4d832e80c9d9d1a8045ac620fda39a99501e632a0c5c",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsgnj.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsgnj.s-00.S",
+      "sha256": "9ead062ab144e5fffc1a8aa31724553d5ab4bba4ec3bc271f0e0d7f2f0a0c73d",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsgnj.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsgnjn.d-00.S",
+      "sha256": "2c6a5a4c97326eefe1c360006ca42f0c9acc114005d721edb254520920dd52f2",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsgnjn.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsgnjn.s-00.S",
+      "sha256": "2e6b6b71cd73bd2c7bcd8686839680f1a854e8bbe865bd946e9a1b39b2c7d141",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsgnjn.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsgnjx.d-00.S",
+      "sha256": "066704f9b9360dccf14996f976fa513aba51f0291d71250a154495629e66d1e0",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsgnjx.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsgnjx.s-00.S",
+      "sha256": "6b054f6e11d13c810a40e5940ce03d6bfcfb734209a9a9eb8f9a6f2ee8ac290a",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsgnjx.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsqrt.d-00.S",
+      "sha256": "3d532086ccfca57775ff16eca68b9293e4541572ed818c40b43d670c5ebaf5ae",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsqrt.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsqrt.s-00.S",
+      "sha256": "abbf91b3d029e2743800e44dfd1955f0028605ad36dc5d33d1fbfcb54c9d4838",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsqrt.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsub.d-00.S",
+      "sha256": "181bf729572c5e396b305660876856e3483528c4a0f75e267998db89e71ce06f",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsub.d-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsub.d-01.S",
+      "sha256": "19ec392505f79fe1185efece6e18d34c8e1390a81e791bfeaabe385bacdeda2b",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsub.d-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsub.d-02.S",
+      "sha256": "90ff6041f6ae19110e07aad48ab3f839308bd129ce521ac2ba6a8ec9180ce097",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsub.d-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsub.d-03.S",
+      "sha256": "32f4d3331b728a299a04259164dc599c64ba839c935f61b84b3584964134293e",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsub.d-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsub.d-04.S",
+      "sha256": "ba4b1b0598c1f0e1964178cf186c2d7187fd0bea395421b868a7f079537336ed",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsub.d-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsub.s-00.S",
+      "sha256": "17f3dcc8dac5163ed9fb88d661fd21cb49c634ec1ab4a9127558e8bcf0aa8de3",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsub.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/D/D-fsw-00.S",
+      "sha256": "726678120465fa7409e62deb2f347e823495497c2162eec3d8449f3771ca3aaa",
+      "required_extensions": [
+        "D",
+        "F",
+        "I"
+      ],
+      "purpose": "D: D-fsw-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr",
+      "disposition": "include",
+      "reason": "required-d",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fadd.s-00.S",
+      "sha256": "3c6dda0252fb92c4b8be814c8e7d6091831ab3cb4b7255a0af48371fda3a51c7",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fadd.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fadd.s-01.S",
+      "sha256": "e8f9ccc22f2bfe76c2d60ba80a7dd40a80881c6669c29da1c5ca3f80fe2d43a6",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fadd.s-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fadd.s-02.S",
+      "sha256": "92f367acc3d5aada4a76a66b3c1e8caf22c5d3ad8fd5bd9c33e51120a7503189",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fadd.s-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fadd.s-03.S",
+      "sha256": "fcba68a2028a75123e06795e887bd06b85b35c11ee6838d66260ef6688f216a6",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fadd.s-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fadd.s-04.S",
+      "sha256": "362582caec4ae5cb4a258fb497065100a05874c0cfc439ea715d26aea6f83437",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fadd.s-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fclass.s-00.S",
+      "sha256": "e79f78cc8dda0e8a7aad0bcf63149424e4bf2d44cab5fc5bb7b8b953fb3e39f2",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fclass.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fcvt.l.s-00.S",
+      "sha256": "b35109cb7adb1a75f84070236b97e7b4e4f1e2d70224ecdaafba2e7d4ff5428a",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fcvt.l.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fcvt.lu.s-00.S",
+      "sha256": "c8b843f40f521dc07aed56b226e58c3e6728a0fe8fa0f6b22770dc5057c21ac2",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fcvt.lu.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fcvt.s.l-00.S",
+      "sha256": "deaac369aa16beec6017611331c30f54e837a7c0c9ff67ca1b3e6b855d87e14f",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fcvt.s.l-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fcvt.s.lu-00.S",
+      "sha256": "770cc341102120ada0f4ce44881e5e75ddbac1f3ff05d7751ef257bf52952517",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fcvt.s.lu-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fcvt.s.w-00.S",
+      "sha256": "57461dabfe7e62b5aed2316af7bd1185d9fde6744eb13317dff66cfc6f02191d",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fcvt.s.w-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fcvt.s.wu-00.S",
+      "sha256": "12f0442f325f0d644bde221bb89e149fd480ebe69d7ad52fc31a17919f273a0f",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fcvt.s.wu-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fcvt.w.s-00.S",
+      "sha256": "d4aee10260c75451061ebdabc76ed9fb4baf6c4001e0ac3c67e209e266194d6b",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fcvt.w.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fcvt.wu.s-00.S",
+      "sha256": "5aaf6ec211032fd177abcfe7dc9ccf76df37f990f0a4075604c679cd896dd0ff",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fcvt.wu.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fdiv.s-00.S",
+      "sha256": "bad873d4f036a3216e0c2ab66c8fd27c7c1555e045861fcf9caaba82105ea70e",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fdiv.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fdiv.s-01.S",
+      "sha256": "d6069d9e3bf59569ef7284c9bd8ba9e13b60a81aa40830079e711a67896f5043",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fdiv.s-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fdiv.s-02.S",
+      "sha256": "6e73825e5a0fda2cf0ba99732237d7a9a53d5f20550865f45b88911a0f9c361e",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fdiv.s-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fdiv.s-03.S",
+      "sha256": "ee1e865e8fbd7fb871a6bc640752d5cfe7b3c216fea648255f76551d6300a3cd",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fdiv.s-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fdiv.s-04.S",
+      "sha256": "9de7e015ce17af7a56492421a1536792bd8e27f965fc23d3d646764a28b669d4",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fdiv.s-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-feq.s-00.S",
+      "sha256": "269107b4c480820ac5a6e110ab22c9c170d67c8f193bb64e735a185a5b5883fd",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-feq.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fle.s-00.S",
+      "sha256": "dd96a1144830657402398222f3f1f9e0e2914c3b6ca5957eb08ddaab8591e076",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fle.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-flt.s-00.S",
+      "sha256": "997f6a75a0ee2101edebfc6123cfeede2ab82d74eb2bbb2836575ea905d75bc6",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-flt.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-flw-00.S",
+      "sha256": "3611421876e0998d08b9156f63c7c32489c34bcf142e1f3fbce47ecdb526639c",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-flw-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmadd.s-00.S",
+      "sha256": "60fa07b190902417b8bf925984c53cdda0e6cd116aa4fd79259555c9a29c3db7",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmadd.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmadd.s-01.S",
+      "sha256": "d52711c03510868e025a144f712b0467540ae9ebb05120838e1daf8368c4fd06",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmadd.s-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmadd.s-02.S",
+      "sha256": "31c5ff7dc5a785ae4c5e22c7be80dbe8f01704589bf57410e42d06064ecb5b1a",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmadd.s-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmadd.s-03.S",
+      "sha256": "de41b9ed7603079060de07cdd48dd8f815a92f7d4023b8de88554b5b44d777b2",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmadd.s-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmadd.s-04.S",
+      "sha256": "6bf623b3592fdb84bc8fb3d1f54c7a241ba3435524aa2ba63224f26b3d3bc36d",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmadd.s-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmadd.s-05.S",
+      "sha256": "7bf47f0bf2aa2293d1db06291a172446251881e5968dcccb3084266324fd6665",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmadd.s-05",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmadd.s-06.S",
+      "sha256": "707f03355fa2e37a6f541c104d8f2fe23db2171a9bdebce9c642a53210722d94",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmadd.s-06",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmadd.s-07.S",
+      "sha256": "80cbd16debf8daed1e3503bebf1c166b18185360b754d40da50117e5aa97de12",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmadd.s-07",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmadd.s-08.S",
+      "sha256": "f878015342cf2822cfb76029dea1de6ba34882a5d5401e5f55456313af82be1c",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmadd.s-08",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmadd.s-09.S",
+      "sha256": "b78ccc4b524736ce86dfc2ba19c4eeb830d197e24dd0aebf3db117969e37a703",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmadd.s-09",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmax.s-00.S",
+      "sha256": "61ab4e03de4ea40a3a7c344fc2244db983e8cdeec50d8c3c521e58351575df46",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmax.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmin.s-00.S",
+      "sha256": "d1e10040071bc2d0ffc40aa40cbdbb26bd7be9ee14514837fc1f409071024519",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmin.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmsub.s-00.S",
+      "sha256": "82bac71d4be44157257df4e8b06a2de4148337f150cf70369d451f4ce284a0e8",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmsub.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmsub.s-01.S",
+      "sha256": "d0fc4177adf313a7d8355a7e14a9e70122a5109c29e7e8b952805b81148b341c",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmsub.s-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmsub.s-02.S",
+      "sha256": "47a8efaf945d2d2b72d1f51fc32f38017ef14250966bb5f24b919749221c9ba8",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmsub.s-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmsub.s-03.S",
+      "sha256": "08bdeb5c98b0720c619a3a6812958ac4eb0f866bb93d4edcb41745b63b9ebf9d",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmsub.s-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmsub.s-04.S",
+      "sha256": "d64cd1c0165e4ac41b5fb02fc33fdb85d284362d77758f4a9f23a54d6fc7a717",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmsub.s-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmsub.s-05.S",
+      "sha256": "c6e807d12c584ed9d2c43d5b7f97c57e9cb83a3a198fad7a8aa815275d1db99b",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmsub.s-05",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmsub.s-06.S",
+      "sha256": "346063795a8404f82b7a24ca388dc1fbd7517e811c0313dcc12687860a5859da",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmsub.s-06",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmsub.s-07.S",
+      "sha256": "94c4f554acf66c29779f682c99f3dc0551d6f2fb990f192c30783a5d9eb3e177",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmsub.s-07",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmsub.s-08.S",
+      "sha256": "ff9c95ee55494fd8134a5a4851ed46b9a327a493aca86608c26e015f786e427f",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmsub.s-08",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmsub.s-09.S",
+      "sha256": "990a9f6ff1f77263bb35736bfa63b168f90ed16a24f3c8d3062a9f9be1f9c8d6",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmsub.s-09",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmul.s-00.S",
+      "sha256": "60e00e85d56a10cd2da9cddda9a149babc8500a687dc2addd6435d1c8ec56b21",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmul.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmul.s-01.S",
+      "sha256": "b0827e6cfae608b1d7b1dc5924295d99380416bbe69b971d3efe4a21bb1c4bcd",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmul.s-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmul.s-02.S",
+      "sha256": "0125aeb7e07a511611fe9874a53101fc9bf8896bbd552641e744f8915d57bff6",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmul.s-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmul.s-03.S",
+      "sha256": "6abf25a15b3f4eda81bbe0b237ea7cf37ec6329fd9910736597516f09202363a",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmul.s-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmul.s-04.S",
+      "sha256": "74901dc84e8abe22b6a32cdd5e404282485ecd3c8e0cd89b85444a63b4a2da8d",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmul.s-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmv.w.x-00.S",
+      "sha256": "434b7f19fa13c6331bf97bc64a0b284d3a5f9c2b7b174c00fe29a05e763c9366",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmv.w.x-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fmv.x.w-00.S",
+      "sha256": "6b2ba6060a1777d02b69382421b6fc465d0c394f1252d8f4b273f58cad0a0993",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fmv.x.w-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmadd.s-00.S",
+      "sha256": "337f13f1eeb2edc6f7609e95cf1b635df38437dd3e0f6a26741fdb1aba3edf42",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmadd.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmadd.s-01.S",
+      "sha256": "3d3164c7cbb44489a302211201fd3efc0b9a1dca2137902fcfa4e5d4b2bbaa27",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmadd.s-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmadd.s-02.S",
+      "sha256": "6a3086a9d1b64c14192b24cab64e1e25bd942698075105b7ebcea85486a7f7a6",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmadd.s-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmadd.s-03.S",
+      "sha256": "08e6f7a346a9acde71f353dba1db6e26bb167488b215d1d115fee54137d79519",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmadd.s-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmadd.s-04.S",
+      "sha256": "a926a87bb6ae87f3d1122a577fbb0fcd0d5fefeae1e76ea87d7a5e01b4e39e16",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmadd.s-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmadd.s-05.S",
+      "sha256": "5b86129d233d2f9f4ad23f5a57a692e4840d5ddd42f7e0309c28f5586b30c4b3",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmadd.s-05",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmadd.s-06.S",
+      "sha256": "a4df1e553f8e9c6eab7f4873c938baafca7bc250232434b874dd1c539c5bafd6",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmadd.s-06",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmadd.s-07.S",
+      "sha256": "f6f67b56005e8245935f0e653d7265180d774b71cd547ef1aeebcc803a14ad19",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmadd.s-07",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmadd.s-08.S",
+      "sha256": "e98951a582f715fa64a015a42876fc706971e4ced852f7f2f5a2b76d01ce26f8",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmadd.s-08",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmadd.s-09.S",
+      "sha256": "49a07e95239c625ac1859d245f7444c649ed07b37b3ef23b56b2ef8e1ea2097a",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmadd.s-09",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmsub.s-00.S",
+      "sha256": "95d22ac2c1e3720ea3a07888430604a40b59dc11376f93b145675733a7ea601e",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmsub.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmsub.s-01.S",
+      "sha256": "4ebda2a779441ececa129a7d399034243e60c1eefb0d7f24f24f5eac3da13367",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmsub.s-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmsub.s-02.S",
+      "sha256": "1ddfd4dcad4a165e8c61e844ba6dcd18d9df16787740582381f2f4dae8a4dcd3",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmsub.s-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmsub.s-03.S",
+      "sha256": "826ac92282456c184fa8965558d7cd505e264f202bc5f06d3d567cb4d23ccc57",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmsub.s-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmsub.s-04.S",
+      "sha256": "4efeccd861b1192bf29dbf3ab9c21dfddefbcef86d256c06813e4fbe11b1b1d2",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmsub.s-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmsub.s-05.S",
+      "sha256": "0a9459f61691585a67ab4ca6d37c6098f0f845c58ffb3fe5003bdb69d39c19ae",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmsub.s-05",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmsub.s-06.S",
+      "sha256": "06c869686635c3381234c57c00b7e885c89e2b249c6bae9f30f0786004321274",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmsub.s-06",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmsub.s-07.S",
+      "sha256": "8470babc2ee1a565f827501f63961bd60b6bcbf82c9d304281d4ed4a94c1c9d8",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmsub.s-07",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmsub.s-08.S",
+      "sha256": "08e47459c02c943f39add81450546cb1dba3cda2b73f1280bdd8358adc745543",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmsub.s-08",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fnmsub.s-09.S",
+      "sha256": "b9b9e5e7dcadd3cc81016cb79adc1fd1f3a84c8fb4045276ff71b8be54cbcadf",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fnmsub.s-09",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fsgnj.s-00.S",
+      "sha256": "25d4feb94ba432968267c40e5ea1a2fdaeb130bcc5d502f7c3c130123bac0fd9",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fsgnj.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fsgnjn.s-00.S",
+      "sha256": "365e7f3da39840848f5428546b29e083a9b2bb089f9701c4533b2eac1cdf1f4e",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fsgnjn.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fsgnjx.s-00.S",
+      "sha256": "dbe2df7cf967e0c2a73499b3e8bcdfc0798d3b3113da0c685822189396b17d5c",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fsgnjx.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fsqrt.s-00.S",
+      "sha256": "663d67283ceba9dcfc9dea773261c4caf9d8e9103495f2831f5389f88a88c732",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fsqrt.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fsub.s-00.S",
+      "sha256": "c1399c1df512f88c289033b43e630b7889678229e6f57b2474dfb7db6224fd87",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fsub.s-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fsub.s-01.S",
+      "sha256": "f27dec81b8a5fa25f9c6234355f0ad23c692ef71cca769953bb45857f177daf8",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fsub.s-01",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fsub.s-02.S",
+      "sha256": "d2bed8fa10ac3e882d7f74c7127d71cae0cffe68228c4fb96be585f64025bd15",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fsub.s-02",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fsub.s-03.S",
+      "sha256": "24428c70701ccb55f7627ce5703fd1b4b36b870dc220afb46b328f102057d9fd",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fsub.s-03",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fsub.s-04.S",
+      "sha256": "b8a6d7e88e7edd5e48da95b95532e4c4dd38b9b21c0c9af1bb9df691752b48fb",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fsub.s-04",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/F/F-fsw-00.S",
+      "sha256": "dfbf19b8169bfe9d16f4435cf578e9292ee68038b004d7936e85a8523e7468de",
+      "required_extensions": [
+        "F",
+        "I"
+      ],
+      "purpose": "F: F-fsw-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64if_zicsr",
+      "disposition": "include",
+      "reason": "required-f",
+      "coverage_consequence": "Nontrapping RV64 F and D instruction coverage under --isa rv64imafd; failure remains a blocker."
+    }
+  ],
+  "environment_headers": {
+    "tests/env/check_defines.h": "57f089a930a52c906eddf538bce0ad6f8ddc8392ee9a443dfa2200770020beb5",
+    "tests/env/encoding.h": "a1047813971b83fcce4b6701b244a0d9552287e53a21774defc1aa96e31820dc",
+    "tests/env/failure_code.h": "416d42f3d6129015025454e909f7182ecd2503a8efbbe59c60616a09644e453c",
+    "tests/env/riscv_arch_test.h": "deead01d29e9216cbe3d92f2c686d49dd2d3663566292a3d17cc81e1961d3cca",
+    "tests/env/rvtest_macros.h": "c007f14d1e5df88ff3efe70600aa4d9eea7a8a3c3f71790b3506c310ee8777b4",
+    "tests/env/rvtest_macros_vector.h": "240878019e1e47c46811ff03fd3236654c4a71dd6cec3ce366cbfc092d03e125",
+    "tests/env/rvtest_setup.h": "6b9f163d7e8741c43a98553061ba7ea1eab689501879913f3740c6c7ed8b4739",
+    "tests/env/rvtest_trap_handler.h": "6dc137ba404caeccc65fbcbb852c93f70d247941bf960820b4210521a4cf012f",
+    "tests/env/sail_macros.h": "90ccc71bce5a5c17f2d4bd163e90b0cbd007bdf24d4e0e7cdae19a9b3f66d796",
+    "tests/env/signature.h": "d76ab68bc1a13bd2bf1f845ef93cb0869f3ec39ffdd4efb488b3db2bb98891b9",
+    "tests/env/utils.h": "46771e8bce240d0bc85ef238df5d44d01eb7be35fbb2d3b1fd0c3563e6a94a81"
+  }
+}

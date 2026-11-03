@@ -4,8 +4,9 @@ Expected variants are derived BEFORE generation from the pinned build_plan.py:
 one signature ELF and one self-check ELF per selected source, XLEN=64.
 The signature ELF is oracle input, never a DUT result.
 
-The frozen 51-case RV64I selection and the frozen 32-source Zca selection use
-the same accounting with different configuration: an A5_CONFIG environment
+The frozen 51-case RV64I selection, the frozen 32-source Zca selection, the
+frozen 196-source F/D selection and the frozen 4-source Zcd selection use the
+same accounting with different configuration: an A5_CONFIG environment
 variable selects the UDB config stem (build directory name under .a5/work),
 A5_MANIFEST selects the checked-in inventory, and A5_PLAN selects the plan
 file name. Defaults keep the RV64I behavior identical.
@@ -37,40 +38,60 @@ def plan_path():
 def run_isa():
     """The selected DUT profile for executed guests, or None for the default.
 
-    The Zca selection runs under --isa rv64imac (contract D9); the RV64I
-    selection keeps the unchanged default rv64ima command line.
+    The Zca selection runs under --isa rv64imac, the F/D selection under
+    --isa rv64imafd and the Zcd selection under --isa rv64imafdc (contract
+    D2/D11); the RV64I selection keeps the unchanged default rv64ima command
+    line.
     """
     return os.environ.get("A5_RUN_ISA") or None
+
+
+# RV64 Zca mnemonics, mapped to their parcel quadrant. C.ADDI4SPN, C.LW,
+# C.SW, C.LD and C.SD are quadrant 0, and the Zcmop names share quadrant 1
+# with C.NOP/C.LI/C.LUI/C.ADDI. C.ADDI4SPN itself is a required Zca
+# instruction; only its zero-immediate encoding is reserved, which is a
+# decode-level rule the caller cannot express as a mnemonic gate. Excluded
+# neighbours (Zcmop, the Zcb and Zcmp families) are absent by name.
+ZCA_COMPRESSED = {
+    "c.nop": 1, "c.addi": 1, "c.li": 1, "c.lui": 1, "c.addi4spn": 0,
+    "c.addiw": 1, "c.addi16sp": 1, "c.srli": 1, "c.srai": 1, "c.slli": 2,
+    "c.andi": 1, "c.sub": 1, "c.xor": 1, "c.or": 1,
+    "c.and": 1, "c.subw": 1, "c.addw": 1,
+    "c.j": 1, "c.beqz": 1, "c.bnez": 1,
+    "c.lw": 0, "c.sw": 0,
+    "c.ld": 0, "c.sd": 0,
+    "c.lwsp": 2, "c.swsp": 2,
+    "c.ldsp": 2, "c.sdsp": 2,
+    "c.jr": 2, "c.jalr": 2, "c.mv": 2, "c.add": 2,
+    "c.ebreak": 2,
+}
+
+# The four Zcd parcels are the compressed double-precision loads and stores.
+ZCD_COMPRESSED = {**ZCA_COMPRESSED, "c.fld": 0, "c.fsd": 0, "c.fldsp": 2, "c.fsdsp": 2}
 
 
 def a5_allowed_compressed():
     """Compressed mnemonics the linked audit may accept, mapped to quadrants.
 
     A5_CONFIG selects the profile: the RV64I smoke default audits no parcels,
-    and the Zca selection audits exactly the RV64 Zca instruction set (D2).
-    The mapping is keyed by mnemonic because quadrants are shared: C.ADDI4SPN,
-    C.LW, C.SW, C.LD and C.SD are quadrant 0, and the Zcmop names share
-    quadrant 1 with C.NOP/C.LI/C.LUI/C.ADDI. C.ADDI4SPN itself is a required
-    Zca instruction; only its zero-immediate encoding is reserved, which is a
-    decode-level rule the caller cannot express as a mnemonic gate. Excluded
-    neighbours (Zcmop, FP-compressed C.FLD/C.FSD/C.FLW/C.FSW families, Zcb,
-    Zcd) are absent by name.
+    the Zca selection audits exactly the RV64 Zca instruction set (D2) and the
+    Zcd selection adds the four compressed FP load/store parcels (D8).
     """
     if config_name() == "ruscv-rv64imac-zca":
-        return {
-            "c.nop": 1, "c.addi": 1, "c.li": 1, "c.lui": 1, "c.addi4spn": 0,
-            "c.addiw": 1, "c.addi16sp": 1, "c.srli": 1, "c.srai": 1, "c.slli": 2,
-            "c.andi": 1, "c.sub": 1, "c.xor": 1, "c.or": 1,
-            "c.and": 1, "c.subw": 1, "c.addw": 1,
-            "c.j": 1, "c.beqz": 1, "c.bnez": 1,
-            "c.lw": 0, "c.sw": 0,
-            "c.ld": 0, "c.sd": 0,
-            "c.lwsp": 2, "c.swsp": 2,
-            "c.ldsp": 2, "c.sdsp": 2,
-            "c.jr": 2, "c.jalr": 2, "c.mv": 2, "c.add": 2,
-            "c.ebreak": 2,
-        }
+        return dict(ZCA_COMPRESSED)
+    if config_name() == "ruscv-rv64imafdc-zcd":
+        return dict(ZCD_COMPRESSED)
     return {}
+
+
+def a5_allowed_fp():
+    """True when the linked audit may accept F and D instructions.
+
+    Only the two FP selections authorize them; the RV64I and Zca audits keep
+    rejecting every LOAD-FP, STORE-FP, OP-FP, R4 and SYSTEM encoding exactly
+    as before.
+    """
+    return config_name() in ("ruscv-rv64imafd", "ruscv-rv64imafdc-zcd")
 
 
 def sha256_local(path):
@@ -224,13 +245,19 @@ def main():
     evidence.mkdir(parents=True, exist_ok=True)
     if args.action == "prepare":
         from inventory import build
+        from inventory_fd import build_fd
         from inventory_zca import build_zca
+        from inventory_zcd import build_zcd
 
         manifest = json.loads(manifest_path().read_text())
-        # The Zca selection derives from the same pinned tree but has its own
-        # frozen manifest and profile; each profile checks its own builder.
-        expected = build_zca(Path(".a5/upstream")) if config_name() == "ruscv-rv64imac-zca" \
-            else build(Path(".a5/upstream"))
+        # Each selection derives from the same pinned tree but has its own
+        # frozen manifest and profile; every profile checks its own builder.
+        builders = {
+            "ruscv-rv64imac-zca": build_zca,
+            "ruscv-rv64imafd": build_fd,
+            "ruscv-rv64imafdc-zcd": build_zcd,
+        }
+        expected = builders.get(config_name(), build)(Path(".a5/upstream"))
         if expected != manifest:
             raise ValueError("pinned source inventory mismatch")
         # Never reuse an old build or a partial selection.
@@ -254,7 +281,7 @@ def main():
             continue
         try:
             audit(work / variant["elf"], evidence / "audit" / variant["elf"],
-                  allowed_compressed=a5_allowed_compressed())
+                  allowed_compressed=a5_allowed_compressed(), allowed_fp=a5_allowed_fp())
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             generated["errors"].append(f"linked audit failed for {variant['elf']}: {error}")
         # Even an audit failure remains enumerated and runs through the public

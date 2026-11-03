@@ -68,6 +68,9 @@ linker_script_for() {
         # .text, so its tohost word must sit on its own page after the image
         # (linker.ld would place it inside .text at 0x80001000).
         zca_straddle_fetch.S) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
+        # The F/D and Zcd guests keep data tables, scratch words and a trap
+        # handler in the image, so they get the same tohost isolation.
+        fd_*|zcd_*) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
         *) printf '%s' "${TESTS_DIR}/linker.ld" ;;
     esac
 }
@@ -89,6 +92,7 @@ fi
 mapfile -t SOURCES < <(
     find "${TESTS_DIR}/rv64i" "${TESTS_DIR}/rv64m" -type f -name '*.S' -print | sort
     find "${TESTS_DIR}/rv64a" -type f -name '*.S' -print | sort
+    find "${TESTS_DIR}/rv64ifd" -type f -name '*.S' -print | sort
 )
 if [ "${#SOURCES[@]}" -eq 0 ]; then
     echo -e "${RED}Error: no RISC-V assembly sources found${NC}" >&2
@@ -105,11 +109,15 @@ for source in "${SOURCES[@]}"; do
     mkdir -p "$(dirname "${object}")"
 
     echo -e "${BLUE}Compiling ${relative}${NC}"
-    # Zca guests (rv64i/zca_*.S) assemble with Zifencei; every existing guest
-    # keeps its frozen -march=rv64ima_zicsr flags unchanged.
+    # Zca guests (rv64i/zca_*.S) assemble with Zifencei, the F/D guests
+    # (rv64ifd/fd_*.S) with F and D, and the Zcd guest (rv64ifd/zcd_*.S) with
+    # F, D and compression; every existing guest keeps its frozen
+    # -march=rv64ima_zicsr flags unchanged.
     march=rv64ima_zicsr
     case "$(basename "${source}")" in
         zca_*) march=rv64imac_zicsr_zifencei ;;
+        fd_*) march=rv64imafd_zicsr_zifencei ;;
+        zcd_*) march=rv64imafdc_zicsr_zifencei ;;
     esac
     if ! "${AS}" -march=${march} -mabi=lp64 "${source}" -o "${object}"; then
         echo -e "${RED}  [FAIL] assembly: ${relative}${NC}" >&2

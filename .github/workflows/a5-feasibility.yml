@@ -3,13 +3,15 @@ on:
   workflow_dispatch:
     inputs:
       selection:
-        description: "Frozen selection to run: proposal (51-case RV64I) or zca (32-source rv64i/Zca)"
+        description: "Frozen selection: proposal (51-case RV64I), zca (32-source rv64i/Zca), fd (82-source rv64i/F + 114-source rv64i/D) or zcd (4-source rv64i/Zcd)"
         required: false
         default: proposal
         type: choice
         options:
           - proposal
           - zca
+          - fd
+          - zcd
 permissions:
   contents: read
 concurrency:
@@ -18,7 +20,10 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    # The 30-minute bound of the recorded RV64I and Zca controls is unchanged.
+    # The FP selections generate, compile and simulate 196 and 4 sources, so
+    # they get their own bound instead of loosening the controls.
+    timeout-minutes: ${{ (inputs.selection == 'fd' || inputs.selection == 'zcd') && 150 || 30 }}
     env:
       A5_SELECTION: ${{ inputs.selection || 'proposal' }}
       UV_CACHE_DIR: ${{ github.workspace }}/.a5/cache/uv
