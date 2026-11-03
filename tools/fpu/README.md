@@ -46,14 +46,17 @@ which is the "equivalent independent generator" option in the contract.
   file depends only on the pinned SoftFloat sources and this generator.
 * Every rounding mode for every rounded operation.
 * The complete cross product of a 28-value curated edge set for unary
-  operations, conversions and comparisons: signed zeros, minimum and maximum
-  subnormals, minimum normal, values around 1, `2^31`/`2^32`, `2^63`/`2^64`,
-  maximum finite, both infinities, canonical and payload quiet NaNs, and
-  signaling NaNs of both signs.
+  operations and conversions: signed zeros, minimum and maximum subnormals,
+  minimum normal, values around 1, `2^31`/`2^32`, `2^63`/`2^64`, maximum
+  finite, both infinities, canonical and payload quiet NaNs, and signaling
+  NaNs of both signs.
 * The complete cross product of a 14-value class-covering subset for the
-  binary operations, plus 48 seeded random cases per operation and mode.
+  binary operations and the comparisons, plus 48 seeded random cases per
+  binary operation and mode.
 * Fused multiply-add: 8 × 8 curated operand pairs with a cycling addend, 48
-  seeded random triples, and the `0 × infinity + qNaN` invalid-operation case.
+  seeded random triples, and explicit rows for `0 × infinity + qNaN`, a zero
+  product with a subnormal addend, exact cancellation and opposite
+  infinities.
 * 48 seeded random cases per unary/conversion operation and mode. Random
   patterns are biased towards subnormal, minimum-normal, huge, near-maximum
   and near-1 values so underflow, overflow and inexact flags are exercised.
@@ -71,9 +74,10 @@ RISC-V rule and the committed rows are the required RISC-V results:
 
 1. NaN results of arithmetic, square root, fused multiply-add and
    float-to-float conversion are replaced with the canonical NaN
-   (`0x7fc00000` / `0x7ff8000000000000`), as D4 requires. Sign injection,
-   comparison and classification are not arithmetic and are not part of the
-   generator; their payload behaviour is covered by unit tests.
+   (`0x7fc00000` / `0x7ff8000000000000`), as D4 requires. Sign injection and
+   classification are not arithmetic and are not part of the generator; their
+   payload behaviour is covered by unit tests. The comparisons are emitted
+   with their boolean result and exception flags.
 2. Invalid float-to-integer conversions use the RISC-V saturation table
    (`+inf`/NaN/positive overflow to the maximum, negative overflow to the
    minimum or zero) and 32-bit results are sign-extended into the 64-bit
@@ -105,8 +109,8 @@ gcc -O2 -I<softfloat>/source/include \
 FPU_VECTOR_FILE=/tmp/fpu-reference.tsv cargo test --release --test fpu_arith
 ```
 
-The differential runs used for the initial issue-146 delivery covered about
-3.3 million additional seeded cases across several seeds with no mismatch.
+The differential runs on the reviewed head covered about 6.4 million
+additional seeded and directed cases across several seeds with no mismatch.
 
 ## Licensing
 
@@ -118,10 +122,11 @@ ported modules.
 
 ## What the vectors do not cover
 
-`FMIN`/`FMAX` (RISC-V F/D version 2.2 rules), `FCLASS`, `FSGNJ`/`FSGNJN`/
-`FSGNJX` and the quiet/signaling rules of `FEQ`/`FLT`/`FLE` are specified
-directly by the ISA manual and are covered by the focused tests in
-`src/fpu/arith/tests.rs`. `f32_fmadd` rows also verify `FMSUB`, `FNMSUB` and
-`FNMADD`: those instructions are the same fused operation with exactly
-negated operands, so `tests/fpu_arith.rs` runs each row through all four with
-the corresponding sign bits flipped.
+`FMIN`/`FMAX` (RISC-V F/D version 2.2 rules), `FCLASS` and
+`FSGNJ`/`FSGNJN`/`FSGNJX` are specified directly by the ISA manual and are
+covered by the focused tests in `src/fpu/arith/tests.rs`. The committed
+`FEQ`/`FLT`/`FLE` rows come from `gen_compare` and cover the 14-value
+cross-product classes only, not the full 28-value edge set. `f32_fmadd` rows
+also verify `FMSUB`, `FNMSUB` and `FNMADD`: those instructions are the same
+fused operation with exactly negated operands, so `tests/fpu_arith.rs` runs
+each row through all four with the corresponding sign bits flipped.
