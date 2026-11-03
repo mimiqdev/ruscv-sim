@@ -497,16 +497,13 @@ fn commit_log_fpr_segment_uses_flen_width_and_spike_padding() {
     let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
     set_fs(&mut core, mstatus::FS_CLEAN);
     let value = 0x4009_21fb_5444_2d18u64;
-    let fixed = addi(1, 0, 0x7ff); // keep the GPR path quiet
-    write32(&ram, 0, fixed);
-    traced_step(&mut core);
     core.state_mut().regs[5] = value;
     let mv = fmv_d_x(10, 5);
-    write32(&ram, 4, mv);
+    write32(&ram, 0, mv);
     let turn = traced_step(&mut core);
     assert_eq!(
         commit_log_text(&turn),
-        format!("core   0: 3 0x0000000000000004 (0x{mv:08x}) f10 0x{value:016x}\n")
+        format!("core   0: 3 0x0000000000000000 (0x{mv:08x}) f10 0x{value:016x}\n")
     );
 }
 
@@ -551,24 +548,27 @@ fn commit_log_orders_effects_like_spikes_log_reg_write_map() {
 }
 
 #[test]
-fn commit_log_prints_equal_value_fpr_writes() {
-    // Spike logs a register write, not a register change.
+fn commit_log_prints_equal_value_fpr_writes_and_never_skips_f0() {
+    // Spike logs a register write, not a register change, and its
+    // `item.first == 0` skip applies to `x0` only: `f0` has key 1, so an
+    // equal-value `fld f0` still prints.
     let (mut core, ram) = ported_core(IsaProfile::Rv64imafd);
     set_fs(&mut core, mstatus::FS_CLEAN);
     core.state_mut().regs[5] = 0x100;
     core.state_mut()
         .fpr
-        .write(8, ruscv_sim::Fpr::from_bits(SENTINEL));
+        .write(0, ruscv_sim::Fpr::from_bits(SENTINEL));
     write64(&ram, 0x100, SENTINEL);
-    let fld = (5 << 15) | (0b011 << 12) | (8 << 7) | 0x07;
+    let fld = (5 << 15) | (0b011 << 12) | 0x07;
     write32(&ram, 0, fld);
     let turn = traced_step(&mut core);
     let record = commit_record(&turn);
+    assert_eq!(record.effects.fpr[0].index, 0);
     assert_eq!(record.effects.fpr[0].before, SENTINEL);
     assert_eq!(record.effects.fpr[0].after, SENTINEL);
     assert_eq!(
         commit_log_text(&turn),
-        format!("core   0: 3 0x0000000000000000 (0x{fld:08x}) f8  0x{SENTINEL:016x}\n")
+        format!("core   0: 3 0x0000000000000000 (0x{fld:08x}) f0  0x{SENTINEL:016x}\n")
     );
 }
 

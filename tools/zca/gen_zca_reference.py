@@ -38,7 +38,6 @@ F3_D = 0b011
 E, H, R, F = "E", "H", "R", "F"
 
 PROFILES = ("zca", "zcd")
-PROFILE = "zca"
 
 
 def sext(value: int, bits: int) -> int:
@@ -347,7 +346,7 @@ for row in ROWS:
     INDEX.setdefault(row.sel, []).append(row)
 
 
-def classify(p: int):
+def classify(p: int, profile: str):
     rows = INDEX.get((p & 3, (p >> 13) & 7), ())
     for row in rows:
         if not row.match(p):
@@ -356,7 +355,7 @@ def classify(p: int):
         if row.imm_bits:
             imm = sext(imm, row.imm_bits)
         cls = row.kind(p, imm)
-        if cls == F and PROFILE == "zcd" and row.zcd_build is not None:
+        if cls == F and profile == "zcd" and row.zcd_build is not None:
             return E, row.zcd_build(p, imm)
         if cls in (R, F):
             return cls, None
@@ -365,13 +364,12 @@ def classify(p: int):
 
 
 def main() -> None:
-    global PROFILE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=PROFILES, default="zca",
                         help="zca (non-FP compressed profiles) or zcd (rv64imafdc)")
-    PROFILE = parser.parse_args().profile
+    profile = parser.parse_args().profile
     for p in range(0x10000):
-        cls, enc = classify(p)
+        cls, enc = classify(p, profile)
         exp = f"0x{enc:08x}" if enc is not None else "-"
         print(f"0x{p:04x}\t{cls}\t{exp}")
 
