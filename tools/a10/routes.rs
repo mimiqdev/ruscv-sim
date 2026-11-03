@@ -1,6 +1,7 @@
 //! Real public adapters; no internal hooks or alternate execution engine.
 use super::*;
 use ruscv_sim::executor::RiscVSimulator;
+use ruscv_sim::machine::IsaProfile;
 use std::process::Command;
 
 fn child(command: &mut Command) -> Result<std::process::Output, String> {
@@ -145,11 +146,14 @@ pub fn capture_cli(
     log: &Path,
 ) -> Result<Sample, String> {
     let mut command = Command::new(cli);
+    // Every A10 route selects rv64ima explicitly (contract D5).
     command
         .arg("run")
         .arg(elf)
         .arg("--max-cycles")
-        .arg((f.turns + 16).to_string());
+        .arg((f.turns + 16).to_string())
+        .arg("--isa")
+        .arg("rv64ima");
     if mode == "file" {
         command.arg("--log-commits").arg(log);
     }
@@ -165,7 +169,7 @@ pub fn capture_cli(
     parse_cli(&stdout, &output.stderr, output.status.code(), mode, file)
 }
 pub fn capture_flat(f: &Fixture, bytes: &[u8]) -> Result<Sample, String> {
-    let mut flat = RiscVSimulator::new(1);
+    let mut flat = RiscVSimulator::new_with_isa(1, IsaProfile::Rv64ima);
     flat.load_elf(bytes).map_err(|e| e.to_string())?;
     let result = flat.run(Some(f.turns + 16)).map_err(|e| e.to_string())?;
     inspect_flat(f, &flat, result)

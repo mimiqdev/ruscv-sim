@@ -40,7 +40,9 @@ control = evidence / "I-add-00.corrupt.elf"
 control.write_bytes(data)
 results = []
 for name, path in [("intact", elf), ("corrupt", control)]:
-    command = [str(root / "target/release/ruscv-sim"), "run", str(path), "--max-cycles", "1000000"]
+    # The smoke path runs under the explicit rv64ima profile (contract D6).
+    command = [str(root / "target/release/ruscv-sim"), "run", str(path), "--max-cycles", "1000000",
+               "--isa", "rv64ima"]
     timed_out = False
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=60)

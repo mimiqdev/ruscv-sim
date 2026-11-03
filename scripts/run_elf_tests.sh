@@ -195,15 +195,21 @@ for elf in "${ELF_FILES[@]}"; do
     name="$(basename "${elf}" .elf)"
     echo -e "${YELLOW}Test ${number}/${#ELF_FILES[@]}: ${name}.elf${NC}"
     echo "  File: ${elf}"
-    # Zca U4 compressed guests select the rv64imac profile, F/D U5 guests
-    # select rv64imafd, and the Zcd guest and the U6 FP attach guest select
-    # rv64imafdc; every existing guest runs unchanged under the default
-    # rv64ima.
+    # Every guest declares its profile (RV64GC contract D4): guests whose
+    # expectations depend on the profile run under their explicit --isa,
+    # profile-independent guests declare the default with no --isa. The
+    # s4_* guests assert the rv64ima misa, FS=0 or IALIGN=32 rules, so the
+    # whole s4_* set is bound to rv64ima explicitly; Zca guests select
+    # rv64imac, F/D guests rv64imafd, and the Zcd and F/D/C attach guests
+    # rv64imafdc.
     isa_args=( )
     case "${name}" in
+        s4_*) isa_args=(--isa rv64ima) ;;
         zca_*) isa_args=(--isa rv64imac) ;;
         fd_*) isa_args=(--isa rv64imafd) ;;
         zcd_*|fdc_*) isa_args=(--isa rv64imafdc) ;;
+        # Profile-independent guests run under the default with no --isa.
+        *) isa_args=( ) ;;
     esac
     if ! check_entry "${elf}"; then
         failed=$((failed + 1))

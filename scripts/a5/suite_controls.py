@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from accounting import execute
+from accounting import execute, run_isa
 from inventory import sha256
 
 
@@ -28,7 +28,10 @@ def main():
     results = []
     for name in [*programs, "malformed", "missing"]:
         elf = directory / f"{name}.elf"
-        outcome = execute(root / "target/release/ruscv-sim", elf, directory / name, max_cycles=1000)
+        outcome = execute(root / "target/release/ruscv-sim", elf, directory / name, max_cycles=1000,
+                          # The controls run under the same explicit profile
+                          # as the selection (contract D6).
+                          isa=run_isa())
         results.append({"control": name, "sha256": sha256(elf) if elf.exists() else None, **outcome})
     expected = ["guest-pass", "guest-fail"] + ["simulator-or-runner-failure"] * 4
     success = [r["classification"] for r in results] == expected and results[2]["reason"] == "cycle-timeout"

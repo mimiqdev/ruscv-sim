@@ -119,7 +119,8 @@ def run(argv):
         elf = fixtures_out / (workload['fixture'] + '.elf')
         for repetition in range(args.repetitions):
             began = time.perf_counter_ns()
-            completed = subprocess.run([str(cli), 'run', str(elf), '--max-cycles', str(workload['max_cycles'])], cwd=ROOT, capture_output=True)
+            completed = subprocess.run([str(cli), 'run', str(elf), '--max-cycles', str(workload['max_cycles']),
+                                       '--isa', 'rv64ima'], cwd=ROOT, capture_output=True)
             elapsed = time.perf_counter_ns() - began
             rows.append({'workload': workload['id'], 'repetition': repetition, 'elapsed_ns': elapsed,
                          'exit_code': completed.returncode, 'expected_exit': workload['expected_exit'],

@@ -14,13 +14,14 @@ set -euo pipefail
 ROOT=$(pwd)
 MODE=${A5_SELECTION:-smoke}
 
-# Everything a mode selects, in one place. The RV64I modes use the accounting
-# defaults, so their SELECTED_* values stay empty and their command lines are
-# unchanged.
+# Everything a mode selects, in one place. Every selection runs under an
+# explicit DUT profile (RV64GC contract D6): the RV64I modes select
+# rv64ima, matching the inherited default, and their command lines now
+# carry --isa rv64ima; the other SELECTED_* values stay empty for them.
 SELECTED_CONFIG=""
 SELECTED_MANIFEST=""
 SELECTED_PLAN=""
-SELECTED_ISA=""
+SELECTED_ISA="rv64ima"
 ACCOUNTING=no
 case "$MODE" in
   smoke)
