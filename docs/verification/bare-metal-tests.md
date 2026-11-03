@@ -34,6 +34,21 @@ The Zca U4 compressed guests build with
 | `rv64i/zca_hints.S` | D2 HINT parcels (`c.addi rd,0`, `c.nop nzimm`, `c.li x0`, `c.lui x0`, `c.slli x0`, `c.srli` zero shift, `c.mv x0`, `c.add x0`) retire with no architectural effect | `tohost` exit 0 |
 | `rv64i/zca_straddle_fetch.S` | Under Sv39, a 32-bit instruction whose first parcel is page A's last 2 bytes and whose second parcel is the R-only page B faults with `mtval=0x2000` and retires nothing (contract D4) | `tohost` exit 0 |
 
+The F/D U5 guests build with `-march=rv64imafd_zicsr_zifencei` and run under
+`--isa rv64imafd`, except `zcd_transfer`, which builds with
+`-march=rv64imafdc_zicsr_zifencei` and runs under `--isa rv64imafdc`:
+
+| Source | Architectural check | Success signal |
+| --- | --- | --- |
+| `rv64ifd/fd_rounding.S` | All five rounding modes on `FDIV.S` of 1/3 and on `FCVT.S.D` of the exact tie 1+2^-24, so RMM differs from RNE; dynamic `frm`; a static `rm` overriding `frm`; reserved static `rm` 5 and 6 and dynamic `frm` 5–7 raising illegal-instruction | `tohost` exit 0 |
+| `rv64ifd/fd_flags.S` | NX, UF, OF, DZ and NV accrual with tininess after rounding, an exact result leaving `fflags` clear, an exact subnormal leaving it clear, and `fflags`/`frm`/`fcsr` aliasing and masking | `tohost` exit 0 |
+| `rv64ifd/fd_nanbox.S` | `FLW` and `FMV.W.X` boxing, canonical NaN from an unboxed single operand, FSGNJ payload preservation, `FSW`/`FMV.X.W` raw low bits, arithmetic/`FSQRT`/`FMIN`/`FMAX` canonicalization, and double payload transfers | `tohost` exit 0 |
+| `rv64ifd/fd_fs_state.S` | FS Off raising illegal-instruction for every F/D class and for `fflags`/`frm`/`fcsr` with `mtval` equal to the encoding; FS Dirty from an FPR write, from flag accrual and from a `CSRRW`; FS unchanged by `FSW`, an exception-free compare and a `CSRR`; SD mirroring FS in `mstatus` and `sstatus` | `tohost` exit 0 |
+| `rv64ifd/fd_fma.S` | Fused single rounding for FMADD, FMSUB, FNMSUB and FNMADD in both formats, including a case whose value differs from an unfused implementation | `tohost` exit 0 |
+| `rv64ifd/fd_convert.S` | The `FCVT` saturation table, RV64 sign extension of 32-bit results, `FCVT` rounding, exact widening and narrowing, all ten `FCLASS` classes, quiet/signaling NaN compare rules, and `FEQ`/`FLT`/`FLE` on ±0 | `tohost` exit 0 |
+| `rv64ifd/fd_zcd_absent.S` | Under `--isa rv64imafd`, `C.FLD`, `C.FSD`, `C.FLDSP` and `C.FSDSP` stay illegal-instruction with the parcel in `mtval` and no architectural effect | `tohost` exit 0 |
+| `rv64ifd/zcd_transfer.S` | Under `--isa rv64imafdc`, the four Zcd parcels transfer 64-bit values at their scaled offsets, preserve a double NaN payload, and leave FS Dirty | `tohost` exit 0 |
+
 Every guest has explicit success and failure writes. A handler that reaches an
 unexpected path writes a nonzero exit code; timeout or simulator failure is not
 a guest pass.
@@ -44,9 +59,11 @@ The scripts build into a disposable target directory directly below the
 canonical repository `target/` directory, remove it before each normal compile,
 record the source Git HEAD in `manifest.txt`, verify ELF entry `== _start`, and
 run the original RV64I/RV64M guests followed by the A8 RV64A atomic additions
-through the public CLI. The five A6 trap guests and the five Zca U4 compressed
-guests remain required members; the Zca guests run with `--isa rv64imac` and
-every other guest runs under the default `rv64ima`. The path guard
+and the F/D U5 additions through the public CLI. The five A6 trap guests, the
+five Zca U4 compressed guests and the eight F/D U5 guests remain required
+members; the Zca guests run with `--isa rv64imac`, the `fd_*` guests with
+`--isa rv64imafd`, `zcd_transfer` with `--isa rv64imafdc`, and every other
+guest runs under the default `rv64ima`. The path guard
 rejects source directories, parent aliases, and symlinked roots; its regression
 cases run with `bash scripts/test_riscv_elf_guards.sh`.
 When a bind-mounted worktree cannot resolve its host-side `.git` file, pass the
@@ -135,10 +152,13 @@ translated to storage offsets by the wrapper.
 The A6 guest suite verifies synchronous Machine-mode trap entry and return on
 the current public 32-bit-fetch path. The Zca U4 guests add end-to-end
 compressed execution under `--isa rv64imac`: mixed-length control flow, link
-values, the D2 HINT set, `C.EBREAK` trap entry and a page-straddling fetch.
-Neither set certifies asynchronous interrupts, MMU/Sv39 integration as a whole,
-the M/A/F/D dispatch end to end, or every Zca encoding; component and ACT4
-verification own those claims. It is not an ACT4 extension suite. The A5 ACT4 baseline remains a 51-case nontrapping result and is not an A6
+values, the D2 HINT set, `C.EBREAK` trap entry and a page-straddling fetch. The
+F/D U5 guests add end-to-end floating point under `--isa rv64imafd` and
+`--isa rv64imafdc`: rounding modes, exception-flag accrual, NaN boxing, FS Off
+and Dirty, fused multiply-add, conversions and classification, and the Zcd
+transfers. None of these sets certifies asynchronous interrupts, MMU/Sv39
+integration as a whole, the M/A/F/D dispatch end to end, or every Zca, F, D or
+Zcd encoding; component and ACT4 verification own those claims. It is not an ACT4 extension suite. The A5 ACT4 baseline remains a 51-case nontrapping result and is not an A6
 trap or extension certification. A separate retained run `35325844246` reran
 that frozen selection at source head
 `845c63325db5ac87ab2ff0ed260453dc3b396ae9`, with 51/51 public-CLI passes;

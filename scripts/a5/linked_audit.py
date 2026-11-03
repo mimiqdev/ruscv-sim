@@ -9,14 +9,47 @@ from excluded neighbours: C.ADDI4SPN, C.LW, C.SW, C.LD and C.SD share quadrant
 0, the Zcmop instructions share quadrant 1 with C.NOP/C.LI/C.LUI/C.ADDI, and
 the FP compressed loads/stores share quadrants 0 and 2. A 4-digit word whose
 quadrant is 3 is not a parcel at all and is reported unsupported.
+
+Floating-point encodings are likewise opt-in. `allowed_fp` extends the
+32-bit opcode set with LOAD-FP, STORE-FP, OP-FP and R4, and the mnemonic set
+with exactly the F and D instruction names plus the six Zicsr CSR forms the
+ACT4 FP tests use to set `mstatus.FS` and clear `fflags`. The default rejects
+all of them, so the RV64I smoke and Zca audits are unchanged.
 """
 import bisect
 import json
 import re
 import subprocess
 
+# LOAD-FP, STORE-FP, MADD/MSUB/NMSUB/NMADD and OP-FP.
+FP_OPCODES = {0x07, 0x27, 0x43, 0x47, 0x4b, 0x4f, 0x53}
+# SYSTEM, restricted below to the six Zicsr CSR instruction mnemonics.
+SYSTEM_OPCODE = 0x73
+CSR_MNEMONICS = {"csrrw", "csrrs", "csrrc", "csrrwi", "csrrsi", "csrrci"}
 
-def audit(elf, evidence, *, allowed_compressed=None):
+
+def fp_mnemonics():
+    """Every F and D instruction name, plus the Zicsr forms FP tests need.
+
+    The set is enumerated rather than inferred from the opcode, so a mnemonic
+    outside the selected profile still fails the audit closed.
+    """
+    names = {"flw", "fsw", "fld", "fsd"}
+    for fmt in ("s", "d"):
+        for operation in ("fadd", "fsub", "fmul", "fdiv", "fsqrt",
+                          "fsgnj", "fsgnjn", "fsgnjx", "fmin", "fmax",
+                          "feq", "flt", "fle", "fclass",
+                          "fmadd", "fmsub", "fnmsub", "fnmadd"):
+            names.add(f"{operation}.{fmt}")
+        for width in ("w", "wu", "l", "lu"):
+            names.add(f"fcvt.{width}.{fmt}")
+            names.add(f"fcvt.{fmt}.{width}")
+    names.update({"fcvt.s.d", "fcvt.d.s",
+                  "fmv.x.w", "fmv.x.d", "fmv.w.x", "fmv.d.x"})
+    return frozenset(names | CSR_MNEMONICS)
+
+
+def audit(elf, evidence, *, allowed_compressed=None, allowed_fp=False):
     evidence.mkdir(parents=True, exist_ok=True)
     objdump = subprocess.check_output(
         ["riscv64-unknown-elf-objdump", "-d", "-M", "no-aliases", str(elf)], text=True)
@@ -33,6 +66,9 @@ addi slti sltiu xori ori andi slli srli srai
 add sub sll slt sltu xor srl sra or and
 addiw slliw srliw sraiw addw subw sllw srlw sraw fence fence.tso""".split())
     allowed = {0x03, 0x0f, 0x13, 0x17, 0x1b, 0x23, 0x33, 0x37, 0x3b, 0x63, 0x67, 0x6f}
+    if allowed_fp:
+        mnemonics |= fp_mnemonics()
+        allowed |= FP_OPCODES | {SYSTEM_OPCODE}
     compressed = allowed_compressed or {}
     instructions, inline_data = [], []
     parcels = 0

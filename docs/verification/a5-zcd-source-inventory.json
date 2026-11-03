@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "status": "approved-frozen",
+  "act4_commit": "a7c99303516f4e668f7488f172043392e23b9dfd",
+  "scope": "all tracked tests/rv64i/Zcd/**/*.S at the pinned revision",
+  "profile": "a5-rv64imafdc-zcd-nontrapping-proposal-v1",
+  "profile_document": "docs/verification/a5-zcd-source-inventory.json",
+  "counts": {
+    "required-zcd": 4
+  },
+  "sources": [
+    {
+      "source": "tests/rv64i/Zcd/Zcd-c.fld-00.S",
+      "sha256": "688909781bba65208f53f7cb627872362796de3abfeef094349b715fd654d8b7",
+      "required_extensions": [
+        "D",
+        "F",
+        "I",
+        "Zcd"
+      ],
+      "purpose": "Zcd: Zcd-c.fld-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr_zcd",
+      "disposition": "include",
+      "reason": "required-zcd",
+      "coverage_consequence": "Nontrapping RV64 Zcd compressed double-precision load/store coverage under --isa rv64imafdc; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zcd/Zcd-c.fldsp-00.S",
+      "sha256": "3f9a854e154e3ab6d40d8f940c75da59505249a000b4cc25e7a1085db090c967",
+      "required_extensions": [
+        "D",
+        "F",
+        "I",
+        "Zcd"
+      ],
+      "purpose": "Zcd: Zcd-c.fldsp-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr_zcd",
+      "disposition": "include",
+      "reason": "required-zcd",
+      "coverage_consequence": "Nontrapping RV64 Zcd compressed double-precision load/store coverage under --isa rv64imafdc; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zcd/Zcd-c.fsd-00.S",
+      "sha256": "03ebb688a55f5f59fa7ba3398a33be33c1407931e29494fbb179b8528d9324dd",
+      "required_extensions": [
+        "D",
+        "F",
+        "I",
+        "Zcd"
+      ],
+      "purpose": "Zcd: Zcd-c.fsd-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr_zcd",
+      "disposition": "include",
+      "reason": "required-zcd",
+      "coverage_consequence": "Nontrapping RV64 Zcd compressed double-precision load/store coverage under --isa rv64imafdc; failure remains a blocker."
+    },
+    {
+      "source": "tests/rv64i/Zcd/Zcd-c.fsdsp-00.S",
+      "sha256": "191f70bfe9382efaf60d93a11bf63241310083f0d84cc8fc7a22ebf91af6e359",
+      "required_extensions": [
+        "D",
+        "F",
+        "I",
+        "Zcd"
+      ],
+      "purpose": "Zcd: Zcd-c.fsdsp-00",
+      "params": {
+        "MXLEN": 64
+      },
+      "march": "rv64ifd_zicsr_zcd",
+      "disposition": "include",
+      "reason": "required-zcd",
+      "coverage_consequence": "Nontrapping RV64 Zcd compressed double-precision load/store coverage under --isa rv64imafdc; failure remains a blocker."
+    }
+  ],
+  "environment_headers": {
+    "tests/env/check_defines.h": "57f089a930a52c906eddf538bce0ad6f8ddc8392ee9a443dfa2200770020beb5",
+    "tests/env/encoding.h": "a1047813971b83fcce4b6701b244a0d9552287e53a21774defc1aa96e31820dc",
+    "tests/env/failure_code.h": "416d42f3d6129015025454e909f7182ecd2503a8efbbe59c60616a09644e453c",
+    "tests/env/riscv_arch_test.h": "deead01d29e9216cbe3d92f2c686d49dd2d3663566292a3d17cc81e1961d3cca",
+    "tests/env/rvtest_macros.h": "c007f14d1e5df88ff3efe70600aa4d9eea7a8a3c3f71790b3506c310ee8777b4",
+    "tests/env/rvtest_macros_vector.h": "240878019e1e47c46811ff03fd3236654c4a71dd6cec3ce366cbfc092d03e125",
+    "tests/env/rvtest_setup.h": "6b9f163d7e8741c43a98553061ba7ea1eab689501879913f3740c6c7ed8b4739",
+    "tests/env/rvtest_trap_handler.h": "6dc137ba404caeccc65fbcbb852c93f70d247941bf960820b4210521a4cf012f",
+    "tests/env/sail_macros.h": "90ccc71bce5a5c17f2d4bd163e90b0cbd007bdf24d4e0e7cdae19a9b3f66d796",
+    "tests/env/signature.h": "d76ab68bc1a13bd2bf1f845ef93cb0869f3ec39ffdd4efb488b3db2bb98891b9",
+    "tests/env/utils.h": "46771e8bce240d0bc85ef238df5d44d01eb7be35fbb2d3b1fd0c3563e6a94a81"
+  }
+}

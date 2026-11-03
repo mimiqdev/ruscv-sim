@@ -4,9 +4,9 @@ UDB 0.1.9 requires MXLEN for all configured profiles but defines it only by
 Sm. Preserve every width constraint, changing only provenance to I for this
 nontrapping probe. No upstream framework/test/oracle code is patched.
 
-The Zca selection applies the same provenance adaptation. The overlay's
-expected hash is pinned per selection, so a UDB schema change fails the run
-for both selections instead of silently passing either.
+The Zca, F/D and Zcd selections apply the same provenance adaptation. The
+overlay's expected hash is pinned per selection, so a UDB schema change fails
+the run for every selection instead of silently passing one of them.
 """
 import difflib
 import hashlib
@@ -21,6 +21,8 @@ original = source.read_bytes()
 expected = {
     "ruscv-rv64i-smoke": "2de45bf488b72952ab339ba335bf8a95f760918840d776b1f30e6df0bfadc368",
     "ruscv-rv64imac-zca": "2de45bf488b72952ab339ba335bf8a95f760918840d776b1f30e6df0bfadc368",
+    "ruscv-rv64imafd": "2de45bf488b72952ab339ba335bf8a95f760918840d776b1f30e6df0bfadc368",
+    "ruscv-rv64imafdc-zcd": "2de45bf488b72952ab339ba335bf8a95f760918840d776b1f30e6df0bfadc368",
 }
 config = root / f".a5/config/{name}.yaml"
 assert original.count(b"    name: Sm\n") == 1

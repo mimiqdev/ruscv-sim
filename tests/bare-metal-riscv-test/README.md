@@ -12,6 +12,7 @@ tests/bare-metal-riscv-test/
 ├── README.md           # 本文件
 ├── rv64a/              # RV64A 原子指令回归 guest
 ├── rv64i/              # RV64I 基础整数指令测试
+├── rv64ifd/            # F/D 与 Zcd 浮点 guest
 └── rv64m/              # RV64M 整数乘除法测试
 ```
 
@@ -30,6 +31,14 @@ tests/bare-metal-riscv-test/
 | Zca 断点陷阱 | `rv64i/zca_ebreak_trap.elf` | `C.EBREAK` 触发 `mcause=3` 并恢复 | 退出码 0 (`--isa rv64imac`) |
 | Zca HINT | `rv64i/zca_hints.elf` | D2 HINT 编码不影响架构状态 | 退出码 0 (`--isa rv64imac`) |
 | Zca 跨页取指 | `rv64i/zca_straddle_fetch.elf` | 跨页 32 位指令第二 parcel 取指访问故障 (`mtval=0x2000`) | 退出码 0 (`--isa rv64imac`) |
+| F/D 舍入模式 | `rv64ifd/fd_rounding.elf` | 五种舍入模式的静态与动态选择、RMM 与 RNE 的差异、保留 `rm` 陷阱 | 退出码 0 (`--isa rv64imafd`) |
+| F/D 异常标志 | `rv64ifd/fd_flags.elf` | NX/UF/OF/DZ/NV 累积、舍入后检测非规格化、`fflags`/`frm`/`fcsr` 别名 | 退出码 0 (`--isa rv64imafd`) |
+| F/D NaN 装箱 | `rv64ifd/fd_nanbox.elf` | NaN 装箱、规范 NaN、FSGNJ 载荷保留、窄传输低 32 位 | 退出码 0 (`--isa rv64imafd`) |
+| F/D FS 状态 | `rv64ifd/fd_fs_state.elf` | FS=Off 陷阱、Dirty 标记规则、SD 位与 sstatus 视图 | 退出码 0 (`--isa rv64imafd`) |
+| F/D 融合乘加 | `rv64ifd/fd_fma.elf` | FMADD/FMSUB/FNMSUB/FNMADD 单次舍入 | 退出码 0 (`--isa rv64imafd`) |
+| F/D 转换与分类 | `rv64ifd/fd_convert.elf` | 饱和表、符号扩展、FCLASS 十类、NaN 比较规则 | 退出码 0 (`--isa rv64imafd`) |
+| Zcd 缺失对照 | `rv64ifd/fd_zcd_absent.elf` | `rv64imafd` 下四个 Zcd 编码仍触发 `mcause=2` | 退出码 0 (`--isa rv64imafd`) |
+| Zcd 传输 | `rv64ifd/zcd_transfer.elf` | 四个 Zcd parcel 的缩放偏移传输与 NaN 载荷保留 | 退出码 0 (`--isa rv64imafdc`) |
 
 ## 快速开始
 
@@ -71,7 +80,7 @@ riscv64-unknown-elf-as -march=rv64ima -mabi=lp64 add.S -o add.o
 riscv64-unknown-elf-ld -T ../linker.ld add.o -o add.elf
 ```
 
-`s4_*` guest 需改用 `-T ../linker-s4.ld`：其镜像内含页表，tohost 必须位于镜像之后的独立页。
+`s4_*` guest 需改用 `-T ../linker-s4.ld`：其镜像内含页表，tohost 必须位于镜像之后的独立页。`rv64ifd/` 下的 F/D 与 Zcd guest 同样使用 `linker-s4.ld`，镜像内包含数据表、暂存区和陷阱处理器。
 
 ### 3. 运行测试
 
@@ -143,7 +152,7 @@ riscv64-unknown-elf-readelf -h rv64i/add.elf | grep Machine
 
 ## 添加新测试
 
-1. 在对应扩展子目录 (`rv64i/`, `rv64m/` 等) 创建新的 `.S` 文件
+1. 在对应扩展子目录 (`rv64i/`, `rv64m/`, `rv64ifd/` 等) 创建新的 `.S` 文件
 2. 遵循现有测试的汇编模板
 3. 运行 `make` 自动编译所有子目录中的测试
 4. 更新此 README

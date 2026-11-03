@@ -1,0 +1,14 @@
+$schema: config_schema.json#
+kind: architecture configuration
+type: fully configured
+name: ruscv-rv64imafdc-zcd
+description: Nontrapping RV64I+Zca+F+D+Zcd selection only; not a complete machine capability claim.
+implemented_extensions:
+  - { name: I, version: "= 2.1.0" }
+  - { name: Zca, version: "= 1.0.0" }
+  - { name: Zicsr, version: "= 2.0.0" }
+  - { name: F, version: "= 2.2.0" }
+  - { name: D, version: "= 2.2.0" }
+  - { name: Zcd, version: "= 1.0.0" }
+params:
+  MXLEN: 64

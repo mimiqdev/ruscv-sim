@@ -121,6 +121,7 @@ grep -E '^(source_head|source_count|compiled_count)=' "${manifest}" || true
 mapfile -t ELF_FILES < <(
     find "${OUTDIR}/rv64i" "${OUTDIR}/rv64m" -type f -name '*.elf' -print | sort
     find "${OUTDIR}/rv64a" -type f -name '*.elf' -print | sort
+    find "${OUTDIR}/rv64ifd" -type f -name '*.elf' -print | sort
 )
 if [ "${#ELF_FILES[@]}" -eq 0 ]; then
     echo -e "${RED}Error: no ELF files found in ${OUTDIR}${NC}" >&2
@@ -157,6 +158,16 @@ for required in zca_ctrl_flow zca_link_values zca_straddle_fetch zca_ebreak_trap
     fi
 done
 
+# F/D U5 guests are required members of the same suite: the rv64imafd profile
+# for the fp_* names and rv64imafdc for zcd_transfer.
+for required in fd_rounding fd_flags fd_nanbox fd_fma fd_convert fd_fs_state fd_zcd_absent \
+    zcd_transfer; do
+    if [ ! -f "${OUTDIR}/rv64ifd/${required}.elf" ]; then
+        echo -e "${RED}Error: required F/D guest missing: ${required}.elf${NC}" >&2
+        exit 2
+    fi
+done
+
 # Stage 4 guests and the Stage 5 U1 through U4 guests live under rv64i and
 # are linked with linker-s4.ld. The suite fails if any of them is missing.
 for required in \
@@ -183,11 +194,14 @@ for elf in "${ELF_FILES[@]}"; do
     name="$(basename "${elf}" .elf)"
     echo -e "${YELLOW}Test ${number}/${#ELF_FILES[@]}: ${name}.elf${NC}"
     echo "  File: ${elf}"
-    # Zca U4 compressed guests select the rv64imac profile; every existing
+    # Zca U4 compressed guests select the rv64imac profile, F/D U5 guests
+    # select rv64imafd, and the Zcd guest selects rv64imafdc; every existing
     # guest runs unchanged under the default rv64ima.
     isa_args=( )
     case "${name}" in
         zca_*) isa_args=(--isa rv64imac) ;;
+        fd_*) isa_args=(--isa rv64imafd) ;;
+        zcd_*) isa_args=(--isa rv64imafdc) ;;
     esac
     if ! check_entry "${elf}"; then
         failed=$((failed + 1))
