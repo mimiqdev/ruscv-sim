@@ -3,8 +3,10 @@
 //! This test deliberately assembles and links the Sv39 guests into a
 //! temporary directory for every invocation, exactly like the A6 trap
 //! guests, and runs each through the three public routes: the `ruscv-sim
-//! run` CLI child, the native library entry (`load_and_run`), and the flat
-//! facade (`RiscVSimulator`).  A pre-existing ELF is never accepted.
+//! run` CLI child, the native library entry (`load_and_run_with_isa`), and
+//! the flat facade (`RiscVSimulator::new_with_isa`).  A pre-existing ELF is
+//! never accepted.  The routes select `rv64ima` explicitly (contract D3):
+//! the SRET guests assert the IALIGN=32 `sepc` bits-1:0 mask.
 //!
 //! `s4_mapped_rw` proves the mapped read/write family: an M-mode boot
 //! builds Sv39 tables, mret enters S, translated fetch runs from a 4 KiB
@@ -50,7 +52,8 @@
 //! is reserved, so the trap is asserted as consistency with the Spike and
 //! Sail reference models, not as a specification requirement.
 
-use ruscv_sim::executor::{load_and_run, RiscVSimulator};
+use ruscv_sim::executor::{load_and_run_with_isa, RiscVSimulator};
+use ruscv_sim::IsaProfile;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -166,8 +169,11 @@ fn s4_sv39_guests_pass_through_cli_library_and_flat_facade() {
         );
         let elf_data = std::fs::read(&elf).expect("fresh guest ELF");
 
+        // Every route selects rv64ima explicitly (contract D3): the SRET
+        // guests assert the IALIGN=32 sepc bits-1:0 mask.
         let cli_result = Command::new(&cli)
             .args(["run", elf.to_str().expect("UTF-8 guest path")])
+            .args(["--isa", "rv64ima"])
             .args(["--max-cycles", &MAX_CYCLES.to_string()])
             .output()
             .unwrap_or_else(|error| panic!("failed to run CLI for {name}: {error}"));
@@ -179,8 +185,15 @@ fn s4_sv39_guests_pass_through_cli_library_and_flat_facade() {
             String::from_utf8_lossy(&cli_result.stderr)
         );
 
-        let library_result = load_and_run(&elf_data, Some(MAX_CYCLES), None, None, false)
-            .unwrap_or_else(|error| panic!("load_and_run failed for {name}: {error}"));
+        let library_result = load_and_run_with_isa(
+            &elf_data,
+            Some(MAX_CYCLES),
+            None,
+            None,
+            false,
+            IsaProfile::Rv64ima,
+        )
+        .unwrap_or_else(|error| panic!("load_and_run_with_isa failed for {name}: {error}"));
         assert_eq!(library_result.exit_code, 0, "library route: {name}");
         assert!(!library_result.timed_out, "library route timed out: {name}");
         assert!(
@@ -189,7 +202,7 @@ fn s4_sv39_guests_pass_through_cli_library_and_flat_facade() {
             library_result.error
         );
 
-        let mut flat = RiscVSimulator::new(0x20_000);
+        let mut flat = RiscVSimulator::new_with_isa(0x20_000, IsaProfile::Rv64ima);
         flat.load_elf(&elf_data)
             .unwrap_or_else(|error| panic!("flat facade load failed for {name}: {error}"));
         let flat_result = flat
