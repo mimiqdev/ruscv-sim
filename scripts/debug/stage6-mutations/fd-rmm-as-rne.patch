@@ -1,0 +1,13 @@
+diff --git i/src/fpu/arith/common.rs w/src/fpu/arith/common.rs
+index d511d2c..ec7fc25 100644
+--- i/src/fpu/arith/common.rs
++++ w/src/fpu/arith/common.rs
+@@ -44,7 +44,7 @@ impl Rounding {
+             1 => Some(Self::Rtz),
+             2 => Some(Self::Rdn),
+             3 => Some(Self::Rup),
+-            4 => Some(Self::Rmm),
++            4 => Some(Self::Rne),
+             _ => None,
+         }
+     }

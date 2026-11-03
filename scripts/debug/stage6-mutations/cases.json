@@ -675,5 +675,134 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "fd-rounds-to-integer",
+    "patch": "fd-rounds-to-integer.patch",
+    "source": "src/fpu/arith/single.rs",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "fpu::arith::tests::arithmetic_rounds_to_the_format_not_to_an_integer",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+\\(1073741824, FpFlags\\(0x0\\)\\)",
+          "right:\\s+\\(1071644672, FpFlags\\(0x0\\)\\)"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "fd-rmm-as-rne",
+    "patch": "fd-rmm-as-rne.patch",
+    "source": "src/fpu/arith/common.rs",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "fd_u3a_execution"
+        ],
+        "test": "static_rounding_modes_produce_their_own_results",
+        "failure": [
+          "assertion `left == right` failed: rm 4",
+          "left:\\s+1065353216",
+          "right:\\s+1065353217"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "fd-unfused-fma",
+    "patch": "fd-unfused-fma.patch",
+    "source": "src/fpu/arith/single.rs",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "fpu::arith::tests::fused_multiply_add_rounds_once",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+\\(0, FpFlags\\(NX\\)\\)",
+          "right:\\s+\\(864026622, FpFlags\\(0x0\\)\\)"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "fd-f0-hardwired",
+    "patch": "fd-f0-hardwired.patch",
+    "source": "src/fpu/mod.rs",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "fd_u3a_execution"
+        ],
+        "test": "f0_is_an_ordinary_floating_point_register",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+0",
+          "right:\\s+18446744070496714752"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "fd-eq-qnan-nv",
+    "patch": "fd-eq-qnan-nv.patch",
+    "source": "src/fpu/arith/single.rs",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "fpu::arith::tests::comparisons_use_quiet_and_signaling_nan_rules",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+\\(false, FpFlags\\(NV\\)\\)",
+          "right:\\s+\\(false, FpFlags\\(0x0\\)\\)"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "fd-fcvt-wu-negative",
+    "patch": "fd-fcvt-wu-negative.patch",
+    "source": "src/fpu/arith/common.rs",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "fpu::arith::tests::fcvt_float_to_integer_saturation_table",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+\\(18446744073709551615, FpFlags\\(NV\\)\\)",
+          "right:\\s+\\(0, FpFlags\\(NV\\)\\)"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "fd-default-misa-f",
+    "patch": "fd-default-misa-f.patch",
+    "source": "src/machine/mod.rs",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "fd_u1_fp_state"
+        ],
+        "test": "profiles_report_exact_read_only_misa",
+        "failure": [
+          "assertion `left == right` failed: profile rv64ima",
+          "left:\\s+9223372036856090913",
+          "right:\\s+9223372036856090881"
+        ]
+      }
+    ]
   }
 ]

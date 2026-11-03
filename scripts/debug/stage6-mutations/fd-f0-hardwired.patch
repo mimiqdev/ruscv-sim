@@ -1,0 +1,14 @@
+diff --git i/src/fpu/mod.rs w/src/fpu/mod.rs
+index c45256a..ed42608 100644
+--- i/src/fpu/mod.rs
++++ w/src/fpu/mod.rs
+@@ -148,6 +148,9 @@ impl FpuRegisterFile {
+     /// Read a floating-point register.  `f0` is an ordinary register and has
+     /// no hard-wired value (contract D5).
+     pub fn read(&self, reg: usize) -> Fpr {
++        if reg == 0 {
++            return Fpr::ZERO;
++        }
+         self.regs[reg & 0x1F]
+     }
+ 

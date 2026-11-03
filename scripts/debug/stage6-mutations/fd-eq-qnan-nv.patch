@@ -1,0 +1,13 @@
+diff --git i/src/fpu/arith/single.rs w/src/fpu/arith/single.rs
+index aafd7f8..c5cb5ee 100644
+--- i/src/fpu/arith/single.rs
++++ w/src/fpu/arith/single.rs
+@@ -735,7 +735,7 @@ fn lt_bits(a: u32, b: u32) -> bool {
+ pub fn eq(a: u32, b: u32) -> (bool, FpFlags) {
+     let mut flags = FpFlags::empty();
+     if is_nan(a) || is_nan(b) {
+-        if is_signaling_nan(a) || is_signaling_nan(b) {
++        if is_nan(a) || is_nan(b) {
+             flags |= FpFlags::NV;
+         }
+         return (false, flags);

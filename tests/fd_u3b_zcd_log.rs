@@ -435,7 +435,12 @@ fn zcd_stays_illegal_under_imac_and_has_no_path_under_imafd() {
         core.state_mut().regs[2] = 0x100;
         core.state_mut().regs[8] = 0x100;
         write64(&ram, 0x100, SENTINEL);
-        write16(&ram, 0, parcel); // low half of the aligned word
+        // The parcel sits in the low half of the word and the upper half is
+        // nonzero, so the `mtval` assertion below proves the trap reports the
+        // parcel alone, not the whole 32-bit fetch word (archived Zca contract
+        // D2; pinned Spike reports the first parcel it reads).
+        write16(&ram, 0, parcel);
+        write16(&ram, 2, 0xffff);
         let entered = trap(&mut core);
         assert_eq!(
             entered.cause,
