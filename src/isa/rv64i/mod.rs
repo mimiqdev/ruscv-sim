@@ -213,6 +213,7 @@ mod tests {
             rd: Some(1),
             imm: Some(0x12345000),
             branch_taken: false,
+            fp: None,
         };
         let mut mem = SimpleMemory::new(0x1000);
 
@@ -237,6 +238,7 @@ mod tests {
             rd: Some(2),
             imm: Some(5),
             branch_taken: false,
+            fp: None,
         };
         let mut mem = SimpleMemory::new(0x1000);
 
@@ -262,6 +264,7 @@ mod tests {
             rd: Some(3),
             imm: None,
             branch_taken: false,
+            fp: None,
         };
         let mut mem = SimpleMemory::new(0x1000);
 

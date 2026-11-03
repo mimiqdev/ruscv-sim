@@ -24,6 +24,7 @@ fn mret_instruction() -> DecodedInstruction {
         rd: None,
         imm: Some(0x302),
         branch_taken: false,
+        fp: None,
     }
 }
 

@@ -24,6 +24,7 @@ fn create_div_instr(rs1: u8, rs2: u8, rd: u8, funct7: u8) -> DecodedInstruction 
         rd: Some(rd),
         imm: None,
         branch_taken: false,
+        fp: None,
     }
 }
 

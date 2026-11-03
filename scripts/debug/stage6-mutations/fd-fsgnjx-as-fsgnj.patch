@@ -1,0 +1,22 @@
+diff --git i/src/isa/fd/mod.rs w/src/isa/fd/mod.rs
+index 90865b1..22023c6 100644
+--- i/src/isa/fd/mod.rs
++++ w/src/isa/fd/mod.rs
+@@ -111,7 +111,7 @@ pub fn execute(
+                 let result = match fp.op {
+                     FpOp::Sgnj => arith::single::fsgnj(a, b),
+                     FpOp::Sgnjn => arith::single::fsgnjn(a, b),
+-                    _ => arith::single::fsgnjx(a, b),
++                    _ => arith::single::fsgnj(a, b),
+                 };
+                 write_single(state, rd, result);
+             }
+@@ -120,7 +120,7 @@ pub fn execute(
+                 let result = match fp.op {
+                     FpOp::Sgnj => arith::double::fsgnj(a, b),
+                     FpOp::Sgnjn => arith::double::fsgnjn(a, b),
+-                    _ => arith::double::fsgnjx(a, b),
++                    _ => arith::double::fsgnj(a, b),
+                 };
+                 write_double(state, rd, result);
+             }

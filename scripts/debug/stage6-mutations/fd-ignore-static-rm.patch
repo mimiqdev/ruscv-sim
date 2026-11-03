@@ -1,0 +1,13 @@
+diff --git i/src/isa/fd/mod.rs w/src/isa/fd/mod.rs
+index 90865b1..2ba0b06 100644
+--- i/src/isa/fd/mod.rs
++++ w/src/isa/fd/mod.rs
+@@ -299,7 +299,7 @@ fn resolve_rounding(
+         return Ok(None);
+     }
+     let raw = fp.rm.ok_or(ExecuteError::IllegalInstruction)?;
+-    let resolved = if raw == 7 { state.fcsr.frm_bits() } else { raw };
++    let resolved = if raw == 7 { state.fcsr.frm_bits() } else { 0 };
+     Rounding::from_encoding(resolved)
+         .map(Some)
+         .ok_or(ExecuteError::IllegalInstruction)

@@ -83,5 +83,5 @@ name = "cache_bench"
 harness = false
 
 [[bench]]
-name = "rv64d_bench"
+name = "fd_bench"
 harness = false

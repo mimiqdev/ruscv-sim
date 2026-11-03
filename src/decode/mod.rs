@@ -20,12 +20,13 @@ pub enum DecodeError {
 /// RV32I Instruction format
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstructionFormat {
-    RType, // Register-Register
-    IType, // Immediate operation
-    SType, // Store
-    BType, // Conditional branch
-    UType, // Long immediate (LUI, AUIPC)
-    JType, // Unconditional jump (JAL)
+    RType,  // Register-Register
+    R4Type, // Register-Register with a third source (FP fused multiply-add)
+    IType,  // Immediate operation
+    SType,  // Store
+    BType,  // Conditional branch
+    UType,  // Long immediate (LUI, AUIPC)
+    JType,  // Unconditional jump (JAL)
 }
 
 /// RV32I Opcode (primary)
@@ -36,6 +37,10 @@ pub enum Opcode {
     LoadFp = 0b000_0111,
     Store = 0b010_0011,
     StoreFp = 0b010_0111,
+    Madd = 0b100_0011,
+    Msub = 0b100_0111,
+    Nmsub = 0b100_1011,
+    Nmadd = 0b100_1111,
     MiscMem = 0b000_1111,
     OpImm = 0b001_0011,
     OpImm32 = 0b001_1011,
@@ -76,6 +81,157 @@ pub enum FPRoundingMode {
     DYN = 7, // Dynamic rounding mode
 }
 
+/// Floating-point operand format from the explicit `fmt` field.
+///
+/// The F and D profile implements `fmt = 00` (single) and `fmt = 01`
+/// (double). `fmt = 10` and `fmt = 11` belong to Zfh and Q, which this
+/// profile does not implement, so their encodings are reserved and raise
+/// illegal-instruction (contract D2, D7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FpFormat {
+    /// `fmt = 00`, the F extension's single precision.
+    Single,
+    /// `fmt = 01`, the D extension's double precision.
+    Double,
+}
+
+impl FpFormat {
+    /// Decode the two-bit `fmt` field (OP-FP/R4 bits 26:25).
+    ///
+    /// Returns `None` for the out-of-profile Zfh and Q formats.
+    pub fn from_encoding(bits: u8) -> Option<Self> {
+        match bits & 0x3 {
+            0 => Some(Self::Single),
+            1 => Some(Self::Double),
+            _ => None,
+        }
+    }
+
+    /// The two-bit `fmt` encoding of this format.
+    pub fn encoding(self) -> u8 {
+        match self {
+            Self::Single => 0,
+            Self::Double => 1,
+        }
+    }
+
+    /// True for the double-precision format (`fmt = 01`).
+    pub fn is_double(self) -> bool {
+        self == Self::Double
+    }
+}
+
+/// Integer width selected by an `FCVT` instruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntWidth {
+    /// `W`: the low 32 bits of the integer register.
+    Word,
+    /// `L`: the full 64-bit integer register.
+    Long,
+}
+
+/// Explicit F/D operation selected by an OP-FP or R4 encoding.
+///
+/// The operation is resolved at decode time so execution never re-reads
+/// `funct7`, `rs2` or `funct3` to guess the instruction (contract D7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FpOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Sqrt,
+    Madd,
+    Msub,
+    Nmsub,
+    Nmadd,
+    Sgnj,
+    Sgnjn,
+    Sgnjx,
+    Min,
+    Max,
+    Eq,
+    Lt,
+    Le,
+    Classify,
+    /// `FCVT.W[U].S/D` and `FCVT.L[U].S/D`: floating-point to integer.
+    CvtToInt {
+        width: IntWidth,
+        signed: bool,
+    },
+    /// `FCVT.S/D.W[U]` and `FCVT.S/D.L[U]`: integer to floating-point.
+    CvtFromInt {
+        width: IntWidth,
+        signed: bool,
+    },
+    /// `FCVT.S.D` (narrowing).
+    CvtToSingle,
+    /// `FCVT.D.S` (widening, exact).
+    CvtToDouble,
+    /// `FMV.X.W` / `FMV.X.D`: an integer-register transfer out of an FPR.
+    MoveToGpr,
+    /// `FMV.W.X` / `FMV.D.X`: an integer-register transfer into an FPR.
+    MoveFromGpr,
+    /// `FLW` / `FLD`.
+    Load,
+    /// `FSW` / `FSD`.
+    Store,
+}
+
+impl FpOp {
+    /// True when the encoding carries an `rm` field that must resolve to an
+    /// implemented rounding mode. A reserved static `rm` (5 or 6), or a
+    /// dynamic `rm` while `frm` holds 5-7, is illegal-instruction
+    /// (contract D5).
+    pub fn requires_rounding(self) -> bool {
+        matches!(
+            self,
+            Self::Add
+                | Self::Sub
+                | Self::Mul
+                | Self::Div
+                | Self::Sqrt
+                | Self::Madd
+                | Self::Msub
+                | Self::Nmsub
+                | Self::Nmadd
+                | Self::CvtToInt { .. }
+                | Self::CvtFromInt { .. }
+                | Self::CvtToSingle
+                | Self::CvtToDouble
+        )
+    }
+
+    /// True when the retired instruction writes `rd` in the integer register
+    /// file. These operations form the GPR destination fact of a commit.
+    pub fn writes_gpr(self) -> bool {
+        matches!(
+            self,
+            Self::Eq
+                | Self::Lt
+                | Self::Le
+                | Self::Classify
+                | Self::CvtToInt { .. }
+                | Self::MoveToGpr
+        )
+    }
+}
+
+/// Explicit decode of one F/D instruction (contract U3a, D7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FpInstruction {
+    /// Operand format from the explicit `fmt` field (OP-FP/R4 bits 26:25)
+    /// or from the LOAD-FP/STORE-FP width in `funct3`.
+    pub fmt: FpFormat,
+    /// The raw `rm` field (bits 14:12) before dynamic resolution. It is
+    /// present only for instructions that round; for FSGNJ*, FMIN/FMAX,
+    /// compares, FCLASS and FMV those bits select the operation instead,
+    /// and LOAD-FP/STORE-FP have no such field.
+    pub rm: Option<u8>,
+    /// The resolved operation.
+    pub op: FpOp,
+}
+
 /// 译码后的指令
 #[derive(Debug, Clone)]
 pub struct DecodedInstruction {
@@ -101,6 +257,9 @@ pub struct DecodedInstruction {
     pub imm: Option<u32>,
     /// 是否发生分支跳转
     pub branch_taken: bool,
+    /// Explicit F/D decode: operand format, raw `rm` and the resolved
+    /// operation (contract U3a). `None` for every non-FP instruction.
+    pub fp: Option<FpInstruction>,
 }
 
 impl DecodedInstruction {
@@ -118,6 +277,7 @@ impl DecodedInstruction {
             rd: None,
             imm: None,
             branch_taken: false,
+            fp: None,
         }
     }
 }
@@ -285,55 +445,202 @@ impl InstructionDecoder {
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
                 decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
             }
-            // F extension opcodes
-            Opcode::LoadFp => {
-                decoded.format = InstructionFormat::IType;
+            // F extension opcodes. The FP decode is explicit: LOAD-FP and
+            // STORE-FP carry their width in `funct3`, and only FLW/FLD and
+            // FSW/FSD exist in this profile. Any other width is a reserved
+            // encoding, so it raises illegal-instruction rather than an
+            // execution failure (contract D7).
+            Opcode::LoadFp | Opcode::StoreFp => {
+                let is_load = opcode == Opcode::LoadFp;
+                decoded.format = if is_load {
+                    InstructionFormat::IType
+                } else {
+                    InstructionFormat::SType
+                };
                 decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
-                decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
                 decoded.funct3 =
                     Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
-                decoded.imm = Some(((instruction >> 20) as i32) as u32 & 0xFFF);
+                decoded.imm = if is_load {
+                    Some(((instruction >> 20) as i32) as u32 & 0xFFF)
+                } else {
+                    // S-type immediate: imm[11:5] | imm[4:0]
+                    let imm11_5 = ((instruction >> 25) & 0x7F) << 5;
+                    let imm4_0 = (instruction >> 7) & 0x1F;
+                    Some(imm11_5 | imm4_0)
+                };
+                let funct3 = ((instruction >> 12) & 0x7) as u8;
+                let fmt = match funct3 {
+                    0b010 => FpFormat::Single,
+                    0b011 => FpFormat::Double,
+                    _ => return Err(DecodeError::ReservedInstruction),
+                };
+                if is_load {
+                    decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                } else {
+                    decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
+                }
+                decoded.fp = Some(FpInstruction {
+                    fmt,
+                    rm: None,
+                    op: if is_load { FpOp::Load } else { FpOp::Store },
+                });
             }
-            Opcode::StoreFp => {
-                decoded.format = InstructionFormat::SType;
+            Opcode::Madd | Opcode::Msub | Opcode::Nmsub | Opcode::Nmadd => {
+                // R4 type: rd | rm | rs1 | rs2 | fmt | rs3 | opcode.
+                decoded.format = InstructionFormat::R4Type;
+                decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
                 decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
                 decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
-                decoded.funct3 =
-                    Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
-                // S-type immediate: imm[11:5] | imm[4:0]
-                let imm11_5 = ((instruction >> 25) & 0x7F) << 5;
-                let imm4_0 = (instruction >> 7) & 0x1F;
-                decoded.imm = Some(imm11_5 | imm4_0);
+                decoded.rs3 = Some(((instruction >> 27) & 0x1F) as u8);
+                let fmt = FpFormat::from_encoding(((instruction >> 25) & 0x3) as u8)
+                    .ok_or(DecodeError::ReservedInstruction)?;
+                let op = match opcode {
+                    Opcode::Madd => FpOp::Madd,
+                    Opcode::Msub => FpOp::Msub,
+                    Opcode::Nmsub => FpOp::Nmsub,
+                    _ => FpOp::Nmadd,
+                };
+                decoded.fp = Some(FpInstruction {
+                    fmt,
+                    rm: Some(((instruction >> 12) & 0x7) as u8),
+                    op,
+                });
             }
             Opcode::OpFp => {
-                // Check if this is an R4-type instruction (FMADD/FMSUB/FNMSUB/FNMADD)
-                // R4-type has rs3 field in bits [31:27]
-                let rs3_bits = (instruction >> 27) & 0x1F;
-                if rs3_bits <= 4 {
-                    // R4-type for FMA instructions
-                    decoded.format = InstructionFormat::RType;
-                    decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
-                    decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
-                    decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
-                    decoded.rs3 = Some(((instruction >> 27) & 0x1F) as u8);
-                    decoded.funct3 =
-                        Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
-                    decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
-                } else {
-                    // Standard R-type for other FPU operations
-                    decoded.format = InstructionFormat::RType;
-                    decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
-                    decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
-                    decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
-                    decoded.funct3 =
-                        Some(Funct3::try_from(((instruction >> 12) & 0x7) as u8).ok()).flatten();
-                    decoded.funct7 = Some(((instruction >> 25) & 0x7F) as u8);
-                }
+                decoded.format = InstructionFormat::RType;
+                decoded.rd = Some(((instruction >> 7) & 0x1F) as u8);
+                decoded.rs1 = Some(((instruction >> 15) & 0x1F) as u8);
+                decoded.rs2 = Some(((instruction >> 20) & 0x1F) as u8);
+                let funct3 = ((instruction >> 12) & 0x7) as u8;
+                decoded.funct3 = Some(Funct3::try_from(funct3).ok()).flatten();
+                let funct7 = ((instruction >> 25) & 0x7F) as u8;
+                decoded.funct7 = Some(funct7);
+                decoded.fp = Some(decode_op_fp(funct7, decoded.rs2.unwrap(), funct3)?);
             }
         }
 
         Ok(decoded)
     }
+}
+
+/// Decode one OP-FP word into its explicit format, raw `rm` and operation.
+///
+/// `funct7[6:2]` selects the operation and `funct7[1:0]` is the explicit
+/// `fmt`. Bits 14:12 are the `rm` field for instructions that round and an
+/// operation selector for the others. Every unassigned combination is a
+/// reserved encoding (contract D7).
+fn decode_op_fp(funct7: u8, rs2: u8, selector: u8) -> Result<FpInstruction, DecodeError> {
+    let fmt = FpFormat::from_encoding(funct7 & 0x3).ok_or(DecodeError::ReservedInstruction)?;
+    let opcode = funct7 >> 2;
+    let (op, rounds) = match opcode {
+        0x00 => (FpOp::Add, true),
+        0x01 => (FpOp::Sub, true),
+        0x02 => (FpOp::Mul, true),
+        0x03 => (FpOp::Div, true),
+        0x0b if rs2 == 0 => (FpOp::Sqrt, true),
+        0x04 => match selector {
+            0 => (FpOp::Sgnj, false),
+            1 => (FpOp::Sgnjn, false),
+            2 => (FpOp::Sgnjx, false),
+            _ => return Err(DecodeError::ReservedInstruction),
+        },
+        0x05 => match selector {
+            0 => (FpOp::Min, false),
+            1 => (FpOp::Max, false),
+            _ => return Err(DecodeError::ReservedInstruction),
+        },
+        0x14 => match selector {
+            0 => (FpOp::Le, false),
+            1 => (FpOp::Lt, false),
+            2 => (FpOp::Eq, false),
+            _ => return Err(DecodeError::ReservedInstruction),
+        },
+        // FCVT.W[U].S/D and FCVT.L[U].S/D: rs2 selects width and signedness.
+        0x18 => match rs2 {
+            0 => (
+                FpOp::CvtToInt {
+                    width: IntWidth::Word,
+                    signed: true,
+                },
+                true,
+            ),
+            1 => (
+                FpOp::CvtToInt {
+                    width: IntWidth::Word,
+                    signed: false,
+                },
+                true,
+            ),
+            2 => (
+                FpOp::CvtToInt {
+                    width: IntWidth::Long,
+                    signed: true,
+                },
+                true,
+            ),
+            3 => (
+                FpOp::CvtToInt {
+                    width: IntWidth::Long,
+                    signed: false,
+                },
+                true,
+            ),
+            _ => return Err(DecodeError::ReservedInstruction),
+        },
+        // FCVT.S/D.W[U] and FCVT.S/D.L[U].
+        0x1a => match rs2 {
+            0 => (
+                FpOp::CvtFromInt {
+                    width: IntWidth::Word,
+                    signed: true,
+                },
+                true,
+            ),
+            1 => (
+                FpOp::CvtFromInt {
+                    width: IntWidth::Word,
+                    signed: false,
+                },
+                true,
+            ),
+            2 => (
+                FpOp::CvtFromInt {
+                    width: IntWidth::Long,
+                    signed: true,
+                },
+                true,
+            ),
+            3 => (
+                FpOp::CvtFromInt {
+                    width: IntWidth::Long,
+                    signed: false,
+                },
+                true,
+            ),
+            _ => return Err(DecodeError::ReservedInstruction),
+        },
+        // FCVT.S.D has rs2 = 1; FCVT.D.S has rs2 = 0. The `rs2` field names
+        // the source format, so it must agree with `fmt`.
+        0x08 => match (fmt, rs2) {
+            (FpFormat::Single, 1) => (FpOp::CvtToSingle, true),
+            (FpFormat::Double, 0) => (FpOp::CvtToDouble, true),
+            _ => return Err(DecodeError::ReservedInstruction),
+        },
+        // FMV.X.W/D and FCLASS.S/D: funct3 selects the operation.
+        0x1c => match selector {
+            0 if rs2 == 0 => (FpOp::MoveToGpr, false),
+            1 if rs2 == 0 => (FpOp::Classify, false),
+            _ => return Err(DecodeError::ReservedInstruction),
+        },
+        // FMV.W.X and FMV.D.X.
+        0x1e if rs2 == 0 && selector == 0 => (FpOp::MoveFromGpr, false),
+        _ => return Err(DecodeError::ReservedInstruction),
+    };
+    Ok(FpInstruction {
+        fmt,
+        rm: rounds.then_some(selector),
+        op,
+    })
 }
 
 impl Default for InstructionDecoder {
@@ -516,5 +823,204 @@ mod tests {
         assert_eq!(decoded.imm, Some(8), "immediate should be 8");
         assert_eq!(decoded.funct3, Some(Funct3::Sltu)); // funct3 = 0b011
         assert!(decoded.rs2.is_none(), "Load should not have rs2");
+    }
+
+    // ============== F/D explicit decode (contract U3a, D7) ==============
+
+    fn op_fp(funct7: u32, rs2: u32, rs1: u32, selector: u32, rd: u32) -> u32 {
+        (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (selector << 12) | (rd << 7) | 0b101_0011
+    }
+
+    fn r4(opcode: u32, rs3: u32, fmt: u32, rs2: u32, rs1: u32, rm: u32, rd: u32) -> u32 {
+        (rs3 << 27) | (fmt << 25) | (rs2 << 20) | (rs1 << 15) | (rm << 12) | (rd << 7) | opcode
+    }
+
+    fn fp_decode(raw: u32) -> FpInstruction {
+        InstructionDecoder::new()
+            .decode(raw)
+            .unwrap()
+            .fp
+            .expect("an FP instruction carries an explicit decode")
+    }
+
+    #[test]
+    fn fp_arithmetic_decode_is_explicit_about_fmt_and_rm() {
+        // FADD.S fa0, fa1, fa2, RMM; FADD.D with the same fields.
+        let s = fp_decode(op_fp(0x00, 12, 11, 4, 10));
+        assert_eq!(s.fmt, FpFormat::Single);
+        assert_eq!(s.rm, Some(4));
+        assert_eq!(s.op, FpOp::Add);
+
+        let d = fp_decode(op_fp(0x01, 12, 11, 4, 10));
+        assert_eq!(d.fmt, FpFormat::Double);
+        assert_eq!(d.rm, Some(4));
+        assert_eq!(d.op, FpOp::Add);
+
+        let sqrt = fp_decode(op_fp(0x2D, 0, 11, 2, 10));
+        assert_eq!(
+            (sqrt.fmt, sqrt.op, sqrt.rm),
+            (FpFormat::Double, FpOp::Sqrt, Some(2))
+        );
+    }
+
+    #[test]
+    fn fp_non_rounding_selectors_are_not_reported_as_rm() {
+        for (selector, op) in [(0, FpOp::Sgnj), (1, FpOp::Sgnjn), (2, FpOp::Sgnjx)] {
+            let fp = fp_decode(op_fp(0x10, 12, 11, selector, 10));
+            assert_eq!(fp.op, op);
+            assert_eq!(fp.rm, None);
+        }
+        assert_eq!(fp_decode(op_fp(0x15, 12, 11, 1, 10)).op, FpOp::Max);
+        assert_eq!(fp_decode(op_fp(0x51, 12, 11, 0, 10)).op, FpOp::Le);
+        assert_eq!(fp_decode(op_fp(0x50, 12, 11, 1, 10)).op, FpOp::Lt);
+        assert_eq!(fp_decode(op_fp(0x51, 12, 11, 2, 10)).op, FpOp::Eq);
+        assert_eq!(fp_decode(op_fp(0x70, 0, 11, 1, 10)).op, FpOp::Classify);
+        assert_eq!(fp_decode(op_fp(0x71, 0, 11, 0, 10)).op, FpOp::MoveToGpr);
+        assert_eq!(fp_decode(op_fp(0x79, 0, 11, 0, 10)).op, FpOp::MoveFromGpr);
+    }
+
+    #[test]
+    fn fp_conversions_decode_their_direction_and_width() {
+        let to_int = fp_decode(op_fp(0x60, 1, 11, 3, 10));
+        assert_eq!(
+            to_int.op,
+            FpOp::CvtToInt {
+                width: IntWidth::Word,
+                signed: false
+            }
+        );
+        assert_eq!((to_int.fmt, to_int.rm), (FpFormat::Single, Some(3)));
+
+        let from_int = fp_decode(op_fp(0x69, 2, 11, 0, 10));
+        assert_eq!(
+            from_int.op,
+            FpOp::CvtFromInt {
+                width: IntWidth::Long,
+                signed: true
+            }
+        );
+        assert_eq!((from_int.fmt, from_int.rm), (FpFormat::Double, Some(0)));
+
+        let narrow = fp_decode(op_fp(0x20, 1, 11, 1, 10));
+        assert_eq!(
+            (narrow.op, narrow.fmt),
+            (FpOp::CvtToSingle, FpFormat::Single)
+        );
+        let widen = fp_decode(op_fp(0x21, 0, 11, 2, 10));
+        assert_eq!((widen.op, widen.fmt), (FpOp::CvtToDouble, FpFormat::Double));
+    }
+
+    #[test]
+    fn fp_load_store_decode_uses_funct3_width() {
+        let flw = InstructionDecoder::new()
+            .decode((4 << 20) | (11 << 15) | (2 << 12) | (10 << 7) | 0b000_0111)
+            .unwrap();
+        assert_eq!(flw.opcode, Opcode::LoadFp);
+        assert_eq!(flw.rd, Some(10));
+        assert_eq!(flw.rs1, Some(11));
+        assert_eq!(
+            flw.fp,
+            Some(FpInstruction {
+                fmt: FpFormat::Single,
+                rm: None,
+                op: FpOp::Load
+            })
+        );
+        let fsd = InstructionDecoder::new()
+            .decode((4 << 25) | (12 << 20) | (11 << 15) | (3 << 12) | (8 << 7) | 0b010_0111)
+            .unwrap();
+        assert_eq!(fsd.rs2, Some(12));
+        assert_eq!(fsd.imm, Some(4 << 5 | 8));
+        assert_eq!(
+            fsd.fp,
+            Some(FpInstruction {
+                fmt: FpFormat::Double,
+                rm: None,
+                op: FpOp::Store
+            })
+        );
+    }
+
+    #[test]
+    fn r4_decode_carries_fmt_rm_and_rs3() {
+        let fmadd = InstructionDecoder::new()
+            .decode(r4(0b100_0011, 13, 0, 12, 11, 2, 10))
+            .unwrap();
+        assert_eq!(fmadd.opcode, Opcode::Madd);
+        assert_eq!(fmadd.format, InstructionFormat::R4Type);
+        assert_eq!(fmadd.rs3, Some(13));
+        assert_eq!(
+            fmadd.fp,
+            Some(FpInstruction {
+                fmt: FpFormat::Single,
+                rm: Some(2),
+                op: FpOp::Madd
+            })
+        );
+
+        let nmsub = InstructionDecoder::new()
+            .decode(r4(0b100_1011, 13, 1, 12, 11, 4, 10))
+            .unwrap();
+        assert_eq!(nmsub.opcode, Opcode::Nmsub);
+        assert_eq!(
+            nmsub.fp,
+            Some(FpInstruction {
+                fmt: FpFormat::Double,
+                rm: Some(4),
+                op: FpOp::Nmsub
+            })
+        );
+    }
+
+    #[test]
+    fn reserved_fp_encodings_are_decode_errors() {
+        let decoder = InstructionDecoder::new();
+        for raw in [
+            // fmt = 10 (Zfh) is out of profile.
+            op_fp(0x02, 12, 11, 0, 10),
+            // FSQRT with a nonzero rs2.
+            op_fp(0x2C, 1, 11, 0, 10),
+            // FSGNJ/FMIN/FCMP with a reserved selector.
+            op_fp(0x10, 12, 11, 3, 10),
+            op_fp(0x14, 12, 11, 2, 10),
+            op_fp(0x50, 12, 11, 3, 10),
+            // FCVT with an unassigned rs2, and a source/destination format
+            // mismatch (FCVT.S.S is not an instruction).
+            op_fp(0x60, 4, 11, 0, 10),
+            op_fp(0x20, 0, 11, 0, 10),
+            op_fp(0x21, 1, 11, 0, 10),
+            // FCLASS/FMV with an unassigned selector or rs2.
+            op_fp(0x70, 0, 11, 2, 10),
+            op_fp(0x70, 1, 11, 0, 10),
+            op_fp(0x78, 0, 11, 1, 10),
+            // An unassigned OP-FP major operation.
+            op_fp(0x06, 0, 11, 0, 10),
+            // LOAD-FP/STORE-FP widths other than 4 and 8 bytes.
+            0b000_0111 | (11 << 15) | (10 << 7),
+            0b010_0111 | (12 << 20) | (11 << 15) | (1 << 12),
+        ] {
+            assert!(
+                matches!(decoder.decode(raw), Err(DecodeError::ReservedInstruction)),
+                "{raw:#010x} must be reserved"
+            );
+        }
+        for raw in [
+            r4(0b100_0011, 13, 2, 12, 11, 0, 10),
+            r4(0b100_0111, 13, 3, 12, 11, 0, 10),
+        ] {
+            assert!(
+                matches!(decoder.decode(raw), Err(DecodeError::ReservedInstruction)),
+                "{raw:#010x} must be reserved"
+            );
+        }
+    }
+
+    #[test]
+    fn reserved_rm_still_decodes_for_the_hart_to_trap() {
+        // rm = 5 is a reserved static rounding mode, not a decode failure:
+        // the Hart owns the trap so the encoding reaches the FP legality
+        // check with the encoding intact (contract D5/D7).
+        let fp = fp_decode(op_fp(0x00, 12, 11, 5, 10));
+        assert_eq!(fp.rm, Some(5));
     }
 }

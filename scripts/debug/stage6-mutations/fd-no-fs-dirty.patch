@@ -1,0 +1,12 @@
+diff --git i/src/isa/fd/mod.rs w/src/isa/fd/mod.rs
+index 90865b1..eb9df32 100644
+--- i/src/isa/fd/mod.rs
++++ w/src/isa/fd/mod.rs
+@@ -320,7 +320,6 @@ fn double_operand(state: &CoreState, reg: u8) -> u64 {
+ /// Write a 32-bit result, NaN-boxed, and mark `mstatus.FS` Dirty.
+ fn write_single(state: &mut CoreState, rd: u8, result: u32) {
+     state.fpr.write_u32(rd as usize, result);
+-    state.mark_fs_dirty();
+ }
+ 
+ /// Write a 64-bit result and mark `mstatus.FS` Dirty.
