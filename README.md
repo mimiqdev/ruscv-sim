@@ -32,15 +32,15 @@ A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七�
 整数/浮点 load/store 当时已接入验证过的 raw physical boundary。
 `rv64ima`/`rv64imac` 下公开 Hart 上的浮点指令仍全部触发非法指令异常，不产生数据访问或
 FPR/FCSR 效果。FP profile 下 F/D 指令通过 `src/fpu/arith` 的 U2 算术核心执行（U3a）：
-舍入模式、异常标志、NaN-boxing 与 FS-Dirty 规则见 [`docs/dev-plan.md`](docs/dev-plan.md) D4–D7。
-Zcd 展开（D8）与 FP profile 下 FPR/`fcsr` 的 commit log 文本（D9）见
+舍入模式、异常标志、NaN-boxing 与 FS-Dirty 规则见已归档的 [F/D 合同](docs/archive/milestones/selectable-fd-floating-point-profiles.md) D4–D7。
+Zcd 展开（该合同 D8）与 FP profile 下 FPR/`fcsr` 的 commit log 文本（该合同 D9）见
 `tests/fd_u3b_zcd_log.rs` 与 `tools/zca/README.md`。
 A8 之后 AMO/LR/SC
 在标准路径上通过同一验证数据端口发送原子 envelope（每指令恰好一个），旧
 `RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
 评估约束。
 
-当前合同见 [`docs/dev-plan.md`](docs/dev-plan.md)：Stage 6（RISC-V Debug Mode），于实际轮换合并时成为唯一 Current 合同；合并前 main 仍保留 Stage 5。Stage 5 的[完整合同归档](docs/archive/milestones/stage5-platform-interrupts-wfi-and-counters.md)保留全部正文，正式完成于本次轮换合并。Stage 6 决策 D0–D15 于 2026-10-19 由所有者批准；D0–D14 为推荐选项，D15 为 `cmderr=3`。Stage 5 决策 D0–D9 于 2026-10-16 13:08 CST 由所有者按推荐选项批准；[提案快照](docs/proposals/stage5-contract-draft.md)不是第二份当前合同。A10 由 PR #71 于 2026-10-08 激活，PR #72 于 2026-10-10 交付，其[完整合同归档](docs/archive/milestones/a10-independent-public-path-performance-test-infrastructure.md)与[实现收尾记录](docs/archive/milestones/a10-closeout-record.md)已在 A10 到 Stage 4 的轮换合并时归档。Stage 4 决策由 PR #75 记录，激活为 2026-10-11 UTC 的所有者授权；[提案快照](docs/proposals/stage4-contract-draft.md)不是第二份当前合同。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
+当前唯一 Current 合同见 [`docs/dev-plan.md`](docs/dev-plan.md)；已完成里程碑的完整合同见 [`docs/archive/milestones/`](docs/archive/milestones/README.md)。以下为历史记录：Stage 5 的[完整合同归档](docs/archive/milestones/stage5-platform-interrupts-wfi-and-counters.md)保留全部正文，于 Stage 5→6 轮换合并（PR #96）正式完成。Stage 6 决策 D0–D15 于 2026-10-19 由所有者批准；D0–D14 为推荐选项，D15 为 `cmderr=3`。Stage 5 决策 D0–D9 于 2026-10-16 13:08 CST 由所有者按推荐选项批准；[提案快照](docs/proposals/stage5-contract-draft.md)不是第二份当前合同。A10 由 PR #71 于 2026-10-08 激活，PR #72 于 2026-10-10 交付，其[完整合同归档](docs/archive/milestones/a10-independent-public-path-performance-test-infrastructure.md)与[实现收尾记录](docs/archive/milestones/a10-closeout-record.md)已在 A10 到 Stage 4 的轮换合并时归档。Stage 4 决策由 PR #75 记录，激活为 2026-10-11 UTC 的所有者授权；[提案快照](docs/proposals/stage4-contract-draft.md)不是第二份当前合同。A8 的[有界收尾评估](docs/verification/a8-closeout-assessment.md)及[完整合同归档记录](docs/archive/milestones/a8-single-hart-atomic-physical-convergence.md)不代表 RV64A 认证或完整 VP 集成。后续技术顺序参考[post-A7 路线图提案](docs/proposals/post-a7-roadmap.md)；该 Draft 不是另一份当前合同。
 
 ## 快速开始
 
