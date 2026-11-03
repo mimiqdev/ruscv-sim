@@ -25,6 +25,11 @@ tests/bare-metal-riscv-test/
 | BLT Issue | `rv64i/blt_issue.elf` | BLT 分支测试 | 退出码 55 |
 | BLT Simple | `rv64i/blt_simple.elf` | 简化 BLT 测试 | 退出码 21 |
 | BLT Test | `rv64i/blt_test.elf` | BLT 综合测试 | 退出码 21 |
+| Zca 控制流 | `rv64i/zca_ctrl_flow.elf` | 压缩/32 位混合分支与跳转 | 退出码 0 (`--isa rv64imac`) |
+| Zca 链接值 | `rv64i/zca_link_values.elf` | `c.jalr` 链接 `pc+2`、`jal` 链接 `pc+4` | 退出码 0 (`--isa rv64imac`) |
+| Zca 断点陷阱 | `rv64i/zca_ebreak_trap.elf` | `C.EBREAK` 触发 `mcause=3` 并恢复 | 退出码 0 (`--isa rv64imac`) |
+| Zca HINT | `rv64i/zca_hints.elf` | D2 HINT 编码不影响架构状态 | 退出码 0 (`--isa rv64imac`) |
+| Zca 跨页取指 | `rv64i/zca_straddle_fetch.elf` | 跨页 32 位指令第二 parcel 取指访问故障 (`mtval=0x2000`) | 退出码 0 (`--isa rv64imac`) |
 
 ## 快速开始
 

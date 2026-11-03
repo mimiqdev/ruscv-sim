@@ -4,7 +4,7 @@
 
 **Authority:** Normative for guest tests under `tests/bare-metal-riscv-test/`
 
-**Last verified:** 2026-09-18
+**Last verified:** 2026-11-03
 
 ## Role and evidence boundary
 
@@ -23,6 +23,17 @@ The A6 trap guests are:
 | `rv64i/trap_vectored.S` | Synchronous ECALL with `mtvec.MODE=Vectored`; a `BASE+4*cause` landing slot fails | `tohost` exit 0 |
 | `rv64i/trap_mret_priv.S` | Legal MRET to User, User-mode MRET rejection, standard illegal trap state, handler recovery | `tohost` exit 0 |
 
+The Zca U4 compressed guests build with
+`-march=rv64imac_zicsr_zifencei` and run only under `--isa rv64imac`:
+
+| Source | Architectural check | Success signal |
+| --- | --- | --- |
+| `rv64i/zca_ctrl_flow.S` | Compressed `c.beqz`/`c.bnez` taken and not-taken, `c.j` over a poison word, and a 32-bit instruction at `pc % 4 == 2` | `tohost` exit 0 |
+| `rv64i/zca_link_values.S` | `c.jalr` links `pc+2`, a 32-bit `jal` links `pc+4`, and `c.jr` transfers to a 2-byte target | `tohost` exit 0 |
+| `rv64i/zca_ebreak_trap.S` | `C.EBREAK` raises `mcause=3`, `mtval=0`; the handler sets `mepc += 2` and MRET resumes in the compressed stream | `tohost` exit 0 |
+| `rv64i/zca_hints.S` | D2 HINT parcels (`c.addi rd,0`, `c.nop nzimm`, `c.li x0`, `c.lui x0`, `c.slli x0`, `c.srli` zero shift, `c.mv x0`, `c.add x0`) retire with no architectural effect | `tohost` exit 0 |
+| `rv64i/zca_straddle_fetch.S` | Under Sv39, a 32-bit instruction whose first parcel is page A's last 2 bytes and whose second parcel is the R-only page B faults with `mtval=0x2000` and retires nothing (contract D4) | `tohost` exit 0 |
+
 Every guest has explicit success and failure writes. A handler that reaches an
 unexpected path writes a nonzero exit code; timeout or simulator failure is not
 a guest pass.
@@ -33,7 +44,9 @@ The scripts build into a disposable target directory directly below the
 canonical repository `target/` directory, remove it before each normal compile,
 record the source Git HEAD in `manifest.txt`, verify ELF entry `== _start`, and
 run the original RV64I/RV64M guests followed by the A8 RV64A atomic additions
-through the public CLI. The five A6 trap guests remain required members. The path guard
+through the public CLI. The five A6 trap guests and the five Zca U4 compressed
+guests remain required members; the Zca guests run with `--isa rv64imac` and
+every other guest runs under the default `rv64ima`. The path guard
 rejects source directories, parent aliases, and symlinked roots; its regression
 cases run with `bash scripts/test_riscv_elf_guards.sh`.
 When a bind-mounted worktree cannot resolve its host-side `.git` file, pass the
@@ -120,9 +133,12 @@ translated to storage offsets by the wrapper.
 ## Scope limits
 
 The A6 guest suite verifies synchronous Machine-mode trap entry and return on
-the current public 32-bit-fetch path. It does **not** certify asynchronous
-interrupts, MMU/Sv39 integration, compressed-instruction execution, or the
-M/A/F/D dispatch end to end. It is not an ACT4 extension suite. The A5 ACT4 baseline remains a 51-case nontrapping result and is not an A6
+the current public 32-bit-fetch path. The Zca U4 guests add end-to-end
+compressed execution under `--isa rv64imac`: mixed-length control flow, link
+values, the D2 HINT set, `C.EBREAK` trap entry and a page-straddling fetch.
+Neither set certifies asynchronous interrupts, MMU/Sv39 integration as a whole,
+the M/A/F/D dispatch end to end, or every Zca encoding; component and ACT4
+verification own those claims. It is not an ACT4 extension suite. The A5 ACT4 baseline remains a 51-case nontrapping result and is not an A6
 trap or extension certification. A separate retained run `35325844246` reran
 that frozen selection at source head
 `845c63325db5ac87ab2ff0ed260453dc3b396ae9`, with 51/51 public-CLI passes;
