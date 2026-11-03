@@ -55,8 +55,8 @@ fn declared_profile<'a>(arms: &'a [(Vec<String>, String)], name: &str) -> &'a st
         .expect("the catch-all arm matches every guest name")
 }
 
-/// Every guest source name, relative to tests/bare-metal-riscv-test without
-/// the `.S` suffix (the identity run_elf_tests.sh derives from the ELF path).
+/// The basename of every guest source, without the `.S` suffix — the
+/// identity run_elf_tests.sh derives from the ELF path (`$(basename ...)`).
 fn guest_names() -> Vec<String> {
     fn walk(dir: &Path, out: &mut Vec<String>) {
         for entry in std::fs::read_dir(dir).expect("guest source directory") {
@@ -65,10 +65,10 @@ fn guest_names() -> Vec<String> {
                 walk(&path, out);
             } else if path.extension().is_some_and(|e| e == "S") {
                 out.push(
-                    path.with_extension("")
+                    path.file_stem()
+                        .expect("guest file stem")
                         .to_string_lossy()
-                        .trim_start_matches("tests/bare-metal-riscv-test/")
-                        .to_string(),
+                        .into_owned(),
                 );
             }
         }
@@ -142,7 +142,9 @@ fn every_guest_declares_its_profile() {
     }
 
     // Resolve every actual guest through the arms under bash first-match
-    // order, and pin the profile-dependent guests to their declarations.
+    // order, and pin each one to the profile its source directory and name
+    // require. An extra singleton arm (for example `fd_flags) isa_args=( )`)
+    // shadowing any guest now fails here, not only for representative names.
     let names = guest_names();
     assert!(
         names.len() >= 100,
@@ -150,8 +152,21 @@ fn every_guest_declares_its_profile() {
         names.len()
     );
     for name in &names {
-        declared_profile(&arms, name);
+        let actual = declared_profile(&arms, name);
+        let expected = if name.starts_with("s4_") {
+            "--isa rv64ima"
+        } else if name.starts_with("zca_") {
+            "--isa rv64imac"
+        } else if name.starts_with("fd_") {
+            "--isa rv64imafd"
+        } else if name.starts_with("zcd_") || name.starts_with("fdc_") {
+            "--isa rv64imafdc"
+        } else {
+            ""
+        };
+        assert_eq!(actual, expected, "guest {name} resolved profile");
     }
+    // The resolved identities of the profile-dependent fixtures.
     let profile = |name: &str| declared_profile(&arms, name);
     assert_eq!(profile("s4_fp_absent"), "--isa rv64ima");
     assert_eq!(profile("s4_csr_policy"), "--isa rv64ima");
