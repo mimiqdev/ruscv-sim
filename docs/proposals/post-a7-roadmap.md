@@ -670,7 +670,7 @@ of the old GDB stub is not that exit.
 **Cost/risk:** high. `StepOutcome` gains a variant. OpenOCD's acceptance of
 `dmstatus.version` 3 is a source fact until U5 runs it.
 
-**Successor after the debug direction, 2026-11-03:** the [Selectable Zca Compressed-Instruction Profile contract](../dev-plan.md), approved under the owner's delegated planning authority, is an ISA-profile increment outside this roadmap's numbered stages. It does not start Stage 7 or Stage 8, both of which still require a concrete consumer.
+**Successor after the debug direction, 2026-11-03:** the [Selectable Zca Compressed-Instruction Profile contract](../archive/milestones/selectable-zca-compressed-profile.md), approved under the owner's delegated planning authority, is an ISA-profile increment outside this roadmap's numbered stages; it completed 2026-11-03 at PR #143. Its successor, the [Selectable F/D Floating-Point Profiles contract](../dev-plan.md), is the next ISA-profile increment. Neither starts Stage 7 or Stage 8, both of which still require a concrete consumer.
 
 ### Stage 7 — native ↔ Rust TLM ↔ SystemC and DMI (conditional integration)
 

@@ -21,6 +21,8 @@
 
 **2026-11-03 amendment:** The [compressed-profile composition amendment](#2026-11-03-amendment-isa-profile-selection) makes the ISA profile Machine composition configuration for the approved [successor contract](../../dev-plan.md). It changes no implementation claim or guest-execution ownership.
 
+**2026-11-03 floating-point amendment:** The [floating-point profile amendment](#2026-11-03-amendment-floating-point-profiles) extends the profile set for the approved [successor contract](../../dev-plan.md). It changes no implementation claim or guest-execution ownership.
+
 ## Context
 
 The product must provide a standalone instruction set simulator (ISS) now and a
@@ -724,6 +726,12 @@ The selected contract defines the register profile, error taxonomy, and tool ver
 The Selectable Zca Compressed-Instruction Profile contract's D1–D10 scope was approved on 2026-11-03 under the owner's delegation of planning authority. The Machine owns the selected ISA profile (`rv64ima` by default, or `rv64imac`) as composition configuration fixed for the Machine's lifetime and passes it to the Hart at construction. Frontends and the Runner forward an explicit selection only. They do not infer it from image metadata or interpret instruction length. The Hart owns every profile-dependent architectural rule (parcel fetch, decode, IALIGN, `misa`, `xepc`/`dpc` legality). The Platform and Debug Module remain profile-agnostic, except that the DM reports the Hart's `misa` and executes program-buffer parcels through the Hart.
 
 The one approved public CLI addition is the `--isa` profile option; `ExecutionResult` keeps its shape. Reset restores the selected profile's reset state and never changes the profile. This amendment defines no FFI, SystemC, dynamic `misa`, multi-Hart or per-Hart heterogeneous profile.
+
+## 2026-11-03 amendment: floating-point profiles
+
+The Selectable F/D Floating-Point Profiles contract's D1–D12 scope was approved on 2026-11-03 under the owner's delegation of planning authority. The Machine-owned ISA profile set becomes exactly `rv64ima` (default), `rv64imac`, `rv64imafd` and `rv64imafdc`, still fixed for the Machine's lifetime and passed to the Hart at construction. The ISA profile selection amendment above otherwise applies unchanged: frontends and the Runner forward an explicit selection, the Hart owns every profile-dependent rule (now also FPR and `fcsr` state, `mstatus.FS`, rounding and FP legality), and the Platform remains profile-agnostic. FP loads and stores are ordinary ADR-0002 data transactions. The DM reaches FPRs and FP CSRs only through the Hart's abstract-register boundary.
+
+`run --isa` accepts the two new values; `ExecutionResult` keeps its shape. Reset restores the selected profile's FP reset state. This amendment defines no FFI, dynamic `misa`, profile alias, default-profile change, multi-Hart or per-Hart heterogeneous profile.
 
 ## Bounded deferrals and open questions
 

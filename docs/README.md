@@ -10,7 +10,7 @@ This index is the entry point for project decisions and technical documentation.
 
 ## Sources of truth
 
-1. [Milestone plan](dev-plan.md) — the sole Current contract. The approved Selectable Zca Compressed-Instruction Profile target replaces System Bus Access Debug on this rotation merge; activation is not an implementation claim.
+1. [Milestone plan](dev-plan.md) — the sole Current contract. The approved Selectable F/D Floating-Point Profiles target replaces Selectable Zca Compressed-Instruction Profile on this rotation merge; activation is not an implementation claim.
 2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
 3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests, the [A8 assessment](verification/a8-closeout-assessment.md) for the atomic route, and the [A9 acceptance assessment](verification/a9-closeout-assessment.md) for Hart facts/Machine integration, separating historical checkpoint and final PR/merge-head evidence.
 4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
@@ -33,8 +33,10 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Selectable Zca Compressed-Instruction Profile contract](dev-plan.md) — D1–D10 approved 2026-11-03 under the owner's delegated planning authority, sole Current on this rotation merge. Adds an opt-in `rv64imac` profile (Zca, IALIGN=16) while the default `rv64ima` profile stays unchanged; F/D, TLM/SystemC and multi-hart work remain later directions.
-- [Approved Zca proposal entry](proposals/post-sba-compressed-profile.md) — informational pointer to the sole normative contract.
+- [Selectable F/D Floating-Point Profiles contract](dev-plan.md) — D1–D12 approved 2026-11-03 under the owner's delegated planning authority, sole Current on this rotation merge. Adds opt-in `rv64imafd` and `rv64imafdc` profiles with bit-exact F/D arithmetic and Zcd; `rv64ima` stays the default.
+- [Approved F/D proposal entry](proposals/post-zca-floating-point.md) — informational pointer to the sole normative contract.
+- [Entire approved Zca contract](archive/milestones/selectable-zca-compressed-profile.md) — preserved in full with its opt-in `rv64imac` profile and limitations. Implementation is PR #138 through PR #143, completed 2026-11-03; historical on the F/D rotation merge.
+- [Approved Zca proposal entry](proposals/post-sba-compressed-profile.md) — historical pointer to the completed contract.
 - [Entire approved System Bus Access Debug contract](archive/milestones/system-bus-access-debug.md) — preserved in full with its single inbound-master SBA profile and limitations. Implementation is PR #126 through PR #130, completed 2026-11-02; historical on the Zca rotation merge.
 - [Approved SBA proposal entry](proposals/post-program-buffer-sba.md) — historical pointer to the completed contract.
 - [Entire approved Program-buffer Debug Execution contract](archive/milestones/program-buffer-debug-execution.md) — preserved in full with its bounded two-word program-buffer scope and limitations. Implementation is PR #114 through PR #118, completed 2026-10-30; historical on the SBA rotation merge.
