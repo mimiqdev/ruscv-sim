@@ -487,7 +487,11 @@ fn an_fpr_write_sets_fs_dirty_even_without_flags() {
     core.state_mut().pc = 0;
     retire(&mut core);
     assert_eq!(core.state().fcsr.flags_bits(), 0);
-    assert_eq!(fs_of(&core), mstatus::FS_DIRTY);
+    assert_eq!(
+        fs_of(&core),
+        mstatus::FS_DIRTY,
+        "an FPR write sets FS Dirty"
+    );
 }
 
 #[test]
@@ -684,7 +688,11 @@ fn unboxed_single_reads_yield_the_canonical_nan() {
     write_word(&ram, 0, op_fp(0x00, 2, 1, 0, 3)); // FADD.S
     core.state_mut().pc = 0;
     retire(&mut core);
-    assert_eq!(fpr_bits(&core, 3), boxed_single(CANONICAL_NAN_F32));
+    assert_eq!(
+        fpr_bits(&core, 3),
+        boxed_single(CANONICAL_NAN_F32),
+        "an unboxed FPR must read as the canonical NaN"
+    );
 
     // FSGNJ.S preserves the payload of the correctly boxed operand but the
     // unboxed operand still reads as the canonical NaN.

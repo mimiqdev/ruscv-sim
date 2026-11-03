@@ -1,0 +1,13 @@
+diff --git i/src/isa/fd/mod.rs w/src/isa/fd/mod.rs
+index 90865b1..da07ac1 100644
+--- i/src/isa/fd/mod.rs
++++ w/src/isa/fd/mod.rs
+@@ -309,7 +309,7 @@ fn resolve_rounding(
+ ///
+ /// An FPR whose upper 32 bits are not all ones yields the canonical NaN.
+ fn single_operand(state: &CoreState, reg: u8) -> u32 {
+-    state.fpr.read_single_bits(reg as usize)
++    state.fpr.read_raw_u32(reg as usize)
+ }
+ 
+ /// Double-precision operand read: the register's full 64-bit content.

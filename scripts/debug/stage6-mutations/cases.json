@@ -552,5 +552,94 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "fd-ignore-static-rm",
+    "source": "src/isa/fd/mod.rs",
+    "patch": "fd-ignore-static-rm.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "fd_u3a_execution"
+        ],
+        "test": "static_rounding_modes_produce_their_own_results",
+        "failure": [
+          "assertion `left == right` failed: rm 3",
+          "left:\\s+1065353216",
+          "right:\\s+1065353217"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "fd-reserved-dynamic-rm",
+    "source": "src/isa/fd/mod.rs",
+    "patch": "fd-reserved-dynamic-rm.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "fd_u3a_execution"
+        ],
+        "test": "dynamic_reserved_rounding_modes_are_illegal_but_legal_frm_values_work",
+        "failure": [
+          "expected illegal-instruction, got InstructionRetired"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "fd-no-fs-dirty",
+    "source": "src/isa/fd/mod.rs",
+    "patch": "fd-no-fs-dirty.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "fd_u3a_execution"
+        ],
+        "test": "an_fpr_write_sets_fs_dirty_even_without_flags",
+        "failure": [
+          "assertion `left == right` failed: an FPR write sets FS Dirty",
+          "left:\\s+16384",
+          "right:\\s+24576"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "fd-unboxed-single-read",
+    "source": "src/isa/fd/mod.rs",
+    "patch": "fd-unboxed-single-read.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "fd_u3a_execution"
+        ],
+        "test": "unboxed_single_reads_yield_the_canonical_nan",
+        "failure": [
+          "an unboxed FPR must read as the canonical NaN"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "core-fs-off-accepted",
+    "source": "src/core/mod.rs",
+    "patch": "core-fs-off-accepted.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "fd_u3a_execution"
+        ],
+        "test": "fs_off_makes_every_fp_encoding_illegal_without_side_effects",
+        "failure": [
+          "expected illegal-instruction, got InstructionRetired"
+        ]
+      }
+    ]
   }
 ]

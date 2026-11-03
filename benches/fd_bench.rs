@@ -24,6 +24,11 @@ fn decode(raw: u32) -> DecodedInstruction {
     InstructionDecoder::new().decode(raw).unwrap()
 }
 
+/// NaN-box a single-precision bit pattern, as every 32-bit FPR write does.
+fn boxed_single(bits: u32) -> u64 {
+    ruscv_sim::fpu::NAN_BOX_MASK | u64::from(bits)
+}
+
 fn state_with(a: u64, b: u64) -> CoreState {
     let mut state = CoreState::default();
     state.fpr.write(1, Fpr::from_bits(a));
@@ -47,7 +52,7 @@ fn bench_binary_formats(c: &mut Criterion) {
         c,
         "fadd_s",
         op_fp(0x00, 2, 1, 0, 10),
-        1.5f32.to_bits() as u64,
+        boxed_single(1.5f32.to_bits()),
     );
     arith_group(c, "fadd_d", op_fp(0x01, 2, 1, 0, 10), 1.5f64.to_bits());
     arith_group(c, "fmul_d", op_fp(0x09, 2, 1, 0, 10), 1.25f64.to_bits());

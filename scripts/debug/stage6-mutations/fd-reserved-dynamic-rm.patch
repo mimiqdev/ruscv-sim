@@ -1,0 +1,17 @@
+diff --git i/src/isa/fd/mod.rs w/src/isa/fd/mod.rs
+index 90865b1..bb30c0e 100644
+--- i/src/isa/fd/mod.rs
++++ w/src/isa/fd/mod.rs
+@@ -300,9 +300,9 @@ fn resolve_rounding(
+     }
+     let raw = fp.rm.ok_or(ExecuteError::IllegalInstruction)?;
+     let resolved = if raw == 7 { state.fcsr.frm_bits() } else { raw };
+-    Rounding::from_encoding(resolved)
+-        .map(Some)
+-        .ok_or(ExecuteError::IllegalInstruction)
++    Ok(Some(
++        Rounding::from_encoding(resolved).unwrap_or(Rounding::Rne),
++    ))
+ }
+ 
+ /// Computational single-precision operand read (contract D5).

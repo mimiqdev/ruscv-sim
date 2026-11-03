@@ -2403,13 +2403,13 @@ impl RiscvCore {
         }
     }
 
-    /// The U3a legality rule for one F/D encoding (contract D3, D5, D6).
+    /// The U3a legality rule for one F/D encoding (contract D3, D6).
     ///
     /// An FP instruction exists only under an FP profile, only while
-    /// `mstatus.FS` is not Off, only in an implemented format, and only with
-    /// a rounding mode that resolves to an implemented mode. A reserved
-    /// static `rm` (5 or 6) or a dynamic `rm` whose `frm` holds 5-7 is
-    /// illegal-instruction, not an FP exception.
+    /// `mstatus.FS` is not Off, and only in an implemented format. The
+    /// rounding-mode rule (D5) is enforced by the FP engine before it writes
+    /// any architectural state, so a reserved `rm` still traps without an
+    /// FPR, `fcsr` or FS effect.
     fn fp_encoding_is_legal(&self, instruction: &DecodedInstruction) -> bool {
         let Some(fp) = instruction.fp.as_ref() else {
             return false;
@@ -2421,19 +2421,6 @@ impl RiscvCore {
             crate::decode::FpFormat::Single if self.isa.has_f() => {}
             crate::decode::FpFormat::Double if self.isa.has_d() => {}
             _ => return false,
-        }
-        if fp.op.requires_rounding() {
-            let Some(raw) = fp.rm else {
-                return false;
-            };
-            let resolved = if raw == 7 {
-                self.state.fcsr.frm_bits()
-            } else {
-                raw
-            };
-            if crate::fpu::arith::Rounding::from_encoding(resolved).is_none() {
-                return false;
-            }
         }
         true
     }

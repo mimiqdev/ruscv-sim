@@ -1,0 +1,11 @@
+--- a/src/core/mod.rs
++++ b/src/core/mod.rs
+@@ -2413,7 +2413,7 @@
+         let Some(fp) = instruction.fp.as_ref() else {
+             return false;
+         };
+-        if !self.state.csr.has_fp() || self.state.csr.mstatus() & mstatus::FS == mstatus::FS_OFF {
++        if !self.state.csr.has_fp() {
+             return false;
+         }
+         match fp.fmt {
