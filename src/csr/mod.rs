@@ -259,7 +259,8 @@ pub struct CsrFile {
     /// this flag so only bit 0 is masked on write (contract D5).
     epc_ialign32: bool,
     /// True when the selected profile has architectural floating-point state.
-    /// It makes `mstatus.FS`/`SD` writable and observable (contract D6).
+    /// It makes `mstatus.FS` writable and derives the read-only `SD` from it
+    /// (contract D6).
     fp_enabled: bool,
 }
 

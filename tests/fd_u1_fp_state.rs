@@ -99,8 +99,11 @@ fn expect_fp_csr_illegal(isa: IsaProfile, instruction: u32, fs: u64) {
     // post-trap assertions prove preservation instead of matching the reset
     // values.
     core.state_mut().fcsr.write(0xB5);
+    // f0 is an ordinary register, so seed it with the others.
+    core.state_mut().fpr.write_u32(0, 0x3F80_0000);
     core.state_mut().fpr.write_u32(7, 0x4049_0FDB);
     core.state_mut().regs[1] = 0xDEAD_BEEF;
+    let fprs: [u64; 32] = std::array::from_fn(|reg| core.state().fpr.read(reg).bits());
     if fs != mstatus::FS_OFF {
         write_csr(&mut core, machine::MSTATUS, fs);
     }
@@ -122,11 +125,13 @@ fn expect_fp_csr_illegal(isa: IsaProfile, instruction: u32, fs: u64) {
         0xB5,
         "a trapping FP CSR access has no fcsr effect"
     );
-    assert_eq!(
-        core.state().fpr.read(7).bits(),
-        NAN_BOX_MASK | 0x4049_0FDB,
-        "a trapping FP CSR access has no FPR effect"
-    );
+    for (reg, expected) in fprs.iter().enumerate() {
+        assert_eq!(
+            core.state().fpr.read(reg).bits(),
+            *expected,
+            "a trapping FP CSR access has no FPR effect (f{reg})"
+        );
+    }
     assert_eq!(
         core.state().regs[1],
         0xDEAD_BEEF,
