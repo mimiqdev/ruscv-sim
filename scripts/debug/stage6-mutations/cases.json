@@ -688,7 +688,7 @@
         "test": "fpu::arith::tests::arithmetic_rounds_to_the_format_not_to_an_integer",
         "failure": [
           "assertion `left == right` failed",
-          "left:\\s+\\(1065353216, FpFlags\\(0x0\\)\\)",
+          "left:\\s+\\(1073741824, FpFlags\\(0x0\\)\\)",
           "right:\\s+\\(1071644672, FpFlags\\(0x0\\)\\)"
         ]
       }

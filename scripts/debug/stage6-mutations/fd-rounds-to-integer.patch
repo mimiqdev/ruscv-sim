@@ -1,13 +1,13 @@
 diff --git i/src/fpu/arith/single.rs w/src/fpu/arith/single.rs
-index aafd7f8..ebcddce 100644
+index aafd7f8..25d1560 100644
 --- i/src/fpu/arith/single.rs
 +++ w/src/fpu/arith/single.rs
-@@ -37,7 +37,7 @@ fn frac(ui: u32) -> u32 {
- 
- #[inline]
- fn pack(sign: bool, exp: u32, sig: u32) -> u32 {
--    ((sign as u32) << 31) + (exp << 23) + sig
-+    ((sign as u32) << 31) + (exp << 23) + (sig & 0xff80_0000)
+@@ -100,7 +100,7 @@ fn round_pack(sign: bool, mut exp: i32, mut sig: u32, rm: Rounding, flags: &mut
+     if sig == 0 {
+         exp = 0;
+     }
+-    pack(sign, exp as u32, sig)
++    f32::from_bits(pack(sign, exp as u32, sig)).round().to_bits()
  }
  
- /// True when the bits encode a quiet or signaling NaN.
+ /// `softfloat_normRoundPackToF32`.
