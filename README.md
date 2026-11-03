@@ -32,8 +32,8 @@ A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七�
 整数/浮点 load/store 当时已接入验证过的 raw physical boundary。
 `rv64ima`/`rv64imac` 下公开 Hart 上的浮点指令仍全部触发非法指令异常，不产生数据访问或
 FPR/FCSR 效果。FP profile 下 F/D 指令通过 `src/fpu/arith` 的 U2 算术核心执行（U3a）：
-舍入模式、异常标志、NaN-boxing 与 FS-Dirty 规则见 [`docs/dev-plan.md`](docs/dev-plan.md) D4–D7。
-Zcd 展开（D8）与 FP profile 下 FPR/`fcsr` 的 commit log 文本（D9）见
+舍入模式、异常标志、NaN-boxing 与 FS-Dirty 规则见已归档的 [F/D 合同](docs/archive/milestones/selectable-fd-floating-point-profiles.md) D4–D7。
+Zcd 展开（该合同 D8）与 FP profile 下 FPR/`fcsr` 的 commit log 文本（该合同 D9）见
 `tests/fd_u3b_zcd_log.rs` 与 `tools/zca/README.md`。
 A8 之后 AMO/LR/SC
 在标准路径上通过同一验证数据端口发送原子 envelope（每指令恰好一个），旧
