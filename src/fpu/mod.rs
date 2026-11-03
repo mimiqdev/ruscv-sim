@@ -6,6 +6,7 @@
 //! single-precision read of a value that is not boxed yields the canonical
 //! NaN (contract D5).
 
+pub mod arith;
 pub mod d_register;
 pub mod fcsr;
 pub mod nan_boxing;
