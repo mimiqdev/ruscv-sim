@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **F/D U3b: Zcd 展开与 Spike 格式 FP commit log（issue #152）**
+  - 压缩译码器新增 profile 维度（`ZcaProfile::{Zca,Zcd}`）：`rv64imafdc` 下 C.FLD/C.FSD/C.FLDSP/C.FSDSP 按 C.LD/C.SD 与 C.LDSP/C.SDSP 的 8 字节缩放偏移展开为 FLD/FSD，经 U3a 路径执行，并保留 FS-Off 非法指令陷阱；`rv64imac` 下仍为 FP-illegal，`rv64imafd` 为 IALIGN=32 且无 Zcd。`CompressedDecoder::new()` 仍是 Zca-only 译码器
+  - Zca 参考生成器新增 `--profile {zca,zcd}` 维度，`tools/zca/zca-reference-v2.tsv` 固定 Zcd 分类；v1 文件逐字节不变，其穷举测试保持有效，新增 v2 穷举测试与 v1/v2 差异测试
+  - FP profile 下 commit log 按 pinned Spike `commit_log_print_insn` 格式与 `(index << 4) | kind` 排序打印 FPR 写入（` f<rd>  <FLEN hex>`）与 `fcsr` 写入（` c3_fcsr <XLEN hex>`）；`rv64ima`/`rv64imac` 的日志文本逐字节不变
+  - 新增负控制 “C.FLD accepted under rv64imac or rv64imafd”（`scripts/debug/stage6-mutations`）
+
 - **F/D U3a: FP 译码与公共路径执行（issue #147）**
   - 32-bit 译码器新增 R4 opcode（MADD/MSUB/NMSUB/NMADD）与显式 `fmt`/`rm` 译码，覆盖全部 OP-FP、LOAD-FP、STORE-FP 形式；未分配或超出 profile 的 FP 编码按非法指令陷入，不再产生 `SimulatorFailure`
   - FP profile 下全部 F/D 指令经 `src/isa/fd` 在公共 Hart 路径上执行，算术、舍入、异常标志与 NaN 结果来自 U2 的 `src/fpu/arith`；静态与动态舍入均生效，保留的静态 `rm`（5/6）或 `frm` 为 5–7 的动态舍入按非法指令陷入

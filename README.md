@@ -21,7 +21,8 @@ Rust 实现的 RISC-V 指令集模拟器。公开入口是一个 ELF 加载/执�
 启用可选 Zca 压缩指令 profile（16-bit parcel 取指、IALIGN=16、`misa.C`，见下）；
 `--isa rv64imafd` / `rv64imafdc` 启用 F/D 浮点 profile（32 个普通 64-bit FPR、
 `fflags`/`frm`/`fcsr`，以及可写 `mstatus.FS` 与只读、由 `FS==Dirty` 派生的 `SD`）。
-FP profile 下全部 F/D 指令经 U2 位精确算术核心在公共路径上执行；Zcd 压缩加载/存储仍按非法指令陷入，属于 U3b。
+FP profile 下全部 F/D 指令经 U2 位精确算术核心在公共路径上执行；`rv64imafdc` 另有 Zcd
+压缩双精度加载/存储（C.FLD/C.FSD/C.FLDSP/C.FSDSP），`rv64imac`/`rv64imafd` 下它们仍按非法指令陷入。
 页表翻译和 TLM 外设总线还没有全部接到这条路径。
 
 外部验证已有 [A7 有界能力证据](docs/verification/a7-capability-assessment.md)：
@@ -31,7 +32,9 @@ A7 时项目自建 ELF 和 ACT4 选择集各自有 51 个用例；A8 新增七�
 整数/浮点 load/store 当时已接入验证过的 raw physical boundary。
 `rv64ima`/`rv64imac` 下公开 Hart 上的浮点指令仍全部触发非法指令异常，不产生数据访问或
 FPR/FCSR 效果。FP profile 下 F/D 指令通过 `src/fpu/arith` 的 U2 算术核心执行（U3a）：
-舍入模式、异常标志、NaN-boxing 与 FS-Dirty 规则见 [`docs/dev-plan.md`](docs/dev-plan.md) D4–D7。Zcd 展开仍是 U3b。
+舍入模式、异常标志、NaN-boxing 与 FS-Dirty 规则见 [`docs/dev-plan.md`](docs/dev-plan.md) D4–D7。
+Zcd 展开（D8）与 FP profile 下 FPR/`fcsr` 的 commit log 文本（D9）见
+`tests/fd_u3b_zcd_log.rs` 与 `tools/zca/README.md`。
 A8 之后 AMO/LR/SC
 在标准路径上通过同一验证数据端口发送原子 envelope（每指令恰好一个），旧
 `RiscvCore::new` 构造保留类型化兼容性适配路径；原子行为的认证边界仍受 A7/A8
@@ -86,10 +89,11 @@ cargo run -- run path/to/program.elf --max-cycles 100000
 | `--log-commits <FILE>` | 写出 Spike 兼容的 commit log |
 | `--rbb-port <PORT>` | 在该 TCP 端口上提供 OpenOCD `remote_bitbang`。不带此选项时，运行循环保持 Stage 5 / 未连接调试器的行为 |
 | `--halted` | 复位后、第一条指令之前进入 Debug Mode（`dpc` 为入口，`minstret` 为 0）。必须与 `--rbb-port` 同时给出 |
-| `--isa <PROFILE>` | 选择 Machine ISA profile：`rv64ima`（默认，IALIGN=32、`misa` `0x8000000000141101`）、`rv64imac`（Zca：16-bit parcel 取指、IALIGN=16、`misa` `0x8000000000141105`）、`rv64imafd`（+F/D、IALIGN=32、`misa` `0x8000000000141129`）、`rv64imafdc`（+F/D+Zca、IALIGN=16、`misa` `0x800000000014112D`）。FP profile 提供 32 个普通 64-bit FPR、`fflags`/`frm`/`fcsr`、可写 `mstatus.FS`，以及只读且由 `FS==Dirty` 派生的 `SD`；FP profile 下全部 F/D 指令在公共 Hart 路径上执行，Zcd 仍按非法指令陷入。profile 不会从 ELF `e_flags` 推断，运行期间不可改变 |
+| `--isa <PROFILE>` | 选择 Machine ISA profile：`rv64ima`（默认，IALIGN=32、`misa` `0x8000000000141101`）、`rv64imac`（Zca：16-bit parcel 取指、IALIGN=16、`misa` `0x8000000000141105`）、`rv64imafd`（+F/D、IALIGN=32、`misa` `0x8000000000141129`）、`rv64imafdc`（+F/D+Zca、IALIGN=16、`misa` `0x800000000014112D`）。FP profile 提供 32 个普通 64-bit FPR、`fflags`/`frm`/`fcsr`、可写 `mstatus.FS`，以及只读且由 `FS==Dirty` 派生的 `SD`；FP profile 下全部 F/D 指令在公共 Hart 路径上执行，且 commit log 按 pinned Spike 格式打印 FPR 与 `fcsr` 写入；`rv64imafdc` 另支持 Zcd 压缩双精度加载/存储，`rv64imac`/`rv64imafd` 下 Zcd 仍按非法指令陷入。profile 不会从 ELF `e_flags` 推断，运行期间不可改变 |
 
 Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在 Runner 中比较寄存器快照。
-文本格式保留原有的 GPR 展示与省略规则，并非完整的 FPR/CSR/内存效果导出。
+文本格式保留原有的 GPR 展示与省略规则；FP profile 下另按 pinned Spike 的 `f`/`c<csr>_<name>`
+段打印 FPR 与 `fcsr` 写入，仍不是完整的内存或其它 CSR 效果导出。
 未启用日志时不构造每条指令的观察记录。日志写入失败会在运行结果的 `error`
 中报告，但不会撤销已退休指令、存储或已识别的客户退出码。
 即使客户退出码为 0，CLI 也将日志报告错误显示为 `FAILED` 并以非零状态退出；
