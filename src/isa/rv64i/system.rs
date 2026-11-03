@@ -504,6 +504,7 @@ mod tests {
             rd: None,
             imm: Some(imm),
             branch_taken: false,
+            fp: None,
         }
     }
 
@@ -525,6 +526,7 @@ mod tests {
             rd: Some(rd),
             imm: Some(csr as u32),
             branch_taken: false,
+            fp: None,
         }
     }
 
@@ -625,6 +627,7 @@ mod tests {
             rd: None,
             imm: None,
             branch_taken: false,
+            fp: None,
         };
         let mut mem = SimpleMemory::new(0x1000);
 
@@ -663,6 +666,7 @@ mod tests {
             rd: None,
             imm: None,
             branch_taken: false,
+            fp: None,
         };
         let mut mem = SimpleMemory::new(0x1000);
 
@@ -695,6 +699,7 @@ mod tests {
             rd: None,
             imm: None,
             branch_taken: false,
+            fp: None,
         };
         let mut mem = SimpleMemory::new(0x1000);
 

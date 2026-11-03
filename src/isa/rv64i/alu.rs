@@ -170,6 +170,7 @@ mod tests {
             rd,
             imm: None,
             branch_taken: false,
+            fp: None,
         }
     }
 
@@ -192,6 +193,7 @@ mod tests {
             rd,
             imm,
             branch_taken: false,
+            fp: None,
         }
     }
 

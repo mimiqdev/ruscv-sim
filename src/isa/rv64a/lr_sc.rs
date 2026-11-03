@@ -235,6 +235,7 @@ mod tests {
             rd: Some(rd),
             imm: None,
             branch_taken: false,
+            fp: None,
         }
     }
 

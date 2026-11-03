@@ -1,9 +1,7 @@
-diff --git i/src/core/mod.rs w/src/core/mod.rs
-index f420136..e890172 100644
---- i/src/core/mod.rs
-+++ w/src/core/mod.rs
-@@ -1644,7 +1644,7 @@ impl RiscvCore {
-         if Self::is_illegal_encoding(&decoded)
+--- a/src/core/mod.rs
++++ b/src/core/mod.rs
+@@ -1644,7 +1644,7 @@
+         if self.is_illegal_encoding(&decoded)
              || self
                  .debug_word
 -                .is_some_and(|_| Self::debug_forbidden(&decoded))

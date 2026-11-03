@@ -8,7 +8,7 @@ pub mod observation;
 mod observed_memory;
 mod translation;
 pub mod trap;
-use crate::csr::{machine, CsrFile};
+use crate::csr::{machine, mstatus, CsrFile};
 use crate::decode::{DecodeError, DecodedInstruction, InstructionDecoder, Opcode};
 use crate::execute::{ExecuteError, Executor};
 use crate::fpu::{Fcsr, FpuRegisterFile};
@@ -294,7 +294,7 @@ impl CoreState {
     }
 
     /// Set `mstatus.FS` to Dirty as a Hart-owned transition (contract D6).
-    fn mark_fs_dirty(&mut self) {
+    pub(crate) fn mark_fs_dirty(&mut self) {
         let mstatus = self.csr.mstatus();
         if mstatus & crate::csr::mstatus::FS != crate::csr::mstatus::FS_DIRTY {
             self.csr
@@ -1707,7 +1707,7 @@ impl RiscvCore {
             }
         };
 
-        if Self::is_illegal_encoding(&decoded)
+        if self.is_illegal_encoding(&decoded)
             || self
                 .debug_word
                 .is_some_and(|_| Self::debug_forbidden(&decoded))
@@ -2313,7 +2313,7 @@ impl RiscvCore {
         raw & 0xFE00_7FFF == 0x1200_0073
     }
 
-    fn is_illegal_encoding(instruction: &DecodedInstruction) -> bool {
+    fn is_illegal_encoding(&self, instruction: &DecodedInstruction) -> bool {
         let funct3 = instruction.funct3.map(|value| value as u8);
         let funct7 = instruction.funct7;
         match instruction.opcode {
@@ -2378,12 +2378,18 @@ impl RiscvCore {
                 Some(1 | 2 | 3 | 5 | 6 | 7) => false,
                 _ => true,
             },
-            // F and D instruction execution is not on the public path yet
-            // (contract U3a, issue #147).  Every LOAD-FP, STORE-FP and OP-FP
-            // encoding is illegal-instruction under every profile, including
-            // the FP profiles, and this check runs before alignment,
-            // translation, and any data request.
-            Opcode::LoadFp | Opcode::StoreFp | Opcode::OpFp => true,
+            // F and D instruction execution is on the public path under an
+            // FP profile (contract U3a).  The profile, `mstatus.FS` and the
+            // rounding mode are checked here, before alignment, translation
+            // and staging, so a trapping FP instruction leaves no FPR,
+            // `fcsr`, FS or memory effect.
+            Opcode::LoadFp
+            | Opcode::StoreFp
+            | Opcode::OpFp
+            | Opcode::Madd
+            | Opcode::Msub
+            | Opcode::Nmsub
+            | Opcode::Nmadd => !self.fp_encoding_is_legal(instruction),
             // Base FENCE and Zifencei FENCE.I (funct3 0 and 1). Other MISC-MEM
             // funct3 values are reserved.
             Opcode::MiscMem => !matches!(funct3, Some(0 | 1)),
@@ -2395,6 +2401,41 @@ impl RiscvCore {
             Opcode::Amo => !crate::isa::rv64a::amo_encoding_is_legal(instruction),
             _ => false,
         }
+    }
+
+    /// The U3a legality rule for one F/D encoding (contract D3, D5, D6).
+    ///
+    /// An FP instruction exists only under an FP profile, only while
+    /// `mstatus.FS` is not Off, only in an implemented format, and only with
+    /// a rounding mode that resolves to an implemented mode. A reserved
+    /// static `rm` (5 or 6) or a dynamic `rm` whose `frm` holds 5-7 is
+    /// illegal-instruction, not an FP exception.
+    fn fp_encoding_is_legal(&self, instruction: &DecodedInstruction) -> bool {
+        let Some(fp) = instruction.fp.as_ref() else {
+            return false;
+        };
+        if !self.state.csr.has_fp() || self.state.csr.mstatus() & mstatus::FS == mstatus::FS_OFF {
+            return false;
+        }
+        match fp.fmt {
+            crate::decode::FpFormat::Single if self.isa.has_f() => {}
+            crate::decode::FpFormat::Double if self.isa.has_d() => {}
+            _ => return false,
+        }
+        if fp.op.requires_rounding() {
+            let Some(raw) = fp.rm else {
+                return false;
+            };
+            let resolved = if raw == 7 {
+                self.state.fcsr.frm_bits()
+            } else {
+                raw
+            };
+            if crate::fpu::arith::Rounding::from_encoding(resolved).is_none() {
+                return false;
+            }
+        }
+        true
     }
 
     /// Reset core. Clears the `haltreq` latch.

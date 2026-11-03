@@ -72,6 +72,7 @@ mod tests {
             rd: None,
             imm: Some(imm),
             branch_taken: false,
+            fp: None,
         }
     }
 

@@ -80,6 +80,7 @@ mod tests {
             rd: Some(rd),
             imm: Some(imm),
             branch_taken: false,
+            fp: None,
         }
     }
 
