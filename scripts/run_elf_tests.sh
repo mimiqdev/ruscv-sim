@@ -158,10 +158,11 @@ for required in zca_ctrl_flow zca_link_values zca_straddle_fetch zca_ebreak_trap
     fi
 done
 
-# F/D U5 guests are required members of the same suite: the rv64imafd profile
-# for the fd_* names and rv64imafdc for zcd_transfer.
+# F/D U5 guests and the U6 FP attach guest are required members of the same
+# suite: the rv64imafd profile for the fd_* names, and rv64imafdc for
+# zcd_transfer and fdc_u6_attach.
 for required in fd_rounding fd_flags fd_nanbox fd_fma fd_convert fd_fs_state fd_zcd_absent \
-    zcd_transfer; do
+    zcd_transfer fdc_u6_attach; do
     if [ ! -f "${OUTDIR}/rv64ifd/${required}.elf" ]; then
         echo -e "${RED}Error: required F/D guest missing: ${required}.elf${NC}" >&2
         exit 2
@@ -195,13 +196,14 @@ for elf in "${ELF_FILES[@]}"; do
     echo -e "${YELLOW}Test ${number}/${#ELF_FILES[@]}: ${name}.elf${NC}"
     echo "  File: ${elf}"
     # Zca U4 compressed guests select the rv64imac profile, F/D U5 guests
-    # select rv64imafd, and the Zcd guest selects rv64imafdc; every existing
-    # guest runs unchanged under the default rv64ima.
+    # select rv64imafd, and the Zcd guest and the U6 FP attach guest select
+    # rv64imafdc; every existing guest runs unchanged under the default
+    # rv64ima.
     isa_args=( )
     case "${name}" in
         zca_*) isa_args=(--isa rv64imac) ;;
         fd_*) isa_args=(--isa rv64imafd) ;;
-        zcd_*) isa_args=(--isa rv64imafdc) ;;
+        zcd_*|fdc_*) isa_args=(--isa rv64imafdc) ;;
     esac
     if ! check_entry "${elf}"; then
         failed=$((failed + 1))

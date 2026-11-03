@@ -39,6 +39,7 @@ tests/bare-metal-riscv-test/
 | F/D 转换与分类 | `rv64ifd/fd_convert.elf` | 饱和表、符号扩展、FCLASS 十类、NaN 比较规则 | 退出码 0 (`--isa rv64imafd`) |
 | Zcd 缺失对照 | `rv64ifd/fd_zcd_absent.elf` | `rv64imafd` 下四个 Zcd 编码仍触发 `mcause=2` | 退出码 0 (`--isa rv64imafd`) |
 | Zcd 传输 | `rv64ifd/zcd_transfer.elf` | 四个 Zcd parcel 的缩放偏移传输与 NaN 载荷保留 | 退出码 0 (`--isa rv64imafdc`) |
+| F/D 调试会话 | `rv64ifd/fdc_u6_attach.elf` | 未连接调试器时校验复位 FP 状态；连接时校验调试器写入的 `f0`–`f31`/`fcsr`，并配合 FLD/FADD.D/FSW 单步与 FS 检查 | 退出码 0 (`--isa rv64imafdc`) |
 
 ## 快速开始
 

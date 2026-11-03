@@ -70,7 +70,7 @@ linker_script_for() {
         zca_straddle_fetch.S) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
         # The F/D and Zcd guests keep data tables, scratch words and a trap
         # handler in the image, so they get the same tohost isolation.
-        fd_*|zcd_*) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
+        fd_*|fdc_*|zcd_*) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
         *) printf '%s' "${TESTS_DIR}/linker.ld" ;;
     esac
 }
@@ -110,13 +110,14 @@ for source in "${SOURCES[@]}"; do
 
     echo -e "${BLUE}Compiling ${relative}${NC}"
     # Zca guests (rv64i/zca_*.S) assemble with Zifencei, the F/D guests
-    # (rv64ifd/fd_*.S) with F and D, and the Zcd guest (rv64ifd/zcd_*.S) with
-    # F, D and compression; every existing guest keeps its frozen
-    # -march=rv64ima_zicsr flags unchanged.
+    # (rv64ifd/fd_*.S) with F and D, the F/D/C attach guest (rv64ifd/fdc_*.S)
+    # and the Zcd guest (rv64ifd/zcd_*.S) with F, D and compression; every
+    # existing guest keeps its frozen -march=rv64ima_zicsr flags unchanged.
     march=rv64ima_zicsr
     case "$(basename "${source}")" in
         zca_*) march=rv64imac_zicsr_zifencei ;;
         fd_*) march=rv64imafd_zicsr_zifencei ;;
+        fdc_*) march=rv64imafdc_zicsr_zifencei ;;
         zcd_*) march=rv64imafdc_zicsr_zifencei ;;
     esac
     if ! "${AS}" -march=${march} -mabi=lp64 "${source}" -o "${object}"; then
