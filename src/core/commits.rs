@@ -7,6 +7,22 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 
+/// Pinned Spike keys every logged register effect by
+/// `(register_or_csr << 4) | kind` in a `std::map` and prints that map in
+/// ascending key order (`riscv/execute.cc`, `commit_log_print_insn`). The
+/// kinds are 0 for an integer register, 1 for a floating-point register and
+/// 4 for a CSR, which is why each register index prints its integer write
+/// before its floating-point write.
+const SPIKE_CSR_KIND: u64 = 4;
+/// CSR number of `fcsr`; contract D5 aliases `fflags`, `frm` and `fcsr` on
+/// this one architectural byte.
+const FCSR_CSR: u64 = 0x003;
+
+/// Pinned Spike's `log_reg_write` map key for one effect.
+fn spike_effect_key(index: u64, kind: u64) -> u64 {
+    (index << 4) | kind
+}
+
 /// Memory access information for logging
 #[derive(Debug, Clone, Copy)]
 pub struct MemoryAccess {
@@ -143,6 +159,12 @@ impl CommitLogger {
     /// the fetched bits zero-padded to `length / 4` hex digits — `(0x0001)`
     /// for a 16-bit parcel, `(0x00000093)` for a 32-bit instruction
     /// (contract D7).
+    ///
+    /// Floating-point effects follow the same pinned function (contract D9):
+    /// an FPR write prints as ` f<rd>  <FLEN hex>` and an `fcsr` write as
+    /// ` c3_fcsr <XLEN hex>`, in the ascending `(index << 4) | kind` key
+    /// order of Spike's `log_reg_write` map. Under `rv64ima`/`rv64imac` no
+    /// FPR or `fcsr` fact exists, so the text is unchanged.
     pub fn log_record(&mut self, record: &super::observation::CommitRecord) -> io::Result<()> {
         let retired = record.retired;
         write!(
@@ -154,9 +176,35 @@ impl CommitLogger {
             2 => write!(self.output, "0x{:04x})", retired.instruction)?,
             _ => write!(self.output, "0x{:08x})", retired.instruction)?,
         };
-        for write in &record.effects.gpr {
-            if write.before != write.after {
+        // Reproduce Spike's map order: for each register index the integer
+        // write (kind 0) precedes the floating-point write (kind 1), and the
+        // `fcsr` CSR write (kind 4) sorts into the bucket of CSR number 3,
+        // between `f3` and `x4`.
+        let fcsr_bucket = (spike_effect_key(FCSR_CSR, SPIKE_CSR_KIND) >> 4) as u8;
+        for index in 0..32u8 {
+            let gpr = record
+                .effects
+                .gpr
+                .iter()
+                .find(|write| write.index == index && write.before != write.after);
+            if let Some(write) = gpr {
                 write!(self.output, " x{}  {:#018x}", write.index, write.after)?;
+            }
+            let fpr = record.effects.fpr.iter().find(|write| write.index == index);
+            if let Some(write) = fpr {
+                // Spike prints `" %c%-2d "` at FLEN and `0x%016` hex digits.
+                write!(self.output, " f{:<2} {:#018x}", write.index, write.after)?;
+            }
+            if index == fcsr_bucket {
+                if let Some((_, after)) = record.effects.fcsr {
+                    // Spike prints `" c%d_%s "` at XLEN for a CSR write.
+                    write!(
+                        self.output,
+                        " c{}_fcsr {:#018x}",
+                        FCSR_CSR,
+                        u64::from(after)
+                    )?;
+                }
             }
         }
         writeln!(self.output)

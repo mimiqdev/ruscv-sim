@@ -14,17 +14,35 @@
 //! - Exactly the contract's D2 HINT classes classify as [`ZcaClass::Hint`].
 //! - Reserved encodings (including the all-zero parcel) classify as
 //!   [`ZcaClass::Reserved`].
-//! - C.FLD, C.FSD, C.FLDSP and C.FSDSP classify as [`ZcaClass::FpIllegal`]:
+//! - C.FLD, C.FSD, C.FLDSP and C.FSDSP carry a profile dimension (contract
+//!   D8). Under [`ZcaProfile::Zca`] they classify as [`ZcaClass::FpIllegal`]:
 //!   without F/D their 32-bit FP counterparts are illegal, so the compressed
-//!   forms are illegal too.
+//!   forms are illegal too. Under [`ZcaProfile::Zcd`] they expand to FLD/FSD
+//!   with the same 8-byte scaled offsets as C.LD/C.SD and C.LDSP/C.SDSP, and
+//!   execute through the ordinary F/D path (contract U3b).
 //!
-//! This component is decode only; wiring compressed parcels into Hart fetch is
-//! a later unit. The `exec_c_*` helpers in this module remain standalone and
-//! are not an execution path.
+//! This component is decode only; the Hart wires it into fetch and the
+//! expansion re-decodes as a 32-bit instruction. The `exec_c_*` helpers in
+//! this module remain standalone and are not an execution path.
 
 use crate::decode::{DecodeError, DecodedInstruction, Funct3, Opcode};
 
-/// Classification of a 16-bit parcel under Zca.
+/// Compressed-extension profile dimension (contract D8).
+///
+/// The four FP-compressed parcels are the only difference between the two
+/// compressed Machine profiles: `rv64imac` selects [`Self::Zca`] and
+/// `rv64imafdc` selects [`Self::Zcd`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ZcaProfile {
+    /// Zca alone: C.FLD/C.FSD/C.FLDSP/C.FSDSP are illegal.
+    #[default]
+    Zca,
+    /// Zca plus Zcd: the four compressed double-precision loads and stores
+    /// expand to FLD/FSD.
+    Zcd,
+}
+
+/// Classification of a 16-bit parcel under the selected compressed profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZcaClass {
     /// Legal Zca instruction; `instruction` holds the equivalent 32-bit
@@ -36,8 +54,9 @@ pub enum ZcaClass {
     /// Reserved encoding; raises illegal-instruction with the zero-extended
     /// 16-bit parcel in `mtval`/`stval`.
     Reserved,
-    /// FP-compressed encoding (C.FLD/C.FSD/C.FLDSP/C.FSDSP); illegal under
-    /// Zca because F/D is absent.
+    /// FP-compressed encoding (C.FLD/C.FSD/C.FLDSP/C.FSDSP) under the
+    /// Zca-only profile; illegal because F/D is absent. The Zcd profile
+    /// expands these parcels instead.
     FpIllegal,
 }
 
@@ -93,15 +112,32 @@ pub enum COpcode {
 
 /// Compressed instruction decoder
 #[derive(Debug, Clone)]
-pub struct CompressedDecoder;
+pub struct CompressedDecoder {
+    profile: ZcaProfile,
+}
 
 impl CompressedDecoder {
-    /// Create a new compressed instruction decoder
+    /// Create a decoder for the Zca-only compressed profile.
     pub fn new() -> Self {
-        Self
+        Self::with_profile(ZcaProfile::Zca)
     }
 
-    /// Classify a 16-bit parcel under the Zca profile (contract D2).
+    /// Create a decoder for the selected compressed profile (contract D8).
+    pub fn with_profile(profile: ZcaProfile) -> Self {
+        Self { profile }
+    }
+
+    /// The compressed profile this decoder classifies against.
+    pub fn profile(&self) -> ZcaProfile {
+        self.profile
+    }
+
+    /// True when the Zcd parcels expand instead of staying FP-illegal.
+    fn zcd(&self) -> bool {
+        self.profile == ZcaProfile::Zcd
+    }
+
+    /// Classify a 16-bit parcel under the selected compressed profile.
     pub fn classify_16bit(&self, parcel: u16) -> ZcaClass {
         match parcel & 0b11 {
             0b00 => self.classify_c0(parcel),
@@ -113,8 +149,9 @@ impl CompressedDecoder {
 
     /// Decode a 16-bit compressed parcel into its expanded 32-bit form.
     ///
-    /// HINT parcels decode to their 32-bit HINT expansion; reserved and
-    /// FP-compressed parcels are decode errors.
+    /// HINT parcels decode to their 32-bit HINT expansion; reserved parcels
+    /// and, under the Zca-only profile, the FP-compressed parcels are decode
+    /// errors.
     pub fn decode_16bit(&self, parcel: u16) -> Result<DecodedInstruction, DecodeError> {
         match self.classify_16bit(parcel) {
             ZcaClass::Expansion { instruction } | ZcaClass::Hint { instruction } => {
@@ -156,7 +193,8 @@ impl CompressedDecoder {
                     instruction: build_i_type(Opcode::OpImm, rd, 2, Funct3::AddSub, nzuimm),
                 }
             }
-            0b001 | 0b101 => ZcaClass::FpIllegal, // C.FLD / C.FSD
+            0b001 => self.classify_c0_fp_load(p),  // C.FLD
+            0b101 => self.classify_c0_fp_store(p), // C.FSD
             0b010 => {
                 // C.LW: lw rd', imm(rs1')
                 let imm = c_lw_imm(p);
@@ -194,6 +232,34 @@ impl CompressedDecoder {
                     instruction: build_s_type(Opcode::Store, rs1, rs2, Funct3::Sltu, imm),
                 }
             }
+        }
+    }
+
+    /// C.FLD: `fld rd', offset(rs1')` with the C.LD 8-byte scaled offset.
+    ///
+    /// The compact fields select `f8`-`f15`; the expansion's `funct3` is the
+    /// D width of LOAD-FP. Under the Zca profile the parcel is FP-illegal
+    /// (contract D8).
+    fn classify_c0_fp_load(&self, p: u32) -> ZcaClass {
+        if !self.zcd() {
+            return ZcaClass::FpIllegal;
+        }
+        let rd = 8 + ((p >> 2) & 0b111);
+        let rs1 = 8 + ((p >> 7) & 0b111);
+        ZcaClass::Expansion {
+            instruction: build_i_type(Opcode::LoadFp, rd, rs1, Funct3::Sltu, c_ld_imm(p)),
+        }
+    }
+
+    /// C.FSD: `fsd rs2', offset(rs1')` with the C.SD 8-byte scaled offset.
+    fn classify_c0_fp_store(&self, p: u32) -> ZcaClass {
+        if !self.zcd() {
+            return ZcaClass::FpIllegal;
+        }
+        let rs1 = 8 + ((p >> 7) & 0b111);
+        let rs2 = 8 + ((p >> 2) & 0b111);
+        ZcaClass::Expansion {
+            instruction: build_s_type(Opcode::StoreFp, rs1, rs2, Funct3::Sltu, c_ld_imm(p)),
         }
     }
 
@@ -392,7 +458,7 @@ impl CompressedDecoder {
                     instruction: build_i_type(Opcode::OpImm, rd, rd, Funct3::Sll, shamt),
                 }
             }
-            0b001 => ZcaClass::FpIllegal, // C.FLDSP
+            0b001 => self.classify_c2_fp_load(p), // C.FLDSP
             0b011 => {
                 // C.LDSP (RV64): ld rd, imm(x2). rd=0 is reserved.
                 let rd = (p >> 7) & 0b11111;
@@ -414,7 +480,7 @@ impl CompressedDecoder {
                 }
             }
             0b100 => self.classify_c2_mv_add(p),
-            0b101 => ZcaClass::FpIllegal, // C.FSDSP
+            0b101 => self.classify_c2_fp_store(p), // C.FSDSP
             0b110 => {
                 // C.SWSP: sw rs2, imm(x2)
                 ZcaClass::Expansion {
@@ -439,6 +505,36 @@ impl CompressedDecoder {
                     ),
                 }
             }
+        }
+    }
+
+    /// C.FLDSP: `fld rd, offset(sp)` with the C.LDSP 8-byte scaled offset.
+    ///
+    /// The full 5-bit `rd` field selects any `f0`-`f31`. Under the Zca
+    /// profile the parcel is FP-illegal (contract D8).
+    fn classify_c2_fp_load(&self, p: u32) -> ZcaClass {
+        if !self.zcd() {
+            return ZcaClass::FpIllegal;
+        }
+        let rd = (p >> 7) & 0b11111;
+        ZcaClass::Expansion {
+            instruction: build_i_type(Opcode::LoadFp, rd, 2, Funct3::Sltu, c_ldsp_imm(p)),
+        }
+    }
+
+    /// C.FSDSP: `fsd rs2, offset(sp)` with the C.SDSP 8-byte scaled offset.
+    fn classify_c2_fp_store(&self, p: u32) -> ZcaClass {
+        if !self.zcd() {
+            return ZcaClass::FpIllegal;
+        }
+        ZcaClass::Expansion {
+            instruction: build_s_type(
+                Opcode::StoreFp,
+                2,
+                (p >> 2) & 0b11111,
+                Funct3::Sltu,
+                c_sdsp_imm(p),
+            ),
         }
     }
 

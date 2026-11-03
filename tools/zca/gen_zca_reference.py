@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Independent Zca expansion-decoder reference generator (issue #132).
+"""Independent Zca/Zcd expansion-decoder reference generator (issue #132, #152).
 
 Classifies every 16-bit parcel as legal expansion / HINT / reserved /
 FP-compressed illegal and emits one `parcel class expansion` TSV row each,
 deterministically, on stdout.
+
+`--profile zca` (the default) is the non-FP compressed profile: C.FLD, C.FSD,
+C.FLDSP and C.FSDSP are class `F`. `--profile zcd` is the `rv64imafdc` profile
+(contract D8, issue #152): those four parcels expand to FLD/FSD instead.
 
 This generator is deliberately written in a different style from
 src/isa/rv64c/decoder_16bit.rs: each compressed encoding is described by a
@@ -11,14 +15,16 @@ declarative table row (which parcel bits select it, its class predicate,
 and a generic immediate field map), and one evaluator walks the table,
 instead of per-quadrant hand-written classify functions with custom shift
 chains. Written from the RISC-V ISA Unprivileged Specification version
-20250508 Chapter "C" and the Selectable Zca Compressed-Instruction Profile
-contract (docs/dev-plan.md D2/D6, merge 9db1bed).
+20250508 Chapter "C" (including Zcd) and the Selectable F/D Floating-Point
+Profiles contract (docs/dev-plan.md D8).
 """
 
+import argparse
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 OP_LOAD, OP_STORE = 0b0000011, 0b0100011
+OP_LOAD_FP, OP_STORE_FP = 0b0000111, 0b0100111
 OP_OP_IMM, OP_OP_IMM_32 = 0b0010011, 0b0011011
 OP_OP, OP_OP_32 = 0b0110011, 0b0111011
 OP_LUI = 0b0110111
@@ -26,8 +32,13 @@ OP_BRANCH, OP_JALR, OP_JAL = 0b1100011, 0b1100111, 0b1101111
 OP_SYSTEM = 0b1110011
 F3_ADDSUB, F3_SLL, F3_SLT, F3_SLTU = 0, 1, 2, 3
 F3_XOR, F3_SRLSRA, F3_OR, F3_AND = 4, 5, 6, 7
+# LOAD-FP/STORE-FP carry the operand width in funct3; 3 is double precision.
+F3_D = 0b011
 
 E, H, R, F = "E", "H", "R", "F"
+
+PROFILES = ("zca", "zcd")
+PROFILE = "zca"
 
 
 def sext(value: int, bits: int) -> int:
@@ -205,11 +216,13 @@ def _b12(p):
 class Row:
     """One compressed encoding.
 
-    sel:   (quadrant, funct3)
-    match: extra parcel-bit conditions identifying this row within the slot
-    kind:  (parcel, imm) -> 'E'|'H'|'R'|'F'
-    build: (parcel, imm) -> 32-bit expansion, for E/H rows
+    sel:      (quadrant, funct3)
+    match:    extra parcel-bit conditions identifying this row within the slot
+    kind:     (parcel, imm) -> 'E'|'H'|'R'|'F'
+    build:    (parcel, imm) -> 32-bit expansion, for E/H rows
     imm_layout / imm_bits: generic immediate assembly + sign width
+    zcd_build: expansion for the four Zcd rows under --profile zcd, which
+              replaces the Zca-only `F` class with `E`
     """
 
     sel: tuple
@@ -219,6 +232,7 @@ class Row:
     build: Optional[Callable[[int, int], int]] = None
     imm_layout: tuple = ()
     imm_bits: int = 0
+    zcd_build: Optional[Callable[[int, int], int]] = None
 
 
 ROWS = [
@@ -226,13 +240,17 @@ ROWS = [
     Row((0b00, 0b000), "c.addi4spn", lambda p: True,
         lambda p, i: R if i == 0 else E,
         lambda p, i: i_type(OP_OP_IMM, _rdp(p), 2, F3_ADDSUB, i), I_ADDI4SPN),
-    Row((0b00, 0b001), "c.fld", lambda p: True, lambda p, i: F),
+    Row((0b00, 0b001), "c.fld", lambda p: True, lambda p, i: F,
+        imm_layout=I_LD,
+        zcd_build=lambda p, i: i_type(OP_LOAD_FP, _rdp(p), _r1p(p), F3_D, i)),
     Row((0b00, 0b010), "c.lw", lambda p: True, lambda p, i: E,
         lambda p, i: i_type(OP_LOAD, _rdp(p), _r1p(p), F3_SLT, i), I_LW),
     Row((0b00, 0b011), "c.ld", lambda p: True, lambda p, i: E,  # RV64 slot
         lambda p, i: i_type(OP_LOAD, _rdp(p), _r1p(p), F3_SLTU, i), I_LD),
     Row((0b00, 0b100), "reserved", lambda p: True, lambda p, i: R),
-    Row((0b00, 0b101), "c.fsd", lambda p: True, lambda p, i: F),
+    Row((0b00, 0b101), "c.fsd", lambda p: True, lambda p, i: F,
+        imm_layout=I_LD,
+        zcd_build=lambda p, i: s_type(OP_STORE_FP, _r1p(p), _r2p(p), F3_D, i)),
     Row((0b00, 0b110), "c.sw", lambda p: True, lambda p, i: E,
         lambda p, i: s_type(OP_STORE, _r1p(p), _r2p(p), F3_SLT, i), I_LW),
     Row((0b00, 0b111), "c.sd", lambda p: True, lambda p, i: E,  # RV64 slot
@@ -291,7 +309,9 @@ ROWS = [
     Row((0b10, 0b000), "c.slli", lambda p: True,
         lambda p, i: H if _rd(p) == 0 or gather(p, I_CI) == 0 else E,
         lambda p, i: i_type(OP_OP_IMM, _rd(p), _rd(p), F3_SLL, i), I_CI),
-    Row((0b10, 0b001), "c.fldsp", lambda p: True, lambda p, i: F),
+    Row((0b10, 0b001), "c.fldsp", lambda p: True, lambda p, i: F,
+        imm_layout=I_LDSP,
+        zcd_build=lambda p, i: i_type(OP_LOAD_FP, _rd(p), 2, F3_D, i)),
     Row((0b10, 0b010), "c.lwsp", lambda p: True,
         lambda p, i: R if _rd(p) == 0 else E,
         lambda p, i: i_type(OP_LOAD, _rd(p), 2, F3_SLT, i), I_LWSP),
@@ -313,7 +333,9 @@ ROWS = [
     Row((0b10, 0b100), "c.add", lambda p: _b12(p) == 1 and _rs2(p) != 0,
         lambda p, i: H if _rd(p) == 0 else E,
         lambda p, i: r_type(OP_OP, _rd(p), _rd(p), _rs2(p), F3_ADDSUB, 0)),
-    Row((0b10, 0b101), "c.fsdsp", lambda p: True, lambda p, i: F),
+    Row((0b10, 0b101), "c.fsdsp", lambda p: True, lambda p, i: F,
+        imm_layout=I_SDSP,
+        zcd_build=lambda p, i: s_type(OP_STORE_FP, 2, _rs2(p), F3_D, i)),
     Row((0b10, 0b110), "c.swsp", lambda p: True, lambda p, i: E,
         lambda p, i: s_type(OP_STORE, 2, _rs2(p), F3_SLT, i), I_SWSP),
     Row((0b10, 0b111), "c.sdsp", lambda p: True, lambda p, i: E,  # RV64 slot
@@ -334,6 +356,8 @@ def classify(p: int):
         if row.imm_bits:
             imm = sext(imm, row.imm_bits)
         cls = row.kind(p, imm)
+        if cls == F and PROFILE == "zcd" and row.zcd_build is not None:
+            return E, row.zcd_build(p, imm)
         if cls in (R, F):
             return cls, None
         return cls, row.build(p, imm)
@@ -341,6 +365,11 @@ def classify(p: int):
 
 
 def main() -> None:
+    global PROFILE
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=PROFILES, default="zca",
+                        help="zca (non-FP compressed profiles) or zcd (rv64imafdc)")
+    PROFILE = parser.parse_args().profile
     for p in range(0x10000):
         cls, enc = classify(p)
         exp = f"0x{enc:08x}" if enc is not None else "-"

@@ -1673,7 +1673,17 @@ impl RiscvCore {
         self.current_instruction_length = instruction_length;
 
         let decoded = if instruction_length == 2 {
-            match crate::isa::rv64c::CompressedDecoder::new().decode_16bit(instruction as u16) {
+            // Contract D8: only the profile that also implements Zcd expands
+            // the four FP-compressed parcels. Every other compressed profile
+            // keeps them FP-illegal, so they trap with the parcel in `tval`.
+            let compressed = if self.isa.has_zcd() {
+                crate::isa::rv64c::CompressedDecoder::with_profile(
+                    crate::isa::rv64c::ZcaProfile::Zcd,
+                )
+            } else {
+                crate::isa::rv64c::CompressedDecoder::new()
+            };
+            match compressed.decode_16bit(instruction as u16) {
                 Ok(decoded) => decoded,
                 Err(_) => {
                     return self.enter_trap(

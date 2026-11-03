@@ -22,6 +22,8 @@
 //! - `C.LD` - Load doubleword (RV64)
 //! - `C.SW` - Store word
 //! - `C.SD` - Store doubleword (RV64)
+//! - `C.FLD` - Load double to `f8`-`f15` (Zcd, `rv64imafdc` only)
+//! - `C.FSD` - Store double from `f8`-`f15` (Zcd, `rv64imafdc` only)
 //!
 //! ### C1 Quadrant
 //! - `C.ADDI` - Add immediate
@@ -51,6 +53,8 @@
 //! - `C.LDSP` - Load doubleword from stack pointer (RV64)
 //! - `C.SWSP` - Store word to stack pointer
 //! - `C.SDSP` - Store doubleword to stack pointer (RV64)
+//! - `C.FLDSP` - Load double from stack pointer (Zcd, `rv64imafdc` only)
+//! - `C.FSDSP` - Store double to stack pointer (Zcd, `rv64imafdc` only)
 //! - `C.MV` - Move register
 //! - `C.ADD` - Add registers
 //! - `C.EBREAK` - Environment break
@@ -79,7 +83,7 @@ pub mod c2_move;
 pub mod c2_stack;
 pub mod decoder_16bit;
 
-pub use decoder_16bit::{COpcode, CQuadrant, CompressedDecoder, ZcaClass};
+pub use decoder_16bit::{COpcode, CQuadrant, CompressedDecoder, ZcaClass, ZcaProfile};
 
 // Standalone execution helpers kept for the component tests. They are not an
 // execution path (contract D6); the decoder expands to 32-bit forms instead.

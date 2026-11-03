@@ -47,7 +47,7 @@ pub enum IsaProfile {
     Rv64imac,
     /// RV64IMA + F + D, IALIGN=32, `misa` `0x8000000000141129`.
     Rv64imafd,
-    /// `rv64imafd` plus Zca (and Zcd once U3b lands), IALIGN=16, `misa`
+    /// `rv64imafd` plus Zca and Zcd, IALIGN=16, `misa`
     /// `0x800000000014112D`.
     Rv64imafdc,
 }
@@ -101,6 +101,16 @@ impl IsaProfile {
     /// True for the profiles with architectural floating-point state (D5/D6).
     pub fn has_fp(self) -> bool {
         self.has_f() && self.has_d()
+    }
+
+    /// True for the profiles with the compressed FP loads and stores of Zcd
+    /// (contract D8).
+    ///
+    /// Zcd is Zca plus D, so only `rv64imafdc` has it: `rv64imac` has the
+    /// compressed encodings but no FP state, and `rv64imafd` has D but
+    /// IALIGN=32.
+    pub fn has_zcd(self) -> bool {
+        self.allows_compressed() && self.has_d()
     }
 
     /// Parse the approved CLI/facade profile name (contract D3).
