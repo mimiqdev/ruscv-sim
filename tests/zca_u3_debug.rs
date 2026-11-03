@@ -42,8 +42,8 @@ const DCSR_STEP: u64 = 1 << 2;
 const C_NOP: u16 = 0x0001;
 const C_LI_X9_5: u16 = 0x4495; // c.li x9, 5
 const C_EBREAK: u16 = 0x9002; // ebreak
-const C_J: u16 = 0xa000; // c.j 0 -> jal x0, 0
-const C_JR_X16: u16 = 0x8800; // c.jr x16 -> jalr x0, 0(x16)
+const C_J: u16 = 0xa001; // c.j 0 -> jal x0, 0
+const C_JR_X16: u16 = 0x8802; // c.jr x16 -> jalr x0, 0(x16)
 const C_JALR_X16: u16 = 0x9802; // c.jalr x16 -> jalr x1, 0(x16)
 const C_BEQZ_X8_P4: u16 = 0xc011; // c.beqz x8, 4 -> beq x8, x0, 4
 const C_BNEZ_X8_M4: u16 = 0xfc75; // c.bnez x8, -4 -> bne x8, x0, -4
@@ -395,15 +395,30 @@ fn c_ebreak_in_the_buffer_ends_the_command_successfully() {
     assert!(h.hart.in_debug_mode());
 }
 
+/// The expansion's opcode, so the forbidden-transfer controls below prove
+/// the named 32-bit form rather than a reserved parcel that never expands.
+fn expansion_opcode(parcel: u16) -> ruscv_sim::decode::Opcode {
+    use ruscv_sim::isa::rv64c::CompressedDecoder;
+    CompressedDecoder::new()
+        .decode_16bit(parcel)
+        .unwrap_or_else(|error| panic!("parcel {parcel:#06x} must expand: {error:?}"))
+        .opcode
+}
+
 #[test]
 fn compressed_control_transfers_are_cmderr_3() {
-    for (name, parcel) in [
-        ("c.j", C_J),
-        ("c.jr", C_JR_X16),
-        ("c.jalr", C_JALR_X16),
-        ("c.beqz", C_BEQZ_X8_P4),
-        ("c.bnez", C_BNEZ_X8_M4),
+    use ruscv_sim::decode::Opcode;
+    // Each parcel must be the real control-transfer encoding, so the check
+    // proves the expansion reaches `debug_forbidden` (a reserved parcel
+    // would pass `cmderr=3` vacuously).
+    for (name, parcel, opcode) in [
+        ("c.j", C_J, Opcode::Jal),
+        ("c.jr", C_JR_X16, Opcode::Jalr),
+        ("c.jalr", C_JALR_X16, Opcode::Jalr),
+        ("c.beqz", C_BEQZ_X8_P4, Opcode::Branch),
+        ("c.bnez", C_BNEZ_X8_M4, Opcode::Branch),
     ] {
+        assert_eq!(expansion_opcode(parcel), opcode, "{name} expansion");
         let mut h = Harness::halted(IsaProfile::Rv64imac);
         h.prog(0, word(parcel, C_NOP));
         h.postexec();

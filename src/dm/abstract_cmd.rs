@@ -118,8 +118,8 @@ impl DebugModule {
             );
         }
         let Some(first) = self.parcel_at(cursor) else {
-            // The cursor is below the implicit EBREAK, so a missing parcel
-            // is a command error rather than a valid grant.
+            // A cursor below the implicit EBREAK always names a parcel;
+            // treat an impossible miss as a command error, not a panic.
             self.finish(CMDERR_EXCEPTION);
             return None;
         };
