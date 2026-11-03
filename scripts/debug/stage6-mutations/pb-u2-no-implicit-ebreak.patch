@@ -1,11 +1,11 @@
 --- a/src/dm/abstract_cmd.rs
 +++ b/src/dm/abstract_cmd.rs
-@@ -90,7 +90,7 @@
-             self.progbuf
-                 .get(usize::from(slot))
-                 .copied()
--                .unwrap_or(EBREAK),
-+                .unwrap_or(0),
-         )
-     }
- 
+@@ -104,7 +104,7 @@
+         }
+         if cursor >= IMPLICIT_EBREAK_CURSOR {
+             self.grant_halves = 2;
+-            return Some(EBREAK);
++            return Some(0);
+         }
+         if !hart.allows_compressed() {
+             // IALIGN=32: one whole buffer word per grant (contract D8;
