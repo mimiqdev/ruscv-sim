@@ -49,6 +49,17 @@ The F/D U5 guests build with `-march=rv64imafd_zicsr_zifencei` and run under
 | `rv64ifd/fd_zcd_absent.S` | Under `--isa rv64imafd`, `C.FLD`, `C.FSD`, `C.FLDSP` and `C.FSDSP` stay illegal-instruction with the parcel in `mtval` and no architectural effect | `tohost` exit 0 |
 | `rv64ifd/zcd_transfer.S` | Under `--isa rv64imafdc`, the four Zcd parcels transfer 64-bit values at their scaled offsets and preserve a double NaN payload; a Zcd load makes FS Dirty and a Zcd store leaves it unchanged | `tohost` exit 0 |
 
+The F/D U6 debug-session guest builds with
+`-march=rv64imafdc_zicsr_zifencei` and runs under `--isa rv64imafdc`:
+
+| Source | Architectural check | Success signal |
+| --- | --- | --- |
+| `rv64ifd/fdc_u6_attach.S` | Unattached, FS is Off at reset, then `fcsr` and every FPR read zero. `scripts/debug_attach.sh` sets `fd_u6_marker`; the guest then verifies the debugger-written `f0`–`f31` and `fcsr`, checks that abstract access left FS Off, and executes an FLD, FADD.D and FSW that the debugger breaks on and single-steps with FS checks | `tohost` exit 0 |
+
+The debug script compares that session's named values with pinned Spike run
+with `--isa=rv64imafdc_zicsr`. The connect PC is the only named difference
+(Spike halts in its boot ROM).
+
 Every guest has explicit success and failure writes. A handler that reaches an
 unexpected path writes a nonzero exit code; timeout or simulator failure is not
 a guest pass.
@@ -60,10 +71,10 @@ canonical repository `target/` directory, remove it before each normal compile,
 record the source Git HEAD in `manifest.txt`, verify ELF entry `== _start`, and
 run the original RV64I/RV64M guests followed by the A8 RV64A atomic additions
 and the F/D U5 additions through the public CLI. The five A6 trap guests, the
-five Zca U4 compressed guests and the eight F/D U5 guests remain required
-members; the Zca guests run with `--isa rv64imac`, the `fd_*` guests with
-`--isa rv64imafd`, `zcd_transfer` with `--isa rv64imafdc`, and every other
-guest runs under the default `rv64ima`. The path guard
+five Zca U4 compressed guests, the eight F/D U5 guests and the U6 FP attach
+guest remain required members; the Zca guests run with `--isa rv64imac`, the
+`fd_*` guests with `--isa rv64imafd`, `zcd_transfer` and `fdc_u6_attach` with
+`--isa rv64imafdc`, and every other guest runs under the default `rv64ima`. The path guard
 rejects source directories, parent aliases, and symlinked roots; its regression
 cases run with `bash scripts/test_riscv_elf_guards.sh`.
 When a bind-mounted worktree cannot resolve its host-side `.git` file, pass the

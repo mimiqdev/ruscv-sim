@@ -22,8 +22,17 @@
 # performs no alignment check, so its misaligned word load traps as a bad
 # address (sberror 2).
 #
-# Named outputs are the S6 and U4 lines in the GDB logs. The comparisons are
-# those values, not a hash. dmstatus.version is not one of them. dcsr is
+# F/D U6 adds one rv64imafdc session under contract D12. The debugger writes
+# f0-f31 and fcsr through DM abstract access while mstatus.FS is Off, reads
+# every value back, and continues. The guest verifies that FS is still Off,
+# sets FS, checks the written values, and parks on an FLD, an FADD.D and an
+# FSW in turn; the debugger breaks on each, single-steps it, and reads
+# mstatus.FS before and after. Pinned Spike runs the same image with
+# --isa=rv64imafdc_zicsr. The only named difference is the connect PC:
+# Spike halts in its boot ROM, this profile at the ELF entry.
+#
+# Named outputs are the S6, U4, Z5 and U6 lines in the GDB logs. The
+# comparisons are those values, not a hash. dmstatus.version is not one of them. dcsr is
 # compared after setting aside two documented differences: D5 forces
 # stopcount, stoptime, and mprven to 1, and this profile's --halted is haltreq
 # (cause 3). Spike hardwires the three D5 bits to 0 and enters with cause 5.
@@ -39,9 +48,12 @@ GDB_SCRIPT="${ROOT}/scripts/debug/s6-u5-session.gdb"
 GDB_PROGBUF_SCRIPT="${ROOT}/scripts/debug/s6-u4-progbuf.gdb"
 GDB_SYSBUS_SCRIPT="${ROOT}/scripts/debug/s6-u4-sysbus.gdb"
 GDB_ZCA_SCRIPT="${ROOT}/scripts/debug/zca-u5-session.gdb"
+GDB_FD_SCRIPT="${ROOT}/scripts/debug/fd-u6-session.gdb"
 GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64i/s6_u5_attach.S"
 ZCA_GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64i/zca_u5_attach.S"
+FD_GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64ifd/fdc_u6_attach.S"
 LINKER="${ROOT}/tests/bare-metal-riscv-test/linker.ld"
+LINKER_S4="${ROOT}/tests/bare-metal-riscv-test/linker-s4.ld"
 
 EVIDENCE=""
 REQUIRE_SPIKE=0
@@ -158,6 +170,41 @@ if (( 0x${ZCA_LEN4} % 4 != 2 )); then
     exit 1
 fi
 
+# F/D U6. The FP session image is a separate rv64imafdc build because the
+# same source is also a fresh-suite guest under that profile. Both the
+# session and the suite require this image, so a binutils without F/D/C
+# fails the run instead of skipping it.
+if ! "${AS}" -march=rv64imafdc_zicsr_zifencei -mabi=lp64 "${FD_GUEST_SRC}" -o "${WORK}/fdc-guest.o" \
+    2>"${WORK}/fdc-assemble.err"; then
+    echo "failed to assemble the rv64imafdc FP session guest (riscv64 binutils with F/D/C is required)" >&2
+    cat "${WORK}/fdc-assemble.err" >&2 || true
+    exit 1
+fi
+"${LD}" -T "${LINKER_S4}" "${WORK}/fdc-guest.o" -o "${WORK}/fdc-guest.elf"
+
+fd_symbol() {
+    local name="$1"
+    "${NM}" "${WORK}/fdc-guest.elf" | awk -v name="${name}" '$3 == name { print $1; exit }'
+}
+
+FD_ENTRY="$(fd_symbol _start)"
+FD_LOAD="$(fd_symbol fd_u6_bp_load)"
+FD_ADD="$(fd_symbol fd_u6_bp_add)"
+FD_STORE="$(fd_symbol fd_u6_bp_store)"
+if [[ -z "${FD_ENTRY}" || -z "${FD_LOAD}" || -z "${FD_ADD}" || -z "${FD_STORE}" ]]; then
+    echo "FP session guest is missing one of its fixed labels" >&2
+    exit 1
+fi
+# The guest keeps the three FP stops 4-byte aligned and 4-byte long. A
+# misaligned stop would need a multi-word breakpoint write, which the pinned
+# Spike refuses.
+for address in "${FD_LOAD}" "${FD_ADD}" "${FD_STORE}"; do
+    if (( 0x${address} % 4 != 0 )); then
+        echo "FP session stop at 0x${address} is not 4-byte aligned" >&2
+        exit 1
+    fi
+done
+
 symbol() {
     local name="$1"
     "${NM}" "${WORK}/guest.elf" | awk -v name="${name}" '$3 == name { print $1; exit }'
@@ -182,6 +229,32 @@ norm() {
     value="${value#0X}"
     value="$(printf '%s' "${value}" | tr 'A-F' 'a-f' | sed 's/^0*//')"
     printf '%s' "${value:-0}"
+}
+
+# mstatus.FS (bits 14:13) and SD (bit 63). Bash arithmetic is two's
+# complement, so the shifts stay correct when bit 63 is set.
+fs_field() {
+    local value
+    value="$(norm "$1")"
+    printf '%x' "$(( (0x${value} >> 13) & 3 ))"
+}
+
+sd_field() {
+    local value
+    value="$(norm "$1")"
+    printf '%x' "$(( (0x${value} >> 63) & 1 ))"
+}
+
+# The U6 guest writes f_i = i + 0.5, exact in binary64. This returns the
+# expected raw bits so the readback is checked against the intended value,
+# not only against the other target.
+fd_expected_bits() {
+    python3 - "$1" <<'PY'
+import struct
+import sys
+value = float(sys.argv[1])
+print(f"{struct.unpack('<Q', struct.pack('<d', value))[0]:x}")
+PY
 }
 
 # Debug 1.0 dcsr. `dcsr_common` clears the bits this profile and Spike are
@@ -320,7 +393,7 @@ start_session() {
         sleep 0.1
     done
     if [[ "${saw_reset}" -ne 1 ]]; then
-        echo "${name}: GDB did not reach monitor reset halt" >&2
+        echo "${name}: GDB did not reach [${ready}]" >&2
         head -40 "${gdb_log}" >&2 || true
         head -40 "${openocd_log}" >&2 || true
         return 1
@@ -371,7 +444,7 @@ start_session() {
         return 1
     fi
     if ! grep -q "${ready}" "${gdb_log}"; then
-        echo "${name}: GDB log has no reset PC (gdb status ${gdb_status})" >&2
+        echo "${name}: GDB log has no [${ready}] (gdb status ${gdb_status})" >&2
         cat "${gdb_log}" >&2 || true
         cat "${openocd_log}" >&2 || true
         return 1
@@ -1046,6 +1119,180 @@ print(hex(value & ~((1 << 10) | (1 << 9) | (1 << 4))))
 PY
 }
 
+# The U6 named outputs, in the order the session prints them.
+fd_u6_keys() {
+    printf 'connect pc mstatus fcsr_init f0_init fcsr mstatus_writes'
+    local index
+    for ((index = 0; index < 32; index++)); do
+        printf ' f%s' "${index}"
+    done
+    printf ' load_pc load_mstatus load_fcsr load_f0 load_f31'
+    printf ' load_step_pc load_step_mstatus load_f8'
+    printf ' add_pc add_mstatus add_step_pc add_step_mstatus add_f10'
+    printf ' store_pc store_mstatus store_step_pc store_step_mstatus store_word'
+    printf ' fcsr_end continue_sent'
+}
+
+# The rv64imafdc FP session. The guest verifies the debugger-written FP
+# state, then the three stops prove FS and the FP effect of an FP load, an
+# FP arithmetic instruction and an FP store through one debugger path.
+run_fd_session() {
+    local name="$1"
+    local named="$3"
+    local SESSION_ELF="${WORK}/fdc-guest.elf"
+    start_session "${name}" "$2" "${GDB_FD_SCRIPT}" 'U6 continue_sent=' -d3 || return 1
+    local keys=()
+    read -r -a keys <<<"$(fd_u6_keys)"
+    extract_named "${named}" "${WORK}/${name}/gdb.log" U6 norm "${keys[@]}" || return 1
+    assert_fd_session "${name}" "${named}" || return 1
+    assert_fd_evidence "${name}" "${WORK}/${name}" || return 1
+    echo "${name}: FP session ok (target exit 0)"
+}
+
+# Every named value the session produced. f0-f31 are i + 0.5, so a stale,
+# repeated or shifted register fails here as well as in the guest.
+assert_fd_session() {
+    local name="$1" named="$2"
+    local index
+    assert_eq "${name}" "$(field "${named}" connect)" "ok" "connect" || return 1
+    if [[ "${name}" == spike-* ]]; then
+        assert_eq "${name}" "$(field "${named}" pc)" "1000" "connect PC" || return 1
+    else
+        assert_eq "${name}" "$(field "${named}" pc)" "${FD_ENTRY}" "connect PC" || return 1
+    fi
+    assert_eq "${name}" "$(fs_field "$(field "${named}" mstatus)")" "0" "FS at connect" \
+        || return 1
+    assert_eq "${name}" "$(sd_field "$(field "${named}" mstatus)")" "0" "SD at connect" \
+        || return 1
+    assert_eq "${name}" "$(field "${named}" fcsr_init)" "0" "fcsr at connect" || return 1
+    assert_eq "${name}" "$(field "${named}" f0_init)" "0" "f0 at connect" || return 1
+    for ((index = 0; index < 32; index++)); do
+        assert_eq "${name}" "$(field "${named}" "f${index}")" \
+            "$(fd_expected_bits "${index}.5")" "f${index} readback" || return 1
+    done
+    assert_eq "${name}" "$(field "${named}" fcsr)" "7b" "fcsr after the debugger write" \
+        || return 1
+    # Contract D10: abstract FPR and fcsr access leaves FS unchanged. The
+    # guest checks the same FS Off state from the hart before it sets FS.
+    assert_eq "${name}" "$(fs_field "$(field "${named}" mstatus_writes)")" "0" \
+        "FS after the abstract FP writes" || return 1
+    assert_eq "${name}" "$(sd_field "$(field "${named}" mstatus_writes)")" "0" \
+        "SD after the abstract FP writes" || return 1
+
+    assert_eq "${name}" "$(field "${named}" load_pc)" "${FD_LOAD}" "FLD breakpoint PC" \
+        || return 1
+    assert_eq "${name}" "$(fs_field "$(field "${named}" load_mstatus)")" "2" \
+        "FS before the FLD" || return 1
+    assert_eq "${name}" "$(sd_field "$(field "${named}" load_mstatus)")" "0" \
+        "SD before the FLD" || return 1
+    assert_eq "${name}" "$(field "${named}" load_fcsr)" "7b" "fcsr at the FLD breakpoint" \
+        || return 1
+    assert_eq "${name}" "$(field "${named}" load_f0)" "$(fd_expected_bits 0.5)" \
+        "f0 read at the FLD breakpoint" || return 1
+    assert_eq "${name}" "$(field "${named}" load_f31)" "$(fd_expected_bits 31.5)" \
+        "f31 read at the FLD breakpoint" || return 1
+    assert_eq "${name}" "$(field "${named}" load_step_pc)" \
+        "$(printf '%x' "$((0x${FD_LOAD} + 4))")" "PC after stepping the FLD" || return 1
+    assert_eq "${name}" "$(fs_field "$(field "${named}" load_step_mstatus)")" "3" \
+        "FS after the FLD" || return 1
+    assert_eq "${name}" "$(sd_field "$(field "${named}" load_step_mstatus)")" "1" \
+        "SD after the FLD" || return 1
+    assert_eq "${name}" "$(field "${named}" load_f8)" "4008000000000000" \
+        "f8 after the FLD" || return 1
+
+    assert_eq "${name}" "$(field "${named}" add_pc)" "${FD_ADD}" "FADD.D breakpoint PC" \
+        || return 1
+    assert_eq "${name}" "$(fs_field "$(field "${named}" add_mstatus)")" "2" \
+        "FS before the FADD.D" || return 1
+    assert_eq "${name}" "$(field "${named}" add_step_pc)" \
+        "$(printf '%x' "$((0x${FD_ADD} + 4))")" "PC after stepping the FADD.D" || return 1
+    assert_eq "${name}" "$(fs_field "$(field "${named}" add_step_mstatus)")" "3" \
+        "FS after the FADD.D" || return 1
+    assert_eq "${name}" "$(sd_field "$(field "${named}" add_step_mstatus)")" "1" \
+        "SD after the FADD.D" || return 1
+    assert_eq "${name}" "$(field "${named}" add_f10)" "4029000000000000" \
+        "f10 after the FADD.D" || return 1
+
+    assert_eq "${name}" "$(field "${named}" store_pc)" "${FD_STORE}" "FSW breakpoint PC" \
+        || return 1
+    assert_eq "${name}" "$(fs_field "$(field "${named}" store_mstatus)")" "2" \
+        "FS before the FSW" || return 1
+    assert_eq "${name}" "$(field "${named}" store_step_pc)" \
+        "$(printf '%x' "$((0x${FD_STORE} + 4))")" "PC after stepping the FSW" || return 1
+    assert_eq "${name}" "$(fs_field "$(field "${named}" store_step_mstatus)")" "2" \
+        "FS after the FSW" || return 1
+    assert_eq "${name}" "$(sd_field "$(field "${named}" store_step_mstatus)")" "0" \
+        "SD after the FSW" || return 1
+    assert_eq "${name}" "$(field "${named}" store_word)" "3fc00000" \
+        "word stored by the FSW" || return 1
+    assert_eq "${name}" "$(field "${named}" fcsr_end)" "7b" "fcsr after the FP instructions" \
+        || return 1
+    assert_eq "${name}" "$(field "${named}" continue_sent)" "ok" "final continue" \
+        || return 1
+}
+
+# The OpenOCD 0.12.0 log must show the FP profile's misa, a 4-byte software
+# breakpoint at each FP stop, abstract FPR and fcsr transfers, and no fallback
+# from abstract FPR access to the program buffer.
+assert_fd_evidence() {
+    local name="$1" dir="$2"
+    local log="${dir}/openocd.log"
+    if ! grep -aqF -- 'misa=0x800000000014112d' "${log}"; then
+        echo "${name}: OpenOCD did not report the rv64imafdc misa" >&2
+        return 1
+    fi
+    local address hex
+    for address in "${FD_LOAD}" "${FD_ADD}" "${FD_STORE}"; do
+        hex="$(printf '0x%x' "0x${address}")"
+        if ! grep -aqF -- "added software breakpoint at ${hex} of length 0x00000004" "${log}"; then
+            echo "${name}: no 4-byte software breakpoint at ${hex}" >&2
+            return 1
+        fi
+    done
+    local pattern
+    for pattern in \
+        'register_write_direct(): {0} fpr0 <- 0x3fe0000000000000' \
+        'register_read_direct(): {0} fpr0 = 0x3fe0000000000000' \
+        'register_write_direct(): {0} fpr31 <- 0x403f800000000000' \
+        'register_read_direct(): {0} fpr31 = 0x403f800000000000' \
+        'write 0x000000000000007b to fcsr' \
+        'wrote 0x7b to fcsr'
+    do
+        if ! grep -aqF -- "${pattern}" "${log}"; then
+            echo "${name}: OpenOCD log lacks [${pattern}]" >&2
+            return 1
+        fi
+    done
+    if grep -aq 'Disabling abstract command reads from FPRs' "${log}" \
+        || grep -aq 'Disabling abstract command writes to FPRs' "${log}"; then
+        echo "${name}: OpenOCD fell back from abstract FPR access" >&2
+        return 1
+    fi
+}
+
+# The D12 comparison: every named value matches except the connect PC, which
+# is the same boot-ROM difference the other sessions document.
+compare_fd_named() {
+    local left="$1" right="$2"
+    local keys=()
+    read -r -a keys <<<"$(fd_u6_keys)"
+    local key a b
+    for key in "${keys[@]}"; do
+        if [[ "${key}" == "pc" ]]; then
+            continue
+        fi
+        a="$(field "${left}" "${key}")"
+        b="$(field "${right}" "${key}")"
+        if [[ "${a}" != "${b}" ]]; then
+            echo "Spike comparison mismatch on ${key}: simulator ${a}, spike ${b}" >&2
+            return 1
+        fi
+        printf 'match %s=%s\n' "${key}" "${a}"
+    done
+    note_divergence "${left}" "${right}" pc "$(norm "${FD_ENTRY}")" 1000 \
+        "Spike --halted stops at its boot ROM (0x1000). This profile has no boot ROM and stops at the ELF entry. The GDB script then writes PC to _start before the guest operations."
+}
+
 ruscv_cmd() {
     local port="$1"
     exec "${RUSCV_SIM}" run "${WORK}/guest.elf" --rbb-port "${port}" --halted --max-cycles 100000000
@@ -1055,6 +1302,13 @@ ruscv_cmd() {
 ruscv_zca_cmd() {
     local port="$1"
     exec "${RUSCV_SIM}" run "${WORK}/zca-guest.elf" --isa rv64imac \
+        --rbb-port "${port}" --halted --max-cycles 100000000
+}
+
+# The F/D U6 target: the FP session guest under rv64imafdc.
+ruscv_fdc_cmd() {
+    local port="$1"
+    exec "${RUSCV_SIM}" run "${WORK}/fdc-guest.elf" --isa rv64imafdc \
         --rbb-port "${port}" --halted --max-cycles 100000000
 }
 
@@ -1130,6 +1384,21 @@ spike_zca_cmd() {
         --dm-datacount=4 \
         --rbb-port="${port}" \
         "${WORK}/zca-guest.elf"
+}
+
+# The F/D U6 comparison target: D12's rv64imafdc_zicsr ISA string and the
+# same debug-module shape as the other sessions.
+spike_fdc_cmd() {
+    local port="$1"
+    exec spike --halted \
+        --isa=rv64imafdc_zicsr \
+        --priv=msu \
+        --pc="0x${FD_ENTRY}" \
+        --dm-progsize=0 \
+        --dm-no-impebreak \
+        --dm-datacount=4 \
+        --rbb-port="${port}" \
+        "${WORK}/fdc-guest.elf"
 }
 
 # One writable word plus the implicit EBREAK is two slots; OpenOCD needs three.
@@ -1467,6 +1736,7 @@ run_session ruscv ruscv_cmd "${WORK}/ruscv.named"
 run_progbuf_session ruscv-progbuf ruscv_cmd "${WORK}/ruscv-progbuf.named"
 run_sysbus_session ruscv-sysbus ruscv_cmd "${WORK}/ruscv-sysbus.named"
 run_zca_session ruscv-zca ruscv_zca_cmd "${WORK}/ruscv-zca.named"
+run_fd_session ruscv-fd ruscv_fdc_cmd "${WORK}/ruscv-fd.named"
 run_negative_version
 run_negative_datacount
 
@@ -1485,6 +1755,9 @@ elif spike_available; then
     run_zca_session spike-zca spike_zca_cmd "${WORK}/spike-zca.named"
     compare_zca_named "${WORK}/ruscv-zca.named" "${WORK}/spike-zca.named" \
         | tee "${WORK}/zca-comparison.txt"
+    run_fd_session spike-fd spike_fdc_cmd "${WORK}/spike-fd.named"
+    compare_fd_named "${WORK}/ruscv-fd.named" "${WORK}/spike-fd.named" \
+        | tee "${WORK}/fd-comparison.txt"
     run_session spike spike_cmd "${WORK}/spike.named"
     compare_named "${WORK}/ruscv.named" "${WORK}/spike.named" | tee "${WORK}/comparison.txt"
 else
@@ -1499,7 +1772,8 @@ if [[ -n "${EVIDENCE}" ]]; then
     mkdir -p "${EVIDENCE}"
     # The script rebuilds the guest. Keep logs and named values only.
     tar -C "${WORK}" -cf - --exclude='guest.o' --exclude='guest.elf' \
-        --exclude='zca-guest.o' --exclude='zca-guest.elf' . \
+        --exclude='zca-guest.o' --exclude='zca-guest.elf' \
+        --exclude='fdc-guest.o' --exclude='fdc-guest.elf' . \
         | tar -C "${EVIDENCE}" -xf -
     echo "evidence copied to ${EVIDENCE}"
 fi
