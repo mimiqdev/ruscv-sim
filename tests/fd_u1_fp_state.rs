@@ -95,6 +95,12 @@ fn write_csr(core: &mut RiscvCore, addr: u16, value: u64) {
 /// Run one instruction that targets an FP CSR and expect illegal-instruction.
 fn expect_fp_csr_illegal(isa: IsaProfile, instruction: u32, fs: u64) {
     let (mut core, ram) = core_with(isa);
+    // Seed nonzero architectural state and a destination sentinel, so the
+    // post-trap assertions prove preservation instead of matching the reset
+    // values.
+    core.state_mut().fcsr.write(0xB5);
+    core.state_mut().fpr.write_u32(7, 0x4049_0FDB);
+    core.state_mut().regs[1] = 0xDEAD_BEEF;
     if fs != mstatus::FS_OFF {
         write_csr(&mut core, machine::MSTATUS, fs);
     }
@@ -112,9 +118,19 @@ fn expect_fp_csr_illegal(isa: IsaProfile, instruction: u32, fs: u64) {
         "illegal FP CSR access reports the instruction in mtval"
     );
     assert_eq!(
-        core.state().fcsr,
-        Fcsr::new(),
+        core.state().fcsr.read(),
+        0xB5,
         "a trapping FP CSR access has no fcsr effect"
+    );
+    assert_eq!(
+        core.state().fpr.read(7).bits(),
+        NAN_BOX_MASK | 0x4049_0FDB,
+        "a trapping FP CSR access has no FPR effect"
+    );
+    assert_eq!(
+        core.state().regs[1],
+        0xDEAD_BEEF,
+        "a trapping CSR read does not write its destination register"
     );
     assert_eq!(
         read_csr(&core, machine::MSTATUS) & mstatus::FS,
