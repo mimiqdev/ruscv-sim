@@ -159,7 +159,7 @@ for required in zca_ctrl_flow zca_link_values zca_straddle_fetch zca_ebreak_trap
 done
 
 # F/D U5 guests are required members of the same suite: the rv64imafd profile
-# for the fp_* names and rv64imafdc for zcd_transfer.
+# for the fd_* names and rv64imafdc for zcd_transfer.
 for required in fd_rounding fd_flags fd_nanbox fd_fma fd_convert fd_fs_state fd_zcd_absent \
     zcd_transfer; do
     if [ ! -f "${OUTDIR}/rv64ifd/${required}.elf" ]; then

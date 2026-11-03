@@ -69,7 +69,9 @@ subdirectory of `tests/rv64i`.
 them. The RV64I and Zca flows pass no FP permission, so their audit still
 rejects LOAD-FP, STORE-FP, OP-FP, R4 and every SYSTEM encoding exactly as
 before. The two FP flows allow exactly the F and D mnemonics plus the six Zicsr
-CSR instructions the ACT4 FP tests use to set `mstatus.FS` and clear `fflags`;
+CSR instruction forms, and a SYSTEM word must also name one of the four CSRs
+these selections address (`mstatus` for the `FS`-enable sequence, and
+`fcsr`/`fflags`/`frm` for flag and rounding control). Any other CSR address,
 `ecall`, `ebreak`, `mret` and any out-of-profile FP format stay unsupported.
 The Zcd flow additionally allows the four compressed double-precision parcels
 on top of the Zca mapping.

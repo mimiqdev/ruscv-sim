@@ -12,9 +12,11 @@ quadrant is 3 is not a parcel at all and is reported unsupported.
 
 Floating-point encodings are likewise opt-in. `allowed_fp` extends the
 32-bit opcode set with LOAD-FP, STORE-FP, OP-FP and R4, and the mnemonic set
-with exactly the F and D instruction names plus the six Zicsr CSR forms the
-ACT4 FP tests use to set `mstatus.FS` and clear `fflags`. The default rejects
-all of them, so the RV64I smoke and Zca audits are unchanged.
+with exactly the F and D instruction names plus the six Zicsr CSR forms. A
+SYSTEM word additionally has to name one of the four CSRs these selections use
+(`mstatus`, `fcsr`, `fflags`, `frm`), so a stray CSR access still fails closed.
+The default rejects all of them, so the RV64I smoke and Zca audits are
+unchanged.
 """
 import bisect
 import json
@@ -23,9 +25,18 @@ import subprocess
 
 # LOAD-FP, STORE-FP, MADD/MSUB/NMSUB/NMADD and OP-FP.
 FP_OPCODES = {0x07, 0x27, 0x43, 0x47, 0x4b, 0x4f, 0x53}
-# SYSTEM, restricted below to the six Zicsr CSR instruction mnemonics.
+# SYSTEM, restricted below to the six Zicsr CSR instruction mnemonics and the
+# four CSRs the F/D and Zcd selections actually address: mstatus for the
+# FS-enable sequence, and fcsr/fflags/frm for flag and rounding control.
 SYSTEM_OPCODE = 0x73
 CSR_MNEMONICS = {"csrrw", "csrrs", "csrrc", "csrrwi", "csrrsi", "csrrci"}
+FP_CSRS = {"mstatus", "fcsr", "fflags", "frm", "0x300", "0x003", "0x001", "0x002"}
+
+
+def csr_operand(operands):
+    """The CSR field of a SYSTEM instruction: the second objdump operand."""
+    fields = [field.strip() for field in operands.split(",")]
+    return fields[1] if len(fields) > 1 else ""
 
 
 def fp_mnemonics():
@@ -72,20 +83,26 @@ addiw slliw srliw sraiw addw subw sllw srlw sraw fence fence.tso""".split())
     compressed = allowed_compressed or {}
     instructions, inline_data = [], []
     parcels = 0
-    for address, word, op in re.findall(r"^\s*([0-9a-f]+):\s+([0-9a-f]{4,8})\s+(\S+)", objdump, re.M):
+    for address, word, op, operands in re.findall(
+            r"^\s*([0-9a-f]+):\s+([0-9a-f]{4,8})\s+(\S+)(.*)$", objdump, re.M):
         index = bisect.bisect_right(addresses, int(address, 16)) - 1
         if index >= 0 and mapping[index][1]:
             inline_data.append((address, word, op))
         else:
             if len(word) == 4:
                 parcels += 1
-            instructions.append((word, op))
+            instructions.append((word, op, operands))
     # A word that is neither an 8-digit 32-bit encoding nor a 4-digit parcel
     # is malformed objdump output and fails closed, exactly as before.
-    unsupported = [(word, op) for word, op in instructions if len(word) not in (4, 8)]
-    unsupported += [(word, op) for word, op in instructions
+    unsupported = [(word, op) for word, op, _ in instructions if len(word) not in (4, 8)]
+    unsupported += [(word, op) for word, op, _ in instructions
                     if len(word) == 8 and (int(word, 16) & 0x7f not in allowed or op not in mnemonics)]
-    for word, op in instructions:
+    if allowed_fp:
+        # The FP gate admits SYSTEM only for the floating-point CSRs.
+        unsupported += [(word, op) for word, op, operands in instructions
+                        if len(word) == 8 and int(word, 16) & 0x7f == SYSTEM_OPCODE
+                        and csr_operand(operands) not in FP_CSRS]
+    for word, op, _ in instructions:
         if len(word) == 4:
             parcel = int(word, 16)
             if parcel & 3 == 3 or compressed.get(op) != parcel & 3:
@@ -93,7 +110,7 @@ addiw slliw srliw sraiw addw subw sllw srlw sraw fence fence.tso""".split())
     report = {"instructions": len(instructions), "unsupported": unsupported,
               "compressed_parcels": parcels,
               "mapped_inline_data_words": len(inline_data),
-              "mnemonics": sorted({op for word, op in instructions})}
+              "mnemonics": sorted({op for word, op, _ in instructions})}
     (evidence / "audit.json").write_text(json.dumps(report, indent=2) + "\n")
     if not instructions or unsupported:
         raise ValueError(f"empty or unsupported linked instruction audit: {report}")

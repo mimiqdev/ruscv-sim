@@ -1,12 +1,14 @@
 # fd_fs_state.S — mstatus.FS Off traps and Dirty marking under rv64imafd.
 #
-# Contract D6. FS and SD reset to Off/0. While FS is Off every F/D and Zcd
-# instruction, and every fflags/frm/fcsr CSR instruction, raises
+# Contract D6. FS and SD reset to Off/0. While FS is Off every F/D instruction
+# class here (arithmetic, R4, loads and stores, moves, compares, classification,
+# conversions) and every fflags/frm/fcsr CSR instruction raises
 # illegal-instruction with mtval equal to the encoding and no architectural FP
-# effect. FS becomes Dirty when a retired instruction writes an FPR, writes
-# fflags/frm/fcsr through CSRRW/CSRRWI, or accrues a nonzero flag set. FSW and
-# an exception-free FEQ/FLT/FLE/FCLASS/FCVT-to-integer leave FS unchanged, and
-# SD reads as FS == Dirty in both mstatus and the sstatus view.
+# effect; the Zcd FS-Off rule is covered by the U3b component test. FS becomes
+# Dirty when a retired instruction writes an FPR, writes fflags/frm/fcsr
+# through CSRRW/CSRRWI, or accrues a nonzero flag set. FSW/carrier stores and an
+# exception-free FEQ/FLT/FLE/FCLASS/FCVT-to-integer leave FS unchanged, and SD
+# reads as FS == Dirty in both mstatus and the sstatus view.
 #
 # Each check increments s2 first, so a failure reports its own number.
 
@@ -47,6 +49,8 @@
 .endm
 
     .equ CAUSE_ILLEGAL, 2
+    .equ NX, 0x01
+    .equ NV, 0x10
     .equ FS_OFF, 0
     .equ FS_INITIAL, 1
     .equ FS_CLEAN, 2
@@ -71,6 +75,7 @@ _start:
 
     # ---- with FS Off every FP instruction class traps ----
     EXPECT_ILLEGAL 0x003170d3, off_fadd       # fadd.s f1,f2,f3,dyn
+    EXPECT_ILLEGAL 0x083170c3, off_fmadd      # fmadd.s f1,f2,f3,f4,dyn
     EXPECT_ILLEGAL 0x0002a087, off_flw        # flw f1,0(t0)
     EXPECT_ILLEGAL 0x0012a027, off_fsw        # fsw f1,0(t0)
     EXPECT_ILLEGAL 0x0002b087, off_fld        # fld f1,0(t0)
@@ -111,8 +116,11 @@ _start:
     fsd     f2, 0(s3)                  # no FPR write, no flags
     CHECK_FS FS_CLEAN
 
+    li      t0, MSTATUS_FS_CLEAN
+    csrw    mstatus, t0
     li      t0, 0x3ff0000000000000
-    fmv.d.x f3, t0                     # this one does write an FPR: Dirty
+    fmv.d.x f3, t0                     # an FPR write alone makes FS Dirty
+    CHECK_FS FS_DIRTY_STATE
     li      t0, MSTATUS_FS_CLEAN
     csrw    mstatus, t0
 
@@ -139,22 +147,28 @@ _start:
     csrr    t1, fflags
     CHECK_FS FS_CLEAN
 
-    # ---- FS = Clean: a nonzero flag set makes FS Dirty ----
-    li      t0, 0x40400000             # 3.0f
-    fmv.w.x f5, t0
+    # ---- FS = Clean: flag accrual alone makes FS Dirty ----
+    # A quiet compare against a signaling NaN accrues NV and writes only a GPR,
+    # so nothing except the accrued flag set can mark FS Dirty here.
+    li      t0, 0x7f800001             # signaling NaN
+    fmv.w.x f5, t0                     # an FPR write: FS reset below
+    csrwi   fflags, 0                  # a CSRRWI write: FS reset below
     li      t0, MSTATUS_FS_CLEAN
     csrw    mstatus, t0
-    fdiv.s  f6, f4, f5                 # 1/3 accrues NX
+    CHECK_FS FS_CLEAN
+    feq.s   t1, f5, f4                 # false, NV accrues, no FPR write
+    CHECK_I t1, 0
+    csrr    t1, fflags
+    CHECK_I t1, NV
     CHECK_FS FS_DIRTY_STATE
     CHECK_SD mstatus, 1
 
     # An exception-free FCVT to integer stays clean even with flags cleared.
-    li      t0, MSTATUS_FS_CLEAN
-    csrw    mstatus, t0
     csrwi   fflags, 0
     li      t0, MSTATUS_FS_CLEAN
     csrw    mstatus, t0
     fcvt.w.s t1, f4, rtz
+    CHECK_I t1, 1
     CHECK_FS FS_CLEAN
 
     # ---- FS = Clean: CSRRW to fflags always writes it ----

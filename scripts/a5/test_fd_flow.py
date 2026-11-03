@@ -15,7 +15,9 @@ import unittest
 
 from accounting import (a5_allowed_compressed, a5_allowed_fp, execute, make_plan,
                         summarize, verify_plan)
-from linked_audit import audit
+from inventory_fd import selection as fd_selection
+from inventory_zcd import selection as zcd_selection
+from linked_audit import audit, fp_mnemonics
 from test_runner import PASS
 
 FD = Path("docs/verification/a5-fd-source-inventory.json")
@@ -134,6 +136,102 @@ class FrozenSelectionTests(unittest.TestCase):
         self.assertEqual(fp.count("#define D_SUPPORTED"), 1)
         for name in ("rvtest_config.h",):
             self.assertNotIn("F_SUPPORTED", Path(f"scripts/a5/{name}").read_text())
+
+
+def source(path, extensions, march, params=None):
+    """A synthetic parsed-inventory record for the fail-closed filter tests."""
+    return {"source": path, "required_extensions": extensions, "march": march,
+            "params": {"MXLEN": 64} if params is None else params,
+            "disposition": "exclude", "reason": "other-extension",
+            "coverage_consequence": "not selected"}
+
+
+class SelectionFilterTests(unittest.TestCase):
+    def test_fd_filter_selects_only_the_two_directories(self):
+        sources = [
+            source("tests/rv64i/F/F-a-00.S", ["F", "I"], "rv64if_zicsr"),
+            source("tests/rv64i/D/D-a-00.S", ["D", "F", "I"], "rv64ifd_zicsr"),
+            # Excluded neighbours: the Misalign headers match a selected source
+            # exactly, so only the directory keeps them out.
+            source("tests/rv64i/MisalignF/F-a-00.S", ["F", "I"], "rv64if_zicsr",
+                   {"MXLEN": 64, "MISALIGNED_LDST": True}),
+            source("tests/rv64i/MisalignD/D-a-00.S", ["D", "F", "I"], "rv64ifd_zicsr",
+                   {"MXLEN": 64, "MISALIGNED_LDST": True}),
+            source("tests/rv64i/Zcd/Z-a-00.S", ["D", "F", "I", "Zcd"], "rv64ifd_zicsr_zcd"),
+            source("tests/rv64i/Zfh/Z-a-00.S", ["F", "I", "Zfh"], "rv64if_zicsr_zfh"),
+            source("tests/rv64i/ZfaF/Z-a-00.S", ["F", "I", "Zfa"], "rv64if_zicsr_zfa"),
+            source("tests/rv32i/F/F-a-00.S", ["F", "I"], "rv32if_zicsr"),
+            source("tests/priv/F/F-a-00.S", ["F", "I"], "rv64if_zicsr"),
+        ]
+        selected = fd_selection(sources)
+        self.assertEqual([s["source"] for s in selected],
+                         ["tests/rv64i/D/D-a-00.S", "tests/rv64i/F/F-a-00.S"])
+        self.assertEqual({s["reason"] for s in selected}, {"required-d", "required-f"})
+        self.assertTrue(all(s["disposition"] == "include" for s in selected))
+
+    def test_fd_filter_is_fail_closed_inside_the_selected_directories(self):
+        for bad in (source("tests/rv64i/F/F-a-00.S", ["I"], "rv64if_zicsr"),
+                    source("tests/rv64i/F/F-a-00.S", ["F", "I"], "rv64if_zicsr_zfh"),
+                    source("tests/rv64i/F/F-a-00.S", ["F", "I"], "rv64if_zicsr",
+                           {"MXLEN": 64, "MISALIGNED_LDST": True}),
+                    source("tests/rv64i/F/F-a-00.S", ["F", "I"], "rv64if_zicsr",
+                           {"MXLEN": 32}),
+                    source("tests/rv64i/D/D-a-00.S", ["F", "I"], "rv64ifd_zicsr")):
+            with self.subTest(source=bad["source"], extensions=bad["required_extensions"],
+                              march=bad["march"], params=bad["params"]), \
+                    self.assertRaises(ValueError):
+                fd_selection([bad])
+        for empty in ([], [source("tests/rv64i/Zfh/Z-a-00.S", ["F", "I", "Zfh"],
+                                  "rv64if_zicsr_zfh")]):
+            with self.subTest(count=len(empty)), self.assertRaises(ValueError):
+                fd_selection(empty)
+
+    def test_zcd_filter_selects_only_its_directory(self):
+        sources = [
+            source("tests/rv64i/Zcd/Zcd-a-00.S", ["D", "F", "I", "Zcd"], "rv64ifd_zicsr_zcd"),
+            source("tests/rv64i/Zcd/Zcd-b-00.S", ["D", "F", "I", "Zcd"], "rv64ifd_zicsr_zcd"),
+            source("tests/rv64i/Zca/Zca-a-00.S", ["I", "Zca"], "rv64i_zicsr_zca"),
+            source("tests/rv64i/MisalignZca/Zca-a-00.S", ["I", "Zca"], "rv64i_zicsr_zca",
+                   {"MXLEN": 64, "MISALIGNED_LDST": True}),
+            source("tests/rv64i/F/F-a-00.S", ["F", "I"], "rv64if_zicsr"),
+        ]
+        selected = zcd_selection(sources)
+        self.assertEqual([s["source"] for s in selected],
+                         ["tests/rv64i/Zcd/Zcd-a-00.S", "tests/rv64i/Zcd/Zcd-b-00.S"])
+        self.assertTrue(all(s["reason"] == "required-zcd" for s in selected))
+
+    def test_zcd_filter_is_fail_closed_inside_its_directory(self):
+        for bad in (source("tests/rv64i/Zcd/Zcd-a-00.S", ["D", "F", "I"], "rv64ifd_zicsr_zcd"),
+                    source("tests/rv64i/Zcd/Zcd-a-00.S", ["D", "F", "I", "Zcd"],
+                           "rv64ifd_zicsr"),
+                    source("tests/rv64i/Zcd/Zcd-a-00.S", ["D", "F", "I", "Zcd"],
+                           "rv64ifd_zicsr_zcd", {"MXLEN": 64, "MISALIGNED_LDST": True})):
+            with self.subTest(extensions=bad["required_extensions"], march=bad["march"],
+                              params=bad["params"]), self.assertRaises(ValueError):
+                zcd_selection([bad])
+        with self.assertRaises(ValueError):
+            zcd_selection([])
+
+
+class FpMnemonicSetTests(unittest.TestCase):
+    def test_fp_mnemonics_is_exactly_f_and_d(self):
+        names = fp_mnemonics()
+        for name in ("fadd.s", "fadd.d", "fmadd.d", "fmsub.s", "fcvt.wu.d",
+                     "fcvt.d.lu", "fcvt.s.d", "fcvt.d.s", "fmv.x.w", "fmv.x.d",
+                     "fmv.w.x", "fmv.d.x", "fclass.d", "flw", "fsd", "feq.s",
+                     "fmin.d", "fmax.s", "fsqrt.d"):
+            self.assertIn(name, names)
+        # Zfa, Zfaq, Zfh, Zfhmin, Zfbfmin, Zfinx and Q stay out by name.
+        for name in ("fli.s", "fminm.s", "fmaxm.d", "fround.s", "froundnx.d",
+                     "fcvtmod.w.d", "fltq.s", "fleq.s", "fadd.h", "fmvh.x.d",
+                     "fmvp.d.x", "flq", "fclass.q", "fcvt.s.h", "fmv.x.h"):
+            self.assertNotIn(name, names)
+        # The six Zicsr forms are the only SYSTEM names admitted, and only
+        # through the FP gate that also restricts the CSR field.
+        for name in ("csrrw", "csrrs", "csrrc", "csrrwi", "csrrsi", "csrrci"):
+            self.assertIn(name, names)
+        for name in ("ecall", "ebreak", "mret", "sret", "wfi", "sfence.vma"):
+            self.assertNotIn(name, names)
 
 
 class FdPlanTests(SelectionEnv):
@@ -259,7 +357,16 @@ class AuditGateTests(unittest.TestCase):
                          ("00100073", "ebreak"), ("30200073", "mret")):
             with self.subTest(op=op), self.assertRaises(ValueError):
                 self.audit(f"80000000: {word} {op}\n", allowed_fp=True)
-        report = self.audit("80000000: 34002073 csrrsi\n", allowed_fp=True)
+        # A Zicsr form addressing a CSR outside the FP set stays unsupported.
+        with self.assertRaises(ValueError):
+            self.audit("80000000: 3a002373 csrrs t1,pmpcfg0,zero\n", allowed_fp=True)
+        with self.assertRaises(ValueError):
+            self.audit("80000000: 3012b073 csrrc zero,misa,t0\n", allowed_fp=True)
+        # The four CSRs the FP selections use are admitted.
+        report = self.audit("80000000: 30006073 csrrsi zero,mstatus,0\n"
+                            "80000004: 00129073 csrrw zero,fflags,t0\n"
+                            "80000008: 00202373 csrrs t1,frm,zero\n"
+                            "8000000c: 00329073 csrrw zero,fcsr,t0\n", allowed_fp=True)
         self.assertEqual(report["unsupported"], [])
 
     def test_zcd_parcels_require_the_compressed_mapping(self):

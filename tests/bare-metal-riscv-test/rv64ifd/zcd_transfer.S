@@ -75,11 +75,23 @@ _start:
     ld      t1, 80(a0)
     CHECK_I t1, 0x7ff8000000000000
 
-    # ---- a Zcd store writes an FPR, so FS stays Dirty ----
+    # ---- a Zcd load writes an FPR (FS becomes Dirty); a Zcd store does not ----
+    li      t0, 0x4000                 # mstatus.FS = Clean
+    csrw    mstatus, t0
+    c.fld   f8, 16(a0)
     csrr    t1, mstatus
     srli    t1, t1, 13
     andi    t1, t1, 3
     li      t6, 3
+    bne     t1, t6, fail_marker
+
+    li      t0, 0x4000                 # mstatus.FS = Clean
+    csrw    mstatus, t0
+    c.fsd   f8, 88(a0)                 # a store writes no FPR and raises nothing
+    csrr    t1, mstatus
+    srli    t1, t1, 13
+    andi    t1, t1, 3
+    li      t6, 2
     bne     t1, t6, fail_marker
 
     li      a0, 0
