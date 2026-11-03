@@ -189,6 +189,28 @@ class RunnerTests(unittest.TestCase):
             data = json.loads((evidence / "audit.json").read_text())
             self.assertEqual(data["unsupported"], [])
 
+    def test_malformed_word_length_fails_closed(self):
+        # 5-7 hex-digit words cannot come from a real objdump line; the audit
+        # must keep rejecting them instead of treating them as 32-bit.
+        from linked_audit import audit as linked_audit
+
+        for word in ("00013", "0000013", "0000001"):
+            with tempfile.TemporaryDirectory() as directory:
+                evidence = pathlib.Path(directory)
+                objdump = f"80000000: {word} addi\n"
+                symbols = "0000000080001000 d signature_base"
+                def fake_run(command, **_):
+                    return symbols if "nm" in command[0] else objdump
+                original = subprocess.check_output
+                subprocess.check_output = fake_run
+                try:
+                    with self.assertRaises(ValueError):
+                        linked_audit("elf", evidence)
+                finally:
+                    subprocess.check_output = original
+                report = json.loads((evidence / "audit.json").read_text())
+                self.assertEqual(report["unsupported"], [[word, "addi"]])
+
     def test_four_digit_thirty_two_bit_word_fails_closed(self):
         result, _, _ = self.probe(instruction="00000013 addi\n80000004: 0013 addi")
         self.assertNotEqual(result.returncode, 0)

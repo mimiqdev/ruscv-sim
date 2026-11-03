@@ -54,6 +54,9 @@ def build_zca(upstream):
         "act4_commit": expected["act4_commit"],
         "scope": "all tracked tests/rv64i/Zca/**/*.S at the pinned revision",
         "profile": PROFILE,
+        # The frozen selection manifest is this profile's own document; the
+        # accounting plan pins it instead of the unrelated RV64I proposal.
+        "profile_document": str(MANIFEST),
         "counts": {"required-zca": len(zca)},
         "sources": zca,
         "environment_headers": environment_headers,

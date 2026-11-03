@@ -31,10 +31,11 @@ manifest differs. It does not modify the frozen RV64I manifest.
 
 The `zca` run reuses `scripts/a5/accounting.py` with
 `A5_CONFIG=ruscv-rv64imac-zca`, `A5_MANIFEST=docs/verification/a5-zca-source-inventory.json`
-and `A5_PLAN=.a5/evidence/zca-plan.json`. Generation uses `--extensions Zca`, so
-the ACT4 framework only selects sources whose directory is `Zca` and whose
-`REQUIRED_EXTENSIONS` (`['I', 'Zca']`) are implemented by the UDB config; the
-`MisalignZca` sources stay excluded by their `MISALIGNED_LDST` parameter.
+and `A5_PLAN=.a5/evidence/zca-plan.json`. Generation uses `--extensions Zca` against a selection directory that contains
+only `tests/rv64i/Zca`, so the ACT4 framework only sees sources whose
+directory is `Zca` and whose `REQUIRED_EXTENSIONS` (`['I', 'Zca']`) are
+implemented by the UDB config. The `MisalignZca`, `ZihintntlZca`, Zcb, Zcd and
+Zcmop directories are never copied into that directory and stay excluded.
 `A5_RUN_ISA=rv64imac` adds `--isa rv64imac` to every public-CLI execution.
 
 `scripts/a5/linked_audit.py` accepts 16-bit parcels only when the caller's

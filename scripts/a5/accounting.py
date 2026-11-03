@@ -107,9 +107,10 @@ def make_plan(manifest):
                         "signature": f"{config_name()}/build/{relative}.sig",
                         "expected_results": f"{config_name()}/build/{relative}.results"})
     unique([r["elf"] for r in records], "planned ELFs")
+    profile_document = Path(manifest.get("profile_document", "scripts/a5/profile-proposal.json"))
     return {"schema_version": 1, "status": STATUS, "act4_commit": PIN,
             "profile": manifest["profile"], "inventory_sha256": sha256(manifest_path()),
-            "profile_sha256": sha256(Path("scripts/a5/profile-proposal.json")),
+            "profile_sha256": sha256(profile_document),
             "tool_pins_sha256": sha256(Path("docs/verification/a5-feasibility-pins.json")),
             "variants": records}
 

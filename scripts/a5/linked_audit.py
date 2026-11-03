@@ -44,8 +44,11 @@ addiw slliw srliw sraiw addw subw sllw srlw sraw fence fence.tso""".split())
             if len(word) == 4:
                 parcels += 1
             instructions.append((word, op))
-    unsupported = [(word, op) for word, op in instructions
-                   if len(word) == 8 and (int(word, 16) & 0x7f not in allowed or op not in mnemonics)]
+    # A word that is neither an 8-digit 32-bit encoding nor a 4-digit parcel
+    # is malformed objdump output and fails closed, exactly as before.
+    unsupported = [(word, op) for word, op in instructions if len(word) not in (4, 8)]
+    unsupported += [(word, op) for word, op in instructions
+                    if len(word) == 8 and (int(word, 16) & 0x7f not in allowed or op not in mnemonics)]
     for word, op in instructions:
         if len(word) == 4:
             parcel = int(word, 16)

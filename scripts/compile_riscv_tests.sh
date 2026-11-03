@@ -64,6 +64,10 @@ done
 linker_script_for() {
     case "$(basename "$1")" in
         s4_*|s5_*) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
+        # The compressed Sv39 guest carries page tables and translated pages in
+        # .text, so its tohost word must sit on its own page after the image
+        # (linker.ld would place it inside .text at 0x80001000).
+        zca_straddle_fetch.S) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
         *) printf '%s' "${TESTS_DIR}/linker.ld" ;;
     esac
 }

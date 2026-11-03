@@ -4,6 +4,7 @@
   "act4_commit": "a7c99303516f4e668f7488f172043392e23b9dfd",
   "scope": "all tracked tests/rv64i/Zca/**/*.S at the pinned revision",
   "profile": "a5-rv64imac-zca-nontrapping-proposal-v1",
+  "profile_document": "docs/verification/a5-zca-source-inventory.json",
   "counts": {
     "required-zca": 32
   },
