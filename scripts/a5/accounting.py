@@ -44,18 +44,22 @@ def run_isa():
 
 
 def a5_allowed_compressed():
-    """Compressed mnemonics the linked audit may accept, mapped to opcode bytes.
+    """Compressed mnemonics the linked audit may accept, mapped to quadrants.
 
     A5_CONFIG selects the profile: the RV64I smoke default audits no parcels,
-    and the Zca selection audits only the RV64 Zca instruction set (contract
-    D2). C.ADDI4SPN is absent: D2 freezes it as reserved, and its opcode 0x0
-    is shared with C.LW/C.SW, so a mnemonic key is what keeps it out. Zcmop
-    shares opcode 0x1 with C.NOP/C.LI/C.LUI/C.ADDI and is likewise absent.
+    and the Zca selection audits exactly the RV64 Zca instruction set (D2).
+    The mapping is keyed by mnemonic because quadrants are shared: C.ADDI4SPN,
+    C.LW, C.SW, C.LD and C.SD are quadrant 0, and the Zcmop names share
+    quadrant 1 with C.NOP/C.LI/C.LUI/C.ADDI. C.ADDI4SPN itself is a required
+    Zca instruction; only its zero-immediate encoding is reserved, which is a
+    decode-level rule the caller cannot express as a mnemonic gate. Excluded
+    neighbours (Zcmop, FP-compressed C.FLD/C.FSD/C.FLW/C.FSW families, Zcb,
+    Zcd) are absent by name.
     """
     if config_name() == "ruscv-rv64imac-zca":
         return {
-            "c.nop": 1, "c.addi": 1, "c.li": 1, "c.lui": 1,
-            "c.addi16sp": 1, "c.srli": 1, "c.srai": 1,
+            "c.nop": 1, "c.addi": 1, "c.li": 1, "c.lui": 1, "c.addi4spn": 0,
+            "c.addiw": 1, "c.addi16sp": 1, "c.srli": 1, "c.srai": 1, "c.slli": 2,
             "c.andi": 1, "c.sub": 1, "c.xor": 1, "c.or": 1,
             "c.and": 1, "c.subw": 1, "c.addw": 1,
             "c.j": 1, "c.beqz": 1, "c.bnez": 1,

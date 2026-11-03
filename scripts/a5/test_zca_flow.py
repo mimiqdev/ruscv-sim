@@ -126,9 +126,12 @@ class ExecutionProfileTests(ZcaEnv):
         self.assertEqual(allowed, {})
         self.assertEqual(zca["c.addi"], 1)
         self.assertEqual(zca["c.lw"], 0)
-        self.assertNotIn("c.addi4spn", zca)
+        self.assertEqual(zca["c.addi4spn"], 0)
+        self.assertEqual(zca["c.addiw"], 1)
+        self.assertEqual(zca["c.slli"], 2)
         self.assertNotIn("c.mop.s", zca)
         self.assertNotIn("c.fld", zca)
+        self.assertNotIn("c.fsdsp", zca)
 
     def test_audit_accepts_only_allowed_parcels(self):
         with tempfile.TemporaryDirectory() as directory:
