@@ -1,7 +1,7 @@
 //! Controlled native backend/host-admission seams, not public recovery APIs.
 use super::*;
 use crate::blocking::test_support::ScriptTarget;
-use crate::blocking::{Transport, ZeroDelayRam};
+use crate::blocking::{BlockingInitiator, Transport, ZeroDelayRam};
 use crate::csr::machine;
 use crate::memory::MemoryError;
 use crate::physical::{
@@ -2463,12 +2463,14 @@ fn program_buffer_and_sba_ram_access_use_the_tlm_route() {
         "program-buffer RAM accesses bypassed the TLM route"
     );
     let calls = target.log();
-    assert!(calls
-        .iter()
-        .any(|call| call.access_kind == PhysicalAccessKind::DataWrite));
-    assert!(calls
-        .iter()
-        .any(|call| call.access_kind == PhysicalAccessKind::DataRead));
+    assert!(calls.iter().any(|call| {
+        call.access_kind == PhysicalAccessKind::DataWrite
+            && call.initiator == BlockingInitiator::Hart
+    }));
+    assert!(calls.iter().any(|call| {
+        call.access_kind == PhysicalAccessKind::DataRead
+            && call.initiator == BlockingInitiator::Hart
+    }));
 
     // One Debug Module system bus write and read reach the same slot through
     // the inbound port.
@@ -2491,6 +2493,21 @@ fn program_buffer_and_sba_ram_access_use_the_tlm_route() {
     );
     assert_eq!(sberror_of(&mut owned), 0);
     assert_eq!(target.transactions.load(Ordering::SeqCst), after_write + 1);
+    let calls = target.log();
+    assert!(
+        calls.iter().any(|call| {
+            call.access_kind == PhysicalAccessKind::DataWrite
+                && call.initiator == BlockingInitiator::DebugInbound
+        }),
+        "the SBA write lost its debug-inbound initiator"
+    );
+    assert!(
+        calls.iter().any(|call| {
+            call.access_kind == PhysicalAccessKind::DataRead
+                && call.initiator == BlockingInitiator::DebugInbound
+        }),
+        "the SBA read lost its debug-inbound initiator"
+    );
 }
 
 #[test]

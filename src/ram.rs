@@ -18,7 +18,7 @@
 //! write the target held after an unknown completion) survive installation.
 
 use crate::blocking::adapter::TlmRamAdapter;
-use crate::blocking::{BlockingTarget, Femtoseconds};
+use crate::blocking::{BlockingInitiator, BlockingTarget, Femtoseconds};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::physical::{
     native_ram_atomic_transact, AtomicBackend, AtomicBackendResult, AtomicRequest, PhysicalBackend,
@@ -146,7 +146,12 @@ impl RamSlot {
     }
 
     /// One raw non-atomic RAM transaction at `offset` within the window.
-    pub(crate) fn raw(&self, request: &PhysicalRequest<'_>, offset: u64) -> PhysicalBackendResult {
+    pub(crate) fn raw(
+        &self,
+        request: &PhysicalRequest<'_>,
+        offset: u64,
+        initiator: BlockingInitiator,
+    ) -> PhysicalBackendResult {
         let width = request.width().bytes();
         self.check_span(offset, width)
             .map_err(|error| physical_target_error(error, request))?;
@@ -185,7 +190,7 @@ impl RamSlot {
                     }
                 }
             }
-            RamKind::Tlm(adapter) => adapter.transact(request),
+            RamKind::Tlm(adapter) => adapter.transact(request, initiator),
         }
     }
 
@@ -421,7 +426,7 @@ impl PhysicalBackend for RamSlot {
             ));
         }
         let offset = request.paddr() - self.inner.base;
-        self.raw(request, offset)
+        self.raw(request, offset, BlockingInitiator::Hart)
     }
 }
 

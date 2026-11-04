@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     TLM RAM target；类型化路径、物理与原子后端、DM inbound、镜像安装和全部 host 视图
     （`tohost` 轮询、签名提取、`read_mem`/`write_mem`、`Machine::memory()`）都经过该槽位。
     安装、host 视图与每次 transport reset 后的 RAM 窗口清零使用 `transport_dbg`，不计为
-    事务；未知完成毒化 transport，直到 target 确认 transport reset
+    事务；未知完成毒化 transport，直到 target 确认 transport reset。轮询或清除 RAM 驻留
+    `tohost` 时若 debug transport 失败，运行结果保留 guest 退出码并报告 host 失败
+    （`Status: FAILED`）；普通未映射地址保持既有的低优先级观察行为
   - `MachineConfig` 新增公开 `transport` 字段（`MachineConfig::new` 选择 native；这破坏了
     `MachineConfig` 的 struct literal 构造），`Transport::Tlm` 共享 `Arc` target 以保持
     `Clone`。`Flat` + `tlm` 返回新增的 `MachineError::UnsupportedTransport`。

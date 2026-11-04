@@ -5,7 +5,8 @@ use crate::blocking::Transport;
 use crate::core::{SharedDataAccess, SharedPhysicalAccess};
 use crate::elf::LoadImage;
 use crate::executor::{
-    PresentedInterruptLines, SystemBus, SYSTEM_BUS_HTIF_BASE, SYSTEM_BUS_UART_BASE,
+    InboundSystemBusBackend, PresentedInterruptLines, SystemBus, SYSTEM_BUS_HTIF_BASE,
+    SYSTEM_BUS_UART_BASE,
 };
 use crate::image::{AddressForm, ImagePlacement};
 use crate::memory::{MemoryInterface, SimpleMemory};
@@ -160,7 +161,7 @@ impl Platform {
         // capability (translation delta, host admission) can serve it.
         let inbound_port: SharedPhysicalAccess = match &bus {
             Some(bus) => Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-                SystemBus::physical_backend(bus.clone()),
+                InboundSystemBusBackend::new(bus.clone()),
             ))),
             None => {
                 let memory = ram

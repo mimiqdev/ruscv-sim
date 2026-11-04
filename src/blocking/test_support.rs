@@ -6,8 +6,8 @@
 //! "host views use debug transport" controls can be asserted.
 
 use super::{
-    BlockingCommand, BlockingDebug, BlockingResponseStatus, BlockingTarget, BlockingTransaction,
-    Femtoseconds,
+    BlockingCommand, BlockingDebug, BlockingInitiator, BlockingResponseStatus, BlockingTarget,
+    BlockingTransaction, Femtoseconds,
 };
 use crate::memory::SimpleMemory;
 use crate::physical::PhysicalAccessKind;
@@ -34,6 +34,7 @@ pub(crate) struct Call {
     pub command: BlockingCommand,
     pub length: usize,
     pub access_kind: PhysicalAccessKind,
+    pub initiator: BlockingInitiator,
 }
 
 /// A scriptable blocking target over one `SimpleMemory` backing store.
@@ -161,6 +162,7 @@ impl BlockingTarget for ScriptTarget {
             command: transaction.command(),
             length: transaction.data_length(),
             access_kind: transaction.extension().access_kind(),
+            initiator: transaction.extension().initiator(),
         });
         if self.panic.load(Ordering::SeqCst) {
             panic!("scripted blocking target panic");

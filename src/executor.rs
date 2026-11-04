@@ -4,6 +4,7 @@
 //! Provides `load_and_run` function for loading and executing ELF files
 //! with tohost exit signal support.
 
+use crate::blocking::BlockingInitiator;
 use crate::core::{
     commits::CommitLogger, CoreState, RiscvCore, SimulatorFailure, StepOutcome,
     TrapContinuationPolicy,
@@ -615,6 +616,19 @@ impl SystemBus {
     /// alignment/error behavior; this method applies full-span routing and raw
     /// byte semantics for the T2 adapter only.
     fn native_transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.native_transact_from(request, BlockingInitiator::Hart)
+    }
+
+    /// Services one raw request with explicit transport initiator provenance.
+    ///
+    /// The Hart ports use [`BlockingInitiator::Hart`]; the Debug Module's
+    /// inbound system bus port uses [`BlockingInitiator::DebugInbound`]
+    /// (dev-plan D3). Routing, fault semantics and side effects are identical.
+    fn native_transact_from(
+        &mut self,
+        request: &PhysicalRequest<'_>,
+        initiator: BlockingInitiator,
+    ) -> PhysicalBackendResult {
         request
             .validate()
             .map_err(|error| PhysicalBackendError::protocol(error.to_string()))?;
@@ -647,7 +661,7 @@ impl SystemBus {
                     "RAM address is below its configured base",
                 )
             })?;
-            return self.ram.raw(request, offset);
+            return self.ram.raw(request, offset, initiator);
         }
 
         if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {
@@ -1084,6 +1098,27 @@ impl PhysicalBackend for SystemBus {
     }
 }
 
+/// The DM's inbound physical backend: the same bus routing and lock domain as
+/// the Hart ports, marked with debug-inbound initiator provenance.
+pub(crate) struct InboundSystemBusBackend {
+    bus: Arc<Mutex<SystemBus>>,
+}
+
+impl InboundSystemBusBackend {
+    pub(crate) const fn new(bus: Arc<Mutex<SystemBus>>) -> Self {
+        Self { bus }
+    }
+}
+
+impl PhysicalBackend for InboundSystemBusBackend {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.bus
+            .lock()
+            .map_err(|_| PhysicalBackendError::host("System bus lock poisoned"))?
+            .native_transact_from(request, BlockingInitiator::DebugInbound)
+    }
+}
+
 impl AtomicBackend for SystemBus {
     fn transact_atomic(&mut self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
         self.native_transact_atomic(request)
@@ -1213,6 +1248,16 @@ pub fn dump_signature(
 /// Extract exit code from tohost value using HTIF format or alternative formats
 ///
 /// Returns the exit code if a valid exit signal is detected, None otherwise.
+/// True for a host-view failure that must be reported, as opposed to an
+/// ordinary unmapped/misaligned address that the run loop already treats as a
+/// later observation (dev-plan D6: a failed debug transport is a host failure).
+fn is_host_view_failure(error: &MemoryError) -> bool {
+    matches!(
+        error,
+        MemoryError::Backend(_) | MemoryError::Protocol(_) | MemoryError::Unknown(_)
+    )
+}
+
 pub(crate) fn try_extract_exit_code(tohost_value: u64) -> Option<u32> {
     // Skip zero value (no signal)
     if tohost_value == 0 {
@@ -1451,10 +1496,14 @@ impl RunControl {
     /// so a caller cannot clear the signal first and report a zeroed code. A value
     /// that carries no exit command decodes to `None` and leaves the signal
     /// untouched for the next observation.
-    fn take_ram_exit(observed: u64, clear: impl FnOnce()) -> Option<u32> {
-        let code = try_extract_exit_code(observed)?;
-        clear();
-        Some(code)
+    fn take_ram_exit(
+        observed: u64,
+        clear: impl FnOnce() -> Result<(), MemoryError>,
+    ) -> (Option<u32>, Option<MemoryError>) {
+        match try_extract_exit_code(observed) {
+            Some(code) => (Some(code), clear().err()),
+            None => (None, None),
+        }
     }
 }
 
@@ -2102,6 +2151,7 @@ fn run_native_inner(
             }
             htif_exit
         };
+        let mut poll_error: Option<String> = None;
         let mut observe_ram = |cycles: u64| {
             if !turn.hart().control.retired {
                 return None;
@@ -2122,9 +2172,16 @@ fn run_native_inner(
 
                         // The shared exit rule decodes the value and clears
                         // the signal only after the code is retained.
-                        if let Some(exit_code_val) = RunControl::take_ram_exit(tohost_value, || {
-                            machine.clear_signal(&turn, tohost_pa, verbose)
-                        }) {
+                        let (exit_code, clear_failure) =
+                            RunControl::take_ram_exit(tohost_value, || {
+                                machine.clear_signal(&turn, tohost_pa, verbose)
+                            });
+                        if let Some(error) = clear_failure {
+                            if is_host_view_failure(&error) {
+                                poll_error = Some(format!("tohost clear failed: {error}"));
+                            }
+                        }
+                        if let Some(exit_code_val) = exit_code {
                             if verbose {
                                 eprintln!("[DEBUG] Exit signal detected: code={}", exit_code_val);
                             }
@@ -2135,8 +2192,16 @@ fn run_native_inner(
                         }
                     }
                     Err(e) => {
-                        // Only log errors periodically to avoid spam
-                        if verbose && cycles.is_multiple_of(1000) {
+                        // A failed or short debug transport is a host failure,
+                        // never a guest-visible fault (dev-plan D6). An ordinary
+                        // unmapped address keeps the existing lower-priority
+                        // observation behavior: a later HTIF exit still wins.
+                        if is_host_view_failure(e) {
+                            poll_error = Some(format!("tohost read failed: {e}"));
+                            if verbose {
+                                eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
+                            }
+                        } else if verbose && cycles.is_multiple_of(1000) {
                             eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
                         }
                     }
@@ -2152,6 +2217,9 @@ fn run_native_inner(
         );
         if let Some(boundary) = hooks.boundary.as_mut() {
             boundary(&turn);
+        }
+        if reporting_error.is_none() {
+            reporting_error = poll_error;
         }
         if let Some(error) = reporting_error {
             let (code, boundary_context) = match decision {
@@ -2870,9 +2938,11 @@ impl RiscVSimulator {
 
                         // The shared exit rule decodes the value and clears the signal
                         // only after the code is retained.
-                        if let Some(exit_code) = RunControl::take_ram_exit(tohost_value, || {
-                            self.machine.clear_signal(&turn, tohost, self.verbose)
-                        }) {
+                        let (exit_code, _clear_failure) =
+                            RunControl::take_ram_exit(tohost_value, || {
+                                self.machine.clear_signal(&turn, tohost, self.verbose)
+                            });
+                        if let Some(exit_code) = exit_code {
                             if self.verbose {
                                 eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
                             }
@@ -3610,19 +3680,38 @@ mod tests {
         let mut cleared = 0u32;
 
         // Standard HTIF payload for exit code 1.
-        let code = RunControl::take_ram_exit(3, || cleared += 1);
+        let (code, failure) = RunControl::take_ram_exit(3, || {
+            cleared += 1;
+            Ok(())
+        });
         assert_eq!(code, Some(1));
+        assert!(failure.is_none());
         assert_eq!(cleared, 1, "the decoded exit is retained, then cleared");
 
         // A value without the exit command leaves the signal untouched.
-        let none = RunControl::take_ram_exit(0, || cleared += 1);
+        let (none, failure) = RunControl::take_ram_exit(0, || {
+            cleared += 1;
+            Ok(())
+        });
         assert_eq!(none, None);
+        assert!(failure.is_none());
         assert_eq!(cleared, 1, "a non-exit value must not clear the signal");
 
         // An alternative high-bit encoding is decoded the same way.
-        let alternative = RunControl::take_ram_exit((1u64 << 63) | 42, || cleared += 1);
+        let (alternative, failure) = RunControl::take_ram_exit((1u64 << 63) | 42, || {
+            cleared += 1;
+            Ok(())
+        });
         assert_eq!(alternative, Some(42));
+        assert!(failure.is_none());
         assert_eq!(cleared, 2);
+
+        // A host failure while clearing is reported, and the guest code is
+        // retained (dev-plan D6: never guest-visible).
+        let (code, failure) =
+            RunControl::take_ram_exit(3, || Err(MemoryError::Backend("clear failed".into())));
+        assert_eq!(code, Some(1));
+        assert!(matches!(failure, Some(MemoryError::Backend(_))));
     }
 
     #[test]
@@ -3714,10 +3803,12 @@ mod tests {
                 },
                 &mut |_| {
                     observations.borrow_mut().push("ram");
-                    RunControl::take_ram_exit(signal.get(), || {
+                    let (code, _failure) = RunControl::take_ram_exit(signal.get(), || {
                         observations.borrow_mut().push("clear");
                         signal.set(0);
-                    })
+                        Ok(())
+                    });
+                    code
                 },
             ],
         );

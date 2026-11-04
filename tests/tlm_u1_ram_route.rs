@@ -6,8 +6,12 @@ mod common;
 use assert_cmd::cargo::cargo_bin_cmd;
 use common::public_elf as elf;
 use ruscv_sim::machine::{MachineConfig, PlatformKind};
-use ruscv_sim::{load_and_run_file_with_config, Transport, ZeroDelayRam};
+use ruscv_sim::{
+    load_and_run_file_with_config, BlockingCommand, BlockingDebug, BlockingTarget,
+    BlockingTransaction, Femtoseconds, Transport, ZeroDelayRam,
+};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -126,4 +130,111 @@ fn the_config_entry_point_rejects_flat_with_tlm() {
         error.to_string().contains("TLM transport requires"),
         "{error}"
     );
+}
+
+/// A zero-delay RAM target that starts failing debug transport once the guest
+/// issues its first blocking transaction (installation is over by then).
+struct FailingHostViews {
+    ram: ZeroDelayRam,
+    started: AtomicBool,
+    fail_writes_only: bool,
+}
+
+impl FailingHostViews {
+    fn new(fail_writes_only: bool) -> Self {
+        Self {
+            ram: ZeroDelayRam::new(),
+            started: AtomicBool::new(false),
+            fail_writes_only,
+        }
+    }
+}
+
+impl BlockingTarget for FailingHostViews {
+    fn declared_max_delay(&self) -> Femtoseconds {
+        Femtoseconds::ZERO
+    }
+
+    fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
+        self.started.store(true, Ordering::SeqCst);
+        self.ram.b_transport(transaction);
+    }
+
+    fn transport_dbg(&self, transaction: &mut BlockingDebug<'_>) -> usize {
+        if self.started.load(Ordering::SeqCst)
+            && !(self.fail_writes_only && transaction.command() == BlockingCommand::Read)
+        {
+            return 0;
+        }
+        self.ram.transport_dbg(transaction)
+    }
+
+    fn transport_reset(&self) -> bool {
+        self.ram.transport_reset()
+    }
+}
+
+/// A guest that stores the exit payload to a RAM-resident `.tohost`, so the
+/// run loop polls and clears it instead of using the HTIF endpoint.
+fn ram_exit_elf() -> Vec<u8> {
+    let code = vec![
+        elf::standard_exit(0),
+        elf::auipc(4, 0),
+        elf::addi(4, 4, -4),
+        elf::addi(4, 4, 0x7ff),
+        elf::addi(4, 4, 0x7ff),
+        elf::addi(4, 4, 0x2),
+        elf::sd(5, 4, 0),
+    ];
+    elf::elf_with_code(&code, 0, true, false, 0)
+}
+
+#[test]
+fn a_failed_poll_transport_is_a_host_failure_not_a_guest_result() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("ram-exit.elf");
+    std::fs::write(&path, ram_exit_elf()).unwrap();
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(FailingHostViews::new(false)));
+    let result = load_and_run_file_with_config(
+        path.to_str().unwrap(),
+        config,
+        Some(8),
+        None,
+        None,
+        false,
+        None,
+    )
+    .unwrap();
+    assert!(!result.timed_out);
+    let error = result.error.expect("a failed poll must be reported");
+    assert!(error.contains("tohost read failed"), "{error}");
+    assert_ne!(
+        result.exit_code, 0,
+        "a host failure must not look successful"
+    );
+}
+
+#[test]
+fn a_failed_clear_transport_retains_the_guest_code_and_reports_failure() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("ram-exit.elf");
+    std::fs::write(&path, ram_exit_elf()).unwrap();
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(FailingHostViews::new(true)));
+    let result = load_and_run_file_with_config(
+        path.to_str().unwrap(),
+        config,
+        Some(8),
+        None,
+        None,
+        false,
+        None,
+    )
+    .unwrap();
+    assert!(!result.timed_out, "{result:?}");
+    assert_eq!(result.exit_code, 0, "the guest exit code must be retained");
+    let error = result.error.expect("a failed clear must be reported");
+    assert!(error.contains("tohost clear failed"), "{error}");
+    assert!(error.contains("guest exit code 0 retained"), "{error}");
 }

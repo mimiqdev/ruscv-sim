@@ -178,18 +178,21 @@ fn one_access_issues_exactly_one_transaction() {
                 command: BlockingCommand::Write,
                 length: 8,
                 access_kind: PhysicalAccessKind::DataWrite,
+                initiator: BlockingInitiator::Hart,
             },
             Call {
                 address: BASE + 8,
                 command: BlockingCommand::Read,
                 length: 1,
                 access_kind: PhysicalAccessKind::DataRead,
+                initiator: BlockingInitiator::Hart,
             },
             Call {
                 address: BASE + 16,
                 command: BlockingCommand::Read,
                 length: 4,
                 access_kind: PhysicalAccessKind::Fetch,
+                initiator: BlockingInitiator::Hart,
             },
         ],
         "one physical access must become exactly one blocking transaction"

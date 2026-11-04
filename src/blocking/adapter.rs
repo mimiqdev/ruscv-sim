@@ -80,7 +80,14 @@ impl TlmRamAdapter {
     }
 
     /// Maps one validated physical request onto one blocking transaction.
-    pub(crate) fn transact(&self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+    ///
+    /// `initiator` distinguishes a Hart-issued access from the Debug Module's
+    /// inbound system bus access (dev-plan D3).
+    pub(crate) fn transact(
+        &self,
+        request: &PhysicalRequest<'_>,
+        initiator: BlockingInitiator,
+    ) -> PhysicalBackendResult {
         request
             .validate()
             .map_err(|error| PhysicalBackendError::protocol(error.to_string()))?;
@@ -116,7 +123,7 @@ impl TlmRamAdapter {
         if let Some(payload) = request.write_payload() {
             bytes[..width].copy_from_slice(payload);
         }
-        let extension = BlockingExtension::new(descriptor.category, BlockingInitiator::Hart);
+        let extension = BlockingExtension::new(descriptor.category, initiator);
         let mut transaction =
             BlockingTransaction::new(descriptor.paddr, command, &mut bytes[..width], extension);
 
