@@ -18,7 +18,9 @@
 //! write the target held after an unknown completion) survive installation.
 
 use crate::blocking::adapter::{PendingDelay, TlmRamAdapter};
-use crate::blocking::{BlockingInitiator, BlockingTarget, DelayConversionError, Femtoseconds};
+use crate::blocking::{
+    BlockingInitiator, BlockingTarget, DelayConversionError, Femtoseconds, TickPeriod,
+};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::physical::{
     native_ram_atomic_transact, AtomicBackend, AtomicBackendResult, AtomicRequest, PhysicalBackend,
@@ -82,16 +84,18 @@ impl RamSlot {
     /// The target's declared maximum delay must be representable under the
     /// Machine's declared tick period; otherwise the configuration fails
     /// before any access is issued.
+    /// A TLM slot whose delay conversion uses the Machine's declared period.
     pub(crate) fn tlm(
         target: Arc<dyn BlockingTarget>,
         base: u64,
         size: usize,
+        period: TickPeriod,
     ) -> Result<Self, DelayConversionError> {
         Ok(Self {
             inner: Arc::new(RamSlotInner {
                 base,
                 size,
-                kind: RamKind::Tlm(TlmRamAdapter::new(target)?),
+                kind: RamKind::Tlm(TlmRamAdapter::with_tick_period(target, period)?),
             }),
         })
     }

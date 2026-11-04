@@ -1,15 +1,14 @@
 diff --git a/src/capi/host.rs b/src/capi/host.rs
-index 8de4c2e..15a86da 100644
+index 87af83a..f416f5b 100644
 --- a/src/capi/host.rs
 +++ b/src/capi/host.rs
-@@ -489,7 +489,9 @@ impl Session {
+@@ -577,7 +577,8 @@ impl Session {
          facts.failed = true;
          facts.uncertain |= unknown;
-         self.facts = facts;
--        self.state = RunState::Failed;
+         let start_fs = facts.committed_start_fs;
+-        self.commit_run(facts, start_fs, RunState::Failed, 0);
 +        // MUTATION: a terminal failure is reported as a passing guest exit.
-+        self.state = RunState::Exited;
-+        self.exit_code = 0;
++        self.commit_run(facts, start_fs, RunState::Exited, 0);
          self.unknown = unknown;
          self.failure = Some(message);
          Ok(())

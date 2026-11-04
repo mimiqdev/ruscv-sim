@@ -24,7 +24,7 @@
  *     state.
  *   - Target callbacks run synchronously inside a ruscv-sim call on that
  *     thread.  Any call back into this ABI from a callback fails with
- *     RUSCV_ERROR_REENTRANT.
+ *     RUSCV_ERROR_REENTRANT, whichever handle it names.
  *   - A Rust panic is caught at the boundary: the handle is poisoned and the
  *     call returns RUSCV_ERROR_PANIC.  Every later call returns
  *     RUSCV_ERROR_POISONED.
@@ -231,8 +231,10 @@ typedef struct ruscv_boundary {
  *
  * `consumed_fs` is the amount of modeled time the Machine committed during the
  * grant (completed turns, idle jumps and transport delay).  The caller commits
- * global time only from this amount; the next grant's start is the value it has
- * committed so far.
+ * global time only from this amount, so the next grant's start may not precede
+ * the value it has committed so far; an earlier start is
+ * RUSCV_ERROR_TIME_AUTHORITY, exactly as an earlier start of the Machine's own
+ * cursor is (ADR-0004 §4.4).
  */
 typedef struct ruscv_grant {
     uint64_t consumed_fs;
@@ -285,9 +287,9 @@ int32_t ruscv_machine_set_commit_log(ruscv_machine *machine, const char *path);
  * `start_fs` is the caller's authoritative start time, `max_end_fs` its
  * inclusive horizon and `turn_budget` the started-slot budget
  * (RUSCV_TURNS_UNBOUNDED for none).  A start earlier than the Machine's last
- * committed time is RUSCV_ERROR_TIME_AUTHORITY and never rewinds the cursor.
- * A classified run failure still returns RUSCV_OK and is visible through
- * ruscv_machine_result.
+ * committed time, or earlier than the caller's own committed time, is
+ * RUSCV_ERROR_TIME_AUTHORITY and never rewinds either cursor.  A classified run
+ * failure still returns RUSCV_OK and is visible through ruscv_machine_result.
  */
 int32_t ruscv_machine_run_grant(ruscv_machine *machine, uint64_t start_fs,
                                 uint64_t max_end_fs, uint64_t turn_budget,
@@ -300,11 +302,14 @@ int32_t ruscv_machine_boundary(ruscv_machine *machine, ruscv_boundary *out);
 int32_t ruscv_machine_result(ruscv_machine *machine, ruscv_result *out);
 
 /*
- * Reinstalls the image on a fresh, acknowledged transport domain.
+ * Reinstalls the image through the Machine's reset lifecycle.
  *
- * This is the recovery path after an unknown completion: the new composition
- * obtains the target's transport-reset acknowledgement and zero-fills the RAM
- * window before any new grant (dev-plan D6).
+ * An ordinary reset quiesces, zero-fills the RAM window and republishes the same
+ * image.  After an unknown completion the poisoned composition is never resumed
+ * or rewired: a fresh composition obtains the target's transport-reset
+ * acknowledgement, zero-fills and reinstalls (dev-plan D6), and the failed
+ * domain stays quarantined.  A target that withholds the acknowledgement keeps
+ * the handle unusable.
  */
 int32_t ruscv_machine_reset(ruscv_machine *machine);
 

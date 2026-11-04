@@ -48,6 +48,14 @@ struct TestTarget {
     reentry_status: AtomicI32,
     /// The handle a callback re-enters, when set.
     handle: AtomicPtr<RuscvMachine>,
+    /// A second handle a callback enters, when set.
+    second_handle: AtomicPtr<RuscvMachine>,
+    /// Status the nested call into `second_handle` returned, or `i32::MIN`.
+    second_status: AtomicI32,
+    /// Make debug-transport reads fail (a short transfer) after installation.
+    fail_dbg_reads: AtomicBool,
+    /// Make debug-transport writes fail (a short transfer) after installation.
+    fail_dbg_writes: AtomicBool,
 }
 
 impl TestTarget {
@@ -63,11 +71,19 @@ impl TestTarget {
             transactions: AtomicUsize::new(0),
             reentry_status: AtomicI32::new(i32::MIN),
             handle: AtomicPtr::new(std::ptr::null_mut()),
+            second_handle: AtomicPtr::new(std::ptr::null_mut()),
+            second_status: AtomicI32::new(i32::MIN),
+            fail_dbg_reads: AtomicBool::new(false),
+            fail_dbg_writes: AtomicBool::new(false),
         }
     }
 
     fn reentry_status(&self) -> i32 {
         self.reentry_status.load(Ordering::SeqCst)
+    }
+
+    fn second_status(&self) -> i32 {
+        self.second_status.load(Ordering::SeqCst)
     }
 
     /// The half-open window of one access, clamped to the modeled RAM.
@@ -94,6 +110,13 @@ unsafe extern "C" fn target_b_transport(user: *mut c_void, payload: *mut CPayloa
         let status = unsafe { ruscv_machine_boundary(handle, &mut facts) };
         target.reentry_status.store(status, Ordering::SeqCst);
     }
+    let second = target.second_handle.load(Ordering::SeqCst);
+    if !second.is_null() && target.second_status.load(Ordering::SeqCst) == i32::MIN {
+        let mut result = CResult::default();
+        // SAFETY: the second handle is live on the same thread.
+        let status = unsafe { ruscv_machine_result(second, &mut result) };
+        target.second_status.store(status, Ordering::SeqCst);
+    }
     let len = payload.length;
     // SAFETY: the ABI guarantees a Rust-owned buffer of exactly `length` bytes
     // that this callback exclusively borrows for its duration.
@@ -117,6 +140,15 @@ unsafe extern "C" fn target_dbg(user: *mut c_void, debug: *mut CDebug) -> usize 
     let (target, debug) = unsafe { (&*(user.cast::<TestTarget>()), &mut *debug) };
     target.debug_calls.fetch_add(1, Ordering::SeqCst);
     let len = debug.length;
+    let fail = if debug.command == super::target::command::READ {
+        target.fail_dbg_reads.load(Ordering::SeqCst)
+    } else {
+        target.fail_dbg_writes.load(Ordering::SeqCst)
+    };
+    if fail {
+        // A short debug transport is a host failure, never a guest fault.
+        return len.saturating_sub(1);
+    }
     // SAFETY: as in `target_b_transport`.
     let data = unsafe { std::slice::from_raw_parts_mut(debug.data, len) };
     let (start, end) = target.window(debug.address, len);
@@ -527,7 +559,7 @@ fn a_wait_wake_at_the_deadline_does_not_cross_the_grant_horizon() {
         ))
         .unwrap(),
     );
-    let mut session = Session::new(config, TickPeriod::DEFAULT, image).unwrap();
+    let mut session = Session::new(config, image).unwrap();
     session
         .run_grant(0, 0x1000 * TICK_FS, super::UNBOUNDED_TURNS)
         .unwrap();
@@ -542,6 +574,209 @@ fn a_wait_wake_at_the_deadline_does_not_cross_the_grant_horizon() {
         facts.deadline_reached,
         "a wait that stopped at the deadline did not report it"
     );
+}
+
+#[test]
+fn a_start_before_the_callers_committed_time_is_rejected() {
+    // ADR-0004 §4.4: the kernel commits global time only from the amount a
+    // grant returned, so its own clock cannot rewind either.  The caller starts
+    // far ahead of the Machine's cursor here, which makes the Machine-cursor
+    // check alone vacuous.
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    let grant = harness.grant(100 * TICK_FS, 110 * TICK_FS, 1).unwrap();
+    assert_eq!(grant.consumed_fs, TICK_FS);
+    assert_eq!(
+        harness.grant(50 * TICK_FS, 200 * TICK_FS, 1).err(),
+        Some(Status::TimeAuthority as i32),
+        "the caller's clock rewound"
+    );
+    assert!(
+        harness.diagnostic().contains("caller's committed time"),
+        "wrong diagnostic: {}",
+        harness.diagnostic()
+    );
+    // A later start (the caller's own idle step) stays legal.
+    let grant = harness
+        .grant(102 * TICK_FS, 200 * TICK_FS, 1)
+        .expect("a forward start is legal");
+    assert_eq!(grant.consumed_fs, TICK_FS);
+}
+
+#[test]
+fn the_declared_tick_period_drives_delay_conversion() {
+    // A 2 ns tick: one compressed fetch annotated at 2 ns is one delay tick, and
+    // a completed turn is one more, so one retired instruction consumes 4 ns.
+    // The period must reach the RAM adapter, not only the caller-facing
+    // arithmetic, and the completion bound must use it too.
+    const PERIOD_FS: u64 = 2_000_000;
+    let mut config = MachineConfig::new(crate::machine::PlatformKind::Native);
+    config.isa = IsaProfile::Rv64imafdc;
+    config.tick_period = TickPeriod::new(Femtoseconds::new(PERIOD_FS));
+    config.transport = crate::blocking::Transport::tlm(Arc::new(DelayedTarget::new(PERIOD_FS)));
+    let image = Arc::new(
+        LoadImage::parse(&elf::elf_with_code(&exit_guest(2), 0, true, false, 0x4000)).unwrap(),
+    );
+    let mut session = Session::new(config, image).unwrap();
+    session
+        .run_grant(0, 100 * PERIOD_FS, 1)
+        .expect("one turn fits");
+    let facts = session.facts();
+    assert_eq!(facts.consumed_fs, 2 * PERIOD_FS);
+    assert_eq!(facts.transport_delay_fs, PERIOD_FS);
+    assert_eq!(facts.turns, 1);
+
+    // The bound converts the declared per-transaction maximum under the same
+    // period: two turns of one tick each, plus two transactions at one tick.
+    session
+        .run_grant(2 * PERIOD_FS, 10 * PERIOD_FS, super::UNBOUNDED_TURNS)
+        .expect("a stopped grant is not an API error");
+    let facts = session.facts();
+    assert!(facts.deadline_blocked);
+    // Two turns, each reserving its own tick plus 18 transactions at one tick.
+    assert_eq!(facts.candidate_bound_fs, 38 * PERIOD_FS);
+    assert_eq!(facts.residual_slack_fs, 8 * PERIOD_FS);
+}
+
+#[test]
+fn a_polling_debug_transport_failure_is_a_host_failure() {
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(0), 0);
+    // Fail only after the image is installed, so the load still succeeds.
+    harness.target.fail_dbg_reads.store(true, Ordering::SeqCst);
+    let grant = harness.grant(0, u64::MAX / 2, 1000).unwrap();
+    let result = harness.result();
+    assert_eq!(
+        grant.facts.failed, 1,
+        "a failed polling read was not a host failure"
+    );
+    assert_eq!(result.state, RunState::Failed.code());
+    assert!(
+        harness.diagnostic().contains("tohost read failed"),
+        "wrong diagnostic: {}",
+        harness.diagnostic()
+    );
+}
+
+#[test]
+fn a_failed_tohost_clear_never_reports_a_guest_exit() {
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(0), 0);
+    harness.target.fail_dbg_writes.store(true, Ordering::SeqCst);
+    let grant = harness.grant(0, u64::MAX / 2, 1000).unwrap();
+    let result = harness.result();
+    assert_eq!(
+        grant.facts.failed, 1,
+        "a failed clear was accepted as a guest exit"
+    );
+    assert_ne!(result.state, RunState::Exited.code());
+    assert_eq!(result.state, RunState::Failed.code());
+    assert!(
+        harness.diagnostic().contains("tohost clear failed"),
+        "wrong diagnostic: {}",
+        harness.diagnostic()
+    );
+}
+
+#[test]
+fn a_callback_call_into_another_handle_is_rejected_as_reentry() {
+    // D8 rejects any call back into the ABI from a callback, not only one into
+    // the handle the callback belongs to.
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    let other = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    harness
+        .target
+        .second_handle
+        .store(other.handle, Ordering::SeqCst);
+    let result = harness.run_to_result(1_000, 8);
+    assert_eq!(
+        harness.target.second_status(),
+        Status::Reentrant as i32,
+        "a callback re-entered the C ABI through another handle"
+    );
+    assert_eq!(result.state, RunState::Exited.code());
+}
+
+#[test]
+fn an_oversized_atomic_snapshot_is_not_a_completion() {
+    use crate::blocking::{
+        BlockingAtomicExtension, BlockingCommand, BlockingInitiator, BlockingTarget,
+        BlockingTransaction,
+    };
+    use crate::physical::{
+        AmoWidth, AtomicOrdering, PhysicalAccessKind, MAX_COMMITTED_WRITE_SNAPSHOT_BYTES,
+    };
+
+    struct SnapshotTarget;
+    unsafe extern "C" fn snapshot_transport(_: *mut c_void, payload: *mut CPayload) {
+        // SAFETY: the ABI guarantees a live payload.
+        let payload = unsafe { &mut *payload };
+        payload.status = super::target::status::OK;
+        payload.atomic.outcome = atomic_outcome::LOAD_RESERVED;
+        payload.atomic.snapshot_length = (MAX_COMMITTED_WRITE_SNAPSHOT_BYTES + 1) as u32;
+    }
+    unsafe extern "C" fn snapshot_debug(_: *mut c_void, debug: *mut CDebug) -> usize {
+        // SAFETY: the ABI guarantees a live request.
+        unsafe { &*debug }.length
+    }
+    unsafe extern "C" fn snapshot_reset(_: *mut c_void) -> i32 {
+        1
+    }
+    let table = CTarget {
+        max_delay_fs: 0,
+        user: std::ptr::null_mut(),
+        b_transport: Some(snapshot_transport),
+        transport_dbg: Some(snapshot_debug),
+        transport_reset: Some(snapshot_reset),
+    };
+    let _ = SnapshotTarget;
+    let adapter = super::target::CBlockingTarget::new(table).unwrap();
+    let mut bytes = [0u8; 4];
+    let mut transaction = BlockingTransaction::new(
+        0x8000_0100,
+        BlockingCommand::Read,
+        &mut bytes,
+        crate::blocking::BlockingExtension::atomic(
+            PhysicalAccessKind::DataRead,
+            BlockingInitiator::Hart,
+            BlockingAtomicExtension::load_reserved(AmoWidth::Word, AtomicOrdering::default()),
+        ),
+    );
+    adapter.b_transport(&mut transaction);
+    assert_eq!(
+        transaction.atomic_extension().unwrap().outcome(),
+        None,
+        "an oversized snapshot was truncated into a completion"
+    );
+}
+
+#[test]
+fn a_fractional_horizon_reports_its_residual_slack() {
+    // A 2.5-tick horizon leaves a half tick that no whole tick can use: the
+    // grant must report DeadlineBlocked with the real femtosecond residual, not
+    // claim the horizon was reached.
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    let grant = harness
+        .grant(0, 5 * TICK_FS / 2, super::UNBOUNDED_TURNS)
+        .unwrap();
+    assert_eq!(grant.facts.deadline_blocked, 1);
+    assert_eq!(grant.facts.deadline_reached, 0);
+    assert_eq!(grant.consumed_fs, TICK_FS);
+    assert_eq!(grant.facts.residual_slack_fs, TICK_FS + TICK_FS / 2);
+    assert_eq!(grant.facts.candidate_bound_fs, 2 * TICK_FS);
+}
+
+#[test]
+fn a_terminal_exit_keeps_coincident_budget_facts() {
+    // The exit lands on the last granted slot, so the boundary facts may not
+    // drop `budget_exhausted` (ADR-0004 §7.1, no return path discards a
+    // coincident fact).
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    let grant = harness
+        .grant(0, u64::MAX / 2, 7)
+        .expect("the guest exits on its seventh turn");
+    let result = harness.result();
+    assert_eq!(result.state, RunState::Exited.code());
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(grant.facts.turns, 7);
+    assert_eq!(grant.facts.budget_exhausted, 1);
 }
 
 #[test]
@@ -755,7 +990,7 @@ fn a_native_grant_reserves_its_two_turn_step_bound() {
     let image = Arc::new(
         LoadImage::parse(&elf::elf_with_code(&exit_guest(2), 0, true, false, 0x4000)).unwrap(),
     );
-    let mut session = Session::new(config, TickPeriod::DEFAULT, image).unwrap();
+    let mut session = Session::new(config, image).unwrap();
     // A native step has no transport reserve, so its bound is the two turns a
     // waiting wake can complete.  A two-tick horizon fits one one-tick turn and
     // then refuses the next, which would need the whole step again.
@@ -1051,4 +1286,58 @@ fn transporting_every_worst_case_transaction_stays_within_the_bound() {
             .ticks(),
         MAX_GUEST_TRANSACTIONS_PER_TURN
     );
+}
+
+/// A RAM target that annotates one fixed delay for every transaction.
+struct DelayedTarget {
+    ram: Mutex<Vec<u8>>,
+    delay: Femtoseconds,
+}
+
+impl DelayedTarget {
+    fn new(delay_fs: u64) -> Self {
+        Self {
+            ram: Mutex::new(vec![0; 0x1_0000]),
+            delay: Femtoseconds::new(delay_fs),
+        }
+    }
+}
+
+impl crate::blocking::BlockingTarget for DelayedTarget {
+    fn declared_max_delay(&self) -> Femtoseconds {
+        self.delay
+    }
+
+    fn b_transport(&self, transaction: &mut crate::blocking::BlockingTransaction<'_>) {
+        let offset = (transaction.address() - elf::BASE) as usize;
+        let len = transaction.data_length();
+        let mut ram = self.ram.lock().unwrap();
+        if transaction.command() == crate::blocking::BlockingCommand::Read {
+            transaction
+                .data_mut()
+                .copy_from_slice(&ram[offset..offset + len]);
+        } else {
+            ram[offset..offset + len].copy_from_slice(transaction.data());
+        }
+        transaction.set_status(crate::blocking::BlockingResponseStatus::Ok);
+        transaction.set_response_delay(self.delay);
+    }
+
+    fn transport_dbg(&self, transaction: &mut crate::blocking::BlockingDebug<'_>) -> usize {
+        let offset = (transaction.address() - elf::BASE) as usize;
+        let len = transaction.len();
+        let mut ram = self.ram.lock().unwrap();
+        if transaction.command() == crate::blocking::BlockingCommand::Read {
+            transaction
+                .data_mut()
+                .copy_from_slice(&ram[offset..offset + len]);
+        } else {
+            ram[offset..offset + len].copy_from_slice(transaction.data());
+        }
+        len
+    }
+
+    fn transport_reset(&self) -> bool {
+        true
+    }
 }

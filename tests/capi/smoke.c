@@ -442,6 +442,26 @@ static void grants_and_commit_log_case(const char *guest, const char *log_path)
         status = grant(handle, committed - TICK_FS, UINT64_MAX / 2, 4, &second);
         check(status == RUSCV_ERROR_TIME_AUTHORITY,
               "a start earlier than the committed time is rejected");
+        /* The caller's own clock may not rewind either, even when the
+         * Machine's cursor is far behind it. */
+        {
+            ruscv_machine *ahead = create_machine(&table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+            ruscv_grant lead;
+
+            check(ahead != NULL && status == RUSCV_OK, "create a caller-clock handle");
+            if (ahead != NULL) {
+                target->handle = ahead;
+                check(ruscv_machine_load_elf(ahead, guest) == RUSCV_OK,
+                      "load for the caller-clock case");
+                status = grant(ahead, 100 * TICK_FS, 110 * TICK_FS, 1, &lead);
+                check(status == RUSCV_OK && lead.consumed_fs == TICK_FS,
+                      "a grant far ahead of the Machine cursor runs");
+                status = grant(ahead, 50 * TICK_FS, 200 * TICK_FS, 1, &lead);
+                check(status == RUSCV_ERROR_TIME_AUTHORITY,
+                      "a start earlier than the caller's committed time is rejected");
+                ruscv_machine_destroy(ahead);
+            }
+        }
         memset(&facts, 0, sizeof(facts));
         ruscv_machine_boundary(handle, &facts);
         check(facts.turns == 5, "the rejected grant did not rewind the cursor");

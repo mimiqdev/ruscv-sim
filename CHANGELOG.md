@@ -16,7 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 不透明句柄：create（ISA profile、tick 周期、可选 C RAM target）、load ELF、set commit log、
     run grant、read boundary facts、read result、reset、destroy。grant 携带权威起点、最大结束时间与
     turn 预算，返回本次消费的建模时间（完成的 turn、idle 跳进与 transport 延迟）、边界事实以及是否
-    触及 grant 边界；早于 Machine 已提交时间的起点按 ADR-0004 §4.4 拒绝，reset 重启纪元
+    触及 grant 边界；早于 Machine 已提交时间或早于调用方自己已提交时间的起点按 ADR-0004 §4.4 拒绝
+    （内核只按 grant 返回量提交全局时间，因此其时钟同样不能回退），reset 重启纪元
+  - 声明的 tick 周期进入组合：`MachineConfig` 新增 `tick_period` 字段（默认 1 ns），Platform 用它
+    构造可选择的 RAM 槽位，因此 target 的标注延迟与声明的单事务最大值按同一周期换算，`mtime` 的 tick
+    与返回的消费时间一致；C ABI 由 create 声明该周期
+  - 轮询或清除 RAM 驻留 `tohost` 时的 debug transport 失败按 host failure 分类（保留已完成的
+    transition 与已消费时间），不再被当作静默缺失或被接受为 guest 退出
+  - 回调再入按线程判定：回调运行期间任何 handle 的 C ABI 调用（含 create/destroy）都以
+    `RUSCV_ERROR_REENTRANT` 拒绝，而不只是同一个 handle；超出 64 字节的 LR 快照不再被截断接受，
+    而是留给适配器判为协议失败
+  - 终止的 guest 退出不再丢弃同时成立的边界事实（最后一个 turn 预算槽与含端截止时间），
+    分数 tick 的剩余视界报告为 `deadline_blocked` 与真实飞秒剩余 slack
+  - `ruscv_machine_reset` 对普通（含 failed）运行使用组合自身的 fresh reset（quiesce、清零、
+    重新安装），只有未知完成才按 D6 在 target 确认 transport reset 后构建新的 transport 域；
+    失败的组合永不恢复、重连或强制 drain
   - grant 级 deadline 阻断（ADR-0004 §7.2）：启动任何 turn 前先形成该 grant step 的保守完成上界。
     一个 step 可能完成等待中的 turn 及其唤醒 turn，因此上界为两个完成 turn tick 加上各自最坏情况
     事务数乘以 target 声明的单事务最大延迟；放不下的 step 不启动，并以 `deadline_blocked`、剩余

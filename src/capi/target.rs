@@ -262,6 +262,7 @@ impl BlockingTarget for CBlockingTarget {
             delay_fs: 0,
             atomic: atomic_request(transaction),
         };
+        let _in_callback = super::CallbackScope::enter();
         // SAFETY: the table was validated at create time, the payload and its
         // data buffer stay alive and exclusively borrowed for this call, and
         // the host keeps `user` valid until destroy.
@@ -301,12 +302,14 @@ impl BlockingTarget for CBlockingTarget {
             data: transaction.data_mut().as_mut_ptr(),
             length: transaction.len(),
         };
+        let _in_callback = super::CallbackScope::enter();
         // SAFETY: as in `b_transport`: validated callback, live buffer, and a
         // `user` pointer the host keeps valid until destroy.
         unsafe { (self.transport_dbg)(self.table.user, &mut debug) }
     }
 
     fn transport_reset(&self) -> bool {
+        let _in_callback = super::CallbackScope::enter();
         // SAFETY: as in `b_transport`; the callback takes no Rust reference.
         unsafe { (self.transport_reset)(self.table.user) != 0 }
     }
@@ -383,10 +386,17 @@ fn record_atomic_outcome(transaction: &mut BlockingTransaction<'_>, atomic: &CAt
     let outcome = match atomic.outcome {
         atomic_outcome::RMW => Some(BlockingAtomicOutcome::Rmw),
         atomic_outcome::LOAD_RESERVED => {
-            let snapshot = &atomic.snapshot[..normalized_length(atomic.snapshot_length)];
-            CommittedWriteSnapshot::from_bytes(snapshot)
-                .ok()
-                .map(|snapshot| BlockingAtomicOutcome::LoadReserved { snapshot })
+            // A reported length the fixed buffer cannot hold is a malformed
+            // completion: leave the outcome absent so the adapter classifies it
+            // as a protocol failure instead of truncating the snapshot.
+            if atomic.snapshot_length as usize > SNAPSHOT_CAPACITY {
+                None
+            } else {
+                let snapshot = &atomic.snapshot[..atomic.snapshot_length as usize];
+                CommittedWriteSnapshot::from_bytes(snapshot)
+                    .ok()
+                    .map(|snapshot| BlockingAtomicOutcome::LoadReserved { snapshot })
+            }
         }
         atomic_outcome::STORE_CONDITIONAL_SUCCESS => Some(BlockingAtomicOutcome::StoreConditional(
             ConditionalStatus::Success,
@@ -400,9 +410,4 @@ fn record_atomic_outcome(transaction: &mut BlockingTransaction<'_>, atomic: &CAt
         return;
     };
     extension.set_outcome(outcome);
-}
-
-/// Clamps a C-reported snapshot length to the buffer it describes.
-fn normalized_length(reported: u32) -> usize {
-    (reported as usize).min(SNAPSHOT_CAPACITY)
 }

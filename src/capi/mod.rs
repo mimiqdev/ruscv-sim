@@ -180,6 +180,36 @@ pub struct CResult {
     pub pc: u64,
 }
 
+thread_local! {
+    /// True while a target callback runs on this thread.
+    ///
+    /// dev-plan D8 rejects any call back into the ABI from a callback.  The
+    /// check is thread-scoped so a callback cannot enter a *different* handle
+    /// while it holds one, and it is independent of the per-handle call gate.
+    static IN_CALLBACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks the current thread as running one target callback.
+pub(crate) struct CallbackScope;
+
+impl CallbackScope {
+    pub(crate) fn enter() -> Self {
+        IN_CALLBACK.with(|flag| flag.set(true));
+        Self
+    }
+}
+
+impl Drop for CallbackScope {
+    fn drop(&mut self) {
+        IN_CALLBACK.with(|flag| flag.set(false));
+    }
+}
+
+/// True when the current call came from inside a target callback.
+pub(crate) fn in_callback() -> bool {
+    IN_CALLBACK.with(|flag| flag.get())
+}
+
 /// The creator-thread and re-entry gate of one handle.
 struct CallGate {
     creator: ThreadId,
@@ -212,7 +242,6 @@ impl Drop for ActiveCall<'_> {
 struct HandleState {
     poisoned: bool,
     config: MachineConfig,
-    period: crate::blocking::TickPeriod,
     session: Option<Session>,
     /// The most recent API-level diagnostic, when no session produced one.
     diagnostic: Option<String>,
@@ -258,6 +287,12 @@ unsafe fn with_handle<T>(
             "the machine handle is null",
         ));
     };
+    if in_callback() {
+        return Err(ApiError::new(
+            Status::Reentrant,
+            "the C ABI is inside a target callback; a callback cannot re-enter it",
+        ));
+    }
     if std::thread::current().id() != machine.gate.creator {
         return Err(ApiError::new(
             Status::NotCreatorThread,
@@ -418,12 +453,16 @@ pub unsafe extern "C" fn ruscv_machine_create(
     if out.is_null() {
         return Status::InvalidArgument as i32;
     }
+    if in_callback() {
+        return Status::Reentrant as i32;
+    }
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { *out = std::ptr::null_mut() };
     let built = (|| -> Result<RuscvMachine, ApiError> {
         let mut config = host::native_config();
         config.isa = isa_profile(isa)?;
         let period = host::tick_period(tick_period_fs)?;
+        config.tick_period = period;
         if !target.is_null() {
             // SAFETY: the caller guarantees one readable table.
             let table = unsafe { *target };
@@ -440,7 +479,6 @@ pub unsafe extern "C" fn ruscv_machine_create(
             state: Mutex::new(HandleState {
                 poisoned: false,
                 config,
-                period,
                 session: None,
                 diagnostic: None,
             }),
@@ -480,7 +518,10 @@ pub unsafe extern "C" fn ruscv_machine_load_elf(
             let image = LoadImage::parse(&data).map_err(|error| {
                 ApiError::new(Status::Elf, format!("cannot parse the ELF: {error}"))
             })?;
-            let session = Session::new(state.config.clone(), state.period, Arc::new(image))?;
+            let mut session = Session::new(state.config.clone(), Arc::new(image))?;
+            if let Some(previous) = state.session.as_mut() {
+                session.adopt_logger(previous.take_logger());
+            }
             state.session = Some(session);
             state.diagnostic = None;
             Ok(())
@@ -712,6 +753,9 @@ pub unsafe extern "C" fn ruscv_machine_self_test_panic(machine: *mut RuscvMachin
 pub unsafe extern "C" fn ruscv_machine_destroy(machine: *mut RuscvMachine) -> i32 {
     if machine.is_null() {
         return Status::Ok as i32;
+    }
+    if in_callback() {
+        return Status::Reentrant as i32;
     }
     // SAFETY: the caller guarantees one live handle.
     let handle = unsafe { &*machine };

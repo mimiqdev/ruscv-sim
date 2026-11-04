@@ -84,15 +84,17 @@ impl Platform {
                 image.base_addr(),
                 image.memory_size(),
             ),
-            Transport::Tlm(target) => {
-                RamSlot::tlm(target.clone(), image.base_addr(), image.memory_size()).map_err(
-                    |error| {
-                        MachineError::Placement(format!(
-                            "blocking target declares an invalid maximum delay: {error}"
-                        ))
-                    },
-                )?
-            }
+            Transport::Tlm(target) => RamSlot::tlm(
+                target.clone(),
+                image.base_addr(),
+                image.memory_size(),
+                config.tick_period,
+            )
+            .map_err(|error| {
+                MachineError::Placement(format!(
+                    "blocking target declares an invalid maximum delay: {error}"
+                ))
+            })?,
         };
         // After every transport reset and before installation, zero-fill the
         // whole RAM window so no prior run's contents survive (dev-plan D6).

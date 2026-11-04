@@ -46,6 +46,17 @@ use std::sync::Arc;
 /// need more time than the bound it was granted.
 const GRANT_STEP_TURNS: u64 = 2;
 
+/// What one completed boundary's exit observation produced.
+#[derive(Debug)]
+enum Exit {
+    /// The guest named a terminal exit code.
+    Code(u32),
+    /// No terminal signal, or an ordinary unmapped/unmisaligned address.
+    Absent,
+    /// The debug transport failed while polling or clearing the signal.
+    HostFailure(String),
+}
+
 /// How a run stands after one grant (the C ABI's `ruscv_run_state`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunState {
@@ -154,21 +165,23 @@ pub(crate) struct Session {
     /// The current failure is an unknown completion, resolvable only by the
     /// target's transport-reset acknowledgement.
     unknown: bool,
+    /// The caller's committed global time after its last grant, in femtoseconds.
+    ///
+    /// The kernel commits global time only from the amount a grant returns
+    /// (ADR-0004 §4.4), so the next grant's authoritative start may not precede
+    /// this value.  `None` after a load or reset, which restarts the epoch.
+    caller_committed_fs: Option<u64>,
 }
 
 impl Session {
     /// Builds one Machine for the installed image through the caller's target.
-    pub(crate) fn new(
-        config: MachineConfig,
-        period: TickPeriod,
-        image: Arc<LoadImage>,
-    ) -> Result<Self, ApiError> {
+    pub(crate) fn new(config: MachineConfig, image: Arc<LoadImage>) -> Result<Self, ApiError> {
         let machine = OwnedMachine::new(config.clone(), image.clone()).map_err(|error| {
             ApiError::new(Status::Elf, format!("cannot install the image: {error}"))
         })?;
         Ok(Self {
+            period: config.tick_period,
             config,
-            period,
             image,
             tohost: machine.selected_tohost(),
             machine: Some(machine),
@@ -178,7 +191,23 @@ impl Session {
             exit_code: 0,
             failure: None,
             unknown: false,
+            caller_committed_fs: None,
         })
+    }
+
+    /// Moves the configured commit-log sink into this session.
+    ///
+    /// Replacing the image keeps the observer connection topology, so a host
+    /// that named a path keeps logging after a reload or reset (ADR-0003 §3).
+    pub(crate) fn adopt_logger(&mut self, logger: Option<CommitLogger>) {
+        if logger.is_some() {
+            self.logger = logger;
+        }
+    }
+
+    /// Takes the configured commit-log sink out of this session.
+    pub(crate) fn take_logger(&mut self) -> Option<CommitLogger> {
+        self.logger.take()
     }
 
     /// Routes the commit log to `path` from now on (dev-plan D8).
@@ -282,8 +311,25 @@ impl Session {
                 format!("grant end {max_end_fs} fs is earlier than its start {start_fs} fs"),
             ));
         }
-        // Round the grant's own slack down to whole ticks, so the inclusive
-        // deadline can only under-estimate the caller's horizon.
+        // The kernel commits global time only from the amount a grant returned
+        // (ADR-0004 §4.4), so its own clock cannot rewind either.  This check is
+        // the caller-facing half of the earlier-start rule; the Machine-cursor
+        // check above is the other.
+        if let Some(committed) = self.caller_committed_fs {
+            if start_fs < committed {
+                return Err(ApiError::new(
+                    Status::TimeAuthority,
+                    format!(
+                        "grant start {start_fs} fs is earlier than the caller's committed time \
+                         {committed} fs"
+                    ),
+                ));
+            }
+        }
+        // The horizon is the caller's inclusive end.  The Machine's deadline is
+        // the last whole tick that starts at or before it, so a step can never be
+        // granted time the caller did not give, and a remaining fraction stays
+        // visible as slack rather than time.
         let slack_ticks = (max_end_fs - start_fs) / period;
         let deadline = start_ticks
             .checked_add(slack_ticks)
@@ -300,7 +346,7 @@ impl Session {
         };
         let bound_ticks =
             GRANT_STEP_TURNS * (1 + machine.turn_completion_bound_ticks().unwrap_or(0));
-        let committed = |machine: &mut OwnedMachine, period: u64| -> Result<u64, ApiError> {
+        let committed = |machine: &mut OwnedMachine| -> Result<u64, ApiError> {
             let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
             now.checked_mul(period)
                 .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the committed time overflows"))
@@ -308,20 +354,22 @@ impl Session {
 
         loop {
             let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
-            let at_deadline = now >= deadline;
-            if !control.may_execute() || at_deadline {
+            let now_fs = now.checked_mul(period).ok_or_else(|| {
+                ApiError::new(Status::TimeAuthority, "the committed time overflows")
+            })?;
+            let at_horizon = now_fs >= max_end_fs;
+            if !control.may_execute() || at_horizon {
                 // ADR-0004 §4.3 phase 3: report every coincident fact, so a zero
-                // budget at a reached deadline is not collapsed into one.
+                // budget at a reached horizon is not collapsed into one.
                 facts.budget_exhausted = !control.may_execute();
-                facts.deadline_reached = at_deadline;
+                facts.deadline_reached = at_horizon;
                 break;
             }
-            // ADR-0004 §7.2: start a turn only when its conservative completion
+            // ADR-0004 §7.2: start a step only when its conservative completion
             // bound fits the inclusive deadline; otherwise report the residual
             // slack and the refused bound instead of speculative work.
             if now.saturating_add(bound_ticks) > deadline {
                 facts.deadline_blocked = true;
-                facts.residual_slack_fs = (deadline - now).saturating_mul(period);
                 facts.candidate_bound_fs = bound_ticks.saturating_mul(period);
                 break;
             }
@@ -378,43 +426,71 @@ impl Session {
                 } => {}
             }
             control.complete_turn();
-            if let Some(code) = self.take_exit_code(machine, &mut turn) {
-                facts.turns = self.facts.turns + control.cycles();
-                facts.committed_end_fs = committed(machine, period)?;
-                facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
-                self.facts = facts;
-                self.state = RunState::Exited;
-                self.exit_code = code;
-                return Ok(());
+            match self.observe_exit(machine, &mut turn) {
+                Exit::Code(code) => {
+                    facts.turns = self.facts.turns + control.cycles();
+                    facts.committed_end_fs = committed(machine)?;
+                    facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
+                    // A terminal exit does not discard coincident bound facts.
+                    facts.budget_exhausted = !control.may_execute();
+                    facts.deadline_reached |= facts.committed_end_fs >= max_end_fs;
+                    self.commit_run(facts, start_fs, RunState::Exited, code);
+                    return Ok(());
+                }
+                Exit::Absent => {}
+                Exit::HostFailure(message) => {
+                    return self.finish_failure(machine, facts, control.cycles(), message, false);
+                }
             }
         }
 
-        let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
-        facts.committed_end_fs = committed(machine, period)?;
+        facts.committed_end_fs = committed(machine)?;
         facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
         facts.turns = self.facts.turns + control.cycles();
-        if facts.deadline_blocked || facts.deadline_reached {
-            facts.residual_slack_fs = deadline.saturating_sub(now).saturating_mul(period);
+        if facts.deadline_blocked || facts.deadline_reached || facts.budget_exhausted {
+            // Residual slack is the caller's femtosecond horizon minus the
+            // committed time, so a fractional remainder is reported, not lost.
+            facts.residual_slack_fs = max_end_fs.saturating_sub(facts.committed_end_fs);
         }
-        self.facts = facts;
+        self.commit_run(facts, start_fs, RunState::Running, 0);
         Ok(())
     }
 
-    /// Reinstalls the image on a fresh, acknowledged transport domain.
+    /// Records one non-terminal grant boundary and the caller's committed time.
+    fn commit_run(&mut self, facts: GrantFacts, start_fs: u64, state: RunState, code: u32) {
+        self.facts = facts;
+        self.state = state;
+        self.exit_code = code;
+        self.caller_committed_fs = Some(start_fs + facts.consumed_fs);
+    }
+
+    /// Reinstalls the image through the Machine's own reset lifecycle.
     ///
-    /// This is the only recovery path after an unknown completion (dev-plan D6):
-    /// building the new composition first obtains the target's transport-reset
-    /// acknowledgement and zero-fills the whole RAM window, and the failed
-    /// domain is never reused or rewired.  A target that withholds the
-    /// acknowledgement keeps the handle unusable.
+    /// An ordinary reset (running, drained or failed) uses the composition's
+    /// coordinated fresh reset: it quiesces, zero-fills the RAM window and
+    /// republishes the same image, so the installed generation is replaced
+    /// rather than silently reused (ADR-0003 §3).
+    ///
+    /// After an unknown completion the poisoned composition is never resumed,
+    /// rewired or force-drained.  Its transport is resolved by the target's
+    /// transport-reset acknowledgement, which a fresh composition obtains while
+    /// it zero-fills and reinstalls (dev-plan D6), and the failed domain stays
+    /// quarantined exactly as the Machine's own teardown records it.  A target
+    /// that withholds the acknowledgement keeps the handle unusable.
     pub(crate) fn reset(&mut self) -> Result<(), ApiError> {
-        let machine =
-            OwnedMachine::new(self.config.clone(), self.image.clone()).map_err(|error| {
-                ApiError::new(
-                    Status::Machine,
-                    format!("cannot reset the Machine: {error}"),
-                )
-            })?;
+        let mut machine = self.machine.take().ok_or(Status::NoImage)?;
+        let machine = if self.unknown {
+            drop(machine);
+            OwnedMachine::new(self.config.clone(), self.image.clone())
+        } else {
+            machine.fresh_reset().map(|()| machine)
+        }
+        .map_err(|error| {
+            ApiError::new(
+                Status::Machine,
+                format!("cannot reset the Machine: {error}"),
+            )
+        })?;
         self.tohost = machine.selected_tohost();
         self.machine = Some(machine);
         self.facts = GrantFacts::default();
@@ -422,6 +498,7 @@ impl Session {
         self.exit_code = 0;
         self.failure = None;
         self.unknown = false;
+        self.caller_committed_fs = None;
         Ok(())
     }
 
@@ -438,15 +515,12 @@ impl Session {
 
     /// Decodes a terminal guest signal, retaining the code before clearing it.
     ///
-    /// Only RAM-resident signals are polled through the selected RAM slot, so a
-    /// failed debug transport is a host failure rather than a silent absence
-    /// (dev-plan D6).  A host-view failure is recorded and then classified by
-    /// the caller, never turned into a guest exit.
-    fn take_exit_code(
-        &mut self,
-        machine: &mut OwnedMachine,
-        turn: &mut MachineTurn,
-    ) -> Option<u32> {
+    /// Only RAM-resident signals are polled through the selected RAM slot.  A
+    /// failed or short debug transport while polling or clearing is a host
+    /// failure, never a silent absence and never a guest exit (dev-plan D6), so
+    /// it is returned for failure classification with the completed transition
+    /// and its consumed time intact.
+    fn observe_exit(&mut self, machine: &mut OwnedMachine, turn: &mut MachineTurn) -> Exit {
         let htif = turn
             .events()
             .iter()
@@ -455,29 +529,33 @@ impl Session {
                 _ => None,
             })
             .find(|code| *code != u32::MAX);
-        if htif.is_some() {
-            return htif;
+        if let Some(code) = htif {
+            return Exit::Code(code);
         }
         if !turn.hart().control.retired {
-            return None;
+            return Exit::Absent;
         }
         let tohost = self.tohost;
         machine.observe_tohost(turn, tohost);
-        let observed = match &turn.tohost()?.value {
+        let Some(sample) = turn.tohost() else {
+            return Exit::Absent;
+        };
+        let observed = match &sample.value {
             Ok(value) => *value,
             Err(error) => {
-                if is_host_view_failure(error) {
-                    self.failure = Some(format!("tohost read failed: {error}"));
-                }
-                return None;
+                return if is_host_view_failure(error) {
+                    Exit::HostFailure(format!("tohost read failed: {error}"))
+                } else {
+                    Exit::Absent
+                };
             }
         };
         let (code, clear_error) =
             RunControl::take_ram_exit(observed, || machine.clear_signal(turn, tohost, false));
         if let Some(error) = clear_error.filter(is_host_view_failure) {
-            self.failure = Some(format!("tohost clear failed: {error}"));
+            return Exit::HostFailure(format!("tohost clear failed: {error}"));
         }
-        code
+        code.map_or(Exit::Absent, Exit::Code)
     }
 
     /// Classifies a terminal failure and records it as the grant result.
@@ -498,8 +576,8 @@ impl Session {
         facts.turns = self.facts.turns + completed_turns;
         facts.failed = true;
         facts.uncertain |= unknown;
-        self.facts = facts;
-        self.state = RunState::Failed;
+        let start_fs = facts.committed_start_fs;
+        self.commit_run(facts, start_fs, RunState::Failed, 0);
         self.unknown = unknown;
         self.failure = Some(message);
         Ok(())

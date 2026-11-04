@@ -82,13 +82,8 @@ impl DelayAccess {
 }
 
 impl TlmRamAdapter {
-    /// Wraps one shared blocking target under the declared default tick
-    /// period.
-    pub(crate) fn new(target: Arc<dyn BlockingTarget>) -> Result<Self, DelayConversionError> {
-        Self::with_tick_period(target, TickPeriod::DEFAULT)
-    }
-
-    /// Wraps one shared blocking target under an explicit tick period.
+    /// Wraps one shared blocking target under the Machine's declared tick
+    /// period (dev-plan D7).
     ///
     /// The target's declared per-transaction maximum must be representable in
     /// that period; an overflowing or malformed bound is a configuration

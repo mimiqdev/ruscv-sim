@@ -21,7 +21,7 @@ fn native_slot(size: usize) -> RamSlot {
 }
 
 fn tlm_slot(target: &Arc<ScriptTarget>, size: usize) -> RamSlot {
-    RamSlot::tlm(target.clone(), BASE, size).unwrap()
+    RamSlot::tlm(target.clone(), BASE, size, TickPeriod::DEFAULT).unwrap()
 }
 
 #[test]
@@ -678,7 +678,7 @@ fn a_completed_write_is_recorded_before_delay_accounting_fails() {
 #[test]
 fn the_declared_maximum_is_a_construction_snapshot() {
     let target = crate::blocking::test_support::DelayingRam::new(1_000_000, 1_000_000);
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE).unwrap();
+    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT).unwrap();
     let mut port = ValidatedPhysicalAccess::new(slot.clone());
     target.set_declared_max_delay(0);
 

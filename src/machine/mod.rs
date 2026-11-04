@@ -14,7 +14,7 @@ pub(crate) use owned::OwnedMachine;
 #[cfg(test)]
 pub(crate) use owned::SignalOperation;
 
-use crate::blocking::Transport;
+use crate::blocking::{TickPeriod, Transport};
 use crate::core::observation::{HartTransition, ObservationSink};
 use crate::core::{CoreState, RiscvCore, StepOutcome};
 use crate::elf::LoadImage;
@@ -152,6 +152,14 @@ pub struct MachineConfig {
     /// default.  [`Transport::Tlm`] shares a caller-supplied blocking target and
     /// requires [`PlatformKind::Native`].
     pub transport: Transport,
+    /// The declared Platform tick period (dev-plan D7).
+    ///
+    /// One tick is one virtual-time unit and one `mtime` unit.  A blocking
+    /// target's annotated delays and its declared per-transaction maximum are
+    /// converted under this period (ADR-0004 §5.2), so a host that declares a
+    /// different unit gets the same conversion the response uses.  The default
+    /// is 1 ns; the C ABI (unit U5) takes it from its create call.
+    pub tick_period: TickPeriod,
     pub verbose: bool,
     /// Native guest/bus address; flat storage offset used only without ELF tohost.
     pub tohost_override: Option<u64>,
@@ -165,6 +173,7 @@ impl MachineConfig {
             // Machine composition default is `rv64imafdc` (contract D2).
             isa: IsaProfile::default(),
             transport: Transport::Native,
+            tick_period: TickPeriod::DEFAULT,
             verbose: false,
             tohost_override: None,
             uart_output: None,

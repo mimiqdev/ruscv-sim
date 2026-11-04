@@ -1112,9 +1112,9 @@
         "target": [
           "--lib"
         ],
-        "test": "capi::tests::a_call_made_while_a_call_is_active_is_rejected_as_reentry",
+        "test": "capi::tests::a_callback_call_into_another_handle_is_rejected_as_reentry",
         "failure": [
-          "a nested call was served instead of rejected"
+          "a callback re-entered the C ABI through another handle"
         ]
       }
     ]
