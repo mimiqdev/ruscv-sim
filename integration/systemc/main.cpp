@@ -55,7 +55,8 @@ struct Options {
     std::string commit_log;
     uint64_t turn_budget = kTurnBudget;
     uint64_t horizon_fs = kHorizonFs;
-    /// Zero: only a terminal ruscv-sim result stops the run.
+    /// Zero: the deliberate early-stop control is off. A terminal result or a
+    /// host-classified failure still stops the run.
     uint64_t stop_after_grants = 0;
     uint64_t max_grants = kMaxGrants;
     uint64_t max_turns = kMaxTurns;
@@ -216,7 +217,8 @@ const char* state_name(int32_t state) {
     }
 }
 
-/// Drives one Machine in bounded grants until it reports a terminal result.
+/// Drives one Machine in bounded grants until it reports a terminal result or the
+/// host classifies a failure.
 class MachineDriver : public sc_core::sc_module {
 public:
     MachineDriver(sc_core::sc_module_name name, Options options, ruscv_target target)

@@ -206,8 +206,9 @@ void RamTarget::apply_atomic(tlm::tlm_generic_payload& transaction,
                 if (extension.reserved_snapshot_length == 0 ||
                     snapshot_bytes != extension.reserved_snapshot_length ||
                     extension.reserved_snapshot_length > extension.reserved_snapshot.size()) {
-                    // The snapshot does not have this target's format: a
-                    // protocol failure, never an ordinary conditional failure.
+                    // The snapshot does not have this target's format: a host
+                    // failure, never an ordinary conditional failure and never a
+                    // guest-visible fault.
                     transaction.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
                     return;
                 }
