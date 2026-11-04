@@ -23,8 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ruscv-sim 以保留其协议判定，原子扩展请求与完成与标注延迟原样按数据跨 ABI
   - initiator 的 `SC_THREAD` 通过 C ABI 以有界 grant 驱动 Machine：每次 grant 从当前
     `sc_time_stamp()` 起算，`wait()` 恰好返回的消费量（内核只按该量提交全局时间，ADR-0004
-    §4.4），仅在 `ruscv_machine_result` 报告终止结果后 `sc_stop`；kernel 时钟与 Machine 游标
-    不一致、零消费的 grant 边界或 grant 守卫超限都是 host 失败。时间分辨率设为 1 fs，使标注
+    §4.4），在 `ruscv_machine_result` 报告终止结果后、或在 host 判定失败后 `sc_stop`（早停控制
+    故意在结果前停下且不得通过）；kernel 时钟与 Machine 游标不一致、零消费的 grant 边界、
+    turn 上限或 grant 守卫超限都是 host 失败。时间分辨率设为 1 fs，使标注
     延迟的飞秒映射精确；`--max-turns`（默认 100000，等价于公共 CLI 的 `--max-cycles`）
     把每个 grant 的预算夹到剩余 turn 额度，永不终止的 guest（例如退出信号被路由破坏后进入
     死循环）以诊断失败而不是让 kernel 空转

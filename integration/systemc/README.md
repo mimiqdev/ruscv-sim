@@ -12,8 +12,9 @@ ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
 - `ruscv_payload_extension.h`: the TLM-2.0 payload extension carrying the access
   category, the initiator and the atomic request and response.
 - `main.cpp`: the `SC_THREAD` grant loop that starts each grant at
-  `sc_time_stamp()`, waits the returned consumed time, and stops the kernel only
-  after `ruscv_machine_result` reports a terminal result.
+  `sc_time_stamp()`, waits the returned consumed time, and stops the kernel after
+  a terminal `ruscv_machine_result` or a host-classified failure. The
+  `--stop-after-grants` control stops it deliberately, without a result.
 
 See [`docs/integration/systemc-tlm.md`](../../docs/integration/systemc-tlm.md)
 for the mapping, ownership and time rules.

@@ -8,9 +8,11 @@
 // * after it the thread `wait()`s exactly the consumed amount the grant
 //   returned, so the kernel commits global time only from that amount
 //   (ADR-0004 §4.4);
-// * `sc_stop()` runs only after `ruscv_machine_result` reports a terminal
-//   result. A host stop before one is not a run result and exits non-zero: the
-//   `--stop-after-grants` control proves that, and it must never pass.
+// * `sc_stop()` follows a terminal `ruscv_machine_result`, or a host
+//   classification (an ABI error, a kernel clock that disagrees with the Machine
+//   cursor, a live grant that consumed no modeled time, or an exhausted grant or
+//   turn bound). A host stop before a result is never a run result and never
+//   passes: the `--stop-after-grants` control proves that.
 //
 // The C ABI handle is created and destroyed on this thread, which is the
 // SystemC kernel thread, so the ABI's creator-thread affinity holds for every
