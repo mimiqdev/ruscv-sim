@@ -281,16 +281,6 @@ impl TlmRamAdapter {
                 crate::blocking::BlockingAtomicExtension::load_reserved(width, request.ordering())
             }
             crate::physical::AtomicAccessKind::StoreConditional => {
-                if let Some(context) = request.reservation() {
-                    let expected = context.reserved.width.bytes() * 8;
-                    if context.snapshot.len() != expected {
-                        return Err(PhysicalBackendError::protocol(format!(
-                            "reservation snapshot has {} bytes, expected {expected} for the {} byte reserved span",
-                            context.snapshot.len(),
-                            context.reserved.width.bytes()
-                        )));
-                    }
-                }
                 crate::blocking::BlockingAtomicExtension::store_conditional(
                     width,
                     request.ordering(),

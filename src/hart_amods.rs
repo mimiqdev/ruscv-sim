@@ -5,9 +5,12 @@
 //! once, here in the Hart layer, identically for every backend (ADR-0002 §6;
 //! dev-plan §5.2 M1).  The module applies the spec-mandated W/D width rules
 //! (dev-plan §2) and produces the pure byte-level transforms carried by the
-//! atomic operation envelopes ([`crate::physical::AmoTransform`]).  The
-//! physical domain and its backends apply those transforms opaquely and
-//! implement no ISA semantics themselves.
+//! atomic operation envelopes ([`crate::physical::AmoTransform`]).  Native
+//! physical backends apply those transforms opaquely and implement no ISA
+//! semantics themselves.  Under the 2026-11-04 ADR-0002 amendment the
+//! blocking TLM route carries an encoded operation tag instead of the
+//! function pointer, and the in-tree target resolves that tag through this
+//! module.
 //!
 //! Byte order: all byte slices are in physical/guest memory order, which for
 //! RV64 is little-endian.  W envelopes compute 32-bit results from the

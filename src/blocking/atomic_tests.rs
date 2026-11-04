@@ -11,8 +11,8 @@ use crate::mmu::translator::AddressTranslator;
 use crate::mmu::{AccessType, MmuConfig};
 use crate::physical::{
     AmoWidth, AtomicAccessResult, AtomicOrdering, AtomicRequest, AtomicReservationContext,
-    ConditionalStatus, NativeRamBackend, PhysicalRequest, PhysicalSpan, PhysicalWidth,
-    ValidatedAtomicAccess, ValidatedPhysicalAccess,
+    CommittedWriteSnapshot, ConditionalStatus, NativeRamBackend, PhysicalRequest, PhysicalSpan,
+    PhysicalWidth, ValidatedAtomicAccess, ValidatedPhysicalAccess,
 };
 use crate::ram::RamSlot;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -101,12 +101,33 @@ fn read_u64(slot: &RamSlot, offset: u64, width: AmoWidth) -> u64 {
 
 #[test]
 fn every_amo_matches_native_for_word_and_doubleword() {
-    let old_patterns = [0x0000_0000u64, 0x7fff_ffff, 0x8000_0000, 0xffff_ffff];
-    let operand_patterns = [0u64, 1, 0x7fff_ffff, 0x8000_0000, 0xffff_ffff];
     for width in [AmoWidth::Word, AmoWidth::Doubleword] {
+        let old_patterns: &[u64] = if width == AmoWidth::Word {
+            &[0x0000_0000, 0x7fff_ffff, 0x8000_0000, 0xffff_ffff]
+        } else {
+            &[
+                0x0000_0000_0000_0000,
+                0x0000_0000_8000_0000,
+                0x7fff_ffff_ffff_ffff,
+                0x8000_0000_0000_0000,
+                0xffff_ffff_ffff_ffff,
+            ]
+        };
+        let operand_patterns: &[u64] = if width == AmoWidth::Word {
+            &[0, 1, 0x7fff_ffff, 0x8000_0000, 0xffff_ffff]
+        } else {
+            &[
+                0,
+                1,
+                0x0000_0000_8000_0000,
+                0x7fff_ffff_ffff_ffff,
+                0x8000_0000_0000_0000,
+                0xffff_ffff_ffff_ffff,
+            ]
+        };
         for operation in hart_amods::ALL_OPERATIONS {
-            for &old in &old_patterns {
-                for &operand in &operand_patterns {
+            for &old in old_patterns {
+                for &operand in operand_patterns {
                     let old_bytes = value_bytes(old, width);
                     let operand_bytes = value_bytes(operand, width);
                     let expected =
@@ -379,6 +400,105 @@ fn one_transaction_per_atomic_operation() {
     port.access_atomic(sc).unwrap();
     assert_eq!(target.transactions(), 2, "SC was not one transaction");
     assert_eq!(target.atomics(), 2, "SC was not one atomic transaction");
+}
+
+/// A target that uses its own compact opaque snapshot format, not the native
+/// per-byte version array.  The adapter must carry it verbatim.
+struct OpaqueSnapshotTarget {
+    snapshot: Vec<u8>,
+    sc_seen: AtomicUsize,
+}
+
+impl BlockingTarget for OpaqueSnapshotTarget {
+    fn declared_max_delay(&self) -> Femtoseconds {
+        Femtoseconds::ZERO
+    }
+
+    fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
+        let Some(atomic) = transaction.atomic_extension() else {
+            transaction.set_status(BlockingResponseStatus::CommandError);
+            return;
+        };
+        match atomic.operation() {
+            BlockingAtomicOperation::LoadReserved => {
+                transaction
+                    .data_mut()
+                    .copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+                let snapshot = CommittedWriteSnapshot::from_bytes(&self.snapshot).unwrap();
+                transaction
+                    .atomic_extension_mut()
+                    .unwrap()
+                    .set_outcome(BlockingAtomicOutcome::LoadReserved { snapshot });
+                transaction.set_status(BlockingResponseStatus::Ok);
+            }
+            BlockingAtomicOperation::StoreConditional => {
+                let context = atomic.reservation().expect("SC reservation context");
+                assert_eq!(context.snapshot.as_bytes(), self.snapshot.as_slice());
+                self.sc_seen.fetch_add(1, Ordering::SeqCst);
+                transaction.atomic_extension_mut().unwrap().set_outcome(
+                    BlockingAtomicOutcome::StoreConditional(ConditionalStatus::Success),
+                );
+                transaction.set_status(BlockingResponseStatus::Ok);
+            }
+            BlockingAtomicOperation::Rmw(_) => {
+                transaction.set_status(BlockingResponseStatus::CommandError);
+            }
+        }
+    }
+
+    fn transport_dbg(&self, transaction: &mut BlockingDebug<'_>) -> usize {
+        let len = transaction.data().len();
+        if transaction.command() == BlockingCommand::Read {
+            transaction.data_mut().fill(0);
+        }
+        len
+    }
+
+    fn transport_reset(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn an_opaque_compact_snapshot_round_trips_through_the_adapter() {
+    let target = Arc::new(OpaqueSnapshotTarget {
+        snapshot: vec![0xab; 8],
+        sc_seen: AtomicUsize::new(0),
+    });
+    let slot = RamSlot::tlm(target.clone(), BASE, SIZE);
+    let mut port = ValidatedAtomicAccess::new(slot);
+    let lr =
+        AtomicRequest::load_reserved(BASE + 0x60, PhysicalWidth::Doubleword, ORDERING).unwrap();
+    let response = port.access_atomic(lr).unwrap();
+    let snapshot = response.snapshot().expect("load-reserved snapshot");
+    assert_eq!(
+        snapshot.as_bytes(),
+        &[0xab; 8],
+        "the adapter changed an opaque target snapshot"
+    );
+
+    let context = AtomicReservationContext {
+        reserved: PhysicalSpan {
+            paddr: BASE + 0x60,
+            width: PhysicalWidth::Doubleword,
+        },
+        snapshot,
+    };
+    let payload = 7u64.to_le_bytes();
+    let sc = AtomicRequest::store_conditional(
+        BASE + 0x60,
+        PhysicalWidth::Doubleword,
+        ORDERING,
+        &payload,
+        Some(context),
+    )
+    .unwrap();
+    assert_eq!(
+        port.access_atomic(sc).unwrap().conditional_status(),
+        Some(ConditionalStatus::Success),
+        "a valid compact snapshot never reached the target"
+    );
+    assert_eq!(target.sc_seen.load(Ordering::SeqCst), 1);
 }
 
 #[test]

@@ -15,8 +15,11 @@
 //! Hart-supplied pure transform, the operand bytes, the optional reservation
 //! context, the old-value result, and the conditional status exist only on
 //! [`AtomicRequest`]/[`AtomicResponse`].  The transform is produced only by
-//! the single Hart-owned AMO arithmetic module ([`crate::hart_amods`]); the
-//! physical domain applies it opaquely and implements no ISA semantics.
+//! the single Hart-owned AMO arithmetic module ([`crate::hart_amods`]); native
+//! physical backends apply it opaquely and implement no ISA semantics.  The
+//! blocking TLM adapter instead carries the transform's [`AmoKind`] tag, and
+//! the target applies the encoded operation under the 2026-11-04 ADR-0002
+//! amendment; neither route sends a function pointer across the transport.
 //!
 //! [`ValidatedPhysicalAccess`] is the small validation boundary the native
 //! target adapters sit behind, and [`ValidatedAtomicAccess`] is its atomic
