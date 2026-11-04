@@ -1,6 +1,6 @@
 --- a/src/ram.rs
 +++ b/src/ram.rs
-@@ -281,8 +281,16 @@
+@@ -281,8 +281,18 @@
                  .lock()
                  .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
                  .read_dword(offset),
@@ -12,7 +12,9 @@
 +                    crate::physical::PhysicalWidth::Doubleword,
 +                )
 +                .map_err(|error| MemoryError::Protocol(error.to_string()))?;
-+                let response = adapter.transact(&request).map_err(memory_error)?;
++                let response = adapter
++                    .transact(&request, BlockingInitiator::Hart)
++                    .map_err(memory_error)?;
 +                let bytes = response
 +                    .read_bytes()
 +                    .ok_or_else(|| MemoryError::Protocol("mutation read".into()))?;

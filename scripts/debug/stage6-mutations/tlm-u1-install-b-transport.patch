@@ -1,6 +1,6 @@
 --- a/src/ram.rs
 +++ b/src/ram.rs
-@@ -213,9 +213,23 @@
+@@ -213,9 +213,25 @@
                  .lock()
                  .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
                  .write_bytes(offset, bytes),
@@ -19,7 +19,9 @@
 +                        &bytes[done..done + count],
 +                    )
 +                    .map_err(|error| MemoryError::Protocol(error.to_string()))?;
-+                    adapter.transact(&request).map_err(memory_error)?;
++                    adapter
++                        .transact(&request, BlockingInitiator::Hart)
++                        .map_err(memory_error)?;
 +                    done += count;
 +                }
 +                Ok(())
