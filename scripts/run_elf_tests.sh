@@ -51,6 +51,57 @@ if [ ! -f "${manifest}" ]; then
     exit 2
 fi
 
+# TLM U4 (dev-plan D10): every guest also runs through the blocking TLM RAM
+# route with its declared profile. These parity guests additionally write
+# --log-commits on both passes, and the two files must be byte-identical.
+PARITY_GUESTS=(hello s5_timer s5_external atomic_tohost_exit fd_fma)
+LOG_DIR="${OUTDIR}/commit-logs"
+rm -rf "${LOG_DIR}"
+mkdir -p "${LOG_DIR}"
+
+is_parity_guest() {
+    local candidate="$1"
+    local guest
+    for guest in "${PARITY_GUESTS[@]}"; do
+        if [ "${candidate}" = "${guest}" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# classify_pass NAME STATUS OUTPUT
+#   Returns 0 when one public-CLI pass meets the guest's success contract.
+#   Otherwise prints the reason and returns 1. Both transports use this, so a
+#   TLM failure is classified exactly like a native one and never skipped.
+classify_pass() {
+    local name="$1"
+    local status="$2"
+    local output="$3"
+    local reason
+    # s5_wfi_none has no future platform event. D4 says that run stops with
+    # NoProgress, timed_out clear, and a non-zero status. That is the pass.
+    if [ "${name}" = "s5_wfi_none" ]; then
+        if [ "${status}" -eq 0 ] \
+            || ! printf '%s\n' "${output}" | grep -q 'Error:      NoProgress' \
+            || printf '%s\n' "${output}" | grep -q 'TIMEOUT'; then
+            echo "s5_wfi_none must stop with NoProgress and not time out"
+            return 1
+        fi
+        return 0
+    fi
+    # Exit 0 alone is not success: the host truncates the status to 8 bits.
+    if ! reason=$(riscv_classify_cli_run "${status}" "${output}"); then
+        echo "${reason}"
+        return 1
+    fi
+    if [ "${name}" = "hello" ] && ! printf '%s\n' "${output}" | grep -q 'Hello!'; then
+        echo "hello output did not contain Hello!"
+        return 1
+    fi
+    return 0
+}
+
 # Use the cross-binutils tools to confirm that the actual ELF entry is the
 # linker-selected _start symbol.  This prevents a source/ELF mismatch from
 # being hidden by a successful process exit.
@@ -185,10 +236,18 @@ do
     fi
 done
 
+# hello belongs to the TLM U4 parity set, so its absence is a suite failure
+# rather than a silently smaller comparison.
+if [ ! -f "${OUTDIR}/rv64i/hello.elf" ]; then
+    echo -e "${RED}Error: required TLM parity guest missing: hello.elf${NC}" >&2
+    exit 2
+fi
+
 echo "Found ${#ELF_FILES[@]} fresh ELF cases"
 
 passed=0
 failed=0
+parity_checked=0
 number=0
 for elf in "${ELF_FILES[@]}"; do
     number=$((number + 1))
@@ -216,35 +275,61 @@ for elf in "${ELF_FILES[@]}"; do
         continue
     fi
 
-    output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" "${isa_args[@]}" 2>&1)
+    # The parity set captures commit logs from both passes; every other guest
+    # still runs twice but needs no log files.
+    native_log=""
+    tlm_log=""
+    native_log_args=( )
+    tlm_log_args=( )
+    if is_parity_guest "${name}"; then
+        native_log="${LOG_DIR}/${name}.native.log"
+        tlm_log="${LOG_DIR}/${name}.tlm.log"
+        native_log_args=(--log-commits "${native_log}")
+        tlm_log_args=(--log-commits "${tlm_log}")
+    fi
+
+    output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" "${isa_args[@]}" "${native_log_args[@]}" 2>&1)
     status=$?
     printf '%s\n' "${output}"
-    # s5_wfi_none has no future platform event. D4 says that run stops with
-    # NoProgress, timed_out clear, and a non-zero status. That is the pass.
-    if [ "${name}" = "s5_wfi_none" ]; then
-        if [ "${status}" -eq 0 ] \
-            || ! printf '%s\n' "${output}" | grep -q 'Error:      NoProgress' \
-            || printf '%s\n' "${output}" | grep -q 'TIMEOUT'; then
-            echo -e "${RED}  [FAIL] s5_wfi_none must stop with NoProgress and not time out${NC}"
-            failed=$((failed + 1))
-            continue
-        fi
-        echo -e "${GREEN}  [PASS]${NC} NoProgress, timed_out clear"
-        passed=$((passed + 1))
-        continue
-    fi
-    # Exit 0 alone is not success: the host truncates the status to 8 bits.
-    if ! reason=$(riscv_classify_cli_run "${status}" "${output}"); then
+    if ! reason=$(classify_pass "${name}" "${status}" "${output}"); then
         echo -e "${RED}  [FAIL] ${reason}${NC}"
         failed=$((failed + 1))
         continue
     fi
-    if [ "${name}" = "hello" ] && ! printf '%s\n' "${output}" | grep -q 'Hello!'; then
-        echo -e "${RED}  [FAIL] hello output did not contain Hello!${NC}"
+    if [ "${name}" = "s5_wfi_none" ]; then
+        echo -e "${GREEN}  [PASS]${NC} NoProgress, timed_out clear"
+    else
+        echo -e "${GREEN}  [PASS]${NC} CLI exit status 0, ${RISCV_CLI_SUCCESS_LINE}"
+    fi
+
+    # D10: the same guest, profile and cycle bound through the blocking TLM
+    # RAM route. A failure here is a real defect, never a skip.
+    tlm_output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" "${isa_args[@]}" --transport tlm "${tlm_log_args[@]}" 2>&1)
+    tlm_status=$?
+    if ! reason=$(classify_pass "${name}" "${tlm_status}" "${tlm_output}"); then
+        printf '%s\n' "${tlm_output}"
+        echo -e "${RED}  [FAIL] --transport tlm: ${reason}${NC}"
         failed=$((failed + 1))
         continue
     fi
-    echo -e "${GREEN}  [PASS]${NC} CLI exit status 0, ${RISCV_CLI_SUCCESS_LINE}"
+
+    if [ -n "${native_log}" ]; then
+        if [ ! -s "${native_log}" ] || [ ! -s "${tlm_log}" ]; then
+            echo -e "${RED}  [FAIL] commit log missing or empty for ${name}${NC}"
+            failed=$((failed + 1))
+            continue
+        fi
+        if ! cmp -s "${native_log}" "${tlm_log}"; then
+            echo -e "${RED}  [FAIL] ${name}: --transport tlm commit log differs from native${NC}"
+            diff -u "${native_log}" "${tlm_log}" | head -20 || true
+            failed=$((failed + 1))
+            continue
+        fi
+        parity_checked=$((parity_checked + 1))
+        echo -e "${GREEN}  [PASS]${NC} --transport tlm, commit log byte-identical to native"
+    else
+        echo -e "${GREEN}  [PASS]${NC} --transport tlm"
+    fi
     passed=$((passed + 1))
 done
 
@@ -255,6 +340,7 @@ printf '  Total:  %s\n' "$((passed + failed))"
 printf '  Passed: %s\n' "${passed}"
 printf '  Failed: %s\n' "${failed}"
 printf '  Cases:  %s\n' "${#ELF_FILES[@]}"
+printf '  TLM parity logs compared: %s/%s\n' "${parity_checked}" "${#PARITY_GUESTS[@]}"
 printf '\n'
 
 if [ "${failed}" -ne 0 ]; then
@@ -262,5 +348,12 @@ if [ "${failed}" -ne 0 ]; then
     exit 1
 fi
 
-echo -e "${GREEN}[PASS]${NC} all ${passed} fresh ELF cases passed through the public CLI"
+# A parity guest that never reached the comparison above must fail the suite
+# instead of silently shrinking the byte-identical set.
+if [ "${parity_checked}" -ne "${#PARITY_GUESTS[@]}" ]; then
+    echo -e "${RED}[FAILED]${NC} TLM parity comparison covered ${parity_checked} of ${#PARITY_GUESTS[@]} guests"
+    exit 1
+fi
+
+echo -e "${GREEN}[PASS]${NC} all ${passed} fresh ELF cases passed through the public CLI on both transports"
 exit 0

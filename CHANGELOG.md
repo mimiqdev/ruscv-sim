@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM U4: guest-suite parity（issue #176）**
+  - `scripts/run_elf_tests.sh` 对每个 guest 以声明的 profile 和相同 cycle 上限再运行一次 `--transport tlm`，并用与 native 相同的成功分类；仅在 TLM 路径失败或超时的 guest 是真实失败，不是 skip
+  - parity set（`hello`、`s5_timer`、`s5_external`、`atomic_tohost_exit`、`fd_fma`）在两次 pass 都写 `--log-commits`，由 `cmp` 逐字节比较；日志缺失/为空或内容不同都使 suite 失败，汇总行 `TLM parity logs compared: 5/5` 是验收证据的一部分
+  - 新增 `tests/tlm_u4_guest_parity.rs`：以 fake simulator 驱动真实的 suite 脚本，证明每个 guest 都以同一 profile 跑两次、第二遍使用 TLM，且 parity 日志确实被比较；另一个公共 CLI 用例对 synthetic guest 比较 native/TLM commit log
+  - 负控制（`scripts/debug/stage6-mutations`）：TLM RAM 路由改变写入数据会被逐字节比较捕获；第二遍被改回 native transport 会被 runner 检查捕获
+  - native 结果、A10 oracle 与 ACT4 选择不变
+
 - **TLM U3: transport delay and time（issue #175）**
   - 标注延迟按声明的 Platform tick 周期（默认 1 ns）从飞秒换算：能整除时精确换算，否则正延迟向上取整，零仍为零；正的非整 tick 延迟不会消失。零 tick 周期（畸形）与换算/累计溢出是 adapter 失败，而不是被丢弃、为负或回绕的时钟更新
   - 每个 guest turn 的保守完成上界（ADR-0004 §7.2）按 target 声明的单事务最大延迟乘以最坏情况事务数计算（两个取指 parcel、Sv39 页表与 A/D 访问、一次数据或原子访问，共 18）；单个响应超过声明最大值按 §5.3 overshoot 报告为 simulator failure，诊断中给出 overshoot 与上界
