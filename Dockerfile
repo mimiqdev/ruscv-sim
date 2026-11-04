@@ -10,6 +10,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 # and already advertises --dm-datacount, --halted, and --rbb-port. A later
 # tag does not exist; v1.1.0 predates those flags.
 ARG SPIKE_VERSION=5d99611782ef8dd81b65b842369bd351a9d4702a
+# Accellera SystemC 3.0.2 at the commit the blocking-transport contract pins
+# (dev-plan D9). That value is a commit SHA and the head of Accellera's
+# `release` branch, so it is fetched explicitly instead of through --branch.
+ARG SYSTEMC_VERSION=70b0fc8e4a74acc677b0fc73cea08f940c2115d5
 ARG CARGO_LLVM_COV_VERSION=0.6.16
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -77,6 +81,30 @@ RUN rustup component add clippy rustfmt llvm-tools-preview \
         --version "${CARGO_LLVM_COV_VERSION}" \
         --locked
 
+# Build the pinned SystemC kernel and its TLM-2.0 headers. SystemC 3.0 needs
+# C++17; selecting it here also makes the installed SystemCLanguage package
+# advertise C++17 to consumers. A static library keeps the integration smoke
+# free of runtime loader search paths. The checked-out commit and the version
+# macros are verified before anything is configured, so a moved or mislabeled
+# pin fails the image build instead of silently changing the kernel.
+RUN git init /tmp/systemc \
+    && git -C /tmp/systemc remote add origin https://github.com/accellera-official/systemc.git \
+    && git -C /tmp/systemc fetch --depth 1 origin "${SYSTEMC_VERSION}" \
+    && git -C /tmp/systemc checkout --detach FETCH_HEAD \
+    && test "$(git -C /tmp/systemc rev-parse HEAD)" = "${SYSTEMC_VERSION}" \
+    && grep -qx '#define SYSTEMC_3_0_2' /tmp/systemc/src/sysc/kernel/sc_ver.h \
+    && cmake -S /tmp/systemc -B /tmp/systemc/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_STANDARD=17 \
+        -DCMAKE_INSTALL_PREFIX=/opt/systemc \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DENABLE_EXAMPLES=OFF \
+        -DENABLE_REGRESSION=OFF \
+    && cmake --build /tmp/systemc/build --parallel "$(nproc)" \
+    && cmake --install /tmp/systemc/build \
+    && test -f /opt/systemc/include/sysc/kernel/sc_ver.h \
+    && rm -rf /tmp/systemc
+
 ARG DEV_USER=developer
 ARG DEV_UID=1000
 ARG DEV_GID=1000
@@ -93,6 +121,7 @@ RUN groupadd --non-unique --gid "${DEV_GID}" "${DEV_USER}" \
     && chown -R "${DEV_USER}:${DEV_USER}" "/home/${DEV_USER}" /workspace
 
 ENV RISCV=/opt/riscv
+ENV SYSTEMC_HOME=/opt/systemc
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV CARGO_HOME=/home/${DEV_USER}/.cargo
 ENV PATH=/home/${DEV_USER}/.cargo/bin:/usr/local/cargo/bin:/opt/riscv/bin:${PATH}
@@ -132,7 +161,15 @@ RUN rustc --version \
     && riscv64-unknown-elf-readelf -h /tmp/guest-cxx-smoke.elf \
         | grep --quiet 'Machine:.*RISC-V' \
     && rm -f /tmp/native-cxx-smoke.cc /tmp/native-cxx-smoke \
-        /tmp/guest-cxx-smoke.cc /tmp/guest-cxx-smoke.elf
+        /tmp/guest-cxx-smoke.cc /tmp/guest-cxx-smoke.elf \
+    && printf '#include <systemc>\n#include <tlm>\nint sc_main(int, char**) {\n    sc_core::sc_set_time_resolution(1, sc_core::SC_FS);\n    tlm::tlm_generic_payload payload;\n    sc_core::sc_time delay = sc_core::SC_ZERO_TIME;\n    return payload.get_response_status() == tlm::TLM_INCOMPLETE_RESPONSE\n               && delay == sc_core::SC_ZERO_TIME\n           ? 0\n           : 1;\n}\n' \
+        > /tmp/systemc-smoke.cpp \
+    && g++ -std=c++17 -Wall -Werror -isystem /opt/systemc/include \
+        /tmp/systemc-smoke.cpp /opt/systemc/lib/libsystemc.a \
+        -lpthread -ldl -lm \
+        -o /tmp/systemc-smoke \
+    && /tmp/systemc-smoke \
+    && rm -f /tmp/systemc-smoke.cpp /tmp/systemc-smoke
 
 LABEL org.opencontainers.image.source="https://github.com/mimiqdev/ruscv-sim"
 LABEL org.opencontainers.image.description="Development and verification environment for ruscv-sim"
