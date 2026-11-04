@@ -10,7 +10,7 @@ This index is the entry point for project decisions and technical documentation.
 
 ## Sources of truth
 
-1. [Milestone plan](dev-plan.md) — the sole Current contract. The approved RV64GC Default Profile target replaces Selectable F/D Floating-Point Profiles on this rotation merge; activation is not an implementation claim.
+1. [Milestone plan](dev-plan.md) — the sole Current contract. The approved Blocking TLM and SystemC Transport target replaces RV64GC Default Profile on this rotation merge; activation is not an implementation claim.
 2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
 3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests, the [A8 assessment](verification/a8-closeout-assessment.md) for the atomic route, and the [A9 acceptance assessment](verification/a9-closeout-assessment.md) for Hart facts/Machine integration, separating historical checkpoint and final PR/merge-head evidence.
 4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
@@ -33,8 +33,9 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [RV64GC Default Profile contract](dev-plan.md) — D1–D10 approved 2026-11-04 under the owner's delegated planning authority, sole Current on this rotation merge. Makes `rv64imafdc` the default and binds profile-specific evidence to explicit profiles; TLM/SystemC integration is the selected direction after it.
-- [Approved default-profile proposal entry](proposals/post-fd-gc-default.md) — informational pointer to the sole normative contract.
+- [Blocking TLM and SystemC Transport contract](dev-plan.md) — D1–D12 approved 2026-11-04 under the owner's delegated planning authority, sole Current on this rotation merge. Adds a blocking TLM RAM route with native parity, a C ABI and a pinned SystemC 3.0.2 smoke.
+- [Approved blocking-transport proposal entry](proposals/post-gc-blocking-tlm.md) — informational pointer to the sole normative contract.
+- [Archived RV64GC default-profile contract](archive/milestones/rv64gc-default-profile.md) — completed 2026-11-04 at PR #171.
 - [Entire approved F/D contract](archive/milestones/selectable-fd-floating-point-profiles.md) — preserved in full with its opt-in `rv64imafd`/`rv64imafdc` profiles and limitations. Implementation is PR #153 through PR #160, completed 2026-11-04; historical on the default-profile rotation merge.
 - [Approved F/D proposal entry](proposals/post-zca-floating-point.md) — historical pointer to the completed contract.
 - [Entire approved Zca contract](archive/milestones/selectable-zca-compressed-profile.md) — preserved in full with its opt-in `rv64imac` profile and limitations. Implementation is PR #138 through PR #143, completed 2026-11-03; historical on the F/D rotation merge.

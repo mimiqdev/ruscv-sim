@@ -1,6 +1,6 @@
 # Selectable F/D Floating-Point Profiles contract
 
-**Status:** Historical. Completed 2026-11-04 at PR #160; the [RV64GC Default Profile contract](../../dev-plan.md) succeeds it as the sole Current contract on the actual rotation merge.
+**Status:** Historical. Completed 2026-11-04 at PR #160; the [RV64GC default-profile contract](rv64gc-default-profile.md) succeeded it, completed 2026-11-04 at PR #171.
 
 **Authority:** Preserved approved contract, not an active plan or an execution report. CI and PR history retain check and review outcomes.
 

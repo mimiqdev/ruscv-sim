@@ -3,7 +3,7 @@
 **Status:** Current verification tooling note
 
 **Authority:** Describes the frozen F/D and Zcd selections and their flow; the
-milestone contract is [`docs/dev-plan.md`](../dev-plan.md) D11 and unit U5.
+milestone contract is the [archived F/D contract](../archive/milestones/selectable-fd-floating-point-profiles.md) D11 and unit U5.
 
 ## What is frozen
 
