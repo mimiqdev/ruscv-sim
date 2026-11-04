@@ -1018,5 +1018,37 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "tlm-u3-subtick-rounds-to-zero",
+    "source": "src/blocking/mod.rs",
+    "patch": "tlm-u3-subtick-rounds-to-zero.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_positive_sub_tick_delay_rounds_up_to_one_tick",
+        "failure": [
+          "a sub-tick delay disappeared instead of rounding up"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "tlm-u3-delay-counted-into-counters",
+    "source": "src/machine/mod.rs",
+    "patch": "tlm-u3-delay-counted-into-counters.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::delay_advances_mtime_by_turns_plus_ticks_without_touching_isa_counters",
+        "failure": [
+          "transport delay leaked into mcycle or minstret"
+        ]
+      }
+    ]
   }
 ]
