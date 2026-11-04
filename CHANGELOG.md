@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM U1: Rust TLM RAM 路由（issue #173）**
+  - 新增独立的 blocking-transport 适配词表（`src/blocking`，与 `src/tlm` 无关）：IEEE 1666
+    七种响应状态、以 `TLM_INCOMPLETE_RESPONSE` 起始的 payload、ruscv-sim 扩展（既有
+    `PhysicalAccessKind` 与 Hart/debug-inbound 发起者）、含 `b_transport`、`transport_dbg`、
+    transport reset 与声明式单事务最大延迟的 target 接口，以及带检查算术的飞秒延迟
+  - Platform 的单一 guest-RAM 槽位可选择原生 `SimpleMemory`（默认，行为不变）或调用方提供的
+    TLM RAM target；类型化路径、物理与原子后端、DM inbound、镜像安装和全部 host 视图
+    （`tohost` 轮询、签名提取、`read_mem`/`write_mem`、`Machine::memory()`）都经过该槽位。
+    安装、host 视图与每次 transport reset 后的 RAM 窗口清零使用 `transport_dbg`，不计为
+    事务；未知完成毒化 transport，直到 target 确认 transport reset
+  - `MachineConfig` 新增公开 `transport` 字段（`MachineConfig::new` 选择 native；这破坏了
+    `MachineConfig` 的 struct literal 构造），`Transport::Tlm` 共享 `Arc` target 以保持
+    `Clone`。`Flat` + `tlm` 返回新增的 `MachineError::UnsupportedTransport`。
+    `BoundaryFacts` 新增 `transport_delay_femtoseconds`（native 与零延迟 target 为 0；
+    U3 负责转换、计入与边界事实总量）
+  - 新增公开入口 `load_and_run_file_with_config`，在给定 `MachineConfig` 下运行 ELF；CLI 新增
+    `run --transport native|tlm`，`tlm` 使用 in-tree 零延迟 Rust RAM target（`ZeroDelayRam`）
+  - 原子操作在 U2 之前以原生 access-fault 原因失败关闭：不发事务、不做 read-then-write 模拟；
+    非零标注延迟在 U3 之前按适配器失败拒绝，不静默丢弃
+  - 负控制（`scripts/debug/stage6-mutations`）：默认 transport 不是 native、
+    `TLM_GENERIC_ERROR_RESPONSE` 映射为 guest 可见故障、不完整或被 target 修改的 payload
+    被当作完成、一次访问被拆分或合并、`tohost` 轮询或镜像安装走 `b_transport`、未知完成后
+    未 reset 仍发起访问
+
 - **GC U1: 默认 profile 切换为 `rv64imafdc`（issue #162）**
   - `IsaProfile::default()`、`MachineConfig::new`、`run --isa` 的默认值以及 native
     （`load_and_run`、`load_and_run_file` 及其 debug 变体）与 flat（`RiscVSimulator::new`）

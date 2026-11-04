@@ -1,10 +1,13 @@
 //! Controlled native backend/host-admission seams, not public recovery APIs.
 use super::*;
+use crate::blocking::test_support::ScriptTarget;
+use crate::blocking::{Transport, ZeroDelayRam};
 use crate::csr::machine;
+use crate::memory::MemoryError;
 use crate::physical::{
-    AccessCategory, AtomicBackend, AtomicBackendResult, AtomicRequest, PhysicalAccessResult,
-    PhysicalBackend, PhysicalBackendError, PhysicalBackendResult, PhysicalRequest,
-    ValidatedPhysicalAccess,
+    AccessCategory, AtomicBackend, AtomicBackendResult, AtomicRequest, PhysicalAccessError,
+    PhysicalAccessKind, PhysicalAccessResult, PhysicalBackend, PhysicalBackendError,
+    PhysicalBackendResult, PhysicalRequest, PhysicalWidth, ValidatedPhysicalAccess,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -170,7 +173,7 @@ fn unknown_delayed_ram_write_or_native_callback_never_permits_new_generation_or_
             // not create a second RAM or another architectural execution path.
             let mut domain = owner.inner.installed.lock().unwrap();
             let installed = domain.as_mut().unwrap();
-            ram = installed.platform.ram.clone();
+            ram = installed.platform.ram.native_memory().unwrap();
             let data = Arc::new(Mutex::new(ValidatedPhysicalAccess::new(UnknownWrite {
                 actual: installed.platform.data.clone(),
                 pending: pending.clone(),
@@ -2400,4 +2403,299 @@ fn quiesce_during_a_command_rejects_the_sba_deferred_behind_it() {
         owned.test_control().try_drain().is_ok(),
         "the aborted command held work open"
     );
+}
+
+// ---- Blocking TLM U1: selectable guest-RAM route ----
+
+#[test]
+fn the_default_transport_is_native() {
+    for kind in [PlatformKind::Native, PlatformKind::Flat] {
+        let config = MachineConfig::new(kind);
+        assert!(
+            config.transport.is_native(),
+            "{kind:?}: MachineConfig::new selected a non-native transport"
+        );
+        assert!(config.transport.target().is_none());
+    }
+    assert!(Transport::default().is_native());
+}
+
+#[test]
+fn flat_with_tlm_is_a_configuration_error() {
+    let mut config = MachineConfig::new(PlatformKind::Flat);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    let owner = Machine::new(config);
+    assert!(matches!(
+        owner.install(image(elf::nop())),
+        Err(MachineError::UnsupportedTransport)
+    ));
+    assert!(matches!(
+        owner.status(),
+        Ok(status) if status.lifecycle == Lifecycle::DrainComplete
+    ));
+}
+
+#[test]
+fn program_buffer_and_sba_ram_access_use_the_tlm_route() {
+    let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::nop())).unwrap();
+
+    halted_by_dmi(&mut owned);
+    // Two program-buffer words store then load the same RAM word through the
+    // Hart data port.
+    write_gpr(&mut owned, 5, elf::BASE + 0x200);
+    write_gpr(&mut owned, 6, 0x1234_5678);
+    postexec_buffer(&mut owned, [sw_word(6, 5, 0), lw_word(7, 5, 0)]);
+    let facts = run_grants(&mut owned);
+    assert!(facts.failure.is_none());
+    assert_eq!(cmderr_of(&mut owned), 0);
+    assert_eq!(owned.state().regs[7], 0x1234_5678);
+    assert_eq!(
+        target.bytes_at(elf::BASE + 0x200, 4),
+        0x1234_5678u32.to_le_bytes(),
+        "the program-buffer store did not reach the TLM RAM target"
+    );
+    let after_buffer = target.transactions.load(Ordering::SeqCst);
+    assert!(
+        after_buffer >= 2,
+        "program-buffer RAM accesses bypassed the TLM route"
+    );
+    let calls = target.log();
+    assert!(calls
+        .iter()
+        .any(|call| call.access_kind == PhysicalAccessKind::DataWrite));
+    assert!(calls
+        .iter()
+        .any(|call| call.access_kind == PhysicalAccessKind::DataRead));
+
+    // One Debug Module system bus write and read reach the same slot through
+    // the inbound port.
+    sba_write_word(
+        &mut owned,
+        sba_address(PlatformKind::Native, 0x200),
+        0xdead_beef,
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(
+        target.bytes_at(elf::BASE + 0x200, 4),
+        0xdead_beefu32.to_le_bytes(),
+        "the SBA write did not reach the TLM RAM target"
+    );
+    let after_write = target.transactions.load(Ordering::SeqCst);
+    assert!(after_write > after_buffer);
+    assert_eq!(
+        sba_read_word(&mut owned, sba_address(PlatformKind::Native, 0x200)),
+        0xdead_beef
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(target.transactions.load(Ordering::SeqCst), after_write + 1);
+}
+
+#[test]
+fn tlm_route_zeroes_the_window_on_fresh_reset() {
+    let target = Arc::new(ZeroDelayRam::new());
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let owner = Machine::new(config);
+    let image = image(elf::nop());
+    let size = image.memory_size();
+    owner.install(image.clone()).unwrap();
+    owner.resume().unwrap();
+    owner.write_mem(0x300, &[0xaa]).unwrap();
+    assert_eq!(target.bytes_at(elf::BASE + 0x300, 1), vec![0xaa]);
+    owner.request_quiesce().unwrap();
+    owner.try_drain().unwrap();
+    owner.fresh_reset().unwrap();
+    assert_eq!(
+        target.bytes_at(elf::BASE + 0x300, 1),
+        vec![0],
+        "a reset did not zero-fill the RAM window"
+    );
+
+    // The whole reinstalled window matches a freshly built native Platform,
+    // including the image, zero tails and padding.
+    let native = Platform::build(&MachineConfig::new(PlatformKind::Native), &image).unwrap();
+    assert_eq!(
+        target.bytes_at(elf::BASE, size),
+        native.ram.host_read(0, size).unwrap(),
+        "the TLM reinstallation differs from a native fresh image"
+    );
+}
+
+#[test]
+fn debug_transport_failure_is_a_host_failure() {
+    let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    target.set_debug_short(true);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let error = Machine::new(config).install(image(elf::nop())).unwrap_err();
+    assert!(
+        matches!(&error, MachineError::Memory(MemoryError::Backend(_))),
+        "an installation debug failure was not a host failure: {error:?}"
+    );
+
+    // A successful installation followed by a failing debug transport makes
+    // polling and host views host failures, never guest-visible faults.
+    target.set_debug_short(false);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let owner = Machine::new(config);
+    owner.install(image(elf::nop())).unwrap();
+    target.set_debug_short(true);
+    let error = owner.read_mem(0, 4).unwrap_err();
+    assert!(
+        matches!(&error, MachineError::Memory(MemoryError::Backend(_))),
+        "a host-view debug failure was not a host failure: {error:?}"
+    );
+    let inspection = owner.inspect().unwrap();
+    assert!(
+        matches!(&inspection.tohost.value, Err(MemoryError::Backend(_))),
+        "a tohost poll debug failure was not a host failure: {:?}",
+        inspection.tohost.value
+    );
+}
+
+#[test]
+fn installation_uses_debug_transport() {
+    let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let owner = Machine::new(config);
+    owner.install(image(elf::nop())).unwrap();
+    assert_eq!(
+        target.transactions.load(Ordering::SeqCst),
+        0,
+        "image installation used b_transport"
+    );
+    assert!(target.debug_requests.load(Ordering::SeqCst) > 0);
+}
+
+#[test]
+fn tohost_polling_and_host_views_use_debug_transport() {
+    let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let owner = Machine::new(config);
+    owner.install(image(elf::nop())).unwrap();
+    let inspection = owner.inspect().unwrap();
+    assert!(inspection.tohost.value.is_ok());
+    assert_eq!(
+        target.transactions.load(Ordering::SeqCst),
+        0,
+        "tohost polling used b_transport"
+    );
+    let _ = owner.read_mem(0, 8).unwrap();
+    assert_eq!(
+        target.transactions.load(Ordering::SeqCst),
+        0,
+        "a host view used b_transport"
+    );
+}
+
+#[test]
+fn unknown_completion_then_reset_reinstalls_an_intact_image() {
+    let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let image = image(elf::nop());
+    let platform = Platform::build(&config, &image).unwrap();
+
+    target.set_unknown(true);
+    let request =
+        PhysicalRequest::data_write(elf::BASE + 0x200, PhysicalWidth::Word, &[1, 2, 3, 4]).unwrap();
+    let error = platform.data.lock().unwrap().access(request).unwrap_err();
+    assert!(matches!(error, PhysicalAccessError::UnknownCompletion(_)));
+    let transactions = target.transactions.load(Ordering::SeqCst);
+    let request = PhysicalRequest::data_read(elf::BASE + 0x200, PhysicalWidth::Word).unwrap();
+    assert!(matches!(
+        platform.data.lock().unwrap().access(request),
+        Err(PhysicalAccessError::UnknownCompletion(_))
+    ));
+    assert_eq!(
+        target.transactions.load(Ordering::SeqCst),
+        transactions,
+        "a poisoned transport issued another access"
+    );
+
+    // The target holds a write that it applies during the next reset. The
+    // post-reset zero fill must erase it before installation.
+    target.set_unknown(false);
+    target.hold_write(elf::BASE + 0x300, vec![0xde, 0xad, 0xbe, 0xef]);
+    let rebuilt = Platform::build(&config, &image).unwrap();
+    assert!(rebuilt.ram.poison_reason().is_none());
+    assert_eq!(
+        target.bytes_at(elf::BASE + 0x300, 4),
+        vec![0; 4],
+        "a held write survived the reset zero fill"
+    );
+    let native = Platform::build(&MachineConfig::new(PlatformKind::Native), &image).unwrap();
+    assert_eq!(
+        rebuilt.ram.host_read(0, image.memory_size()).unwrap(),
+        native.ram.host_read(0, image.memory_size()).unwrap(),
+        "the reset did not reinstall the intact image"
+    );
+}
+
+#[derive(Default)]
+struct CountingTlmInterface {
+    reads: AtomicUsize,
+    writes: AtomicUsize,
+}
+
+impl crate::tlm::TlmInterface for CountingTlmInterface {
+    fn read(&self, _: u64, _: usize) -> Result<Vec<u8>, crate::tlm::TlmError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        Err(crate::tlm::TlmError::NotImplemented)
+    }
+
+    fn write(&mut self, _: u64, _: &[u8]) -> Result<(), crate::tlm::TlmError> {
+        self.writes.fetch_add(1, Ordering::SeqCst);
+        Err(crate::tlm::TlmError::NotImplemented)
+    }
+
+    fn get_delay(&self) -> crate::tlm::ScTime {
+        crate::tlm::ScTime::zero()
+    }
+
+    fn set_delay(&mut self, _: crate::tlm::ScTime) {}
+}
+
+#[test]
+fn the_legacy_tlm_interface_routes_no_access() {
+    let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let owner = Machine::new(config);
+    owner.install(image(elf::sd(2, 1, 0))).unwrap();
+    let interface = Arc::new(Mutex::new(CountingTlmInterface::default()));
+    {
+        let mut domain = owner.inner.installed.lock().unwrap();
+        let installed = domain.as_mut().unwrap();
+        installed.core.set_tlm_interface(interface.clone());
+        installed.core.state_mut().regs[1] = elf::BASE + 0x200;
+        installed.core.state_mut().regs[2] = 0x55;
+    }
+    owner.resume().unwrap();
+    let turn = owner.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(
+        interface.lock().unwrap().reads.load(Ordering::SeqCst),
+        0,
+        "the legacy tlm_interface routed a read"
+    );
+    assert_eq!(
+        interface.lock().unwrap().writes.load(Ordering::SeqCst),
+        0,
+        "the legacy tlm_interface routed a write"
+    );
+    assert!(
+        target.transactions.load(Ordering::SeqCst) > 0,
+        "the store bypassed the selected TLM RAM route"
+    );
+    assert_eq!(target.bytes_at(elf::BASE + 0x200, 8)[0], 0x55);
 }

@@ -1,0 +1,21 @@
+--- a/src/ram.rs
++++ b/src/ram.rs
+@@ -281,8 +281,16 @@
+                 .lock()
+                 .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
+                 .read_dword(offset),
+-            RamKind::Tlm(_) => {
+-                let bytes = self.typed_read(offset, 8)?;
++            RamKind::Tlm(adapter) => {
++                let request = crate::physical::PhysicalRequest::data_read(
++                    self.inner.base + offset,
++                    crate::physical::PhysicalWidth::Doubleword,
++                )
++                .map_err(|error| MemoryError::Protocol(error.to_string()))?;
++                let response = adapter.transact(&request).map_err(memory_error)?;
++                let bytes = response
++                    .read_bytes()
++                    .ok_or_else(|| MemoryError::Protocol("mutation read".into()))?;
+                 Ok(u64::from_le_bytes(bytes.try_into().expect("eight bytes")))
+             }
+         }

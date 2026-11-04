@@ -446,7 +446,7 @@ fn standard_facades_route_admitted_atomics_only_through_one_validated_envelope()
     );
     let platform = std::fs::read_to_string("src/machine/platform.rs").unwrap();
     assert!(platform.contains("SystemBus::physical_backend(bus.clone())"));
-    assert!(platform.contains("NativeRamBackend::new(ram.clone(), 0, image.memory_size())"));
+    assert!(platform.contains("NativeRamBackend::new(memory.clone(), 0, image.memory_size())"));
 
     // Each instruction-kind arm has one atomic port call.  The validated
     // backend's one-call property is independently guarded by the target spy

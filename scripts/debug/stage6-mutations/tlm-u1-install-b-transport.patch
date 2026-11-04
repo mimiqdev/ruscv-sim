@@ -1,0 +1,29 @@
+--- a/src/ram.rs
++++ b/src/ram.rs
+@@ -213,9 +213,23 @@
+                 .lock()
+                 .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
+                 .write_bytes(offset, bytes),
+-            RamKind::Tlm(adapter) => adapter
+-                .debug_write(self.inner.base + offset, bytes)
+-                .map_err(memory_error),
++            RamKind::Tlm(adapter) => {
++                let mut done = 0;
++                while done < bytes.len() {
++                    let count = (bytes.len() - done).min(8);
++                    let width = crate::physical::PhysicalWidth::from_bytes(count)
++                        .map_err(|error| MemoryError::Protocol(error.to_string()))?;
++                    let request = crate::physical::PhysicalRequest::data_write(
++                        self.inner.base + offset + done as u64,
++                        width,
++                        &bytes[done..done + count],
++                    )
++                    .map_err(|error| MemoryError::Protocol(error.to_string()))?;
++                    adapter.transact(&request).map_err(memory_error)?;
++                    done += count;
++                }
++                Ok(())
++            }
+         }
+     }
+ 

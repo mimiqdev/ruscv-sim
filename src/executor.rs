@@ -17,12 +17,13 @@ use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::{Clint, Plic, Uart16550, CLINT_SIZE, PLIC_SIZE};
 pub use crate::physical::NativeSystemBusBackend;
 use crate::physical::{
-    map_native_memory_error, native_ram_atomic_transact, AtomicAccessKind, AtomicBackend,
-    AtomicBackendResult, AtomicRequest, AtomicResponse, NativeAtomicTarget, NativePhysicalTarget,
-    PhysicalAccessKind, PhysicalBackend, PhysicalBackendError, PhysicalBackendResult,
-    PhysicalRequest, PhysicalResponse, PhysicalResponseBytes, PhysicalResponseCompletion,
-    PhysicalTargetRejectionReason, PhysicalWidth,
+    AtomicAccessKind, AtomicBackend, AtomicBackendResult, AtomicRequest, AtomicResponse,
+    NativeAtomicTarget, NativePhysicalTarget, PhysicalAccessKind, PhysicalBackend,
+    PhysicalBackendError, PhysicalBackendResult, PhysicalRequest, PhysicalResponse,
+    PhysicalResponseBytes, PhysicalResponseCompletion, PhysicalTargetRejectionReason,
+    PhysicalWidth,
 };
+use crate::ram::RamSlot;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -240,7 +241,7 @@ impl PresentedInterruptLines {
 /// - Read returns 0 (no signal)
 /// - After processing exit, value is cleared
 pub struct SystemBus {
-    ram: Arc<Mutex<SimpleMemory>>,
+    ram: RamSlot,
     uart: Arc<Mutex<Uart16550>>,
     ram_base: u64,
     ram_size: usize,
@@ -275,6 +276,21 @@ pub struct SystemBus {
 impl SystemBus {
     pub fn new(
         ram: Arc<Mutex<SimpleMemory>>,
+        uart: Arc<Mutex<Uart16550>>,
+        ram_base: u64,
+        ram_size: usize,
+    ) -> Self {
+        Self::with_ram_slot(
+            RamSlot::native(ram, ram_base, ram_size),
+            uart,
+            ram_base,
+            ram_size,
+        )
+    }
+
+    /// Adds the selectable guest-RAM slot without changing [`Self::new`].
+    pub(crate) fn with_ram_slot(
+        ram: RamSlot,
         uart: Arc<Mutex<Uart16550>>,
         ram_base: u64,
         ram_size: usize,
@@ -617,7 +633,8 @@ impl SystemBus {
 
         // RAM retains first-match priority, but only when it accepts the whole
         // request span.  A request that crosses RAM's end is not stitched from
-        // RAM and another target.
+        // RAM and another target.  The selected slot is either the native
+        // `SimpleMemory` or the caller's blocking RAM target.
         if contains_range(
             self.ram_base,
             self.ram_size,
@@ -630,36 +647,7 @@ impl SystemBus {
                     "RAM address is below its configured base",
                 )
             })?;
-            let mut ram = self
-                .ram
-                .lock()
-                .map_err(|_| PhysicalBackendError::host("RAM lock poisoned"))?;
-            return match descriptor.category {
-                PhysicalAccessKind::Fetch | PhysicalAccessKind::DataRead => {
-                    let mut bytes = [0; 8];
-                    ram.read_bytes_into(offset, &mut bytes[..descriptor.width.bytes()])
-                        .map_err(map_native_memory_error)?;
-                    Ok(PhysicalResponse::new(
-                        descriptor,
-                        PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(
-                            &bytes[..descriptor.width.bytes()],
-                        )),
-                    ))
-                }
-                PhysicalAccessKind::DataWrite => {
-                    let payload = request.write_payload().ok_or_else(|| {
-                        PhysicalBackendError::protocol(
-                            "validated native RAM write was missing its payload",
-                        )
-                    })?;
-                    ram.write_bytes(offset, payload)
-                        .map_err(map_native_memory_error)?;
-                    Ok(PhysicalResponse::new(
-                        descriptor,
-                        PhysicalResponseCompletion::WriteAcknowledgement,
-                    ))
-                }
-            };
+            return self.ram.raw(request, offset);
         }
 
         if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {
@@ -839,7 +827,7 @@ impl SystemBus {
             descriptor.paddr,
             descriptor.width.bytes(),
         ) {
-            return native_ram_atomic_transact(&self.ram, self.ram_base, self.ram_size, request);
+            return self.ram.atomic(request);
         }
 
         if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {
@@ -942,11 +930,7 @@ impl SystemBus {
 impl MemoryInterface for SystemBus {
     fn read_dword(&self, addr: u64) -> Result<u64, MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 8) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .read_dword(addr - self.ram_base);
+            return self.ram.read_dword(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -961,11 +945,7 @@ impl MemoryInterface for SystemBus {
 
     fn read_word(&self, addr: u64) -> Result<u32, MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 4) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .read_word(addr - self.ram_base);
+            return self.ram.read_word(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -975,11 +955,7 @@ impl MemoryInterface for SystemBus {
 
     fn read_half(&self, addr: u64) -> Result<u16, MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 2) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .read_half(addr - self.ram_base);
+            return self.ram.read_half(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -989,11 +965,7 @@ impl MemoryInterface for SystemBus {
 
     fn read_byte(&self, addr: u64) -> Result<u8, MemoryError> {
         if self.is_ram(addr) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .read_byte(addr - self.ram_base);
+            return self.ram.read_byte(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             let offset = addr - self.uart_base;
@@ -1035,11 +1007,7 @@ impl MemoryInterface for SystemBus {
 
     fn write_dword(&mut self, addr: u64, value: u64) -> Result<(), MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 8) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .write_dword(addr - self.ram_base, value);
+            return self.ram.write_dword(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -1057,11 +1025,7 @@ impl MemoryInterface for SystemBus {
 
     fn write_word(&mut self, addr: u64, value: u32) -> Result<(), MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 4) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .write_word(addr - self.ram_base, value);
+            return self.ram.write_word(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -1071,11 +1035,7 @@ impl MemoryInterface for SystemBus {
 
     fn write_half(&mut self, addr: u64, value: u16) -> Result<(), MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 2) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .write_half(addr - self.ram_base, value);
+            return self.ram.write_half(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -1085,11 +1045,7 @@ impl MemoryInterface for SystemBus {
 
     fn write_byte(&mut self, addr: u64, value: u8) -> Result<(), MemoryError> {
         if self.is_ram(addr) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .write_byte(addr - self.ram_base, value);
+            return self.ram.write_byte(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
             let offset = addr - self.uart_base;
@@ -1815,7 +1771,7 @@ struct NativeHooks {
     observer: Option<NativeObserver>,
     prepare: Option<PrepareMachine>,
     boundary: Option<BoundaryObserver>,
-    #[cfg(test)]
+    /// Machine composition supplied by the additive config entry point.
     config: Option<MachineConfig>,
     debug: Option<RemoteBitbangConfig>,
     /// Machine-owned ISA profile forwarded into `MachineConfig` (contract D3).
@@ -1870,15 +1826,17 @@ fn run_native_inner(
     let tohost = tohost_addr
         .or(placement.tohost(AddressForm::Bus)?)
         .unwrap_or(DEFAULT_TOHOST);
-    let mut config = MachineConfig::new(PlatformKind::Native);
-    config.isa = hooks.isa;
-    config.verbose = verbose;
-    config.tohost_override = tohost_addr;
-    config.uart_output = Some(Arc::new(|byte| print!("{}", byte as char)));
-    #[cfg(test)]
-    if let Some(test_config) = hooks.config.take() {
-        config = test_config;
-    }
+    let config = match hooks.config.take() {
+        Some(config) => config,
+        None => {
+            let mut config = MachineConfig::new(PlatformKind::Native);
+            config.isa = hooks.isa;
+            config.verbose = verbose;
+            config.tohost_override = tohost_addr;
+            config.uart_output = Some(Arc::new(|byte| print!("{}", byte as char)));
+            config
+        }
+    };
     let mut machine = OwnedMachine::new(config, image)
         .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
     if let Some(prepare) = hooks.prepare.take() {
@@ -2387,6 +2345,47 @@ pub fn load_and_run_file_with_debug_isa(
         verbose,
         debug,
         isa,
+    )
+}
+
+/// Runs one ELF file under an explicit [`MachineConfig`].
+///
+/// This is the additive public entry point for a selectable RAM transport
+/// (dev-plan D2).  The configuration supplies the Platform kind, ISA profile,
+/// blocking target and host callbacks; ELF parsing still supplies image
+/// placement and the declared `tohost` location.  `tohost_addr` takes
+/// precedence over [`MachineConfig::tohost_override`] and is applied to both
+/// the Machine and the run loop's exit polling.
+///
+/// `debug` attaches the existing `remote_bitbang` OpenOCD transport when
+/// present.  Every other facade keeps the native route unchanged.
+pub fn load_and_run_file_with_config(
+    elf_path: &str,
+    config: MachineConfig,
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<PathBuf>,
+    verbose: bool,
+    debug: Option<RemoteBitbangConfig>,
+) -> Result<ExecutionResult, ExecutorError> {
+    let elf_data = std::fs::read(elf_path)
+        .map_err(|e| ExecutorError::ElfLoadError(ElfError::IoError(e.to_string())))?;
+    let mut config = config;
+    let tohost_addr = tohost_addr.or(config.tohost_override);
+    config.tohost_override = tohost_addr;
+    let hooks = NativeHooks {
+        config: Some(config),
+        debug,
+        ..NativeHooks::default()
+    };
+    run_native_inner(
+        &elf_data,
+        max_cycles,
+        tohost_addr,
+        log_commits.as_deref(),
+        verbose,
+        None,
+        hooks,
     )
 }
 

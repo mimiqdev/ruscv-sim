@@ -424,7 +424,14 @@ fn committed_sba_write_invalidates_an_overlapping_hart_reservation() {
         );
         drop(hart);
         assert_eq!(
-            platform.ram.lock().unwrap().read_bytes(offset, 4).unwrap(),
+            platform
+                .ram
+                .native_memory()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .read_bytes(offset, 4)
+                .unwrap(),
             vec![0x22, 0x22, 0x33, 0x33],
             "{kind:?}: the failed SC commits nothing and the SBA bytes stay"
         );
@@ -432,7 +439,9 @@ fn committed_sba_write_invalidates_an_overlapping_hart_reservation() {
         // A refused write that overlaps the reserved bytes is the dangerous
         // case: if the backend recorded the write before rejecting it, the
         // reservation would die and the SC would fail for the wrong reason.
-        let end_word = u64::try_from(platform.ram.lock().unwrap().size()).unwrap() - 4;
+        let end_word = u64::try_from(platform.ram.native_memory().unwrap().lock().unwrap().size())
+            .unwrap()
+            - 4;
         let end_address = platform_address(kind, end_word);
         assert_eq!(
             platform.sba_access(write(end_address, SbaAccessSize::Word, 0x1111_2222)),
@@ -447,7 +456,14 @@ fn committed_sba_write_invalidates_an_overlapping_hart_reservation() {
             "{kind:?}: a span crossing the end of RAM is refused"
         );
         assert_eq!(
-            platform.ram.lock().unwrap().read_word(end_word).unwrap(),
+            platform
+                .ram
+                .native_memory()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .read_word(end_word)
+                .unwrap(),
             0x1111_2222,
             "{kind:?}: the refused overlapping write committed no byte"
         );
@@ -479,7 +495,14 @@ fn platform_inbound_path_shares_the_platform_domain() {
             Ok(0)
         );
         assert_eq!(
-            platform.ram.lock().unwrap().read_word(RAM_OFFSET).unwrap(),
+            platform
+                .ram
+                .native_memory()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .read_word(RAM_OFFSET)
+                .unwrap(),
             0xfeed_face,
             "{kind:?}: the SBA write reached the Platform RAM"
         );
@@ -488,7 +511,8 @@ fn platform_inbound_path_shares_the_platform_domain() {
             Ok(0xfeed_face)
         );
         let _ = platform.take_events().unwrap();
-        let memory = u64::try_from(platform.ram.lock().unwrap().size()).unwrap();
+        let memory =
+            u64::try_from(platform.ram.native_memory().unwrap().lock().unwrap().size()).unwrap();
         assert_eq!(
             platform.sba_access(read(address + memory, SbaAccessSize::Word)),
             Err(bad_address())
@@ -683,7 +707,7 @@ fn an_sba_transaction_cannot_interpose_inside_a_hart_atomic_envelope() {
         // That is the same storage lock domain the Platform's inbound port
         // uses, and it is the only place where the "reached the boundary"
         // signal can be emitted without product-only test hooks.
-        let ram = platform.ram.clone();
+        let ram = platform.ram.native_memory().unwrap();
         let size = ram.lock().unwrap().size();
         let base = match kind {
             PlatformKind::Native => RAM_BASE,
@@ -765,7 +789,14 @@ fn an_sba_transaction_cannot_interpose_inside_a_hart_atomic_envelope() {
         assert!(state.done, "{kind:?}: the SBA read completed after the AMO");
         drop(state);
         assert_eq!(
-            platform.ram.lock().unwrap().read_word(RAM_OFFSET).unwrap(),
+            platform
+                .ram
+                .native_memory()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .read_word(RAM_OFFSET)
+                .unwrap(),
             written,
             "{kind:?}: the AMO committed exactly once"
         );
