@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM U7: 累积验证与收尾（issue #179）**
+  - 合同 §4 的十一条负控制全部在 mutation runner（`scripts/debug/stage6-mutations`）注册，并逐条指向必须
+    失败的已提交测试：默认 transport 不是 native（`tlm-u1-default-not-native`）、
+    `TLM_GENERIC_ERROR_RESPONSE` 映射为 guest 可见故障（`tlm-u1-generic-error-guest-fault`）、
+    不完整或被 target 修改的 payload 被当作完成（`tlm-u1-incomplete-or-modified-accepted`）、
+    一次访问被拆分或合并（`tlm-u1-split-access`，同一个事务日志相等断言同时拒绝缺失的事务）、
+    `tohost` 轮询与镜像安装走 `b_transport`（`tlm-u1-poll-b-transport`、`tlm-u1-install-b-transport`）、
+    AMO 被模拟为独立读和写（`tlm-u2-amo-read-then-write`）、正的 sub-tick 延迟被舍入为零
+    （`tlm-u3-subtick-rounds-to-zero`）、transport 延迟计入 `mcycle`/`minstret`
+    （`tlm-u3-delay-counted-into-counters`）、未知完成后未 reset 仍发起访问
+    （`tlm-u1-access-after-unknown`）、回调再入 C ABI 被接受（`tlm-u5-callback-reentry-accepted`）、
+    TLM 状态或终止结果前的 host stop 被报告为通过的 ruscv-sim 结果
+    （`tlm-u5-transport-status-passes`、`tlm-u5-boundary-passes`）。`sc_stop` 由该 Rust stand-in
+    加上 SystemC 作业的早停变体（`--stop-after-grants 1`，必须不通过）共同覆盖。审计未发现缺失的控制，
+    未新增控制
+  - CI 覆盖合同要求的全部检查：`Quality and tests` 运行完整 Rust 质量门（fmt、check、clippy、test、doc）、
+    带 TLM 第二遍的 guest 套件、C ABI smoke（`scripts/test_capi_smoke.sh`）、A10 producer pin 套件与
+    mutation runner（`python3 scripts/verify_stage6_mutations.py --source-ref HEAD`）；`Debug attach`
+    运行 tool script（`scripts/debug_attach.sh --require-spike`）；`SystemC transport smoke` 运行 pinned
+    SystemC 作业
+  - `tools/a10/public-v1.json` 及其 fixtures 与里程碑前逐字节相同（`tools/a10/` 自轮换合并 `579d128`
+    起无改动），A10 只在 native 路由上运行，Stage 3 performance-certification 缓期不变
+  - D12 文档收尾：`docs/integration/systemc-tlm.md` 成为所选 blocking 映射、FFI 所有权与线程、错误映射、
+    时间单位、再入与停止行为、构建与版本 pin 的规范说明，DMI 与 quantum／同步策略仍为开放项；README 新增
+    `MachineConfig` 变更、C ABI 与 pinned SystemC 3.0.2 宿主的说明；验证文档列出 TLM 第二遍、C ABI smoke
+    与 SystemC 作业
+  - 2026-11-05 在合同授权下对 D2 做有界修订：声明的 tick 周期以 `MachineConfig.tick_period`（默认 1 ns，
+    来自 D7 与 ADR-0004 §5.2）列为第四个新增公开变更，与 `transport`、`BoundaryFacts` 的
+    `transport_delay_femtoseconds`、`Flat` + `tlm` 的 `MachineError::UnsupportedTransport` 并列，
+    四者均由此处命名；“all three” 改为 “all four”。合同其余正文不变，合同未归档或轮换
+  - 为让 D2 的 “no other public signature changes” 按字面成立，U2 加在既有 `AmoTransform` 与
+    `AmoOperation` 上的三个方法（`operation()`、`kind()`、`from_kind()`）由 `pub` 收窄为 `pub(crate)`；
+    调用点全部在 crate 内，运行时行为不变，`AmoKind` 等新词表类型保持公开
+
 - **TLM U6: pinned SystemC 3.0.2 smoke（issue #178）**
   - `Dockerfile` 新增 Accellera SystemC 3.0.2 构建：从 `accellera-official/systemc` 取
     `70b0fc8e4a74acc677b0fc73cea08f940c2115d5`（合同 pin），配置前用 `git rev-parse HEAD`

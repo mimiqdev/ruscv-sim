@@ -66,7 +66,12 @@ pub const ALL_OPERATIONS: [AmoOperation; 9] = [
 
 impl AmoOperation {
     /// Returns the transport-visible operation tag for this operation.
-    pub const fn kind(self) -> AmoKind {
+    ///
+    /// Crate-internal: the blocking adapter and the in-tree zero-delay target
+    /// map between the Hart operation and the transport tag. Contract D2
+    /// requires that no public signature of a pre-existing type changes for
+    /// this milestone.
+    pub(crate) const fn kind(self) -> AmoKind {
         match self {
             Self::Swap => AmoKind::Swap,
             Self::Add => AmoKind::Add,
@@ -81,7 +86,9 @@ impl AmoOperation {
     }
 
     /// Maps a transport-visible operation tag back to the Hart operation.
-    pub const fn from_kind(kind: AmoKind) -> Self {
+    ///
+    /// Crate-internal, for the same D2 reason as [`Self::kind`].
+    pub(crate) const fn from_kind(kind: AmoKind) -> Self {
         match kind {
             AmoKind::Swap => Self::Swap,
             AmoKind::Add => Self::Add,

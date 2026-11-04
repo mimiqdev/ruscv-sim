@@ -180,7 +180,8 @@ integration as a whole, the M/A/F/D dispatch end to end, or every Zca, F, D or
 Zcd encoding; component and ACT4 verification own those claims. The second pass
 uses the in-tree zero-delay Rust RAM target (`ZeroDelayRam`), so it proves guest
 parity on the blocking TLM route, not nonzero transport delay, SystemC, or the
-C ABI; those units own their own evidence. It is not an ACT4 extension suite. The A5 ACT4 baseline remains a 51-case nontrapping result and is not an A6
+C ABI; those units own their own evidence in `scripts/test_capi_smoke.sh`,
+`integration/systemc/` and the [SystemC/TLM boundary](../integration/systemc-tlm.md). It is not an ACT4 extension suite. The A5 ACT4 baseline remains a 51-case nontrapping result and is not an A6
 trap or extension certification. A separate retained run `35325844246` reran
 that frozen selection at source head
 `845c63325db5ac87ab2ff0ed260453dc3b396ae9`, with 51/51 public-CLI passes;
