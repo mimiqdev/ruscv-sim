@@ -230,8 +230,10 @@ pub struct BoundaryFacts {
     pub deadline_stop: bool,
     /// Total consumed blocking-transport delay in exact femtoseconds.
     ///
-    /// Zero on the native route and for a zero-delay target, which is every
-    /// target in unit U1: unit U3 adds conversion and consumption.
+    /// This is the guest-turn delay converted and charged to Platform time so
+    /// far under ADR-0004 §5.3.  It is zero on the native route and for a
+    /// zero-delay target, and excludes SBA/Debug Mode delay, which is
+    /// validated but not charged.
     pub transport_delay_femtoseconds: u64,
 }
 impl Default for BoundaryFacts {
@@ -404,6 +406,7 @@ impl Installed {
         // (privileged §3.2.1, contract D1). This pre-fetch sample is the only
         // acceptance sample. An idle jump republishes and uses that same
         // sample again. It is not a second Hart entry point.
+        self.platform.begin_transport_turn();
         let mut idle_stop = (false, false);
         let mut jumped = false;
         let hart = loop {
@@ -451,11 +454,20 @@ impl Installed {
         };
         let failed = failure.is_some();
         let uncertain = self.core.unresolved_physical_access().is_some();
-        let events = if failed || waiting || debug_without_turn {
-            Vec::new()
+        let completed_turn = !(failed || waiting || debug_without_turn);
+        // A completed turn contributes one framework `iss_tick` plus the
+        // converted transport delay; a started failed turn contributes only
+        // its known delay and no turn tick (ADR-0004 §5.3/§5.1).  Delay never
+        // enters `mcycle` or `minstret`.
+        let delay = self.platform.take_transport_turn_delay()?;
+        let advance = delay.ticks + u64::from(completed_turn);
+        let events = if completed_turn {
+            self.platform.take_events()?
         } else {
-            let events = self.platform.take_events()?;
-            let mtime = self.platform.advance_mtime()?;
+            Vec::new()
+        };
+        if advance != 0 {
+            let mtime = self.platform.advance_mtime_by(advance)?;
             // The instruction read the pre-turn snapshot. Park `time` and the
             // machine lines on the post-tick device so a host inspect matches
             // the store plus the tick.
@@ -466,8 +478,7 @@ impl Installed {
                 .csr
                 .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
             self.core.state_mut().csr.set_seip_external(lines.seip);
-            events
-        };
+        }
         let tohost = (sample && !failed).then(|| self.sample());
         let receipt = lease.boundary(uncertain, failure)?;
         let (lifecycle, uncertain) = receipt.boundary_state()?;

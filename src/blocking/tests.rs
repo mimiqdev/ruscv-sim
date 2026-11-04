@@ -1,5 +1,6 @@
 //! Adapter parity and negative-control tests for the blocking RAM route.
 
+use super::adapter::TlmRamAdapter;
 use super::test_support::{Call, Mutation, ScriptTarget};
 use super::*;
 use crate::memory::{MemoryError, SimpleMemory};
@@ -20,7 +21,7 @@ fn native_slot(size: usize) -> RamSlot {
 }
 
 fn tlm_slot(target: &Arc<ScriptTarget>, size: usize) -> RamSlot {
-    RamSlot::tlm(target.clone(), BASE, size)
+    RamSlot::tlm(target.clone(), BASE, size).unwrap()
 }
 
 #[test]
@@ -276,26 +277,193 @@ fn a_target_panic_is_an_unknown_completion() {
 }
 
 #[test]
-fn a_non_zero_annotated_delay_is_an_adapter_failure() {
+fn delay_conversion_is_exact_rounded_up_and_checked() {
+    let period = TickPeriod::DEFAULT;
+    assert_eq!(Femtoseconds::ZERO.to_platform_ticks(period), Ok(0));
+    assert_eq!(
+        Femtoseconds::new(2_000_000).to_platform_ticks(period),
+        Ok(2)
+    );
+    assert_eq!(
+        Femtoseconds::new(1_500_000).to_platform_ticks(period),
+        Ok(2),
+        "a positive remainder must round up"
+    );
+    assert_eq!(
+        Femtoseconds::new(1).to_platform_ticks(period),
+        Ok(1),
+        "a positive sub-tick delay must not disappear"
+    );
+    assert_eq!(Femtoseconds::new(999_999).to_platform_ticks(period), Ok(1));
+    assert_eq!(
+        Femtoseconds::new(7).to_platform_ticks(TickPeriod::new(Femtoseconds::ZERO)),
+        Err(DelayConversionError::Malformed),
+        "a zero tick period is malformed, not an infinite tick count"
+    );
+
+    let bound = TurnCompletionBound::new(Femtoseconds::new(2_000_000), period).unwrap();
+    assert_eq!(bound.ticks_per_transaction(), 2);
+    assert_eq!(bound.transactions(), MAX_GUEST_TRANSACTIONS_PER_TURN);
+    assert_eq!(bound.ticks(), 2 * MAX_GUEST_TRANSACTIONS_PER_TURN);
+    // A sub-tick declared maximum still reserves one whole tick per
+    // transaction, so the bound cannot round the delay away.
+    let sub_tick = TurnCompletionBound::new(Femtoseconds::new(1), period).unwrap();
+    assert_eq!(sub_tick.ticks_per_transaction(), 1);
+    assert_eq!(sub_tick.ticks(), MAX_GUEST_TRANSACTIONS_PER_TURN);
+    assert_eq!(
+        TurnCompletionBound::new(
+            Femtoseconds::new(u64::MAX),
+            TickPeriod::new(Femtoseconds::new(1))
+        ),
+        Err(DelayConversionError::Overflow),
+        "a bound that overflows the tick count is an adapter failure"
+    );
+}
+
+#[test]
+fn annotated_delay_is_converted_and_consumed_once_per_turn() {
     let target = Arc::new(ScriptTarget::new(BASE, SIZE));
-    let mut port = ValidatedPhysicalAccess::new(tlm_slot(&target, SIZE));
-    target.set_delay(1);
-    let request = PhysicalRequest::data_write(BASE, PhysicalWidth::Byte, &[1]).unwrap();
+    target.set_declared_max_delay(2_000_000);
+    target.set_delay(1_500_000);
+    let slot = tlm_slot(&target, SIZE);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_write(BASE, PhysicalWidth::Word, &[1, 2, 3, 4]).unwrap();
+    port.access(request).unwrap();
+    let delay = slot.take_transport_turn_delay().unwrap();
+    assert_eq!(delay.ticks, 2, "1.5 ns must round up to two ticks");
+    assert_eq!(delay.femtoseconds, Femtoseconds::new(1_500_000));
+    assert_eq!(
+        slot.consumed_delay(),
+        Femtoseconds::new(1_500_000),
+        "the boundary fact keeps the exact annotated delay"
+    );
+
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    port.access(request).unwrap();
+    assert_eq!(slot.take_transport_turn_delay().unwrap().ticks, 2);
+    assert_eq!(slot.consumed_delay(), Femtoseconds::new(3_000_000));
+}
+
+#[test]
+fn each_delay_consumption_outcome_follows_the_contract() {
+    // Successful access: the entire reported delay is consumed.
+    let target = Arc::new(ScriptTarget::new(BASE, SIZE));
+    target.set_declared_max_delay(1_000_000);
+    target.set_delay(1_000_000);
+    let slot = tlm_slot(&target, SIZE);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_write(BASE, PhysicalWidth::Word, &[1, 2, 3, 4]).unwrap();
+    assert!(port.access(request).unwrap().is_write_acknowledgement());
+    assert_eq!(slot.take_transport_turn_delay().unwrap().ticks, 1);
+
+    // Guest-visible target fault: the delay is still elapsed once.
+    target.set_status(BlockingResponseStatus::AddressError);
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    assert!(matches!(
+        port.access(request),
+        Err(PhysicalAccessError::TargetRejected(_))
+    ));
+    assert_eq!(
+        slot.take_transport_turn_delay().unwrap().ticks,
+        1,
+        "a target fault did not consume its reported delay"
+    );
+
+    // Known transport/host failure: the annotated delay is marked elapsed.
+    target.set_status(BlockingResponseStatus::GenericError);
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    assert!(matches!(
+        port.access(request),
+        Err(PhysicalAccessError::BackendFailure(_))
+    ));
+    assert_eq!(slot.take_transport_turn_delay().unwrap().ticks, 1);
+
+    // Protocol failure: an incomplete payload is not a completion, so its
+    // annotation is not trusted as elapsed.
+    target.set_status(BlockingResponseStatus::Incomplete);
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    assert!(matches!(
+        port.access(request),
+        Err(PhysicalAccessError::Protocol(_))
+    ));
+    assert_eq!(slot.take_transport_turn_delay().unwrap().ticks, 0);
+
+    // Unknown completion: earlier known committed delay is preserved, and the
+    // unknown transaction itself consumes nothing.
+    target.set_status(BlockingResponseStatus::Ok);
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_write(BASE, PhysicalWidth::Word, &[5, 6, 7, 8]).unwrap();
+    port.access(request).unwrap();
+    target.set_unknown(true);
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    assert!(matches!(
+        port.access(request),
+        Err(PhysicalAccessError::UnknownCompletion(_))
+    ));
+    assert_eq!(
+        slot.take_transport_turn_delay().unwrap().ticks,
+        1,
+        "a later unknown completion erased an already elapsed delay"
+    );
+}
+
+#[test]
+fn a_response_above_the_declared_maximum_is_an_overshoot_failure() {
+    let target = Arc::new(ScriptTarget::new(BASE, SIZE));
+    target.set_declared_max_delay(1_000_000);
+    target.set_delay(3_000_000);
+    let slot = tlm_slot(&target, SIZE);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
     let error = port.access(request).unwrap_err();
     assert!(
         matches!(error, PhysicalAccessError::BackendFailure(_)),
-        "an annotated delay was not an adapter failure: {error:?}"
+        "an overshoot was not a simulator-side failure: {error:?}"
     );
+    let message = error.to_string();
+    assert!(message.contains("overshoot 2000000"), "{message}");
     assert!(
-        error
-            .to_string()
-            .contains("delay conversion is not implemented"),
-        "{error}"
+        message.contains("conservative completion bound"),
+        "{message}"
     );
-    assert_eq!(target.transactions.load(Ordering::SeqCst), 1);
-    target.set_delay(0);
-    let request = PhysicalRequest::data_write(BASE, PhysicalWidth::Byte, &[2]).unwrap();
-    assert!(port.access(request).unwrap().is_write_acknowledgement());
+    assert_eq!(
+        slot.take_transport_turn_delay().unwrap().ticks,
+        3,
+        "a known overshoot delay must still be reported once"
+    );
+    assert_eq!(slot.consumed_delay(), Femtoseconds::new(3_000_000));
+}
+
+#[test]
+fn delay_overflow_and_a_malformed_period_are_adapter_failures() {
+    // Two responses at the declared maximum overflow the exact total.
+    let target = Arc::new(ScriptTarget::new(BASE, SIZE));
+    target.set_declared_max_delay(u64::MAX);
+    target.set_delay(u64::MAX);
+    let slot = tlm_slot(&target, SIZE);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    port.access(request).unwrap();
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    let error = port.access(request).unwrap_err();
+    assert!(matches!(error, PhysicalAccessError::BackendFailure(_)));
+    assert!(error.to_string().contains("overflowed"), "{error}");
+
+    // A zero declared tick period cannot represent any positive delay.
+    let target = Arc::new(ScriptTarget::new(BASE, SIZE));
+    assert_eq!(
+        TlmRamAdapter::with_tick_period(target, TickPeriod::new(Femtoseconds::ZERO)).err(),
+        Some(DelayConversionError::Malformed)
+    );
 }
 
 #[test]

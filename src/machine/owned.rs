@@ -180,6 +180,7 @@ impl OwnedMachine {
             budget_exhausted,
             lifecycle: status.lifecycle,
             uncertain: status.uncertain,
+            transport_delay_femtoseconds: self.domain().platform.transport_delay_femtoseconds(),
             ..BoundaryFacts::default()
         })
     }
@@ -767,9 +768,17 @@ impl OwnedMachine {
 
     /// Move the Platform queue into the held debug events. Called before a
     /// later operation can replace the Platform.
+    ///
+    /// Debug-work transport delay (program buffer and system bus access) is
+    /// converted and validated when the access runs, but it is not charged to
+    /// Platform time: the 2026-10-28 and 2026-10-30 ADR-0004 amendments keep
+    /// the fixed stopcount/stoptime profile free of automatic guest time
+    /// charges for debug work.  Dropping the pending amount here keeps it
+    /// from leaking into the next guest turn.
     fn capture_debug_events(&mut self) -> Result<(), MachineError> {
         self.debug_events
             .extend(self.domain().platform.take_events()?);
+        self.domain().platform.discard_transport_turn_delay();
         Ok(())
     }
 
@@ -932,6 +941,12 @@ impl OwnedMachine {
     #[cfg(test)]
     pub(crate) fn hart_in_debug_mode(&self) -> bool {
         self.domain().core.in_debug_mode()
+    }
+
+    /// One guest turn's conservative completion bound in Platform ticks.
+    #[cfg(test)]
+    pub(crate) fn turn_completion_bound_ticks(&self) -> Option<u64> {
+        self.domain().platform.turn_completion_bound_ticks()
     }
 
     #[cfg(test)]

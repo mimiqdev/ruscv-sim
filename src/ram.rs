@@ -17,8 +17,8 @@
 //! whole RAM window through debug transport, so no prior run's contents (or a
 //! write the target held after an unknown completion) survive installation.
 
-use crate::blocking::adapter::TlmRamAdapter;
-use crate::blocking::{BlockingInitiator, BlockingTarget, Femtoseconds};
+use crate::blocking::adapter::{PendingDelay, TlmRamAdapter};
+use crate::blocking::{BlockingInitiator, BlockingTarget, DelayConversionError, Femtoseconds};
 use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::physical::{
     native_ram_atomic_transact, AtomicBackend, AtomicBackendResult, AtomicRequest, PhysicalBackend,
@@ -78,14 +78,22 @@ impl RamSlot {
     }
 
     /// A TLM slot over one shared blocking target.
-    pub(crate) fn tlm(target: Arc<dyn BlockingTarget>, base: u64, size: usize) -> Self {
-        Self {
+    ///
+    /// The target's declared maximum delay must be representable under the
+    /// Machine's declared tick period; otherwise the configuration fails
+    /// before any access is issued.
+    pub(crate) fn tlm(
+        target: Arc<dyn BlockingTarget>,
+        base: u64,
+        size: usize,
+    ) -> Result<Self, DelayConversionError> {
+        Ok(Self {
             inner: Arc::new(RamSlotInner {
                 base,
                 size,
-                kind: RamKind::Tlm(TlmRamAdapter::new(target)),
+                kind: RamKind::Tlm(TlmRamAdapter::new(target)?),
             }),
-        }
+        })
     }
 
     /// The exact shared native `SimpleMemory`, when this is a native slot.
@@ -105,12 +113,44 @@ impl RamSlot {
         }
     }
 
-    /// Exact total annotated transport delay accepted so far (zero on native
+    /// Exact total charged guest-turn transport delay so far (zero on native
     /// and for a zero-delay target).
     pub(crate) fn consumed_delay(&self) -> Femtoseconds {
         match &self.inner.kind {
             RamKind::Native(_) => Femtoseconds::ZERO,
             RamKind::Tlm(adapter) => adapter.consumed_delay(),
+        }
+    }
+
+    /// Opens one guest turn's delay accounting.
+    pub(crate) fn begin_transport_turn(&self) {
+        if let RamKind::Tlm(adapter) = &self.inner.kind {
+            adapter.begin_turn();
+        }
+    }
+
+    /// Consumes one guest turn's transport delay once, or fails when the turn
+    /// exceeded its conservative completion bound.
+    pub(crate) fn take_transport_turn_delay(&self) -> Result<PendingDelay, PhysicalBackendError> {
+        match &self.inner.kind {
+            RamKind::Native(_) => Ok(PendingDelay::default()),
+            RamKind::Tlm(adapter) => adapter.take_turn_delay(),
+        }
+    }
+
+    /// Drops debug-work delay after validation without charging Platform time.
+    pub(crate) fn discard_transport_turn_delay(&self) {
+        if let RamKind::Tlm(adapter) = &self.inner.kind {
+            adapter.discard_turn_delay();
+        }
+    }
+
+    /// One guest turn's conservative completion bound in Platform ticks.
+    #[cfg(test)]
+    pub(crate) fn turn_completion_bound_ticks(&self) -> Option<u64> {
+        match &self.inner.kind {
+            RamKind::Native(_) => None,
+            RamKind::Tlm(adapter) => Some(adapter.turn_completion_bound_ticks()),
         }
     }
 

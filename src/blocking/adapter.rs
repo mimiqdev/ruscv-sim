@@ -17,7 +17,8 @@
 
 use super::{
     BlockingCommand, BlockingDebug, BlockingExtension, BlockingInitiator, BlockingResponseStatus,
-    BlockingTarget, BlockingTransaction, Femtoseconds,
+    BlockingTarget, BlockingTransaction, DelayConversionError, Femtoseconds, TickPeriod,
+    TurnCompletionBound,
 };
 use crate::physical::{
     AtomicBackendResult, AtomicRequest, PhysicalBackendError, PhysicalBackendResult,
@@ -30,6 +31,10 @@ use std::sync::{Arc, Mutex};
 /// One selectable TLM RAM route over a shared blocking target.
 pub(crate) struct TlmRamAdapter {
     target: Arc<dyn BlockingTarget>,
+    /// The Machine's declared Platform tick period for delay conversion.
+    period: TickPeriod,
+    /// The target's declared maximum delay reserved by one guest turn.
+    bound: TurnCompletionBound,
     state: Mutex<AdapterState>,
 }
 
@@ -39,16 +44,103 @@ struct AdapterState {
     poisoned: Option<String>,
     /// Monotonic count of completed writes and AMOs.
     committed_writes: u64,
-    /// Exact total of validated annotated delay, zero until unit U3.
+    /// Exact running total of charged guest-turn delay in femtoseconds.
     delay: Femtoseconds,
+    /// Delay converted since the last turn boundary.
+    pending: PendingDelay,
+}
+
+/// Delay accumulated since the last turn boundary.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PendingDelay {
+    /// Converted Platform ticks.
+    pub(crate) ticks: u64,
+    /// Exact annotated femtoseconds.
+    pub(crate) femtoseconds: Femtoseconds,
 }
 
 impl TlmRamAdapter {
-    /// Wraps one shared blocking target.
-    pub(crate) fn new(target: Arc<dyn BlockingTarget>) -> Self {
-        Self {
+    /// Wraps one shared blocking target under the declared default tick
+    /// period.
+    pub(crate) fn new(target: Arc<dyn BlockingTarget>) -> Result<Self, DelayConversionError> {
+        Self::with_tick_period(target, TickPeriod::DEFAULT)
+    }
+
+    /// Wraps one shared blocking target under an explicit tick period.
+    ///
+    /// The target's declared per-transaction maximum must be representable in
+    /// that period; an overflowing or malformed bound is a configuration
+    /// failure before any access is issued.
+    pub(crate) fn with_tick_period(
+        target: Arc<dyn BlockingTarget>,
+        period: TickPeriod,
+    ) -> Result<Self, DelayConversionError> {
+        let bound = TurnCompletionBound::new(target.declared_max_delay(), period)?;
+        Ok(Self {
             target,
+            period,
+            bound,
             state: Mutex::new(AdapterState::default()),
+        })
+    }
+
+    /// Opens one guest turn's delay accounting.
+    pub(crate) fn begin_turn(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.pending = PendingDelay::default();
+        }
+    }
+
+    /// One guest turn's conservative completion bound in Platform ticks.
+    #[cfg(test)]
+    pub(crate) fn turn_completion_bound_ticks(&self) -> u64 {
+        self.bound.ticks()
+    }
+
+    /// Consumes the guest turn's accumulated delay into Platform time
+    /// accounting and returns it once.
+    ///
+    /// A turn that issued more delay than the conservative completion bound is
+    /// a §5.3 overshoot: the known delay is still reported, but the accounting
+    /// is an adapter failure rather than a silently exceeded deadline bound.
+    pub(crate) fn take_turn_delay(&self) -> Result<PendingDelay, PhysicalBackendError> {
+        let mut state = self.state.lock().map_err(|_| {
+            PhysicalBackendError::host("TLM adapter state lock is poisoned by an earlier panic")
+        })?;
+        let pending = std::mem::take(&mut state.pending);
+        if pending.ticks > self.bound.ticks() {
+            return Err(PhysicalBackendError::host(format!(
+                "the turn consumed {} Platform ticks of transport delay, above its conservative \
+                 completion bound of {} ticks ({} ticks per transaction x {} transactions); \
+                 overshoot {} ticks",
+                pending.ticks,
+                self.bound.ticks(),
+                self.bound.ticks_per_transaction(),
+                self.bound.transactions(),
+                pending.ticks - self.bound.ticks(),
+            )));
+        }
+        state.delay = state
+            .delay
+            .checked_add(pending.femtoseconds)
+            .ok_or_else(|| {
+                PhysicalBackendError::host(format!(
+                    "total blocking-transport delay overflowed after {} fs",
+                    state.delay.as_u64()
+                ))
+            })?;
+        Ok(pending)
+    }
+
+    /// Drops the delay validated since the last boundary without charging
+    /// Platform time.
+    ///
+    /// SBA and Debug Mode RAM accesses (including program-buffer execution)
+    /// are converted and validated the same way, but the 2026-10-28 and
+    /// 2026-10-30 ADR-0004 amendments keep them out of Platform time.
+    pub(crate) fn discard_turn_delay(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.pending = PendingDelay::default();
         }
     }
 
@@ -62,7 +154,7 @@ impl TlmRamAdapter {
         }
     }
 
-    /// Exact total annotated delay accepted so far.
+    /// Exact total charged guest-turn delay accepted so far.
     pub(crate) fn consumed_delay(&self) -> Femtoseconds {
         match self.state.lock() {
             Ok(state) => state.delay,
@@ -170,29 +262,65 @@ impl TlmRamAdapter {
             )));
         }
 
-        // Unit U3 converts annotated delays.  Until then a non-zero annotation
-        // is an adapter failure, never a silently dropped zero.
+        // Convert and account the annotated delay before classifying the
+        // response, so a completed fault or host failure keeps the modeled
+        // elapsed time exactly once (ADR-0004 §5.3).  An incomplete or
+        // target-modified payload is not a completion, so its annotation is
+        // not trusted as elapsed.
         let delay = transaction.response_delay();
-        if !delay.is_zero() {
-            return Err(PhysicalBackendError::host(format!(
-                "blocking target annotated {} fs of delay for {:?} at {:#018x}; \
-                 delay conversion is not implemented until unit U3",
+        let ticks = delay.to_platform_ticks(self.period).map_err(|error| {
+            PhysicalBackendError::host(format!(
+                "blocking target annotated a malformed delay of {} fs for {:?} at {:#018x}: \
+                 {error}",
                 delay.as_u64(),
                 descriptor.category,
                 descriptor.paddr
-            )));
-        }
-        state.delay = state.delay.checked_add(delay).ok_or_else(|| {
-            PhysicalBackendError::host(format!(
-                "total blocking-transport delay overflowed at {:#018x}",
-                descriptor.paddr
             ))
         })?;
+        let status = transaction.status();
+        if status != BlockingResponseStatus::Incomplete {
+            let pending = &mut state.pending;
+            pending.ticks = pending.ticks.checked_add(ticks).ok_or_else(|| {
+                PhysicalBackendError::host(format!(
+                    "blocking-transport delay overflowed while converting {} fs for {:?} at \
+                     {:#018x}",
+                    delay.as_u64(),
+                    descriptor.category,
+                    descriptor.paddr
+                ))
+            })?;
+            pending.femtoseconds = pending.femtoseconds.checked_add(delay).ok_or_else(|| {
+                PhysicalBackendError::host(format!(
+                    "blocking-transport delay accounting overflowed after {} fs",
+                    pending.femtoseconds.as_u64()
+                ))
+            })?;
+        }
+        // An `Ok` write committed its effects before an overshoot is detected;
+        // record it so committed-write visibility stays truthful even when the
+        // turn ends in a simulator failure.
+        if status == BlockingResponseStatus::Ok && command == BlockingCommand::Write {
+            state.committed_writes = state.committed_writes.saturating_add(1);
+        }
+        let declared_max = self.target.declared_max_delay();
+        if delay > declared_max {
+            let overshoot = Femtoseconds::new(delay.as_u64() - declared_max.as_u64());
+            return Err(PhysicalBackendError::host(format!(
+                "target reported {} fs of delay for one {:?} transaction at {:#018x}, above its \
+                 declared per-transaction maximum of {} fs (overshoot {} fs); the turn's \
+                 conservative completion bound is {} ticks",
+                delay.as_u64(),
+                descriptor.category,
+                descriptor.paddr,
+                declared_max.as_u64(),
+                overshoot.as_u64(),
+                self.bound.ticks(),
+            )));
+        }
 
-        match transaction.status() {
+        match status {
             BlockingResponseStatus::Ok => {
                 if command == BlockingCommand::Write {
-                    state.committed_writes = state.committed_writes.saturating_add(1);
                     Ok(PhysicalResponse::new(
                         descriptor,
                         PhysicalResponseCompletion::WriteAcknowledgement,

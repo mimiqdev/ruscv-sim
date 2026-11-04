@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM U3: transport delay and time（issue #175）**
+  - 标注延迟按声明的 Platform tick 周期（默认 1 ns）从飞秒换算：能整除时精确换算，否则正延迟向上取整，零仍为零；正的非整 tick 延迟不会消失。零 tick 周期（畸形）与换算/累计溢出是 adapter 失败，而不是被丢弃、为负或回绕的时钟更新
+  - 每个 guest turn 的保守完成上界（ADR-0004 §7.2）按 target 声明的单事务最大延迟乘以最坏情况事务数计算（两个取指 parcel、Sv39 页表与 A/D 访问、一次数据或原子访问，共 18）；单个响应超过声明最大值按 §5.3 overshoot 报告为 simulator failure，诊断中给出 overshoot 与上界
+  - 延迟按 ADR-0004 §5.3 的结果消费：成功访问与 guest 可见 target fault 消耗完整的已标注延迟，已知 host 失败消耗已标注的延迟，协议失败与未知完成不把标注当作已流逝时间；已消耗的延迟不会因后续 fault 或返回原因被撤销
+  - 完成的 turn 让 `mtime` 前进一个 turn tick 加换算后的延迟 tick，因此定时器比较能看到延迟；失败的 turn 只消耗已知延迟，不增加 turn tick。两者都不改变 `mcycle`/`minstret`
+  - SBA 与 Debug Mode（含 program-buffer 执行）的访问延迟同样换算和校验，但不计入 Platform 时间，保持 2026-10-28 与 2026-10-30 ADR-0004 修订；`BoundaryFacts::transport_delay_femtoseconds` 现在报告已计入的精确延迟总量，native 与零延迟 target 保持 0
+  - in-tree `ZeroDelayRam` 与 SystemC target 仍标注零延迟，parity 运行时间等价；延迟测试使用 test-only 的延迟 target。新增负控制：正的 sub-tick 延迟被舍入为零、transport delay 计入 `mcycle` 或 `minstret`
+
 - **TLM U1: Rust TLM RAM 路由（issue #173）**
   - 新增独立的 blocking-transport 适配词表（`src/blocking`，与 `src/tlm` 无关）：IEEE 1666
     七种响应状态、以 `TLM_INCOMPLETE_RESPONSE` 起始的 payload、ruscv-sim 扩展（既有

@@ -48,6 +48,8 @@ pub(crate) struct ScriptTarget {
     /// Transport resets issued.
     pub resets: AtomicUsize,
     status: Mutex<BlockingResponseStatus>,
+    /// Declared per-transaction maximum delay (dev-plan D7).
+    declared_max: AtomicU64,
     delay: AtomicU64,
     unknown: AtomicBool,
     panic: AtomicBool,
@@ -68,6 +70,7 @@ impl ScriptTarget {
             debug_requests: AtomicUsize::new(0),
             resets: AtomicUsize::new(0),
             status: Mutex::new(BlockingResponseStatus::Ok),
+            declared_max: AtomicU64::new(0),
             delay: AtomicU64::new(0),
             unknown: AtomicBool::new(false),
             panic: AtomicBool::new(false),
@@ -87,6 +90,11 @@ impl ScriptTarget {
     /// Sets the annotated response delay.
     pub(crate) fn set_delay(&self, delay: u64) {
         self.delay.store(delay, Ordering::SeqCst);
+    }
+
+    /// Sets the declared per-transaction maximum delay.
+    pub(crate) fn set_declared_max_delay(&self, delay: u64) {
+        self.declared_max.store(delay, Ordering::SeqCst);
     }
 
     /// Marks the next transactions' outcome unknown.
@@ -152,7 +160,7 @@ impl ScriptTarget {
 
 impl BlockingTarget for ScriptTarget {
     fn declared_max_delay(&self) -> Femtoseconds {
-        Femtoseconds::ZERO
+        Femtoseconds::new(self.declared_max.load(Ordering::SeqCst))
     }
 
     fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
