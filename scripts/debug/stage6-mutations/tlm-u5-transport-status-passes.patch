@@ -1,8 +1,8 @@
 diff --git a/src/capi/host.rs b/src/capi/host.rs
-index 5dcf9d2..953b41c 100644
+index 61a15e3..613c3c4 100644
 --- a/src/capi/host.rs
 +++ b/src/capi/host.rs
-@@ -687,7 +687,8 @@ impl Session {
+@@ -707,7 +707,8 @@ impl Session {
              .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the caller clock overflows"))?;
          finalize_horizon(&mut facts, caller_end, max_end_fs, false);
          self.facts = facts;

@@ -997,6 +997,53 @@ fn a_terminal_exit_reports_the_remaining_slack() {
 }
 
 #[test]
+fn a_host_view_failure_keeps_the_completed_final_slot() {
+    // The turn completed before polling failed, so the final budget slot and its
+    // residual slack are coincident facts, not casualties of the failure
+    // (ADR-0004 §4.3; §7.1's exception is a failed attempt, not a completed one).
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    harness.target.fail_dbg_reads.store(true, Ordering::SeqCst);
+    let grant = harness.grant(100 * TICK_FS, 200 * TICK_FS, 1).unwrap();
+    let result = harness.result();
+    assert_eq!(result.state, RunState::Failed.code());
+    assert_eq!(grant.facts.turns, 1, "the completed turn was dropped");
+    assert_eq!(grant.consumed_fs, TICK_FS);
+    assert_eq!(
+        grant.facts.budget_exhausted, 1,
+        "a completed final slot lost its budget fact"
+    );
+    assert_eq!(grant.facts.residual_slack_fs, 99 * TICK_FS);
+}
+
+#[test]
+fn a_commit_log_failure_keeps_the_completed_turn() {
+    // /dev/full accepts the open and fails every write, so delivery fails after
+    // the Hart already completed its transition.
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    let path = c_text(std::path::Path::new("/dev/full"));
+    // SAFETY: the handle is live and the path is NUL-terminated.
+    let status = unsafe { ruscv_machine_set_commit_log(harness.handle, path.as_ptr()) };
+    if status != Status::Ok as i32 {
+        // A host without /dev/full cannot exercise this; do not fake a pass.
+        eprintln!("skipping /dev/full commit-log case: status {status}");
+        return;
+    }
+    let grant = harness.grant(0, 100 * TICK_FS, 100).unwrap();
+    let result = harness.result();
+    assert_eq!(result.state, RunState::Failed.code());
+    assert_eq!(
+        grant.facts.turns, 1,
+        "a commit-log failure unretired the completed turn"
+    );
+    assert_eq!(grant.consumed_fs, TICK_FS);
+    assert!(
+        harness.diagnostic().contains("commit log"),
+        "wrong diagnostic: {}",
+        harness.diagnostic()
+    );
+}
+
+#[test]
 fn a_grant_boundary_is_not_a_terminal_result() {
     // The C-ABI stand-in for `sc_stop`: a host that ends a grant at its budget
     // and stops granting has not produced a terminal result, and a zero exit

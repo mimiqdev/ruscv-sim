@@ -434,6 +434,21 @@ impl Session {
             deadline_stop_seen |= turn.boundary().deadline_stop;
             facts.uncertain |= turn.boundary().uncertain;
 
+            // A completed Hart outcome is accounted before fallible observer
+            // delivery: a commit-log write cannot unretire or drop a committed
+            // transition (ADR-0004 §4.3/§5.1).
+            let completed = matches!(
+                turn.hart().outcome,
+                StepOutcome::InstructionRetired(_)
+                    | StepOutcome::TrapEntered(_)
+                    | StepOutcome::DebugHalted {
+                        completed_turn: true,
+                        ..
+                    }
+            );
+            if completed {
+                control.complete_turn();
+            }
             if let Some(message) = self.deliver(&turn) {
                 return self.finish_failure(
                     machine,
@@ -441,6 +456,7 @@ impl Session {
                     start_fs,
                     max_end_fs,
                     control.cycles(),
+                    last_slot && completed,
                     message,
                     false,
                 );
@@ -457,6 +473,7 @@ impl Session {
                         start_fs,
                         max_end_fs,
                         control.cycles(),
+                        false,
                         message,
                         unknown,
                     );
@@ -485,6 +502,7 @@ impl Session {
                         start_fs,
                         max_end_fs,
                         control.cycles(),
+                        false,
                         "the Hart is halted in Debug Mode and no debugger can resume it".into(),
                         false,
                     );
@@ -496,7 +514,6 @@ impl Session {
                     ..
                 } => {}
             }
-            control.complete_turn();
             match self.observe_exit(machine, &mut turn) {
                 Exit::Code(code) => {
                     facts.turns = self.facts.turns + control.cycles();
@@ -517,6 +534,7 @@ impl Session {
                         start_fs,
                         max_end_fs,
                         control.cycles(),
+                        last_slot,
                         message,
                         false,
                     );
@@ -666,6 +684,7 @@ impl Session {
         start_fs: u64,
         max_end_fs: u64,
         completed_turns: u64,
+        budget_exhausted: bool,
         message: String,
         unknown: bool,
     ) -> Result<(), ApiError> {
@@ -678,6 +697,7 @@ impl Session {
         facts.turns = self.facts.turns + completed_turns;
         facts.failed = true;
         facts.uncertain |= unknown;
+        facts.budget_exhausted |= budget_exhausted;
         // The caller's grant context, not the Machine cursor, gives its
         // committed time; the coincident horizon facts are retained too.  A
         // failed attempt never adds `budget_exhausted` merely because it used

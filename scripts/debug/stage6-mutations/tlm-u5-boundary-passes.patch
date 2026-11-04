@@ -1,8 +1,8 @@
 diff --git a/src/capi/host.rs b/src/capi/host.rs
-index 5dcf9d2..b72534e 100644
+index 61a15e3..74d46c9 100644
 --- a/src/capi/host.rs
 +++ b/src/capi/host.rs
-@@ -529,7 +529,8 @@ impl Session {
+@@ -547,7 +547,8 @@ impl Session {
          facts.turns = self.facts.turns + control.cycles();
          let caller_end = caller_now(facts.consumed_fs)?;
          finalize_horizon(&mut facts, caller_end, max_end_fs, deadline_stop_seen);
