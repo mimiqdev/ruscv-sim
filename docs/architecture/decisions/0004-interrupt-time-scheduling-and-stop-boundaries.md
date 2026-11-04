@@ -1468,3 +1468,5 @@ not evidence that interrupt/time/stop integration already exists. Future
 implementation work must add focused tests for the verification scenarios above
 and then update the current-state evidence with actual results. This accepted ADR
 has no superseding record.
+
+Amendment, 2026-11-04, owner decision recorded with the Blocking TLM and SystemC Transport contract. The SystemC/TLM FFI and external-kernel deferral in §13's list is narrowed for blocking transport only. A TLM response's annotated delay is converted with a declared tick period under §5.2 and consumed under §5.3, advancing the same Platform time as completed turns; it never enters `mcycle` or `minstret`, and native responses carry zero delay. In the SystemC host the external kernel owns global time and commits only the consumed time a grant returns (§4.4). Delta-cycle semantics, temporal decoupling, quantum policy and non-blocking callbacks remain deferred.

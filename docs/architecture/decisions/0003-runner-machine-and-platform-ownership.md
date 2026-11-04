@@ -770,3 +770,7 @@ split, unclassified facts, quiesce requirement, image-base distinction, HTIF
 retirement ordering, and compatibility constraints are decisions, not open
 questions. This ADR is **Accepted**; it has no superseding record. Implementation
 verification remains separate.
+
+## 2026-11-04 amendment: blocking TLM transport
+
+The Blocking TLM and SystemC Transport contract's D1–D12 scope was approved on 2026-11-04 under the owner's delegation of planning authority. The Machine owns an additive transport selection: native (default, unchanged) or a TLM RAM target. The Platform owns the RAM route, installs images through the target's debug transport and owns transport reset; CLINT, PLIC, UART, HTIF and the test device stay native Platform devices. A narrow C ABI with opaque handles, creator-thread affinity, synchronous non-reentrant callbacks and panic poisoning is a Runner-side hosting adapter: an external SystemC kernel may host the Machine through it, granting budgets and classifying results, and no `sc_stop`, TLM status or callback becomes a ruscv-sim terminal result. This amendment defines no DMI, non-blocking transport, multi-Hart or non-Linux FFI target.

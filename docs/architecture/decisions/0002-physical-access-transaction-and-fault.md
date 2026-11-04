@@ -435,3 +435,7 @@ and [ADR-0004](0004-interrupt-time-scheduling-and-stop-boundaries.md) consume th
 respective ownership and timing concerns. The cross-check with [ADR-0001](0001-hart-execution-outcome-and-observation.md)
 keeps the cause matrix consistent; these records do not redefine the physical-access
 contract.
+
+## 2026-11-04 amendment: blocking TLM transport
+
+The Blocking TLM and SystemC Transport contract's D1–D12 scope was approved on 2026-11-04 under the owner's delegation of planning authority. It selects the first §8 adapter: one physical request becomes one blocking generic-payload transaction with explicit address, command, width, raw little-endian bytes and request category, never split, merged, cached or retried. Status mapping follows §4: OK is completion; address, command, burst and byte-enable errors are guest-visible target faults; generic error is a host failure; an incomplete or target-modified payload is a protocol failure; an unvouched outcome, panic or exception is unknown completion. LR, SC and AMOs cross as one transaction with an atomic extension that the target applies indivisibly; a target without it answers with a command error, which is an access fault, and read-then-write emulation stays forbidden. Reservations remain per-Hart state. This amendment defines no DMI, non-blocking transport or TLM-modeled device.
