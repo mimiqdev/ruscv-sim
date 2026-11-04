@@ -10,9 +10,9 @@ use crate::mmu::pte::{PagePermissions, PageTableEntry};
 use crate::mmu::translator::AddressTranslator;
 use crate::mmu::{AccessType, MmuConfig};
 use crate::physical::{
-    AmoWidth, AtomicAccessResult, AtomicOrdering, AtomicRequest, AtomicReservationContext,
-    CommittedWriteSnapshot, ConditionalStatus, NativeRamBackend, PhysicalRequest, PhysicalSpan,
-    PhysicalWidth, ValidatedAtomicAccess, ValidatedPhysicalAccess,
+    AmoWidth, AtomicAccessError, AtomicAccessResult, AtomicOrdering, AtomicRequest,
+    AtomicReservationContext, CommittedWriteSnapshot, ConditionalStatus, NativeRamBackend,
+    PhysicalRequest, PhysicalSpan, PhysicalWidth, ValidatedAtomicAccess, ValidatedPhysicalAccess,
 };
 use crate::ram::RamSlot;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -499,6 +499,39 @@ fn an_opaque_compact_snapshot_round_trips_through_the_adapter() {
         "a valid compact snapshot never reached the target"
     );
     assert_eq!(target.sc_seen.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_malformed_target_snapshot_is_a_host_failure_not_sc_failure() {
+    let target = CountingTarget::new(false);
+    let slot = tlm_slot(&target);
+    let mut port = ValidatedAtomicAccess::new(slot);
+    let context = AtomicReservationContext {
+        reserved: PhysicalSpan {
+            paddr: BASE + 0x60,
+            width: PhysicalWidth::Doubleword,
+        },
+        snapshot: CommittedWriteSnapshot::from_bytes(&[1, 2, 3]).unwrap(),
+    };
+    let payload = 7u64.to_le_bytes();
+    let sc = AtomicRequest::store_conditional(
+        BASE + 0x60,
+        PhysicalWidth::Doubleword,
+        ORDERING,
+        &payload,
+        Some(context),
+    )
+    .unwrap();
+    let error = port.access_atomic(sc).unwrap_err();
+    assert!(
+        matches!(error, AtomicAccessError::BackendFailure(_)),
+        "a malformed target-format snapshot became an SC outcome: {error:?}"
+    );
+    assert_eq!(
+        target.transactions(),
+        1,
+        "the malformed SC still reaches the target exactly once"
+    );
 }
 
 #[test]

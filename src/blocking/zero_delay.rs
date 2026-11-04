@@ -111,12 +111,14 @@ impl CommitBookkeeping {
         bytes
     }
 
-    /// Returns true when the snapshot no longer describes the exact span.
-    /// A malformed snapshot is conservatively treated as overwritten; the
-    /// adapter rejects one before it can reach the target.
-    fn span_overwritten(&self, address: u64, len: usize, snapshot: &[u8]) -> bool {
+    /// Re-checks a snapshot against the exact span.
+    ///
+    /// `Ok(true)` means a committed write overlapped the span. `Err(())` means
+    /// the snapshot does not have this target's format; that is a simulator
+    /// protocol failure, never an ordinary conditional failure.
+    fn span_overwritten(&self, address: u64, len: usize, snapshot: &[u8]) -> Result<bool, ()> {
         if snapshot.is_empty() || snapshot.len() != len * 8 {
-            return true;
+            return Err(());
         }
         for i in 0..len {
             let recorded = u64::from_le_bytes(
@@ -125,10 +127,10 @@ impl CommitBookkeeping {
                     .expect("snapshot is a multiple of eight bytes"),
             );
             if recorded != self.byte_version(address + i as u64) {
-                return true;
+                return Ok(true);
             }
         }
-        false
+        Ok(false)
     }
 }
 
@@ -294,16 +296,22 @@ fn apply_atomic(
         }
         BlockingAtomicOperation::StoreConditional => {
             let committed = match atomic.reservation() {
-                Some(context)
-                    if covered(address, width, context)
-                        && !storage.commits.span_overwritten(
-                            context.reserved.paddr,
-                            context.reserved.width.bytes(),
-                            context.snapshot.as_bytes(),
-                        ) =>
-                {
-                    write(storage, address, transaction.data().to_vec());
-                    true
+                Some(context) if covered(address, width, context) => {
+                    match storage.commits.span_overwritten(
+                        context.reserved.paddr,
+                        context.reserved.width.bytes(),
+                        context.snapshot.as_bytes(),
+                    ) {
+                        Ok(true) => false,
+                        Ok(false) => {
+                            write(storage, address, transaction.data().to_vec());
+                            true
+                        }
+                        Err(()) => {
+                            transaction.set_status(BlockingResponseStatus::GenericError);
+                            return;
+                        }
+                    }
                 }
                 _ => false,
             };
