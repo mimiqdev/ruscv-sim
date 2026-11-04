@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     来自 D7 与 ADR-0004 §5.2）列为第四个新增公开变更，与 `transport`、`BoundaryFacts` 的
     `transport_delay_femtoseconds`、`Flat` + `tlm` 的 `MachineError::UnsupportedTransport` 并列，
     四者均由此处命名；“all three” 改为 “all four”。合同其余正文不变，合同未归档或轮换
+  - 为让 D2 的 “no other public signature changes” 按字面成立，U2 加在既有 `AmoTransform` 与
+    `AmoOperation` 上的三个方法（`operation()`、`kind()`、`from_kind()`）由 `pub` 收窄为 `pub(crate)`；
+    调用点全部在 crate 内，运行时行为不变，`AmoKind` 等新词表类型保持公开
 
 - **TLM U6: pinned SystemC 3.0.2 smoke（issue #178）**
   - `Dockerfile` 新增 Accellera SystemC 3.0.2 构建：从 `accellera-official/systemc` 取

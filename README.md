@@ -103,9 +103,10 @@ blocking 事务，长度等于访问宽度、原始字节按物理地址递增�
 持有，因此 `Clone` 仍然成立；新增字段破坏了 `MachineConfig` 的结构体字面量构造。同一批公开类型变更还包括
 声明 tick 周期的 `tick_period`（默认 1 ns，C ABI 的 create 带入该周期）与 `BoundaryFacts` 的
 `transport_delay_femtoseconds`（native 与零延迟 target 为 0）；`Flat` 与 `tlm` 的组合是配置错误
-（`MachineError::UnsupportedTransport`）。这四个是合同 D2 点名的配置面变更；本里程碑另新增 blocking
-适配词表、`capi` 模块，以及为它们服务的既有 AMO 类型的公开访问器（见 CHANGELOG 的 U2/U5 条目）。
-`RiscVSimulator` 与 `load_and_run*` facade 仍走 native 路径。
+（`MachineError::UnsupportedTransport`）。这四个是既有公开类型上仅有的公开变更，D2 的
+“no other public signature changes” 按字面成立；本里程碑其余新增都是新的公开项（blocking 适配词表、
+`capi` 模块与 D3/D5/D8 的新词表类型），不是既有类型的公开签名变化。`RiscVSimulator` 与
+`load_and_run*` facade 仍走 native 路径。
 
 Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在 Runner 中比较寄存器快照。
 文本格式保留原有的 GPR 展示与省略规则；FP profile 下另按 pinned Spike 的 `f`/`c<csr>_<name>`

@@ -1549,7 +1549,11 @@ impl AmoTransform {
 
     /// Returns the encoded operation identity, when the producer supplied
     /// one.
-    pub const fn operation(self) -> Option<AmoKind> {
+    ///
+    /// Crate-internal: transport adapters read the identity to build the
+    /// blocking-extension payload. Contract D2 requires that no public
+    /// signature of a pre-existing type changes for this milestone.
+    pub(crate) const fn operation(self) -> Option<AmoKind> {
         self.operation
     }
 
