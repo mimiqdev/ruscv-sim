@@ -1,0 +1,19 @@
+diff --git a/src/capi/mod.rs b/src/capi/mod.rs
+index 95eb9cd..01b6d36 100644
+--- a/src/capi/mod.rs
++++ b/src/capi/mod.rs
+@@ -264,12 +264,8 @@ unsafe fn with_handle<T>(
+             "the C ABI accepts calls only on the creating thread",
+         ));
+     }
+-    let Some(_active) = machine.gate.enter() else {
+-        return Err(ApiError::new(
+-            Status::Reentrant,
+-            "the C ABI is already inside a call; a target callback cannot re-enter it",
+-        ));
+-    };
++    // MUTATION: a re-entered call is accepted instead of being rejected.
++    let _active = machine.gate.active.load(Ordering::SeqCst);
+     let outcome = {
+         let mut state = machine.lock()?;
+         if state.poisoned {
