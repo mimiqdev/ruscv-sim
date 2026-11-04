@@ -3,11 +3,13 @@
 //! For testing and debugging RISC-V simulator
 
 use clap::{Parser, Subcommand};
+use ruscv_sim::machine::{MachineConfig, PlatformKind};
 use ruscv_sim::{
-    load_and_run_file_with_debug_isa, load_and_run_file_with_isa, ExecutionResult, IsaProfile,
-    RemoteBitbangConfig,
+    load_and_run_file_with_config, load_and_run_file_with_debug_isa, load_and_run_file_with_isa,
+    ExecutionResult, IsaProfile, RemoteBitbangConfig, Transport, ZeroDelayRam,
 };
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Parse address string that may be in decimal or hexadecimal format
 fn parse_addr(s: &str) -> Result<u64, String> {
@@ -64,7 +66,32 @@ enum Commands {
         /// `rv64imac` or `rv64imafd`
         #[arg(long, value_name = "PROFILE", default_value = "rv64imafdc")]
         isa: IsaProfileArg,
+
+        /// Guest-RAM transport: `native` (default) or `tlm`. `tlm` uses the
+        /// in-tree zero-delay Rust RAM target and requires the native Platform.
+        #[arg(long, value_name = "TRANSPORT", default_value = "native")]
+        transport: TransportArg,
     },
+}
+
+/// Approved `--transport` names (dev-plan D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransportArg {
+    Native,
+    Tlm,
+}
+
+impl std::str::FromStr for TransportArg {
+    type Err = String;
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name {
+            "native" => Ok(Self::Native),
+            "tlm" => Ok(Self::Tlm),
+            other => Err(format!(
+                "invalid transport '{other}': expected native or tlm"
+            )),
+        }
+    }
 }
 
 /// Approved `--isa` profile names (contract D3). No ELF inference applies.
@@ -95,6 +122,7 @@ fn main() {
             rbb_port,
             halted,
             isa,
+            transport,
         } => {
             if halted && rbb_port.is_none() {
                 eprintln!("error: --halted requires --rbb-port");
@@ -108,6 +136,7 @@ fn main() {
                 if let Some(ref path) = log_commits {
                     eprintln!("Commit log: {:?}", path);
                 }
+                eprintln!("Transport: {:?}", transport);
                 if let Some(port) = rbb_port {
                     eprintln!("remote_bitbang port: {port}");
                     if halted {
@@ -126,6 +155,7 @@ fn main() {
                     rbb_port,
                     halted,
                     isa: isa.0,
+                    transport,
                 },
             ) {
                 Ok(result) => {
@@ -150,28 +180,51 @@ struct RunOptions {
     rbb_port: Option<u16>,
     halted: bool,
     isa: IsaProfile,
+    transport: TransportArg,
 }
 
 fn run_elf(elf_path: &std::path::Path, options: RunOptions) -> Result<ExecutionResult, String> {
     let path = elf_path.to_str().unwrap();
-    match options.rbb_port {
-        Some(port) => load_and_run_file_with_debug_isa(
-            path,
-            options.max_cycles,
-            options.tohost,
-            options.log_commits,
-            options.verbose,
-            RemoteBitbangConfig::listen(port).halted(options.halted),
-            options.isa,
-        ),
-        None => load_and_run_file_with_isa(
-            path,
-            options.max_cycles,
-            options.tohost,
-            options.log_commits,
-            options.verbose,
-            options.isa,
-        ),
+    match options.transport {
+        TransportArg::Native => match options.rbb_port {
+            Some(port) => load_and_run_file_with_debug_isa(
+                path,
+                options.max_cycles,
+                options.tohost,
+                options.log_commits,
+                options.verbose,
+                RemoteBitbangConfig::listen(port).halted(options.halted),
+                options.isa,
+            ),
+            None => load_and_run_file_with_isa(
+                path,
+                options.max_cycles,
+                options.tohost,
+                options.log_commits,
+                options.verbose,
+                options.isa,
+            ),
+        },
+        TransportArg::Tlm => {
+            let mut config = MachineConfig::new(PlatformKind::Native);
+            config.isa = options.isa;
+            config.verbose = options.verbose;
+            config.tohost_override = options.tohost;
+            config.uart_output = Some(Arc::new(|byte| print!("{}", byte as char)));
+            config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+            let debug = options
+                .rbb_port
+                .map(|port| RemoteBitbangConfig::listen(port).halted(options.halted));
+            load_and_run_file_with_config(
+                path,
+                config,
+                options.max_cycles,
+                options.tohost,
+                options.log_commits,
+                options.verbose,
+                debug,
+            )
+        }
     }
     .map_err(|e| format!("Execution failed: {}", e))
 }

@@ -14,6 +14,7 @@ pub(crate) use owned::OwnedMachine;
 #[cfg(test)]
 pub(crate) use owned::SignalOperation;
 
+use crate::blocking::Transport;
 use crate::core::observation::{HartTransition, ObservationSink};
 use crate::core::{CoreState, RiscvCore, StepOutcome};
 use crate::elf::LoadImage;
@@ -145,6 +146,12 @@ pub struct MachineConfig {
     pub platform: PlatformKind,
     /// Machine-owned ISA profile; the Hart applies it at construction.
     pub isa: IsaProfile,
+    /// Guest-RAM transport selection (dev-plan D2).
+    ///
+    /// [`Transport::Native`] keeps the existing `SimpleMemory` route and is the
+    /// default.  [`Transport::Tlm`] shares a caller-supplied blocking target and
+    /// requires [`PlatformKind::Native`].
+    pub transport: Transport,
     pub verbose: bool,
     /// Native guest/bus address; flat storage offset used only without ELF tohost.
     pub tohost_override: Option<u64>,
@@ -157,6 +164,7 @@ impl MachineConfig {
             platform,
             // Machine composition default is `rv64imafdc` (contract D2).
             isa: IsaProfile::default(),
+            transport: Transport::Native,
             verbose: false,
             tohost_override: None,
             uart_output: None,
@@ -187,6 +195,8 @@ pub enum MachineError {
     Poisoned,
     #[error("placement failed: {0}")]
     Placement(String),
+    #[error("a TLM transport requires PlatformKind::Native; Flat has no TLM route")]
+    UnsupportedTransport,
     #[error("this configuration has no UART")]
     NoUart,
     #[error("no RAM-backed selected tohost")]
@@ -218,6 +228,11 @@ pub struct BoundaryFacts {
     pub no_progress: bool,
     /// The idle jump stopped at a virtual-time deadline.
     pub deadline_stop: bool,
+    /// Total consumed blocking-transport delay in exact femtoseconds.
+    ///
+    /// Zero on the native route and for a zero-delay target, which is every
+    /// target in unit U1: unit U3 adds conversion and consumption.
+    pub transport_delay_femtoseconds: u64,
 }
 impl Default for BoundaryFacts {
     fn default() -> Self {
@@ -230,6 +245,7 @@ impl Default for BoundaryFacts {
             waiting: false,
             no_progress: false,
             deadline_stop: false,
+            transport_delay_femtoseconds: 0,
         }
     }
 }
@@ -466,6 +482,7 @@ impl Installed {
                 waiting,
                 no_progress: idle_stop.0,
                 deadline_stop: idle_stop.1,
+                transport_delay_femtoseconds: self.platform.transport_delay_femtoseconds(),
                 ..BoundaryFacts::default()
             },
             _receipt: receipt,
@@ -907,13 +924,7 @@ impl Machine {
     }
     /// Volatile host RAM read, not a coherent MachineInspection.
     pub fn read_mem(&self, offset: u64, size: usize) -> Result<Vec<u8>, MachineError> {
-        Ok(self
-            .host_view()?
-            .writer
-            .ram
-            .lock()
-            .map_err(|_| MachineError::Poisoned)?
-            .read_bytes(offset, size)?)
+        Ok(self.host_view()?.writer.read_bytes(offset, size)?)
     }
     pub fn clear_tohost(&self) -> Result<(), MachineError> {
         let view = self.host_view()?;

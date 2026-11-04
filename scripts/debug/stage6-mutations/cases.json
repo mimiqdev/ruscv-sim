@@ -897,5 +897,126 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "tlm-u1-default-not-native",
+    "source": "src/machine/mod.rs",
+    "patch": "tlm-u1-default-not-native.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::the_default_transport_is_native",
+        "failure": [
+          "selected a non-native transport"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "tlm-u1-generic-error-guest-fault",
+    "source": "src/blocking/adapter.rs",
+    "patch": "tlm-u1-generic-error-guest-fault.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::tests::every_response_status_maps_to_the_contract_category",
+        "failure": [
+          "GenericError was not a host failure"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "tlm-u1-incomplete-or-modified-accepted",
+    "source": "src/blocking/adapter.rs",
+    "patch": "tlm-u1-incomplete-or-modified-accepted.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::tests::every_response_status_maps_to_the_contract_category",
+        "failure": [
+          "an incomplete payload was accepted as a completion"
+        ]
+      },
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::tests::an_incomplete_or_modified_payload_is_not_a_completion",
+        "failure": [
+          "was accepted"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "tlm-u1-split-access",
+    "source": "src/blocking/adapter.rs",
+    "patch": "tlm-u1-split-access.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::tests::one_access_issues_exactly_one_transaction",
+        "failure": [
+          "one physical access must become exactly one blocking transaction"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "tlm-u1-install-b-transport",
+    "source": "src/ram.rs",
+    "patch": "tlm-u1-install-b-transport.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::installation_uses_debug_transport",
+        "failure": [
+          "image installation used b_transport"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "tlm-u1-poll-b-transport",
+    "source": "src/ram.rs",
+    "patch": "tlm-u1-poll-b-transport.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::tohost_polling_and_host_views_use_debug_transport",
+        "failure": [
+          "tohost polling used b_transport"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "tlm-u1-access-after-unknown",
+    "source": "src/blocking/adapter.rs",
+    "patch": "tlm-u1-access-after-unknown.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::tests::an_unknown_completion_blocks_further_access_until_reset",
+        "failure": [
+          "a poisoned transport issued another access"
+        ]
+      }
+    ]
   }
 ]

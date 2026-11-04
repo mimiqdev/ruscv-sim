@@ -4,6 +4,7 @@
 //! Provides `load_and_run` function for loading and executing ELF files
 //! with tohost exit signal support.
 
+use crate::blocking::BlockingInitiator;
 use crate::core::{
     commits::CommitLogger, CoreState, RiscvCore, SimulatorFailure, StepOutcome,
     TrapContinuationPolicy,
@@ -17,12 +18,13 @@ use crate::memory::{contains_range, MemoryError, MemoryInterface, SimpleMemory};
 use crate::peripherals::{Clint, Plic, Uart16550, CLINT_SIZE, PLIC_SIZE};
 pub use crate::physical::NativeSystemBusBackend;
 use crate::physical::{
-    map_native_memory_error, native_ram_atomic_transact, AtomicAccessKind, AtomicBackend,
-    AtomicBackendResult, AtomicRequest, AtomicResponse, NativeAtomicTarget, NativePhysicalTarget,
-    PhysicalAccessKind, PhysicalBackend, PhysicalBackendError, PhysicalBackendResult,
-    PhysicalRequest, PhysicalResponse, PhysicalResponseBytes, PhysicalResponseCompletion,
-    PhysicalTargetRejectionReason, PhysicalWidth,
+    AtomicAccessKind, AtomicBackend, AtomicBackendResult, AtomicRequest, AtomicResponse,
+    NativeAtomicTarget, NativePhysicalTarget, PhysicalAccessKind, PhysicalBackend,
+    PhysicalBackendError, PhysicalBackendResult, PhysicalRequest, PhysicalResponse,
+    PhysicalResponseBytes, PhysicalResponseCompletion, PhysicalTargetRejectionReason,
+    PhysicalWidth,
 };
+use crate::ram::RamSlot;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -240,7 +242,7 @@ impl PresentedInterruptLines {
 /// - Read returns 0 (no signal)
 /// - After processing exit, value is cleared
 pub struct SystemBus {
-    ram: Arc<Mutex<SimpleMemory>>,
+    ram: RamSlot,
     uart: Arc<Mutex<Uart16550>>,
     ram_base: u64,
     ram_size: usize,
@@ -275,6 +277,21 @@ pub struct SystemBus {
 impl SystemBus {
     pub fn new(
         ram: Arc<Mutex<SimpleMemory>>,
+        uart: Arc<Mutex<Uart16550>>,
+        ram_base: u64,
+        ram_size: usize,
+    ) -> Self {
+        Self::with_ram_slot(
+            RamSlot::native(ram, ram_base, ram_size),
+            uart,
+            ram_base,
+            ram_size,
+        )
+    }
+
+    /// Adds the selectable guest-RAM slot without changing [`Self::new`].
+    pub(crate) fn with_ram_slot(
+        ram: RamSlot,
         uart: Arc<Mutex<Uart16550>>,
         ram_base: u64,
         ram_size: usize,
@@ -599,6 +616,19 @@ impl SystemBus {
     /// alignment/error behavior; this method applies full-span routing and raw
     /// byte semantics for the T2 adapter only.
     fn native_transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.native_transact_from(request, BlockingInitiator::Hart)
+    }
+
+    /// Services one raw request with explicit transport initiator provenance.
+    ///
+    /// The Hart ports use [`BlockingInitiator::Hart`]; the Debug Module's
+    /// inbound system bus port uses [`BlockingInitiator::DebugInbound`]
+    /// (dev-plan D3). Routing, fault semantics and side effects are identical.
+    fn native_transact_from(
+        &mut self,
+        request: &PhysicalRequest<'_>,
+        initiator: BlockingInitiator,
+    ) -> PhysicalBackendResult {
         request
             .validate()
             .map_err(|error| PhysicalBackendError::protocol(error.to_string()))?;
@@ -617,7 +647,8 @@ impl SystemBus {
 
         // RAM retains first-match priority, but only when it accepts the whole
         // request span.  A request that crosses RAM's end is not stitched from
-        // RAM and another target.
+        // RAM and another target.  The selected slot is either the native
+        // `SimpleMemory` or the caller's blocking RAM target.
         if contains_range(
             self.ram_base,
             self.ram_size,
@@ -630,36 +661,7 @@ impl SystemBus {
                     "RAM address is below its configured base",
                 )
             })?;
-            let mut ram = self
-                .ram
-                .lock()
-                .map_err(|_| PhysicalBackendError::host("RAM lock poisoned"))?;
-            return match descriptor.category {
-                PhysicalAccessKind::Fetch | PhysicalAccessKind::DataRead => {
-                    let mut bytes = [0; 8];
-                    ram.read_bytes_into(offset, &mut bytes[..descriptor.width.bytes()])
-                        .map_err(map_native_memory_error)?;
-                    Ok(PhysicalResponse::new(
-                        descriptor,
-                        PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(
-                            &bytes[..descriptor.width.bytes()],
-                        )),
-                    ))
-                }
-                PhysicalAccessKind::DataWrite => {
-                    let payload = request.write_payload().ok_or_else(|| {
-                        PhysicalBackendError::protocol(
-                            "validated native RAM write was missing its payload",
-                        )
-                    })?;
-                    ram.write_bytes(offset, payload)
-                        .map_err(map_native_memory_error)?;
-                    Ok(PhysicalResponse::new(
-                        descriptor,
-                        PhysicalResponseCompletion::WriteAcknowledgement,
-                    ))
-                }
-            };
+            return self.ram.raw(request, offset, initiator);
         }
 
         if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {
@@ -839,7 +841,7 @@ impl SystemBus {
             descriptor.paddr,
             descriptor.width.bytes(),
         ) {
-            return native_ram_atomic_transact(&self.ram, self.ram_base, self.ram_size, request);
+            return self.ram.atomic(request);
         }
 
         if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {
@@ -942,11 +944,7 @@ impl SystemBus {
 impl MemoryInterface for SystemBus {
     fn read_dword(&self, addr: u64) -> Result<u64, MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 8) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .read_dword(addr - self.ram_base);
+            return self.ram.read_dword(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -961,11 +959,7 @@ impl MemoryInterface for SystemBus {
 
     fn read_word(&self, addr: u64) -> Result<u32, MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 4) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .read_word(addr - self.ram_base);
+            return self.ram.read_word(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -975,11 +969,7 @@ impl MemoryInterface for SystemBus {
 
     fn read_half(&self, addr: u64) -> Result<u16, MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 2) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .read_half(addr - self.ram_base);
+            return self.ram.read_half(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -989,11 +979,7 @@ impl MemoryInterface for SystemBus {
 
     fn read_byte(&self, addr: u64) -> Result<u8, MemoryError> {
         if self.is_ram(addr) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .read_byte(addr - self.ram_base);
+            return self.ram.read_byte(addr - self.ram_base);
         }
         if self.is_uart(addr) {
             let offset = addr - self.uart_base;
@@ -1035,11 +1021,7 @@ impl MemoryInterface for SystemBus {
 
     fn write_dword(&mut self, addr: u64, value: u64) -> Result<(), MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 8) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .write_dword(addr - self.ram_base, value);
+            return self.ram.write_dword(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -1057,11 +1039,7 @@ impl MemoryInterface for SystemBus {
 
     fn write_word(&mut self, addr: u64, value: u32) -> Result<(), MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 4) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .write_word(addr - self.ram_base, value);
+            return self.ram.write_word(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -1071,11 +1049,7 @@ impl MemoryInterface for SystemBus {
 
     fn write_half(&mut self, addr: u64, value: u16) -> Result<(), MemoryError> {
         if contains_range(self.ram_base, self.ram_size, addr, 2) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .write_half(addr - self.ram_base, value);
+            return self.ram.write_half(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
             return Err(MemoryError::InvalidAddress(addr));
@@ -1085,11 +1059,7 @@ impl MemoryInterface for SystemBus {
 
     fn write_byte(&mut self, addr: u64, value: u8) -> Result<(), MemoryError> {
         if self.is_ram(addr) {
-            return self
-                .ram
-                .lock()
-                .map_err(|_| MemoryError::Backend("RAM lock poisoned".into()))?
-                .write_byte(addr - self.ram_base, value);
+            return self.ram.write_byte(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
             let offset = addr - self.uart_base;
@@ -1125,6 +1095,27 @@ impl NativeAtomicTarget for SystemBus {
 impl PhysicalBackend for SystemBus {
     fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
         self.native_transact(request)
+    }
+}
+
+/// The DM's inbound physical backend: the same bus routing and lock domain as
+/// the Hart ports, marked with debug-inbound initiator provenance.
+pub(crate) struct InboundSystemBusBackend {
+    bus: Arc<Mutex<SystemBus>>,
+}
+
+impl InboundSystemBusBackend {
+    pub(crate) const fn new(bus: Arc<Mutex<SystemBus>>) -> Self {
+        Self { bus }
+    }
+}
+
+impl PhysicalBackend for InboundSystemBusBackend {
+    fn transact(&mut self, request: &PhysicalRequest<'_>) -> PhysicalBackendResult {
+        self.bus
+            .lock()
+            .map_err(|_| PhysicalBackendError::host("System bus lock poisoned"))?
+            .native_transact_from(request, BlockingInitiator::DebugInbound)
     }
 }
 
@@ -1257,6 +1248,16 @@ pub fn dump_signature(
 /// Extract exit code from tohost value using HTIF format or alternative formats
 ///
 /// Returns the exit code if a valid exit signal is detected, None otherwise.
+/// True for a host-view failure that must be reported, as opposed to an
+/// ordinary unmapped/misaligned address that the run loop already treats as a
+/// later observation (dev-plan D6: a failed debug transport is a host failure).
+fn is_host_view_failure(error: &MemoryError) -> bool {
+    matches!(
+        error,
+        MemoryError::Backend(_) | MemoryError::Protocol(_) | MemoryError::Unknown(_)
+    )
+}
+
 pub(crate) fn try_extract_exit_code(tohost_value: u64) -> Option<u32> {
     // Skip zero value (no signal)
     if tohost_value == 0 {
@@ -1495,10 +1496,14 @@ impl RunControl {
     /// so a caller cannot clear the signal first and report a zeroed code. A value
     /// that carries no exit command decodes to `None` and leaves the signal
     /// untouched for the next observation.
-    fn take_ram_exit(observed: u64, clear: impl FnOnce()) -> Option<u32> {
-        let code = try_extract_exit_code(observed)?;
-        clear();
-        Some(code)
+    fn take_ram_exit(
+        observed: u64,
+        clear: impl FnOnce() -> Result<(), MemoryError>,
+    ) -> (Option<u32>, Option<MemoryError>) {
+        match try_extract_exit_code(observed) {
+            Some(code) => (Some(code), clear().err()),
+            None => (None, None),
+        }
     }
 }
 
@@ -1815,7 +1820,7 @@ struct NativeHooks {
     observer: Option<NativeObserver>,
     prepare: Option<PrepareMachine>,
     boundary: Option<BoundaryObserver>,
-    #[cfg(test)]
+    /// Machine composition supplied by the additive config entry point.
     config: Option<MachineConfig>,
     debug: Option<RemoteBitbangConfig>,
     /// Machine-owned ISA profile forwarded into `MachineConfig` (contract D3).
@@ -1870,15 +1875,17 @@ fn run_native_inner(
     let tohost = tohost_addr
         .or(placement.tohost(AddressForm::Bus)?)
         .unwrap_or(DEFAULT_TOHOST);
-    let mut config = MachineConfig::new(PlatformKind::Native);
-    config.isa = hooks.isa;
-    config.verbose = verbose;
-    config.tohost_override = tohost_addr;
-    config.uart_output = Some(Arc::new(|byte| print!("{}", byte as char)));
-    #[cfg(test)]
-    if let Some(test_config) = hooks.config.take() {
-        config = test_config;
-    }
+    let config = match hooks.config.take() {
+        Some(config) => config,
+        None => {
+            let mut config = MachineConfig::new(PlatformKind::Native);
+            config.isa = hooks.isa;
+            config.verbose = verbose;
+            config.tohost_override = tohost_addr;
+            config.uart_output = Some(Arc::new(|byte| print!("{}", byte as char)));
+            config
+        }
+    };
     let mut machine = OwnedMachine::new(config, image)
         .map_err(|error| ExecutorError::ExecutionError(error.to_string()))?;
     if let Some(prepare) = hooks.prepare.take() {
@@ -2144,6 +2151,7 @@ fn run_native_inner(
             }
             htif_exit
         };
+        let mut poll_error: Option<String> = None;
         let mut observe_ram = |cycles: u64| {
             if !turn.hart().control.retired {
                 return None;
@@ -2164,9 +2172,16 @@ fn run_native_inner(
 
                         // The shared exit rule decodes the value and clears
                         // the signal only after the code is retained.
-                        if let Some(exit_code_val) = RunControl::take_ram_exit(tohost_value, || {
-                            machine.clear_signal(&turn, tohost_pa, verbose)
-                        }) {
+                        let (exit_code, clear_failure) =
+                            RunControl::take_ram_exit(tohost_value, || {
+                                machine.clear_signal(&turn, tohost_pa, verbose)
+                            });
+                        if let Some(error) = clear_failure {
+                            if is_host_view_failure(&error) {
+                                poll_error = Some(format!("tohost clear failed: {error}"));
+                            }
+                        }
+                        if let Some(exit_code_val) = exit_code {
                             if verbose {
                                 eprintln!("[DEBUG] Exit signal detected: code={}", exit_code_val);
                             }
@@ -2177,8 +2192,16 @@ fn run_native_inner(
                         }
                     }
                     Err(e) => {
-                        // Only log errors periodically to avoid spam
-                        if verbose && cycles.is_multiple_of(1000) {
+                        // A failed or short debug transport is a host failure,
+                        // never a guest-visible fault (dev-plan D6). An ordinary
+                        // unmapped address keeps the existing lower-priority
+                        // observation behavior: a later HTIF exit still wins.
+                        if is_host_view_failure(e) {
+                            poll_error = Some(format!("tohost read failed: {e}"));
+                            if verbose {
+                                eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
+                            }
+                        } else if verbose && cycles.is_multiple_of(1000) {
                             eprintln!("[DEBUG] Cycle {}: tohost read failed: {}", cycles, e);
                         }
                     }
@@ -2194,6 +2217,9 @@ fn run_native_inner(
         );
         if let Some(boundary) = hooks.boundary.as_mut() {
             boundary(&turn);
+        }
+        if reporting_error.is_none() {
+            reporting_error = poll_error;
         }
         if let Some(error) = reporting_error {
             let (code, boundary_context) = match decision {
@@ -2387,6 +2413,47 @@ pub fn load_and_run_file_with_debug_isa(
         verbose,
         debug,
         isa,
+    )
+}
+
+/// Runs one ELF file under an explicit [`MachineConfig`].
+///
+/// This is the additive public entry point for a selectable RAM transport
+/// (dev-plan D2).  The configuration supplies the Platform kind, ISA profile,
+/// blocking target and host callbacks; ELF parsing still supplies image
+/// placement and the declared `tohost` location.  `tohost_addr` takes
+/// precedence over [`MachineConfig::tohost_override`] and is applied to both
+/// the Machine and the run loop's exit polling.
+///
+/// `debug` attaches the existing `remote_bitbang` OpenOCD transport when
+/// present.  Every other facade keeps the native route unchanged.
+pub fn load_and_run_file_with_config(
+    elf_path: &str,
+    config: MachineConfig,
+    max_cycles: Option<u64>,
+    tohost_addr: Option<u64>,
+    log_commits: Option<PathBuf>,
+    verbose: bool,
+    debug: Option<RemoteBitbangConfig>,
+) -> Result<ExecutionResult, ExecutorError> {
+    let elf_data = std::fs::read(elf_path)
+        .map_err(|e| ExecutorError::ElfLoadError(ElfError::IoError(e.to_string())))?;
+    let mut config = config;
+    let tohost_addr = tohost_addr.or(config.tohost_override);
+    config.tohost_override = tohost_addr;
+    let hooks = NativeHooks {
+        config: Some(config),
+        debug,
+        ..NativeHooks::default()
+    };
+    run_native_inner(
+        &elf_data,
+        max_cycles,
+        tohost_addr,
+        log_commits.as_deref(),
+        verbose,
+        None,
+        hooks,
     )
 }
 
@@ -2871,9 +2938,11 @@ impl RiscVSimulator {
 
                         // The shared exit rule decodes the value and clears the signal
                         // only after the code is retained.
-                        if let Some(exit_code) = RunControl::take_ram_exit(tohost_value, || {
-                            self.machine.clear_signal(&turn, tohost, self.verbose)
-                        }) {
+                        let (exit_code, _clear_failure) =
+                            RunControl::take_ram_exit(tohost_value, || {
+                                self.machine.clear_signal(&turn, tohost, self.verbose)
+                            });
+                        if let Some(exit_code) = exit_code {
                             if self.verbose {
                                 eprintln!("[DEBUG] Exit signal detected: code={}", exit_code);
                             }
@@ -3611,19 +3680,38 @@ mod tests {
         let mut cleared = 0u32;
 
         // Standard HTIF payload for exit code 1.
-        let code = RunControl::take_ram_exit(3, || cleared += 1);
+        let (code, failure) = RunControl::take_ram_exit(3, || {
+            cleared += 1;
+            Ok(())
+        });
         assert_eq!(code, Some(1));
+        assert!(failure.is_none());
         assert_eq!(cleared, 1, "the decoded exit is retained, then cleared");
 
         // A value without the exit command leaves the signal untouched.
-        let none = RunControl::take_ram_exit(0, || cleared += 1);
+        let (none, failure) = RunControl::take_ram_exit(0, || {
+            cleared += 1;
+            Ok(())
+        });
         assert_eq!(none, None);
+        assert!(failure.is_none());
         assert_eq!(cleared, 1, "a non-exit value must not clear the signal");
 
         // An alternative high-bit encoding is decoded the same way.
-        let alternative = RunControl::take_ram_exit((1u64 << 63) | 42, || cleared += 1);
+        let (alternative, failure) = RunControl::take_ram_exit((1u64 << 63) | 42, || {
+            cleared += 1;
+            Ok(())
+        });
         assert_eq!(alternative, Some(42));
+        assert!(failure.is_none());
         assert_eq!(cleared, 2);
+
+        // A host failure while clearing is reported, and the guest code is
+        // retained (dev-plan D6: never guest-visible).
+        let (code, failure) =
+            RunControl::take_ram_exit(3, || Err(MemoryError::Backend("clear failed".into())));
+        assert_eq!(code, Some(1));
+        assert!(matches!(failure, Some(MemoryError::Backend(_))));
     }
 
     #[test]
@@ -3715,10 +3803,12 @@ mod tests {
                 },
                 &mut |_| {
                     observations.borrow_mut().push("ram");
-                    RunControl::take_ram_exit(signal.get(), || {
+                    let (code, _failure) = RunControl::take_ram_exit(signal.get(), || {
                         observations.borrow_mut().push("clear");
                         signal.set(0);
-                    })
+                        Ok(())
+                    });
+                    code
                 },
             ],
         );

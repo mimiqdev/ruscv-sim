@@ -288,7 +288,12 @@ impl OwnedMachine {
     /// Flat acquires the public capability before RAM, with no admission gate
     /// held. Write through the owned storage beneath that guard, not HostMemory:
     /// this already accepted receipt may finish even after quiesce stops new work.
-    pub(crate) fn clear_signal(&self, _turn: &MachineTurn, address: u64, verbose: bool) {
+    pub(crate) fn clear_signal(
+        &self,
+        _turn: &MachineTurn,
+        address: u64,
+        verbose: bool,
+    ) -> Result<(), MemoryError> {
         let signal_memory = self.signal_memory();
         #[cfg(test)]
         self.probe_signal_lock(SignalOperation::Clear, signal_memory);
@@ -307,6 +312,7 @@ impl OwnedMachine {
                 .typed
                 .lock()
                 .map_err(|_| MemoryError::Backend("poisoned Platform".into()))?;
+            let mut first_error = None;
             for i in 0..8 {
                 let result = address
                     .checked_add(i)
@@ -316,17 +322,26 @@ impl OwnedMachine {
                     if verbose {
                         eprintln!("[WARN] Failed to clear tohost byte {}: {}", i, error);
                     }
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
                 }
             }
-            Ok(())
+            match first_error {
+                Some(error) => Err(error),
+                None => Ok(()),
+            }
         })();
-        if result.is_err() && verbose {
-            eprintln!("[WARN] Failed to lock memory for clear_tohost");
+        if let Err(error) = &result {
+            if verbose {
+                eprintln!("[WARN] Failed to clear tohost: {error}");
+            }
         }
         #[cfg(test)]
         if let Some(after_clear) = &self.signal_hooks.after_clear {
             after_clear();
         }
+        result
     }
     pub(crate) fn signature(&self) -> Option<Result<Vec<u8>, String>> {
         let info = self.image().signature()?;

@@ -1,12 +1,11 @@
-diff --git i/src/main.rs w/src/main.rs
---- i/src/main.rs
-+++ w/src/main.rs
-@@ -62,7 +62,7 @@
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -64,7 +64,7 @@
  
          /// Machine ISA profile: `rv64imafdc` (default), `rv64ima`,
          /// `rv64imac` or `rv64imafd`
 -        #[arg(long, value_name = "PROFILE", default_value = "rv64imafdc")]
 +        #[arg(long, value_name = "PROFILE", default_value = "rv64ima")]
          isa: IsaProfileArg,
-     },
- }
+ 
+         /// Guest-RAM transport: `native` (default) or `tlm`. `tlm` uses the

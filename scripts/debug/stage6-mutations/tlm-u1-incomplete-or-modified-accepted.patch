@@ -1,0 +1,37 @@
+--- a/src/blocking/adapter.rs
++++ b/src/blocking/adapter.rs
+@@ -145,10 +145,7 @@
+             return Err(PhysicalBackendError::unknown(reason));
+         }
+ 
+-        if transaction.address() != descriptor.paddr
+-            || transaction.command() != command
+-            || transaction.data_length() != width
+-        {
++        if false {
+             return Err(PhysicalBackendError::protocol(format!(
+                 "blocking target changed the request payload for {:?} at {:#018x}: \
+                  address {:#018x}, command {}, length {} (expected address {:#018x}, \
+@@ -214,12 +211,16 @@
+                 descriptor.category,
+                 descriptor.paddr
+             ))),
+-            BlockingResponseStatus::Incomplete => Err(PhysicalBackendError::protocol(format!(
+-                "target left {} for {:?} at {:#018x}",
+-                BlockingResponseStatus::Incomplete.name(),
+-                descriptor.category,
+-                descriptor.paddr
+-            ))),
++            BlockingResponseStatus::Incomplete => Ok(PhysicalResponse::new(
++                descriptor,
++                if command == BlockingCommand::Write {
++                    PhysicalResponseCompletion::WriteAcknowledgement
++                } else {
++                    PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(
++                        transaction.data(),
++                    ))
++                },
++            )),
+             _ => unreachable!("every blocking status is handled"),
+         }
+     }

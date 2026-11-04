@@ -1,15 +1,18 @@
 //! Existing Platform configurations and placement, without run-stop policy.
 use super::inbound::InboundPort;
 use super::{MachineConfig, MachineError, PlatformKind};
+use crate::blocking::Transport;
 use crate::core::{SharedDataAccess, SharedPhysicalAccess};
 use crate::elf::LoadImage;
 use crate::executor::{
-    PresentedInterruptLines, SystemBus, SYSTEM_BUS_HTIF_BASE, SYSTEM_BUS_UART_BASE,
+    InboundSystemBusBackend, PresentedInterruptLines, SystemBus, SYSTEM_BUS_HTIF_BASE,
+    SYSTEM_BUS_UART_BASE,
 };
 use crate::image::{AddressForm, ImagePlacement};
 use crate::memory::{MemoryInterface, SimpleMemory};
 use crate::peripherals::uart16550::{Uart16550, UartInspection};
 use crate::physical::{NativeRamBackend, ValidatedPhysicalAccess};
+use crate::ram::RamSlot;
 use std::sync::{Arc, Mutex};
 
 pub(super) type SharedMemory = Arc<Mutex<dyn MemoryInterface + Send + Sync>>;
@@ -22,7 +25,9 @@ pub enum PlatformEvent {
 }
 
 pub(super) struct Platform {
-    pub ram: Arc<Mutex<SimpleMemory>>,
+    /// The single selectable guest-RAM slot.  Every RAM user in this Platform
+    /// reaches memory through this object.
+    pub ram: RamSlot,
     pub typed: SharedMemory,
     pub fetch: SharedPhysicalAccess,
     pub data: SharedDataAccess,
@@ -68,7 +73,24 @@ impl Platform {
             PlatformKind::Flat => declared.or(config.tohost_override),
         }
         .unwrap_or(SYSTEM_BUS_HTIF_BASE);
-        let ram = Arc::new(Mutex::new(SimpleMemory::new(image.memory_size())));
+        // A TLM route needs the native Platform's device map; the flat
+        // configuration has no device transport and no TLM route.
+        if config.platform == PlatformKind::Flat && !config.transport.is_native() {
+            return Err(MachineError::UnsupportedTransport);
+        }
+        let ram = match &config.transport {
+            Transport::Native => RamSlot::native(
+                Arc::new(Mutex::new(SimpleMemory::new(image.memory_size()))),
+                image.base_addr(),
+                image.memory_size(),
+            ),
+            Transport::Tlm(target) => {
+                RamSlot::tlm(target.clone(), image.base_addr(), image.memory_size())
+            }
+        };
+        // After every transport reset and before installation, zero-fill the
+        // whole RAM window so no prior run's contents survive (dev-plan D6).
+        ram.begin_window()?;
         Self::place(&ram, image)?;
         let events = Arc::new(Mutex::new(Vec::new()));
         let (typed, fetch, data, uart, bus): (
@@ -79,12 +101,17 @@ impl Platform {
             _,
         ) = match config.platform {
             PlatformKind::Flat => {
+                let memory = ram
+                    .native_memory()
+                    .ok_or(MachineError::UnsupportedTransport)?;
                 let port = || {
                     Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-                        NativeRamBackend::new(ram.clone(), 0, image.memory_size()),
+                        NativeRamBackend::new(memory.clone(), 0, image.memory_size()),
                     )))
                 };
-                (ram.clone(), port(), port(), None, None)
+                let fetch = port();
+                let data = port();
+                (memory, fetch, data, None, None)
             }
             PlatformKind::Native => {
                 let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
@@ -101,7 +128,7 @@ impl Platform {
                             callback(byte);
                         }
                     });
-                let bus = Arc::new(Mutex::new(SystemBus::new(
+                let bus = Arc::new(Mutex::new(SystemBus::with_ram_slot(
                     ram.clone(),
                     uart.clone(),
                     image.base_addr(),
@@ -134,11 +161,16 @@ impl Platform {
         // capability (translation delta, host admission) can serve it.
         let inbound_port: SharedPhysicalAccess = match &bus {
             Some(bus) => Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-                SystemBus::physical_backend(bus.clone()),
+                InboundSystemBusBackend::new(bus.clone()),
             ))),
-            None => Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
-                NativeRamBackend::new(ram.clone(), 0, image.memory_size()),
-            ))),
+            None => {
+                let memory = ram
+                    .native_memory()
+                    .ok_or(MachineError::UnsupportedTransport)?;
+                Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
+                    NativeRamBackend::new(memory, 0, image.memory_size()),
+                )))
+            }
         };
         let offset = match config.platform {
             PlatformKind::Native => selected_tohost.checked_sub(image.base_addr()),
@@ -184,6 +216,12 @@ impl Platform {
         Ok(self.flat_mtime)
     }
 
+    /// Exact total blocking-transport delay accepted by this Platform's RAM
+    /// route.  Zero on native and for a zero-delay target.
+    pub(super) fn transport_delay_femtoseconds(&self) -> u64 {
+        self.ram.consumed_delay().as_u64()
+    }
+
     /// Hart 0 lines. Flat has no CLINT or PLIC, so every line stays clear.
     pub(super) fn machine_interrupt_lines(&self) -> Result<PresentedInterruptLines, MachineError> {
         if let Some(bus) = &self.bus {
@@ -227,15 +265,17 @@ impl Platform {
 
     /// One active RAM allocation; image descriptions are immutable restoration
     /// inputs. Preserve segment order, explicit zero tails, gaps and padding.
-    fn place(ram: &Arc<Mutex<SimpleMemory>>, image: &LoadImage) -> Result<(), MachineError> {
-        let mut ram = ram.lock().map_err(|_| MachineError::Poisoned)?;
+    ///
+    /// Placement uses the selected slot's debug transport, never
+    /// `b_transport` (dev-plan D6).
+    fn place(ram: &RamSlot, image: &LoadImage) -> Result<(), MachineError> {
         for segment in image.segments() {
             let offset = segment
                 .guest_address
                 .checked_sub(image.base_addr())
                 .ok_or_else(|| MachineError::Placement("segment below base".into()))?;
             if !segment.file_bytes.is_empty() {
-                ram.write_bytes(offset, &segment.file_bytes)?;
+                ram.program(offset, &segment.file_bytes)?;
             }
             let mut zero_offset = offset
                 .checked_add(segment.file_bytes.len() as u64)
@@ -244,7 +284,7 @@ impl Platform {
             let zeros = [0; 4096];
             while remaining != 0 {
                 let count = remaining.min(zeros.len());
-                ram.write_bytes(zero_offset, &zeros[..count])?;
+                ram.program(zero_offset, &zeros[..count])?;
                 zero_offset += count as u64;
                 remaining -= count;
             }

@@ -92,6 +92,12 @@ cargo run -- run path/to/program.elf --max-cycles 100000
 | `--rbb-port <PORT>` | 在该 TCP 端口上提供 OpenOCD `remote_bitbang`。不带此选项时，运行循环保持 Stage 5 / 未连接调试器的行为 |
 | `--halted` | 复位后、第一条指令之前进入 Debug Mode（`dpc` 为入口，`minstret` 为 0）。必须与 `--rbb-port` 同时给出 |
 | `--isa <PROFILE>` | 选择 Machine ISA profile：`rv64imafdc`（默认，+F/D+Zca，IALIGN=16、`misa` `0x800000000014112D`）、`rv64ima`（IALIGN=32、`misa` `0x8000000000141101`）、`rv64imac`（Zca：16-bit parcel 取指、IALIGN=16、`misa` `0x8000000000141105`）、`rv64imafd`（+F/D、IALIGN=32、`misa` `0x8000000000141129`）。FP profile 提供 32 个普通 64-bit FPR、`fflags`/`frm`/`fcsr`、可写 `mstatus.FS`，以及只读且由 `FS==Dirty` 派生的 `SD`；FP profile 下全部 F/D 指令在公共 Hart 路径上执行，且 commit log 按 pinned Spike 格式打印 FPR 与 `fcsr` 写入；`rv64imafdc` 另支持 Zcd 压缩双精度加载/存储，`rv64imac`/`rv64imafd` 下 Zcd 仍按非法指令陷入。profile 不会从 ELF `e_flags` 推断，运行期间不可改变 |
+| `--transport <KIND>` | 选择 guest-RAM 传输：`native`（默认，现有 `SimpleMemory` 路径，行为不变）或 `tlm`。`tlm` 通过 blocking `b_transport` 目标服务全部 RAM 访问，并使用 in-tree 零延迟 Rust RAM target；它要求 native Platform（`Flat` + `tlm` 是配置错误）。镜像安装、`tohost` 轮询、`read_mem`/`write_mem`/`Machine::memory()` 与签名提取走 `transport_dbg`，不计为事务。U2 之前原子操作以原生 access-fault 原因失败关闭；U3 之前非零标注延迟按适配器失败拒绝 |
+
+`--transport tlm` 的 RAM 路径与 native 使用同一 Hart、地址映射和 DM 规则：一次物理访问对应恰好一次
+blocking 事务，长度等于访问宽度、原始字节按物理地址递增排列，状态的 guest 可见性、host/protocol/unknown
+完成分类与未知完成后的 quarantine 由适配器统一执行。未知完成会毒化 transport：在 target 确认 transport reset
+之前不再发起访问。`load_and_run_file_with_config` 是公共入口，用给定的 `MachineConfig` 运行 ELF。
 
 Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在 Runner 中比较寄存器快照。
 文本格式保留原有的 GPR 展示与省略规则；FP profile 下另按 pinned Spike 的 `f`/`c<csr>_<name>`

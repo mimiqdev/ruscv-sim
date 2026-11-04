@@ -1,13 +1,16 @@
 use super::admission::{Gate, Lease};
-use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
+use crate::memory::{MemoryError, MemoryInterface};
+use crate::ram::RamSlot;
+#[cfg(test)]
 use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 type BeforeWrite = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
 
+/// The host's storage-offset RAM views over the Platform's selected slot.
 #[derive(Clone)]
 pub(super) struct HostMemory {
-    pub ram: Arc<Mutex<SimpleMemory>>,
+    pub ram: RamSlot,
     pub gate: Gate,
     pub generation: u64,
     pub size: usize,
@@ -17,7 +20,7 @@ pub(super) struct HostMemory {
 impl HostMemory {
     fn with_write<T>(
         &self,
-        write: impl FnOnce(&mut SimpleMemory) -> Result<T, MemoryError>,
+        write: impl FnOnce(&RamSlot) -> Result<T, MemoryError>,
     ) -> Result<T, MemoryError> {
         let _lease = Lease::host(&self.gate, self.generation)
             .map_err(|error| MemoryError::Backend(error.to_string()))?;
@@ -28,11 +31,7 @@ impl HostMemory {
                 hook();
             }
         }
-        let mut ram = self
-            .ram
-            .lock()
-            .map_err(|_| MemoryError::Backend("poisoned RAM".into()))?;
-        write(&mut ram)
+        write(&self.ram)
     }
     pub fn write_bytes(&self, addr: u64, bytes: &[u8]) -> Result<(), MemoryError> {
         // Compatibility write_mem commits accepted byte prefixes, not a new bulk
@@ -47,11 +46,16 @@ impl HostMemory {
             Ok(())
         })
     }
+    /// One raw host-view read of the selected slot, through debug transport on
+    /// a TLM route.
+    pub fn read_bytes(&self, addr: u64, size: usize) -> Result<Vec<u8>, MemoryError> {
+        self.ram.host_read(addr, size)
+    }
 }
 macro_rules! reads {
     ($($name:ident -> $ty:ty),* $(,)?) => {$ (
         fn $name(&self, addr: u64) -> Result<$ty, MemoryError> {
-            self.ram.lock().map_err(|_| MemoryError::Backend("poisoned RAM".into()))?.$name(addr)
+            self.ram.$name(addr)
         }
     )*};
 }

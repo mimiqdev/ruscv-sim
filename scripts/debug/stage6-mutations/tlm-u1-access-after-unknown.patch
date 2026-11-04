@@ -1,0 +1,10 @@
+--- a/src/blocking/adapter.rs
++++ b/src/blocking/adapter.rs
+@@ -98,6 +98,7 @@
+         let mut state = self.state.lock().map_err(|_| {
+             PhysicalBackendError::host("TLM adapter state lock is poisoned by an earlier panic")
+         })?;
++        state.poisoned = None;
+         if let Some(reason) = &state.poisoned {
+             return Err(PhysicalBackendError::unknown(format!(
+                 "the TLM RAM transport is poisoned by an earlier unknown completion ({reason}); \

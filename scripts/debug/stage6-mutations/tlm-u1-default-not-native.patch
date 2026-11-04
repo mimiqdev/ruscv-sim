@@ -1,0 +1,11 @@
+--- a/src/machine/mod.rs
++++ b/src/machine/mod.rs
+@@ -164,7 +164,7 @@
+             platform,
+             // Machine composition default is `rv64imafdc` (contract D2).
+             isa: IsaProfile::default(),
+-            transport: Transport::Native,
++            transport: Transport::tlm(Arc::new(crate::blocking::ZeroDelayRam::new())),
+             verbose: false,
+             tohost_override: None,
+             uart_output: None,

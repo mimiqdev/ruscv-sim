@@ -2,6 +2,7 @@
 //!
 //! This crate provides a RISC-V instruction set simulator with SystemC TLM2.0 interface support.
 
+pub mod blocking;
 pub mod codegen;
 pub mod core;
 pub mod csr;
@@ -21,8 +22,13 @@ pub mod memory;
 pub mod mmu;
 pub mod peripherals;
 pub mod physical;
+mod ram;
 pub mod tlm;
 
+pub use blocking::{
+    BlockingCommand, BlockingDebug, BlockingExtension, BlockingInitiator, BlockingResponseStatus,
+    BlockingTarget, BlockingTransaction, Femtoseconds, Transport, ZeroDelayRam,
+};
 pub use core::{
     CoreState, CoreStepOutcome, DebugMemFault, HartStepOutcome, InstructionRetired,
     LegacyTypedMemoryAdapter, MemoryAdapter, PhysicalAtomicAdapter, PhysicalMemoryAdapter,
@@ -35,7 +41,7 @@ pub use dm::DebugModule;
 pub use dm::{SbaAccessSize, SbaFault, SbaRequest};
 pub use execute::{ExecuteError, Executor};
 pub use executor::{
-    load_and_run, load_and_run_file, load_and_run_file_with_debug,
+    load_and_run, load_and_run_file, load_and_run_file_with_config, load_and_run_file_with_debug,
     load_and_run_file_with_debug_isa, load_and_run_file_with_isa, load_and_run_with_debug,
     load_and_run_with_debug_isa, load_and_run_with_isa, ExecutionResult, ExecutorError,
     PresentedInterruptLines, RiscVSimulator, SYSTEM_BUS_CLINT_BASE, SYSTEM_BUS_CLINT_SIZE,

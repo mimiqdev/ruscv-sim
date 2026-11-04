@@ -1,0 +1,46 @@
+--- a/src/blocking/adapter.rs
++++ b/src/blocking/adapter.rs
+@@ -127,9 +127,40 @@
+         let mut transaction =
+             BlockingTransaction::new(descriptor.paddr, command, &mut bytes[..width], extension);
+ 
+-        let panic = catch_unwind(AssertUnwindSafe(|| {
+-            self.target.b_transport(&mut transaction);
+-        }));
++        // MUTATION: split one access into two narrower transactions.
++        let panic = if width >= 2 {
++            let half = width / 2;
++            let mut low = [0u8; MAX_PHYSICAL_ACCESS_BYTES];
++            let mut high = [0u8; MAX_PHYSICAL_ACCESS_BYTES];
++            low[..half].copy_from_slice(&transaction.data()[..half]);
++            high[..width - half].copy_from_slice(&transaction.data()[half..width]);
++            let mut first =
++                BlockingTransaction::new(descriptor.paddr, command, &mut low[..half], extension);
++            let mut second = BlockingTransaction::new(
++                descriptor.paddr + half as u64,
++                command,
++                &mut high[..width - half],
++                extension,
++            );
++            let first_result = catch_unwind(AssertUnwindSafe(|| {
++                self.target.b_transport(&mut first);
++            }));
++            let second_result = catch_unwind(AssertUnwindSafe(|| {
++                self.target.b_transport(&mut second);
++            }));
++            if first_result.is_ok() && second_result.is_ok() {
++                if command == BlockingCommand::Read {
++                    transaction.data_mut()[..half].copy_from_slice(first.data());
++                    transaction.data_mut()[half..width].copy_from_slice(second.data());
++                }
++                transaction.set_status(BlockingResponseStatus::Ok);
++            }
++            first_result.and(second_result)
++        } else {
++            catch_unwind(AssertUnwindSafe(|| {
++                self.target.b_transport(&mut transaction);
++            }))
++        };
+         if panic.is_err() {
+             let reason = format!(
+                 "blocking target panicked while servicing {} {:?} at {:#018x}",

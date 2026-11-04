@@ -1,0 +1,24 @@
+--- a/src/blocking/adapter.rs
++++ b/src/blocking/adapter.rs
+@@ -208,12 +208,15 @@
+                     descriptor.paddr
+                 ),
+             )),
+-            BlockingResponseStatus::GenericError => Err(PhysicalBackendError::host(format!(
+-                "target reported {} for {:?} at {:#018x}",
+-                BlockingResponseStatus::GenericError.name(),
+-                descriptor.category,
+-                descriptor.paddr
+-            ))),
++            BlockingResponseStatus::GenericError => Err(PhysicalBackendError::target(
++                PhysicalTargetRejectionReason::TargetError,
++                format!(
++                    "target reported {} for {:?} at {:#018x}",
++                    BlockingResponseStatus::GenericError.name(),
++                    descriptor.category,
++                    descriptor.paddr
++                ),
++            )),
+             BlockingResponseStatus::Incomplete => Err(PhysicalBackendError::protocol(format!(
+                 "target left {} for {:?} at {:#018x}",
+                 BlockingResponseStatus::Incomplete.name(),
