@@ -1,11 +1,11 @@
 diff --git a/src/machine/mod.rs b/src/machine/mod.rs
-index 273b0bb..8b6d416 100644
+index f0f04f2..d366b1e 100644
 --- a/src/machine/mod.rs
 +++ b/src/machine/mod.rs
-@@ -460,6 +460,10 @@ impl Installed {
+@@ -453,6 +453,10 @@ impl Installed {
          // its known delay and no turn tick (ADR-0004 §5.3/§5.1).  Delay never
          // enters `mcycle` or `minstret`.
-         let delay = self.platform.take_transport_turn_delay()?;
+         let delay = self.platform.take_transport_turn_delay();
 +        for _ in 0..delay.ticks {
 +            self.core.state_mut().csr.increment_mcycle();
 +            self.core.state_mut().csr.increment_minstret();
