@@ -331,7 +331,7 @@ fn annotated_delay_is_converted_and_consumed_once_per_turn() {
     slot.begin_transport_turn();
     let request = PhysicalRequest::data_write(BASE, PhysicalWidth::Word, &[1, 2, 3, 4]).unwrap();
     port.access(request).unwrap();
-    let delay = slot.take_transport_turn_delay().unwrap();
+    let delay = slot.take_transport_turn_delay();
     assert_eq!(delay.ticks, 2, "1.5 ns must round up to two ticks");
     assert_eq!(delay.femtoseconds, Femtoseconds::new(1_500_000));
     assert_eq!(
@@ -343,7 +343,7 @@ fn annotated_delay_is_converted_and_consumed_once_per_turn() {
     slot.begin_transport_turn();
     let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
     port.access(request).unwrap();
-    assert_eq!(slot.take_transport_turn_delay().unwrap().ticks, 2);
+    assert_eq!(slot.take_transport_turn_delay().ticks, 2);
     assert_eq!(slot.consumed_delay(), Femtoseconds::new(3_000_000));
 }
 
@@ -358,7 +358,7 @@ fn each_delay_consumption_outcome_follows_the_contract() {
     slot.begin_transport_turn();
     let request = PhysicalRequest::data_write(BASE, PhysicalWidth::Word, &[1, 2, 3, 4]).unwrap();
     assert!(port.access(request).unwrap().is_write_acknowledgement());
-    assert_eq!(slot.take_transport_turn_delay().unwrap().ticks, 1);
+    assert_eq!(slot.take_transport_turn_delay().ticks, 1);
 
     // Guest-visible target fault: the delay is still elapsed once.
     target.set_status(BlockingResponseStatus::AddressError);
@@ -369,7 +369,7 @@ fn each_delay_consumption_outcome_follows_the_contract() {
         Err(PhysicalAccessError::TargetRejected(_))
     ));
     assert_eq!(
-        slot.take_transport_turn_delay().unwrap().ticks,
+        slot.take_transport_turn_delay().ticks,
         1,
         "a target fault did not consume its reported delay"
     );
@@ -382,7 +382,7 @@ fn each_delay_consumption_outcome_follows_the_contract() {
         port.access(request),
         Err(PhysicalAccessError::BackendFailure(_))
     ));
-    assert_eq!(slot.take_transport_turn_delay().unwrap().ticks, 1);
+    assert_eq!(slot.take_transport_turn_delay().ticks, 1);
 
     // Protocol failure: an incomplete payload is not a completion, so its
     // annotation is not trusted as elapsed.
@@ -393,7 +393,7 @@ fn each_delay_consumption_outcome_follows_the_contract() {
         port.access(request),
         Err(PhysicalAccessError::Protocol(_))
     ));
-    assert_eq!(slot.take_transport_turn_delay().unwrap().ticks, 0);
+    assert_eq!(slot.take_transport_turn_delay().ticks, 0);
 
     // Unknown completion: earlier known committed delay is preserved, and the
     // unknown transaction itself consumes nothing.
@@ -408,7 +408,7 @@ fn each_delay_consumption_outcome_follows_the_contract() {
         Err(PhysicalAccessError::UnknownCompletion(_))
     ));
     assert_eq!(
-        slot.take_transport_turn_delay().unwrap().ticks,
+        slot.take_transport_turn_delay().ticks,
         1,
         "a later unknown completion erased an already elapsed delay"
     );
@@ -435,7 +435,7 @@ fn a_response_above_the_declared_maximum_is_an_overshoot_failure() {
         "{message}"
     );
     assert_eq!(
-        slot.take_transport_turn_delay().unwrap().ticks,
+        slot.take_transport_turn_delay().ticks,
         3,
         "a known overshoot delay must still be reported once"
     );
@@ -590,5 +590,57 @@ fn femtoseconds_arithmetic_is_checked() {
     assert_eq!(
         Femtoseconds::new(1_000).checked_mul(1_000),
         Some(Femtoseconds::new(1_000_000))
+    );
+}
+
+/// The declared worst-case transaction count is pinned here, because it sizes
+/// every guest turn's conservative completion bound (dev-plan D7).  A turn at
+/// the declared maximum fits exactly; one more transaction in the same turn
+/// exceeds the bound, and its known delay is still accounted.
+#[test]
+fn a_guest_turn_may_use_the_declared_worst_case_transactions() {
+    const WORST_CASE: u64 = 18;
+    assert_eq!(
+        MAX_GUEST_TRANSACTIONS_PER_TURN, WORST_CASE,
+        "the declared worst-case transaction count changed; update its derivation and this bound test"
+    );
+    let target = Arc::new(ScriptTarget::new(BASE, SIZE));
+    target.set_declared_max_delay(1_000_000);
+    target.set_delay(1_000_000);
+    let slot = tlm_slot(&target, SIZE);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    assert_eq!(slot.turn_completion_bound_ticks(), Some(WORST_CASE));
+
+    slot.begin_transport_turn();
+    for _ in 0..WORST_CASE {
+        let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+        port.access(request).unwrap();
+    }
+    assert_eq!(
+        slot.take_transport_turn_delay().ticks,
+        WORST_CASE,
+        "a turn at the declared maximum must fit its bound exactly"
+    );
+
+    slot.begin_transport_turn();
+    for _ in 0..WORST_CASE {
+        let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+        port.access(request).unwrap();
+    }
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    let error = port.access(request).unwrap_err();
+    assert!(
+        matches!(error, PhysicalAccessError::BackendFailure(_)),
+        "a turn above the declared transaction count was accepted: {error:?}"
+    );
+    assert!(
+        error.to_string().contains("conservative completion bound"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("overshoot 1 ticks"), "{error}");
+    assert_eq!(
+        slot.take_transport_turn_delay().ticks,
+        WORST_CASE + 1,
+        "the known over-bound delay must still be accounted once"
     );
 }

@@ -949,6 +949,18 @@ impl OwnedMachine {
         self.domain().platform.turn_completion_bound_ticks()
     }
 
+    /// Current Platform `mtime` of the installed domain.
+    #[cfg(test)]
+    pub(crate) fn platform_mtime(&self) -> Result<u64, MachineError> {
+        self.domain().platform.read_mtime()
+    }
+
+    /// Replace Platform `mtime` directly, as a guest CLINT write would.
+    #[cfg(test)]
+    pub(crate) fn set_platform_mtime(&mut self, value: u64) -> Result<(), MachineError> {
+        self.domain_mut().platform.set_mtime(value).map(|_| ())
+    }
+
     #[cfg(test)]
     pub(crate) fn debug_queue_len(&self) -> usize {
         self.control.inner.debug.queue_len()

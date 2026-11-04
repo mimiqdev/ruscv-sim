@@ -409,7 +409,7 @@ impl Installed {
         self.platform.begin_transport_turn();
         let mut idle_stop = (false, false);
         let mut jumped = false;
-        let hart = loop {
+        let mut hart = loop {
             let mtime = self.platform.read_mtime()?;
             self.core.state_mut().csr.set_time(mtime);
             let lines = self.platform.machine_interrupt_lines()?;
@@ -445,6 +445,45 @@ impl Installed {
                 ..
             }
         );
+        let outcome_failed = matches!(hart.outcome, StepOutcome::SimulatorFailure(_));
+        let uncertain = self.core.unresolved_physical_access().is_some();
+        let completed_turn = !(outcome_failed || waiting || debug_without_turn);
+        // A completed turn contributes one framework `iss_tick` plus the
+        // converted transport delay; a started failed turn contributes only
+        // its known delay and no turn tick (ADR-0004 §5.3/§5.1).  Delay never
+        // enters `mcycle` or `minstret`.
+        let delay = self.platform.take_transport_turn_delay();
+        let advance = delay.ticks + u64::from(completed_turn);
+        let events = if completed_turn {
+            self.platform.take_events()?
+        } else {
+            Vec::new()
+        };
+        if advance != 0 {
+            // Native and zero-delay turns keep the existing wrapping one-tick
+            // path.  A transport-derived advance is checked, and an overflow
+            // becomes a simulator failure that retains the completed facts
+            // and the already-accounted delay instead of rewinding time.
+            let advanced = if delay.ticks == 0 {
+                self.platform.advance_mtime()
+            } else {
+                self.platform.advance_mtime_by(advance)
+            };
+            match advanced {
+                // The instruction read the pre-turn snapshot. Park `time` and
+                // the machine lines on the post-tick device so a host inspect
+                // matches the store plus the tick.
+                Ok(mtime) => self.publish_platform_time(mtime)?,
+                Err(error) => {
+                    let failure = crate::core::SimulatorFailure {
+                        pc: self.core.state().pc,
+                        kind: crate::core::SimulatorFailureKind::Invariant,
+                        message: format!("Platform time: {error}"),
+                    };
+                    hart.outcome = StepOutcome::SimulatorFailure(failure);
+                }
+            }
+        }
         let failure = match &hart.outcome {
             StepOutcome::SimulatorFailure(failure) => Some(failure.clone()),
             StepOutcome::DebugHalted { .. }
@@ -453,32 +492,6 @@ impl Installed {
             | StepOutcome::Waiting => None,
         };
         let failed = failure.is_some();
-        let uncertain = self.core.unresolved_physical_access().is_some();
-        let completed_turn = !(failed || waiting || debug_without_turn);
-        // A completed turn contributes one framework `iss_tick` plus the
-        // converted transport delay; a started failed turn contributes only
-        // its known delay and no turn tick (ADR-0004 §5.3/§5.1).  Delay never
-        // enters `mcycle` or `minstret`.
-        let delay = self.platform.take_transport_turn_delay()?;
-        let advance = delay.ticks + u64::from(completed_turn);
-        let events = if completed_turn {
-            self.platform.take_events()?
-        } else {
-            Vec::new()
-        };
-        if advance != 0 {
-            let mtime = self.platform.advance_mtime_by(advance)?;
-            // The instruction read the pre-turn snapshot. Park `time` and the
-            // machine lines on the post-tick device so a host inspect matches
-            // the store plus the tick.
-            self.core.state_mut().csr.set_time(mtime);
-            let lines = self.platform.machine_interrupt_lines()?;
-            self.core
-                .state_mut()
-                .csr
-                .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
-            self.core.state_mut().csr.set_seip_external(lines.seip);
-        }
         let tohost = (sample && !failed).then(|| self.sample());
         let receipt = lease.boundary(uncertain, failure)?;
         let (lifecycle, uncertain) = receipt.boundary_state()?;
@@ -499,6 +512,18 @@ impl Installed {
             _receipt: receipt,
         })
     }
+    /// Publish the post-advance `mtime` and the machine lines derived from it.
+    fn publish_platform_time(&mut self, mtime: u64) -> Result<(), MachineError> {
+        self.core.state_mut().csr.set_time(mtime);
+        let lines = self.platform.machine_interrupt_lines()?;
+        self.core
+            .state_mut()
+            .csr
+            .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
+        self.core.state_mut().csr.set_seip_external(lines.seip);
+        Ok(())
+    }
+
     /// Jump `mtime` to the next wake, or stop. Does not retire an instruction.
     /// Privileged §3.3.3 wakes on `mip & mie` only. The only future event
     /// this profile can raise while the hart waits is `mtime` reaching

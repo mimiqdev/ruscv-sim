@@ -33,6 +33,9 @@ pub(crate) struct TlmRamAdapter {
     target: Arc<dyn BlockingTarget>,
     /// The Machine's declared Platform tick period for delay conversion.
     period: TickPeriod,
+    /// The target's declared per-transaction maximum, read once at
+    /// construction so the response limit and the turn bound use one snapshot.
+    declared_max: Femtoseconds,
     /// The target's declared maximum delay reserved by one guest turn.
     bound: TurnCompletionBound,
     state: Mutex<AdapterState>,
@@ -46,6 +49,9 @@ struct AdapterState {
     committed_writes: u64,
     /// Exact running total of charged guest-turn delay in femtoseconds.
     delay: Femtoseconds,
+    /// True between [`TlmRamAdapter::begin_turn`] and its take/discard.
+    /// Only an active guest turn charges Platform time; debug work is dropped.
+    active: bool,
     /// Delay converted since the last turn boundary.
     pending: PendingDelay,
 }
@@ -75,10 +81,12 @@ impl TlmRamAdapter {
         target: Arc<dyn BlockingTarget>,
         period: TickPeriod,
     ) -> Result<Self, DelayConversionError> {
-        let bound = TurnCompletionBound::new(target.declared_max_delay(), period)?;
+        let declared_max = target.declared_max_delay();
+        let bound = TurnCompletionBound::new(declared_max, period)?;
         Ok(Self {
             target,
             period,
+            declared_max,
             bound,
             state: Mutex::new(AdapterState::default()),
         })
@@ -88,6 +96,7 @@ impl TlmRamAdapter {
     pub(crate) fn begin_turn(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.pending = PendingDelay::default();
+            state.active = true;
         }
     }
 
@@ -100,36 +109,19 @@ impl TlmRamAdapter {
     /// Consumes the guest turn's accumulated delay into Platform time
     /// accounting and returns it once.
     ///
-    /// A turn that issued more delay than the conservative completion bound is
-    /// a §5.3 overshoot: the known delay is still reported, but the accounting
-    /// is an adapter failure rather than a silently exceeded deadline bound.
-    pub(crate) fn take_turn_delay(&self) -> Result<PendingDelay, PhysicalBackendError> {
-        let mut state = self.state.lock().map_err(|_| {
-            PhysicalBackendError::host("TLM adapter state lock is poisoned by an earlier panic")
-        })?;
-        let pending = std::mem::take(&mut state.pending);
-        if pending.ticks > self.bound.ticks() {
-            return Err(PhysicalBackendError::host(format!(
-                "the turn consumed {} Platform ticks of transport delay, above its conservative \
-                 completion bound of {} ticks ({} ticks per transaction x {} transactions); \
-                 overshoot {} ticks",
-                pending.ticks,
-                self.bound.ticks(),
-                self.bound.ticks_per_transaction(),
-                self.bound.transactions(),
-                pending.ticks - self.bound.ticks(),
-            )));
+    /// The per-transaction and per-turn limits are enforced where the response
+    /// arrives, so this step cannot fail and never discards known elapsed
+    /// time: an overshooting or overflowing response fails the access that
+    /// produced it, and the failed turn still consumes the delay accumulated
+    /// before it (ADR-0004 §5.3).
+    pub(crate) fn take_turn_delay(&self) -> PendingDelay {
+        match self.state.lock() {
+            Ok(mut state) => {
+                state.active = false;
+                std::mem::take(&mut state.pending)
+            }
+            Err(_) => PendingDelay::default(),
         }
-        state.delay = state
-            .delay
-            .checked_add(pending.femtoseconds)
-            .ok_or_else(|| {
-                PhysicalBackendError::host(format!(
-                    "total blocking-transport delay overflowed after {} fs",
-                    state.delay.as_u64()
-                ))
-            })?;
-        Ok(pending)
     }
 
     /// Drops the delay validated since the last boundary without charging
@@ -141,6 +133,7 @@ impl TlmRamAdapter {
     pub(crate) fn discard_turn_delay(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.pending = PendingDelay::default();
+            state.active = false;
         }
     }
 
@@ -278,23 +271,40 @@ impl TlmRamAdapter {
             ))
         })?;
         let status = transaction.status();
-        if status != BlockingResponseStatus::Incomplete {
-            let pending = &mut state.pending;
-            pending.ticks = pending.ticks.checked_add(ticks).ok_or_else(|| {
+        if status != BlockingResponseStatus::Incomplete && state.active {
+            // Accumulate this response before classifying a limit failure, so
+            // a known over-limit delay is still consumed once by the failed
+            // turn.  An unrepresentable total fails the access without
+            // dropping delay already known.
+            let pending_ticks = state.pending.ticks.checked_add(ticks).ok_or_else(|| {
                 PhysicalBackendError::host(format!(
-                    "blocking-transport delay overflowed while converting {} fs for {:?} at \
-                     {:#018x}",
+                    "blocking-transport tick accounting overflowed while converting {} fs \
+                     for {:?} at {:#018x}",
                     delay.as_u64(),
                     descriptor.category,
                     descriptor.paddr
                 ))
             })?;
-            pending.femtoseconds = pending.femtoseconds.checked_add(delay).ok_or_else(|| {
+            let pending_femtoseconds =
+                state
+                    .pending
+                    .femtoseconds
+                    .checked_add(delay)
+                    .ok_or_else(|| {
+                        PhysicalBackendError::host(format!(
+                            "blocking-transport delay accounting overflowed after {} fs",
+                            state.pending.femtoseconds.as_u64()
+                        ))
+                    })?;
+            let total = state.delay.checked_add(delay).ok_or_else(|| {
                 PhysicalBackendError::host(format!(
-                    "blocking-transport delay accounting overflowed after {} fs",
-                    pending.femtoseconds.as_u64()
+                    "total blocking-transport delay overflowed after {} fs",
+                    state.delay.as_u64()
                 ))
             })?;
+            state.pending.ticks = pending_ticks;
+            state.pending.femtoseconds = pending_femtoseconds;
+            state.delay = total;
         }
         // An `Ok` write committed its effects before an overshoot is detected;
         // record it so committed-write visibility stays truthful even when the
@@ -302,7 +312,7 @@ impl TlmRamAdapter {
         if status == BlockingResponseStatus::Ok && command == BlockingCommand::Write {
             state.committed_writes = state.committed_writes.saturating_add(1);
         }
-        let declared_max = self.target.declared_max_delay();
+        let declared_max = self.declared_max;
         if delay > declared_max {
             let overshoot = Femtoseconds::new(delay.as_u64() - declared_max.as_u64());
             return Err(PhysicalBackendError::host(format!(
@@ -315,6 +325,18 @@ impl TlmRamAdapter {
                 declared_max.as_u64(),
                 overshoot.as_u64(),
                 self.bound.ticks(),
+            )));
+        }
+        if state.active && state.pending.ticks > self.bound.ticks() {
+            return Err(PhysicalBackendError::host(format!(
+                "the turn consumed {} Platform ticks of transport delay, above its conservative \
+                 completion bound of {} ticks ({} ticks per transaction x {} transactions); \
+                 overshoot {} ticks",
+                state.pending.ticks,
+                self.bound.ticks(),
+                self.bound.ticks_per_transaction(),
+                self.bound.transactions(),
+                state.pending.ticks - self.bound.ticks(),
             )));
         }
 

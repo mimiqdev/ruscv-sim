@@ -9,7 +9,7 @@ use crate::executor::{
     SYSTEM_BUS_UART_BASE,
 };
 use crate::image::{AddressForm, ImagePlacement};
-use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
+use crate::memory::{MemoryInterface, SimpleMemory};
 use crate::peripherals::uart16550::{Uart16550, UartInspection};
 use crate::physical::{NativeRamBackend, ValidatedPhysicalAccess};
 use crate::ram::RamSlot;
@@ -235,14 +235,8 @@ impl Platform {
     }
 
     /// Consumes one guest turn's transport delay into Platform time once.
-    pub(super) fn take_transport_turn_delay(
-        &self,
-    ) -> Result<crate::blocking::adapter::PendingDelay, MachineError> {
-        self.ram.take_transport_turn_delay().map_err(|error| {
-            MachineError::Memory(MemoryError::Backend(format!(
-                "blocking-transport delay accounting: {error:?}"
-            )))
-        })
+    pub(super) fn take_transport_turn_delay(&self) -> crate::blocking::adapter::PendingDelay {
+        self.ram.take_transport_turn_delay()
     }
 
     /// Drops debug-work delay after validation, without charging Platform
@@ -300,13 +294,10 @@ impl Platform {
 
     /// Add `ticks` Platform ticks without touching `mcycle` or `minstret`.
     ///
-    /// A completed turn uses this with one turn tick plus its converted
-    /// transport delay; a failed turn contributes only its known delay.  The
-    /// addition is checked, so modeled time never wraps.
+    /// Transport-derived time uses this checked addition, so modeled time
+    /// never wraps.  A completed turn with no transport delay keeps the
+    /// existing native one-tick path.
     pub(super) fn advance_mtime_by(&mut self, ticks: u64) -> Result<u64, MachineError> {
-        if ticks == 1 {
-            return self.advance_mtime();
-        }
         if let Some(bus) = &self.bus {
             let mut bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
             let next = bus.mtime().checked_add(ticks).ok_or_else(|| {

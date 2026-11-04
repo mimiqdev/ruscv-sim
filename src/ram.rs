@@ -129,11 +129,10 @@ impl RamSlot {
         }
     }
 
-    /// Consumes one guest turn's transport delay once, or fails when the turn
-    /// exceeded its conservative completion bound.
-    pub(crate) fn take_transport_turn_delay(&self) -> Result<PendingDelay, PhysicalBackendError> {
+    /// Consumes one guest turn's transport delay once.
+    pub(crate) fn take_transport_turn_delay(&self) -> PendingDelay {
         match &self.inner.kind {
-            RamKind::Native(_) => Ok(PendingDelay::default()),
+            RamKind::Native(_) => PendingDelay::default(),
             RamKind::Tlm(adapter) => adapter.take_turn_delay(),
         }
     }

@@ -2750,8 +2750,10 @@ fn prepare_store(owned: &mut OwnedMachine, value: u64) {
 
 /// D7/ADR-0004 §5.1/§5.3: one completed turn advances `mtime` by its turn tick
 /// plus the converted delay ticks, exactly once, and never into the ISA
-/// counters.  The response sits at the declared maximum in a multi-transaction
-/// turn, so the turn still fits its conservative completion bound.
+/// counters.  The responses sit at the declared maximum in a multi-transaction
+/// turn, and the Machine's bound uses the declared maximum per worst-case
+/// transaction; `blocking::tests::a_guest_turn_may_use_the_declared_worst_case_transactions`
+/// pins that declared count and its enforcement.
 #[test]
 fn delay_advances_mtime_by_turns_plus_ticks_without_touching_isa_counters() {
     let target = delay_target(1_000_000, 1_000_000);
@@ -3002,4 +3004,86 @@ fn transport_delay_moves_the_timer_compare() {
         0,
         "the timer compare did not see the consumed transport delay"
     );
+}
+
+/// Regression for the U3 review: a known overshooting response must keep its
+/// accounted time and stay a known simulator failure, not become an
+/// unknown-completion quarantine that drops the delay.
+#[test]
+fn an_overshooting_delay_keeps_known_time_and_reports_a_failure() {
+    let target = delay_target(0, 1);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+
+    let turn = owned.step(false).unwrap();
+    let StepOutcome::SimulatorFailure(failure) = &turn.hart().outcome else {
+        panic!(
+            "an overshoot did not fail the turn: {:?}",
+            turn.hart().outcome
+        );
+    };
+    assert!(
+        failure.message.contains("overshoot"),
+        "the failure lost its overshoot detail: {failure:?}"
+    );
+    assert_eq!(
+        target.transactions.load(Ordering::SeqCst),
+        1,
+        "the first fetch was the overshooting transaction"
+    );
+    assert_eq!(
+        guest_time(&owned),
+        1,
+        "the known one-tick delay must be consumed once by the failed turn"
+    );
+    assert_eq!(
+        turn.boundary().transport_delay_femtoseconds,
+        1,
+        "the failed turn's known delay must reach the boundary fact"
+    );
+    let status = owned.test_control().status().unwrap();
+    assert!(status.failed);
+    assert!(
+        !status.uncertain,
+        "a known overshoot became unknown completion"
+    );
+    assert!(
+        status
+            .last_failure
+            .as_ref()
+            .is_some_and(|failure| failure.message.contains("overshoot")),
+        "the Machine lost the known failure diagnostic: {status:?}"
+    );
+}
+
+/// Regression for the U3 review: a transport delay must never wrap `mtime`,
+/// even when the converted amount is one tick.
+#[test]
+fn transport_delay_never_wraps_mtime() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    owned.set_platform_mtime(u64::MAX).unwrap();
+
+    let turn = owned.step(false).unwrap();
+    let StepOutcome::SimulatorFailure(failure) = &turn.hart().outcome else {
+        panic!(
+            "an overflow did not fail the turn: {:?}",
+            turn.hart().outcome
+        );
+    };
+    assert!(
+        failure.message.contains("overflow"),
+        "the failure lost its overflow detail: {failure:?}"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        u64::MAX,
+        "a transport delay wrapped Platform time"
+    );
+    assert!(owned.test_control().status().unwrap().failed);
 }
