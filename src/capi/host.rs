@@ -46,6 +46,30 @@ use std::sync::Arc;
 /// need more time than the bound it was granted.
 const GRANT_STEP_TURNS: u64 = 2;
 
+/// Applies the caller-frame horizon facts to one boundary.
+///
+/// The internal deadline is the last whole tick before the caller's horizon, so
+/// only the caller's own time base can say whether the horizon was reached; a
+/// remaining fraction is slack.  Residual slack is reported whenever a grant
+/// bound applies, in the caller's time base.
+fn finalize_horizon(
+    facts: &mut GrantFacts,
+    caller_end: u64,
+    max_end_fs: u64,
+    deadline_stop_seen: bool,
+) {
+    if caller_end >= max_end_fs {
+        facts.deadline_reached = true;
+        facts.deadline_blocked = false;
+    } else {
+        facts.deadline_reached = false;
+        facts.deadline_blocked |= deadline_stop_seen;
+    }
+    if facts.deadline_blocked || facts.deadline_reached || facts.budget_exhausted {
+        facts.residual_slack_fs = max_end_fs.saturating_sub(caller_end);
+    }
+}
+
 /// What one completed boundary's exit observation produced.
 #[derive(Debug)]
 enum Exit {
@@ -386,7 +410,12 @@ impl Session {
             // ADR-0004 §7.2: start a step only when its conservative completion
             // bound fits the inclusive deadline; otherwise report the residual
             // slack and the refused bound instead of speculative work.
-            if now_ticks.saturating_add(bound_ticks) > deadline {
+            // A reserve that cannot be added to the cursor cannot fit either:
+            // overflow is refusal, never a wrapped or saturated "fits".
+            if now_ticks
+                .checked_add(bound_ticks)
+                .is_none_or(|end| end > deadline)
+            {
                 facts.deadline_blocked = true;
                 facts.candidate_bound_fs = bound_ticks.saturating_mul(period);
                 break;
@@ -406,7 +435,15 @@ impl Session {
             facts.uncertain |= turn.boundary().uncertain;
 
             if let Some(message) = self.deliver(&turn) {
-                return self.finish_failure(machine, facts, control.cycles(), message, false);
+                return self.finish_failure(
+                    machine,
+                    facts,
+                    start_fs,
+                    max_end_fs,
+                    control.cycles(),
+                    message,
+                    false,
+                );
             }
             match &turn.hart().outcome {
                 StepOutcome::SimulatorFailure(failure) => {
@@ -414,7 +451,15 @@ impl Session {
                     // turn, and it never becomes a guest exit or passing result.
                     let message = format_failure(failure);
                     let unknown = turn.boundary().uncertain;
-                    return self.finish_failure(machine, facts, control.cycles(), message, unknown);
+                    return self.finish_failure(
+                        machine,
+                        facts,
+                        start_fs,
+                        max_end_fs,
+                        control.cycles(),
+                        message,
+                        unknown,
+                    );
                 }
                 StepOutcome::Waiting => {
                     // A parked wait retires nothing here: the WFI transition that
@@ -437,6 +482,8 @@ impl Session {
                     return self.finish_failure(
                         machine,
                         facts,
+                        start_fs,
+                        max_end_fs,
                         control.cycles(),
                         "the Hart is halted in Debug Mode and no debugger can resume it".into(),
                         false,
@@ -458,16 +505,21 @@ impl Session {
                     let caller_end = caller_now(facts.consumed_fs)?;
                     // A terminal exit does not discard coincident bound facts.
                     facts.budget_exhausted = !control.may_execute();
-                    facts.deadline_reached |= caller_end >= max_end_fs;
-                    if facts.deadline_reached {
-                        facts.deadline_blocked = false;
-                    }
+                    finalize_horizon(&mut facts, caller_end, max_end_fs, false);
                     self.commit_run(facts, caller_end, RunState::Exited, code)?;
                     return Ok(());
                 }
                 Exit::Absent => {}
                 Exit::HostFailure(message) => {
-                    return self.finish_failure(machine, facts, control.cycles(), message, false);
+                    return self.finish_failure(
+                        machine,
+                        facts,
+                        start_fs,
+                        max_end_fs,
+                        control.cycles(),
+                        message,
+                        false,
+                    );
                 }
             }
         }
@@ -476,21 +528,7 @@ impl Session {
         facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
         facts.turns = self.facts.turns + control.cycles();
         let caller_end = caller_now(facts.consumed_fs)?;
-        // An internal deadline stop is only `DeadlineReached` when the caller's
-        // own inclusive horizon is reached; a remaining fraction of a tick is
-        // `DeadlineBlocked` with that residual as slack.
-        if caller_end >= max_end_fs {
-            facts.deadline_reached = true;
-            facts.deadline_blocked = false;
-        } else {
-            facts.deadline_reached = false;
-            facts.deadline_blocked |= deadline_stop_seen;
-        }
-        if facts.deadline_blocked || facts.deadline_reached || facts.budget_exhausted {
-            // Residual slack is in the caller's own time base, so an absolute
-            // start far ahead of the Machine cursor cannot inflate it.
-            facts.residual_slack_fs = max_end_fs.saturating_sub(caller_end);
-        }
+        finalize_horizon(&mut facts, caller_end, max_end_fs, deadline_stop_seen);
         self.commit_run(facts, caller_end, RunState::Running, 0)?;
         Ok(())
     }
@@ -618,10 +656,15 @@ impl Session {
     }
 
     /// Classifies a terminal failure and records it as the grant result.
+    // The grant window and the Machine are both required: the caller's clock
+    // and the horizon are not derivable from the Machine cursor.
+    #[allow(clippy::too_many_arguments)]
     fn finish_failure(
         &mut self,
         machine: &mut OwnedMachine,
         mut facts: GrantFacts,
+        start_fs: u64,
+        max_end_fs: u64,
         completed_turns: u64,
         message: String,
         unknown: bool,
@@ -635,10 +678,14 @@ impl Session {
         facts.turns = self.facts.turns + completed_turns;
         facts.failed = true;
         facts.uncertain |= unknown;
-        let caller_end = facts
-            .committed_start_fs
+        // The caller's grant context, not the Machine cursor, gives its
+        // committed time; the coincident horizon facts are retained too.  A
+        // failed attempt never adds `budget_exhausted` merely because it used
+        // the last slot (ADR-0004 §7.1).
+        let caller_end = start_fs
             .checked_add(facts.consumed_fs)
             .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the caller clock overflows"))?;
+        finalize_horizon(&mut facts, caller_end, max_end_fs, false);
         self.facts = facts;
         self.state = RunState::Failed;
         self.exit_code = 0;

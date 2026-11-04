@@ -943,6 +943,60 @@ fn a_refused_reset_keeps_the_failed_machine_in_place() {
 }
 
 #[test]
+fn an_overflowing_reserve_is_refused_at_the_maximum_horizon() {
+    // A 1 fs period with 1 fs transaction delays: after the idle jump to
+    // `mtimecmp = UINT64_MAX - 1`, the wake turn's reserve cannot be added to
+    // the cursor.  Overflow is refusal, never a saturated "fits", so the grant
+    // must report `deadline_blocked` instead of starting the turn and failing on
+    // a clock overflow (ADR-0004 §7.2).
+    let mut config = MachineConfig::new(crate::machine::PlatformKind::Native);
+    config.isa = IsaProfile::Rv64imafdc;
+    config.tick_period = TickPeriod::new(Femtoseconds::new(1));
+    config.transport = crate::blocking::Transport::tlm(Arc::new(DelayedTarget::new(1)));
+    let mut code = wake_guest(0);
+    // mtimecmp = UINT64_MAX - 1: x6 = -1 then x6 -= 1.
+    let compare = code
+        .iter()
+        .position(|word| *word == elf::addi(6, 0, 0))
+        .expect("the compare setup");
+    code[compare] = elf::addi(6, 0, -1);
+    code.insert(compare + 1, elf::addi(6, 6, -1));
+    let image =
+        Arc::new(LoadImage::parse(&elf::elf_with_code(&code, 0, true, false, 0x4000)).unwrap());
+    let mut session = Session::new(config, image).unwrap();
+    session
+        .run_grant(0, u64::MAX, super::UNBOUNDED_TURNS)
+        .expect("a blocked grant is not an API error");
+    let facts = session.facts();
+    assert!(!facts.failed, "the grant failed instead of refusing");
+    assert!(
+        facts.deadline_blocked,
+        "an overflowing reserve was treated as fitting the horizon"
+    );
+    assert!(
+        facts.consumed_fs < u64::MAX,
+        "the wake turn ran past the maximum horizon"
+    );
+}
+
+#[test]
+fn a_terminal_exit_reports_the_remaining_slack() {
+    // The guest exits on its seventh and last budgeted turn, so the boundary
+    // reports both the exhausted budget and the caller's remaining slack.
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    let grant = harness.grant(100 * TICK_FS, 200 * TICK_FS, 7).unwrap();
+    let result = harness.result();
+    assert_eq!(result.state, RunState::Exited.code());
+    assert_eq!(grant.facts.turns, 7);
+    assert_eq!(grant.facts.budget_exhausted, 1);
+    assert_eq!(
+        grant.facts.residual_slack_fs,
+        93 * TICK_FS,
+        "a terminal exit dropped the caller's residual slack"
+    );
+}
+
+#[test]
 fn a_grant_boundary_is_not_a_terminal_result() {
     // The C-ABI stand-in for `sc_stop`: a host that ends a grant at its budget
     // and stops granting has not produced a terminal result, and a zero exit

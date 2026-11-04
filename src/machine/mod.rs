@@ -583,10 +583,19 @@ impl Installed {
         let Some(deadline) = self.virtual_deadline else {
             return true;
         };
-        let reserve = 1 + self.platform.turn_completion_bound_ticks().unwrap_or(0);
-        self.platform
-            .read_mtime()
-            .is_ok_and(|mtime| mtime.saturating_add(reserve) <= deadline)
+        let Some(reserve) = self
+            .platform
+            .turn_completion_bound_ticks()
+            .unwrap_or(0)
+            .checked_add(1)
+        else {
+            return false;
+        };
+        self.platform.read_mtime().is_ok_and(|mtime| {
+            mtime
+                .checked_add(reserve)
+                .is_some_and(|end| end <= deadline)
+        })
     }
 
     /// True when the cursor has reached the configured virtual deadline.

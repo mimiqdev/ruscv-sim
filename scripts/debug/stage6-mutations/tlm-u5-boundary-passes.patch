@@ -1,11 +1,11 @@
 diff --git a/src/capi/host.rs b/src/capi/host.rs
-index cc7e73e..6bc4411 100644
+index 5dcf9d2..b72534e 100644
 --- a/src/capi/host.rs
 +++ b/src/capi/host.rs
-@@ -491,7 +491,8 @@ impl Session {
-             // start far ahead of the Machine cursor cannot inflate it.
-             facts.residual_slack_fs = max_end_fs.saturating_sub(caller_end);
-         }
+@@ -529,7 +529,8 @@ impl Session {
+         facts.turns = self.facts.turns + control.cycles();
+         let caller_end = caller_now(facts.consumed_fs)?;
+         finalize_horizon(&mut facts, caller_end, max_end_fs, deadline_stop_seen);
 -        self.commit_run(facts, caller_end, RunState::Running, 0)?;
 +        // MUTATION: a grant boundary is reported as a passing guest exit.
 +        self.commit_run(facts, caller_end, RunState::Exited, 0)?;
