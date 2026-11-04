@@ -21,9 +21,9 @@ use super::{
     TurnCompletionBound,
 };
 use crate::physical::{
-    AtomicBackendResult, AtomicRequest, PhysicalBackendError, PhysicalBackendResult,
-    PhysicalRequest, PhysicalResponse, PhysicalResponseBytes, PhysicalResponseCompletion,
-    PhysicalTargetRejectionReason, MAX_PHYSICAL_ACCESS_BYTES,
+    AtomicBackendResult, AtomicRequest, AtomicResponse, PhysicalBackendError,
+    PhysicalBackendResult, PhysicalRequest, PhysicalResponse, PhysicalResponseBytes,
+    PhysicalResponseCompletion, PhysicalTargetRejectionReason, MAX_PHYSICAL_ACCESS_BYTES,
 };
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
@@ -63,6 +63,22 @@ pub(crate) struct PendingDelay {
     pub(crate) ticks: u64,
     /// Exact annotated femtoseconds.
     pub(crate) femtoseconds: Femtoseconds,
+}
+
+/// One access whose annotated delay is being accounted.
+#[derive(Clone, Copy)]
+enum DelayAccess {
+    Physical(crate::physical::PhysicalAccessKind),
+    Atomic(crate::physical::AtomicAccessKind),
+}
+
+impl DelayAccess {
+    fn label(self) -> String {
+        match self {
+            Self::Physical(kind) => format!("{kind:?}"),
+            Self::Atomic(kind) => format!("atomic {kind:?}"),
+        }
+    }
 }
 
 impl TlmRamAdapter {
@@ -164,6 +180,92 @@ impl TlmRamAdapter {
         }
     }
 
+    /// Validates and accounts one completed response's annotated delay
+    /// (ADR-0004 §5.2/§5.3, dev-plan D7).
+    ///
+    /// The caller records a committed write before this step.  The delay is
+    /// accumulated before a limit is enforced, so an over-limit response still
+    /// consumes its known time on the failed turn.  An incomplete payload is
+    /// not a completion and its annotation is not trusted as elapsed.
+    fn account_response_delay(
+        &self,
+        state: &mut AdapterState,
+        transaction: &BlockingTransaction<'_>,
+        access: DelayAccess,
+    ) -> Result<(), PhysicalBackendError> {
+        let address = transaction.address();
+        let delay = transaction.response_delay();
+        let ticks = delay.to_platform_ticks(self.period).map_err(|error| {
+            PhysicalBackendError::host(format!(
+                "blocking target annotated a malformed delay of {} fs for {} at {address:#018x}: \
+                 {error}",
+                delay.as_u64(),
+                access.label()
+            ))
+        })?;
+        let status = transaction.status();
+        if status != BlockingResponseStatus::Incomplete && state.active {
+            // Accumulate this response before classifying a limit failure, so
+            // a known over-limit delay is still consumed once by the failed
+            // turn.  An unrepresentable total fails the access without
+            // dropping delay already known.
+            let pending_ticks = state.pending.ticks.checked_add(ticks).ok_or_else(|| {
+                PhysicalBackendError::host(format!(
+                    "blocking-transport tick accounting overflowed while converting {} fs \
+                     for {} at {address:#018x}",
+                    delay.as_u64(),
+                    access.label()
+                ))
+            })?;
+            let pending_femtoseconds =
+                state
+                    .pending
+                    .femtoseconds
+                    .checked_add(delay)
+                    .ok_or_else(|| {
+                        PhysicalBackendError::host(format!(
+                            "blocking-transport delay accounting overflowed after {} fs",
+                            state.pending.femtoseconds.as_u64()
+                        ))
+                    })?;
+            let total = state.delay.checked_add(delay).ok_or_else(|| {
+                PhysicalBackendError::host(format!(
+                    "total blocking-transport delay overflowed after {} fs",
+                    state.delay.as_u64()
+                ))
+            })?;
+            state.pending.ticks = pending_ticks;
+            state.pending.femtoseconds = pending_femtoseconds;
+            state.delay = total;
+        }
+        if delay > self.declared_max {
+            let overshoot = Femtoseconds::new(delay.as_u64() - self.declared_max.as_u64());
+            return Err(PhysicalBackendError::host(format!(
+                "target reported {} fs of delay for one {} transaction at {address:#018x}, above \
+                 its declared per-transaction maximum of {} fs (overshoot {} fs); the turn's \
+                 conservative completion bound is {} ticks",
+                delay.as_u64(),
+                access.label(),
+                self.declared_max.as_u64(),
+                overshoot.as_u64(),
+                self.bound.ticks(),
+            )));
+        }
+        if state.active && state.pending.ticks > self.bound.ticks() {
+            return Err(PhysicalBackendError::host(format!(
+                "the turn consumed {} Platform ticks of transport delay, above its conservative \
+                 completion bound of {} ticks ({} ticks per transaction x {} transactions); \
+                 overshoot {} ticks",
+                state.pending.ticks,
+                self.bound.ticks(),
+                self.bound.ticks_per_transaction(),
+                self.bound.transactions(),
+                state.pending.ticks - self.bound.ticks(),
+            )));
+        }
+        Ok(())
+    }
+
     /// Maps one validated physical request onto one blocking transaction.
     ///
     /// `initiator` distinguishes a Hart-issued access from the Debug Module's
@@ -255,21 +357,6 @@ impl TlmRamAdapter {
             )));
         }
 
-        // Convert and account the annotated delay before classifying the
-        // response, so a completed fault or host failure keeps the modeled
-        // elapsed time exactly once (ADR-0004 §5.3).  An incomplete or
-        // target-modified payload is not a completion, so its annotation is
-        // not trusted as elapsed.
-        let delay = transaction.response_delay();
-        let ticks = delay.to_platform_ticks(self.period).map_err(|error| {
-            PhysicalBackendError::host(format!(
-                "blocking target annotated a malformed delay of {} fs for {:?} at {:#018x}: \
-                 {error}",
-                delay.as_u64(),
-                descriptor.category,
-                descriptor.paddr
-            ))
-        })?;
         let status = transaction.status();
         // An `Ok` write committed its effects before any delay accounting or
         // overshoot classification can fail; record it first so
@@ -278,68 +365,11 @@ impl TlmRamAdapter {
         if status == BlockingResponseStatus::Ok && command == BlockingCommand::Write {
             state.committed_writes = state.committed_writes.saturating_add(1);
         }
-        if status != BlockingResponseStatus::Incomplete && state.active {
-            // Accumulate this response before classifying a limit failure, so
-            // a known over-limit delay is still consumed once by the failed
-            // turn.  An unrepresentable total fails the access without
-            // dropping delay already known.
-            let pending_ticks = state.pending.ticks.checked_add(ticks).ok_or_else(|| {
-                PhysicalBackendError::host(format!(
-                    "blocking-transport tick accounting overflowed while converting {} fs \
-                     for {:?} at {:#018x}",
-                    delay.as_u64(),
-                    descriptor.category,
-                    descriptor.paddr
-                ))
-            })?;
-            let pending_femtoseconds =
-                state
-                    .pending
-                    .femtoseconds
-                    .checked_add(delay)
-                    .ok_or_else(|| {
-                        PhysicalBackendError::host(format!(
-                            "blocking-transport delay accounting overflowed after {} fs",
-                            state.pending.femtoseconds.as_u64()
-                        ))
-                    })?;
-            let total = state.delay.checked_add(delay).ok_or_else(|| {
-                PhysicalBackendError::host(format!(
-                    "total blocking-transport delay overflowed after {} fs",
-                    state.delay.as_u64()
-                ))
-            })?;
-            state.pending.ticks = pending_ticks;
-            state.pending.femtoseconds = pending_femtoseconds;
-            state.delay = total;
-        }
-        let declared_max = self.declared_max;
-        if delay > declared_max {
-            let overshoot = Femtoseconds::new(delay.as_u64() - declared_max.as_u64());
-            return Err(PhysicalBackendError::host(format!(
-                "target reported {} fs of delay for one {:?} transaction at {:#018x}, above its \
-                 declared per-transaction maximum of {} fs (overshoot {} fs); the turn's \
-                 conservative completion bound is {} ticks",
-                delay.as_u64(),
-                descriptor.category,
-                descriptor.paddr,
-                declared_max.as_u64(),
-                overshoot.as_u64(),
-                self.bound.ticks(),
-            )));
-        }
-        if state.active && state.pending.ticks > self.bound.ticks() {
-            return Err(PhysicalBackendError::host(format!(
-                "the turn consumed {} Platform ticks of transport delay, above its conservative \
-                 completion bound of {} ticks ({} ticks per transaction x {} transactions); \
-                 overshoot {} ticks",
-                state.pending.ticks,
-                self.bound.ticks(),
-                self.bound.ticks_per_transaction(),
-                self.bound.transactions(),
-                state.pending.ticks - self.bound.ticks(),
-            )));
-        }
+        self.account_response_delay(
+            &mut state,
+            &transaction,
+            DelayAccess::Physical(descriptor.category),
+        )?;
 
         match status {
             BlockingResponseStatus::Ok => {
@@ -382,16 +412,65 @@ impl TlmRamAdapter {
         }
     }
 
-    /// Refuses an atomic envelope without issuing a transaction (unit U2).
+    /// Maps one validated atomic envelope onto one blocking transaction with
+    /// the ruscv-sim atomic extension (dev-plan D5).
     ///
-    /// LR, SC and every AMO fail closed with the native access-fault cause
-    /// until the atomic extension lands; read-then-write emulation is
-    /// forbidden, so no transaction reaches the target.
+    /// One envelope is one `b_transport` call.  The target applies the
+    /// encoded operation indivisibly and reports the old bytes, committed-write
+    /// snapshot or conditional status in that same transaction.  A target
+    /// that does not accept the extension answers
+    /// `TLM_COMMAND_ERROR_RESPONSE`, which maps to the native load or
+    /// store/AMO access fault.  The Hart-owned transform function pointer
+    /// never crosses the transport: only the encoded operation does.
     pub(crate) fn transact_atomic(&self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
         request
             .validate()
             .map_err(|error| PhysicalBackendError::protocol(error.to_string()))?;
-        let state = self.state.lock().map_err(|_| {
+        if !request.span().is_non_wrapping() {
+            let descriptor = request.descriptor();
+            return Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::RangeOverflow,
+                format!(
+                    "blocking atomic span starting at {:#018x} with width {} wraps the address space",
+                    descriptor.paddr,
+                    descriptor.width.bytes()
+                ),
+            ));
+        }
+
+        let descriptor = request.descriptor();
+        let width =
+            crate::physical::AmoWidth::from_physical_width(descriptor.width).ok_or_else(|| {
+                PhysicalBackendError::protocol(format!(
+                    "atomic envelope width {} is not a 4/8-byte width",
+                    descriptor.width.bytes()
+                ))
+            })?;
+        let atomic = match descriptor.kind {
+            crate::physical::AtomicAccessKind::Rmw => {
+                let operation = request
+                    .transform()
+                    .and_then(|transform| transform.operation());
+                let operation = operation.ok_or_else(|| {
+                    PhysicalBackendError::protocol(
+                        "RMW envelope carries no encoded operation identity for the transport",
+                    )
+                })?;
+                crate::blocking::BlockingAtomicExtension::rmw(operation, width, request.ordering())
+            }
+            crate::physical::AtomicAccessKind::LoadReserved => {
+                crate::blocking::BlockingAtomicExtension::load_reserved(width, request.ordering())
+            }
+            crate::physical::AtomicAccessKind::StoreConditional => {
+                crate::blocking::BlockingAtomicExtension::store_conditional(
+                    width,
+                    request.ordering(),
+                    request.reservation(),
+                )
+            }
+        };
+
+        let mut state = self.state.lock().map_err(|_| {
             PhysicalBackendError::host("TLM adapter state lock is poisoned by an earlier panic")
         })?;
         if let Some(reason) = &state.poisoned {
@@ -400,11 +479,151 @@ impl TlmRamAdapter {
                  the target's transport reset must be acknowledged before any further access"
             )));
         }
-        Err(PhysicalBackendError::target(
-            PhysicalTargetRejectionReason::UnsupportedCategory,
-            "the TLM RAM route does not carry atomics until unit U2; \
-             the request is refused before any transaction",
-        ))
+
+        let command = match descriptor.kind {
+            crate::physical::AtomicAccessKind::LoadReserved => BlockingCommand::Read,
+            crate::physical::AtomicAccessKind::Rmw
+            | crate::physical::AtomicAccessKind::StoreConditional => BlockingCommand::Write,
+        };
+        let access_kind = match command {
+            BlockingCommand::Read => crate::physical::PhysicalAccessKind::DataRead,
+            BlockingCommand::Write => crate::physical::PhysicalAccessKind::DataWrite,
+        };
+        let mut bytes = [0u8; MAX_PHYSICAL_ACCESS_BYTES];
+        if let Some(payload) = request.operand_bytes().or_else(|| request.store_payload()) {
+            bytes[..width.bytes()].copy_from_slice(payload);
+        }
+        let extension = BlockingExtension::atomic(access_kind, BlockingInitiator::Hart, atomic);
+        let mut transaction = BlockingTransaction::new(
+            descriptor.paddr,
+            command,
+            &mut bytes[..width.bytes()],
+            extension,
+        );
+
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            self.target.b_transport(&mut transaction);
+        }));
+        if panic.is_err() {
+            let reason = format!(
+                "blocking target panicked while servicing atomic {:?} at {:#018x}",
+                descriptor.kind, descriptor.paddr
+            );
+            state.poisoned = Some(reason.clone());
+            return Err(PhysicalBackendError::unknown(reason));
+        }
+
+        if transaction.extension().is_outcome_unknown() {
+            let reason = format!(
+                "blocking target could not establish the outcome of atomic {:?} at {:#018x}",
+                descriptor.kind, descriptor.paddr
+            );
+            state.poisoned = Some(reason.clone());
+            return Err(PhysicalBackendError::unknown(reason));
+        }
+
+        if transaction.address() != descriptor.paddr
+            || transaction.command() != command
+            || transaction.data_length() != width.bytes()
+        {
+            return Err(PhysicalBackendError::protocol(format!(
+                "blocking target changed the atomic request payload for {:?} at {:#018x}: \
+                 address {:#018x}, command {}, length {} (expected address {:#018x}, \
+                 command {}, length {})",
+                descriptor.kind,
+                descriptor.paddr,
+                transaction.address(),
+                command_label(transaction.command()),
+                transaction.data_length(),
+                descriptor.paddr,
+                command_label(command),
+                width.bytes(),
+            )));
+        }
+
+        let status = transaction.status();
+        let outcome = transaction
+            .atomic_extension()
+            .and_then(|extension| extension.outcome());
+        // A successful RMW or SC committed its effects before delay
+        // accounting can fail, so record it first (ADR-0002 §6).
+        if status == BlockingResponseStatus::Ok {
+            match (descriptor.kind, outcome) {
+                (
+                    crate::physical::AtomicAccessKind::Rmw,
+                    Some(crate::blocking::BlockingAtomicOutcome::Rmw),
+                )
+                | (
+                    crate::physical::AtomicAccessKind::StoreConditional,
+                    Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
+                        crate::physical::ConditionalStatus::Success,
+                    )),
+                ) => {
+                    state.committed_writes = state.committed_writes.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+        self.account_response_delay(
+            &mut state,
+            &transaction,
+            DelayAccess::Atomic(descriptor.kind),
+        )?;
+
+        match status {
+            BlockingResponseStatus::Ok => match (descriptor.kind, outcome) {
+                (
+                    crate::physical::AtomicAccessKind::Rmw,
+                    Some(crate::blocking::BlockingAtomicOutcome::Rmw),
+                ) => Ok(AtomicResponse::rmw_for(request, transaction.data())),
+                (
+                    crate::physical::AtomicAccessKind::LoadReserved,
+                    Some(crate::blocking::BlockingAtomicOutcome::LoadReserved { snapshot }),
+                ) => Ok(AtomicResponse::load_reserved_for(
+                    request,
+                    transaction.data(),
+                    snapshot,
+                )),
+                (
+                    crate::physical::AtomicAccessKind::StoreConditional,
+                    Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(status)),
+                ) => Ok(AtomicResponse::store_conditional_for(request, status)),
+                (_, Some(outcome)) => Err(PhysicalBackendError::protocol(format!(
+                    "target returned an atomic completion of kind {:?} for a {:?} request",
+                    outcome.kind(),
+                    descriptor.kind
+                ))),
+                (_, None) => Err(PhysicalBackendError::protocol(format!(
+                    "target returned {} for atomic {:?} at {:#018x} without an atomic \
+                         completion; it did not accept the atomic extension",
+                    BlockingResponseStatus::Ok.name(),
+                    descriptor.kind,
+                    descriptor.paddr
+                ))),
+            },
+            status if status.is_guest_visible_fault() => Err(PhysicalBackendError::target(
+                PhysicalTargetRejectionReason::TargetError,
+                format!(
+                    "target reported {} for atomic {:?} at {:#018x}",
+                    status.name(),
+                    descriptor.kind,
+                    descriptor.paddr
+                ),
+            )),
+            BlockingResponseStatus::GenericError => Err(PhysicalBackendError::host(format!(
+                "target reported {} for atomic {:?} at {:#018x}",
+                BlockingResponseStatus::GenericError.name(),
+                descriptor.kind,
+                descriptor.paddr
+            ))),
+            BlockingResponseStatus::Incomplete => Err(PhysicalBackendError::protocol(format!(
+                "target left {} for atomic {:?} at {:#018x}",
+                BlockingResponseStatus::Incomplete.name(),
+                descriptor.kind,
+                descriptor.paddr
+            ))),
+            _ => unreachable!("every blocking status is handled"),
+        }
     }
 
     /// Reads bytes through the target's debug transport (dev-plan D6).

@@ -5,9 +5,12 @@
 //! once, here in the Hart layer, identically for every backend (ADR-0002 §6;
 //! dev-plan §5.2 M1).  The module applies the spec-mandated W/D width rules
 //! (dev-plan §2) and produces the pure byte-level transforms carried by the
-//! atomic operation envelopes ([`crate::physical::AmoTransform`]).  The
-//! physical domain and its backends apply those transforms opaquely and
-//! implement no ISA semantics themselves.
+//! atomic operation envelopes ([`crate::physical::AmoTransform`]).  Native
+//! physical backends apply those transforms opaquely and implement no ISA
+//! semantics themselves.  Under the 2026-11-04 ADR-0002 amendment the
+//! blocking TLM route carries an encoded operation tag instead of the
+//! function pointer, and the in-tree target resolves that tag through this
+//! module.
 //!
 //! Byte order: all byte slices are in physical/guest memory order, which for
 //! RV64 is little-endian.  W envelopes compute 32-bit results from the
@@ -18,7 +21,9 @@
 //! deliberately not referenced by any execution path at T1; the Hart dispatch
 //! integrates it in a later task (dev-plan §8 T3).
 
-use crate::physical::{AmoTransform, AmoWidth, PureAmoTransform, MAX_PHYSICAL_ACCESS_BYTES};
+use crate::physical::{
+    AmoKind, AmoTransform, AmoWidth, PureAmoTransform, MAX_PHYSICAL_ACCESS_BYTES,
+};
 use std::fmt;
 
 /// The nine AMO read-modify-write operations of the approved `funct5` table
@@ -58,6 +63,38 @@ pub const ALL_OPERATIONS: [AmoOperation; 9] = [
     AmoOperation::Minu,
     AmoOperation::Maxu,
 ];
+
+impl AmoOperation {
+    /// Returns the transport-visible operation tag for this operation.
+    pub const fn kind(self) -> AmoKind {
+        match self {
+            Self::Swap => AmoKind::Swap,
+            Self::Add => AmoKind::Add,
+            Self::BitXor => AmoKind::BitXor,
+            Self::BitAnd => AmoKind::BitAnd,
+            Self::BitOr => AmoKind::BitOr,
+            Self::Min => AmoKind::Min,
+            Self::Minu => AmoKind::Minu,
+            Self::Max => AmoKind::Max,
+            Self::Maxu => AmoKind::Maxu,
+        }
+    }
+
+    /// Maps a transport-visible operation tag back to the Hart operation.
+    pub const fn from_kind(kind: AmoKind) -> Self {
+        match kind {
+            AmoKind::Swap => Self::Swap,
+            AmoKind::Add => Self::Add,
+            AmoKind::BitXor => Self::BitXor,
+            AmoKind::BitAnd => Self::BitAnd,
+            AmoKind::BitOr => Self::BitOr,
+            AmoKind::Min => Self::Min,
+            AmoKind::Minu => Self::Minu,
+            AmoKind::Max => Self::Max,
+            AmoKind::Maxu => Self::Maxu,
+        }
+    }
+}
 
 impl fmt::Display for AmoOperation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -152,7 +189,7 @@ pub const fn transform(operation: AmoOperation, width: AmoWidth) -> AmoTransform
         (AmoOperation::Maxu, AmoWidth::Word) => apply_maxu_word,
         (AmoOperation::Maxu, AmoWidth::Doubleword) => apply_maxu_doubleword,
     };
-    AmoTransform::new(width, apply_fn)
+    AmoTransform::with_operation(operation.kind(), width, apply_fn)
 }
 
 /// Defines one total envelope-transform entry function.

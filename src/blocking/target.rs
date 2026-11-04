@@ -35,6 +35,14 @@ pub trait BlockingTarget: Send + Sync {
     /// Platform ticks under the declared tick period and consumed by the
     /// turn's outcome; a delay above the declared per-transaction maximum is
     /// an overshoot failure (ADR-0004 §5.2/§5.3).
+    ///
+    /// An atomic transaction carries [`super::BlockingAtomicExtension`].  A
+    /// target that supports it applies the encoded operation indivisibly inside
+    /// this one call and records the completion in the same extension.  A
+    /// target that does not support atomics sets
+    /// [`super::BlockingResponseStatus::CommandError`], which the adapter maps
+    /// to the native load or store/AMO access fault; it must not emulate the
+    /// operation with ordinary reads and writes.
     fn b_transport(&self, transaction: &mut BlockingTransaction<'_>);
 
     /// Services one debug-transport request and returns the number of bytes

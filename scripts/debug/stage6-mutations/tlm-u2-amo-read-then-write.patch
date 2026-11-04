@@ -1,0 +1,43 @@
+--- a/src/blocking/adapter.rs
++++ b/src/blocking/adapter.rs
+@@ -322,6 +322,40 @@
+         if let Some(payload) = request.operand_bytes().or_else(|| request.store_payload()) {
+             bytes[..width.bytes()].copy_from_slice(payload);
+         }
++        // MUTATION: emulate one AMO as a separate ordinary read and write.
++        if descriptor.kind == crate::physical::AtomicAccessKind::Rmw {
++            let mut old = [0u8; MAX_PHYSICAL_ACCESS_BYTES];
++            let mut read = BlockingTransaction::new(
++                descriptor.paddr,
++                BlockingCommand::Read,
++                &mut old[..width.bytes()],
++                BlockingExtension::new(
++                    crate::physical::PhysicalAccessKind::DataRead,
++                    BlockingInitiator::Hart,
++                ),
++            );
++            self.target.b_transport(&mut read);
++            let transform = request
++                .transform()
++                .expect("validated RMW envelope carries its transform");
++            let operand = request
++                .operand_bytes()
++                .expect("validated RMW envelope carries its operand");
++            let new = transform.apply(read.data(), operand);
++            let mut write = BlockingTransaction::new(
++                descriptor.paddr,
++                BlockingCommand::Write,
++                &mut bytes[..width.bytes()],
++                BlockingExtension::new(
++                    crate::physical::PhysicalAccessKind::DataWrite,
++                    BlockingInitiator::Hart,
++                ),
++            );
++            write.data_mut().copy_from_slice(&new[..width.bytes()]);
++            self.target.b_transport(&mut write);
++            state.committed_writes = state.committed_writes.saturating_add(1);
++            return Ok(AtomicResponse::rmw_for(request, read.data()));
++        }
+         let extension = BlockingExtension::atomic(access_kind, BlockingInitiator::Hart, atomic);
+         let mut transaction = BlockingTransaction::new(
+             descriptor.paddr,

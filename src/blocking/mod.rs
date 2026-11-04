@@ -40,6 +40,10 @@ use std::fmt;
 use std::sync::Arc;
 
 pub(crate) mod adapter;
+mod atomic;
+#[cfg(test)]
+#[path = "atomic_tests.rs"]
+mod atomic_tests;
 mod target;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -48,6 +52,7 @@ pub(crate) mod test_support;
 mod tests;
 mod zero_delay;
 
+pub use atomic::{BlockingAtomicExtension, BlockingAtomicOperation, BlockingAtomicOutcome};
 pub use target::BlockingTarget;
 pub use zero_delay::ZeroDelayRam;
 
@@ -127,13 +132,17 @@ pub enum BlockingInitiator {
 
 /// ruscv-sim payload extension for one blocking transaction.
 ///
-/// The atomic extension of dev-plan D5 is a later unit; this type describes
-/// only the ordinary fetch/read/write mapping of unit U1.
+/// The ordinary fetch/read/write mapping of unit U1 is carried by
+/// `access_kind` and `initiator`.  Unit U2 adds the optional
+/// [`BlockingAtomicExtension`]: an atomic transaction carries its operation,
+/// width, ordering and store-conditional reservation context as data instead
+/// of an ordinary read/write pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockingExtension {
     access_kind: PhysicalAccessKind,
     initiator: BlockingInitiator,
     outcome_unknown: bool,
+    atomic: Option<BlockingAtomicExtension>,
 }
 
 impl BlockingExtension {
@@ -143,6 +152,21 @@ impl BlockingExtension {
             access_kind,
             initiator,
             outcome_unknown: false,
+            atomic: None,
+        }
+    }
+
+    /// Creates an atomic request extension.
+    pub const fn atomic(
+        access_kind: PhysicalAccessKind,
+        initiator: BlockingInitiator,
+        atomic: BlockingAtomicExtension,
+    ) -> Self {
+        Self {
+            access_kind,
+            initiator,
+            outcome_unknown: false,
+            atomic: Some(atomic),
         }
     }
 
@@ -154,6 +178,16 @@ impl BlockingExtension {
     /// The Platform initiator that issued the request.
     pub const fn initiator(self) -> BlockingInitiator {
         self.initiator
+    }
+
+    /// The atomic payload extension, when this is an atomic transaction.
+    pub const fn atomic_extension(self) -> Option<BlockingAtomicExtension> {
+        self.atomic
+    }
+
+    /// Mutable access to the atomic payload extension.
+    pub fn atomic_extension_mut(&mut self) -> Option<&mut BlockingAtomicExtension> {
+        self.atomic.as_mut()
     }
 
     /// True when the target cannot vouch that the transaction completed.
@@ -443,6 +477,16 @@ impl<'a> BlockingTransaction<'a> {
     /// Mutable access to the ruscv-sim request extension.
     pub fn extension_mut(&mut self) -> &mut BlockingExtension {
         &mut self.extension
+    }
+
+    /// The atomic payload extension, when this is an atomic transaction.
+    pub const fn atomic_extension(&self) -> Option<BlockingAtomicExtension> {
+        self.extension.atomic_extension()
+    }
+
+    /// Mutable access to the atomic payload extension.
+    pub fn atomic_extension_mut(&mut self) -> Option<&mut BlockingAtomicExtension> {
+        self.extension.atomic_extension_mut()
     }
 
     /// The annotated response delay.

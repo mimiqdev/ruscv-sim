@@ -26,8 +26,9 @@ mod ram;
 pub mod tlm;
 
 pub use blocking::{
-    BlockingCommand, BlockingDebug, BlockingExtension, BlockingInitiator, BlockingResponseStatus,
-    BlockingTarget, BlockingTransaction, Femtoseconds, Transport, ZeroDelayRam,
+    BlockingAtomicExtension, BlockingAtomicOperation, BlockingAtomicOutcome, BlockingCommand,
+    BlockingDebug, BlockingExtension, BlockingInitiator, BlockingResponseStatus, BlockingTarget,
+    BlockingTransaction, Femtoseconds, Transport, ZeroDelayRam,
 };
 pub use core::{
     CoreState, CoreStepOutcome, DebugMemFault, HartStepOutcome, InstructionRetired,
@@ -57,7 +58,7 @@ pub use mmu::{
     AccessType, Mmu, MmuConfig, MmuError, Satp, Tlb, TlbEntry, TlbStats, TranslationMode,
 };
 pub use physical::{
-    AccessCategory, AccessWidth, AmoTransform, AmoWidth, AtomicAccess, AtomicAccessError,
+    AccessCategory, AccessWidth, AmoKind, AmoTransform, AmoWidth, AtomicAccess, AtomicAccessError,
     AtomicAccessKind, AtomicAccessResult, AtomicBackend, AtomicBackendFailure, AtomicBackendResult,
     AtomicOrdering, AtomicProtocolError, AtomicRequest, AtomicRequestDescriptor,
     AtomicReservationContext, AtomicResponse, AtomicResponseCompletion, AtomicTargetRejection,

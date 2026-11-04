@@ -1,6 +1,6 @@
 //! Controlled native backend/host-admission seams, not public recovery APIs.
 use super::*;
-use crate::blocking::test_support::ScriptTarget;
+use crate::blocking::test_support::{DelayingRam, ScriptTarget};
 use crate::blocking::{BlockingInitiator, Transport, ZeroDelayRam};
 use crate::csr::machine;
 use crate::memory::MemoryError;
@@ -3130,5 +3130,59 @@ fn a_one_tick_transport_advance_preserves_the_original_failure() {
     assert!(
         last.message.contains("overshoot") && last.message.contains("overflow"),
         "the retained failure lost context: {last:?}"
+    );
+}
+
+/// An atomic guest turn follows the same delay rules as a data access: its one
+/// atomic transaction is charged to `mtime`, never to an ISA counter.
+#[test]
+fn atomic_delay_advances_mtime_like_a_data_access() {
+    let target = DelayingRam::new(1_000_000, 1_000_000);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    // amoadd.w x7, x2, (x1)
+    let mut owned = OwnedMachine::new(config, image(0x0020_a3af)).unwrap();
+    {
+        let state = owned.state_mut();
+        state.regs[1] = elf::BASE + 0x200;
+        state.regs[2] = 5;
+    }
+    let before = (guest_time(&owned), guest_counters_now(&owned));
+
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    let transactions = target.transactions.load(Ordering::SeqCst) as u64;
+    assert_eq!(
+        transactions, 3,
+        "two fetch parcels and one atomic transaction"
+    );
+    assert_eq!(
+        guest_time(&owned),
+        before.0 + 1 + transactions,
+        "the atomic delay did not advance mtime with the turn"
+    );
+    assert_eq!(
+        turn.boundary().transport_delay_femtoseconds,
+        transactions * 1_000_000,
+        "the atomic delay was not reported in the boundary fact"
+    );
+    assert_eq!(
+        owned.state().regs[7],
+        0,
+        "the AMO did not return the old value"
+    );
+    assert_eq!(
+        target.bytes_at(elf::BASE + 0x200, 4),
+        5u32.to_le_bytes(),
+        "the atomic operation did not reach the delaying target"
+    );
+    let (minstret_before, mcycle_before) = before.1;
+    assert_eq!(
+        guest_counters_now(&owned),
+        (minstret_before + 1, mcycle_before + 1),
+        "the atomic delay leaked into mcycle or minstret"
     );
 }

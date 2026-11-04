@@ -15,7 +15,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 延迟按 ADR-0004 §5.3 的结果消费：成功访问与 guest 可见 target fault 消耗完整的已标注延迟，已知 host 失败消耗已标注的延迟，协议失败与未知完成不把标注当作已流逝时间；已消耗的延迟不会因后续 fault 或返回原因被撤销
   - 完成的 turn 让 `mtime` 前进一个 turn tick 加换算后的延迟 tick，因此定时器比较能看到延迟；失败的 turn 只消耗已知延迟，不增加 turn tick。两者都不改变 `mcycle`/`minstret`
   - SBA 与 Debug Mode（含 program-buffer 执行）的访问延迟同样换算和校验，但不计入 Platform 时间，保持 2026-10-28 与 2026-10-30 ADR-0004 修订；`BoundaryFacts::transport_delay_femtoseconds` 现在报告已计入的精确延迟总量，native 与零延迟 target 保持 0
+  - 原子（LR/SC/AMO）响应与普通数据访问遵循同一延迟换算、保守上界与计入规则：一次原子事务的标注延迟在 guest turn 中计入 `mtime`，超限同样按 §5.3 overshoot 失败并保留已知延迟
   - in-tree `ZeroDelayRam` 与 SystemC target 仍标注零延迟，parity 运行时间等价；延迟测试使用 test-only 的延迟 target。新增负控制：正的 sub-tick 延迟被舍入为零、transport delay 计入 `mcycle` 或 `minstret`
+
+- **TLM U2: 原子 payload 扩展（issue #174）**
+  - LR、SC 与全部 AMO 经一次 blocking `b_transport` 事务携带 ruscv-sim 原子扩展：操作、
+    宽度、`aq`/`rl` 与 SC 的保留上下文（保留区间与 committed-write 快照）均作为数据编码，
+    Hart 的 AMO transform 函数指针不跨传输
+  - in-tree `ZeroDelayRam` 在同一锁临界区内按与 `hart_amods` 一致的运算表执行 RMW、LR、SC，
+    返回旧值、快照或条件结果，并维护与 native RAM 相同的逐字节 committed-write 记账；
+    适配器记录完成的写入、AMO 与成功 SC
+  - 不接受扩展的 target 以 `TLM_COMMAND_ERROR_RESPONSE` 拒绝，按 native 原因映射为 LR 的
+    load access fault 与 SC/AMO 的 store access fault；返回 `TLM_OK_RESPONSE` 却没有原子完成
+    的 target 是协议失败
+  - 对全部 9 种 AMO 的 W/D 宽度、signed/unsigned min/max、W 符号扩展以及 LR/SC 的
+    成功、失败、覆盖与无保留结果做 native 对等测试；计数 target 证明每个原子（含 Sv39
+    A/D 的 LR/SC）恰好一个事务
+  - 负控制：AMO 被模拟为独立读和写会被捕获（`scripts/debug/stage6-mutations`）
 
 - **TLM U1: Rust TLM RAM 路由（issue #173）**
   - 新增独立的 blocking-transport 适配词表（`src/blocking`，与 `src/tlm` 无关）：IEEE 1666
