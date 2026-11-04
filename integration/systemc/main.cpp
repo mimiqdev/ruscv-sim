@@ -68,8 +68,9 @@ void print_usage(const char* program) {
         "\n"
         "Runs one ruscv-sim Machine under this SystemC kernel. The RAM target is\n"
         "the zero-delay blocking model the initiator socket is bound to. Exit\n"
-        "status is the guest exit code for a terminal run, 1 for a failed run,\n"
-        "and 2 for a host stop before a terminal ruscv-sim result.\n"
+        "status is the guest exit code for a terminal exited run and 1 for a\n"
+        "failed run or a host-classified failure; the --stop-after-grants control,\n"
+        "which leaves no run result, exits 2.\n"
         "\n"
         "--max-turns bounds completed turns, the counterpart of the public CLI's\n"
         "--max-cycles; exhausting it without a terminal result is a failure.\n",

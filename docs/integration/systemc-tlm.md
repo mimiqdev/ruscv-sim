@@ -152,18 +152,17 @@ target, so a run stays time-equivalent to native (ADR-0004 §4.4, §5.3).
   `--max-cycles`). Each grant's budget is clamped to the turns still allowed, so
   a live guest loop exhausts the limit and stops with a diagnostic instead of
   spinning the kernel.
-- The run stops in one of exactly two ways. The ordinary stop follows a terminal
-  result from `ruscv_machine_result`. The other follows a host classification:
-  an ABI error, a kernel clock that disagrees with the Machine cursor, a grant
-  boundary that consumed no modeled time while the run is still live, or an
-  exhausted grant or turn bound. That second group is a host decision and never a
-  ruscv-sim result, and it exits non-zero.
-- A host stop before any of those is not a run result either. The host reports it
-  and exits non-zero; the `--stop-after-grants` control in
-  [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh) proves it
-  and must not pass.
-- The process exit status is the guest exit code for a terminal exited run, 1 for
-  a failed run, and 2 for a host stop without a terminal result.
+- The kernel is stopped for one of three reasons. The ordinary stop follows a
+  terminal result from `ruscv_machine_result`. A classified host failure stops it
+  too: an ABI error, a kernel clock that disagrees with the Machine cursor, a
+  grant boundary that consumed no modeled time while the run is still live, or an
+  exhausted grant or turn bound. That is a host decision and never a ruscv-sim
+  result. The third is the deliberate `--stop-after-grants` control, which stops
+  the kernel before any result to prove that a host stop is not one; it must never
+  pass.
+- The process exit status is the guest exit code for a terminal exited run and 1
+  for a failed run or a host-classified failure. The early-stop control, which
+  leaves no run result at all, exits 2.
 
 ## Build and version pins
 

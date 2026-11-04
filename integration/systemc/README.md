@@ -52,8 +52,9 @@ usage: systemc_smoke <elf> [--isa rv64ima|rv64imac|rv64imafd|rv64imafdc]
        [--max-grants <grants>] [--max-turns <turns>]
 ```
 
-The exit status is the guest exit code for a terminal exited run, 1 for a failed
-run, and 2 for a host stop before a terminal ruscv-sim result.
+The exit status is the guest exit code for a terminal exited run and 1 for a
+failed run or a host-classified failure. The `--stop-after-grants` early-stop
+control, which deliberately leaves no run result, exits 2.
 
 `--max-turns` bounds completed turns, the C ABI counterpart of the public CLI's
 `--max-cycles` (default 100000). Each grant's budget is clamped to the turns
