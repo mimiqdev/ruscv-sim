@@ -140,7 +140,8 @@ or host stop becomes a ruscv-sim terminal result.
 
 The SystemC host sets a 1 fs time resolution before the kernel starts, so one
 `sc_time` unit is exactly one femtosecond. The declared Platform tick period is
-one nanosecond (`ruscv_machine_create`).
+one nanosecond, the default of `MachineConfig.tick_period`; `ruscv_machine_create`
+carries the C ABI's declaration of the same period.
 
 Each grant starts at the current `sc_time_stamp()`. The kernel owns global time
 and commits only the amount a grant returns: the host `wait()`s exactly the

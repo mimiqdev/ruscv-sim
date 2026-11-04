@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     时间单位、再入与停止行为、构建与版本 pin 的规范说明，DMI 与 quantum／同步策略仍为开放项；README 新增
     `MachineConfig` 变更、C ABI 与 pinned SystemC 3.0.2 宿主的说明；验证文档列出 TLM 第二遍、C ABI smoke
     与 SystemC 作业
+  - 2026-11-05 在合同授权下对 D2 做有界修订：声明的 tick 周期以 `MachineConfig.tick_period`（默认 1 ns，
+    来自 D7 与 ADR-0004 §5.2）列为第四个新增公开变更，与 `transport`、`BoundaryFacts` 的
+    `transport_delay_femtoseconds`、`Flat` + `tlm` 的 `MachineError::UnsupportedTransport` 并列，
+    四者均由此处命名；“all three” 改为 “all four”，并记录该声明周期不再属于未列入的公开变更。
+    合同其余正文不变，合同未归档或轮换
 
 - **TLM U6: pinned SystemC 3.0.2 smoke（issue #178）**
   - `Dockerfile` 新增 Accellera SystemC 3.0.2 构建：从 `accellera-official/systemc` 取
