@@ -344,20 +344,37 @@ impl Session {
             turns: self.facts.turns,
             ..GrantFacts::default()
         };
+        // One step can complete a waiting turn and its wake, and each reserves
+        // its own turn tick plus the target's declared per-transaction maximum
+        // for the worst-case transaction count.  The arithmetic is checked: a
+        // configuration that cannot be bounded is a failure, never a wrap.
+        let turn_bound = machine.turn_completion_bound_ticks().unwrap_or(0);
         let bound_ticks =
-            GRANT_STEP_TURNS * (1 + machine.turn_completion_bound_ticks().unwrap_or(0));
+            GRANT_STEP_TURNS
+                .checked_mul(turn_bound.checked_add(1).ok_or_else(|| {
+                    ApiError::new(Status::Config, "the completion bound overflows")
+                })?)
+                .ok_or_else(|| ApiError::new(Status::Config, "the completion bound overflows"))?;
+        let wake_bound_ticks = turn_bound
+            .checked_add(1)
+            .ok_or_else(|| ApiError::new(Status::Config, "the completion bound overflows"))?;
         let committed = |machine: &mut OwnedMachine| -> Result<u64, ApiError> {
             let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
             now.checked_mul(period)
                 .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the committed time overflows"))
         };
+        // The caller's own clock: its start plus everything the grant consumed.
+        let caller_now = |consumed_fs: u64| -> Result<u64, ApiError> {
+            start_fs
+                .checked_add(consumed_fs)
+                .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the caller clock overflows"))
+        };
+        let mut deadline_stop_seen = false;
 
         loop {
-            let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
-            let now_fs = now.checked_mul(period).ok_or_else(|| {
-                ApiError::new(Status::TimeAuthority, "the committed time overflows")
-            })?;
-            let at_horizon = now_fs >= max_end_fs;
+            let now_fs = committed(machine)?;
+            let elapsed_fs = now_fs - facts.committed_start_fs;
+            let at_horizon = caller_now(elapsed_fs)? >= max_end_fs;
             if !control.may_execute() || at_horizon {
                 // ADR-0004 §4.3 phase 3: report every coincident fact, so a zero
                 // budget at a reached horizon is not collapsed into one.
@@ -365,10 +382,11 @@ impl Session {
                 facts.deadline_reached = at_horizon;
                 break;
             }
+            let now_ticks = machine.platform_mtime().map_err(MachineRefusal::status)?;
             // ADR-0004 §7.2: start a step only when its conservative completion
             // bound fits the inclusive deadline; otherwise report the residual
             // slack and the refused bound instead of speculative work.
-            if now.saturating_add(bound_ticks) > deadline {
+            if now_ticks.saturating_add(bound_ticks) > deadline {
                 facts.deadline_blocked = true;
                 facts.candidate_bound_fs = bound_ticks.saturating_mul(period);
                 break;
@@ -384,7 +402,7 @@ impl Session {
             facts.transport_delay_fs = turn.boundary().transport_delay_femtoseconds;
             facts.waiting |= turn.boundary().waiting;
             facts.no_progress |= turn.boundary().no_progress;
-            facts.deadline_reached |= turn.boundary().deadline_stop;
+            deadline_stop_seen |= turn.boundary().deadline_stop;
             facts.uncertain |= turn.boundary().uncertain;
 
             if let Some(message) = self.deliver(&turn) {
@@ -401,8 +419,14 @@ impl Session {
                 StepOutcome::Waiting => {
                     // A parked wait retires nothing here: the WFI transition that
                     // completed is already counted, and a wait that starts no
-                    // turn consumes no budget slot (ADR-0004 §7.1).
+                    // turn consumes no budget slot (ADR-0004 §7.1).  A jump that
+                    // left too little slack for the wake turn ends the step, and
+                    // the refused bound is reported like any other blocked turn.
                     control.refund_uncompleted_slot();
+                    if turn.wake_blocked() {
+                        facts.deadline_blocked = true;
+                        facts.candidate_bound_fs = wake_bound_ticks.saturating_mul(period);
+                    }
                     break;
                 }
                 StepOutcome::DebugHalted {
@@ -431,10 +455,14 @@ impl Session {
                     facts.turns = self.facts.turns + control.cycles();
                     facts.committed_end_fs = committed(machine)?;
                     facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
+                    let caller_end = caller_now(facts.consumed_fs)?;
                     // A terminal exit does not discard coincident bound facts.
                     facts.budget_exhausted = !control.may_execute();
-                    facts.deadline_reached |= facts.committed_end_fs >= max_end_fs;
-                    self.commit_run(facts, start_fs, RunState::Exited, code);
+                    facts.deadline_reached |= caller_end >= max_end_fs;
+                    if facts.deadline_reached {
+                        facts.deadline_blocked = false;
+                    }
+                    self.commit_run(facts, caller_end, RunState::Exited, code)?;
                     return Ok(());
                 }
                 Exit::Absent => {}
@@ -447,21 +475,39 @@ impl Session {
         facts.committed_end_fs = committed(machine)?;
         facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
         facts.turns = self.facts.turns + control.cycles();
-        if facts.deadline_blocked || facts.deadline_reached || facts.budget_exhausted {
-            // Residual slack is the caller's femtosecond horizon minus the
-            // committed time, so a fractional remainder is reported, not lost.
-            facts.residual_slack_fs = max_end_fs.saturating_sub(facts.committed_end_fs);
+        let caller_end = caller_now(facts.consumed_fs)?;
+        // An internal deadline stop is only `DeadlineReached` when the caller's
+        // own inclusive horizon is reached; a remaining fraction of a tick is
+        // `DeadlineBlocked` with that residual as slack.
+        if caller_end >= max_end_fs {
+            facts.deadline_reached = true;
+            facts.deadline_blocked = false;
+        } else {
+            facts.deadline_reached = false;
+            facts.deadline_blocked |= deadline_stop_seen;
         }
-        self.commit_run(facts, start_fs, RunState::Running, 0);
+        if facts.deadline_blocked || facts.deadline_reached || facts.budget_exhausted {
+            // Residual slack is in the caller's own time base, so an absolute
+            // start far ahead of the Machine cursor cannot inflate it.
+            facts.residual_slack_fs = max_end_fs.saturating_sub(caller_end);
+        }
+        self.commit_run(facts, caller_end, RunState::Running, 0)?;
         Ok(())
     }
 
     /// Records one non-terminal grant boundary and the caller's committed time.
-    fn commit_run(&mut self, facts: GrantFacts, start_fs: u64, state: RunState, code: u32) {
+    fn commit_run(
+        &mut self,
+        facts: GrantFacts,
+        caller_end: u64,
+        state: RunState,
+        code: u32,
+    ) -> Result<(), ApiError> {
         self.facts = facts;
         self.state = state;
         self.exit_code = code;
-        self.caller_committed_fs = Some(start_fs + facts.consumed_fs);
+        self.caller_committed_fs = Some(caller_end);
+        Ok(())
     }
 
     /// Reinstalls the image through the Machine's own reset lifecycle.
@@ -478,21 +524,34 @@ impl Session {
     /// quarantined exactly as the Machine's own teardown records it.  A target
     /// that withholds the acknowledgement keeps the handle unusable.
     pub(crate) fn reset(&mut self) -> Result<(), ApiError> {
-        let mut machine = self.machine.take().ok_or(Status::NoImage)?;
-        let machine = if self.unknown {
-            drop(machine);
-            OwnedMachine::new(self.config.clone(), self.image.clone())
-        } else {
-            machine.fresh_reset().map(|()| machine)
+        if self.machine.is_none() {
+            return Err(ApiError::status(Status::NoImage));
         }
-        .map_err(|error| {
-            ApiError::new(
-                Status::Machine,
-                format!("cannot reset the Machine: {error}"),
-            )
-        })?;
-        self.tohost = machine.selected_tohost();
-        self.machine = Some(machine);
+        // A refused reset leaves the session exactly as it was: the failed
+        // Machine stays installed (and quarantined), so a host that later
+        // obtains the target's acknowledgement can retry.
+        if self.unknown {
+            let fresh =
+                OwnedMachine::new(self.config.clone(), self.image.clone()).map_err(|error| {
+                    ApiError::new(
+                        Status::Machine,
+                        format!("cannot reset the Machine: {error}"),
+                    )
+                })?;
+            self.tohost = fresh.selected_tohost();
+            self.machine = Some(fresh);
+        } else {
+            self.machine
+                .as_mut()
+                .ok_or(ApiError::status(Status::NoImage))?
+                .fresh_reset()
+                .map_err(|error| {
+                    ApiError::new(
+                        Status::Machine,
+                        format!("cannot reset the Machine: {error}"),
+                    )
+                })?;
+        }
         self.facts = GrantFacts::default();
         self.state = RunState::Running;
         self.exit_code = 0;
@@ -576,8 +635,14 @@ impl Session {
         facts.turns = self.facts.turns + completed_turns;
         facts.failed = true;
         facts.uncertain |= unknown;
-        let start_fs = facts.committed_start_fs;
-        self.commit_run(facts, start_fs, RunState::Failed, 0);
+        let caller_end = facts
+            .committed_start_fs
+            .checked_add(facts.consumed_fs)
+            .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the caller clock overflows"))?;
+        self.facts = facts;
+        self.state = RunState::Failed;
+        self.exit_code = 0;
+        self.caller_committed_fs = Some(caller_end);
         self.unknown = unknown;
         self.failure = Some(message);
         Ok(())

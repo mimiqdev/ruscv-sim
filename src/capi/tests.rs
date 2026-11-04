@@ -14,9 +14,7 @@ use super::{
     ruscv_machine_self_test_panic, ruscv_machine_set_commit_log, CBoundary, CGrant, CResult,
     RuscvMachine, Status,
 };
-use crate::blocking::{
-    Femtoseconds, TickPeriod, TurnCompletionBound, MAX_GUEST_TRANSACTIONS_PER_TURN,
-};
+use crate::blocking::{Femtoseconds, TickPeriod, TurnCompletionBound};
 use crate::elf::LoadImage;
 use crate::executor::observation_fixture as elf;
 use crate::machine::{IsaProfile, MachineConfig};
@@ -524,12 +522,17 @@ fn csrrs(rd: u8, csr: u16, rs1: u8) -> u32 {
 ///
 /// Eight turns complete before the wait, so the Machine's cursor is 8 when the
 /// `WFI` retires; `mtimecmp` is 0x1000.
-fn waiting_guest() -> Vec<u32> {
+fn waiting_guest(compare: u32) -> Vec<u32> {
+    let load_compare = if compare < 2048 {
+        elf::addi(6, 0, compare as i32)
+    } else {
+        elf::lui(6, compare >> 12)
+    };
     vec![
         elf::addi(5, 0, 0x80),
         csrrs(0, crate::csr::machine::MIE, 5),
         elf::lui(9, 0x02004),
-        elf::lui(6, 1),
+        load_compare,
         elf::sd(6, 9, 0),
         elf::addi(5, 0, 8),
         csrrs(0, crate::csr::machine::MSTATUS, 5),
@@ -551,7 +554,7 @@ fn a_wait_wake_at_the_deadline_does_not_cross_the_grant_horizon() {
     config.isa = IsaProfile::Rv64imafdc;
     let image = Arc::new(
         LoadImage::parse(&elf::elf_with_code(
-            &waiting_guest(),
+            &waiting_guest(0x1000),
             0,
             true,
             false,
@@ -777,6 +780,166 @@ fn a_terminal_exit_keeps_coincident_budget_facts() {
     assert_eq!(result.exit_code, 2);
     assert_eq!(grant.facts.turns, 7);
     assert_eq!(grant.facts.budget_exhausted, 1);
+}
+
+/// A guest that arms the timer, waits, then keeps executing after the wake.
+///
+/// The wake is a normal instruction turn (the interrupt is not taken), so it
+/// fetches with the target's annotated delay.
+fn wake_guest(compare: u32) -> Vec<u32> {
+    let load_compare = if compare < 2048 {
+        elf::addi(6, 0, compare as i32)
+    } else {
+        elf::lui(6, compare >> 12)
+    };
+    vec![
+        elf::addi(5, 0, 0x80),
+        csrrs(0, crate::csr::machine::MIE, 5),
+        elf::lui(9, 0x02004),
+        load_compare,
+        elf::sd(6, 9, 0),
+        0x1050_0073,
+        elf::lui(4, 0x80),
+        elf::addi(4, 4, 1),
+        elf::slli(4, 4, 12),
+        elf::standard_exit(2),
+        elf::sd(5, 4, 0),
+    ]
+}
+
+#[test]
+fn an_idle_jump_leaves_no_slack_for_a_wake_turn_that_cannot_fit() {
+    // The timer fires one tick before the horizon.  The idle jump consumes the
+    // slack the step was granted, so the wake turn's own conservative bound no
+    // longer fits and must not start (ADR-0004 §7.2).
+    const PERIOD_FS: u64 = 2_000_000;
+    let mut config = MachineConfig::new(crate::machine::PlatformKind::Native);
+    config.isa = IsaProfile::Rv64imafdc;
+    config.tick_period = TickPeriod::new(Femtoseconds::new(PERIOD_FS));
+    config.transport = crate::blocking::Transport::tlm(Arc::new(DelayedTarget::new(PERIOD_FS)));
+    let image = Arc::new(
+        LoadImage::parse(&elf::elf_with_code(&wake_guest(59), 0, true, false, 0x4000)).unwrap(),
+    );
+    let mut session = Session::new(config, image).unwrap();
+    session
+        .run_grant(0, 60 * PERIOD_FS, super::UNBOUNDED_TURNS)
+        .expect("a blocked grant is not an API error");
+    let facts = session.facts();
+    assert!(
+        facts.consumed_fs <= 60 * PERIOD_FS,
+        "the wake turn consumed {} fs against a {} fs horizon",
+        facts.consumed_fs,
+        60 * PERIOD_FS
+    );
+    assert!(
+        facts.deadline_blocked,
+        "the refused wake turn was not reported"
+    );
+    assert!(!facts.deadline_reached);
+    assert_eq!(facts.candidate_bound_fs, 19 * PERIOD_FS);
+}
+
+#[test]
+fn horizon_facts_stay_in_the_callers_time_base() {
+    // The caller's clock runs far ahead of the Machine's cursor, so the residual
+    // slack must be measured from the caller's own committed time.
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    let grant = harness.grant(100 * TICK_FS, 110 * TICK_FS, 1).unwrap();
+    assert_eq!(grant.consumed_fs, TICK_FS);
+    assert_eq!(grant.facts.budget_exhausted, 1);
+    assert_eq!(
+        grant.facts.residual_slack_fs,
+        9 * TICK_FS,
+        "the residual mixed the caller's horizon with the Machine cursor"
+    );
+
+    // A fractional horizon is not reached by the floored internal deadline.
+    let waiting = Harness::new(IsaProfile::Rv64imafdc as i32, &waiting_guest(0x1000), 0);
+    let grant = waiting
+        .grant(0, 4096 * TICK_FS + TICK_FS / 2, super::UNBOUNDED_TURNS)
+        .unwrap();
+    assert_eq!(grant.consumed_fs, 4096 * TICK_FS);
+    assert_eq!(
+        grant.facts.deadline_blocked, 1,
+        "the internal deadline stop was reported as the caller's horizon"
+    );
+    assert_eq!(grant.facts.deadline_reached, 0);
+    assert_eq!(grant.facts.residual_slack_fs, TICK_FS / 2);
+}
+
+#[test]
+fn an_unbounded_completion_bound_is_a_configuration_failure() {
+    // A period of 1 fs with a maximum of UINT64_MAX/18 passes create-time
+    // validation, but doubling the step bound cannot be represented.  It must be
+    // an explicit failure, never a wrap or a panic (ADR-0004 §5.2).
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), u64::MAX / 18);
+    // Harness uses a 1 ns period, so rebuild with a 1 fs period by hand.
+    drop(harness);
+    let mut target = Box::new(TestTarget::new(elf::BASE, 0x1_0000));
+    let table = target.table(u64::MAX / 18);
+    let mut handle = std::ptr::null_mut();
+    // SAFETY: the table outlives the handle.
+    let status =
+        unsafe { ruscv_machine_create(&table, IsaProfile::Rv64imafdc as i32, 1, &mut handle) };
+    assert_eq!(status, Status::Ok as i32, "create with a 1 fs period");
+    let file = elf_file(&exit_guest(2));
+    let path = c_text(file.path());
+    // SAFETY: the handle is live and the path is NUL-terminated.
+    assert_eq!(
+        unsafe { ruscv_machine_load_elf(handle, path.as_ptr()) },
+        Status::Ok as i32
+    );
+    let mut grant = CGrant::default();
+    // SAFETY: the handle is live.
+    let status = unsafe { ruscv_machine_run_grant(handle, 0, u64::MAX / 2, 1, &mut grant) };
+    assert_eq!(
+        status,
+        Status::Config as i32,
+        "an unrepresentable step bound was not a configuration failure"
+    );
+    let mut facts = CBoundary::default();
+    // SAFETY: the handle is live and must not be poisoned.
+    assert_eq!(
+        unsafe { ruscv_machine_boundary(handle, &mut facts) },
+        Status::Ok as i32,
+        "the failure poisoned the handle"
+    );
+    // SAFETY: the handle is live.
+    assert_eq!(unsafe { ruscv_machine_destroy(handle) }, Status::Ok as i32);
+}
+
+#[test]
+fn a_refused_reset_keeps_the_failed_machine_in_place() {
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    harness.target.unknown.store(true, Ordering::SeqCst);
+    let grant = harness.grant(0, u64::MAX / 2, 100).unwrap();
+    assert_eq!(grant.facts.uncertain, 1);
+
+    harness.target.reset_ack.store(false, Ordering::SeqCst);
+    // SAFETY: the handle is live.
+    assert_eq!(
+        unsafe { ruscv_machine_reset(harness.handle) },
+        Status::Machine as i32,
+        "a reset without the acknowledgement must fail"
+    );
+    // The failed Machine stays installed, so the session still reports facts and
+    // the same unknown-completion refusal instead of `NO_IMAGE`.
+    let _ = harness.facts();
+    assert_eq!(
+        harness.grant(0, u64::MAX / 2, 100).err(),
+        Some(Status::UnknownCompletion as i32)
+    );
+
+    harness.target.reset_ack.store(true, Ordering::SeqCst);
+    // SAFETY: the handle is live.
+    assert_eq!(
+        unsafe { ruscv_machine_reset(harness.handle) },
+        Status::Ok as i32,
+        "the retried reset was refused"
+    );
+    harness.target.unknown.store(false, Ordering::SeqCst);
+    let result = harness.run_to_result(1_000, 8);
+    assert_eq!(result.state, RunState::Exited.code());
 }
 
 #[test]
@@ -1272,20 +1435,6 @@ fn calls_before_an_image_is_installed_report_no_image() {
         );
         assert_eq!(ruscv_machine_destroy(handle), Status::Ok as i32);
     }
-}
-
-#[test]
-fn transporting_every_worst_case_transaction_stays_within_the_bound() {
-    assert_eq!(
-        MAX_GUEST_TRANSACTIONS_PER_TURN, 18,
-        "the documented worst-case transaction count changed"
-    );
-    assert_eq!(
-        TurnCompletionBound::new(Femtoseconds::new(TICK_FS), TickPeriod::DEFAULT)
-            .unwrap()
-            .ticks(),
-        MAX_GUEST_TRANSACTIONS_PER_TURN
-    );
 }
 
 /// A RAM target that annotates one fixed delay for every transaction.

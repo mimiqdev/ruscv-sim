@@ -303,11 +303,19 @@ pub struct MachineTurn {
     events: Vec<PlatformEvent>,
     tohost: Option<TohostSample>,
     boundary: BoundaryFacts,
+    /// A wake turn was refused because its conservative bound did not fit the
+    /// configured virtual deadline (ADR-0004 §7.2).
+    wake_blocked: bool,
     _receipt: Lease,
 }
 impl MachineTurn {
     pub fn boundary(&self) -> &BoundaryFacts {
         &self.boundary
+    }
+    /// True when an idle jump settled before the deadline but the wake turn's
+    /// conservative completion bound did not fit it, so no turn started.
+    pub(crate) const fn wake_blocked(&self) -> bool {
+        self.wake_blocked
     }
     /// Attach downstream reporting context and the lifecycle facts now visible
     /// after delivery, without changing the immutable completed Hart record.
@@ -418,6 +426,7 @@ impl Installed {
         self.platform.begin_transport_turn();
         let mut idle_stop = (false, false);
         let mut jumped = false;
+        let mut wake_blocked = false;
         let mut hart = loop {
             let mtime = self.platform.read_mtime()?;
             self.core.state_mut().csr.set_time(mtime);
@@ -450,6 +459,15 @@ impl Installed {
                     // wake turn the granted horizon did not reserve.
                     if self.reached_virtual_deadline() {
                         idle_stop = (false, true);
+                        break hart;
+                    }
+                    // The idle jump consumed slack the exchange was granted for
+                    // the waiting turn only.  A wake turn may begin only when its
+                    // own conservative completion bound still fits the deadline
+                    // (ADR-0004 §7.2); otherwise the exchange ends here and the
+                    // host re-evaluates the bound before any further work.
+                    if !self.wake_turn_fits() {
+                        wake_blocked = true;
                         break hart;
                     }
                     jumped = true;
@@ -539,6 +557,7 @@ impl Installed {
                 transport_delay_femtoseconds: self.platform.transport_delay_femtoseconds(),
                 ..BoundaryFacts::default()
             },
+            wake_blocked,
             _receipt: receipt,
         })
     }
@@ -552,6 +571,22 @@ impl Installed {
             .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
         self.core.state_mut().csr.set_seip_external(lines.seip);
         Ok(())
+    }
+
+    /// True when one more turn's conservative completion bound fits the
+    /// configured virtual deadline.
+    ///
+    /// The reserve is one completed turn plus the selected RAM target's declared
+    /// per-transaction maximum for the turn's worst-case transaction count.  A
+    /// Machine without a virtual deadline has no such bound to honor.
+    fn wake_turn_fits(&self) -> bool {
+        let Some(deadline) = self.virtual_deadline else {
+            return true;
+        };
+        let reserve = 1 + self.platform.turn_completion_bound_ticks().unwrap_or(0);
+        self.platform
+            .read_mtime()
+            .is_ok_and(|mtime| mtime.saturating_add(reserve) <= deadline)
     }
 
     /// True when the cursor has reached the configured virtual deadline.

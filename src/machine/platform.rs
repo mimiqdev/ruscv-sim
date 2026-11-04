@@ -248,7 +248,6 @@ impl Platform {
     }
 
     /// One guest turn's conservative completion bound in Platform ticks.
-    #[cfg(any(test, feature = "capi"))]
     pub(super) fn turn_completion_bound_ticks(&self) -> Option<u64> {
         self.ram.turn_completion_bound_ticks()
     }
