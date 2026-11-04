@@ -475,12 +475,23 @@ impl Installed {
                 // matches the store plus the tick.
                 Ok(mtime) => self.publish_platform_time(mtime)?,
                 Err(error) => {
-                    let failure = crate::core::SimulatorFailure {
-                        pc: self.core.state().pc,
-                        kind: crate::core::SimulatorFailureKind::Invariant,
-                        message: format!("Platform time: {error}"),
-                    };
-                    hart.outcome = StepOutcome::SimulatorFailure(failure);
+                    // Preserve a transport-failure diagnostic already produced
+                    // by this turn and append the clock failure, so the
+                    // original overshoot/maximum context is not lost.
+                    match &mut hart.outcome {
+                        StepOutcome::SimulatorFailure(existing) => {
+                            existing.message.push_str("; clock advance also failed: ");
+                            existing.message.push_str(&error.to_string());
+                        }
+                        _ => {
+                            hart.outcome =
+                                StepOutcome::SimulatorFailure(crate::core::SimulatorFailure {
+                                    pc: self.core.state().pc,
+                                    kind: crate::core::SimulatorFailureKind::Invariant,
+                                    message: format!("Platform time: {error}"),
+                                });
+                        }
+                    }
                 }
             }
         }

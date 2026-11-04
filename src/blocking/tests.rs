@@ -644,3 +644,30 @@ fn a_guest_turn_may_use_the_declared_worst_case_transactions() {
         "the known over-bound delay must still be accounted once"
     );
 }
+
+/// A successful write commits before delay accounting can fail, so
+/// committed-write visibility stays truthful on an overflowing annotation.
+#[test]
+fn a_completed_write_is_recorded_before_delay_accounting_fails() {
+    let target = Arc::new(ScriptTarget::new(BASE, SIZE));
+    target.set_declared_max_delay(u64::MAX);
+    target.set_delay(u64::MAX);
+    let slot = tlm_slot(&target, SIZE);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    slot.begin_transport_turn();
+
+    let first = PhysicalRequest::data_write(BASE, PhysicalWidth::Word, &[1, 2, 3, 4]).unwrap();
+    port.access(first).unwrap();
+    assert_eq!(slot.committed_write_version(), Some(1));
+
+    let second = PhysicalRequest::data_write(BASE, PhysicalWidth::Word, &[5, 6, 7, 8]).unwrap();
+    let error = port.access(second).unwrap_err();
+    assert!(matches!(error, PhysicalAccessError::BackendFailure(_)));
+    assert!(error.to_string().contains("overflowed"), "{error}");
+    assert_eq!(
+        slot.committed_write_version(),
+        Some(2),
+        "a completed write was not recorded before delay accounting failed"
+    );
+    assert_eq!(target.bytes_at(BASE, 4), [5, 6, 7, 8]);
+}

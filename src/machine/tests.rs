@@ -3087,3 +3087,48 @@ fn transport_delay_never_wraps_mtime() {
     );
     assert!(owned.test_control().status().unwrap().failed);
 }
+
+/// Regression for the U3 re-review: a one-tick transport advance at the last
+/// representable `mtime` must not wrap, and must not replace the transport
+/// failure that produced the tick with a bare clock diagnostic.
+#[test]
+fn a_one_tick_transport_advance_preserves_the_original_failure() {
+    let target = delay_target(0, 1);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    owned.set_platform_mtime(u64::MAX).unwrap();
+
+    let turn = owned.step(false).unwrap();
+    let StepOutcome::SimulatorFailure(failure) = &turn.hart().outcome else {
+        panic!(
+            "the one-tick overflow did not fail the turn: {:?}",
+            turn.hart().outcome
+        );
+    };
+    assert!(
+        failure.message.contains("overshoot"),
+        "the original overshoot diagnostic was lost: {failure:?}"
+    );
+    assert!(
+        failure.message.contains("overflow"),
+        "the clock-overflow context was lost: {failure:?}"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        u64::MAX,
+        "a one-tick transport advance wrapped Platform time"
+    );
+    let status = owned.test_control().status().unwrap();
+    assert!(status.failed);
+    assert!(!status.uncertain);
+    let last = status
+        .last_failure
+        .as_ref()
+        .expect("the Machine lost the known failure");
+    assert!(
+        last.message.contains("overshoot") && last.message.contains("overflow"),
+        "the retained failure lost context: {last:?}"
+    );
+}

@@ -271,6 +271,13 @@ impl TlmRamAdapter {
             ))
         })?;
         let status = transaction.status();
+        // An `Ok` write committed its effects before any delay accounting or
+        // overshoot classification can fail; record it first so
+        // committed-write visibility stays truthful even when the access ends
+        // in a simulator failure (ADR-0002 §6).
+        if status == BlockingResponseStatus::Ok && command == BlockingCommand::Write {
+            state.committed_writes = state.committed_writes.saturating_add(1);
+        }
         if status != BlockingResponseStatus::Incomplete && state.active {
             // Accumulate this response before classifying a limit failure, so
             // a known over-limit delay is still consumed once by the failed
@@ -305,12 +312,6 @@ impl TlmRamAdapter {
             state.pending.ticks = pending_ticks;
             state.pending.femtoseconds = pending_femtoseconds;
             state.delay = total;
-        }
-        // An `Ok` write committed its effects before an overshoot is detected;
-        // record it so committed-write visibility stays truthful even when the
-        // turn ends in a simulator failure.
-        if status == BlockingResponseStatus::Ok && command == BlockingCommand::Write {
-            state.committed_writes = state.committed_writes.saturating_add(1);
         }
         let declared_max = self.declared_max;
         if delay > declared_max {
