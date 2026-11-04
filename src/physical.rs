@@ -1438,6 +1438,58 @@ impl AmoWidth {
     }
 }
 
+/// Data identity of one Hart AMO operation, carried by a transform and a
+/// blocking atomic extension.
+///
+/// This is the transport-visible operation tag, not the arithmetic.  The
+/// Hart-owned arithmetic module maps it back to its operation table; the
+/// physical backend never implements or names ISA semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum AmoKind {
+    /// AMOADD: wrapping addition.
+    Add,
+    /// AMOSWAP: operand replaces the old span.
+    Swap,
+    /// AMOXOR: bitwise exclusive or.
+    BitXor,
+    /// AMOOR: bitwise or.
+    BitOr,
+    /// AMOAND: bitwise and.
+    BitAnd,
+    /// AMOMIN: signed minimum.
+    Min,
+    /// AMOMAX: signed maximum.
+    Max,
+    /// AMOMINU: unsigned minimum.
+    Minu,
+    /// AMOMAXU: unsigned maximum.
+    Maxu,
+}
+
+impl AmoKind {
+    /// Returns the encoded operation tag as a stable small integer.
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
+
+    /// Decodes a stable operation tag, or `None` for an unknown value.
+    pub const fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => Self::Add,
+            1 => Self::Swap,
+            2 => Self::BitXor,
+            3 => Self::BitOr,
+            4 => Self::BitAnd,
+            5 => Self::Min,
+            6 => Self::Max,
+            7 => Self::Minu,
+            8 => Self::Maxu,
+            _ => return None,
+        })
+    }
+}
+
 /// The Hart-supplied pure RMW transform carried by an envelope (dev-plan
 /// §5.2 M1).
 ///
@@ -1458,15 +1510,44 @@ pub type PureAmoTransform =
 /// exactly one Hart-owned implementation, identically for every backend.
 #[derive(Debug, Clone, Copy)]
 pub struct AmoTransform {
+    operation: Option<AmoKind>,
     width: AmoWidth,
     apply: PureAmoTransform,
 }
 
 impl AmoTransform {
-    /// In-crate constructor: only the Hart-owned arithmetic module produces
-    /// transforms.
+    /// In-crate constructor for a transform without an encoded operation
+    /// identity.  Native backends apply the transform opaquely, so they do
+    /// not need the operation; an adapter that must carry the operation as
+    /// data uses [`Self::with_operation`] instead.
+    #[cfg(test)]
     pub(crate) const fn new(width: AmoWidth, apply: PureAmoTransform) -> Self {
-        Self { width, apply }
+        Self {
+            operation: None,
+            width,
+            apply,
+        }
+    }
+
+    /// In-crate constructor carrying the Hart-owned operation identity as
+    /// data.  This is the form the blocking adapter encodes; the function
+    /// pointer itself never crosses the transport.
+    pub(crate) const fn with_operation(
+        operation: AmoKind,
+        width: AmoWidth,
+        apply: PureAmoTransform,
+    ) -> Self {
+        Self {
+            operation: Some(operation),
+            width,
+            apply,
+        }
+    }
+
+    /// Returns the encoded operation identity, when the producer supplied
+    /// one.
+    pub const fn operation(self) -> Option<AmoKind> {
+        self.operation
     }
 
     /// Returns the encoded W/D result width of this transform.

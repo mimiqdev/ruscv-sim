@@ -32,6 +32,14 @@ pub trait BlockingTarget: Send + Sync {
     /// [`BlockingTransaction::data_mut`].  It must apply a write as one
     /// indivisible semantic write.  Annotating a non-zero delay is an adapter
     /// failure until unit U3.
+    ///
+    /// An atomic transaction carries [`super::BlockingAtomicExtension`].  A
+    /// target that supports it applies the encoded operation indivisibly inside
+    /// this one call and records the completion in the same extension.  A
+    /// target that does not support atomics sets
+    /// [`super::BlockingResponseStatus::CommandError`], which the adapter maps
+    /// to the native load or store/AMO access fault; it must not emulate the
+    /// operation with ordinary reads and writes.
     fn b_transport(&self, transaction: &mut BlockingTransaction<'_>);
 
     /// Services one debug-transport request and returns the number of bytes
