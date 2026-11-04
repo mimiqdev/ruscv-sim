@@ -3,7 +3,7 @@
 **Status:** Current verification tooling note
 
 **Authority:** Describes the frozen Zca selection and its flow; the milestone
-contract is [`docs/dev-plan.md`](../dev-plan.md) D9 and unit U4.
+contract is the [archived Zca contract](../archive/milestones/selectable-zca-compressed-profile.md) D9 and unit U4.
 
 ## What is frozen
 
