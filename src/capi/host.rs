@@ -37,6 +37,15 @@ use crate::machine::{
 use std::path::Path;
 use std::sync::Arc;
 
+/// Completed Hart turns one grant step can produce.
+///
+/// A waiting Hart retires its `WFI` turn and, when the wake is earlier than the
+/// deadline, takes the wake turn inside the same step (the Machine settles the
+/// idle jump before it returns).  The lookahead therefore reserves two completed
+/// turns, each with its own worst-case transaction delay, so a step can never
+/// need more time than the bound it was granted.
+const GRANT_STEP_TURNS: u64 = 2;
+
 /// How a run stands after one grant (the C ABI's `ruscv_run_state`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunState {
@@ -289,7 +298,8 @@ impl Session {
             turns: self.facts.turns,
             ..GrantFacts::default()
         };
-        let bound_ticks = 1 + machine.turn_completion_bound_ticks().unwrap_or(0);
+        let bound_ticks =
+            GRANT_STEP_TURNS * (1 + machine.turn_completion_bound_ticks().unwrap_or(0));
         let committed = |machine: &mut OwnedMachine, period: u64| -> Result<u64, ApiError> {
             let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
             now.checked_mul(period)

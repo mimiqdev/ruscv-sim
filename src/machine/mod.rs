@@ -434,7 +434,17 @@ impl Installed {
                     idle_stop = (false, true);
                     break hart;
                 }
-                WaitSettlement::Jumped | WaitSettlement::NotWaiting => jumped = true,
+                WaitSettlement::Jumped | WaitSettlement::NotWaiting => {
+                    // A settlement at or after the inclusive deadline admits the
+                    // event due there but starts no normal turn (ADR-0004 §7.2),
+                    // so the exchange returns `DeadlineReached` instead of a
+                    // wake turn the granted horizon did not reserve.
+                    if self.reached_virtual_deadline() {
+                        idle_stop = (false, true);
+                        break hart;
+                    }
+                    jumped = true;
+                }
             }
         };
         let waiting = matches!(hart.outcome, StepOutcome::Waiting);
@@ -533,6 +543,19 @@ impl Installed {
             .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
         self.core.state_mut().csr.set_seip_external(lines.seip);
         Ok(())
+    }
+
+    /// True when the cursor has reached the configured virtual deadline.
+    ///
+    /// The deadline is an inclusive completion bound: an exchange may settle on
+    /// it and admit the event due there, but it starts no normal turn.
+    fn reached_virtual_deadline(&self) -> bool {
+        let Some(deadline) = self.virtual_deadline else {
+            return false;
+        };
+        self.platform
+            .read_mtime()
+            .is_ok_and(|mtime| mtime >= deadline)
     }
 
     /// Jump `mtime` to the next wake, or stop. Does not retire an instruction.

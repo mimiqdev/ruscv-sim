@@ -17,9 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     run grant、read boundary facts、read result、reset、destroy。grant 携带权威起点、最大结束时间与
     turn 预算，返回本次消费的建模时间（完成的 turn、idle 跳进与 transport 延迟）、边界事实以及是否
     触及 grant 边界；早于 Machine 已提交时间的起点按 ADR-0004 §4.4 拒绝，reset 重启纪元
-  - grant 级 deadline 阻断（ADR-0004 §7.2）：启动任何 turn 前先形成其保守完成上界（一个完成 turn
-    tick 加上该 turn 最坏情况事务数乘以 target 声明的单事务最大延迟），放不下的 turn 不启动，并以
-    `deadline_blocked`、剩余 slack 与被拒绝的上界报告；到达含端截止时间时不再启动普通 turn
+  - grant 级 deadline 阻断（ADR-0004 §7.2）：启动任何 turn 前先形成该 grant step 的保守完成上界。
+    一个 step 可能完成等待中的 turn 及其唤醒 turn，因此上界为两个完成 turn tick 加上各自最坏情况
+    事务数乘以 target 声明的单事务最大延迟；放不下的 step 不启动，并以 `deadline_blocked`、剩余
+    slack 与被拒绝的上界报告
+  - 含端截止时间处不启动普通 turn：等待结算（idle jump）落在截止时间上时，同一 exchange 在该
+    时刻停止并报告 `DeadlineReached`，不再执行唤醒 turn；因此定时器恰好到期的 grant 不会越过
+    其视界（ADR-0004 §7.2）
   - C RAM target 是 `b_transport`、`transport_dbg`、transport reset 回调表加声明的单事务最大延迟与
     user 数据；payload 的原始字节缓冲由 Rust 拥有且只在一次回调内有效，原子扩展的请求与完成（RMW、
     LR 快照、SC 结果）同样跨 ABI 编码为数据

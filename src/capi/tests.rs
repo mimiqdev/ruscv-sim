@@ -483,6 +483,67 @@ fn a_caught_panic_poisons_the_handle() {
     assert_eq!(status, Status::Poisoned as i32);
 }
 
+/// Encode `csrrs rd, csr, rs1` (setting bits from `rs1`).
+fn csrrs(rd: u8, csr: u16, rs1: u8) -> u32 {
+    (u32::from(csr) << 20) | (u32::from(rs1) << 15) | (2 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
+/// A guest that arms the timer, waits, then reports an exit.
+///
+/// Eight turns complete before the wait, so the Machine's cursor is 8 when the
+/// `WFI` retires; `mtimecmp` is 0x1000.
+fn waiting_guest() -> Vec<u32> {
+    vec![
+        elf::addi(5, 0, 0x80),
+        csrrs(0, crate::csr::machine::MIE, 5),
+        elf::lui(9, 0x02004),
+        elf::lui(6, 1),
+        elf::sd(6, 9, 0),
+        elf::addi(5, 0, 8),
+        csrrs(0, crate::csr::machine::MSTATUS, 5),
+        0x1050_0073,
+        elf::lui(4, 0x80),
+        elf::addi(4, 4, 1),
+        elf::slli(4, 4, 12),
+        elf::standard_exit(2),
+        elf::sd(5, 4, 0),
+    ]
+}
+
+#[test]
+fn a_wait_wake_at_the_deadline_does_not_cross_the_grant_horizon() {
+    // The timer fires exactly at the inclusive deadline.  A turn may not begin
+    // at the deadline (ADR-0004 §7.2), so the grant must stop there instead of
+    // taking the wake turn and reporting more time than its horizon.
+    let mut config = MachineConfig::new(crate::machine::PlatformKind::Native);
+    config.isa = IsaProfile::Rv64imafdc;
+    let image = Arc::new(
+        LoadImage::parse(&elf::elf_with_code(
+            &waiting_guest(),
+            0,
+            true,
+            false,
+            0x4000,
+        ))
+        .unwrap(),
+    );
+    let mut session = Session::new(config, TickPeriod::DEFAULT, image).unwrap();
+    session
+        .run_grant(0, 0x1000 * TICK_FS, super::UNBOUNDED_TURNS)
+        .unwrap();
+    let facts = session.facts();
+    assert!(
+        facts.consumed_fs <= 0x1000 * TICK_FS,
+        "the grant consumed {} fs beyond its {} fs horizon",
+        facts.consumed_fs,
+        0x1000 * TICK_FS
+    );
+    assert!(
+        facts.deadline_reached,
+        "a wait that stopped at the deadline did not report it"
+    );
+}
+
 #[test]
 fn a_grant_boundary_is_not_a_terminal_result() {
     // The C-ABI stand-in for `sc_stop`: a host that ends a grant at its budget
@@ -648,20 +709,20 @@ fn a_target_status_is_a_guest_fault_never_a_pass() {
 
 #[test]
 fn a_deadline_blocks_a_turn_it_cannot_finish() {
-    // One declared tick per transaction reserves 18 ticks plus the completed
-    // turn tick, so a 10-tick grant cannot start a turn.
+    // One declared tick per transaction reserves one turn tick plus 18
+    // transaction ticks, and a step may complete a waiting turn and its wake, so
+    // the lookahead reserves two of those: 38 ticks.  A 10-tick grant therefore
+    // cannot start a turn.
     let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), TICK_FS);
     let bound = TurnCompletionBound::new(Femtoseconds::new(TICK_FS), TickPeriod::DEFAULT).unwrap();
+    let step_bound = 2 * (bound.ticks() + 1);
     let grant = harness
         .grant(0, 10 * TICK_FS, super::UNBOUNDED_TURNS)
         .unwrap();
     assert_eq!(grant.facts.deadline_blocked, 1);
     assert_eq!(grant.boundary_reached, 1);
     assert_eq!(grant.consumed_fs, 0, "a blocked grant consumed time");
-    assert_eq!(
-        grant.facts.candidate_bound_fs,
-        (bound.ticks() + 1) * TICK_FS
-    );
+    assert_eq!(grant.facts.candidate_bound_fs, step_bound * TICK_FS);
     assert_eq!(grant.facts.residual_slack_fs, 10 * TICK_FS);
     assert_eq!(
         harness.target.transactions.load(Ordering::SeqCst),
@@ -669,40 +730,44 @@ fn a_deadline_blocks_a_turn_it_cannot_finish() {
         "a blocked grant issued a transaction"
     );
 
-    // A 20-tick horizon fits exactly two turns; the third would cross it, so
+    // A 40-tick horizon fits three one-tick turns; the fourth would cross it, so
     // the grant reports the residual slack instead of starting it.
     let grant = harness
-        .grant(0, 20 * TICK_FS, super::UNBOUNDED_TURNS)
+        .grant(0, 40 * TICK_FS, super::UNBOUNDED_TURNS)
         .unwrap();
-    assert_eq!(grant.consumed_fs, 2 * TICK_FS);
-    assert_eq!(grant.facts.turns, 2);
+    assert_eq!(grant.consumed_fs, 3 * TICK_FS);
+    assert_eq!(grant.facts.turns, 3);
     assert_eq!(grant.facts.deadline_blocked, 1);
     assert_eq!(grant.facts.deadline_reached, 0);
-    assert_eq!(grant.facts.residual_slack_fs, 18 * TICK_FS);
+    assert_eq!(grant.facts.residual_slack_fs, 37 * TICK_FS);
     assert_eq!(
         harness.target.transactions.load(Ordering::SeqCst),
-        2,
-        "the blocked turn issued a transaction"
+        4,
+        "the blocked turn issued a transaction (two 2-byte parcels, then one \
+         two-parcel 32-bit parcel read)"
     );
 }
 
 #[test]
-fn a_native_grant_starts_one_turn_that_fits_its_deadline() {
+fn a_native_grant_reserves_its_two_turn_step_bound() {
     let mut config = MachineConfig::new(crate::machine::PlatformKind::Native);
     config.isa = IsaProfile::Rv64imafdc;
     let image = Arc::new(
         LoadImage::parse(&elf::elf_with_code(&exit_guest(2), 0, true, false, 0x4000)).unwrap(),
     );
     let mut session = Session::new(config, TickPeriod::DEFAULT, image).unwrap();
-    // A native turn has no transport-bound reserve, so a one-tick horizon fits
-    // exactly one turn and then reports the reached inclusive deadline.
+    // A native step has no transport reserve, so its bound is the two turns a
+    // waiting wake can complete.  A two-tick horizon fits one one-tick turn and
+    // then refuses the next, which would need the whole step again.
     session
-        .run_grant(0, TICK_FS, super::UNBOUNDED_TURNS)
+        .run_grant(0, 2 * TICK_FS, super::UNBOUNDED_TURNS)
         .unwrap();
     let facts = session.facts();
     assert_eq!(facts.consumed_fs, TICK_FS);
     assert_eq!(facts.turns, 1);
-    assert!(facts.deadline_reached);
+    assert!(facts.deadline_blocked);
+    assert_eq!(facts.candidate_bound_fs, 2 * TICK_FS);
+    assert_eq!(facts.residual_slack_fs, TICK_FS);
     assert_eq!(facts.transport_delay_fs, 0);
 }
 

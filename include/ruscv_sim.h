@@ -214,6 +214,13 @@ typedef struct ruscv_boundary {
     int32_t failed;
     int32_t lifecycle;
     uint64_t residual_slack_fs;
+    /*
+     * The refused grant step's conservative completion bound, in femtoseconds.
+     *
+     * One step can complete the waiting turn and its wake turn, so the bound
+     * reserves both, each with the target's declared per-transaction maximum for
+     * its worst-case transaction count.
+     */
     uint64_t candidate_bound_fs;
     uint64_t transport_delay_fs;
     uint64_t turns;
