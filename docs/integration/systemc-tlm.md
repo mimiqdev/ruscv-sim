@@ -82,7 +82,9 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
   ruscv-sim access is one transaction. The adapter never splits, merges, caches,
   or retries an access.
 - The response status starts incomplete. Only the seven standard blocking
-  statuses are completions; any other value is reported as incomplete.
+  statuses are recognized; any other value is reported as incomplete. Of those
+  seven, `TLM_INCOMPLETE_RESPONSE` is not a completion: the mapping table below
+  classifies it as a protocol failure.
 - The target's address, command and data length are echoed back into the ABI
   payload, so a target that changed the request is visible to ruscv-sim and is
   classified as a protocol failure by the blocking adapter rather than here.

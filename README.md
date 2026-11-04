@@ -158,9 +158,12 @@ grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒�
 与 `SYSTEMC_3_0_2` 版本宏，并编译运行一个真实 SystemC/TLM 程序。该宿主用 `simple_target_socket`
 提供零延迟 blocking RAM target（`b_transport`、`transport_dbg`、transport reset 与原子扩展），
 并由一个 `SC_THREAD` 通过 C ABI 以有界 grant 驱动 Machine：每次 grant 从当前 `sc_time_stamp()`
-起算，内核只按 grant 返回的消费量 `wait()` 提交全局时间，`sc_stop` 只在 ruscv-sim 报告终止结果后
-调用。`--max-turns`（默认 100000）把每个 grant 的预算夹到剩余 turn 额度，是公共 CLI `--max-cycles`
-的对应物，永不终止的 guest 以诊断失败而不是让 kernel 空转。
+起算，内核只按 grant 返回的消费量 `wait()` 提交全局时间。普通终止（`ruscv_machine_result`
+报告终止结果）之后调用 `sc_stop`；host 判定的失败（ABI 错误、内核时钟与 Machine 游标不一致、
+零消费的 grant 边界、grant 或 turn 上界耗尽）与显式早停控制（`--stop-after-grants`）
+也会在结果之前停止内核，且都不制造 ruscv-sim 结果。`--max-turns`（默认 100000）把每个 grant
+的预算夹到剩余 turn 额度，是公共 CLI `--max-cycles` 的对应物，永不终止的 guest 以诊断失败
+而不是让 kernel 空转。
 
 `scripts/test_systemc_smoke.sh` 在 CI 作业 `SystemC transport smoke` 内运行：`atomic_tohost_exit`
 （`rv64imafdc`）与 `fd_fma`（`rv64imafd`）经该内核与 blocking RAM target 运行后的退出码和
