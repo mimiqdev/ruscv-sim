@@ -1418,7 +1418,7 @@ Guest single-step, WFI, interrupt eligibility/priority, and ordinary grant seman
 
 ## 2026-11-04 amendment: blocking transport time
 
-The Blocking TLM and SystemC Transport contract records this owner decision. The SystemC/TLM FFI and external-kernel deferral in §17's list is narrowed for blocking transport only. A TLM response's annotated delay is converted with a declared tick period under §5.2 and consumed under §5.3, advancing the same Platform time as completed turns; it never enters `mcycle` or `minstret`, and native responses carry zero delay. In the SystemC host the external kernel owns global time and commits only the consumed time a grant returns (§4.4). Delta-cycle semantics, temporal decoupling, quantum policy and non-blocking callbacks remain deferred.
+The Blocking TLM and SystemC Transport contract records this owner decision. The SystemC/TLM FFI and external-kernel deferral in §17's list is narrowed for blocking transport only. A TLM response's annotated delay is converted with a declared tick period under §5.2 and consumed under §5.3, advancing the same Platform time as completed turns; it never enters `mcycle` or `minstret`, and native responses carry zero delay. In the SystemC host the external kernel owns global time: each C-ABI grant carries an authoritative start and maximum end time plus a turn budget, returns the consumed time (turns, idle jumps and transport delay), and the kernel commits only that amount; an earlier start, except after reset, is an adapter failure (§4.4). Delta-cycle semantics, temporal decoupling, quantum policy and non-blocking callbacks remain deferred.
 
 ## 18. Source and test map
 
