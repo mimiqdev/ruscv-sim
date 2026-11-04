@@ -878,5 +878,24 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "gc-u5-a10-machine-default",
+    "source": "tools/a10/mod.rs",
+    "patch": "gc-u5-a10-machine-default.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "a10_p0_oracles"
+        ],
+        "test": "machine_routes_select_rv64ima_explicitly",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+Rv64imafdc",
+          "right:\\s+Rv64ima"
+        ]
+      }
+    ]
   }
 ]

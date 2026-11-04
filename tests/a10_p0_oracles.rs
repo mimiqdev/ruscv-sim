@@ -1,8 +1,13 @@
 //! P0 exact public-route correctness, negative controls and lifecycle evidence.
 //! No elapsed times are measured or accepted here.
+//!
+//! Negative control behind this suite (`scripts/debug/stage6-mutations`):
+//! `gc-u5-a10-machine-default` (the A10 Machine routes fall back to the
+//! default profile; `s4_csr_fields` exits nonzero and the route-oracle
+//! validation rejects the sample).
 #[path = "../tools/a10/mod.rs"]
 pub mod support;
-use ruscv_sim::machine::{Lifecycle, MachineError, PlatformKind};
+use ruscv_sim::machine::{IsaProfile, Lifecycle, MachineError, PlatformKind};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -693,6 +698,19 @@ fn cli_signature_metadata_from_real_capture_is_exact_and_unique() {
         validate(&m, f, &missing).is_err(),
         "missing CLI signature passed"
     );
+}
+
+/// The A10 Machine composition selects `rv64ima` explicitly (contract D5).
+/// No toolchain or fixture build is needed: this pins the declaration the
+/// route-oracle validation below then proves end to end. Negative control
+/// `gc-u5-a10-machine-default` removes the selection; the default profile
+/// leaks into both Machine routes and this assertion fails first.
+#[test]
+fn machine_routes_select_rv64ima_explicitly() {
+    for kind in [PlatformKind::Native, PlatformKind::Flat] {
+        let (config, _) = machine_config(kind);
+        assert_eq!(config.isa, IsaProfile::Rv64ima, "{kind:?}");
+    }
 }
 
 #[test]
