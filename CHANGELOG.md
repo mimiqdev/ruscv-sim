@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM U6: pinned SystemC 3.0.2 smoke（issue #178）**
+  - `Dockerfile` 新增 Accellera SystemC 3.0.2 构建：从 `accellera-official/systemc` 取
+    `70b0fc8e4a74acc677b0fc73cea08f940c2115d5`（合同 pin），配置前用 `git rev-parse HEAD`
+    校验检出的提交并用 `SYSTEMC_3_0_2` 版本宏校验内核，以 C++17 构建静态库连同 TLM-2.0 头文件
+    安装到 `/opt/systemc`（`SYSTEMC_HOME`）；pin 被移动或标注不符时镜像构建失败。镜像基线校验
+    新增一个真实 SystemC/TLM 编译并运行的程序，缺可用的内核时镜像构建失败
+  - 新增 `integration/systemc/` CMake 工程：零延迟 blocking RAM target 模块带
+    `simple_target_socket`，实现 `b_transport`、`transport_dbg`、transport reset 与原子扩展
+    （一次事务内应用 RMW、LR 与 SC，SC 按 target 自己的逐字节 committed-write 版本快照判定），
+    以及把 C ABI 回调映射为 TLM 事务的 initiator socket：一个访问一个事务、streaming width 等于
+    长度、无 byte enable、只接受七种标准响应状态，target 修改过的 address/command/length 回声给
+    ruscv-sim 以保留其协议判定，原子扩展请求与完成与标注延迟原样按数据跨 ABI
+  - initiator 的 `SC_THREAD` 通过 C ABI 以有界 grant 驱动 Machine：每次 grant 从当前
+    `sc_time_stamp()` 起算，`wait()` 恰好返回的消费量（内核只按该量提交全局时间，ADR-0004
+    §4.4），仅在 `ruscv_machine_result` 报告终止结果后 `sc_stop`；kernel 时钟与 Machine 游标
+    不一致、零消费的 grant 边界或 grant 守卫超限都是 host 失败。时间分辨率设为 1 fs，使标注
+    延迟的飞秒映射精确；`--max-turns`（默认 100000，等价于公共 CLI 的 `--max-cycles`）
+    把每个 grant 的预算夹到剩余 turn 额度，永不终止的 guest（例如退出信号被路由破坏后进入
+    死循环）以诊断失败而不是让 kernel 空转
+  - 新增 `scripts/test_systemc_smoke.sh` 与 CI 作业 `SystemC transport smoke`：在该镜像内构建
+    静态库与 SystemC 宿主，`atomic_tohost_exit`（`rv64imafdc`）与 `fd_fma`（`rv64imafd`）
+    的退出码与 `--log-commits` 输出必须与 native 公共 CLI 完全一致；空日志、非零退出、无终止
+    结果或 RAM target 未服务任何 blocking 事务都失败。两次运行使用同一 turn 上限，且每次运行
+    都有 wall-clock `timeout`，因此 guest 死循环或宿主缺陷都不会挂住 CI。现有 CI 作业不变，
+    `cargo build/test --all-features` 仍不需要 C++ 工具链或 SystemC
+  - 早停变体（`--stop-after-grants 1 --turn-budget 1`）必须在终止结果前停下且不得通过：它以
+    非零状态退出、报告 host stop before a terminal ruscv-sim result，且不产生 guest 退出码
+  - `docs/integration/systemc-tlm.md` 记录本次实现的映射（构建与版本 pin、FFI 所有权与线程、
+    错误映射、时间单位、再入与停止行为）；DMI 生命周期与 quantum/同步仍为开放项。Linux x86-64
+    only
+
 - **TLM U5: C ABI facade（issue #177）**
   - 新增 `capi` cargo feature、`src/capi` 与手写头文件 `include/ruscv_sim.h`；crate type 与默认/
     `--all-features` 构建不变，静态库用 `cargo rustc --lib --features capi --crate-type staticlib`

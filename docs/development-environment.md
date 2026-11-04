@@ -26,16 +26,22 @@ image referenced by archived milestone plans.
   with `--dm-no-impebreak` does not abort in the debug-module constructor. Upstream
   still asserts on that pair, including on current master. The patch maps the
   empty program buffer just past the data registers and covers no bytes.
+- Accellera SystemC 3.0.2 at commit
+  `70b0fc8e4a74acc677b0fc73cea08f940c2115d5`, built with C++17 and installed as a
+  static library with its TLM-2.0 headers under `/opt/systemc` (`SYSTEMC_HOME`).
+  The image build verifies the checked-out commit and the `SYSTEMC_3_0_2` version
+  macro, and compiles and runs a small SystemC/TLM program, so a
+  version-printing executable cannot stand in for a working kernel. The pin is
+  the `docs/dev-plan.md` D9 selection.
 
 The image is sufficient for the current Rust quality gate, project-authored
-assembly guests, freestanding C/C++ guests, and Spike-based differential work.
-The cross toolchain does not include a target libc, libstdc++, or startup
-runtime: a guest using those facilities must supply a reviewed runtime and
-linker setup. Native host-side C++ has its normal standard library, which is
-needed by tools and future C++ test harnesses. SystemC is not part of the
-baseline image because the current crate has no native SystemC build dependency.
-Add it through a reviewed image change when the SystemC adapter becomes an
-active integration target.
+assembly guests, freestanding C/C++ guests, Spike-based differential work, and
+the pinned SystemC smoke. The cross toolchain does not include a target libc,
+libstdc++, or startup runtime: a guest using those facilities must supply a
+reviewed runtime and linker setup. Native host-side C++ has its normal standard
+library, which is needed by tools and the SystemC host. SystemC is a build
+prerequisite only for `scripts/test_systemc_smoke.sh`; `cargo build` and
+`cargo test --all-features` need neither a C++ toolchain nor SystemC.
 
 ## Build
 
@@ -50,6 +56,7 @@ without editing the file:
 docker build \
   --build-arg RUST_VERSION=1.97.1 \
   --build-arg SPIKE_VERSION=5d99611782ef8dd81b65b842369bd351a9d4702a \
+  --build-arg SYSTEMC_VERSION=70b0fc8e4a74acc677b0fc73cea08f940c2115d5 \
   --build-arg DEV_UID="$(id -u)" \
   --build-arg DEV_GID="$(id -g)" \
   --tag ruscv-sim-dev .
@@ -161,9 +168,26 @@ docker run --rm --init \
     ./scripts/run_elf_tests.sh'
 ```
 
+Build and run the pinned SystemC smoke. It builds the C ABI static library and
+the SystemC host against `/opt/systemc`, then compares `atomic_tohost_exit` and
+`fd_fma` with the native CLI by exit code and commit log, and runs the
+early-`sc_stop` control that must not pass:
+
+```bash
+docker run --rm --init \
+  --volume "$PWD:/workspace" \
+  --workdir /workspace \
+  ruscv-sim-dev \
+  bash -c 'export CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/systemc-cargo; \
+    ./scripts/test_systemc_smoke.sh'
+```
+
+The script fails rather than skips when CMake, a C++17 compiler, the SystemC
+installation or the RISC-V cross toolchain is missing.
+
 ## Version policy
 
-- Rust, Spike, and Cargo-installed tools have explicit defaults in the
+- Rust, Spike, SystemC, and Cargo-installed tools have explicit defaults in the
   Dockerfile.
 - Debian packages are resolved from the selected Debian release when the image
   is rebuilt. Published project images must additionally be identified by an
