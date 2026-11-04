@@ -278,9 +278,10 @@ impl Femtoseconds {
 /// The Machine's declared Platform tick period (dev-plan D7, ADR-0004 §5.2).
 ///
 /// One Platform tick is one virtual-time unit and one `mtime` unit.  The
-/// declared default is 1 ns (`1_000_000` fs).  Unit U3 fixes that default for
-/// the Machine configuration; the C-ABI grant (unit U5) carries the period
-/// explicitly.
+/// declared default is 1 ns (`1_000_000` fs); [`crate::machine::MachineConfig`]
+/// carries the declaration so a target's annotated delays and its declared
+/// per-transaction maximum are converted under the same period, and the C ABI
+/// takes it from its create call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TickPeriod(Femtoseconds);
 

@@ -1,0 +1,14 @@
+diff --git a/src/capi/host.rs b/src/capi/host.rs
+index 61a15e3..613c3c4 100644
+--- a/src/capi/host.rs
++++ b/src/capi/host.rs
+@@ -707,7 +707,8 @@ impl Session {
+             .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the caller clock overflows"))?;
+         finalize_horizon(&mut facts, caller_end, max_end_fs, false);
+         self.facts = facts;
+-        self.state = RunState::Failed;
++        // MUTATION: a terminal failure is reported as a passing guest exit.
++        self.state = RunState::Exited;
+         self.exit_code = 0;
+         self.caller_committed_fs = Some(caller_end);
+         self.unknown = unknown;

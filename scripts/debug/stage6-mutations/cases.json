@@ -1102,5 +1102,53 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "tlm-u5-callback-reentry-accepted",
+    "source": "src/capi/mod.rs",
+    "patch": "tlm-u5-callback-reentry-accepted.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::a_callback_call_into_another_handle_is_rejected_as_reentry",
+        "failure": [
+          "a callback re-entered the C ABI through another handle"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "tlm-u5-transport-status-passes",
+    "source": "src/capi/host.rs",
+    "patch": "tlm-u5-transport-status-passes.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::a_host_or_protocol_transport_status_is_not_a_passing_result",
+        "failure": [
+          "a transport status became a terminal guest exit"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "tlm-u5-boundary-passes",
+    "source": "src/capi/host.rs",
+    "patch": "tlm-u5-boundary-passes.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::a_grant_boundary_is_not_a_terminal_result",
+        "failure": [
+          "a host stop before a terminal result was reported as a passing result"
+        ]
+      }
+    ]
   }
 ]

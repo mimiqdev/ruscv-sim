@@ -76,6 +76,12 @@ jobs:
       - name: Run tests
         run: cargo test --all-features
 
+      - name: Run the C ABI compile-and-link smoke
+        # Builds the static library with `--features capi` and links a plain-C
+        # host against it.  gcc is present on the runner; the script fails
+        # rather than skipping when it is missing.
+        run: ./scripts/test_capi_smoke.sh
+
       - name: Run debug mutation controls
         run: python3 scripts/verify_stage6_mutations.py --source-ref HEAD
 

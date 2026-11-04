@@ -14,7 +14,7 @@ pub(crate) use owned::OwnedMachine;
 #[cfg(test)]
 pub(crate) use owned::SignalOperation;
 
-use crate::blocking::Transport;
+use crate::blocking::{TickPeriod, Transport};
 use crate::core::observation::{HartTransition, ObservationSink};
 use crate::core::{CoreState, RiscvCore, StepOutcome};
 use crate::elf::LoadImage;
@@ -152,6 +152,14 @@ pub struct MachineConfig {
     /// default.  [`Transport::Tlm`] shares a caller-supplied blocking target and
     /// requires [`PlatformKind::Native`].
     pub transport: Transport,
+    /// The declared Platform tick period (dev-plan D7).
+    ///
+    /// One tick is one virtual-time unit and one `mtime` unit.  A blocking
+    /// target's annotated delays and its declared per-transaction maximum are
+    /// converted under this period (ADR-0004 §5.2), so a host that declares a
+    /// different unit gets the same conversion the response uses.  The default
+    /// is 1 ns; the C ABI (unit U5) takes it from its create call.
+    pub tick_period: TickPeriod,
     pub verbose: bool,
     /// Native guest/bus address; flat storage offset used only without ELF tohost.
     pub tohost_override: Option<u64>,
@@ -165,6 +173,7 @@ impl MachineConfig {
             // Machine composition default is `rv64imafdc` (contract D2).
             isa: IsaProfile::default(),
             transport: Transport::Native,
+            tick_period: TickPeriod::DEFAULT,
             verbose: false,
             tohost_override: None,
             uart_output: None,
@@ -294,11 +303,19 @@ pub struct MachineTurn {
     events: Vec<PlatformEvent>,
     tohost: Option<TohostSample>,
     boundary: BoundaryFacts,
+    /// A wake turn was refused because its conservative bound did not fit the
+    /// configured virtual deadline (ADR-0004 §7.2).
+    wake_blocked: bool,
     _receipt: Lease,
 }
 impl MachineTurn {
     pub fn boundary(&self) -> &BoundaryFacts {
         &self.boundary
+    }
+    /// True when an idle jump settled before the deadline but the wake turn's
+    /// conservative completion bound did not fit it, so no turn started.
+    pub(crate) const fn wake_blocked(&self) -> bool {
+        self.wake_blocked
     }
     /// Attach downstream reporting context and the lifecycle facts now visible
     /// after delivery, without changing the immutable completed Hart record.
@@ -409,6 +426,7 @@ impl Installed {
         self.platform.begin_transport_turn();
         let mut idle_stop = (false, false);
         let mut jumped = false;
+        let mut wake_blocked = false;
         let mut hart = loop {
             let mtime = self.platform.read_mtime()?;
             self.core.state_mut().csr.set_time(mtime);
@@ -434,7 +452,26 @@ impl Installed {
                     idle_stop = (false, true);
                     break hart;
                 }
-                WaitSettlement::Jumped | WaitSettlement::NotWaiting => jumped = true,
+                WaitSettlement::Jumped | WaitSettlement::NotWaiting => {
+                    // A settlement at or after the inclusive deadline admits the
+                    // event due there but starts no normal turn (ADR-0004 §7.2),
+                    // so the exchange returns `DeadlineReached` instead of a
+                    // wake turn the granted horizon did not reserve.
+                    if self.reached_virtual_deadline() {
+                        idle_stop = (false, true);
+                        break hart;
+                    }
+                    // The idle jump consumed slack the exchange was granted for
+                    // the waiting turn only.  A wake turn may begin only when its
+                    // own conservative completion bound still fits the deadline
+                    // (ADR-0004 §7.2); otherwise the exchange ends here and the
+                    // host re-evaluates the bound before any further work.
+                    if !self.wake_turn_fits() {
+                        wake_blocked = true;
+                        break hart;
+                    }
+                    jumped = true;
+                }
             }
         };
         let waiting = matches!(hart.outcome, StepOutcome::Waiting);
@@ -520,6 +557,7 @@ impl Installed {
                 transport_delay_femtoseconds: self.platform.transport_delay_femtoseconds(),
                 ..BoundaryFacts::default()
             },
+            wake_blocked,
             _receipt: receipt,
         })
     }
@@ -533,6 +571,44 @@ impl Installed {
             .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
         self.core.state_mut().csr.set_seip_external(lines.seip);
         Ok(())
+    }
+
+    /// True when one more turn's conservative completion bound fits the
+    /// configured virtual deadline.
+    ///
+    /// The reserve is one completed turn plus the selected RAM target's declared
+    /// per-transaction maximum for the turn's worst-case transaction count.  A
+    /// Machine without a virtual deadline has no such bound to honor.
+    fn wake_turn_fits(&self) -> bool {
+        let Some(deadline) = self.virtual_deadline else {
+            return true;
+        };
+        let Some(reserve) = self
+            .platform
+            .turn_completion_bound_ticks()
+            .unwrap_or(0)
+            .checked_add(1)
+        else {
+            return false;
+        };
+        self.platform.read_mtime().is_ok_and(|mtime| {
+            mtime
+                .checked_add(reserve)
+                .is_some_and(|end| end <= deadline)
+        })
+    }
+
+    /// True when the cursor has reached the configured virtual deadline.
+    ///
+    /// The deadline is an inclusive completion bound: an exchange may settle on
+    /// it and admit the event due there, but it starts no normal turn.
+    fn reached_virtual_deadline(&self) -> bool {
+        let Some(deadline) = self.virtual_deadline else {
+            return false;
+        };
+        self.platform
+            .read_mtime()
+            .is_ok_and(|mtime| mtime >= deadline)
     }
 
     /// Jump `mtime` to the next wake, or stop. Does not retire an instruction.

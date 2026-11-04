@@ -3,6 +3,8 @@
 //! This crate provides a RISC-V instruction set simulator with SystemC TLM2.0 interface support.
 
 pub mod blocking;
+#[cfg(feature = "capi")]
+pub mod capi;
 pub mod codegen;
 pub mod core;
 pub mod csr;

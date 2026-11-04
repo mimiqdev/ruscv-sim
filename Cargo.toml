@@ -42,6 +42,11 @@ tempfile = "3"
 [features]
 default = []
 tlm = []  # SystemC TLM2.0 接口支持
+# Blocking-transport C ABI facade (dev-plan D8).  Pure Rust; the hand-written
+# header lives in include/ruscv_sim.h and the static library is built with
+# `cargo rustc --lib --features capi --crate-type staticlib`, so no crate type
+# and no C/C++ toolchain is added to a default or --all-features build.
+capi = []
 
 # P0 test transport only: captures native library UART stdout in a child.
 # Not the P1 performance driver or a new simulator frontend.

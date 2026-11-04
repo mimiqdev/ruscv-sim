@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM U5: C ABI facade（issue #177）**
+  - 新增 `capi` cargo feature、`src/capi` 与手写头文件 `include/ruscv_sim.h`；crate type 与默认/
+    `--all-features` 构建不变，静态库用 `cargo rustc --lib --features capi --crate-type staticlib`
+    构建，`cargo build/test --all-features` 不需要 C++ 工具链
+  - 不透明句柄：create（ISA profile、tick 周期、可选 C RAM target）、load ELF、set commit log、
+    run grant、read boundary facts、read result、reset、destroy。grant 携带权威起点、最大结束时间与
+    turn 预算，返回本次消费的建模时间（完成的 turn、idle 跳进与 transport 延迟）、边界事实以及是否
+    触及 grant 边界；早于 Machine 已提交时间或早于调用方自己已提交时间的起点按 ADR-0004 §4.4 拒绝
+    （内核只按 grant 返回量提交全局时间，因此其时钟同样不能回退），reset 重启纪元
+  - 声明的 tick 周期进入组合：`MachineConfig` 新增 `tick_period` 字段（默认 1 ns），Platform 用它
+    构造可选择的 RAM 槽位，因此 target 的标注延迟与声明的单事务最大值按同一周期换算，`mtime` 的 tick
+    与返回的消费时间一致；C ABI 由 create 声明该周期
+  - 轮询或清除 RAM 驻留 `tohost` 时的 debug transport 失败按 host failure 分类（保留已完成的
+    transition 与已消费时间），不再被当作静默缺失或被接受为 guest 退出
+  - 回调再入按线程判定：回调运行期间任何 handle 的 C ABI 调用（含 create/destroy）都以
+    `RUSCV_ERROR_REENTRANT` 拒绝，而不只是同一个 handle；超出 64 字节的 LR 快照不再被截断接受，
+    而是留给适配器判为协议失败
+  - 终止的 guest 退出不再丢弃同时成立的边界事实（最后一个 turn 预算槽与含端截止时间），
+    分数 tick 的剩余视界报告为 `deadline_blocked` 与真实飞秒剩余 slack
+  - `ruscv_machine_reset` 对普通（含 failed）运行使用组合自身的 fresh reset（quiesce、清零、
+    重新安装），只有未知完成才按 D6 在 target 确认 transport reset 后构建新的 transport 域；
+    失败的组合永不恢复、重连或强制 drain
+  - grant 级 deadline 阻断（ADR-0004 §7.2）：启动任何 turn 前先形成该 grant step 的保守完成上界。
+    一个 step 可能完成等待中的 turn 及其唤醒 turn，因此上界为两个完成 turn tick 加上各自最坏情况
+    事务数乘以 target 声明的单事务最大延迟；放不下的 step 不启动，并以 `deadline_blocked`、剩余
+    slack 与被拒绝的上界报告
+  - 含端截止时间处不启动普通 turn：等待结算（idle jump）落在截止时间上时，同一 exchange 在该
+    时刻停止并报告 `DeadlineReached`，不再执行唤醒 turn；因此定时器恰好到期的 grant 不会越过
+    其视界（ADR-0004 §7.2）
+  - C RAM target 是 `b_transport`、`transport_dbg`、transport reset 回调表加声明的单事务最大延迟与
+    user 数据；payload 的原始字节缓冲由 Rust 拥有且只在一次回调内有效，原子扩展的请求与完成（RMW、
+    LR 快照、SC 结果）同样跨 ABI 编码为数据
+  - 只在创建线程接受调用；回调只在 ruscv-sim 调用内同步执行，从回调再入 C ABI 返回
+    `RUSCV_ERROR_REENTRANT`。Rust panic 在边界被捕获并毒化句柄（`RUSCV_ERROR_PANIC`，之后
+    `RUSCV_ERROR_POISONED`），错误一律为整数状态码。TLM 状态、回调返回值或 host stop 都不会
+    变成 ruscv-sim 的终态结果；未知完成毒化 transport，只有 target 确认 transport reset 后的
+    reset 才重新安装镜像并继续
+  - `Quality and tests` 作业新增普通 C 编译并链接的 smoke（`scripts/test_capi_smoke.sh`），覆盖
+    生命周期、profile 选择、commit log、grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic
+    毒化、不通过的 TLM 状态与未知完成后的 reset；缺少 C 编译器时脚本直接失败，不算作跳过
+  - 负控制：回调再入 C ABI 被接受；TLM 状态（终态结果之前）被报告为通过的 ruscv-sim 结果
+
 - **TLM U4: guest-suite parity（issue #176）**
   - `scripts/run_elf_tests.sh` 对每个 guest 以声明的 profile 和相同 cycle 上限再运行一次 `--transport tlm`，并用与 native 相同的成功分类；仅在 TLM 路径失败或超时的 guest 是真实失败，不是 skip
   - parity set（`hello`、`s5_timer`、`s5_external`、`atomic_tohost_exit`、`fd_fma`）在两次 pass 都写 `--log-commits`，由 `cmp` 逐字节比较；日志缺失/为空或内容不同都使 suite 失败，汇总行 `TLM parity logs compared: 5/5` 是验收证据的一部分

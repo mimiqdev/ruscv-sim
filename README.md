@@ -113,6 +113,36 @@ Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在
 完整客户退出码仍显示在 `Exit Code` 行。`scripts/run_elf_tests.sh` 仅在进程状态为 0
 且输出中唯一的状态行为 `Status:     SUCCESS` 时判定通过。
 
+## C ABI（blocking TLM U5）
+
+`capi` cargo feature 提供 blocking-transport 宿主的窄 C ABI 与手写头文件
+`include/ruscv_sim.h`。它不改变 crate type，也不给默认或 `--all-features` 构建引入
+C/C++ 工具链；静态库显式构建：
+
+```bash
+cargo rustc --lib --features capi --crate-type staticlib
+cc -std=c11 -Iinclude host.c target/debug/libruscv_sim.a -lpthread -ldl -lm
+```
+
+外部内核（例如 SystemC）拥有全局时间与外层线程；句柄只按预算授予 turn：
+`ruscv_machine_create`（ISA profile、tick 周期、可选的 C RAM target 回调表）→
+`ruscv_machine_load_elf` → `ruscv_machine_set_commit_log` →
+`ruscv_machine_run_grant`（权威起点、最大结束时间、turn 预算）→
+`ruscv_machine_boundary`／`ruscv_machine_result` → `ruscv_machine_reset` →
+`ruscv_machine_destroy`。grant 返回本次消费的建模时间（完成的 turn、idle 跳进与 transport
+延迟），内核只按该量提交全局时间；早于 Machine 已提交时间的起点是 adapter 失败，reset 重启纪元。
+截止时间前先形成该 turn 的保守完成上界，放不下的 turn 不启动，并以 `deadline_blocked`、
+剩余 slack 与被拒绝的上界报告（ADR-0004 §7.2）。
+
+回调表包含 `b_transport`、`transport_dbg`、transport reset 与声明的单事务最大延迟。句柄只接受创建线程
+的调用，回调只在 ruscv-sim 调用内同步执行，从回调再入 C ABI 以 `RUSCV_ERROR_REENTRANT` 拒绝；
+payload 缓冲区由 Rust 拥有且只在一次回调内有效。Rust panic 在边界被捕获并毒化句柄
+（`RUSCV_ERROR_PANIC`，之后为 `RUSCV_ERROR_POISONED`），错误一律是整数状态码；TLM 状态、
+回调返回值或 host stop 都不会变成 ruscv-sim 的终态结果。未知完成毒化 transport，只有 target
+确认 transport reset 后的 `ruscv_machine_reset` 才能重新安装镜像并继续。
+`scripts/test_capi_smoke.sh` 用普通 C 编译并链接静态库，覆盖生命周期、profile 选择、commit log、
+grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒化、不通过的 TLM 状态以及未知完成后的 reset。
+
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 
 `machine::Machine` 直接拥有一个 Hart 与现有 native 或 flat Platform 的组合。
