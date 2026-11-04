@@ -1251,7 +1251,7 @@ pub fn dump_signature(
 /// True for a host-view failure that must be reported, as opposed to an
 /// ordinary unmapped/misaligned address that the run loop already treats as a
 /// later observation (dev-plan D6: a failed debug transport is a host failure).
-fn is_host_view_failure(error: &MemoryError) -> bool {
+pub(crate) fn is_host_view_failure(error: &MemoryError) -> bool {
     matches!(
         error,
         MemoryError::Backend(_) | MemoryError::Protocol(_) | MemoryError::Unknown(_)
@@ -1360,7 +1360,7 @@ use std::path::Path;
 /// forms, diagnostics and result construction. This owner alone traverses that
 /// list and selects the stop reason after accounting for the step.
 #[derive(Debug)]
-struct RunControl {
+pub(crate) struct RunControl {
     /// Completed Hart turns (retirements and synchronous trap entries).
     cycles: u64,
     /// Started execution slots, including a slot that ended in a host failure.
@@ -1382,7 +1382,7 @@ fn format_failure(failure: SimulatorFailure) -> String {
 
 impl RunControl {
     /// Start a run with a fixed instruction budget.
-    fn new(max_cycles: u64) -> Self {
+    pub(crate) fn new(max_cycles: u64) -> Self {
         Self {
             cycles: 0,
             started_slots: 0,
@@ -1391,26 +1391,26 @@ impl RunControl {
     }
 
     /// Whether another execution slot may start inside the budget.
-    fn may_execute(&self) -> bool {
+    pub(crate) fn may_execute(&self) -> bool {
         self.started_slots < self.max_cycles
     }
 
     /// Reserve one started slot.  A slot is consumed before the Hart is
     /// called, so a host/backend failure in the last slot cannot be retried.
-    fn start_slot(&mut self) {
+    pub(crate) fn start_slot(&mut self) {
         debug_assert!(self.may_execute());
         self.started_slots += 1;
     }
 
     /// A halted poll, or a WFI wait that is parking for a debugger, did not
     /// complete a turn. D12: that time does not consume the turn budget.
-    fn refund_uncompleted_slot(&mut self) {
+    pub(crate) fn refund_uncompleted_slot(&mut self) {
         debug_assert!(self.started_slots > 0);
         self.started_slots -= 1;
     }
 
     /// Record one completed Hart turn.
-    fn complete_turn(&mut self) {
+    pub(crate) fn complete_turn(&mut self) {
         self.cycles += 1;
     }
 
@@ -1481,7 +1481,7 @@ impl RunControl {
     }
 
     /// Instructions retired so far.
-    fn cycles(&self) -> u64 {
+    pub(crate) fn cycles(&self) -> u64 {
         self.cycles
     }
 
@@ -1496,7 +1496,7 @@ impl RunControl {
     /// so a caller cannot clear the signal first and report a zeroed code. A value
     /// that carries no exit command decodes to `None` and leaves the signal
     /// untouched for the next observation.
-    fn take_ram_exit(
+    pub(crate) fn take_ram_exit(
         observed: u64,
         clear: impl FnOnce() -> Result<(), MemoryError>,
     ) -> (Option<u32>, Option<MemoryError>) {

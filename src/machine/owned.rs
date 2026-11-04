@@ -107,7 +107,8 @@ impl OwnedMachine {
     pub(crate) fn dpc(&self) -> u64 {
         self.domain().core.dpc()
     }
-    #[cfg(test)]
+    /// Virtual-time deadline for an idle jump (dev-plan D8 grant horizon).
+    #[cfg(any(test, feature = "capi"))]
     pub(crate) fn set_virtual_deadline(&mut self, deadline: Option<u64>) {
         self.domain_mut().virtual_deadline = deadline;
     }
@@ -944,15 +945,25 @@ impl OwnedMachine {
     }
 
     /// One guest turn's conservative completion bound in Platform ticks.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "capi"))]
     pub(crate) fn turn_completion_bound_ticks(&self) -> Option<u64> {
         self.domain().platform.turn_completion_bound_ticks()
     }
 
     /// Current Platform `mtime` of the installed domain.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "capi"))]
     pub(crate) fn platform_mtime(&self) -> Result<u64, MachineError> {
         self.domain().platform.read_mtime()
+    }
+
+    /// The guest/bus address of the selected RAM exit signal.
+    ///
+    /// The C-ABI grant host polls and clears `tohost` through this address
+    /// exactly like the native Runner (dev-plan D6), so a fail-closed
+    /// observation never guesses the location.
+    #[cfg(feature = "capi")]
+    pub(crate) fn selected_tohost(&self) -> u64 {
+        self.domain().platform.selected_tohost
     }
 
     /// Replace Platform `mtime` directly, as a guest CLINT write would.

@@ -145,7 +145,7 @@ impl RamSlot {
     }
 
     /// One guest turn's conservative completion bound in Platform ticks.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "capi"))]
     pub(crate) fn turn_completion_bound_ticks(&self) -> Option<u64> {
         match &self.inner.kind {
             RamKind::Native(_) => None,

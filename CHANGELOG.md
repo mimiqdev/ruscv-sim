@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM U5: C ABI facade（issue #177）**
+  - 新增 `capi` cargo feature、`src/capi` 与手写头文件 `include/ruscv_sim.h`；crate type 与默认/
+    `--all-features` 构建不变，静态库用 `cargo rustc --lib --features capi --crate-type staticlib`
+    构建，`cargo build/test --all-features` 不需要 C++ 工具链
+  - 不透明句柄：create（ISA profile、tick 周期、可选 C RAM target）、load ELF、set commit log、
+    run grant、read boundary facts、read result、reset、destroy。grant 携带权威起点、最大结束时间与
+    turn 预算，返回本次消费的建模时间（完成的 turn、idle 跳进与 transport 延迟）、边界事实以及是否
+    触及 grant 边界；早于 Machine 已提交时间的起点按 ADR-0004 §4.4 拒绝，reset 重启纪元
+  - grant 级 deadline 阻断（ADR-0004 §7.2）：启动任何 turn 前先形成其保守完成上界（一个完成 turn
+    tick 加上该 turn 最坏情况事务数乘以 target 声明的单事务最大延迟），放不下的 turn 不启动，并以
+    `deadline_blocked`、剩余 slack 与被拒绝的上界报告；到达含端截止时间时不再启动普通 turn
+  - C RAM target 是 `b_transport`、`transport_dbg`、transport reset 回调表加声明的单事务最大延迟与
+    user 数据；payload 的原始字节缓冲由 Rust 拥有且只在一次回调内有效，原子扩展的请求与完成（RMW、
+    LR 快照、SC 结果）同样跨 ABI 编码为数据
+  - 只在创建线程接受调用；回调只在 ruscv-sim 调用内同步执行，从回调再入 C ABI 返回
+    `RUSCV_ERROR_REENTRANT`。Rust panic 在边界被捕获并毒化句柄（`RUSCV_ERROR_PANIC`，之后
+    `RUSCV_ERROR_POISONED`），错误一律为整数状态码。TLM 状态、回调返回值或 host stop 都不会
+    变成 ruscv-sim 的终态结果；未知完成毒化 transport，只有 target 确认 transport reset 后的
+    reset 才重新安装镜像并继续
+  - `Quality and tests` 作业新增普通 C 编译并链接的 smoke（`scripts/test_capi_smoke.sh`），覆盖
+    生命周期、profile 选择、commit log、grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic
+    毒化、不通过的 TLM 状态与未知完成后的 reset；缺少 C 编译器时脚本直接失败，不算作跳过
+  - 负控制：回调再入 C ABI 被接受；TLM 状态（终态结果之前）被报告为通过的 ruscv-sim 结果
+
 - **TLM U4: guest-suite parity（issue #176）**
   - `scripts/run_elf_tests.sh` 对每个 guest 以声明的 profile 和相同 cycle 上限再运行一次 `--transport tlm`，并用与 native 相同的成功分类；仅在 TLM 路径失败或超时的 guest 是真实失败，不是 skip
   - parity set（`hello`、`s5_timer`、`s5_external`、`atomic_tohost_exit`、`fd_fma`）在两次 pass 都写 `--log-commits`，由 `cmp` 逐字节比较；日志缺失/为空或内容不同都使 suite 失败，汇总行 `TLM parity logs compared: 5/5` 是验收证据的一部分
