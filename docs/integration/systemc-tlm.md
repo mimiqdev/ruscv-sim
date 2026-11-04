@@ -2,19 +2,22 @@
 
 **Status:** Implemented for the selected blocking-transport mapping
 
-**Authority:** Architectural constraint under ADR-0002, ADR-0003 and ADR-0004 and
-their 2026-11-04 blocking-transport amendments. [`docs/dev-plan.md`](../dev-plan.md)
-governs where this page disagrees with it.
+**Authority:** Normative for the selected blocking-transport mapping, FFI
+ownership and threads, error mapping, the time unit, re-entrancy and stop
+behavior, and the build and version pins (dev-plan D12). Bounded by ADR-0002,
+ADR-0003 and ADR-0004 with their 2026-11-04 blocking-transport amendments, and
+by [`docs/dev-plan.md`](../dev-plan.md), which govern where this page disagrees
+with them.
 
 **Last reviewed:** 2026-11-04
 
 The repository implements one blocking-transport integration: a C ABI facade
 ([`src/capi`](../../src/capi), [`include/ruscv_sim.h`](../../include/ruscv_sim.h))
 and a pinned SystemC host ([`integration/systemc`](../../integration/systemc)).
-This page records that mapping, its ownership and thread rules, its error and
-time mapping, its stop behavior, and its build pins. DMI, non-blocking
-transport, temporal decoupling and TLM-modeled devices stay out of scope, as the
-contract's §5 records.
+This page is the normative reference for that mapping, its ownership and thread
+rules, its error and time mapping, its stop behavior, and its build pins. DMI,
+non-blocking transport, temporal decoupling and TLM-modeled devices stay out of
+scope, as the contract's §5 records.
 
 ## Selected mapping
 

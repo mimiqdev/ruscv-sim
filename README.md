@@ -99,6 +99,13 @@ blocking 事务，长度等于访问宽度、原始字节按物理地址递增�
 完成分类与未知完成后的 quarantine 由适配器统一执行。未知完成会毒化 transport：在 target 确认 transport reset
 之前不再发起访问。`load_and_run_file_with_config` 是公共入口，用给定的 `MachineConfig` 运行 ELF。
 
+`MachineConfig` 新增公开 `transport` 字段（`MachineConfig::new` 选择 native），target 以共享 `Arc`
+持有，因此 `Clone` 仍然成立；新增字段破坏了 `MachineConfig` 的结构体字面量构造。同一批公开类型变更还包括
+声明 tick 周期的 `tick_period`（默认 1 ns，C ABI 的 create 带入该周期）与 `BoundaryFacts` 的
+`transport_delay_femtoseconds`（native 与零延迟 target 为 0）；`Flat` 与 `tlm` 的组合是配置错误
+（`MachineError::UnsupportedTransport`）。除上述新增字段与错误分支外没有公开签名变化，
+`RiscVSimulator` 与 `load_and_run*` facade 仍走 native 路径。
+
 Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在 Runner 中比较寄存器快照。
 文本格式保留原有的 GPR 展示与省略规则；FP profile 下另按 pinned Spike 的 `f`/`c<csr>_<name>`
 段打印 FPR 写入与 `fflags`/`frm` 写入（`f<rd>`、`c1_fflags`、`c2_frm`），仍不是完整的内存或其它 CSR 效果导出。
@@ -142,6 +149,27 @@ payload 缓冲区由 Rust 拥有且只在一次回调内有效。Rust panic 在�
 确认 transport reset 后的 `ruscv_machine_reset` 才能重新安装镜像并继续。
 `scripts/test_capi_smoke.sh` 用普通 C 编译并链接静态库，覆盖生命周期、profile 选择、commit log、
 grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒化、不通过的 TLM 状态以及未知完成后的 reset。
+
+## SystemC 宿主（blocking TLM U6）
+
+`integration/systemc/` 是 pinned SystemC 宿主：Accellera SystemC 3.0.2（commit
+`70b0fc8e4a74acc677b0fc73cea08f940c2115d5`，`docs/dev-plan.md` D9 的选择）以 C++17 构建为静态库，
+连同 TLM-2.0 头文件安装在开发镜像的 `/opt/systemc`（`SYSTEMC_HOME`）；镜像构建校验检出的 commit
+与 `SYSTEMC_3_0_2` 版本宏，并编译运行一个真实 SystemC/TLM 程序。该宿主用 `simple_target_socket`
+提供零延迟 blocking RAM target（`b_transport`、`transport_dbg`、transport reset 与原子扩展），
+并由一个 `SC_THREAD` 通过 C ABI 以有界 grant 驱动 Machine：每次 grant 从当前 `sc_time_stamp()`
+起算，内核只按 grant 返回的消费量 `wait()` 提交全局时间，`sc_stop` 只在 ruscv-sim 报告终止结果后
+调用。`--max-turns`（默认 100000）把每个 grant 的预算夹到剩余 turn 额度，是公共 CLI `--max-cycles`
+的对应物，永不终止的 guest 以诊断失败而不是让 kernel 空转。
+
+`scripts/test_systemc_smoke.sh` 在 CI 作业 `SystemC transport smoke` 内运行：`atomic_tohost_exit`
+（`rv64imafdc`）与 `fd_fma`（`rv64imafd`）经该内核与 blocking RAM target 运行后的退出码和
+`--log-commits` 必须与 native 公共 CLI 完全一致；早停变体（`--stop-after-grants 1`）必须在终止结果前
+停下且不得通过。缺少工具链、缺少 SystemC 或任一比较失败都是失败，不是跳过。`cargo build`／
+`cargo test --all-features` 不需要 C++ 工具链或 SystemC。Linux x86-64 only。
+
+选定的 blocking 映射、FFI 所有权与线程、错误映射、时间单位、再入与停止行为、构建与版本 pin 的规范说明见
+[SystemC/TLM 边界](docs/integration/systemc-tlm.md)；DMI 与 quantum／同步策略仍为该页的开放项。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 
@@ -273,7 +301,11 @@ ruscv-sim/
 │   ├── memory/          # 平坦内存
 │   ├── mmu/             # Sv39 / TLB
 │   ├── tlm/             # TLM 风格总线抽象
+│   ├── blocking/        # blocking transport 适配词表与 RAM 路由
+│   ├── capi/            # C ABI facade（`capi` feature）
 │   └── peripherals/     # CLINT、PLIC、UART 16550
+├── include/             # 手写 C 头文件（ruscv_sim.h）
+├── integration/systemc/ # pinned SystemC 宿主与 blocking RAM target
 ├── tests/               # Rust 集成测试与自建裸机程序
 ├── benches/             # 基准
 ├── docs/                # 设计与开发文档
