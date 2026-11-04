@@ -25,9 +25,15 @@
 //!
 //! A target that leaves [`BlockingResponseStatus::Incomplete`], or that changes the
 //! payload's address, command or length, has not completed the transaction;
-//! an outcome-unknown flag, a target panic or a non-zero annotated delay are
-//! likewise never silently accepted.  The adapter enforces every rule, so a
-//! target cannot turn a simulator-side failure into a guest trap.
+//! an outcome-unknown flag or a target panic is likewise never silently
+//! accepted.  The adapter enforces every rule, so a target cannot turn a
+//! simulator-side failure into a guest trap.
+//!
+//! Annotated delays are converted under the declared [`TickPeriod`] (default
+//! 1 ns) per ADR-0004 §5.2: exact when the delay is a whole number of ticks,
+//! otherwise rounded up, with zero staying zero.  Overflow and a malformed
+//! annotation are adapter failures, and a response above the target's
+//! declared per-transaction maximum is a §5.3 overshoot failure.
 
 use crate::physical::PhysicalAccessKind;
 use std::fmt;
@@ -202,9 +208,10 @@ impl BlockingExtension {
 
 /// Exact femtosecond delay with checked arithmetic (dev-plan D3/D7).
 ///
-/// The adapter converts an annotated response delay to Platform ticks only in
-/// unit U3.  Until then a non-zero annotation is an adapter failure, never a
-/// silent zero.
+/// The adapter converts an annotated response delay to Platform ticks under a
+/// declared [`TickPeriod`] (ADR-0004 §5.2).  A delay that is not a whole
+/// number of ticks is rounded up, so a positive sub-tick delay stays visible;
+/// zero remains zero.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Femtoseconds(u64);
 
@@ -246,6 +253,137 @@ impl Femtoseconds {
             Some(value) => Some(Self(value)),
             None => None,
         }
+    }
+
+    /// Converts this delay to Platform ticks under the declared `period`
+    /// (ADR-0004 §5.2).
+    ///
+    /// Exact conversion is used when the delay is a whole number of ticks;
+    /// otherwise a positive delay is rounded up and zero stays zero.  A
+    /// malformed period or an overflowing conversion is an adapter failure,
+    /// never a negative or silently dropped clock update.
+    pub fn to_platform_ticks(self, period: TickPeriod) -> Result<u64, DelayConversionError> {
+        let tick = period.femtoseconds().as_u64();
+        if tick == 0 {
+            return Err(DelayConversionError::Malformed);
+        }
+        let quotient = self.0 / tick;
+        let remainder = self.0 % tick;
+        quotient
+            .checked_add(u64::from(remainder != 0))
+            .ok_or(DelayConversionError::Overflow)
+    }
+}
+
+/// The Machine's declared Platform tick period (dev-plan D7, ADR-0004 §5.2).
+///
+/// One Platform tick is one virtual-time unit and one `mtime` unit.  The
+/// declared default is 1 ns (`1_000_000` fs).  Unit U3 fixes that default for
+/// the Machine configuration; the C-ABI grant (unit U5) carries the period
+/// explicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TickPeriod(Femtoseconds);
+
+impl TickPeriod {
+    /// The declared default: 1 ns per Platform tick.
+    pub const DEFAULT: Self = Self(Femtoseconds::new(1_000_000));
+
+    /// Creates a declared tick period from an exact femtosecond value.
+    pub const fn new(femtoseconds: Femtoseconds) -> Self {
+        Self(femtoseconds)
+    }
+
+    /// The tick period in exact femtoseconds.
+    pub const fn femtoseconds(self) -> Femtoseconds {
+        self.0
+    }
+
+    /// True for a period that can represent a positive delay.
+    pub const fn is_valid(self) -> bool {
+        self.0.as_u64() != 0
+    }
+}
+
+impl Default for TickPeriod {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// A delay that cannot enter the Platform cursor (ADR-0004 §5.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelayConversionError {
+    /// The declared tick period cannot represent a positive delay.
+    Malformed,
+    /// The converted value does not fit the Platform tick count.
+    Overflow,
+}
+
+impl fmt::Display for DelayConversionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Malformed => formatter.write_str("the declared tick period is zero"),
+            Self::Overflow => formatter.write_str("the converted delay overflows the tick count"),
+        }
+    }
+}
+
+impl std::error::Error for DelayConversionError {}
+
+/// Worst-case guest RAM transactions in one guest Hart turn (dev-plan D7).
+///
+/// A complete instruction fetch occupies up to two parcels, and each parcel is
+/// translated separately through three Sv39 levels.  A walk that must set the
+/// A/D bits reads each level's PTE and performs the walk-private LR/SC pair
+/// on the leaf, then issues its own access: `3 + 2 + 1 = 6` transactions per
+/// parcel, or 12 for a straddling instruction.  One data or atomic access
+/// adds the same six.  The conservative completion bound therefore uses 18
+/// transactions.
+///
+/// A `b_transport` response is bounded separately by the target's declared
+/// per-transaction maximum, so this count only sizes the turn-level bound.
+pub const MAX_GUEST_TRANSACTIONS_PER_TURN: u64 = 18;
+
+/// One guest Hart turn's conservative completion bound (dev-plan D7).
+///
+/// ADR-0004 §7.2 adds the target's declared per-transaction maximum delay once
+/// per worst-case transaction.  The maximum is converted with the same
+/// rounding rule as a response, so a sub-tick declared maximum still reserves
+/// one tick per transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnCompletionBound {
+    per_transaction_ticks: u64,
+    transactions: u64,
+    ticks: u64,
+}
+
+impl TurnCompletionBound {
+    /// Builds the bound for one guest turn.
+    pub fn new(max_delay: Femtoseconds, period: TickPeriod) -> Result<Self, DelayConversionError> {
+        let per_transaction_ticks = max_delay.to_platform_ticks(period)?;
+        let ticks = per_transaction_ticks
+            .checked_mul(MAX_GUEST_TRANSACTIONS_PER_TURN)
+            .ok_or(DelayConversionError::Overflow)?;
+        Ok(Self {
+            per_transaction_ticks,
+            transactions: MAX_GUEST_TRANSACTIONS_PER_TURN,
+            ticks,
+        })
+    }
+
+    /// Converted delay reserved for one worst-case transaction.
+    pub const fn ticks_per_transaction(self) -> u64 {
+        self.per_transaction_ticks
+    }
+
+    /// Worst-case transactions this bound reserves delay for.
+    pub const fn transactions(self) -> u64 {
+        self.transactions
+    }
+
+    /// The whole turn's delay bound in Platform ticks.
+    pub const fn ticks(self) -> u64 {
+        self.ticks
     }
 }
 

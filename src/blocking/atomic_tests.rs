@@ -84,7 +84,7 @@ impl BlockingTarget for CountingTarget {
 }
 
 fn tlm_slot(target: &Arc<CountingTarget>) -> RamSlot {
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE);
+    let slot = RamSlot::tlm(target.clone(), BASE, SIZE).unwrap();
     slot.begin_window().unwrap();
     slot
 }
@@ -465,7 +465,7 @@ fn an_opaque_compact_snapshot_round_trips_through_the_adapter() {
         snapshot: vec![0xab; 8],
         sc_seen: AtomicUsize::new(0),
     });
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE);
+    let slot = RamSlot::tlm(target.clone(), BASE, SIZE).unwrap();
     let mut port = ValidatedAtomicAccess::new(slot);
     let lr =
         AtomicRequest::load_reserved(BASE + 0x60, PhysicalWidth::Doubleword, ORDERING).unwrap();
@@ -817,4 +817,74 @@ fn sc_w(rd: u8, rs1: u8, rs2: u8) -> u32 {
 
 fn amo_w(funct5: u8, rd: u8, rs1: u8, rs2: u8) -> u32 {
     amo_raw(funct5, 0b010, rd, rs1, rs2)
+}
+
+// ---- Blocking TLM U3: atomic delay accounting ----
+
+use super::test_support::DelayingRam;
+
+/// An atomic response's annotated delay is converted and charged once by the
+/// active turn, like any other RAM access (dev-plan D7).
+#[test]
+fn atomic_delay_is_converted_and_charged_once() {
+    let target = DelayingRam::new(1_000_000, 1_000_000);
+    let slot = RamSlot::tlm(target.clone(), BASE, SIZE).unwrap();
+    slot.begin_window().unwrap();
+    let mut port = ValidatedAtomicAccess::new(slot.clone());
+    slot.begin_transport_turn();
+
+    let operand = 1u32.to_le_bytes();
+    let request = AtomicRequest::rmw(
+        BASE,
+        PhysicalWidth::Word,
+        ORDERING,
+        &operand,
+        hart_amods::transform(hart_amods::AmoOperation::Add, AmoWidth::Word),
+    )
+    .unwrap();
+    port.access_atomic(request).unwrap();
+    assert_eq!(target.transactions.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        slot.take_transport_turn_delay().ticks,
+        1,
+        "an atomic response's delay was not converted"
+    );
+    assert_eq!(slot.consumed_delay(), Femtoseconds::new(1_000_000));
+}
+
+/// An atomic response above the declared maximum is a §5.3 overshoot, and its
+/// known delay is still accounted on the failed turn.
+#[test]
+fn an_overshooting_atomic_delay_is_a_failure() {
+    let target = DelayingRam::new(1_000_000, 3_000_000);
+    let slot = RamSlot::tlm(target.clone(), BASE, SIZE).unwrap();
+    slot.begin_window().unwrap();
+    let mut port = ValidatedAtomicAccess::new(slot.clone());
+    slot.begin_transport_turn();
+
+    let operand = 1u32.to_le_bytes();
+    let request = AtomicRequest::rmw(
+        BASE,
+        PhysicalWidth::Word,
+        ORDERING,
+        &operand,
+        hart_amods::transform(hart_amods::AmoOperation::Add, AmoWidth::Word),
+    )
+    .unwrap();
+    let error = port.access_atomic(request).unwrap_err();
+    assert!(
+        matches!(error, AtomicAccessError::BackendFailure(_)),
+        "an atomic overshoot was not a simulator-side failure: {error:?}"
+    );
+    let message = error.to_string();
+    assert!(message.contains("overshoot 2000000"), "{message}");
+    assert!(
+        message.contains("conservative completion bound"),
+        "{message}"
+    );
+    assert_eq!(
+        slot.take_transport_turn_delay().ticks,
+        3,
+        "the known atomic overshoot delay must still be accounted"
+    );
 }

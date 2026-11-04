@@ -1,0 +1,15 @@
+diff --git a/src/blocking/mod.rs b/src/blocking/mod.rs
+index b4ff5a6..e3b426e 100644
+--- a/src/blocking/mod.rs
++++ b/src/blocking/mod.rs
+@@ -268,9 +268,8 @@ impl Femtoseconds {
+             return Err(DelayConversionError::Malformed);
+         }
+         let quotient = self.0 / tick;
+-        let remainder = self.0 % tick;
+         quotient
+-            .checked_add(u64::from(remainder != 0))
++            .checked_add(0)
+             .ok_or(DelayConversionError::Overflow)
+     }
+ }

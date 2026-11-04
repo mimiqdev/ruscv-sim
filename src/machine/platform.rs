@@ -85,7 +85,13 @@ impl Platform {
                 image.memory_size(),
             ),
             Transport::Tlm(target) => {
-                RamSlot::tlm(target.clone(), image.base_addr(), image.memory_size())
+                RamSlot::tlm(target.clone(), image.base_addr(), image.memory_size()).map_err(
+                    |error| {
+                        MachineError::Placement(format!(
+                            "blocking target declares an invalid maximum delay: {error}"
+                        ))
+                    },
+                )?
             }
         };
         // After every transport reset and before installation, zero-fill the
@@ -216,10 +222,33 @@ impl Platform {
         Ok(self.flat_mtime)
     }
 
-    /// Exact total blocking-transport delay accepted by this Platform's RAM
-    /// route.  Zero on native and for a zero-delay target.
+    /// Exact total charged blocking-transport delay in this Platform's RAM
+    /// slot.  Zero on native and for a zero-delay target, and unchanged by
+    /// debug work whose delay is validated but not charged.
     pub(super) fn transport_delay_femtoseconds(&self) -> u64 {
         self.ram.consumed_delay().as_u64()
+    }
+
+    /// Opens one guest turn's transport-delay accounting.
+    pub(super) fn begin_transport_turn(&self) {
+        self.ram.begin_transport_turn();
+    }
+
+    /// Consumes one guest turn's transport delay into Platform time once.
+    pub(super) fn take_transport_turn_delay(&self) -> crate::blocking::adapter::PendingDelay {
+        self.ram.take_transport_turn_delay()
+    }
+
+    /// Drops debug-work delay after validation, without charging Platform
+    /// time (ADR-0004 2026-10-28 and 2026-10-30 amendments).
+    pub(super) fn discard_transport_turn_delay(&self) {
+        self.ram.discard_transport_turn_delay();
+    }
+
+    /// One guest turn's conservative completion bound in Platform ticks.
+    #[cfg(test)]
+    pub(super) fn turn_completion_bound_ticks(&self) -> Option<u64> {
+        self.ram.turn_completion_bound_ticks()
     }
 
     /// Hart 0 lines. Flat has no CLINT or PLIC, so every line stays clear.
@@ -260,6 +289,30 @@ impl Platform {
             return Ok(bus.mtime());
         }
         self.flat_mtime = self.flat_mtime.wrapping_add(1);
+        Ok(self.flat_mtime)
+    }
+
+    /// Add `ticks` Platform ticks without touching `mcycle` or `minstret`.
+    ///
+    /// Transport-derived time uses this checked addition, so modeled time
+    /// never wraps.  A completed turn with no transport delay keeps the
+    /// existing native one-tick path.
+    pub(super) fn advance_mtime_by(&mut self, ticks: u64) -> Result<u64, MachineError> {
+        if let Some(bus) = &self.bus {
+            let mut bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            let next = bus.mtime().checked_add(ticks).ok_or_else(|| {
+                MachineError::Placement(format!(
+                    "Platform mtime overflow advancing by {ticks} ticks"
+                ))
+            })?;
+            bus.set_mtime(next);
+            return Ok(bus.mtime());
+        }
+        self.flat_mtime = self.flat_mtime.checked_add(ticks).ok_or_else(|| {
+            MachineError::Placement(format!(
+                "Platform mtime overflow advancing by {ticks} ticks"
+            ))
+        })?;
         Ok(self.flat_mtime)
     }
 

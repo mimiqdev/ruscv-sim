@@ -1,6 +1,6 @@
 //! Controlled native backend/host-admission seams, not public recovery APIs.
 use super::*;
-use crate::blocking::test_support::ScriptTarget;
+use crate::blocking::test_support::{DelayingRam, ScriptTarget};
 use crate::blocking::{BlockingInitiator, Transport, ZeroDelayRam};
 use crate::csr::machine;
 use crate::memory::MemoryError;
@@ -2715,4 +2715,474 @@ fn the_legacy_tlm_interface_routes_no_access() {
         "the store bypassed the selected TLM RAM route"
     );
     assert_eq!(target.bytes_at(elf::BASE + 0x200, 8)[0], 0x55);
+}
+
+// ---- Blocking TLM U3: transport delay and time ----
+
+fn delay_target(declared_max: u64, delay: u64) -> Arc<ScriptTarget> {
+    let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    target.set_declared_max_delay(declared_max);
+    target.set_delay(delay);
+    target
+}
+
+fn guest_time(owned: &OwnedMachine) -> u64 {
+    owned
+        .state()
+        .csr
+        .read(crate::csr::unprivileged::TIME)
+        .unwrap()
+}
+
+fn guest_counters_now(owned: &OwnedMachine) -> (u64, u64) {
+    (
+        owned.state().csr.read(machine::MINSTRET).unwrap(),
+        owned.state().csr.read(machine::MCYCLE).unwrap(),
+    )
+}
+
+/// Set the store's source register and address while the Machine is drained.
+fn prepare_store(owned: &mut OwnedMachine, value: u64) {
+    let state = owned.state_mut();
+    state.regs[1] = elf::BASE + 0x200;
+    state.regs[2] = value;
+}
+
+/// D7/ADR-0004 §5.1/§5.3: one completed turn advances `mtime` by its turn tick
+/// plus the converted delay ticks, exactly once, and never into the ISA
+/// counters.  The responses sit at the declared maximum in a multi-transaction
+/// turn, and the Machine's bound uses the declared maximum per worst-case
+/// transaction; `blocking::tests::a_guest_turn_may_use_the_declared_worst_case_transactions`
+/// pins that declared count and its enforcement.
+#[test]
+fn delay_advances_mtime_by_turns_plus_ticks_without_touching_isa_counters() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    let before = (guest_time(&owned), guest_counters_now(&owned));
+
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    let transactions = target.transactions.load(Ordering::SeqCst) as u64;
+    assert_eq!(
+        transactions, 3,
+        "two fetch parcels and one store transaction"
+    );
+    let (turns_before, counters_before) = before;
+    assert_eq!(
+        guest_time(&owned),
+        turns_before + 1 + transactions,
+        "mtime must be turns plus converted delay ticks"
+    );
+    assert_eq!(
+        turn.boundary().transport_delay_femtoseconds,
+        transactions * 1_000_000,
+        "the boundary fact must report the exact charged delay"
+    );
+    let (minstret_before, mcycle_before) = counters_before;
+    assert_eq!(
+        guest_counters_now(&owned),
+        (minstret_before + 1, mcycle_before + 1),
+        "transport delay leaked into mcycle or minstret"
+    );
+
+    let bound = owned
+        .turn_completion_bound_ticks()
+        .expect("a TLM route has a completion bound");
+    assert_eq!(
+        bound,
+        crate::blocking::TurnCompletionBound::new(
+            crate::blocking::Femtoseconds::new(1_000_000),
+            crate::blocking::TickPeriod::DEFAULT,
+        )
+        .unwrap()
+        .ticks(),
+        "the Machine's bound must add the declared maximum for every worst-case transaction"
+    );
+    assert!(
+        transactions <= crate::blocking::MAX_GUEST_TRANSACTIONS_PER_TURN,
+        "a multi-transaction turn exceeded the declared worst-case transaction count"
+    );
+    assert!(
+        transactions <= bound,
+        "a turn at the declared maximum did not fit its conservative completion bound"
+    );
+}
+
+/// D7: a positive sub-tick delay is rounded up to one tick, never down to zero.
+#[test]
+fn a_positive_sub_tick_delay_rounds_up_to_one_tick() {
+    let target = delay_target(1, 1);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    let transactions = target.transactions.load(Ordering::SeqCst) as u64;
+    assert_eq!(transactions, 3);
+    assert_eq!(
+        guest_time(&owned),
+        1 + transactions,
+        "a sub-tick delay disappeared instead of rounding up"
+    );
+    assert_eq!(
+        turn.boundary().transport_delay_femtoseconds,
+        transactions,
+        "the exact sub-tick delay must survive in the boundary fact"
+    );
+}
+
+/// D7 and the 2026-10-28/2026-10-30 ADR-0004 amendments: SBA and program-buffer
+/// delay is validated and converted but never charged to Platform time.
+#[test]
+fn debug_initiated_transport_delay_is_not_charged_to_platform_time() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    halted_by_dmi(&mut owned);
+    let (time_before, counters_before) = (guest_time(&owned), guest_counters_now(&owned));
+
+    // The guest store's operands, written while halted.
+    write_gpr(&mut owned, 1, elf::BASE + 0x200);
+    write_gpr(&mut owned, 2, 0x1234_5678);
+    // Two program-buffer words store and load the same RAM word.
+    write_gpr(&mut owned, 5, elf::BASE + 0x200);
+    write_gpr(&mut owned, 6, 0x1234_5678);
+    postexec_buffer(&mut owned, [sw_word(6, 5, 0), lw_word(7, 5, 0)]);
+    let facts = run_grants(&mut owned);
+    assert!(facts.failure.is_none());
+    let after_buffer = target.transactions.load(Ordering::SeqCst);
+    assert!(
+        after_buffer >= 2,
+        "program-buffer RAM accesses bypassed the TLM route"
+    );
+    assert_eq!(
+        guest_time(&owned),
+        time_before,
+        "program-buffer transport delay advanced Platform time"
+    );
+
+    // One debug system bus write reaches the same TLM RAM slot.
+    sba_write_word(
+        &mut owned,
+        sba_address(PlatformKind::Native, 0x200),
+        0xdead_beef,
+    );
+    assert_eq!(sberror_of(&mut owned), 0);
+    let after_sba = target.transactions.load(Ordering::SeqCst);
+    assert!(after_sba > after_buffer);
+    assert_eq!(
+        guest_time(&owned),
+        time_before,
+        "SBA transport delay advanced Platform time"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        counters_before,
+        "debug-initiated delay changed an ISA counter"
+    );
+
+    // The next guest turn charges only its own delay and advance.
+    owned
+        .dmi_write(DM_DMCONTROL, DM_DMACTIVE | DM_RESUMEREQ)
+        .unwrap();
+    let mut guest = None;
+    for _ in 0..3 {
+        let turn = owned.step(false).unwrap();
+        if matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)) {
+            guest = Some(turn);
+            break;
+        }
+    }
+    let guest = guest.expect("the hart did not resume to a guest turn");
+    let guest_transactions = target.transactions.load(Ordering::SeqCst) - after_sba;
+    assert_eq!(
+        guest_transactions, 3,
+        "the guest turn issued its own two fetch parcels and store"
+    );
+    assert_eq!(
+        guest_time(&owned),
+        time_before + 1 + guest_transactions as u64,
+        "debug delay leaked into the guest turn's mtime"
+    );
+    assert_eq!(
+        guest.boundary().transport_delay_femtoseconds,
+        guest_transactions as u64 * 1_000_000,
+        "the boundary fact must exclude debug-initiated delay"
+    );
+}
+
+/// ADR-0004 §5.3: a started failed turn consumes its known delay once and gets
+/// no completed-turn tick or ISA counter delta.
+#[test]
+fn a_failed_turn_consumes_its_known_delay_without_a_turn_tick() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    let before = (guest_time(&owned), guest_counters_now(&owned));
+    target.set_status(crate::blocking::BlockingResponseStatus::GenericError);
+
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::SimulatorFailure(_)
+    ));
+    assert_eq!(
+        guest_time(&owned),
+        before.0 + 1,
+        "a failed turn must consume its known delay without a turn tick"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        before.1,
+        "a failed turn changed an ISA counter"
+    );
+    assert_eq!(
+        turn.boundary().transport_delay_femtoseconds,
+        1_000_000,
+        "the failed turn's known delay must reach the boundary fact"
+    );
+}
+
+/// Native responses carry zero delay and keep the existing one-tick-per-turn
+/// Platform time.
+#[test]
+fn the_native_route_reports_zero_transport_delay() {
+    let mut owned = OwnedMachine::new(
+        MachineConfig::new(PlatformKind::Native),
+        image(elf::sd(2, 1, 0)),
+    )
+    .unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    let before = guest_time(&owned);
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(guest_time(&owned), before + 1);
+    assert_eq!(turn.boundary().transport_delay_femtoseconds, 0);
+    assert!(owned.turn_completion_bound_ticks().is_none());
+}
+
+/// D7: transport delay is consumed into the same `mtime` as completed turns,
+/// so a timer compare sees it at the next boundary.
+#[test]
+fn transport_delay_moves_the_timer_compare() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    {
+        // Hart 0 mtimecmp is the dword at CLINT + 0x4000.
+        let state = owned.state_mut();
+        state.regs[1] = crate::executor::SYSTEM_BUS_CLINT_BASE + 0x4000;
+        state.regs[2] = 3;
+    }
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    // Two fetch parcels each carry one tick of delay: mtime = 1 + 2.
+    assert_eq!(guest_time(&owned), 3);
+    assert_ne!(
+        owned.state().csr.mip() & (1 << 7),
+        0,
+        "the timer compare did not see the consumed transport delay"
+    );
+}
+
+/// Regression for the U3 review: a known overshooting response must keep its
+/// accounted time and stay a known simulator failure, not become an
+/// unknown-completion quarantine that drops the delay.
+#[test]
+fn an_overshooting_delay_keeps_known_time_and_reports_a_failure() {
+    let target = delay_target(0, 1);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+
+    let turn = owned.step(false).unwrap();
+    let StepOutcome::SimulatorFailure(failure) = &turn.hart().outcome else {
+        panic!(
+            "an overshoot did not fail the turn: {:?}",
+            turn.hart().outcome
+        );
+    };
+    assert!(
+        failure.message.contains("overshoot"),
+        "the failure lost its overshoot detail: {failure:?}"
+    );
+    assert_eq!(
+        target.transactions.load(Ordering::SeqCst),
+        1,
+        "the first fetch was the overshooting transaction"
+    );
+    assert_eq!(
+        guest_time(&owned),
+        1,
+        "the known one-tick delay must be consumed once by the failed turn"
+    );
+    assert_eq!(
+        turn.boundary().transport_delay_femtoseconds,
+        1,
+        "the failed turn's known delay must reach the boundary fact"
+    );
+    let status = owned.test_control().status().unwrap();
+    assert!(status.failed);
+    assert!(
+        !status.uncertain,
+        "a known overshoot became unknown completion"
+    );
+    assert!(
+        status
+            .last_failure
+            .as_ref()
+            .is_some_and(|failure| failure.message.contains("overshoot")),
+        "the Machine lost the known failure diagnostic: {status:?}"
+    );
+}
+
+/// Regression for the U3 review: a transport delay must never wrap `mtime`,
+/// even when the converted amount is one tick.
+#[test]
+fn transport_delay_never_wraps_mtime() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    owned.set_platform_mtime(u64::MAX).unwrap();
+
+    let turn = owned.step(false).unwrap();
+    let StepOutcome::SimulatorFailure(failure) = &turn.hart().outcome else {
+        panic!(
+            "an overflow did not fail the turn: {:?}",
+            turn.hart().outcome
+        );
+    };
+    assert!(
+        failure.message.contains("overflow"),
+        "the failure lost its overflow detail: {failure:?}"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        u64::MAX,
+        "a transport delay wrapped Platform time"
+    );
+    assert!(owned.test_control().status().unwrap().failed);
+}
+
+/// Regression for the U3 re-review: a one-tick transport advance at the last
+/// representable `mtime` must not wrap, and must not replace the transport
+/// failure that produced the tick with a bare clock diagnostic.
+#[test]
+fn a_one_tick_transport_advance_preserves_the_original_failure() {
+    let target = delay_target(0, 1);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    owned.set_platform_mtime(u64::MAX).unwrap();
+
+    let turn = owned.step(false).unwrap();
+    let StepOutcome::SimulatorFailure(failure) = &turn.hart().outcome else {
+        panic!(
+            "the one-tick overflow did not fail the turn: {:?}",
+            turn.hart().outcome
+        );
+    };
+    assert!(
+        failure.message.contains("overshoot"),
+        "the original overshoot diagnostic was lost: {failure:?}"
+    );
+    assert!(
+        failure.message.contains("overflow"),
+        "the clock-overflow context was lost: {failure:?}"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        u64::MAX,
+        "a one-tick transport advance wrapped Platform time"
+    );
+    let status = owned.test_control().status().unwrap();
+    assert!(status.failed);
+    assert!(!status.uncertain);
+    let last = status
+        .last_failure
+        .as_ref()
+        .expect("the Machine lost the known failure");
+    assert!(
+        last.message.contains("overshoot") && last.message.contains("overflow"),
+        "the retained failure lost context: {last:?}"
+    );
+}
+
+/// An atomic guest turn follows the same delay rules as a data access: its one
+/// atomic transaction is charged to `mtime`, never to an ISA counter.
+#[test]
+fn atomic_delay_advances_mtime_like_a_data_access() {
+    let target = DelayingRam::new(1_000_000, 1_000_000);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    // amoadd.w x7, x2, (x1)
+    let mut owned = OwnedMachine::new(config, image(0x0020_a3af)).unwrap();
+    {
+        let state = owned.state_mut();
+        state.regs[1] = elf::BASE + 0x200;
+        state.regs[2] = 5;
+    }
+    let before = (guest_time(&owned), guest_counters_now(&owned));
+
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    let transactions = target.transactions.load(Ordering::SeqCst) as u64;
+    assert_eq!(
+        transactions, 3,
+        "two fetch parcels and one atomic transaction"
+    );
+    assert_eq!(
+        guest_time(&owned),
+        before.0 + 1 + transactions,
+        "the atomic delay did not advance mtime with the turn"
+    );
+    assert_eq!(
+        turn.boundary().transport_delay_femtoseconds,
+        transactions * 1_000_000,
+        "the atomic delay was not reported in the boundary fact"
+    );
+    assert_eq!(
+        owned.state().regs[7],
+        0,
+        "the AMO did not return the old value"
+    );
+    assert_eq!(
+        target.bytes_at(elf::BASE + 0x200, 4),
+        5u32.to_le_bytes(),
+        "the atomic operation did not reach the delaying target"
+    );
+    let (minstret_before, mcycle_before) = before.1;
+    assert_eq!(
+        guest_counters_now(&owned),
+        (minstret_before + 1, mcycle_before + 1),
+        "the atomic delay leaked into mcycle or minstret"
+    );
 }

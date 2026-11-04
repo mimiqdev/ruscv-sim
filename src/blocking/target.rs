@@ -18,9 +18,10 @@ use super::{BlockingDebug, BlockingTransaction, Femtoseconds};
 pub trait BlockingTarget: Send + Sync {
     /// The declared per-transaction maximum delay (dev-plan D7).
     ///
-    /// Unit U3 uses it to form each turn's conservative completion bound.  It
-    /// is an upper bound on the delay a target annotates for one transaction;
-    /// the in-tree and SystemC RAM targets declare zero.
+    /// Unit U3 uses it to form each turn's conservative completion bound and
+    /// to reject an overshooting response.  It is an upper bound on the delay
+    /// a target annotates for one transaction; the in-tree and SystemC RAM
+    /// targets declare zero.
     fn declared_max_delay(&self) -> Femtoseconds;
 
     /// Services one complete blocking transaction.
@@ -30,8 +31,10 @@ pub trait BlockingTarget: Send + Sync {
     /// target that forgets leaves `Incomplete`, which is a protocol failure),
     /// and write the response bytes for a read into
     /// [`BlockingTransaction::data_mut`].  It must apply a write as one
-    /// indivisible semantic write.  Annotating a non-zero delay is an adapter
-    /// failure until unit U3.
+    /// indivisible semantic write.  An annotated delay is converted to
+    /// Platform ticks under the declared tick period and consumed by the
+    /// turn's outcome; a delay above the declared per-transaction maximum is
+    /// an overshoot failure (ADR-0004 §5.2/§5.3).
     ///
     /// An atomic transaction carries [`super::BlockingAtomicExtension`].  A
     /// target that supports it applies the encoded operation indivisibly inside

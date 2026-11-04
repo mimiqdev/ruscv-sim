@@ -12,7 +12,7 @@ use super::{
 use crate::memory::SimpleMemory;
 use crate::physical::PhysicalAccessKind;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// A request-identity mutation the target applies before returning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +48,8 @@ pub(crate) struct ScriptTarget {
     /// Transport resets issued.
     pub resets: AtomicUsize,
     status: Mutex<BlockingResponseStatus>,
+    /// Declared per-transaction maximum delay (dev-plan D7).
+    declared_max: AtomicU64,
     delay: AtomicU64,
     unknown: AtomicBool,
     panic: AtomicBool,
@@ -68,6 +70,7 @@ impl ScriptTarget {
             debug_requests: AtomicUsize::new(0),
             resets: AtomicUsize::new(0),
             status: Mutex::new(BlockingResponseStatus::Ok),
+            declared_max: AtomicU64::new(0),
             delay: AtomicU64::new(0),
             unknown: AtomicBool::new(false),
             panic: AtomicBool::new(false),
@@ -87,6 +90,11 @@ impl ScriptTarget {
     /// Sets the annotated response delay.
     pub(crate) fn set_delay(&self, delay: u64) {
         self.delay.store(delay, Ordering::SeqCst);
+    }
+
+    /// Sets the declared per-transaction maximum delay.
+    pub(crate) fn set_declared_max_delay(&self, delay: u64) {
+        self.declared_max.store(delay, Ordering::SeqCst);
     }
 
     /// Marks the next transactions' outcome unknown.
@@ -152,7 +160,7 @@ impl ScriptTarget {
 
 impl BlockingTarget for ScriptTarget {
     fn declared_max_delay(&self) -> Femtoseconds {
-        Femtoseconds::ZERO
+        Femtoseconds::new(self.declared_max.load(Ordering::SeqCst))
     }
 
     fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
@@ -234,5 +242,65 @@ impl BlockingTarget for ScriptTarget {
             self.write(address, &bytes);
         }
         self.reset_ack.load(Ordering::SeqCst)
+    }
+}
+
+/// A test-only delaying target over [`super::ZeroDelayRam`].
+///
+/// It supports the U2 atomic extension (delegated to the in-tree zero-delay
+/// target) and annotates a fixed delay after the inner target completes, so
+/// U3 can exercise the transport-delay path end to end without changing the
+/// in-tree `ZeroDelayRam` declaration.
+pub(crate) struct DelayingRam {
+    inner: super::ZeroDelayRam,
+    declared_max: AtomicU64,
+    delay: AtomicU64,
+    /// Blocking transactions issued.
+    pub transactions: AtomicUsize,
+}
+
+impl DelayingRam {
+    pub(crate) fn new(declared_max: u64, delay: u64) -> Arc<Self> {
+        Arc::new(Self {
+            inner: super::ZeroDelayRam::new(),
+            declared_max: AtomicU64::new(declared_max),
+            delay: AtomicU64::new(delay),
+            transactions: AtomicUsize::new(0),
+        })
+    }
+
+    pub(crate) fn set_delay(&self, delay: u64) {
+        self.delay.store(delay, Ordering::SeqCst);
+    }
+
+    pub(crate) fn set_declared_max_delay(&self, delay: u64) {
+        self.declared_max.store(delay, Ordering::SeqCst);
+    }
+
+    pub(crate) fn bytes_at(&self, address: u64, len: usize) -> Vec<u8> {
+        self.inner.bytes_at(address, len)
+    }
+}
+
+impl BlockingTarget for DelayingRam {
+    fn declared_max_delay(&self) -> Femtoseconds {
+        Femtoseconds::new(self.declared_max.load(Ordering::SeqCst))
+    }
+
+    fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
+        self.transactions.fetch_add(1, Ordering::SeqCst);
+        self.inner.b_transport(transaction);
+        let delay = self.delay.load(Ordering::SeqCst);
+        if delay != 0 {
+            transaction.set_response_delay(Femtoseconds::new(delay));
+        }
+    }
+
+    fn transport_dbg(&self, transaction: &mut BlockingDebug<'_>) -> usize {
+        self.inner.transport_dbg(transaction)
+    }
+
+    fn transport_reset(&self) -> bool {
+        self.inner.transport_reset()
     }
 }
