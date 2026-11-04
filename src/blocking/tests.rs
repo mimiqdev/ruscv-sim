@@ -4,9 +4,9 @@ use super::test_support::{Call, Mutation, ScriptTarget};
 use super::*;
 use crate::memory::{MemoryError, SimpleMemory};
 use crate::physical::{
-    AtomicAccess, AtomicAccessError, AtomicOrdering, AtomicRequest, PhysicalAccessError,
-    PhysicalProtocolError, PhysicalRequest, PhysicalTargetRejectionReason, PhysicalWidth,
-    ValidatedPhysicalAccess,
+    AtomicAccess, AtomicAccessError, AtomicOrdering, AtomicProtocolError, AtomicRequest,
+    PhysicalAccessError, PhysicalProtocolError, PhysicalRequest, PhysicalTargetRejectionReason,
+    PhysicalWidth, ValidatedPhysicalAccess,
 };
 use crate::ram::RamSlot;
 use std::sync::atomic::Ordering;
@@ -326,7 +326,7 @@ fn completed_writes_are_recorded_for_committed_write_visibility() {
 }
 
 #[test]
-fn atomics_fail_closed_without_a_transaction() {
+fn a_target_that_ignores_the_atomic_extension_is_a_protocol_failure() {
     let target = Arc::new(ScriptTarget::new(BASE, SIZE));
     let slot = tlm_slot(&target, SIZE);
     let mut port = ValidatedPhysicalAccess::new(slot.clone());
@@ -337,19 +337,19 @@ fn atomics_fail_closed_without_a_transaction() {
     assert!(
         matches!(
             &error,
-            AtomicAccessError::TargetRejected(rejection)
-                if rejection.reason == PhysicalTargetRejectionReason::UnsupportedCategory
+            AtomicAccessError::Protocol(AtomicProtocolError::BackendProtocol { context })
+                if context.contains("without an atomic completion")
         ),
-        "an atomic was not refused with the access-fault cause: {error:?}"
+        "an unanswered atomic extension was not a protocol failure: {error:?}"
     );
     assert_eq!(
         target.transactions.load(Ordering::SeqCst),
-        0,
-        "an atomic reached the blocking target"
+        1,
+        "the atomic extension did not reach the target"
     );
 
-    // A poisoned transport reports unknown completion before the capability
-    // rejection, because no access may be attempted at all.
+    // A poisoned transport reports unknown completion before any new access,
+    // including an atomic envelope.
     target.set_unknown(true);
     let write = PhysicalRequest::data_write(BASE, PhysicalWidth::Word, &[0; 4]).unwrap();
     let mut port = ValidatedPhysicalAccess::new(slot.clone());
@@ -364,7 +364,7 @@ fn atomics_fail_closed_without_a_transaction() {
         port.access_atomic(request),
         Err(AtomicAccessError::UnknownCompletion(_))
     ));
-    assert_eq!(target.transactions.load(Ordering::SeqCst), 1);
+    assert_eq!(target.transactions.load(Ordering::SeqCst), 2);
 }
 
 #[test]

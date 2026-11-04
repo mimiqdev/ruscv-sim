@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM U2: 原子 payload 扩展（issue #174）**
+  - LR、SC 与全部 AMO 经一次 blocking `b_transport` 事务携带 ruscv-sim 原子扩展：操作、
+    宽度、`aq`/`rl` 与 SC 的保留上下文（保留区间与 committed-write 快照）均作为数据编码，
+    Hart 的 AMO transform 函数指针不跨传输
+  - in-tree `ZeroDelayRam` 在同一锁临界区内按与 `hart_amods` 一致的运算表执行 RMW、LR、SC，
+    返回旧值、快照或条件结果，并维护与 native RAM 相同的逐字节 committed-write 记账；
+    适配器记录完成的写入、AMO 与成功 SC
+  - 不接受扩展的 target 以 `TLM_COMMAND_ERROR_RESPONSE` 拒绝，按 native 原因映射为 LR 的
+    load access fault 与 SC/AMO 的 store access fault；返回 `TLM_OK_RESPONSE` 却没有原子完成
+    的 target 是协议失败
+  - 对全部 9 种 AMO 的 W/D 宽度、signed/unsigned min/max、W 符号扩展以及 LR/SC 的
+    成功、失败、覆盖与无保留结果做 native 对等测试；计数 target 证明每个原子（含 Sv39
+    A/D 的 LR/SC）恰好一个事务
+  - 负控制：AMO 被模拟为独立读和写会被捕获（`scripts/debug/stage6-mutations`）
+
 - **TLM U1: Rust TLM RAM 路由（issue #173）**
   - 新增独立的 blocking-transport 适配词表（`src/blocking`，与 `src/tlm` 无关）：IEEE 1666
     七种响应状态、以 `TLM_INCOMPLETE_RESPONSE` 起始的 payload、ruscv-sim 扩展（既有
