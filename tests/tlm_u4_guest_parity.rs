@@ -4,11 +4,13 @@
 //!
 //! * [`the_guest_suite_runs_every_case_under_the_tlm_route`] drives the real
 //!   `scripts/run_elf_tests.sh` against a fake simulator. It proves every
-//!   guest gets a second pass with the same declared profile, that the parity
-//!   set writes `--log-commits` on both passes, and that the script compares
-//!   the two files as bytes. The fake simulator records each invocation, so a
-//!   suite that silently drops the TLM pass fails here without needing a
-//!   RISC-V toolchain.
+//!   guest gets a second pass with its declared profile and cycle bound, that
+//!   the parity set writes `--log-commits` on both passes, and that the script
+//!   compares the complete files as bytes. The injected divergence is
+//!   whitespace-only and follows an identical first line, so a first-line-only
+//!   or whitespace-insensitive comparison fails here. The fake simulator
+//!   records each invocation, so a suite that silently drops the TLM pass or
+//!   a profile fails without needing a RISC-V toolchain.
 //! * [`synthetic_guest_commit_logs_match_between_native_and_tlm`] runs one
 //!   synthetic guest through the public CLI on both routes and compares the
 //!   commit logs byte for byte. This is the target of the
@@ -109,22 +111,41 @@ struct Invocation {
     guest: String,
     isa: String,
     transport: String,
+    cycles: String,
     log: String,
 }
 
 impl Invocation {
     fn parse(line: &str) -> Self {
-        let mut fields = line.splitn(4, '|');
+        let mut fields = line.splitn(5, '|');
         let guest = fields.next().expect("guest field").to_string();
         let isa = fields.next().expect("isa field").to_string();
         let transport = fields.next().expect("transport field").to_string();
+        let cycles = fields.next().expect("cycles field").to_string();
         let log = fields.next().expect("log field").to_string();
         Self {
             guest,
             isa,
             transport,
+            cycles,
             log,
         }
+    }
+}
+
+/// The profile each guest declares in `scripts/run_elf_tests.sh`, resolved
+/// with bash `case` first-match order.
+fn declared_profile(guest: &str) -> &'static str {
+    if guest.starts_with("s4_") {
+        "rv64ima"
+    } else if guest.starts_with("zca_") {
+        "rv64imac"
+    } else if guest.starts_with("fd_") {
+        "rv64imafd"
+    } else if guest.starts_with("zcd_") || guest.starts_with("fdc_") {
+        "rv64imafdc"
+    } else {
+        ""
     }
 }
 
@@ -188,24 +209,27 @@ set -u
 name=""
 transport="native"
 isa=""
+cycles=""
 log=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         run) shift; name="$(basename "$1" .elf)"; shift ;;
-        --max-cycles) shift 2 ;;
+        --max-cycles) cycles="$2"; shift 2 ;;
         --isa) isa="$2"; shift 2 ;;
         --transport) transport="$2"; shift 2 ;;
         --log-commits) log="$2"; shift 2 ;;
         *) shift ;;
     esac
 done
-printf '%s|%s|%s|%s\n' "$name" "$isa" "$transport" "$log" >> "${RUNNER_INVOCATIONS}"
+printf '%s|%s|%s|%s|%s\n' "$name" "$isa" "$transport" "$cycles" "$log" >> "${RUNNER_INVOCATIONS}"
 if [ -n "$log" ]; then
-    printf 'commit  %s\n' "$name" > "$log"
+    printf 'commit  %s\nscope %s\n' "$name" "$name" > "$log"
     case ",${TLM_DIVERGES:-}," in
         *",${name},"*)
             if [ "$transport" = "tlm" ]; then
-                printf 'diverge %s\n' "$name" > "$log"
+                # Divergence after an identical first line, whitespace only:
+                # a first-line or whitespace-insensitive comparison misses it.
+                printf 'commit  %s\nscope  %s\n' "$name" "$name" > "$log"
             fi
             ;;
     esac
@@ -280,6 +304,7 @@ fn run_guest_suite(scratch: &Scratch, diverges: Option<&str>, fails: Option<&str
         .env("RISCV_TEST_OUTDIR", &outdir)
         .env("RISCV_PREFIX", format!("{}/riscv-", tools.display()))
         .env("RUSCV_SIM_BIN", tools.join("fake-sim"))
+        .env("RISCV_TEST_MAX_CYCLES", "123456")
         .env("RUNNER_INVOCATIONS", &invocations);
     if let Some(names) = diverges {
         command.env("TLM_DIVERGES", names);
@@ -354,9 +379,22 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
             runs[1].transport, "tlm",
             "{guest}: the second pass must run under --transport tlm"
         );
+        let profile = declared_profile(guest);
         assert_eq!(
-            runs[0].isa, runs[1].isa,
+            runs[0].isa, profile,
+            "{guest}: the native pass must use the declared profile"
+        );
+        assert_eq!(
+            runs[1].isa, profile,
             "{guest}: the TLM pass must reuse the declared profile"
+        );
+        assert_eq!(
+            runs[0].cycles, "123456",
+            "{guest}: the native pass must use the suite cycle bound"
+        );
+        assert_eq!(
+            runs[1].cycles, runs[0].cycles,
+            "{guest}: the TLM pass must reuse the suite cycle bound"
         );
 
         if PARITY_GUESTS.contains(&guest.as_str()) {
@@ -419,7 +457,9 @@ fn the_guest_suite_fails_when_the_tlm_commit_log_diverges() {
     );
 
     // Both passes still ran; the failure is the comparison, not a skipped
-    // TLM pass.
+    // TLM pass. The injected logs share their first line and differ only in
+    // whitespace, so a first-line-only or whitespace-insensitive comparison
+    // would wrongly pass.
     let invocations = recorded(&scratch);
     let runs: Vec<&Invocation> = invocations
         .iter()
@@ -427,6 +467,19 @@ fn the_guest_suite_fails_when_the_tlm_commit_log_diverges() {
         .collect();
     assert_eq!(runs.len(), 2, "fd_fma passes: {runs:#?}");
     assert_eq!(runs[1].transport, "tlm");
+    let native_log = fs::read_to_string(&runs[0].log).expect("native fd_fma log");
+    let tlm_log = fs::read_to_string(&runs[1].log).expect("tlm fd_fma log");
+    assert_eq!(
+        native_log.lines().next(),
+        tlm_log.lines().next(),
+        "the injected divergence must follow an identical first line"
+    );
+    assert_eq!(
+        native_log.split_whitespace().collect::<Vec<_>>(),
+        tlm_log.split_whitespace().collect::<Vec<_>>(),
+        "the injected divergence must be whitespace only"
+    );
+    assert_ne!(native_log, tlm_log, "the injected logs must differ");
 }
 
 #[test]
