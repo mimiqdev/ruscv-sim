@@ -859,5 +859,43 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "gc-u2-raw-core-ima",
+    "source": "src/core/mod.rs",
+    "patch": "gc-u2-raw-core-ima.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "gc_u1_default_profile"
+        ],
+        "test": "raw_core_constructors_stay_rv64ima",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+9223372036856090925",
+          "right:\\s+9223372036856090881"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "gc-u5-a10-machine-default",
+    "source": "tools/a10/mod.rs",
+    "patch": "gc-u5-a10-machine-default.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "a10_p0_oracles"
+        ],
+        "test": "machine_routes_select_rv64ima_explicitly",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+Rv64imafdc",
+          "right:\\s+Rv64ima"
+        ]
+      }
+    ]
   }
 ]

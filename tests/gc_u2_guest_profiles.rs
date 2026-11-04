@@ -8,6 +8,13 @@
 //! default with no `--isa`. A profile-pinned guest silently moved to the
 //! default fails this test, so the mutation runner can express the
 //! guest-pinning negative control against this file.
+//!
+//! Negative controls behind this suite (`scripts/debug/stage6-mutations`):
+//! `gc-u2-guest-default` (the `s4_*` arm moved to the default).
+//!
+//! Related U5 control in another suite: `gc-u5-a10-machine-default`
+//! (the A10 Machine routes left on the default profile;
+//! `tests/a10_p0_oracles.rs`).
 
 use std::path::{Path, PathBuf};
 

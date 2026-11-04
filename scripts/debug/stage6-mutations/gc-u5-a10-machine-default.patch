@@ -1,0 +1,12 @@
+--- i/tools/a10/mod.rs
++++ w/tools/a10/mod.rs
+@@ -719,8 +719,7 @@
+     let uart = Arc::new(Mutex::new(Vec::new()));
+     let captured = uart.clone();
+     let mut config = MachineConfig::new(kind);
+-    // Every A10 route selects rv64ima explicitly (contract D5).
+-    config.isa = IsaProfile::Rv64ima;
++    // The intended defect: the Machine routes fall back to the default profile.
+     config.uart_output = Some(Arc::new(move |b| captured.lock().unwrap().push(b)));
+     (config, uart)
+ }

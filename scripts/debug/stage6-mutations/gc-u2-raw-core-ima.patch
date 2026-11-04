@@ -1,0 +1,13 @@
+--- i/src/core/mod.rs
++++ w/src/core/mod.rs
+@@ -1000,6 +1000,10 @@
+             current_instruction_length: 4,
+         };
+         core.set_isa_profile(crate::machine::IsaProfile::Rv64ima);
++        // The intended defect: the CSR state is rebuilt from a different
++        // profile than the one this constructor selected, so `misa`
++        // advertises GC while `self.isa` stays `rv64ima` until `reset()`.
++        core.state.csr.set_isa(crate::machine::IsaProfile::Rv64imafdc);
+         core
+     }
+ 

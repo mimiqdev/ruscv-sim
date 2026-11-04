@@ -8,9 +8,10 @@
 //! and behavior.
 //!
 //! Negative controls behind this suite (`scripts/debug/stage6-mutations`):
-//! `gc-default-stays-ima` (the Machine default remains `rv64ima`) and
+//! `gc-default-stays-ima` (the Machine default remains `rv64ima`),
 //! `gc-cli-default-diverges` (the CLI `--isa` default diverges from
-//! `MachineConfig::new`).
+//! `MachineConfig::new`) and `gc-u2-raw-core-ima` (a raw `RiscvCore::new`
+//! core's CSR `misa` disagrees with its rv64ima profile before `reset()`; U5).
 
 #[allow(dead_code)]
 mod common;
