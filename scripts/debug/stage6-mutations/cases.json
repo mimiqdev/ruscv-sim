@@ -1134,5 +1134,21 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "tlm-u5-boundary-passes",
+    "source": "src/capi/host.rs",
+    "patch": "tlm-u5-boundary-passes.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::a_grant_boundary_is_not_a_terminal_result",
+        "failure": [
+          "a host stop before a terminal result was reported as a passing result"
+        ]
+      }
+    ]
   }
 ]

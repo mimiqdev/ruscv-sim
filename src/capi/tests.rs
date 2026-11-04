@@ -484,6 +484,39 @@ fn a_caught_panic_poisons_the_handle() {
 }
 
 #[test]
+fn a_grant_boundary_is_not_a_terminal_result() {
+    // The C-ABI stand-in for `sc_stop`: a host that ends a grant at its budget
+    // and stops granting has not produced a terminal result, and a zero exit
+    // code alone must not read as one.
+    let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    let grant = harness.grant(0, 1000 * TICK_FS, 1).unwrap();
+    let result = harness.result();
+    assert_eq!(
+        result.state,
+        RunState::Running.code(),
+        "a host stop before a terminal result was reported as a passing result"
+    );
+    assert_eq!(result.exit_code, 0, "a boundary invented a guest exit code");
+    assert_eq!(grant.facts.failed, 0);
+    assert_eq!(grant.facts.uncertain, 0);
+    assert_eq!(grant.boundary_reached, 1);
+
+    // The run is still resumable from the committed time it returned.
+    let grant = harness
+        .grant(grant.committed_end_fs, u64::MAX / 2, super::UNBOUNDED_TURNS)
+        .unwrap();
+    assert_eq!(grant.committed_start_fs, TICK_FS);
+    let result = harness.result();
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "the resumed run did not reach the guest exit: {}",
+        harness.diagnostic()
+    );
+    assert_eq!(result.exit_code, 2);
+}
+
+#[test]
 fn an_unknown_completion_blocks_the_transport_until_reset() {
     let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
     harness.target.unknown.store(true, Ordering::SeqCst);

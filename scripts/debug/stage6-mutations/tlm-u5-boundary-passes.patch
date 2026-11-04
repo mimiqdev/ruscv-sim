@@ -1,0 +1,13 @@
+diff --git a/src/capi/host.rs b/src/capi/host.rs
+index 8de4c2e..3ad8ce4 100644
+--- a/src/capi/host.rs
++++ b/src/capi/host.rs
+@@ -387,6 +387,8 @@ impl Session {
+             facts.residual_slack_fs = deadline.saturating_sub(now).saturating_mul(period);
+         }
+         self.facts = facts;
++        // MUTATION: a grant boundary is reported as a passing guest exit.
++        self.state = RunState::Exited;
+         Ok(())
+     }
+ 
