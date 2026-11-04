@@ -1,0 +1,20 @@
+diff --git a/src/blocking/zero_delay.rs b/src/blocking/zero_delay.rs
+index d1c8bb7..b166778 100644
+--- a/src/blocking/zero_delay.rs
++++ b/src/blocking/zero_delay.rs
+@@ -210,11 +210,10 @@ impl BlockingTarget for ZeroDelayRam {
+                 transaction.data_mut().copy_from_slice(&bytes);
+             }
+             BlockingCommand::Write => {
+-                write(
+-                    &mut storage,
+-                    transaction.address(),
+-                    transaction.data().to_vec(),
+-                );
++                // MUTATION: diverge the TLM route from native on every write.
++                let mut bytes = transaction.data().to_vec();
++                bytes[0] ^= 0x01;
++                write(&mut storage, transaction.address(), bytes);
+             }
+         }
+         transaction.set_status(BlockingResponseStatus::Ok);

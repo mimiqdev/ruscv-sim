@@ -1068,5 +1068,39 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "tlm-u4-transport-diverges",
+    "source": "src/blocking/zero_delay.rs",
+    "patch": "tlm-u4-transport-diverges.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "tlm_u4_guest_parity"
+        ],
+        "test": "synthetic_guest_commit_logs_match_between_native_and_tlm",
+        "failure": [
+          "the TLM route's commit log diverged from native"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "tlm-u4-parity-pass-removed",
+    "source": "scripts/run_elf_tests.sh",
+    "patch": "tlm-u4-parity-pass-removed.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "tlm_u4_guest_parity"
+        ],
+        "test": "the_guest_suite_runs_every_case_under_the_tlm_route",
+        "failure": [
+          "the second pass must run under --transport tlm"
+        ]
+      }
+    ]
   }
 ]
