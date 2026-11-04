@@ -1018,17 +1018,21 @@ fn a_host_view_failure_keeps_the_completed_final_slot() {
 #[test]
 fn a_commit_log_failure_keeps_the_completed_turn() {
     // /dev/full accepts the open and fails every write, so delivery fails after
-    // the Hart already completed its transition.
+    // the Hart already completed its transition.  The device node is a
+    // prerequisite of this case on the supported Linux x86-64 platform.
+    assert!(
+        std::path::Path::new("/dev/full").exists(),
+        "the /dev/full prerequisite is missing"
+    );
     let harness = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
     let path = c_text(std::path::Path::new("/dev/full"));
     // SAFETY: the handle is live and the path is NUL-terminated.
-    let status = unsafe { ruscv_machine_set_commit_log(harness.handle, path.as_ptr()) };
-    if status != Status::Ok as i32 {
-        // A host without /dev/full cannot exercise this; do not fake a pass.
-        eprintln!("skipping /dev/full commit-log case: status {status}");
-        return;
-    }
-    let grant = harness.grant(0, 100 * TICK_FS, 100).unwrap();
+    assert_eq!(
+        unsafe { ruscv_machine_set_commit_log(harness.handle, path.as_ptr()) },
+        Status::Ok as i32,
+        "routing the commit log to /dev/full failed"
+    );
+    let grant = harness.grant(0, 100 * TICK_FS, 1).unwrap();
     let result = harness.result();
     assert_eq!(result.state, RunState::Failed.code());
     assert_eq!(
@@ -1036,6 +1040,11 @@ fn a_commit_log_failure_keeps_the_completed_turn() {
         "a commit-log failure unretired the completed turn"
     );
     assert_eq!(grant.consumed_fs, TICK_FS);
+    assert_eq!(
+        grant.facts.budget_exhausted, 1,
+        "the completed final slot lost its budget fact"
+    );
+    assert_eq!(grant.facts.residual_slack_fs, 99 * TICK_FS);
     assert!(
         harness.diagnostic().contains("commit log"),
         "wrong diagnostic: {}",
