@@ -352,6 +352,15 @@ private:
                     state_name(result.state), result.exit_code, result.turns, result.pc, grants_,
                     consumed_fs_);
                 std::fflush(stdout);
+                if (result.state == RUSCV_RUN_FAILED) {
+                    // A classified failure keeps its message in the handle; print
+                    // it here so a CI log names the cause instead of only "failed".
+                    char diagnostic[512] = {};
+                    ruscv_machine_diagnostic(machine, diagnostic, sizeof(diagnostic));
+                    std::fprintf(stderr, "systemc-smoke: failed run diagnostic: %s\n",
+                                 diagnostic);
+                    std::fflush(stderr);
+                }
                 ruscv_machine_destroy(machine);
                 sc_core::sc_stop();
                 return;

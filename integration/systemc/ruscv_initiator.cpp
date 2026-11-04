@@ -80,6 +80,18 @@ void copy_atomic_response(const PayloadExtension& extension, ruscv_atomic& atomi
     }
 }
 
+/// Marks one blocking payload as an unknown completion (dev-plan D4).
+///
+/// Used when no target was reachable or the target raised a C++ exception. It
+/// allocates nothing, so reporting the failure cannot itself throw.
+void mark_unknown_completion(ruscv_payload* payload) {
+    payload->status = RUSCV_TLM_INCOMPLETE;
+    payload->outcome_unknown = 1;
+    payload->delay_fs = 0;
+    payload->atomic.outcome = RUSCV_ATOMIC_OUTCOME_NONE;
+    payload->atomic.snapshot_length = 0;
+}
+
 }  // namespace
 
 RuscvInitiator::RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram)
@@ -142,6 +154,7 @@ size_t RuscvInitiator::serve_transport_dbg(ruscv_debug& debug) {
         return 0;
     }
     if (transaction.get_address() != debug.address ||
+        command_code(transaction.get_command()) != debug.command ||
         transaction.get_data_length() != debug.length) {
         return 0;
     }
@@ -153,15 +166,51 @@ int32_t RuscvInitiator::serve_transport_reset() {
 }
 
 extern "C" void ruscv_systemc_b_transport(void* user, ruscv_payload* payload) {
-    static_cast<RuscvInitiator*>(user)->serve_b_transport(*payload);
+    // No Rust or C++ exception may cross the ABI boundary (dev-plan D8): a C++
+    // exception is an unknown completion (D4), so it is reported through the
+    // payload instead of unwinding into the ruscv-sim call that made it. The
+    // handler allocates nothing, so reporting the failure cannot itself throw.
+    try {
+        if (user == nullptr || payload == nullptr) {
+            // No target was reachable, so the outcome is unknown just as it is
+            // for a target that could not establish one.
+            if (payload != nullptr) {
+                mark_unknown_completion(payload);
+            }
+            return;
+        }
+        static_cast<RuscvInitiator*>(user)->serve_b_transport(*payload);
+    } catch (...) {
+        if (payload != nullptr) {
+            mark_unknown_completion(payload);
+        }
+    }
 }
 
 extern "C" size_t ruscv_systemc_transport_dbg(void* user, ruscv_debug* debug) {
-    return static_cast<RuscvInitiator*>(user)->serve_transport_dbg(*debug);
+    try {
+        if (user == nullptr || debug == nullptr) {
+            return 0;
+        }
+        return static_cast<RuscvInitiator*>(user)->serve_transport_dbg(*debug);
+    } catch (...) {
+        // A short transfer is a failed debug transport, which is a host failure
+        // during installation and a host failure during polling (dev-plan D6).
+        return 0;
+    }
 }
 
 extern "C" int32_t ruscv_systemc_transport_reset(void* user) {
-    return static_cast<RuscvInitiator*>(user)->serve_transport_reset();
+    try {
+        if (user == nullptr) {
+            return 0;
+        }
+        return static_cast<RuscvInitiator*>(user)->serve_transport_reset();
+    } catch (...) {
+        // Without the acknowledgement the Platform keeps the handle unusable
+        // instead of trusting a half-reset transport (dev-plan D6).
+        return 0;
+    }
 }
 
 }  // namespace ruscv_sim

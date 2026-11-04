@@ -196,8 +196,16 @@ void RamTarget::apply_atomic(tlm::tlm_generic_payload& transaction,
                                  address + length <= extension.reserved_address +
                                                           extension.reserved_length;
             if (covered) {
+                // The snapshot is this target's own format: one little-endian
+                // 64-bit version per reserved byte. A length that disagrees with
+                // the reserved span, or that the ABI buffer cannot hold, is a
+                // malformed completion and never an ordinary conditional failure.
+                // The product is formed in 64 bits so no wrapping length passes.
+                const uint64_t snapshot_bytes =
+                    static_cast<uint64_t>(extension.reserved_length) * 8;
                 if (extension.reserved_snapshot_length == 0 ||
-                    extension.reserved_snapshot_length != extension.reserved_length * 8) {
+                    snapshot_bytes != extension.reserved_snapshot_length ||
+                    extension.reserved_snapshot_length > extension.reserved_snapshot.size()) {
                     // The snapshot does not have this target's format: a
                     // protocol failure, never an ordinary conditional failure.
                     transaction.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);

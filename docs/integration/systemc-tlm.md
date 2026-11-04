@@ -88,8 +88,9 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
   C++ object crosses the ABI.
 - The annotated delay is copied as exact femtoseconds, and the declared
   per-transaction maximum is zero because this model annotates zero delay.
-- A debug request requires a complete transfer and an unchanged request; either
-  a short transfer or a changed request is a failed debug transfer.
+- A debug request requires a complete transfer and an unchanged address, command
+  and length; a short transfer or any changed request field is a failed debug
+  transfer.
 
 Error mapping across the boundary:
 
@@ -124,7 +125,11 @@ or host stop becomes a ruscv-sim terminal result.
 - Payload data pointers are owned by Rust and valid only for one callback.
 - A Rust panic is caught at the boundary, the handle is poisoned, and the call
   returns `RUSCV_ERROR_PANIC`; later calls return `RUSCV_ERROR_POISONED`. No Rust
-  or C++ exception crosses the ABI.
+  or C++ exception crosses the ABI: each target callback contains every C++
+  exception, so it cannot unwind into the ruscv-sim call. A blocking exception
+  becomes an unknown completion, a debug exception becomes a failed debug
+  transfer, and a reset exception withholds the acknowledgement. A report of
+  failure allocates nothing, so reporting it cannot itself throw.
 
 ## Time unit and commit rule
 
@@ -147,11 +152,13 @@ target, so a run stays time-equivalent to native (ADR-0004 §4.4, §5.3).
   `--max-cycles`). Each grant's budget is clamped to the turns still allowed, so
   a live guest loop exhausts the limit and stops with a diagnostic instead of
   spinning the kernel.
-- `sc_stop()` is called only after `ruscv_machine_result` reports a terminal
-  result. A grant boundary that consumes no modeled time while the run is still
-  live cannot make progress and ends the run as a host failure instead of
-  spinning.
-- A host stop before a terminal result is not a run result. The host reports it
+- The run stops in one of exactly two ways. The ordinary stop follows a terminal
+  result from `ruscv_machine_result`. The other follows a host classification:
+  an ABI error, a kernel clock that disagrees with the Machine cursor, a grant
+  boundary that consumed no modeled time while the run is still live, or an
+  exhausted grant or turn bound. That second group is a host decision and never a
+  ruscv-sim result, and it exits non-zero.
+- A host stop before any of those is not a run result either. The host reports it
   and exits non-zero; the `--stop-after-grants` control in
   [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh) proves it
   and must not pass.

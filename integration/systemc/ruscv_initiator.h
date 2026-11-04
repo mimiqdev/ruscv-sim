@@ -75,7 +75,10 @@ private:
 
 /// The C ABI callbacks, one per `ruscv_target` field.
 ///
-/// They cast `user` to the `RuscvInitiator` named in the table and forward.
+/// They cast `user` to the `RuscvInitiator` named in the table and forward. Each
+/// one contains every C++ exception, so none can unwind into the ruscv-sim call
+/// that made it: a blocking exception becomes an unknown completion, and a
+/// debug or reset exception becomes a failure result.
 extern "C" void ruscv_systemc_b_transport(void* user, ruscv_payload* payload);
 extern "C" size_t ruscv_systemc_transport_dbg(void* user, ruscv_debug* debug);
 extern "C" int32_t ruscv_systemc_transport_reset(void* user);
