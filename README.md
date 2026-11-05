@@ -121,8 +121,9 @@ blocking 事务，长度等于访问宽度、原始字节按物理地址递增�
 声明 tick 周期的 `tick_period`（默认 1 ns，C ABI 的 create 带入该周期）与 `BoundaryFacts` 的
 `transport_delay_femtoseconds`（native 与零延迟 target 为 0）；`Flat` 与 `tlm` 的组合是配置错误
 （`MachineError::UnsupportedTransport`）。TLM Direct Memory Interface 里程碑在此之上新增公开 `dmi`
-字段（`MachineConfig::new` 选择 `false`，`dmi` 与 native 的组合是同一配置错误）以及 `BlockingTarget`
-上两个带默认实现且不提供任何能力的直接内存方法；`dmi` 的公开行为见上文 `--dmi` 段。以上是既有公开类型上
+字段（`MachineConfig::new` 选择 `false`，`dmi` 与 native 的组合是同一配置错误）、`BlockingTarget`
+上两个带默认实现且不提供任何能力的直接内存方法，以及 `BlockingTransaction` 上的
+`is_dmi_allowed`／`set_dmi_allowed` hint 访问器；`dmi` 的公开行为见上文 `--dmi` 段。以上是既有公开类型上
 全部的公开变更，D2 的 “no other public signature changes” 按字面成立。U2 曾把 `AmoTransform::operation()`、
 `AmoOperation::kind()` 与 `AmoOperation::from_kind()` 加为公开方法，现按 2026-11-05 的所有者决定收窄为
 `pub(crate)`，方法体与行为不变。本里程碑其余新增都是新的公开项（blocking 适配词表、`capi` 模块与
