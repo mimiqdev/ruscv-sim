@@ -51,9 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ZeroDelayRam` 改为授予包含被查询地址的单个 4 KiB chunk 可读写零延迟 grant；chunk 字节本就是
     `AtomicU8`，直接 store 与 `b_transport`、debug transport 看到同一份数据，invalidate-before-discard 与
     非重复版本时钟不变
-  - 新增 9 个适配器级与 7 个 Machine 级测试覆盖合同 §4 U2 的验收项，包括 U1 延后的完整形式（guest 在直接
-    store 之后取得预留、跨失败的 recomposition 保留它，此时 SC 结果与 `dmi` 关闭时相同）；合同 §4 的 U2
-    负控制注册进 `scripts/debug/stage6-mutations`（`direct-mem-u2-*`），每条都指向必须失败的已提交测试
+  - 新增 11 个适配器级与 9 个 Machine 级测试覆盖合同 §4 U2 的验收项，另有两个既有测试扩展到写路径
+    （direct-memory 锁屏障与 chunk grant 形状），包括 U1 延后的完整形式（guest 在直接 store 之后取得预留、
+    跨失败的 recomposition 保留它，此时 SC 结果与 `dmi` 关闭时相同）；合同 §4 的 U2 负控制注册进
+    `scripts/debug/stage6-mutations`（`direct-mem-u2-*`），每条都指向必须失败的已提交测试
 
 - **TLM U7: 累积验证与收尾（issue #179）**
   - 合同 §4 的十一条负控制全部在 mutation runner（`scripts/debug/stage6-mutations`）注册，并逐条指向必须
