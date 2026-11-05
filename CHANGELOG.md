@@ -69,7 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     都不产生任何事务（每个 4 KiB chunk 只允许冷访问那一次）；关闭直接内存的同一镜像必须记录这些访问本身，
     因此该证明既不会因“未走该路径”而空过，也不依赖调度
   - `tests/tlm_u4_guest_parity.rs` 扩展为每 guest 三遍，断言第三遍确实带 `--dmi`，并注入仅在直接内存那一遍
-    发生的空白差异（`DIRECT_DIVERGES`），证明该比较针对 native 而不是与 TLM 那一遍互比
+    发生的空白差异（`DIRECT_DIVERGES`），证明该差异会被 suite 检出且不波及 TLM 那一遍；脚本按合同比较
+    native 与第三遍，而在 suite 已先要求 TLM 与 native 一致的前提下，这与比较 TLM 等价，故没有 fixture
+    能区分这两种比较目标
   - `scripts/debug_attach.sh` 增加一条 `run --transport tlm --dmi` 会话，强制 OpenOCD 只用 system bus：
     读取 `s6_break` 处的字、写入 EBREAK、resume 命中、用 raw system-bus 访问回读植入字、恢复原字并再次
     执行它直到 tohost 退出。读回必须绕过 GDB 自己的软件断点影子字节，插入与移除必须是恰好两次 OpenOCD

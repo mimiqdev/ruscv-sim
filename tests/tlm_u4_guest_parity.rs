@@ -16,12 +16,13 @@
 //!   [`the_guest_suite_fails_when_the_direct_commit_log_diverges`] inject a
 //!   whitespace-only divergence after an identical first line, in one pass at
 //!   a time, so a first-line-only or whitespace-insensitive comparison fails
-//!   here, and each proves the other pass stayed byte-identical. The suite
-//!   requires the TLM log to equal the native one before it looks at the
-//!   direct log, so comparing the direct log with the TLM log would be
-//!   equivalent to comparing it with native; the script compares it with
-//!   native, which is what the contract names, and no fixture here can tell
-//!   those two apart.
+//!   here. The direct-divergence check also proves the TLM pass stayed
+//!   byte-identical; the TLM-divergence check stops that guest before its
+//!   third pass, which it asserts explicitly. The suite requires the TLM log
+//!   to equal the native one before it looks at the direct log, so comparing
+//!   the direct log with the TLM log would be equivalent to comparing it with
+//!   native: the script compares it with native, which is what the contract
+//!   names, and no fixture here can tell those two apart.
 //! * [`synthetic_guest_commit_logs_match_between_native_and_tlm`] runs one
 //!   synthetic guest through the public CLI on both routes and compares the
 //!   commit logs byte for byte. This is the target of the
@@ -42,8 +43,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The parity set, in contract order: the five guests TLM U4 names (D10)
-/// followed by the two direct-memory U3 guests (direct-memory D14).
+/// The parity set, in contract order: the five guests Blocking TLM U4 names
+/// (D10 of the archived blocking-transport contract) followed by the two
+/// direct-memory U3 guests (direct-memory D14).
 const PARITY_GUESTS: [&str; 7] = [
     "hello",
     "s5_timer",
