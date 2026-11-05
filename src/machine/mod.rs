@@ -152,6 +152,14 @@ pub struct MachineConfig {
     /// default.  [`Transport::Tlm`] shares a caller-supplied blocking target and
     /// requires [`PlatformKind::Native`].
     pub transport: Transport,
+    /// Direct-memory selection for the selected guest-RAM target
+    /// (direct-memory D2).
+    ///
+    /// The default is `false`, which keeps the blocking route exactly as it was:
+    /// the adapter issues no direct-memory query and ignores every
+    /// `dmi_allowed` hint.  `true` requires a [`Transport::Tlm`] selection;
+    /// [`MachineError::UnsupportedTransport`] reports a native combination.
+    pub dmi: bool,
     /// The declared Platform tick period (dev-plan D7).
     ///
     /// One tick is one virtual-time unit and one `mtime` unit.  A blocking
@@ -173,6 +181,7 @@ impl MachineConfig {
             // Machine composition default is `rv64imafdc` (contract D2).
             isa: IsaProfile::default(),
             transport: Transport::Native,
+            dmi: false,
             tick_period: TickPeriod::DEFAULT,
             verbose: false,
             tohost_override: None,
@@ -204,7 +213,11 @@ pub enum MachineError {
     Poisoned,
     #[error("placement failed: {0}")]
     Placement(String),
-    #[error("a TLM transport requires PlatformKind::Native; Flat has no TLM route")]
+    #[error(
+        "unsupported transport configuration: a TLM transport requires PlatformKind::Native (Flat \
+         has no TLM route), and direct memory requires a TLM transport (the native route has no \
+         direct memory)"
+    )]
     UnsupportedTransport,
     #[error("this configuration has no UART")]
     NoUart,

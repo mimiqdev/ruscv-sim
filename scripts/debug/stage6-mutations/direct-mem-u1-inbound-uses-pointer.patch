@@ -1,0 +1,16 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index 8e38338..95a9ab1 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -348,9 +348,8 @@ impl TlmRamAdapter {
+         initiator: BlockingInitiator,
+     ) -> Option<PhysicalBackendResult> {
+         let regions = self.direct.as_deref()?;
+-        if !matches!(initiator, BlockingInitiator::Hart) {
+-            return None;
+-        }
++        // MUTATION: serve a DebugInbound request through the pointer.
++        let _ = initiator;
+         let descriptor = request.descriptor();
+         if !matches!(
+             descriptor.category,

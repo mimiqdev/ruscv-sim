@@ -83,19 +83,21 @@ impl RamSlot {
     ///
     /// The target's declared maximum delay must be representable under the
     /// Machine's declared tick period; otherwise the configuration fails
-    /// before any access is issued.
-    /// A TLM slot whose delay conversion uses the Machine's declared period.
+    /// before any access is issued.  `direct_mem` selects the direct-memory
+    /// path and registers this slot's adapter with the target
+    /// (direct-memory D2/D8).
     pub(crate) fn tlm(
         target: Arc<dyn BlockingTarget>,
         base: u64,
         size: usize,
         period: TickPeriod,
+        direct_mem: bool,
     ) -> Result<Self, DelayConversionError> {
         Ok(Self {
             inner: Arc::new(RamSlotInner {
                 base,
                 size,
-                kind: RamKind::Tlm(TlmRamAdapter::with_tick_period(target, period)?),
+                kind: RamKind::Tlm(TlmRamAdapter::with_tick_period(target, period, direct_mem)?),
             }),
         })
     }
@@ -105,6 +107,33 @@ impl RamSlot {
         match &self.inner.kind {
             RamKind::Native(memory) => Some(memory.clone()),
             RamKind::Tlm(_) => None,
+        }
+    }
+
+    /// Number of the TLM adapter's cached direct-memory grants, or zero on
+    /// native and with direct memory disabled.
+    #[cfg(test)]
+    pub(crate) fn cached_direct_mem_regions(&self) -> usize {
+        match &self.inner.kind {
+            RamKind::Native(_) => 0,
+            RamKind::Tlm(adapter) => adapter.cached_regions(),
+        }
+    }
+
+    /// Installs the test-only pause point inside a direct copy.
+    #[cfg(test)]
+    pub(crate) fn set_direct_copy_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        if let RamKind::Tlm(adapter) = &self.inner.kind {
+            adapter.set_direct_copy_hook(hook);
+        }
+    }
+
+    /// True while a direct copy holds the direct-memory lock, for tests.
+    #[cfg(test)]
+    pub(crate) fn direct_memory_lock_held(&self) -> bool {
+        match &self.inner.kind {
+            RamKind::Native(_) => false,
+            RamKind::Tlm(adapter) => adapter.direct_memory_lock_held(),
         }
     }
 

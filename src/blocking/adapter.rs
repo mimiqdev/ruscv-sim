@@ -3,8 +3,9 @@
 //!
 //! The adapter owns every classification rule:
 //!
-//! * one [`PhysicalRequest`] becomes exactly one `b_transport` call, never a
-//!   split, merge, cache or retry;
+//! * one [`PhysicalRequest`] becomes at most one `b_transport` call, never a
+//!   split, merge or retry; a Hart fetch or load a cached grant covers copies
+//!   through the target's pointer instead (direct-memory D4);
 //! * a changed payload or a left-incomplete status is a protocol failure;
 //! * the four fault statuses are guest-visible target faults, generic error is
 //!   a host failure, and an unknown flag, panic or non-zero annotation is
@@ -15,15 +16,18 @@
 //! * every completed write and AMO is recorded before the response returns
 //!   (ADR-0002 §6 committed-write visibility).
 
+use super::direct_mem::DirectMemRegions;
 use super::{
-    BlockingCommand, BlockingDebug, BlockingExtension, BlockingInitiator, BlockingResponseStatus,
-    BlockingTarget, BlockingTransaction, DelayConversionError, Femtoseconds, TickPeriod,
-    TurnCompletionBound,
+    BlockingCommand, BlockingDebug, BlockingDirectMemAccess, BlockingDirectMemGrant,
+    BlockingDirectMemQuery, BlockingDirectMemResponse, BlockingExtension, BlockingInitiator,
+    BlockingResponseStatus, BlockingTarget, BlockingTransaction, DelayConversionError,
+    Femtoseconds, TickPeriod, TurnCompletionBound,
 };
 use crate::physical::{
-    AtomicBackendResult, AtomicRequest, AtomicResponse, PhysicalBackendError,
-    PhysicalBackendResult, PhysicalRequest, PhysicalResponse, PhysicalResponseBytes,
-    PhysicalResponseCompletion, PhysicalTargetRejectionReason, MAX_PHYSICAL_ACCESS_BYTES,
+    AtomicBackendResult, AtomicRequest, AtomicResponse, PhysicalAccessKind, PhysicalBackendError,
+    PhysicalBackendResult, PhysicalRequest, PhysicalRequestDescriptor, PhysicalResponse,
+    PhysicalResponseBytes, PhysicalResponseCompletion, PhysicalTargetRejectionReason,
+    MAX_PHYSICAL_ACCESS_BYTES,
 };
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
@@ -38,6 +42,11 @@ pub(crate) struct TlmRamAdapter {
     declared_max: Femtoseconds,
     /// The target's declared maximum delay reserved by one guest turn.
     bound: TurnCompletionBound,
+    /// The cached grants, when direct memory is selected (direct-memory D4/D8).
+    /// `None` means the adapter issues no query and ignores every hint.
+    /// Dropping the adapter drops the cache, which is the teardown rule; the
+    /// target's registration becomes inert because it holds only a weak handle.
+    direct: Option<Arc<DirectMemRegions>>,
     state: Mutex<AdapterState>,
 }
 
@@ -88,17 +97,31 @@ impl TlmRamAdapter {
     /// The target's declared per-transaction maximum must be representable in
     /// that period; an overflowing or malformed bound is a configuration
     /// failure before any access is issued.
+    ///
+    /// With direct memory selected the adapter registers its own invalidation
+    /// handle with the target here, before its first transport reset, and keeps
+    /// one dedicated direct-memory lock for the cached grants (direct-memory
+    /// D8/D9).
     pub(crate) fn with_tick_period(
         target: Arc<dyn BlockingTarget>,
         period: TickPeriod,
+        direct_mem: bool,
     ) -> Result<Self, DelayConversionError> {
         let declared_max = target.declared_max_delay();
         let bound = TurnCompletionBound::new(declared_max, period)?;
+        let direct = if direct_mem {
+            let regions = DirectMemRegions::new();
+            target.register_direct_mem_invalidator(regions.invalidator());
+            Some(regions)
+        } else {
+            None
+        };
         Ok(Self {
             target,
             period,
             declared_max,
             bound,
+            direct,
             state: Mutex::new(AdapterState::default()),
         })
     }
@@ -177,18 +200,42 @@ impl TlmRamAdapter {
     /// Validates and accounts one completed response's annotated delay
     /// (ADR-0004 §5.2/§5.3, dev-plan D7).
     ///
-    /// The caller records a committed write before this step.  The delay is
-    /// accumulated before a limit is enforced, so an over-limit response still
-    /// consumes its known time on the failed turn.  An incomplete payload is
-    /// not a completion and its annotation is not trusted as elapsed.
+    /// The caller records a committed write before this step.  An incomplete
+    /// payload is not a completion and its annotation is not trusted as
+    /// elapsed.
     fn account_response_delay(
         &self,
         state: &mut AdapterState,
         transaction: &BlockingTransaction<'_>,
         access: DelayAccess,
     ) -> Result<(), PhysicalBackendError> {
-        let address = transaction.address();
-        let delay = transaction.response_delay();
+        self.account_delay(
+            state,
+            transaction.address(),
+            transaction.response_delay(),
+            transaction.status() != BlockingResponseStatus::Incomplete,
+            access,
+        )
+    }
+
+    /// Converts and accounts one access's transport delay.
+    ///
+    /// This is the one accounting path for both completions: a `b_transport`
+    /// response that annotates a delay and a direct access that charges its
+    /// grant's latency, so the conversion, the debug-not-charged rule, the
+    /// boundary total, the overshoot rule and the turn bound are identical
+    /// (direct-memory D6).
+    ///
+    /// The delay is accumulated before a limit is enforced, so an over-limit
+    /// response still consumes its known time on the failed turn.
+    fn account_delay(
+        &self,
+        state: &mut AdapterState,
+        address: u64,
+        delay: Femtoseconds,
+        counted: bool,
+        access: DelayAccess,
+    ) -> Result<(), PhysicalBackendError> {
         let ticks = delay.to_platform_ticks(self.period).map_err(|error| {
             PhysicalBackendError::host(format!(
                 "blocking target annotated a malformed delay of {} fs for {} at {address:#018x}: \
@@ -197,8 +244,7 @@ impl TlmRamAdapter {
                 access.label()
             ))
         })?;
-        let status = transaction.status();
-        if status != BlockingResponseStatus::Incomplete && state.active {
+        if counted && state.active {
             // Accumulate this response before classifying a limit failure, so
             // a known over-limit delay is still consumed once by the failed
             // turn.  An unrepresentable total fails the access without
@@ -260,10 +306,13 @@ impl TlmRamAdapter {
         Ok(())
     }
 
-    /// Maps one validated physical request onto one blocking transaction.
+    /// Maps one validated physical request onto one completion.
     ///
     /// `initiator` distinguishes a Hart-issued access from the Debug Module's
-    /// inbound system bus access (dev-plan D3).
+    /// inbound system bus access (dev-plan D3).  A Hart-initiated read that a
+    /// cached grant covers completes through the target's host pointer without
+    /// a `b_transport` call; every other request takes one blocking transaction
+    /// unchanged (direct-memory D4).
     pub(crate) fn transact(
         &self,
         request: &PhysicalRequest<'_>,
@@ -282,7 +331,78 @@ impl TlmRamAdapter {
                 ),
             ));
         }
+        if let Some(result) = self.direct_transact(request, initiator) {
+            return result;
+        }
+        self.blocking_transact(request, initiator)
+    }
 
+    /// The direct-memory read path (direct-memory D4–D6).
+    ///
+    /// Returns `None` when this request must take `b_transport`: direct memory
+    /// is off, the access was not Hart-initiated, it is not a fetch or a load
+    /// (this unit leaves stores, atomics and the reservation gate to the write
+    /// path), or no single cached grant covers the whole span with read
+    /// permission.  A span that crosses a grant's end therefore stays one
+    /// transaction instead of being split.
+    fn direct_transact(
+        &self,
+        request: &PhysicalRequest<'_>,
+        initiator: BlockingInitiator,
+    ) -> Option<PhysicalBackendResult> {
+        let regions = self.direct.as_deref()?;
+        if !matches!(initiator, BlockingInitiator::Hart) {
+            return None;
+        }
+        let descriptor = request.descriptor();
+        if !matches!(
+            descriptor.category,
+            PhysicalAccessKind::Fetch | PhysicalAccessKind::DataRead
+        ) {
+            return None;
+        }
+        let width = descriptor.width.bytes();
+        let mut bytes = [0u8; MAX_PHYSICAL_ACCESS_BYTES];
+        let latency = regions.read(descriptor.paddr, width, &mut bytes[..width])?;
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                return Some(Err(PhysicalBackendError::host(
+                    "TLM adapter state lock is poisoned by an earlier panic",
+                )))
+            }
+        };
+        if let Some(reason) = &state.poisoned {
+            return Some(Err(PhysicalBackendError::unknown(format!(
+                "the TLM RAM transport is poisoned by an earlier unknown completion ({reason}); \
+                 the target's transport reset must be acknowledged before any further access"
+            ))));
+        }
+        Some(
+            self.account_delay(
+                &mut state,
+                descriptor.paddr,
+                latency,
+                true,
+                DelayAccess::Physical(descriptor.category),
+            )
+            .map(|()| {
+                PhysicalResponse::new(
+                    descriptor,
+                    PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(
+                        &bytes[..width],
+                    )),
+                )
+            }),
+        )
+    }
+
+    /// Maps one validated physical request onto one blocking transaction.
+    fn blocking_transact(
+        &self,
+        request: &PhysicalRequest<'_>,
+        initiator: BlockingInitiator,
+    ) -> PhysicalBackendResult {
         let mut state = self.state.lock().map_err(|_| {
             PhysicalBackendError::host("TLM adapter state lock is poisoned by an earlier panic")
         })?;
@@ -318,7 +438,7 @@ impl TlmRamAdapter {
                 descriptor.category,
                 descriptor.paddr
             );
-            state.poisoned = Some(reason.clone());
+            self.poison(&mut state, reason.clone());
             return Err(PhysicalBackendError::unknown(reason));
         }
 
@@ -329,7 +449,7 @@ impl TlmRamAdapter {
                 descriptor.category,
                 descriptor.paddr
             );
-            state.poisoned = Some(reason.clone());
+            self.poison(&mut state, reason.clone());
             return Err(PhysicalBackendError::unknown(reason));
         }
 
@@ -364,6 +484,19 @@ impl TlmRamAdapter {
             &transaction,
             DelayAccess::Physical(descriptor.category),
         )?;
+
+        // A target may offer direct memory only on a completed non-atomic
+        // transaction, and the adapter queries it once, for a Hart-initiated
+        // read in this unit, before the response returns (direct-memory D3).
+        if status == BlockingResponseStatus::Ok
+            && command == BlockingCommand::Read
+            && initiator == BlockingInitiator::Hart
+            && transaction.is_dmi_allowed()
+        {
+            if let Some(regions) = self.direct.as_deref() {
+                self.query_grant(regions, &mut state, &descriptor)?;
+            }
+        }
 
         match status {
             BlockingResponseStatus::Ok => {
@@ -403,6 +536,166 @@ impl TlmRamAdapter {
                 descriptor.paddr
             ))),
             _ => unreachable!("every blocking status is handled"),
+        }
+    }
+
+    /// Marks the transport poisoned and drops every cached grant.
+    ///
+    /// An unknown completion means no proof excludes late effects, so no grant
+    /// may survive it: the next access takes `b_transport`, which the poisoned
+    /// transport refuses until a reset is acknowledged (direct-memory D9).
+    fn poison(&self, state: &mut AdapterState, reason: String) {
+        state.poisoned = Some(reason);
+        if let Some(regions) = &self.direct {
+            regions.clear();
+        }
+    }
+
+    /// Queries the target once for one completed read access and caches a valid
+    /// grant (direct-memory D3/D5).
+    ///
+    /// A denial caches nothing and is not an error.  A malformed grant is a
+    /// protocol failure of the access that queried it.  A panic in the query, or
+    /// a target's contained failure, is an unknown completion of that access and
+    /// poisons the transport.  No grant failure is guest-visible.
+    fn query_grant(
+        &self,
+        regions: &DirectMemRegions,
+        state: &mut AdapterState,
+        descriptor: &PhysicalRequestDescriptor,
+    ) -> Result<(), PhysicalBackendError> {
+        let query = BlockingDirectMemQuery::new(
+            descriptor.paddr,
+            descriptor.width.bytes(),
+            BlockingDirectMemAccess::Read,
+        );
+        // Sampled before the query begins: an invalidation that arrives while
+        // the query is in flight discards the grant (direct-memory D8).
+        let epoch = regions.epoch();
+        let reply = catch_unwind(AssertUnwindSafe(|| self.target.get_direct_mem_ptr(query)));
+        let reply = match reply {
+            Ok(reply) => reply,
+            Err(_) => {
+                let reason = format!(
+                    "blocking target panicked in its direct-memory query for a read at {:#018x}",
+                    descriptor.paddr
+                );
+                self.poison(state, reason.clone());
+                return Err(PhysicalBackendError::unknown(reason));
+            }
+        };
+        let grant = match reply {
+            BlockingDirectMemResponse::Granted(grant) => grant,
+            BlockingDirectMemResponse::Denied => return Ok(()),
+            BlockingDirectMemResponse::Failed => {
+                let reason = format!(
+                    "blocking target could not complete its direct-memory query for a read at \
+                     {:#018x}",
+                    descriptor.paddr
+                );
+                self.poison(state, reason.clone());
+                return Err(PhysicalBackendError::unknown(reason));
+            }
+        };
+        self.validate_grant(&grant, query)?;
+        // A grant the target races with an invalidation is discarded rather
+        // than installed (direct-memory D8).
+        regions.install(grant, epoch);
+        Ok(())
+    }
+
+    /// Rejects a grant whose shape a target cannot have promised
+    /// (direct-memory D3/D10).
+    ///
+    /// The adapter checks only the shape.  The pointer's validity is the
+    /// target's `unsafe` promise, which an invalidation must end.
+    fn validate_grant(
+        &self,
+        grant: &BlockingDirectMemGrant,
+        query: BlockingDirectMemQuery,
+    ) -> Result<(), PhysicalBackendError> {
+        let malformed = |detail: String| {
+            PhysicalBackendError::protocol(format!(
+                "the blocking target's direct-memory grant for the {} at {:#018x} is malformed: \
+                 {detail}",
+                query.access().name(),
+                query.address()
+            ))
+        };
+        if grant.start() > grant.end() {
+            return Err(malformed(format!(
+                "its inclusive range {:#018x}..={:#018x} is inverted",
+                grant.start(),
+                grant.end()
+            )));
+        }
+        if grant
+            .end()
+            .checked_sub(grant.start())
+            .and_then(|span| span.checked_add(1))
+            .is_none()
+        {
+            return Err(malformed(
+                "its inclusive range does not fit a representable length".into(),
+            ));
+        }
+        if !grant.access().has_access() {
+            return Err(malformed("it grants no access".into()));
+        }
+        if grant.pointer().is_null() {
+            return Err(malformed("its pointer is null".into()));
+        }
+        if !(grant.start() <= query.address() && query.address() <= grant.end()) {
+            return Err(malformed(format!(
+                "it does not contain the queried address {:#018x}",
+                query.address()
+            )));
+        }
+        for (latency, direction) in [
+            (grant.read_latency(), "read"),
+            (grant.write_latency(), "write"),
+        ] {
+            if latency > self.declared_max {
+                return Err(malformed(format!(
+                    "its {direction} latency of {} fs is above the declared per-transaction \
+                     maximum of {} fs",
+                    latency.as_u64(),
+                    self.declared_max.as_u64()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Drops every cached grant (direct-memory D9).
+    pub(crate) fn drop_regions(&self) {
+        if let Some(regions) = &self.direct {
+            regions.clear();
+        }
+    }
+
+    /// Installs the test-only pause point inside a direct copy.
+    #[cfg(test)]
+    pub(crate) fn set_direct_copy_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        if let Some(regions) = &self.direct {
+            regions.set_copy_hook(hook);
+        }
+    }
+
+    /// True while a direct copy holds the direct-memory lock, for tests.
+    #[cfg(test)]
+    pub(crate) fn direct_memory_lock_held(&self) -> bool {
+        self.direct
+            .as_ref()
+            .is_some_and(|regions| regions.lock_held())
+    }
+
+    /// Number of cached grants, for tests.
+    #[cfg(test)]
+    pub(crate) fn cached_regions(&self) -> usize {
+        match &self.direct {
+            Some(regions) => regions.len(),
+            None => 0,
         }
     }
 
@@ -503,7 +796,7 @@ impl TlmRamAdapter {
                 "blocking target panicked while servicing atomic {:?} at {:#018x}",
                 descriptor.kind, descriptor.paddr
             );
-            state.poisoned = Some(reason.clone());
+            self.poison(&mut state, reason.clone());
             return Err(PhysicalBackendError::unknown(reason));
         }
 
@@ -512,7 +805,7 @@ impl TlmRamAdapter {
                 "blocking target could not establish the outcome of atomic {:?} at {:#018x}",
                 descriptor.kind, descriptor.paddr
             );
-            state.poisoned = Some(reason.clone());
+            self.poison(&mut state, reason.clone());
             return Err(PhysicalBackendError::unknown(reason));
         }
 
@@ -666,7 +959,7 @@ impl TlmRamAdapter {
                 "blocking target panicked in its debug transport for {} at {address:#018x}",
                 command_label(command)
             );
-            state.poisoned = Some(reason.clone());
+            self.poison(&mut state, reason.clone());
             PhysicalBackendError::unknown(reason)
         })?;
         if transferred != len {
@@ -681,7 +974,14 @@ impl TlmRamAdapter {
 
     /// Performs the target's transport reset and clears any poison only when
     /// the target acknowledges it.
+    ///
+    /// The adapter drops its own grants before it calls the target, as the
+    /// Platform's reset entry point requires (direct-memory D9).  That covers
+    /// this composition; the target must still invalidate every registration
+    /// before it frees storage, which covers a composition that is being
+    /// replaced and stays current until publication.
     pub(crate) fn transport_reset(&self) -> Result<(), PhysicalBackendError> {
+        self.drop_regions();
         let mut state = self.state.lock().map_err(|_| {
             PhysicalBackendError::host("TLM adapter state lock is poisoned by an earlier panic")
         })?;
@@ -693,12 +993,12 @@ impl TlmRamAdapter {
             }
             Ok(false) => {
                 let reason = "blocking target did not acknowledge the transport reset".to_string();
-                state.poisoned = Some(reason.clone());
+                self.poison(&mut state, reason.clone());
                 Err(PhysicalBackendError::host(reason))
             }
             Err(_) => {
                 let reason = "blocking target panicked during its transport reset".to_string();
-                state.poisoned = Some(reason.clone());
+                self.poison(&mut state, reason.clone());
                 Err(PhysicalBackendError::unknown(reason))
             }
         }

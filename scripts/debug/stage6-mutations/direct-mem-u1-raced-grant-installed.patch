@@ -1,0 +1,17 @@
+diff --git i/src/blocking/direct_mem.rs w/src/blocking/direct_mem.rs
+index 43eb8d1..1981ecd 100644
+--- i/src/blocking/direct_mem.rs
++++ w/src/blocking/direct_mem.rs
+@@ -483,9 +483,9 @@ impl DirectMemRegions {
+             .state
+             .lock()
+             .unwrap_or_else(|poisoned| poisoned.into_inner());
+-        if cache.invalidations != epoch {
+-            return false;
+-        }
++        // MUTATION: install a grant an invalidation raced, instead of
++        // discarding it.
++        let _ = epoch;
+         let region = Region::new(grant);
+         cache
+             .regions

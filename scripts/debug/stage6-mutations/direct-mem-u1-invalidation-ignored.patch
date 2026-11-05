@@ -1,0 +1,14 @@
+diff --git i/src/blocking/direct_mem.rs w/src/blocking/direct_mem.rs
+index 43eb8d1..6105332 100644
+--- i/src/blocking/direct_mem.rs
++++ w/src/blocking/direct_mem.rs
+@@ -433,7 +433,8 @@ impl DirectMemRegions {
+             .lock()
+             .unwrap_or_else(|poisoned| poisoned.into_inner());
+         cache.invalidations = cache.invalidations.wrapping_add(1);
+-        cache.regions.retain(|region| !region.overlaps(start, end));
++        // MUTATION: keep every cached grant through the invalidation.
++        let _ = (start, end);
+     }
+ 
+     /// Removes every cached grant.

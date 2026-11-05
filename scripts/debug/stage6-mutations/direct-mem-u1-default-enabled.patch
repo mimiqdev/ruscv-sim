@@ -1,0 +1,14 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 4a32994..3f66068 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -181,7 +181,8 @@ impl MachineConfig {
+             // Machine composition default is `rv64imafdc` (contract D2).
+             isa: IsaProfile::default(),
+             transport: Transport::Native,
+-            dmi: false,
++            // MUTATION: MachineConfig::new selects direct memory.
++            dmi: true,
+             tick_period: TickPeriod::DEFAULT,
+             verbose: false,
+             tohost_override: None,

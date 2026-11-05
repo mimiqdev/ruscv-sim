@@ -1,0 +1,14 @@
+diff --git i/src/blocking/zero_delay.rs w/src/blocking/zero_delay.rs
+index 2365935..f537383 100644
+--- i/src/blocking/zero_delay.rs
++++ w/src/blocking/zero_delay.rs
+@@ -145,7 +145,8 @@ impl CommitBookkeeping {
+     /// version must never repeat: a retained reservation's snapshot must not
+     /// match a byte that a later run rewrote (direct-memory D10/D13).
+     fn reset_preserving_clock(&mut self) {
+-        self.versions.clear();
++        // MUTATION: restart the committed-write clock with the reset.
++        *self = Self::default();
+     }
+ }
+ 

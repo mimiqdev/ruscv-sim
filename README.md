@@ -93,6 +93,17 @@ cargo run -- run path/to/program.elf --max-cycles 100000
 | `--halted` | 复位后、第一条指令之前进入 Debug Mode（`dpc` 为入口，`minstret` 为 0）。必须与 `--rbb-port` 同时给出 |
 | `--isa <PROFILE>` | 选择 Machine ISA profile：`rv64imafdc`（默认，+F/D+Zca，IALIGN=16、`misa` `0x800000000014112D`）、`rv64ima`（IALIGN=32、`misa` `0x8000000000141101`）、`rv64imac`（Zca：16-bit parcel 取指、IALIGN=16、`misa` `0x8000000000141105`）、`rv64imafd`（+F/D、IALIGN=32、`misa` `0x8000000000141129`）。FP profile 提供 32 个普通 64-bit FPR、`fflags`/`frm`/`fcsr`、可写 `mstatus.FS`，以及只读且由 `FS==Dirty` 派生的 `SD`；FP profile 下全部 F/D 指令在公共 Hart 路径上执行，且 commit log 按 pinned Spike 格式打印 FPR 与 `fcsr` 写入；`rv64imafdc` 另支持 Zcd 压缩双精度加载/存储，`rv64imac`/`rv64imafd` 下 Zcd 仍按非法指令陷入。profile 不会从 ELF `e_flags` 推断，运行期间不可改变 |
 | `--transport <KIND>` | 选择 guest-RAM 传输：`native`（默认，现有 `SimpleMemory` 路径，行为不变）或 `tlm`。`tlm` 通过 blocking `b_transport` 目标服务全部 RAM 访问，并使用 in-tree 零延迟 Rust RAM target；它要求 native Platform（`Flat` + `tlm` 是配置错误）。镜像安装、`tohost` 轮询、`read_mem`/`write_mem`/`Machine::memory()` 与签名提取走 `transport_dbg`，不计为事务。标注延迟按声明的 Platform tick 周期（默认 1 ns）换算并计入 `mtime`：能整除时精确换算，否则向上取整；超过 target 声明的单事务最大值是 simulator failure，SBA 与 Debug Mode 的延迟只校验、不计时。U2 之前原子操作以原生 access-fault 原因失败关闭 |
+| `--dmi` | 允许 target 为 guest RAM 的取指与 load 授予 host 指针（TLM Direct Memory Interface）。要求 `--transport tlm`；单独使用是 CLI 错误（状态 2） |
+
+`--transport tlm --dmi` 启用本里程碑的第一单元：target 可以在完成的非原子事务上设置 `dmi_allowed` 提示，
+适配器据此查询一次 `get_direct_mem_ptr`，并把合法 grant 保存在适配器内部的有界 region 缓存中。此后整段落在
+同一 region 内、且有读取权限的 Hart 取指与 load 直接经由 host 指针完成（relaxed 逐字节原子拷贝），不再调用
+`b_transport`；跨 region 边界、缺少权限、store、原子操作与 `DebugInbound` 访问一律保持一次 blocking 事务。
+直接访问的读取延迟按 grant 声明的值走与标注延迟相同的换算与记账路径，不计入 `mcycle`/`minstret`。target 必须
+保留每一个注册的 invalidation 句柄（不替换），并在丢弃存储前 invalidate 全部注册；适配器在自身 reset、
+未知完成与 teardown 时丢弃全部 region，被 invalidation 竞态的 grant 不会被安装。`dmi` 为 `false` 时适配器
+不发起查询、忽略全部 hint，行为与轮换前的 blocking 合同完全一致。写入路径、LR/SC 门控与 Sv39 A/D 标记不在
+本单元内。
 
 `--transport tlm` 的 RAM 路径与 native 使用同一 Hart、地址映射和 DM 规则：一次物理访问对应恰好一次
 blocking 事务，长度等于访问宽度、原始字节按物理地址递增排列，状态的 guest 可见性、host/protocol/unknown

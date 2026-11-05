@@ -2,12 +2,16 @@
 //!
 //! Implementations model one IEEE 1666 blocking transport endpoint.  The
 //! adapter in [`super::adapter`] owns every ruscv-sim rule: one physical
-//! request becomes exactly one [`BlockingTransaction`], the request is never
-//! split, merged, cached or retried, and every status is reclassified into the
-//! ADR-0002 §4 categories.  A target therefore carries no TLM, ISA or trap
-//! dependency and cannot affect a guest outcome by itself.
+//! request becomes at most one [`BlockingTransaction`], the request is never
+//! split or merged, every status is reclassified into the ADR-0002 §4
+//! categories, and a granted host pointer may only replace a transaction the
+//! target's own hint offers (direct-memory D3/D4).  A target therefore carries
+//! no TLM, ISA or trap dependency and cannot affect a guest outcome by itself.
 
-use super::{BlockingDebug, BlockingTransaction, Femtoseconds};
+use super::{
+    BlockingDebug, BlockingDirectMemInvalidator, BlockingDirectMemQuery, BlockingDirectMemResponse,
+    BlockingTransaction, Femtoseconds,
+};
 
 /// A blocking guest-RAM target (dev-plan D3/D4/D6).
 ///
@@ -59,5 +63,45 @@ pub trait BlockingTarget: Send + Sync {
     /// window after an unknown completion or a fresh reset.  `true` means the
     /// target has quiesced and accepts new accesses; `false` leaves the
     /// transport unusable (dev-plan D6).
+    ///
+    /// A target that grants direct memory invalidates every registration it
+    /// keeps before it discards, moves or remaps granted storage, atomically
+    /// with respect to new grants, and keeps its committed-write version clock
+    /// across the reset (direct-memory D10/D13).
     fn transport_reset(&self) -> bool;
+
+    /// Answers one direct-memory query (direct-memory D3).
+    ///
+    /// The adapter asks once per completed Hart-initiated non-atomic
+    /// transaction that carried the `dmi_allowed` hint.  A target that offers
+    /// direct memory returns a [`super::BlockingDirectMemGrant`] whose pointer
+    /// and range satisfy the obligations of
+    /// [`super::BlockingDirectMemGrant::new`] until it invalidates them, and
+    /// whose read and write latencies are each at most
+    /// [`Self::declared_max_delay`].  Returning
+    /// [`BlockingDirectMemResponse::Denied`] caches nothing and is not an
+    /// error; [`BlockingDirectMemResponse::Failed`] is a contained failure of
+    /// the query itself and poisons the transport.
+    ///
+    /// The default offers nothing, so an existing target needs no change.
+    fn get_direct_mem_ptr(&self, query: BlockingDirectMemQuery) -> BlockingDirectMemResponse {
+        let _ = query;
+        BlockingDirectMemResponse::Denied
+    }
+
+    /// Keeps one adapter's direct-memory invalidation handle (direct-memory
+    /// D8).
+    ///
+    /// The adapter calls this once when it is constructed with direct memory
+    /// selected, before its first transport reset.  A target must keep every
+    /// registration and never replace an earlier one with a later one, because
+    /// a reset must reach the composition that is still current as well as the
+    /// one under construction.  [`super::BlockingDirectMemRegistry`] provides
+    /// that bookkeeping.  The handle is inert once its adapter is gone.
+    ///
+    /// The default keeps nothing, which is enough because a target that grants
+    /// no direct memory needs no invalidation.
+    fn register_direct_mem_invalidator(&self, invalidator: BlockingDirectMemInvalidator) {
+        let _ = invalidator;
+    }
 }

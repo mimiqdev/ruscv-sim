@@ -78,6 +78,12 @@ impl Platform {
         if config.platform == PlatformKind::Flat && !config.transport.is_native() {
             return Err(MachineError::UnsupportedTransport);
         }
+        // Direct memory is a property of the blocking route, so a native
+        // selection that enables it has no transport to grant it
+        // (direct-memory D2).
+        if config.dmi && config.transport.is_native() {
+            return Err(MachineError::UnsupportedTransport);
+        }
         let ram = match &config.transport {
             Transport::Native => RamSlot::native(
                 Arc::new(Mutex::new(SimpleMemory::new(image.memory_size()))),
@@ -89,6 +95,7 @@ impl Platform {
                 image.base_addr(),
                 image.memory_size(),
                 config.tick_period,
+                config.dmi,
             )
             .map_err(|error| {
                 MachineError::Placement(format!(

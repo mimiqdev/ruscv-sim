@@ -1,0 +1,24 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index 85ef7db..f00421b 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -109,13 +109,12 @@ impl TlmRamAdapter {
+     ) -> Result<Self, DelayConversionError> {
+         let declared_max = target.declared_max_delay();
+         let bound = TurnCompletionBound::new(declared_max, period)?;
+-        let direct = if direct_mem {
+-            let regions = DirectMemRegions::new();
+-            target.register_direct_mem_invalidator(regions.invalidator());
+-            Some(regions)
+-        } else {
+-            None
+-        };
++        // MUTATION: select direct memory regardless of the selection, so the
++        // adapter queries the target and uses grants with direct memory off.
++        let _ = direct_mem;
++        let regions = DirectMemRegions::new();
++        target.register_direct_mem_invalidator(regions.invalidator());
++        let direct = Some(regions);
+         Ok(Self {
+             target,
+             period,

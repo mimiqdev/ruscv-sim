@@ -1150,5 +1150,261 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "direct-mem-u1-default-enabled",
+    "source": "src/machine/mod.rs",
+    "patch": "direct-mem-u1-default-enabled.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::direct_memory_defaults_off_and_requires_the_tlm_route",
+        "failure": [
+          "MachineConfig::new selected direct memory"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-query-with-dmi-off",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u1-query-with-dmi-off.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::direct_memory_off_issues_no_query_and_uses_no_grant",
+        "failure": [
+          "direct memory off issued a query"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-invalidation-ignored",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u1-invalidation-ignored.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::an_invalidation_inside_b_transport_takes_effect_before_the_next_access",
+        "failure": [
+          "an invalidated grant is still cached"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-raced-grant-installed",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u1-raced-grant-installed.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_grant_raced_by_an_invalidation_is_discarded",
+        "failure": [
+          "a grant raced by an invalidation was installed"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-registration-replaced",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u1-registration-replaced.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::every_registration_is_kept_and_invalidation_reaches_all_of_them",
+        "failure": [
+          "a later registration replaced an earlier one"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-version-clock-restarted",
+    "source": "src/blocking/zero_delay.rs",
+    "patch": "direct-mem-u1-version-clock-restarted.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::the_committed_write_clock_survives_a_transport_reset",
+        "failure": [
+          "a committed-write version repeated across a transport reset"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-reset-keeps-regions",
+    "source": "src/blocking/zero_delay.rs",
+    "patch": "direct-mem-u1-reset-keeps-regions.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::the_in_tree_target_invalidates_before_it_discards_a_granted_chunk",
+        "failure": [
+          "an in-tree target reset left another composition's grant live"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-pointer-after-unknown",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u1-pointer-after-unknown.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::an_unknown_completion_drops_every_grant",
+        "failure": [
+          "a grant survived an unknown completion"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-write-only-grant-load",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u1-write-only-grant-load.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_load_through_a_write_only_grant_takes_b_transport",
+        "failure": [
+          "a load through a write-only grant used the pointer"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-crossing-span-uses-pointer",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u1-crossing-span-uses-pointer.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_span_crossing_a_grant_end_stays_one_transaction",
+        "failure": [
+          "a span crossing a grant end was served by the pointer"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-inbound-uses-pointer",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u1-inbound-uses-pointer.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::an_inbound_debug_access_never_uses_a_grant",
+        "failure": [
+          "a DebugInbound access was served by the pointer"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-malformed-grant-accepted",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u1-malformed-grant-accepted.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::every_malformed_grant_is_a_protocol_failure_of_the_querying_access",
+        "failure": [
+          "a malformed grant was accepted"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-latency-not-charged",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u1-latency-not-charged.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_direct_read_charges_its_grant_latency_through_the_one_accounting_path",
+        "failure": [
+          "a direct read charged a different delay than the annotated one"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-latency-into-counters",
+    "source": "src/machine/mod.rs",
+    "patch": "direct-mem-u1-latency-into-counters.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::direct_read_latency_never_reaches_the_isa_counters",
+        "failure": [
+          "direct read latency leaked into mcycle or minstret"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-overlap-not-replaced",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u1-overlap-not-replaced.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_new_grant_replaces_every_overlapping_cached_grant",
+        "failure": [
+          "a new grant did not replace every overlapping cached grant"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-copy-without-the-lock",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u1-copy-without-the-lock.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_direct_copy_holds_the_direct_memory_lock",
+        "failure": [
+          "a direct copy did not hold the direct-memory lock"
+        ]
+      }
+    ]
   }
 ]

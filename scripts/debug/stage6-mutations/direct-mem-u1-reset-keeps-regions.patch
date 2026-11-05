@@ -1,0 +1,14 @@
+diff --git i/src/blocking/zero_delay.rs w/src/blocking/zero_delay.rs
+index 2365935..df2c570 100644
+--- i/src/blocking/zero_delay.rs
++++ w/src/blocking/zero_delay.rs
+@@ -263,7 +263,8 @@ impl BlockingTarget for ZeroDelayRam {
+                 // discarded, and both happen under the storage lock, so no
+                 // grant is issued across the window and no cached pointer
+                 // outlives its storage (direct-memory D9/D13).
+-                self.direct.invalidate_all();
++                // MUTATION: discard the chunks without invalidating the
++                // registrations that still point at them.
+                 storage.chunks.clear();
+                 storage.commits.reset_preserving_clock();
+                 true
