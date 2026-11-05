@@ -74,8 +74,8 @@ enum Commands {
 
         /// Let the TLM target grant host pointers for guest-RAM fetches and
         /// loads. Requires `--transport tlm`.
-        #[arg(long)]
-        dmi: bool,
+        #[arg(long = "dmi")]
+        direct_mem: bool,
     },
 }
 
@@ -128,13 +128,13 @@ fn main() {
             halted,
             isa,
             transport,
-            dmi,
+            direct_mem,
         } => {
             if halted && rbb_port.is_none() {
                 eprintln!("error: --halted requires --rbb-port");
                 std::process::exit(2);
             }
-            if dmi && transport != TransportArg::Tlm {
+            if direct_mem && transport != TransportArg::Tlm {
                 eprintln!("error: --dmi requires --transport tlm");
                 std::process::exit(2);
             }
@@ -147,7 +147,7 @@ fn main() {
                     eprintln!("Commit log: {:?}", path);
                 }
                 eprintln!("Transport: {:?}", transport);
-                if dmi {
+                if direct_mem {
                     eprintln!("Direct memory: enabled");
                 }
                 if let Some(port) = rbb_port {
@@ -169,7 +169,7 @@ fn main() {
                     halted,
                     isa: isa.0,
                     transport,
-                    dmi,
+                    direct_mem,
                 },
             ) {
                 Ok(result) => {
@@ -195,7 +195,7 @@ struct RunOptions {
     halted: bool,
     isa: IsaProfile,
     transport: TransportArg,
-    dmi: bool,
+    direct_mem: bool,
 }
 
 fn run_elf(elf_path: &std::path::Path, options: RunOptions) -> Result<ExecutionResult, String> {
@@ -227,7 +227,7 @@ fn run_elf(elf_path: &std::path::Path, options: RunOptions) -> Result<ExecutionR
             config.tohost_override = options.tohost;
             config.uart_output = Some(Arc::new(|byte| print!("{}", byte as char)));
             config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
-            config.dmi = options.dmi;
+            config.dmi = options.direct_mem;
             let debug = options
                 .rbb_port
                 .map(|port| RemoteBitbangConfig::listen(port).halted(options.halted));

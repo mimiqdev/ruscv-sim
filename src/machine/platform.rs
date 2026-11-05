@@ -79,7 +79,7 @@ impl Platform {
             return Err(MachineError::UnsupportedTransport);
         }
         // Direct memory is a property of the blocking route, so a native
-        // selection with `dmi` set has no transport to grant it
+        // selection that enables it has no transport to grant it
         // (direct-memory D2).
         if config.dmi && config.transport.is_native() {
             return Err(MachineError::UnsupportedTransport);
