@@ -507,9 +507,9 @@ fn a_direct_copy_holds_the_direct_memory_lock() {
     copying_rx.recv().unwrap();
 
     // A failed `try_lock` is the scheduler-independent observation: the copy
-    // holds the direct-memory lock, so `invalidate`, which takes the same lock,
-    // can neither enter nor return while the copy is in flight (direct-memory
-    // D8).
+    // holds the direct-memory lock, so an `invalidate`, which takes that same
+    // lock before it changes anything, cannot enter its protected section or
+    // return while the copy is in flight (direct-memory D8).
     assert!(
         slot.direct_memory_lock_held(),
         "a direct copy did not hold the direct-memory lock"
@@ -522,7 +522,7 @@ fn a_direct_copy_holds_the_direct_memory_lock() {
         "the direct-memory lock stayed held after the copy"
     );
 
-    // The invalidation that the lock deferred now takes effect.
+    // An invalidation after the copy still takes effect.
     target.invalidate_everything();
     assert_eq!(
         slot.cached_direct_mem_regions(),
