@@ -4,7 +4,7 @@
 
 **Authority:** Normative for test-layer ownership; individual tool integrations require their own verified setup
 
-**Last reviewed:** 2026-11-04
+**Last reviewed:** 2026-11-06
 
 ## Test layers
 
@@ -38,8 +38,8 @@ Test language follows the layer rather than the simulator implementation languag
 
 - Rust tests live under `src/**` and `tests/*.rs`.
 - Project-authored guest programs currently live under `tests/bare-metal-riscv-test/` and are assembly sources.
-- CI installs a RISC-V GNU assembler/linker, runs the Rust quality gate, and on pull requests and on pushes to `main` builds and runs the project-authored ELF programs, including the Stage 4 `s4_*` guests. Every guest then runs a second time under `--transport tlm` with its declared profile and the same cycle bound, and the parity set named by the blocking-transport contract compares both `--log-commits` outputs byte for byte; the TLM pass is classified exactly like the native pass, so a guest that fails only there fails the suite.
-- CI runs debug mutation controls with `python3 scripts/verify_stage6_mutations.py --source-ref HEAD` and tool integration with `scripts/debug_attach.sh --require-spike`. The mutation runner uses disposable storage outside the checkout and writes diagnostics to the CI log. It also holds the `sc_stop` control's Rust stand-in; the `SystemC transport smoke` job runs that control's early-`sc_stop` variant, which must not pass.
+- CI installs a RISC-V GNU assembler/linker, runs the Rust quality gate, and on pull requests and on pushes to `main` builds and runs the project-authored ELF programs, including the Stage 4 `s4_*` guests. Every guest then runs a second time under `--transport tlm` and a third time under `--transport tlm --dmi`, each with its declared profile and the same cycle bound; both passes are classified exactly like the native pass, so a guest that fails only there fails the suite. The parity set named by the blocking-transport contract, extended by the direct-memory self-modifying-code and page-table guests, compares each `--log-commits` output byte for byte with the native one.
+- CI runs debug mutation controls with `python3 scripts/verify_stage6_mutations.py --source-ref HEAD` and tool integration with `scripts/debug_attach.sh --require-spike`. The mutation runner uses disposable storage outside the checkout and writes diagnostics to the CI log; its 96 units include the direct-memory negative controls of the current contract. It also holds the `sc_stop` control's Rust stand-in; the `SystemC transport smoke` job runs that control's early-`sc_stop` variant, which must not pass. The debug-attach sessions include `ruscv-direct-mem`, which inserts, hits and removes a software breakpoint through forced system-bus access under `--transport tlm --dmi`.
 - CI job `Quality and tests` also builds the `capi` static library and compiles and links a plain-C host against it with `scripts/test_capi_smoke.sh`, so the C ABI needs no C++ toolchain and `cargo build`/`test --all-features` still do not. The same job runs the A10 producer-pin suite under `tools/a10`.
 - CI job `SystemC transport smoke` builds the development image, whose SystemC layer pins Accellera SystemC 3.0.2 at commit `70b0fc8e4a74acc677b0fc73cea08f940c2115d5` with C++17, and runs `scripts/test_systemc_smoke.sh` inside it: `atomic_tohost_exit` and `fd_fma` through the pinned kernel, the C ABI and the blocking RAM target, compared against the native CLI for exit code and commit log; both guests run again under `--dmi` with the target's `b_transport` count strictly below the non-direct pass, and one guest runs under `--dmi-invalidate-every` with an unchanged commit log and verified invalidation counts.
 - Execution results belong in CI logs/artifacts and PR discussions. This document defines verification ownership and commands; it is not a run ledger.

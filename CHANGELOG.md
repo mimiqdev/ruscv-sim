@@ -117,6 +117,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     计划计数恰等于 grants/2 且转发的计数不低于它。既有各遍与早停控制不变。C++ 检查不在 Rust mutation runner
     覆盖内，其失败证据记录在 PR 中，未新增控制
 
+- **Direct memory U6: 累积验证与收尾（issue #193）**
+  - 合同 §4 的负控制审计：十五条全部已在 mutation runner 注册为 33 个 `direct-mem-u1-*`/`u2-*`/`u3-*`/
+    `u4-*` 单元，每条指向必须失败的已提交测试；审计未发现缺失的控制，未新增控制。U5 的 C++ 侧检查不在该
+    runner 可补丁范围内，其失败证据与脚本断言的对应关系记录在对应单元 PR 中，由
+    `scripts/test_systemc_smoke.sh` 的断言本身（`b_transport` 计数必须严格更低、invalidation 计数必须
+    匹配）逐次执行证明
+  - CI 覆盖确认（读 `.github/workflows/ci.yml` 核实，非假设）：`Quality and tests` 运行完整 Rust 质量门
+    （fmt、check、clippy、test、doc）、三遍 guest 套件（native、`--transport tlm`、`--transport tlm --dmi`）、
+    C ABI smoke、A10 producer pin 套件与 mutation runner；`Debug attach` 运行 tool script（含
+    `ruscv-direct-mem` 会话）；`SystemC transport smoke` 运行 pinned SystemC 作业的 `--dmi` 与
+    `--dmi-invalidate-every` 遍。无新 CI 作业，开发镜像不变
+  - `tools/a10/public-v1.json` 及其 fixtures 与里程碑前逐字节相同（`tools/a10/` 自 `17633cc` 起无改动），
+    A10 只在 native 路由上运行，Stage 3 performance-certification 缓期不变
+  - D14 文档收尾：`docs/integration/systemc-tlm.md` 对直接内存的 grant、permission、latency、invalidation、
+    lifetime、version-clock persistence across reset 与 FFI 规则成为规范说明（SystemC 侧），quantum 与
+    同步策略仍为该页开放项；README 的 `--dmi` 行与 SystemC/`--help` 文本已随各单元更新，本单元核对全部
+    陈述与源码一致；验证文档列出第三遍 guest 套件与 96 单元 mutation runner
+  - 修复 `direct-mem-u1-copy-without-the-lock` 的输出交错 flake：被变异的源使测试在释放前 panic，挂起在
+    拷贝钩子里的辅助线程随后因通道关闭而 panic，其分离线程的 panic 输出与 runner 匹配的
+    `test result:` 汇总行竞争。钩子改为在通道关闭时安静返回（`let _ = ...recv()`），辅助线程不再产生
+    竞争输出；测试与控制行为不变
+
 - **TLM U7: 累积验证与收尾（issue #179）**
   - 合同 §4 的十一条负控制全部在 mutation runner（`scripts/debug/stage6-mutations`）注册，并逐条指向必须
     失败的已提交测试：默认 transport 不是 native（`tlm-u1-default-not-native`）、

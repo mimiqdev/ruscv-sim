@@ -72,8 +72,8 @@ enum Commands {
         #[arg(long, value_name = "TRANSPORT", default_value = "native")]
         transport: TransportArg,
 
-        /// Let the TLM target grant host pointers for guest-RAM fetches and
-        /// loads. Requires `--transport tlm`.
+        /// Let the TLM target grant host pointers for guest-RAM fetches,
+        /// loads and stores. Requires `--transport tlm`.
         #[arg(long = "dmi")]
         direct_mem: bool,
     },
