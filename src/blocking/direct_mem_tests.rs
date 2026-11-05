@@ -492,9 +492,9 @@ fn an_invalidation_waits_for_a_copy_that_is_in_flight() {
     assert_eq!(read(&mut port, BASE, PhysicalWidth::Word).len(), 4);
     assert_eq!(slot.cached_direct_mem_regions(), 1);
 
-    // A direct copy that holds the direct-memory lock until the test lets it
-    // finish.  The pause point sits between the grant lookup and the byte copy,
-    // so this proves that window: an invalidation cannot slip between them.
+    // A direct copy that holds the direct-memory lock until the test releases
+    // it.  The pause point sits between the grant lookup and the byte copy, so
+    // this proves that window: an invalidation cannot slip between them.
     let (copying, copying_rx) = mpsc::channel();
     let (release, release_rx) = mpsc::channel();
     let release_rx = Mutex::new(release_rx);
@@ -508,35 +508,25 @@ fn an_invalidation_waits_for_a_copy_that_is_in_flight() {
     };
     copying_rx.recv().unwrap();
 
-    // An invalidation from another thread cannot return while a copy through
-    // the removed grant is in flight (direct-memory D8).  The invalidator
-    // reports that it is running and about to invalidate first, so the probe
-    // below cannot pass merely because that thread was never scheduled.
-    let (attempting, attempting_rx) = mpsc::channel();
-    let (invalidated, invalidated_rx) = mpsc::channel();
-    let invalidator = {
-        let target = target.clone();
+    // The copy is released only after a delay, so the assertion below reads a
+    // definite ordering rather than a timing window: a lock that the copy still
+    // holds cannot let this call return before that release.
+    let released = Arc::new(AtomicBool::new(false));
+    let releaser = {
+        let released = released.clone();
         thread::spawn(move || {
-            attempting.send(()).unwrap();
-            target.invalidate_everything();
-            invalidated.send(()).unwrap();
+            thread::sleep(Duration::from_millis(500));
+            released.store(true, Ordering::SeqCst);
+            release.send(()).unwrap();
         })
     };
-    attempting_rx
-        .recv_timeout(Duration::from_secs(10))
-        .expect("the invalidator never started");
+    target.invalidate_everything();
     assert!(
-        invalidated_rx
-            .recv_timeout(Duration::from_millis(100))
-            .is_err(),
+        released.load(Ordering::SeqCst),
         "an invalidation returned while a direct copy was in flight"
     );
-    release.send(()).unwrap();
     assert_eq!(reader.join().unwrap(), vec![0; 4]);
-    invalidated_rx
-        .recv_timeout(Duration::from_secs(10))
-        .expect("the invalidation did not finish after the copy completed");
-    invalidator.join().unwrap();
+    releaser.join().unwrap();
     slot.set_direct_copy_hook(None);
     assert_eq!(
         slot.cached_direct_mem_regions(),
