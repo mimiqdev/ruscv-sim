@@ -207,7 +207,7 @@ invalidate-all 会额外转发一次）。缺少工具链、缺少 SystemC 或�
 `cargo build`／`cargo test --all-features` 不需要 C++ 工具链或 SystemC。Linux x86-64 only。
 
 选定的 blocking 映射、FFI 所有权与线程、错误映射、时间单位、再入与停止行为、构建与版本 pin 的规范说明见
-[SystemC/TLM 边界](docs/integration/systemc-tlm.md)；quantum／同步策略仍为该页的开放项。
+[SystemC/TLM 边界](docs/integration/systemc-tlm.md)；quantum／同步策略已由当前合同选定，尚未实现。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 

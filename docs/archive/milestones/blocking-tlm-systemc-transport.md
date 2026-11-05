@@ -1,6 +1,6 @@
 # Blocking TLM and SystemC Transport contract
 
-**Status:** Historical. Completed 2026-11-05 at PR #186; the [TLM Direct Memory Interface contract](../../dev-plan.md) succeeds it as the sole Current contract on the actual rotation merge.
+**Status:** Historical. Completed 2026-11-05 at PR #186; the [TLM Direct Memory Interface contract](tlm-direct-memory-interface.md) succeeded it, completed 2026-11-06 at PR #199.
 
 **Authority:** Preserved approved contract, not an active plan or an execution report. CI and PR history retain check and review outcomes.
 

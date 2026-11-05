@@ -8,12 +8,14 @@ behavior, and the build and version pins (D12 of the
 [archived blocking-transport contract](../archive/milestones/blocking-tlm-systemc-transport.md),
 to which this page's `dev-plan` D numbers refer), and for direct memory: grant,
 permission, latency, invalidation, lifetime, version-clock persistence across
-reset and the FFI rules (direct-memory D3–D10, D12 and D13 of
-[`docs/dev-plan.md`](../dev-plan.md); this page's `direct-memory D<n>`
-citations name that contract). Bounded by ADR-0002, ADR-0003
-and ADR-0004 with their amendments, and by [`docs/dev-plan.md`](../dev-plan.md),
-which governs where this page disagrees with them. Quantum and
-synchronization policy stay open (the page end records them).
+reset and the FFI rules (direct-memory D3–D10, D12 and D13 of the
+[archived direct-memory contract](../archive/milestones/tlm-direct-memory-interface.md);
+this page's `direct-memory D<n>` citations name that contract). Bounded by
+ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
+[`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
+with them. The Current contract selects quantum and synchronization policy but
+has not implemented it; quantum D14 makes this page normative for it at U6, and
+the page end records the state until then.
 
 **Last reviewed:** 2026-11-06
 
@@ -22,12 +24,12 @@ The repository implements one blocking-transport integration: a C ABI facade
 and a pinned SystemC host ([`integration/systemc`](../../integration/systemc)).
 This page is the normative reference for that mapping, its ownership and thread
 rules, its error and time mapping, its stop behavior, and its build pins. It
-records the SystemC halves of the current direct-memory contract's grant,
+records the SystemC halves of the direct-memory contract's grant,
 permission, latency, invalidation, lifetime and version-clock obligations and
-its FFI rules, normative where they are not already covered by
-[`docs/dev-plan.md`](../dev-plan.md) and the header's
-direct-memory obligations. Non-blocking transport, temporal decoupling and
-TLM-modeled devices stay out of scope, as the contract's §5 records.
+its FFI rules, normative where they are not already covered by the
+[archived contract](../archive/milestones/tlm-direct-memory-interface.md) and the
+header's direct-memory obligations. Non-blocking transport and TLM-modeled
+devices stay out of scope, as the Current contract's §5 records.
 
 ## Selected mapping
 
@@ -253,11 +255,11 @@ neither a guest loop nor a host defect can hang CI.
 
 ## Open items
 
-- Quantum, temporal decoupling and synchronization policy. After every grant
-  here the host `wait()`s exactly the consumed amount (a zero-consumption
-  grant waits for nothing, and a zero consumed amount cannot advance the
-  kernel clock), so the kernel advances global time only between grants; no
-  quantum keeper exists and none is selected.
+- Quantum and temporal decoupling are selected by the Current contract and not
+  implemented. Until they are, after every grant here the host `wait()`s exactly
+  the consumed amount (a zero-consumption grant waits for nothing, and a zero
+  consumed amount cannot advance the kernel clock), so the kernel advances
+  global time only between grants, and `b_transport` receives a zero `delay`.
 - Non-blocking transport, which needs its own timing contract.
 
 ## Direct-memory grant, permission, latency, invalidation, lifetime and FFI
@@ -265,8 +267,8 @@ neither a guest loop nor a host defect can hang CI.
 This section states the SystemC host's rules for the direct-memory topics
 D14 makes normative here — grant, permission, latency, invalidation,
 lifetime, version-clock persistence across reset, and the FFI rules — under
-the current contract. The Rust-side rules live in
-[`docs/dev-plan.md`](../dev-plan.md) D3–D10 and in the header's direct-memory
+the direct-memory contract. The Rust-side rules live in
+[its D3–D10](../archive/milestones/tlm-direct-memory-interface.md) and in the header's direct-memory
 obligations; this section binds the host of
 [`integration/systemc`](../../integration/systemc) to them and states what only
 this host can state.

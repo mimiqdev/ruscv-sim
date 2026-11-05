@@ -75,8 +75,10 @@ Test language follows the layer rather than the simulator implementation languag
 - [A9 T0–T3 checkpoints and local T4 progress](a9-stage2-progress.md) — frozen route inventory, Hart facts, direct-owner lifecycle, public-facade migration and R1–R4 reproductions
 - [A9 bounded acceptance assessment](a9-closeout-assessment.md) — cumulative audit, preserved checkpoint, separate final PR-head gate/review and exact merged-main CI; 58 fresh project CLI guests, Coverage skipped
 - [A9 implementation closeout record](../archive/milestones/a9-closeout-record.md) — technical acceptance 2026-10-02, closeout documents delivered 2026-10-03, approved rotation; formal completion effective on actual merge
-- [TLM Direct Memory Interface contract](../dev-plan.md) — D1–D14 approved 2026-11-05 under delegated planning authority, sole Current on the successor rotation merge. Its units are implementation requirements, not runtime support claims.
-- [Approved direct-memory proposal entry](../proposals/post-tlm-dmi.md) — informational pointer to the normative contract.
+- [Quantum and Temporal Decoupling contract](../dev-plan.md) — D1–D14 approved 2026-11-06 under delegated planning authority, sole Current on the successor rotation merge. Its units are implementation requirements, not runtime support claims.
+- [Approved quantum proposal entry](../proposals/post-dmi-quantum.md) — informational pointer to the normative contract.
+- [Archived direct-memory contract](../archive/milestones/tlm-direct-memory-interface.md) — entire contract, completed 2026-11-06 at PR #199.
+- [Historical direct-memory proposal entry](../proposals/post-tlm-dmi.md) — informational pointer to the archived contract.
 - [Archived blocking-transport contract](../archive/milestones/blocking-tlm-systemc-transport.md) — completed 2026-11-05 at PR #186.
 - [Historical blocking-transport proposal entry](../proposals/post-gc-blocking-tlm.md) — informational pointer to the archived contract.
 - [Archived RV64GC default-profile contract](../archive/milestones/rv64gc-default-profile.md) — completed 2026-11-04 at PR #171.
