@@ -58,8 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Direct memory U3: 交互与 guest parity（issue #190）**
   - `scripts/run_elf_tests.sh` 对每个 guest 追加第三次运行：在 `--transport tlm --dmi` 下使用其声明的
-    profile 与同一 cycle 上限，并像另外两遍一样分类失败（失败即缺陷，绝不跳过）。parity set 的第三次
-    commit log（`<guest>.direct.log`）必须与 native 逐字节相同，摘要同时报告两种 parity 比较的覆盖数
+    profile 与同一 cycle 上限，并像另外两遍一样分类失败（失败即缺陷，绝不跳过）。parity set（U4 的五个
+    guest 加上本单元新增的两个）的第三次 commit log（`<guest>.direct.log`）必须与 native 逐字节相同，
+    摘要同时报告两种 parity 比较的覆盖数
   - 新增两个必选 guest：`direct_mem_smc_fence_i.S` 在自己的指令流上打补丁（store → `FENCE.I` → 执行被替换
     的指令），`direct_mem_sv39_pt_store.S` 用直接 store 改写叶 PTE、执行 `sfence.vma`、再通过重映射的 VA
     读取；两者都参与 fresh suite 的三遍运行
