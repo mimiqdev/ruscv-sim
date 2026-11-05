@@ -36,6 +36,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 新增 17 个适配器级与 6 个 Machine 级测试覆盖合同 §4 U1 的验收项；合同 §4 的 14 条 U1 负控制注册进
     `scripts/debug/stage6-mutations`（`direct-mem-u1-*`），每条都指向必须失败的已提交测试
 
+- **Direct memory U2: 写路径与原子操作（issue #189）**
+  - `TlmRamAdapter` 在同一个 region 缓存内实现直接写路径：整段落在一个可写缓存 grant 内、且写挂起门关闭的
+    Hart store 经由 host 指针完成（relaxed 逐字节原子 `AtomicU8` 存储），不再调用 `b_transport`；跨 region
+    边界或缺少写权限的 store 仍是一次 blocking 事务，因此指向只读 region 的 store 到达 target，其响应上的
+    hint 以 `DMI_ACCESS_WRITE` 查询，target 可改授可读写 grant 并替换旧 region。直接 store 的写入延迟走既有
+    的一处延迟记账路径（同一换算、同一 debug 不计时规则、同一边界总量），不计入 `mcycle`/`minstret`，并在
+    返回前计入适配器的 committed-write 记录
+  - 实现 direct-memory D7 的写挂起门：guest LR 打开它，此后每个 store 都取 `b_transport`，使 target 记录该
+    写入；只有结论性的 guest SC（成功或条件失败）关闭它，faulted 或未决的 SC 保持打开（Hart 仍持有预留），
+    transport reset 关闭它。LR、SC、每个 AMO 与每一段 A/D 包络始终各是一次 `b_transport`，从不经由指针
+  - `AtomicRequest` 新增 `pub(crate)` 页表更新标记，`src/core/translation.rs` 与 `src/mmu/sv39.rs` 两条
+    walker 路由的 A/D LR 与 SC 都设置它，使 walk 私有的预留既不打开也不关闭写挂起门
+  - `ZeroDelayRam` 改为授予包含被查询地址的单个 4 KiB chunk 可读写零延迟 grant；chunk 字节本就是
+    `AtomicU8`，直接 store 与 `b_transport`、debug transport 看到同一份数据，invalidate-before-discard 与
+    非重复版本时钟不变
+  - 新增 11 个适配器级与 9 个 Machine 级测试覆盖合同 §4 U2 的验收项，另有两个既有测试扩展到写路径
+    （direct-memory 锁屏障与 chunk grant 形状），包括 U1 延后的完整形式（guest 在直接 store 之后取得预留、
+    跨失败的 recomposition 保留它，此时 SC 结果与 `dmi` 关闭时相同）；合同 §4 的 U2 负控制注册进
+    `scripts/debug/stage6-mutations`（`direct-mem-u2-*`），每条都指向必须失败的已提交测试
+
 - **TLM U7: 累积验证与收尾（issue #179）**
   - 合同 §4 的十一条负控制全部在 mutation runner（`scripts/debug/stage6-mutations`）注册，并逐条指向必须
     失败的已提交测试：默认 transport 不是 native（`tlm-u1-default-not-native`）、

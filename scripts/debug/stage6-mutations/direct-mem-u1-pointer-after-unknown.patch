@@ -1,22 +1,21 @@
 diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
-index 8e38338..25d2938 100644
+index 7b91a45..aaee66d 100644
 --- i/src/blocking/adapter.rs
 +++ w/src/blocking/adapter.rs
-@@ -369,12 +369,7 @@ impl TlmRamAdapter {
-                 )))
-             }
+@@ -372,11 +372,7 @@ impl TlmRamAdapter {
          };
--        if let Some(reason) = &state.poisoned {
--            return Some(Err(PhysicalBackendError::unknown(format!(
--                "the TLM RAM transport is poisoned by an earlier unknown completion ({reason}); \
--                 the target's transport reset must be acknowledged before any further access"
--            ))));
+         let width = descriptor.width.bytes();
+         let mut state = self.state.lock().ok()?;
+-        // A poisoned transport refuses the direct path exactly as it refuses
+-        // `b_transport`, and the blocking path owns that diagnostic.
+-        if state.poisoned.is_some() {
+-            return None;
 -        }
 +        // MUTATION: the direct path ignores a poisoned transport.
-         Some(
-             self.account_delay(
-                 &mut state,
-@@ -542,10 +537,8 @@ impl TlmRamAdapter {
+         if store && state.writes_suspended {
+             // direct-memory D7: a live guest reservation must observe every
+             // store through the target's committed-write record, so the store
+@@ -581,10 +577,8 @@ impl TlmRamAdapter {
      /// may survive it: the next access takes `b_transport`, which the poisoned
      /// transport refuses until a reset is acknowledged (direct-memory D9).
      fn poison(&self, state: &mut AdapterState, reason: String) {
@@ -27,4 +26,4 @@ index 8e38338..25d2938 100644
 -        }
      }
  
-     /// Queries the target once for one completed read access and caches a valid
+     /// Queries the target once for one completed access and caches a valid

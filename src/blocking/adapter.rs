@@ -56,6 +56,13 @@ struct AdapterState {
     poisoned: Option<String>,
     /// Monotonic count of completed writes and AMOs.
     committed_writes: u64,
+    /// True while a guest load-reserved's reservation may be live: the
+    /// store-suspension gate of direct-memory D7.  A target's store-conditional
+    /// check reads committed-write versions that a direct store never updates,
+    /// so while this is set every store takes `b_transport` and the target
+    /// records it.  A conclusive guest store-conditional clears it; a faulted
+    /// one leaves it set, because the Hart keeps its reservation.
+    writes_suspended: bool,
     /// Exact running total of charged guest-turn delay in femtoseconds.
     delay: Femtoseconds,
     /// True between [`TlmRamAdapter::begin_turn`] and its take/discard.
@@ -171,7 +178,7 @@ impl TlmRamAdapter {
     }
 
     /// Number of completed writes and AMOs recorded for committed-write
-    /// visibility.
+    /// visibility.  A direct store is one of them (direct-memory D7).
     #[cfg(test)]
     pub(crate) fn committed_write_version(&self) -> u64 {
         match self.state.lock() {
@@ -337,14 +344,18 @@ impl TlmRamAdapter {
         self.blocking_transact(request, initiator)
     }
 
-    /// The direct-memory read path (direct-memory D4–D6).
+    /// The direct-memory read and write path (direct-memory D4–D7).
     ///
     /// Returns `None` when this request must take `b_transport`: direct memory
-    /// is off, the access was not Hart-initiated, it is not a fetch or a load
-    /// (this unit leaves stores, atomics and the reservation gate to the write
-    /// path), or no single cached grant covers the whole span with read
-    /// permission.  A span that crosses a grant's end therefore stays one
-    /// transaction instead of being split.
+    /// is off, the access was not Hart-initiated, no single cached grant covers
+    /// the whole span with the required permission, or a store arrives while
+    /// the D7 write-suspension gate is open.  A span that crosses a grant's end
+    /// therefore stays one transaction instead of being split.
+    ///
+    /// The adapter's state lock is taken first and the direct-memory lock
+    /// second, and only for the copy itself: the direct-memory lock stays a
+    /// leaf that is never held across a target call, so an invalidation may
+    /// arrive from inside `b_transport`.
     fn direct_transact(
         &self,
         request: &PhysicalRequest<'_>,
@@ -355,46 +366,65 @@ impl TlmRamAdapter {
             return None;
         }
         let descriptor = request.descriptor();
-        if !matches!(
-            descriptor.category,
-            PhysicalAccessKind::Fetch | PhysicalAccessKind::DataRead
-        ) {
+        let store = match descriptor.category {
+            PhysicalAccessKind::Fetch | PhysicalAccessKind::DataRead => false,
+            PhysicalAccessKind::DataWrite => true,
+        };
+        let width = descriptor.width.bytes();
+        let mut state = self.state.lock().ok()?;
+        // A poisoned transport refuses the direct path exactly as it refuses
+        // `b_transport`, and the blocking path owns that diagnostic.
+        if state.poisoned.is_some() {
             return None;
         }
-        let width = descriptor.width.bytes();
-        let mut bytes = [0u8; MAX_PHYSICAL_ACCESS_BYTES];
-        let latency = regions.read(descriptor.paddr, width, &mut bytes[..width])?;
-        let mut state = match self.state.lock() {
-            Ok(state) => state,
-            Err(_) => {
-                return Some(Err(PhysicalBackendError::host(
-                    "TLM adapter state lock is poisoned by an earlier panic",
-                )))
-            }
-        };
-        if let Some(reason) = &state.poisoned {
-            return Some(Err(PhysicalBackendError::unknown(format!(
-                "the TLM RAM transport is poisoned by an earlier unknown completion ({reason}); \
-                 the target's transport reset must be acknowledged before any further access"
-            ))));
+        if store && state.writes_suspended {
+            // direct-memory D7: a live guest reservation must observe every
+            // store through the target's committed-write record, so the store
+            // takes `b_transport` until a guest store-conditional completes.
+            return None;
         }
-        Some(
-            self.account_delay(
-                &mut state,
-                descriptor.paddr,
-                latency,
-                true,
-                DelayAccess::Physical(descriptor.category),
-            )
-            .map(|()| {
-                PhysicalResponse::new(
-                    descriptor,
-                    PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(
-                        &bytes[..width],
-                    )),
+        if store {
+            let payload = request.write_payload()?;
+            let latency = regions.write(descriptor.paddr, width, payload)?;
+            // The bytes are already in the target's storage, so the write is
+            // recorded before delay accounting can fail (ADR-0002 §6).
+            state.committed_writes = state.committed_writes.saturating_add(1);
+            Some(
+                self.account_delay(
+                    &mut state,
+                    descriptor.paddr,
+                    latency,
+                    true,
+                    DelayAccess::Physical(descriptor.category),
                 )
-            }),
-        )
+                .map(|()| {
+                    PhysicalResponse::new(
+                        descriptor,
+                        PhysicalResponseCompletion::WriteAcknowledgement,
+                    )
+                }),
+            )
+        } else {
+            let mut bytes = [0u8; MAX_PHYSICAL_ACCESS_BYTES];
+            let latency = regions.read(descriptor.paddr, width, &mut bytes[..width])?;
+            Some(
+                self.account_delay(
+                    &mut state,
+                    descriptor.paddr,
+                    latency,
+                    true,
+                    DelayAccess::Physical(descriptor.category),
+                )
+                .map(|()| {
+                    PhysicalResponse::new(
+                        descriptor,
+                        PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(
+                            &bytes[..width],
+                        )),
+                    )
+                }),
+            )
+        }
     }
 
     /// Maps one validated physical request onto one blocking transaction.
@@ -486,15 +516,21 @@ impl TlmRamAdapter {
         )?;
 
         // A target may offer direct memory only on a completed non-atomic
-        // transaction, and the adapter queries it once, for a Hart-initiated
-        // read in this unit, before the response returns (direct-memory D3).
+        // transaction, and the adapter queries it once, for the access
+        // direction of a Hart-initiated read or write, before the response
+        // returns (direct-memory D3).  A store that took `b_transport` because
+        // the D7 gate is open may still answer with a write or read-write
+        // grant; the gate alone decides whether a store may use it.
         if status == BlockingResponseStatus::Ok
-            && command == BlockingCommand::Read
             && initiator == BlockingInitiator::Hart
             && transaction.is_dmi_allowed()
         {
             if let Some(regions) = self.direct.as_deref() {
-                self.query_grant(regions, &mut state, &descriptor)?;
+                let access = match command {
+                    BlockingCommand::Read => BlockingDirectMemAccess::Read,
+                    BlockingCommand::Write => BlockingDirectMemAccess::Write,
+                };
+                self.query_grant(regions, &mut state, &descriptor, access)?;
             }
         }
 
@@ -551,7 +587,7 @@ impl TlmRamAdapter {
         }
     }
 
-    /// Queries the target once for one completed read access and caches a valid
+    /// Queries the target once for one completed access and caches a valid
     /// grant (direct-memory D3/D5).
     ///
     /// A denial caches nothing and is not an error.  A malformed grant is a
@@ -563,12 +599,9 @@ impl TlmRamAdapter {
         regions: &DirectMemRegions,
         state: &mut AdapterState,
         descriptor: &PhysicalRequestDescriptor,
+        access: BlockingDirectMemAccess,
     ) -> Result<(), PhysicalBackendError> {
-        let query = BlockingDirectMemQuery::new(
-            descriptor.paddr,
-            descriptor.width.bytes(),
-            BlockingDirectMemAccess::Read,
-        );
+        let query = BlockingDirectMemQuery::new(descriptor.paddr, descriptor.width.bytes(), access);
         // Sampled before the query begins: an invalidation that arrives while
         // the query is in flight discards the grant (direct-memory D8).
         let epoch = regions.epoch();
@@ -577,7 +610,8 @@ impl TlmRamAdapter {
             Ok(reply) => reply,
             Err(_) => {
                 let reason = format!(
-                    "blocking target panicked in its direct-memory query for a read at {:#018x}",
+                    "blocking target panicked in its direct-memory query for a {} at {:#018x}",
+                    access.name(),
                     descriptor.paddr
                 );
                 self.poison(state, reason.clone());
@@ -589,8 +623,9 @@ impl TlmRamAdapter {
             BlockingDirectMemResponse::Denied => return Ok(()),
             BlockingDirectMemResponse::Failed => {
                 let reason = format!(
-                    "blocking target could not complete its direct-memory query for a read at \
+                    "blocking target could not complete its direct-memory query for a {} at \
                      {:#018x}",
+                    access.name(),
                     descriptor.paddr
                 );
                 self.poison(state, reason.clone());
@@ -702,13 +737,20 @@ impl TlmRamAdapter {
     /// Maps one validated atomic envelope onto one blocking transaction with
     /// the ruscv-sim atomic extension (dev-plan D5).
     ///
-    /// One envelope is one `b_transport` call.  The target applies the
-    /// encoded operation indivisibly and reports the old bytes, committed-write
-    /// snapshot or conditional status in that same transaction.  A target
-    /// that does not accept the extension answers
+    /// One envelope is one `b_transport` call, whatever grants the adapter has
+    /// cached: no load-reserved, store-conditional, AMO or translation A/D leg
+    /// is ever served through a host pointer (direct-memory D7).  The target
+    /// applies the encoded operation indivisibly and reports the old bytes,
+    /// committed-write snapshot or conditional status in that same transaction.
+    /// A target that does not accept the extension answers
     /// `TLM_COMMAND_ERROR_RESPONSE`, which maps to the native load or
     /// store/AMO access fault.  The Hart-owned transform function pointer
     /// never crosses the transport: only the encoded operation does.
+    ///
+    /// A guest load-reserved suspends direct stores until a guest
+    /// store-conditional conclusively completes, and a translation A/D
+    /// envelope, marked by the walker, changes neither direction of that gate
+    /// (direct-memory D7).
     pub(crate) fn transact_atomic(&self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
         request
             .validate()
@@ -765,6 +807,23 @@ impl TlmRamAdapter {
                 "the TLM RAM transport is poisoned by an earlier unknown completion ({reason}); \
                  the target's transport reset must be acknowledged before any further access"
             )));
+        }
+        let page_table_update = request.is_page_table_update();
+        if !page_table_update
+            && matches!(
+                descriptor.kind,
+                crate::physical::AtomicAccessKind::LoadReserved
+            )
+        {
+            // direct-memory D7: this load-reserved may create the Hart's
+            // reservation, whose later store-conditional check reads the
+            // target's committed-write versions that a direct store never
+            // updates, so every store takes `b_transport` from here until a
+            // guest store-conditional completes.  A load-reserved that faults
+            // or never completes therefore opens the gate too: a gate left open
+            // with no store-conditional is correct and only slower, so the
+            // conservative direction is the safe one.
+            state.writes_suspended = true;
         }
 
         let command = match descriptor.kind {
@@ -850,6 +909,37 @@ impl TlmRamAdapter {
                 }
                 _ => {}
             }
+        }
+        // direct-memory D7: only a conclusively completed guest
+        // store-conditional closes the gate, successful or failed.  A faulted
+        // or unresolved one leaves it open, because the Hart keeps the
+        // reservation that authored it, and a translation A/D leg never closes
+        // it at all.
+        //
+        // A reported success is decisive only if the validated boundary will
+        // accept it.  The boundary rejects a success that the Hart's reservation
+        // context does not cover (physical.rs's
+        // `store_conditional_success_rejection`), and that rejection is a
+        // protocol failure of the envelope, so the Hart keeps its reservation
+        // and the gate stays open.
+        let conclusive = status == BlockingResponseStatus::Ok
+            && match outcome {
+                Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
+                    crate::physical::ConditionalStatus::Success,
+                )) => crate::physical::store_conditional_success_rejection(request).is_none(),
+                Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
+                    crate::physical::ConditionalStatus::Failure,
+                )) => true,
+                _ => false,
+            };
+        if !page_table_update
+            && matches!(
+                descriptor.kind,
+                crate::physical::AtomicAccessKind::StoreConditional
+            )
+            && conclusive
+        {
+            state.writes_suspended = false;
         }
         self.account_response_delay(
             &mut state,
@@ -975,16 +1065,18 @@ impl TlmRamAdapter {
     /// Performs the target's transport reset and clears any poison only when
     /// the target acknowledges it.
     ///
-    /// The adapter drops its own grants before it calls the target, as the
-    /// Platform's reset entry point requires (direct-memory D9).  That covers
-    /// this composition; the target must still invalidate every registration
-    /// before it frees storage, which covers a composition that is being
-    /// replaced and stays current until publication.
+    /// The adapter drops its own grants and closes its write-suspension gate
+    /// before it calls the target, as the Platform's reset entry point requires
+    /// (direct-memory D7/D9).  That covers this composition; the target must
+    /// still invalidate every registration before it frees storage, which
+    /// covers a composition that is being replaced and stays current until
+    /// publication.
     pub(crate) fn transport_reset(&self) -> Result<(), PhysicalBackendError> {
         self.drop_regions();
         let mut state = self.state.lock().map_err(|_| {
             PhysicalBackendError::host("TLM adapter state lock is poisoned by an earlier panic")
         })?;
+        state.writes_suspended = false;
         let acknowledged = catch_unwind(AssertUnwindSafe(|| self.target.transport_reset()));
         match acknowledged {
             Ok(true) => {

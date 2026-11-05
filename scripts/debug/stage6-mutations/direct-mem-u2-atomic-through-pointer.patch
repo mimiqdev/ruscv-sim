@@ -1,0 +1,61 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index 7b91a45..58d2e7b 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -767,6 +767,56 @@ impl TlmRamAdapter {
+             ));
+         }
+ 
++        // MUTATION: emulate the atomic envelope through the grant cache
++        // instead of its one b_transport.
++        if let Some(regions) = self.direct.as_deref() {
++            let descriptor = request.descriptor();
++            let width = descriptor.width.bytes();
++            let mut bytes = [0u8; MAX_PHYSICAL_ACCESS_BYTES];
++            match descriptor.kind {
++                crate::physical::AtomicAccessKind::LoadReserved => {
++                    if regions
++                        .read(descriptor.paddr, width, &mut bytes[..width])
++                        .is_some()
++                    {
++                        let snapshot = crate::physical::CommittedWriteSnapshot::from_bytes(
++                            &bytes[..width],
++                        )
++                        .expect("an inline snapshot always fits");
++                        return Ok(crate::physical::AtomicResponse::load_reserved_for(
++                            request,
++                            &bytes[..width],
++                            snapshot,
++                        ));
++                    }
++                }
++                crate::physical::AtomicAccessKind::Rmw => {
++                    if regions
++                        .read(descriptor.paddr, width, &mut bytes[..width])
++                        .is_some()
++                    {
++                        let payload = request.operand_bytes().unwrap_or(&[]);
++                        if regions.write(descriptor.paddr, width, payload).is_some() {
++                            return Ok(crate::physical::AtomicResponse::rmw_for(
++                                request,
++                                &bytes[..width],
++                            ));
++                        }
++                    }
++                }
++                crate::physical::AtomicAccessKind::StoreConditional => {
++                    let payload = request.store_payload().unwrap_or(&[]);
++                    if regions.write(descriptor.paddr, width, payload).is_some() {
++                        return Ok(
++                            crate::physical::AtomicResponse::store_conditional_for(
++                                request,
++                                crate::physical::ConditionalStatus::Success,
++                            ),
++                        );
++                    }
++                }
++            }
++        }
+         let descriptor = request.descriptor();
+         let width =
+             crate::physical::AmoWidth::from_physical_width(descriptor.width).ok_or_else(|| {

@@ -9,12 +9,14 @@
 //! Storage is a sparse map of 4 KiB chunks keyed by physical address.  The
 //! Platform bounds every transaction to the RAM window, so chunk allocation is
 //! proportional to the window the guest actually uses, not to the address
-//! value.  Chunk bytes are atomics, because the platform may reach them through
-//! a direct-memory grant while another thread's transaction reaches them
-//! through `b_transport` or debug transport (direct-memory D10/D13).  Alongside
-//! the bytes the target keeps exact per-byte committed-write bookkeeping: a
-//! load-reserved returns its snapshot and a store-conditional re-checks it
-//! inside the same lock hold, matching the native RAM target.
+//! value.  Chunk bytes are atomics, because the platform may read and write
+//! them through a direct-memory grant while another thread's transaction
+//! reaches them through `b_transport` or debug transport (direct-memory
+//! D10/D13).  A chunk is granted read-write, because a store the adapter may
+//! serve through the pointer must land in the same bytes the blocking route
+//! serves.  Alongside the bytes the target keeps exact per-byte committed-write
+//! bookkeeping: a load-reserved returns its snapshot and a store-conditional
+//! re-checks it inside the same lock hold, matching the native RAM target.
 //!
 //! Atomics arrive in one `b_transport` transaction carrying the ruscv-sim
 //! atomic extension.  The target applies the encoded operation under this
@@ -284,12 +286,16 @@ impl BlockingTarget for ZeroDelayRam {
         // `b_transport` and debug transport serve the same atomics, and the
         // chunk stays where it is until `transport_reset`, which invalidates
         // every registration before it discards it (direct-memory D10/D13).
+        // A read-write grant can serve a store, which lands in the same
+        // atomics a later `b_transport` or debug transport reads, so the
+        // chunk's committed-write bookkeeping is untouched by a direct store
+        // exactly as the adapter's write-suspension gate requires.
         let grant = unsafe {
             BlockingDirectMemGrant::new(
                 start,
                 end,
                 pointer,
-                BlockingDirectMemAccess::Read,
+                BlockingDirectMemAccess::ReadWrite,
                 Femtoseconds::ZERO,
                 Femtoseconds::ZERO,
             )

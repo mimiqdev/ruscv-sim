@@ -307,7 +307,9 @@ impl RiscvCore {
             issued,
             PhysicalWidth::Doubleword,
             AtomicOrdering::default(),
-        ) {
+        )
+        .map(AtomicRequest::with_page_table_update)
+        {
             Ok(request) => request,
             Err(error) => {
                 return AdUpdate::Fault(Walk::Failure(
@@ -344,7 +346,9 @@ impl RiscvCore {
             AtomicOrdering::default(),
             &payload,
             AtomicReservationContext { reserved, snapshot },
-        ) {
+        )
+        .map(AtomicRequest::with_page_table_update)
+        {
             Ok(request) => request,
             Err(error) => {
                 return AdUpdate::Fault(Walk::Failure(

@@ -1,0 +1,14 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index 7b91a45..00ed301 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -386,9 +386,6 @@ impl TlmRamAdapter {
+         if store {
+             let payload = request.write_payload()?;
+             let latency = regions.write(descriptor.paddr, width, payload)?;
+-            // The bytes are already in the target's storage, so the write is
+-            // recorded before delay accounting can fail (ADR-0002 §6).
+-            state.committed_writes = state.committed_writes.saturating_add(1);
+             Some(
+                 self.account_delay(
+                     &mut state,

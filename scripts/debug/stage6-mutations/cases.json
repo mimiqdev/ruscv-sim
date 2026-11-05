@@ -1406,5 +1406,181 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "direct-mem-u2-atomic-through-pointer",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u2-atomic-through-pointer.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::every_atomic_envelope_is_one_transaction_over_a_covered_grant",
+        "failure": [
+          "a load-reserved over a covered grant was served by the pointer"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u2-store-while-gate-open",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u2-store-while-gate-open.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_store_overlapping_a_reservation_matches_with_direct_memory_on_and_off",
+        "failure": [
+          "a store after a guest load-reserved was served by the pointer"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u2-gate-closed-by-faulted-sc",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u2-gate-closed-by-faulted-sc.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_target_that_faults_a_store_conditional_leaves_the_gate_open",
+        "failure": [
+          "a store after a faulted store-conditional was served by the pointer"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u2-gate-closed-by-protocol-failed-sc",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u2-gate-closed-by-protocol-failed-sc.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_rejected_store_conditional_success_leaves_the_gate_open",
+        "failure": [
+          "a protocol-failed store-conditional closed the write-suspension gate"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u2-ate-sc-closes-gate",
+    "source": "src/core/translation.rs",
+    "patch": "direct-mem-u2-ate-sc-closes-gate.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_guest_lr_then_a_translation_ad_update_then_a_store_and_sc_matches",
+        "failure": [
+          "the store after an A/D update was served by the pointer"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u2-mmu-ate-sc-closes-gate",
+    "source": "src/mmu/sv39.rs",
+    "patch": "direct-mem-u2-mmu-ate-sc-closes-gate.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::atomic_tests::an_mmu_ad_update_neither_opens_nor_closes_the_write_suspension_gate",
+        "failure": [
+          "an A/D store-conditional closed the write-suspension gate"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u2-ate-lr-opens-gate",
+    "source": "src/core/translation.rs",
+    "patch": "direct-mem-u2-ate-lr-opens-gate.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_translation_ad_update_does_not_open_the_write_suspension_gate",
+        "failure": [
+          "an A/D load-reserved opened the write-suspension gate"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u2-store-through-read-only-grant",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u2-store-through-read-only-grant.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_store_to_a_read_only_region_reaches_the_target",
+        "failure": [
+          "a store to a read-only region was served by the pointer"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u2-write-charges-read-latency",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u2-write-charges-read-latency.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_direct_store_charges_the_write_latency_not_the_read_latency",
+        "failure": [
+          "not its granted 2000000 fs write latency"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u2-write-latency-not-charged",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u2-write-latency-not-charged.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_direct_store_charges_its_write_latency_through_the_one_accounting_path",
+        "failure": [
+          "a direct store charged a different delay than the annotated one"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u2-direct-store-not-recorded",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u2-direct-store-not-recorded.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_direct_store_is_recorded_as_a_committed_write",
+        "failure": [
+          "a direct store was left out of the committed-write record"
+        ]
+      }
+    ]
   }
 ]

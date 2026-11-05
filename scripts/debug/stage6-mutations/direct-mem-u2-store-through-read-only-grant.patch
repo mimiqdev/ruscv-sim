@@ -1,0 +1,13 @@
+diff --git i/src/blocking/direct_mem.rs w/src/blocking/direct_mem.rs
+index 6b599bd..d788540 100644
+--- i/src/blocking/direct_mem.rs
++++ w/src/blocking/direct_mem.rs
+@@ -523,7 +523,7 @@ impl DirectMemRegions {
+         let region = cache
+             .regions
+             .iter()
+-            .find(|region| region.covers(paddr, width) && region.access.allows_write())?;
++            .find(|region| region.covers(paddr, width) && region.access.has_access())?;
+         let offset = paddr - region.start;
+         #[cfg(test)]
+         {

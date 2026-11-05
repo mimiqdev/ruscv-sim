@@ -347,6 +347,7 @@ struct Region {
     pointer: *mut u8,
     access: BlockingDirectMemAccess,
     read_latency: Femtoseconds,
+    write_latency: Femtoseconds,
 }
 
 // SAFETY: a region stores a raw address, never a Rust reference.  The grant
@@ -366,6 +367,7 @@ impl Region {
             pointer: grant.pointer(),
             access: grant.access(),
             read_latency: grant.read_latency(),
+            write_latency: grant.write_latency(),
         }
     }
 
@@ -399,7 +401,7 @@ pub(crate) struct DirectMemRegions {
     state: Mutex<RegionCache>,
     /// Test-only pause point inside a direct copy.  It runs while the
     /// direct-memory lock is held, so a test can prove that an invalidation
-    /// from another thread waits for an in-flight copy.
+    /// from another thread waits for an in-flight copy of either direction.
     #[cfg(test)]
     copy_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
@@ -507,6 +509,43 @@ impl DirectMemRegions {
                 .load(Ordering::Relaxed);
         }
         Some(region.read_latency)
+    }
+
+    /// Copies one store span through a cached grant.
+    ///
+    /// Returns the grant's write latency, or `None` when no single cached grant
+    /// covers the whole span with write permission, in which case the caller
+    /// takes `b_transport` and never splits the access (direct-memory D4/D5).
+    /// Lookup and copy happen in one lock hold, so an invalidation cannot free
+    /// the storage between them (direct-memory D8).
+    pub(crate) fn write(&self, paddr: u64, width: usize, bytes: &[u8]) -> Option<Femtoseconds> {
+        let cache = self.state.lock().ok()?;
+        let region = cache
+            .regions
+            .iter()
+            .find(|region| region.covers(paddr, width) && region.access.allows_write())?;
+        let offset = paddr - region.start;
+        #[cfg(test)]
+        {
+            let hook = self
+                .copy_hook
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
+        for (index, byte) in bytes.iter().take(width).enumerate() {
+            // SAFETY: the grant promises the range stays valid until an
+            // overlapping invalidation, and this hold excludes one, so the
+            // pointer addresses `width` writable bytes from `paddr`.  The
+            // storage behind it is atomic (direct-memory D10), so a relaxed
+            // store through it cannot race the target's own accesses.
+            unsafe { AtomicU8::from_ptr(region.pointer.add(offset as usize + index)) }
+                .store(*byte, Ordering::Relaxed);
+        }
+        Some(region.write_latency)
     }
 
     /// Caches one validated grant, replacing every grant it overlaps.

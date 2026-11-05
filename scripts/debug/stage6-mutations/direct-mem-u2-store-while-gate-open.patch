@@ -1,0 +1,17 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index 7b91a45..a6113b1 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -377,12 +377,6 @@ impl TlmRamAdapter {
+         if state.poisoned.is_some() {
+             return None;
+         }
+-        if store && state.writes_suspended {
+-            // direct-memory D7: a live guest reservation must observe every
+-            // store through the target's committed-write record, so the store
+-            // takes `b_transport` until a guest store-conditional completes.
+-            return None;
+-        }
+         if store {
+             let payload = request.write_payload()?;
+             let latency = regions.write(descriptor.paddr, width, payload)?;
