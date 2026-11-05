@@ -16,9 +16,10 @@
 # its own shadow bytes for an address at which it holds a software breakpoint,
 # and a GDB read could not tell the planted EBREAK from the original word.
 #
-# Lines that start with U3DMI are the named outputs.
+# Lines that start with U3 are the named outputs, following the S6, U4, Z5
+# and U6 prefixes of the other sessions.
 
-printf "U3DMI connect=ok\n"
+printf "U3 connect=ok\n"
 set $pc = _start
 
 python
@@ -55,7 +56,7 @@ def raw_sba_word(address):
 site = int(gdb.parse_and_eval("&s6_break"))
 original = raw_sba_word(site)
 gdb.set_convenience_variable("u3_original", original)
-print("U3DMI original=%#x" % original)
+print("U3 original=%#x" % original)
 end
 
 # Plant the software breakpoint through the forced system bus.
@@ -65,14 +66,14 @@ python
 import gdb
 
 site = int(gdb.parse_and_eval("&s6_break"))
-print("U3DMI inserted=%#x" % raw_sba_word(site))
+print("U3 inserted=%#x" % raw_sba_word(site))
 end
 
 continue
-printf "U3DMI break_pc="
+printf "U3 break_pc="
 output/x $pc
 printf "\n"
-printf "U3DMI a2="
+printf "U3 a2="
 output/x $a2
 printf "\n"
 
@@ -83,11 +84,11 @@ python
 import gdb
 
 site = int(gdb.parse_and_eval("&s6_break"))
-print("U3DMI restored=%#x" % raw_sba_word(site))
+print("U3 restored=%#x" % raw_sba_word(site))
 end
 
 # Re-execute the restored instruction and run to the public exit.
 set $pc = s6_break
-printf "U3DMI resume=ok\n"
+printf "U3 resume=ok\n"
 continue
-printf "U3DMI continue_returned=unexpected\n"
+printf "U3 continue_returned=unexpected\n"

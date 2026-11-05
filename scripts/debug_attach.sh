@@ -50,7 +50,7 @@
 # facts it checks are the ones the system-bus session already compares with
 # Spike.
 #
-# Named outputs are the S6, U4, Z5, U3DMI and U6 lines in the GDB logs. The
+# Named outputs are the S6, U4, Z5, U3 and U6 lines in the GDB logs. The
 # comparisons are those values, not a hash. dmstatus.version is not one of them. dcsr is
 # compared after setting aside two documented differences: D5 forces
 # stopcount, stoptime, and mprven to 1, and this profile's --halted is haltreq
@@ -66,7 +66,7 @@ CFG="${ROOT}/scripts/debug/openocd-remote-bitbang.cfg"
 GDB_SCRIPT="${ROOT}/scripts/debug/s6-u5-session.gdb"
 GDB_PROGBUF_SCRIPT="${ROOT}/scripts/debug/s6-u4-progbuf.gdb"
 GDB_SYSBUS_SCRIPT="${ROOT}/scripts/debug/s6-u4-sysbus.gdb"
-GDB_DIRECT_MEM_SCRIPT="${ROOT}/scripts/debug/direct-mem-u3-dmi.gdb"
+GDB_DIRECT_MEM_SCRIPT="${ROOT}/scripts/debug/direct-mem-u3-session.gdb"
 GDB_ZCA_SCRIPT="${ROOT}/scripts/debug/zca-u5-session.gdb"
 GDB_FD_SCRIPT="${ROOT}/scripts/debug/fd-u6-session.gdb"
 GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64i/s6_u5_attach.S"
@@ -959,11 +959,11 @@ direct_mem_keys() {
 # the direct-memory grant serves.
 run_direct_mem_session() {
     local name="$1" named="$3"
-    start_session "${name}" "$2" "${GDB_DIRECT_MEM_SCRIPT}" 'U3DMI resume=ok' \
+    start_session "${name}" "$2" "${GDB_DIRECT_MEM_SCRIPT}" 'U3 resume=ok' \
         -d3 -c "riscv set_mem_access sysbus" || return 1
     local keys=()
     read -r -a keys <<<"$(direct_mem_keys)"
-    extract_named "${named}" "${WORK}/${name}/gdb.log" U3DMI raw "${keys[@]}" || return 1
+    extract_named "${named}" "${WORK}/${name}/gdb.log" U3 raw "${keys[@]}" || return 1
     assert_direct_mem_session "${name}" "${named}" || return 1
     assert_direct_mem_evidence "${name}" "${WORK}/${name}" || return 1
     echo "${name}: direct-memory session ok (target exit 0)"
