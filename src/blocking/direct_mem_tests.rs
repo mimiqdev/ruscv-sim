@@ -501,7 +501,11 @@ fn a_direct_copy_holds_the_direct_memory_lock() {
     let release_rx = Mutex::new(release_rx);
     slot.set_direct_copy_hook(Some(Arc::new(move || {
         copying.send(()).unwrap();
-        release_rx.lock().unwrap().recv().unwrap();
+        // A closed channel ends this wait without a panic: if the test itself
+        // panics before releasing (as a mutation must), the parked copy
+        // unwinds quietly on its harness thread instead of printing a
+        // detached-thread panic that races the runner's summary match.
+        let _ = release_rx.lock().unwrap().recv();
     })));
     let reader = {
         let mut reader_port = ValidatedPhysicalAccess::new(slot.clone());
@@ -543,7 +547,8 @@ fn a_direct_copy_holds_the_direct_memory_lock() {
     let release_rx = Mutex::new(release_rx);
     slot.set_direct_copy_hook(Some(Arc::new(move || {
         copying.send(()).unwrap();
-        release_rx.lock().unwrap().recv().unwrap();
+        // The same quiet exit as the read copy above.
+        let _ = release_rx.lock().unwrap().recv();
     })));
     let writer = {
         let mut writer_port = ValidatedPhysicalAccess::new(slot.clone());

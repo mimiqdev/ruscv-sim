@@ -6,21 +6,26 @@
 ownership and threads, error mapping, the time unit, re-entrancy and stop
 behavior, and the build and version pins (D12 of the
 [archived blocking-transport contract](../archive/milestones/blocking-tlm-systemc-transport.md),
-to which this page's `dev-plan` D numbers refer). Bounded by ADR-0002, ADR-0003
+to which this page's `dev-plan` D numbers refer), and for direct memory: grant,
+permission, latency, invalidation, lifetime, version-clock persistence across
+reset and the FFI rules (direct-memory D3–D10, D12 and D13 of
+[`docs/dev-plan.md`](../dev-plan.md); this page's `direct-memory D<n>`
+citations name that contract). Bounded by ADR-0002, ADR-0003
 and ADR-0004 with their amendments, and by [`docs/dev-plan.md`](../dev-plan.md),
-which govern where this page disagrees with them.
+which governs where this page disagrees with them. Quantum and
+synchronization policy stay open (the page end records them).
 
-**Last reviewed:** 2026-11-05
+**Last reviewed:** 2026-11-06
 
 The repository implements one blocking-transport integration: a C ABI facade
 ([`src/capi`](../../src/capi), [`include/ruscv_sim.h`](../../include/ruscv_sim.h))
 and a pinned SystemC host ([`integration/systemc`](../../integration/systemc)).
 This page is the normative reference for that mapping, its ownership and thread
 rules, its error and time mapping, its stop behavior, and its build pins. It
-also records how the current direct-memory contract's D13 lands on the SystemC
-host: the rules below are the SystemC halves of that contract's grant,
-invalidation and version-clock obligations, normative where they are not
-already covered by [`docs/dev-plan.md`](../dev-plan.md) and the header's
+records the SystemC halves of the current direct-memory contract's grant,
+permission, latency, invalidation, lifetime and version-clock obligations and
+its FFI rules, normative where they are not already covered by
+[`docs/dev-plan.md`](../dev-plan.md) and the header's
 direct-memory obligations. Non-blocking transport, temporal decoupling and
 TLM-modeled devices stay out of scope, as the contract's §5 records.
 
@@ -248,12 +253,101 @@ neither a guest loop nor a host defect can hang CI.
 
 ## Open items
 
-- Direct-memory documentation beyond the SystemC smoke scope of this page is
-  the current contract's U6 deliverable: grant, permission, latency,
-  invalidation, lifetime, version-clock persistence across reset and FFI rules
-  are then normative here in full.
-- Quantum, temporal decoupling and synchronization policy.
+- Quantum, temporal decoupling and synchronization policy. After every grant
+  here the host `wait()`s exactly the consumed amount (a zero-consumption
+  grant waits for nothing, and a zero consumed amount cannot advance the
+  kernel clock), so the kernel advances global time only between grants; no
+  quantum keeper exists and none is selected.
 - Non-blocking transport, which needs its own timing contract.
+
+## Direct-memory grant, permission, latency, invalidation, lifetime and FFI
+
+This section states the SystemC host's rules for the direct-memory topics
+D14 makes normative here — grant, permission, latency, invalidation,
+lifetime, version-clock persistence across reset, and the FFI rules — under
+the current contract. The Rust-side rules live in
+[`docs/dev-plan.md`](../dev-plan.md) D3–D10 and in the header's direct-memory
+obligations; this section binds the host of
+[`integration/systemc`](../../integration/systemc) to them and states what only
+this host can state.
+
+**Grant.** `RamTarget` sets the `dmi_allowed` hint on a completed non-atomic
+`b_transport` transaction, and never on an atomic one, an atomic-extension
+payload, a debug transfer or an error status. That hint is the only licence
+for the query. `register_get_direct_mem_ptr` grants the whole 4 KiB chunk that
+contains the queried address — inclusive start and end, the chunk's host
+pointer, read-write access whatever the query asked (D13 grants one storage
+chunk read-write), zero read and write latency —
+and denies a query whose chunk does not exist, so a query never allocates
+storage. The IEEE 1666 `tlm_dmi` fields cross the C ABI verbatim: the
+initiator's `serve_get_direct_mem_ptr` maps `true` to `RUSCV_DMI_GRANTED`,
+`false` to `RUSCV_DMI_DENIED`, and a contained C++ exception (or an
+unreachable target) to `RUSCV_DMI_FAILED`, the contract's contained-exception
+case, which is an unknown completion, never a denial. The granted access
+values equal the `RUSCV_DMI_ACCESS_*` constants (statically asserted).
+
+**Permission.** A granted range is read-write because the chunk is ordinary
+RAM: every `b_transport` command the target would complete with
+`TLM_OK_RESPONSE` over that range completes with `TLM_OK_RESPONSE`, so the
+direct path cannot observe a fault `b_transport` would not produce
+(direct-memory D10). A denied query caches nothing and changes nothing.
+
+**Latency.** Both granted latencies are zero. The host's time resolution is
+1 fs, so a non-zero grant latency would still cross the ABI as exact
+femtoseconds and be charged through the Machine's one accounting path
+(direct-memory D6); this target simply annotates zero delay in `b_transport`
+and grants the same zero, so a run is time-equivalent with `--dmi` and without
+it.
+
+**Invalidation.** The initiator registers its backward
+`invalidate_direct_mem_ptr` on its initiator socket
+(`register_invalidate_direct_mem_ptr`), and the target module registers its
+forward `get_direct_mem_ptr` on its target socket; every forward of the
+backward callback calls
+`ruscv_machine_invalidate_direct_mem`, the one ABI entry accepted inside a
+callback and on a poisoned handle, always on the kernel thread that owns the
+handle. A backward call while no handle is bound is a no-op: after `destroy`
+the handle's target wrapper and its registry no longer exist, so no live grant
+can still name them. A refused forward — the ABI rejected the invalidation —
+ends the run as a host failure. `--dmi-invalidate-every <grants>` asks the
+target to issue a whole-space backward invalidation after each Nth Machine
+grant, so the target→initiator→ABI path is exercised end to end; the smoke
+requires the scheduled count to equal grants/N exactly and the forwarded count
+to cover it (the extra forward is `RamTarget::transport_reset`'s own
+invalidate-all before it discards chunks, which traverses the same backward
+path).
+
+**Lifetime.** `RamTarget` invalidates every registration before it frees,
+moves or discards granted storage: its `transport_reset` calls
+`invalidate_direct_mem_ptr(0, UINT64_MAX)` before `chunks_.clear()`, atomic
+with respect to new grants because the module runs on the single SystemC
+kernel thread (direct-memory D13). Between resets a granted chunk pointer
+stays valid; chunk allocation never moves existing storage. No pointer, grant
+or cached region survives above the C ABI: the Machine's adapter owns its own
+cache and drop rules (direct-memory D9), and this host adds no second copy.
+
+**Version-clock persistence across reset.** Each chunk byte carries one
+committed-write version, and the target's version clock keeps running across
+`transport_reset`: the records go with the discarded bytes, the clock does not
+restart, so no committed-write version repeats after a reset (direct-memory
+D10/D13). A direct store deliberately leaves a byte's version in place — that
+is why the Machine's write-suspension gate exists — so this target's
+load-reserved snapshot and store-conditional check behave identically with
+`--dmi` on and off.
+
+**FFI rules.** The direct-memory additions to the C ABI (`get_direct_mem_ptr`,
+`dmi_allowed`, `ruscv_direct_mem`, the `RUSCV_DMI_*` constants,
+`ruscv_machine_invalidate_direct_mem`) follow the header's layout rule (fields
+are appended; earlier offsets never move) and its direct-memory D10
+obligations, which bind this target exactly as they bind a C target: granted
+storage is `std::atomic<uint8_t>` and every access to it, including
+`b_transport`, `transport_dbg` and the granted pointer, is a relaxed atomic
+byte access; the pointer stays valid until a covering invalidation; and the
+invalidate-before-free order above holds. The query and its answer carry no
+C++ object, pointer or operation callback: `ruscv_direct_mem` is plain data,
+and the host copies the `tlm_dmi` fields into it value by value. (The
+pre-existing callback table is C-linkage function pointers, as before; this
+contract adds none.)
 
 ## Source and test map
 
@@ -262,8 +356,13 @@ neither a guest loop nor a host defect can hang CI.
 - [`integration/systemc`](../../integration/systemc): the CMake project, the RAM
   target, the initiator bridge and the grant loop.
 - [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh): native
-  comparison and the early-`sc_stop` control.
+  comparison, the `--dmi` and `--dmi-invalidate-every` passes and the
+  early-`sc_stop` control.
 - [`scripts/test_capi_smoke.sh`](../../scripts/test_capi_smoke.sh): the plain-C
-  compile-and-link smoke of the same ABI.
+  compile-and-link smoke of the same ABI, including its direct-memory cases.
 - [`tests/tlm_u4_guest_parity.rs`](../../tests/tlm_u4_guest_parity.rs): guest
-  parity on the in-tree Rust TLM route.
+  parity on the in-tree Rust TLM route, now three passes per guest.
+- [`tests/direct_mem_cli.rs`](../../tests/direct_mem_cli.rs),
+  [`tests/direct_mem_u3_guests.rs`](../../tests/direct_mem_u3_guests.rs) and
+  [`src/blocking/direct_mem_tests.rs`](../../src/blocking/direct_mem_tests.rs):
+  the direct-memory selection, guest and adapter suites on the Rust side.
