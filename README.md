@@ -157,7 +157,7 @@ grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒�
 ## SystemC 宿主（blocking TLM U6）
 
 `integration/systemc/` 是 pinned SystemC 宿主：Accellera SystemC 3.0.2（commit
-`70b0fc8e4a74acc677b0fc73cea08f940c2115d5`，`docs/dev-plan.md` D9 的选择）以 C++17 构建为静态库，
+`70b0fc8e4a74acc677b0fc73cea08f940c2115d5`，[归档的 blocking-transport 合同](docs/archive/milestones/blocking-tlm-systemc-transport.md) D9 的选择）以 C++17 构建为静态库，
 连同 TLM-2.0 头文件安装在开发镜像的 `/opt/systemc`（`SYSTEMC_HOME`）；镜像构建校验检出的 commit
 与 `SYSTEMC_3_0_2` 版本宏，并编译运行一个真实 SystemC/TLM 程序。该宿主用 `simple_target_socket`
 提供零延迟 blocking RAM target（`b_transport`、`transport_dbg`、transport reset 与原子扩展），

@@ -4,20 +4,22 @@
 
 **Authority:** Normative for the selected blocking-transport mapping, FFI
 ownership and threads, error mapping, the time unit, re-entrancy and stop
-behavior, and the build and version pins (dev-plan D12). Bounded by ADR-0002,
-ADR-0003 and ADR-0004 with their 2026-11-04 blocking-transport amendments, and
-by [`docs/dev-plan.md`](../dev-plan.md), which govern where this page disagrees
-with them.
+behavior, and the build and version pins (D12 of the
+[archived blocking-transport contract](../archive/milestones/blocking-tlm-systemc-transport.md),
+to which this page's `dev-plan` D numbers refer). Bounded by ADR-0002, ADR-0003
+and ADR-0004 with their amendments, and by [`docs/dev-plan.md`](../dev-plan.md),
+which govern where this page disagrees with them.
 
-**Last reviewed:** 2026-11-04
+**Last reviewed:** 2026-11-05
 
 The repository implements one blocking-transport integration: a C ABI facade
 ([`src/capi`](../../src/capi), [`include/ruscv_sim.h`](../../include/ruscv_sim.h))
 and a pinned SystemC host ([`integration/systemc`](../../integration/systemc)).
 This page is the normative reference for that mapping, its ownership and thread
-rules, its error and time mapping, its stop behavior, and its build pins. DMI,
-non-blocking transport, temporal decoupling and TLM-modeled devices stay out of
-scope, as the contract's §5 records.
+rules, its error and time mapping, its stop behavior, and its build pins.
+Direct memory (DMI) is the current contract's target and is not implemented
+yet. Non-blocking transport, temporal decoupling and TLM-modeled devices stay
+out of scope, as the contract's §5 records.
 
 ## Selected mapping
 
@@ -31,7 +33,7 @@ scope, as the contract's §5 records.
 | Transport reset | The target's own reset operation |
 | Guest-RAM target | `simple_target_socket` on `RamTarget` |
 | Machine grant | Bounded grant over the C ABI, then `wait(consumed)` |
-| Direct RAM fast path | Not selected; DMI stays a later contract |
+| Direct RAM fast path | Not implemented; the current contract selects it |
 
 `tlm_generic_payload` and `sc_time` stay outside the Rust side and outside ISA
 instruction functions. The only Rust/C++ boundary is the C ABI.
