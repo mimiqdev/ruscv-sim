@@ -157,7 +157,8 @@ impl Default for CAtomic {
 ///
 /// The request half is filled by ruscv-sim; the response half is meaningful
 /// only for `RUSCV_DMI_GRANTED`.  The target owns the granted bytes and the
-/// D10 promises behind them (see [`BlockingDirectMemGrant::new`]).
+/// direct-memory D10 promises behind them (see
+/// [`BlockingDirectMemGrant::new`]).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct CDirectMem {
@@ -418,8 +419,9 @@ impl BlockingTarget for CBlockingTarget {
         let answer = unsafe { callback(self.table.user, &mut direct) };
         match answer {
             dmi_result::GRANTED => {
-                // SAFETY: the target answered with the D10 promises; the
-                // adapter checks only the grant's shape, never the promise.
+                // SAFETY: the target answered with the direct-memory D10
+                // promises; the adapter checks only the grant's shape, never
+                // the promise.
                 BlockingDirectMemResponse::Granted(unsafe {
                     BlockingDirectMemGrant::new(
                         direct.start,

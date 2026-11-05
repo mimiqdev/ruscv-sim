@@ -517,8 +517,8 @@ fn a_direct_memory_grant_serves_covered_accesses_without_transport() {
     // The image was installed through `transport_dbg` and the fetches read it
     // back through the granted pointer, while the direct store landed in the
     // target's own bytes: the pointer, `transport_dbg` and the target share one
-    // storage, as D10's aliasing promise requires.  The witness is the store
-    // outside `.tohost`, because the exit poll clears the signal.
+    // storage, as direct-memory D10's aliasing promise requires.  The witness
+    // is the store outside `.tohost`, because the exit poll clears the signal.
     let offset = (elf::TOHOST + 8 - elf::BASE) as usize;
     let ram = direct.target.ram.lock().unwrap();
     assert_eq!(

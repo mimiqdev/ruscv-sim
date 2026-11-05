@@ -246,9 +246,9 @@ typedef struct ruscv_payload {
  *      whole inclusive `start`..`end` range at that address.  ruscv-sim holds no
  *      pointer outside the adapter and never reads it after an invalidation
  *      returns, so the target must not free, move, remap or narrow that storage
- *      before it has invalidated the range.  Transport reset invalidates every
- *      registration before the reset callback runs, so storage discarded by a
- *      reset is covered too.
+ *      before it has invalidated the range.  Before the reset callback runs,
+ *      ruscv-sim invalidates every registration this handle's target wrapper
+ *      keeps, so storage that a reset discards is covered for this handle too.
  *   2. Aliasing.  The pointer addresses the same bytes b_transport and
  *      transport_dbg serve, so a write through any of the three is visible to
  *      the others at once.  A range may be granted only where b_transport
@@ -267,10 +267,19 @@ typedef struct ruscv_payload {
  *      invalidation proves that no copy through a removed pointer is in flight.
  *      The target may call it between grants, from inside b_transport or from
  *      inside transport_reset, on the creating thread only.
+ *   5. Version clock.  A load-reserved snapshot and a store-conditional check
+ *      are committed-write versions, and no version may repeat across a
+ *      transport reset.  A direct store leaves a byte's version in place, so a
+ *      repeated version could let a reservation retained across a failed
+ *      recomposition pass a store-conditional that fails with direct memory
+ *      off.
  *
  * Running several direct-memory Machines concurrently on one target is
  * memory-safe but architecturally unspecified; sequential reuse of a shared
- * target is specified.
+ * target is specified.  Because each handle owns its own target wrapper, a
+ * host that shares one `user` target across handles must invalidate every such
+ * handle before it resets or frees the shared storage; a reset invalidates the
+ * registrations of the handle being reset only.
  */
 typedef struct ruscv_direct_mem {
     uint64_t address;

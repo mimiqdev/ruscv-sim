@@ -235,7 +235,8 @@ static int build_direct_guest(const char *path, uint32_t code)
 /* ------------------------------------------------------------ test target */
 
 typedef struct test_target {
-    /* A direct-memory grant promises relaxed byte-wise atomic access (D10). */
+    /* A direct-memory grant promises relaxed byte-wise atomic access
+     * (direct-memory D10). */
     _Atomic unsigned char ram[RAM_SIZE];
     int32_t status;
     int unknown;
@@ -376,7 +377,8 @@ static ruscv_target target_table(test_target *target, uint64_t max_delay_fs)
     return table;
 }
 
-/* The same table with the non-NULL query that selects direct memory (D12). */
+/* The same table with the non-NULL query that selects direct memory
+ * (direct-memory D12). */
 static ruscv_target direct_target_table(test_target *target, uint64_t max_delay_fs)
 {
     ruscv_target table = target_table(target, max_delay_fs);
@@ -1065,7 +1067,7 @@ static void direct_memory_reentry_case(const char *direct_guest)
     free(target);
 }
 
-static void direct_memory_unknown_completion_case(const char *direct_guest, const char *guest)
+static void direct_memory_unknown_completion_case(const char *direct_guest)
 {
     test_target *target = calloc(1, sizeof(test_target));
     ruscv_target table;
@@ -1117,7 +1119,7 @@ static void direct_memory_unknown_completion_case(const char *direct_guest, cons
     check_exit(handle, status, "the reset domain runs to the guest exit");
     check(target->queries > 0, "reset restored the direct-memory grant path");
     check(target->transactions - transactions <
-              blocking_transactions(guest, 0, 0),
+              blocking_transactions(direct_guest, 0, 0),
           "the post-reset run used direct memory again");
     ruscv_machine_destroy(handle);
     free(target);
@@ -1193,7 +1195,7 @@ int main(int argc, char **argv)
     direct_memory_wrong_thread_case(direct_guest);
     direct_memory_invalidate_in_callback_case(direct_guest);
     direct_memory_reentry_case(direct_guest);
-    direct_memory_unknown_completion_case(direct_guest, guest);
+    direct_memory_unknown_completion_case(direct_guest);
 
     /* The wrong-thread rejection needs a live handle of its own. */
     handle = create_machine(NULL, RUSCV_ISA_RV64IMA, TICK_FS, &status);
