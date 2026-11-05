@@ -1,0 +1,15 @@
+diff --git i/src/core/translation.rs w/src/core/translation.rs
+index dbaaa29..b01d759 100644
+--- i/src/core/translation.rs
++++ w/src/core/translation.rs
+@@ -307,9 +307,7 @@ impl RiscvCore {
+             issued,
+             PhysicalWidth::Doubleword,
+             AtomicOrdering::default(),
+-        )
+-        .map(AtomicRequest::with_page_table_update)
+-        {
++        ) {
+             Ok(request) => request,
+             Err(error) => {
+                 return AdUpdate::Fault(Walk::Failure(

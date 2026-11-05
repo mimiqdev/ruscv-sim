@@ -1,0 +1,12 @@
+diff --git i/src/mmu/sv39.rs w/src/mmu/sv39.rs
+index 5b65b48..c94ade4 100644
+--- i/src/mmu/sv39.rs
++++ w/src/mmu/sv39.rs
+@@ -548,7 +548,6 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
+             &payload,
+             AtomicReservationContext { reserved, snapshot },
+         )
+-        .map(AtomicRequest::with_page_table_update)
+         .map_err(protocol)?;
+         let stored = self
+             .memory

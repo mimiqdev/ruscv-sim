@@ -1,0 +1,13 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index 7b91a45..781def5 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -394,7 +394,7 @@ impl TlmRamAdapter {
+                     &mut state,
+                     descriptor.paddr,
+                     latency,
+-                    true,
++                    false,
+                     DelayAccess::Physical(descriptor.category),
+                 )
+                 .map(|()| {
