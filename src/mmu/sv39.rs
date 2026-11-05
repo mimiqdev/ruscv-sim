@@ -523,6 +523,7 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
             PhysicalWidth::Doubleword,
             AtomicOrdering::default(),
         )
+        .map(AtomicRequest::with_page_table_update)
         .map_err(protocol)?;
         let reserved = lr.span();
         let loaded = self
@@ -547,6 +548,7 @@ impl<'a, M: super::physical::PhysicalMemoryInterface + ?Sized> PageTableWalker<'
             &payload,
             AtomicReservationContext { reserved, snapshot },
         )
+        .map(AtomicRequest::with_page_table_update)
         .map_err(protocol)?;
         let stored = self
             .memory

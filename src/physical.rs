@@ -1846,6 +1846,12 @@ pub enum AtomicProtocolError {
 /// store-conditional carries the write payload and optional Hart reservation
 /// context. No field or constructor can express an AMO/SC through the
 /// ordinary [`PhysicalRequest`] categories.
+///
+/// An envelope may also carry the crate-private page-table-update marker set
+/// by a translation's A/D update: such an envelope is a walk-private
+/// reservation, never the Hart's architectural one, so the blocking adapter
+/// lets it change neither direction of its write-suspension gate
+/// (direct-memory D7).
 #[derive(Debug, Clone, Copy)]
 pub struct AtomicRequest<'a> {
     descriptor: AtomicRequestDescriptor,
@@ -1854,6 +1860,7 @@ pub struct AtomicRequest<'a> {
     transform: Option<AmoTransform>,
     store_payload: Option<&'a [u8]>,
     reservation: Option<AtomicReservationContext>,
+    page_table_update: bool,
 }
 
 impl<'a> AtomicRequest<'a> {
@@ -1873,6 +1880,7 @@ impl<'a> AtomicRequest<'a> {
             transform: Some(transform),
             store_payload: None,
             reservation: None,
+            page_table_update: false,
         };
         request.validate()?;
         Ok(request)
@@ -1892,6 +1900,7 @@ impl<'a> AtomicRequest<'a> {
             transform: None,
             store_payload: None,
             reservation: None,
+            page_table_update: false,
         };
         request.validate()?;
         Ok(request)
@@ -1919,9 +1928,31 @@ impl<'a> AtomicRequest<'a> {
             transform: None,
             store_payload: Some(payload),
             reservation: reservation.into(),
+            page_table_update: false,
         };
         request.validate()?;
         Ok(request)
+    }
+
+    /// Marks this envelope as one leg of a translation A/D update
+    /// (direct-memory D7).
+    ///
+    /// A translation's A/D update is the walk's own load-reserved/store-
+    /// conditional pair: it creates no Hart reservation, so it must neither
+    /// open nor close the blocking adapter's write-suspension gate.  The
+    /// marker is crate-private because no Hart, ISA, MMU or DM code that issues
+    /// a guest envelope can set it.
+    pub(crate) fn with_page_table_update(self) -> Self {
+        Self {
+            page_table_update: true,
+            ..self
+        }
+    }
+
+    /// True when this envelope is one leg of a translation A/D update rather
+    /// than a Hart architected atomic (direct-memory D7).
+    pub(crate) const fn is_page_table_update(&self) -> bool {
+        self.page_table_update
     }
 
     /// Returns the physical start address.

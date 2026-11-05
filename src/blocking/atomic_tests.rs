@@ -823,6 +823,104 @@ fn amo_w(funct5: u8, rd: u8, rs1: u8, rs2: u8) -> u32 {
 
 use super::test_support::DelayingRam;
 
+/// D7: the Sv39 A/D update is a walk-private LR/SC pair, so neither leg may
+/// change the adapter's write-suspension gate.  Both legs still cross the
+/// transport as exactly one transaction each, whatever grants are cached.
+#[test]
+fn an_mmu_ad_update_neither_opens_nor_closes_the_write_suspension_gate() {
+    const ROOT_PPN: u64 = 0x80000;
+    const DATA_PPN: u64 = 0x80004;
+    const LEAF_OFFSET: u64 = 0x2008;
+    const VA: u64 = 0x1000;
+    let target = super::test_support::DirectMemTarget::new(BASE, SIZE);
+    target.set_reply(super::test_support::DirectMemReply::Chunk(
+        BlockingDirectMemAccess::ReadWrite,
+    ));
+    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, true).unwrap();
+    slot.begin_window().unwrap();
+    let pointer = |ppn: u64| PageTableEntry::new_pointer(ppn).bits().to_le_bytes();
+    slot.program(0, &pointer(ROOT_PPN + 1)).unwrap();
+    slot.program(0x1000, &pointer(ROOT_PPN + 2)).unwrap();
+    let leaf = PageTableEntry::new_leaf(DATA_PPN, PagePermissions::rw(), false);
+    slot.program(LEAF_OFFSET, &leaf.bits().to_le_bytes())
+        .unwrap();
+
+    // Orient the direct-memory cache with a read over the data page the walk
+    // targets, so a store could use the pointer once the gate is shut.
+    let data = DATA_PPN << 12;
+    let mut physical = ValidatedPhysicalAccess::new(slot.clone());
+    let request = PhysicalRequest::data_read(data, PhysicalWidth::Word).unwrap();
+    physical.access(request).unwrap();
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+
+    let walk = |slot: &RamSlot| {
+        AddressTranslator::new(MmuConfig::default())
+            .translate_sv39_walk(
+                VA,
+                (8 << 60) | ROOT_PPN,
+                AccessType::Write,
+                crate::core::PrivilegeMode::Supervisor,
+                0,
+                &mut SlotMemory { slot: slot.clone() },
+            )
+            .unwrap()
+    };
+
+    // The walk sets A and D through one LR and one SC; neither opens the gate,
+    // so a store over the covered grant is still direct.
+    let atomics = target.atomics();
+    assert_eq!(walk(&slot), data | (VA & 0xfff));
+    assert_eq!(
+        target.atomics(),
+        atomics + 2,
+        "A/D is not one LR and one SC"
+    );
+    let updated = PageTableEntry::from_raw(
+        slot.host_read(LEAF_OFFSET, 8)
+            .unwrap()
+            .try_into()
+            .map(u64::from_le_bytes)
+            .unwrap(),
+    );
+    assert!(updated.is_accessed() && updated.is_dirty());
+    let after = target.transactions();
+    let request =
+        PhysicalRequest::data_write(data + 8, PhysicalWidth::Word, &[1, 2, 3, 4]).unwrap();
+    physical.access(request).unwrap();
+    assert_eq!(
+        target.transactions(),
+        after,
+        "an A/D load-reserved opened the write-suspension gate"
+    );
+
+    // A guest load-reserved opens the gate; the next walk's A/D SC must not
+    // close it, so a store over the covered grant keeps taking b_transport.
+    let lr = AtomicRequest::load_reserved(data, PhysicalWidth::Doubleword, ORDERING).unwrap();
+    ValidatedAtomicAccess::new(slot.clone())
+        .access_atomic(lr)
+        .unwrap();
+    let accessed = PageTableEntry::from_raw(leaf.bits() | crate::mmu::pte::flags::A);
+    slot.program(LEAF_OFFSET, &accessed.bits().to_le_bytes())
+        .unwrap();
+    let atomics = target.atomics();
+    assert_eq!(walk(&slot), data | (VA & 0xfff));
+    assert_eq!(
+        target.atomics(),
+        atomics + 2,
+        "the D-only A/D update is not one LR and one SC"
+    );
+    let after = target.transactions();
+    let request =
+        PhysicalRequest::data_write(data + 16, PhysicalWidth::Word, &[5, 6, 7, 8]).unwrap();
+    physical.access(request).unwrap();
+    assert_eq!(
+        target.transactions(),
+        after + 1,
+        "an A/D store-conditional closed the write-suspension gate"
+    );
+    assert_eq!(target.bytes_at(data + 16, 4), [5, 6, 7, 8]);
+}
+
 /// An atomic response's annotated delay is converted and charged once by the
 /// active turn, like any other RAM access (dev-plan D7).
 #[test]

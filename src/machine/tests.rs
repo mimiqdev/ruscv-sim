@@ -1,7 +1,7 @@
 //! Controlled native backend/host-admission seams, not public recovery APIs.
 use super::*;
-use crate::blocking::test_support::{DelayingRam, DirectMemTarget, ScriptTarget};
-use crate::blocking::{BlockingInitiator, Transport, ZeroDelayRam};
+use crate::blocking::test_support::{DelayingRam, DirectMemReply, DirectMemTarget, ScriptTarget};
+use crate::blocking::{BlockingDirectMemAccess, BlockingInitiator, Transport, ZeroDelayRam};
 use crate::csr::machine;
 use crate::memory::MemoryError;
 use crate::physical::{
@@ -3512,5 +3512,761 @@ fn direct_read_latency_never_reaches_the_isa_counters() {
         guest_counters_now(&owned),
         (minstret_before + 1, mcycle_before + 1),
         "direct read latency leaked into mcycle or minstret"
+    );
+}
+
+// ---- Direct memory U2: write path and atomics ----
+
+/// A direct-memory target that grants read-write chunks with zero latency.
+fn direct_store_target(size: usize) -> Arc<DirectMemTarget> {
+    let target = DirectMemTarget::new(elf::BASE, size);
+    target.set_reply(DirectMemReply::Chunk(BlockingDirectMemAccess::ReadWrite));
+    target
+}
+
+/// A direct-memory image with an explicit RAM window size.
+fn direct_mem_image_of(code: &[u32], size: usize) -> Arc<LoadImage> {
+    Arc::new(LoadImage::parse(&elf::elf_with_code(code, 0, true, false, size)).unwrap())
+}
+
+/// One guest turn that must retire an instruction.
+fn retire(owned: &mut OwnedMachine) {
+    let turn = owned.step(false).unwrap();
+    assert!(
+        matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)),
+        "the turn did not retire an instruction: {:?}",
+        turn.hart().outcome
+    );
+}
+
+/// True when the target serviced a store at `address` after log index `from`.
+///
+/// This is the scheduler-independent way to observe that a store reached the
+/// target instead of being copied through a direct-memory grant.
+fn store_reached(target: &Arc<DirectMemTarget>, from: usize, address: u64) -> bool {
+    target.log()[from..].iter().any(|call| {
+        call.address == address && call.command == crate::blocking::BlockingCommand::Write
+    })
+}
+
+fn storage_dword(owned: &OwnedMachine, offset: u64) -> u64 {
+    owned.memory().lock().unwrap().read_dword(offset).unwrap()
+}
+
+fn storage_word(owned: &OwnedMachine, offset: u64) -> u32 {
+    owned.memory().lock().unwrap().read_word(offset).unwrap()
+}
+
+/// U1's deferred acceptance item, in its full form: the guest takes its
+/// reservation *after* a store that the direct path served, and keeps that
+/// reservation across a recomposition that resets the shared target and then
+/// fails.  The store-conditional outcome must match the same run with direct
+/// memory off.
+#[test]
+fn a_reservation_taken_after_a_direct_store_and_retained_across_a_failed_build_matches_with_direct_memory_on_and_off(
+) {
+    // ld primes the read-write grant, sd is direct, lr.d takes the
+    // reservation, and sc.d runs after the failed build.
+    let code = [
+        elf::ld(5, 1, 0),
+        elf::sd(2, 1, 0),
+        lr_d(3, 1),
+        sc_d(4, 6, 1),
+    ];
+    let stored = 0x1111_2222_3333_4444u64;
+    let run = |direct_mem: bool| -> (u64, u64) {
+        let target = direct_store_target(0x4000);
+        let mut owned = OwnedMachine::new(
+            direct_mem_config(&target, direct_mem),
+            direct_mem_image(&code),
+        )
+        .unwrap();
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_dword(0x200, 0)
+            .unwrap();
+        {
+            let state = owned.state_mut();
+            state.regs[1] = elf::BASE + 0x200;
+            state.regs[2] = stored;
+            state.regs[6] = 0xaaaa_bbbb_cccc_ddddu64;
+        }
+
+        // The load is the first access, so it takes b_transport and its hint
+        // obtains the read-write grant.
+        retire(&mut owned);
+        // The store is direct with direct memory on: no guest reservation
+        // exists yet, so the write-suspension gate is closed.
+        let log = target.log().len();
+        retire(&mut owned);
+        assert_eq!(
+            store_reached(&target, log, elf::BASE + 0x200),
+            !direct_mem,
+            "the store before the reservation took the wrong path"
+        );
+        assert_eq!(storage_dword(&owned, 0x200), stored);
+
+        // The reservation is taken after that store, so the LR-time snapshot
+        // covers whatever version the store left.
+        retire(&mut owned);
+        assert_eq!(
+            owned.state().regs[3],
+            stored,
+            "the reservation loaded wrong bytes"
+        );
+
+        // The recomposition fails after the shared target was reset.
+        target.set_debug_short(true);
+        assert!(owned.install(direct_mem_image(&code)).is_err());
+        target.set_debug_short(false);
+
+        // Restore the code and the data through debug transport.
+        for (index, word) in code.iter().enumerate() {
+            owned
+                .memory()
+                .lock()
+                .unwrap()
+                .write_word(index as u64 * 4, *word)
+                .unwrap();
+        }
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_dword(0x200, stored)
+            .unwrap();
+
+        retire(&mut owned);
+        (owned.state().regs[4], storage_dword(&owned, 0x200))
+    };
+
+    let with = run(true);
+    let without = run(false);
+    assert_eq!(
+        with, without,
+        "the store-conditional outcome after a direct store diverged with direct memory on"
+    );
+    assert_eq!(
+        with.0, 1,
+        "a reservation retained across the reset should fail its store-conditional"
+    );
+}
+
+/// D7: a guest load-reserved suspends direct stores, so an overlapping store
+/// still reaches the target and the store-conditional outcome matches native.
+#[test]
+fn a_store_overlapping_a_reservation_matches_with_direct_memory_on_and_off() {
+    let code = [
+        elf::ld(5, 1, 0),
+        lr_d(3, 1),
+        elf::sd(2, 1, 0),
+        sc_d(4, 6, 1),
+    ];
+    let reserved = 0x1111_2222_3333_4444u64;
+    let stored = 0xaaaa_bbbb_cccc_ddddu64;
+    let run = |direct_mem: bool| -> (u64, u64, bool) {
+        let target = direct_store_target(0x4000);
+        let mut owned = OwnedMachine::new(
+            direct_mem_config(&target, direct_mem),
+            direct_mem_image(&code),
+        )
+        .unwrap();
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_dword(0x200, reserved)
+            .unwrap();
+        {
+            let state = owned.state_mut();
+            state.regs[1] = elf::BASE + 0x200;
+            state.regs[2] = stored;
+            state.regs[6] = 0x5555_6666_7777_8888u64;
+        }
+
+        retire(&mut owned);
+        retire(&mut owned);
+        assert_eq!(
+            owned.state().regs[3],
+            reserved,
+            "the reservation loaded wrong bytes"
+        );
+
+        // The store is direct-eligible but the gate is open, so it must reach
+        // the target and commit a version to the reserved span.
+        let log = target.log().len();
+        retire(&mut owned);
+        assert!(
+            store_reached(&target, log, elf::BASE + 0x200),
+            "a store after a guest load-reserved was served by the pointer"
+        );
+        assert_eq!(storage_dword(&owned, 0x200), stored);
+
+        retire(&mut owned);
+        (owned.state().regs[4], storage_dword(&owned, 0x200), true)
+    };
+
+    let with = run(true);
+    let without = run(false);
+    assert_eq!(
+        with.0, 1,
+        "a store the gate suspended must fail the store-conditional"
+    );
+    assert_eq!(
+        with, without,
+        "an overlapping store changed the store-conditional outcome with direct memory on"
+    );
+}
+
+/// D7: the gate suspends every store, not only an overlapping one, and a
+/// non-overlapping store still leaves the reservation able to commit.
+#[test]
+fn a_store_outside_a_reservation_matches_with_direct_memory_on_and_off() {
+    let code = [
+        elf::ld(5, 1, 0),
+        lr_d(3, 1),
+        elf::sd(2, 7, 0),
+        sc_d(4, 6, 1),
+    ];
+    let reserved = 0x1111_2222_3333_4444u64;
+    let stored = 0xaaaa_bbbb_cccc_ddddu64;
+    let conditional = 0x5555_6666_7777_8888u64;
+    let run = |direct_mem: bool| -> (u64, u64, u64) {
+        let target = direct_store_target(0x4000);
+        let mut owned = OwnedMachine::new(
+            direct_mem_config(&target, direct_mem),
+            direct_mem_image(&code),
+        )
+        .unwrap();
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_dword(0x200, reserved)
+            .unwrap();
+        {
+            let state = owned.state_mut();
+            state.regs[1] = elf::BASE + 0x200;
+            state.regs[2] = stored;
+            state.regs[6] = conditional;
+            state.regs[7] = elf::BASE + 0x300;
+        }
+
+        retire(&mut owned);
+        retire(&mut owned);
+        let log = target.log().len();
+        retire(&mut owned);
+        assert!(
+            store_reached(&target, log, elf::BASE + 0x300),
+            "a non-overlapping store was served by the pointer while the gate was open"
+        );
+        assert_eq!(storage_dword(&owned, 0x300), stored);
+        retire(&mut owned);
+        (
+            owned.state().regs[4],
+            storage_dword(&owned, 0x200),
+            storage_dword(&owned, 0x300),
+        )
+    };
+
+    let with = run(true);
+    let without = run(false);
+    assert_eq!(
+        with.0, 0,
+        "a store outside the reservation must not fail the store-conditional"
+    );
+    assert_eq!(
+        with, without,
+        "a non-overlapping store changed the store-conditional outcome with direct memory on"
+    );
+    assert_eq!(
+        with.1, conditional,
+        "the successful store-conditional did not write its payload to the reserved span"
+    );
+    assert_eq!(with.2, stored, "the non-overlapping store did not land");
+}
+
+/// D7: a gate left open by a load-reserved with no store-conditional is
+/// correct and only slower.
+#[test]
+fn a_load_reserved_without_a_store_conditional_matches_with_direct_memory_on_and_off() {
+    let code = [elf::ld(5, 1, 0), lr_d(3, 1), elf::sd(2, 7, 0)];
+    let reserved = 0x1111_2222_3333_4444u64;
+    let stored = 0xaaaa_bbbb_cccc_ddddu64;
+    let run = |direct_mem: bool| -> (u64, u64) {
+        let target = direct_store_target(0x4000);
+        let mut owned = OwnedMachine::new(
+            direct_mem_config(&target, direct_mem),
+            direct_mem_image(&code),
+        )
+        .unwrap();
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_dword(0x200, reserved)
+            .unwrap();
+        {
+            let state = owned.state_mut();
+            state.regs[1] = elf::BASE + 0x200;
+            state.regs[2] = stored;
+            state.regs[7] = elf::BASE + 0x300;
+        }
+        retire(&mut owned);
+        retire(&mut owned);
+        let log = target.log().len();
+        retire(&mut owned);
+        assert!(
+            store_reached(&target, log, elf::BASE + 0x300),
+            "a store after a load-reserved with no store-conditional was served by the pointer"
+        );
+        (owned.state().regs[3], storage_dword(&owned, 0x300))
+    };
+
+    let with = run(true);
+    let without = run(false);
+    assert_eq!(
+        with, without,
+        "a load-reserved with no store-conditional changed a later store with direct memory on"
+    );
+    assert_eq!(
+        with.1, stored,
+        "the store after the load-reserved was wrong"
+    );
+}
+
+/// U2/U3 §4 step-9: the walk's A/D pair runs through the adapter as exactly
+/// one load-reserved and one store-conditional, and (direct-memory D7) it
+/// neither opens nor closes the write-suspension gate.
+const PTE_V: u64 = 0x1;
+const PTE_RW: u64 = 0x6;
+const PTE_A: u64 = 0x40;
+const PTE_D: u64 = 0x80;
+// Storage offsets within the RAM window; the page table stores physical
+// addresses, so the fixture adds `elf::BASE` where one is needed.
+const SV39_ROOT: u64 = 0x3000;
+const SV39_LEVEL1: u64 = 0x4000;
+const SV39_LEVEL0: u64 = 0x5000;
+const SV39_DATA: u64 = 0x6000;
+const SV39_VA: u64 = 0x2000;
+const SV39_LEAF_OFFSET: u64 = 0x5010;
+
+/// A direct-memory image with room for the Sv39 fixtures.
+fn sv39_image(code: &[u32]) -> Arc<LoadImage> {
+    direct_mem_image_of(code, 0x8000)
+}
+
+/// Programs a three-level Sv39 mapping of `SV39_VA` to `SV39_DATA` with the
+/// given leaf flags, through the Machine's own RAM.
+fn install_sv39_leaf(owned: &OwnedMachine, flags: u64) {
+    let vpns = [
+        (SV39_VA >> 12) & 0x1ff,
+        (SV39_VA >> 21) & 0x1ff,
+        (SV39_VA >> 30) & 0x1ff,
+    ];
+    let pointer = |offset: u64| (((elf::BASE + offset) >> 12) << 10) | PTE_V;
+    let mut memory = owned.memory().lock().unwrap();
+    memory
+        .write_dword(SV39_ROOT + vpns[2] * 8, pointer(SV39_LEVEL1))
+        .unwrap();
+    memory
+        .write_dword(SV39_LEVEL1 + vpns[1] * 8, pointer(SV39_LEVEL0))
+        .unwrap();
+    memory
+        .write_dword(
+            SV39_LEVEL0 + vpns[0] * 8,
+            (((elf::BASE + SV39_DATA) >> 12) << 10) | flags,
+        )
+        .unwrap();
+    // The fixture must land exactly where the walk reads it.
+    assert_eq!(
+        memory.read_dword(SV39_ROOT + vpns[2] * 8).unwrap(),
+        pointer(SV39_LEVEL1),
+        "the root PTE did not land where the walk reads it"
+    );
+    assert_eq!(
+        memory.read_dword(SV39_LEVEL1 + vpns[1] * 8).unwrap(),
+        pointer(SV39_LEVEL0)
+    );
+    assert_eq!(
+        memory.read_dword(SV39_LEVEL0 + vpns[0] * 8).unwrap(),
+        (((elf::BASE + SV39_DATA) >> 12) << 10) | flags
+    );
+}
+
+/// Switches the Hart to M-mode with `MPRV=1` and `MPP=S`, so a data access
+/// walks the Sv39 table while instruction fetch stays untranslated.
+fn enable_mprv_sv39(owned: &mut OwnedMachine) {
+    let state = owned.state_mut();
+    state
+        .csr
+        .write(
+            crate::csr::supervisor::SATP,
+            (8 << 60) | ((elf::BASE + SV39_ROOT) >> 12),
+        )
+        .unwrap();
+    state
+        .csr
+        .write(
+            machine::MSTATUS,
+            crate::csr::mstatus::MPRV | (1 << crate::csr::mstatus::MPP_SHIFT),
+        )
+        .unwrap();
+}
+
+/// A load's walk sets A through one LR and one SC, and that pair must not open
+/// the direct-store gate: the following untranslated store stays direct.
+#[test]
+fn a_translation_ad_update_does_not_open_the_write_suspension_gate() {
+    let code = [elf::ld(5, 1, 0), elf::sd(2, 7, 0)];
+    let run = |direct_mem: bool| -> (u64, bool) {
+        let target = direct_store_target(0x8000);
+        let mut owned =
+            OwnedMachine::new(direct_mem_config(&target, direct_mem), sv39_image(&code)).unwrap();
+        install_sv39_leaf(&owned, PTE_V | PTE_RW);
+        {
+            enable_mprv_sv39(&mut owned);
+            owned.state_mut().regs[1] = SV39_VA;
+        }
+
+        // The walk sets A, then the load itself reaches the target and its
+        // hint obtains the read-write grant over the data page.
+        retire(&mut owned);
+        assert_eq!(
+            target.atomics(),
+            2,
+            "the A update was not one load-reserved and one store-conditional"
+        );
+        assert_eq!(owned.state().regs[5], 0);
+        let leaf = storage_dword(&owned, SV39_LEAF_OFFSET);
+        assert_eq!(leaf & PTE_A, PTE_A, "the walk did not set A");
+        assert_eq!(leaf & PTE_D, 0, "a load set D");
+
+        // Drop MPRV so the store is untranslated: only the gate can stop it.
+        owned.state_mut().csr.write(machine::MSTATUS, 0).unwrap();
+        {
+            let state = owned.state_mut();
+            state.regs[7] = elf::BASE + SV39_DATA + 8;
+            state.regs[2] = 0xdead_beef;
+        }
+        let log = target.log().len();
+        retire(&mut owned);
+        assert_eq!(storage_dword(&owned, 0x6008), 0xdead_beef);
+        (
+            storage_dword(&owned, 0x6008),
+            store_reached(&target, log, elf::BASE + SV39_DATA + 8),
+        )
+    };
+
+    let with = run(true);
+    assert!(
+        !with.1,
+        "an A/D load-reserved opened the write-suspension gate"
+    );
+    let without = run(false);
+    assert!(without.1, "the store did not reach the target with dmi off");
+    assert_eq!(with.0, without.0);
+}
+
+/// D7: a guest load-reserved followed by an A/D update, a store and a
+/// store-conditional matches the same run with direct memory off.
+#[test]
+fn a_guest_lr_then_a_translation_ad_update_then_a_store_and_sc_matches() {
+    let code = [
+        elf::ld(5, 1, 0),
+        lr_d(3, 1),
+        elf::sd(2, 1, 0),
+        sc_d(4, 6, 1),
+    ];
+    let reserved = 0x1111_2222_3333_4444u64;
+    let stored = 0xaaaa_bbbb_cccc_ddddu64;
+    let run = |direct_mem: bool| -> (u64, u64) {
+        let target = direct_store_target(0x8000);
+        let mut owned =
+            OwnedMachine::new(direct_mem_config(&target, direct_mem), sv39_image(&code)).unwrap();
+        // A is set and D is clear, so only the store's walk updates the leaf.
+        install_sv39_leaf(&owned, PTE_V | PTE_RW | PTE_A);
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_dword(SV39_DATA, reserved)
+            .unwrap();
+        {
+            enable_mprv_sv39(&mut owned);
+            let state = owned.state_mut();
+            state.regs[1] = SV39_VA;
+            state.regs[2] = stored;
+            state.regs[6] = 0x5555_6666_7777_8888u64;
+        }
+
+        // The load primes the grant; the load-reserved then opens the gate.
+        retire(&mut owned);
+        let atomics = target.atomics();
+        retire(&mut owned);
+        assert_eq!(owned.state().regs[3], reserved);
+        assert_eq!(
+            target.atomics(),
+            atomics + 1,
+            "the load-reserved's own walk updated A/D"
+        );
+
+        // The store's walk sets D through one LR and one SC, and the store
+        // itself must reach the target because the gate is open.
+        let atomics = target.atomics();
+        let log = target.log().len();
+        retire(&mut owned);
+        assert_eq!(
+            target.atomics(),
+            atomics + 2,
+            "the D update was not one load-reserved and one store-conditional"
+        );
+        assert_eq!(
+            storage_dword(&owned, SV39_LEAF_OFFSET) & PTE_D,
+            PTE_D,
+            "the walk did not set D"
+        );
+        assert!(
+            store_reached(&target, log, elf::BASE + SV39_DATA),
+            "the store after an A/D update was served by the pointer"
+        );
+
+        // The store committed a version to the reserved span, so the
+        // reservation that outlived the A/D update fails.
+        retire(&mut owned);
+        (owned.state().regs[4], storage_dword(&owned, 0x6000))
+    };
+
+    let with = run(true);
+    let without = run(false);
+    assert_eq!(
+        with.0, 1,
+        "a store the gate suspended must fail the store-conditional"
+    );
+    assert_eq!(
+        with, without,
+        "a guest load-reserved followed by an A/D update diverged with direct memory on"
+    );
+}
+
+/// `mret`.
+fn mret() -> u32 {
+    0x3020_0073
+}
+
+/// D7: a store-conditional the target faults leaves the gate open, because the
+/// Hart keeps the reservation that authored it; a later store and
+/// store-conditional match the same run with direct memory off.
+#[test]
+fn a_target_that_faults_a_store_conditional_leaves_the_gate_open() {
+    // 0: ld primes the read-write grant over the reserved word.
+    // 4: lr.d takes the reservation and opens the gate.
+    // 8: sc.d is rejected by the target.
+    // 12: a later ordinary store, after the reservation is consumed.
+    // 20: the handler stores over the reserved word, then mret re-executes the
+    //     faulting store-conditional.
+    let code = [
+        elf::ld(9, 1, 0),
+        lr_d(3, 1),
+        sc_d(4, 6, 1),
+        elf::sd(5, 7, 0),
+        elf::nop(),
+        elf::sd(2, 1, 0),
+        mret(),
+    ];
+    let handler = elf::BASE + 20;
+    let reserved = 0x1111_2222_3333_4444u64;
+    let handled = 0xaaaa_bbbb_cccc_ddddu64;
+    let later = 0x9999_8888_7777_6666u64;
+    let run = |direct_mem: bool| -> (u64, u64, u64) {
+        let target = direct_store_target(0x4000);
+        let mut owned = OwnedMachine::new(
+            direct_mem_config(&target, direct_mem),
+            direct_mem_image(&code),
+        )
+        .unwrap();
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_dword(0x200, reserved)
+            .unwrap();
+        {
+            let state = owned.state_mut();
+            state.csr.write(machine::MTVEC, handler).unwrap();
+            state.regs[1] = elf::BASE + 0x200;
+            state.regs[2] = handled;
+            state.regs[5] = later;
+            state.regs[6] = 0x5555_6666_7777_8888u64;
+            state.regs[7] = elf::BASE + 0x300;
+        }
+
+        retire(&mut owned);
+        retire(&mut owned);
+        assert_eq!(owned.state().regs[3], reserved);
+
+        // The target rejects this store-conditional: a guest-visible fault, not
+        // a poisoning completion.
+        target.fault_next_store_conditional();
+        let turn = owned.step(false).unwrap();
+        assert!(
+            matches!(turn.hart().outcome, StepOutcome::TrapEntered(_)),
+            "the rejected store-conditional did not trap: {:?}",
+            turn.hart().outcome
+        );
+        drop(turn);
+        assert_eq!(owned.state().pc, handler);
+
+        // The handler's store overlaps the retained reservation, and the gate
+        // the faulted store-conditional did not close sends it to the target.
+        let log = target.log().len();
+        retire(&mut owned);
+        assert!(
+            store_reached(&target, log, elf::BASE + 0x200),
+            "a store after a faulted store-conditional was served by the pointer"
+        );
+        assert_eq!(storage_dword(&owned, 0x200), handled);
+
+        // The handler returns to the faulting instruction, which now completes
+        // conclusively: it fails, consumes the reservation and closes the gate.
+        retire(&mut owned);
+        assert_eq!(owned.state().pc, elf::BASE + 8);
+        retire(&mut owned);
+        // A later ordinary store is direct-eligible again with direct memory on.
+        retire(&mut owned);
+        (
+            owned.state().regs[4],
+            storage_dword(&owned, 0x200),
+            storage_dword(&owned, 0x300),
+        )
+    };
+
+    let with = run(true);
+    let without = run(false);
+    assert_eq!(
+        with.0, 1,
+        "the re-executed store-conditional should fail after the handler's store"
+    );
+    assert_eq!(
+        with, without,
+        "a faulted store-conditional diverged with direct memory on"
+    );
+    assert_eq!(with.1, handled);
+    assert_eq!(with.2, later);
+}
+
+/// D6/D7: a non-zero-latency target charges a direct store's grant latency
+/// exactly as its annotated `b_transport` delay, so Platform time, `mtime` and
+/// the boundary delay total match with direct memory on and off.
+#[test]
+fn direct_store_latency_matches_with_direct_memory_on_and_off() {
+    const DELAY: u64 = 1_000_000;
+    let code = [elf::ld(5, 1, 0), elf::sd(2, 1, 0), elf::ld(5, 1, 8)];
+    let run = |direct_mem: bool| -> (Vec<(u64, u64, u64, u64)>, bool) {
+        let target = direct_store_target(0x4000);
+        target.set_declared_max_delay(DELAY);
+        target.set_delay(DELAY);
+        target.set_grant_latency(DELAY, DELAY);
+        let mut owned = OwnedMachine::new(
+            direct_mem_config(&target, direct_mem),
+            direct_mem_image(&code),
+        )
+        .unwrap();
+        {
+            let state = owned.state_mut();
+            state.regs[1] = elf::BASE + 0x200;
+            state.regs[2] = 0x1234_5678_9abc_def0;
+        }
+        let mut facts = Vec::new();
+        let mut store_direct = false;
+        for turn_index in 0..3 {
+            let log = target.log().len();
+            let turn = owned.step(false).unwrap();
+            assert!(matches!(
+                turn.hart().outcome,
+                StepOutcome::InstructionRetired(_)
+            ));
+            if turn_index == 1 {
+                store_direct = !store_reached(&target, log, elf::BASE + 0x200);
+            }
+            let (minstret, mcycle) = guest_counters_now(&owned);
+            facts.push((
+                guest_time(&owned),
+                turn.boundary().transport_delay_femtoseconds,
+                minstret,
+                mcycle,
+            ));
+            drop(turn);
+        }
+        (facts, store_direct)
+    };
+
+    let (with, store_direct) = run(true);
+    let (without, _) = run(false);
+    assert!(
+        store_direct,
+        "the store in the second turn did not take the direct path"
+    );
+    assert_eq!(
+        with, without,
+        "direct store latency changed Platform time, the boundary total or the ISA counters"
+    );
+    assert!(
+        with[1].0 > with[0].0,
+        "the turns advanced no Platform time at all"
+    );
+}
+
+/// D6: a direct store issued by debug work (program buffer) is validated but
+/// never charged to Platform time or the ISA counters.
+#[test]
+fn debug_mode_store_latency_is_not_charged_with_direct_memory() {
+    const DELAY: u64 = 1_000_000;
+    let target = direct_store_target(0x4000);
+    target.set_declared_max_delay(DELAY);
+    target.set_delay(DELAY);
+    target.set_grant_latency(DELAY, DELAY);
+    let mut owned = OwnedMachine::new(direct_mem_config(&target, true), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    let (time_before, counters_before) = (guest_time(&owned), guest_counters_now(&owned));
+
+    write_gpr(&mut owned, 5, elf::BASE + 0x200);
+    write_gpr(&mut owned, 6, 0x1234_5678);
+    postexec_buffer(&mut owned, [sw_word(6, 5, 0), elf::nop()]);
+    let facts = run_grants(&mut owned);
+    assert!(facts.failure.is_none());
+    let primed = target.transactions();
+    assert!(
+        primed > 0,
+        "the program-buffer store bypassed the TLM route"
+    );
+    assert!(
+        target.queries() > 0,
+        "the program-buffer store is not a Hart-initiated access"
+    );
+
+    // The second program-buffer store is direct: the grant covers it, and the
+    // write-suspension gate is shut because no guest load-reserved is live.
+    write_gpr(&mut owned, 5, elf::BASE + 0x204);
+    postexec_buffer(&mut owned, [sw_word(6, 5, 0), elf::nop()]);
+    let facts = run_grants(&mut owned);
+    assert!(facts.failure.is_none());
+    assert_eq!(
+        target.transactions(),
+        primed,
+        "the second program-buffer store was not direct"
+    );
+    assert_eq!(storage_word(&owned, 0x204), 0x1234_5678);
+    assert_eq!(
+        guest_time(&owned),
+        time_before,
+        "debug store latency advanced Platform time"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        counters_before,
+        "debug store latency changed an ISA counter"
     );
 }

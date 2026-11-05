@@ -9,7 +9,7 @@ use crate::physical::{
     ValidatedAtomicAccess, ValidatedPhysicalAccess,
 };
 use crate::ram::RamSlot;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
@@ -412,15 +412,18 @@ fn an_invalidation_inside_b_transport_takes_effect_before_the_next_access() {
     assert_eq!(read(&mut port, BASE + 0x204, PhysicalWidth::Word).len(), 4);
     assert_eq!(target.transactions(), primed, "the grant was not in use");
 
-    // A store always takes b_transport in this unit; inside it the target
-    // invalidates the granted range, which is legal at any time.
+    // A debug-inbound access always takes b_transport and never queries, so
+    // the invalidation the target performs inside it is the only thing that
+    // can change the cache.  Inside `b_transport` is a legal moment for it.
     let weak = Arc::downgrade(&target);
     target.on_transport(Arc::new(move || {
         if let Some(target) = weak.upgrade() {
             target.invalidate_everything();
         }
     }));
-    write(&mut port, BASE + 0x300, &[1, 2, 3, 4]);
+    let request = PhysicalRequest::data_read(BASE + 0x300, PhysicalWidth::Word).unwrap();
+    slot.raw(&request, 0x300, BlockingInitiator::DebugInbound)
+        .unwrap();
     target.clear_transport_hook();
     assert_eq!(
         slot.cached_direct_mem_regions(),
@@ -528,6 +531,40 @@ fn a_direct_copy_holds_the_direct_memory_lock() {
         slot.cached_direct_mem_regions(),
         0,
         "the invalidation after the copy did not remove the grant"
+    );
+
+    // A store copy takes the same lock, so an in-flight store is equally
+    // protected from an invalidation that would free the storage behind it.
+    target.set_reply(DirectMemReply::Chunk(BlockingDirectMemAccess::ReadWrite));
+    write(&mut port, BASE + 0x108, &[1, 2, 3, 4]);
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+    let (copying, copying_rx) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    slot.set_direct_copy_hook(Some(Arc::new(move || {
+        copying.send(()).unwrap();
+        release_rx.lock().unwrap().recv().unwrap();
+    })));
+    let writer = {
+        let mut writer_port = ValidatedPhysicalAccess::new(slot.clone());
+        thread::spawn(move || write(&mut writer_port, BASE + 0x10c, &[5, 6, 7, 8]))
+    };
+    copying_rx.recv().unwrap();
+    assert!(
+        slot.direct_memory_lock_held(),
+        "a direct store did not hold the direct-memory lock"
+    );
+    release.send(()).unwrap();
+    writer.join().unwrap();
+    slot.set_direct_copy_hook(None);
+    assert!(
+        !slot.direct_memory_lock_held(),
+        "the direct-memory lock stayed held after the store copy"
+    );
+    assert_eq!(
+        target.bytes_at(BASE + 0x10c, 4),
+        [5, 6, 7, 8],
+        "the store copy did not write through the grant"
     );
 }
 
@@ -793,6 +830,512 @@ fn a_direct_read_charges_its_grant_latency_through_the_one_accounting_path() {
     );
 }
 
+// ---- D4/D5: the direct store path ----
+
+/// A target that answers every query with a read-write chunk grant.
+fn grant_read_write(target: &Arc<DirectMemTarget>) {
+    target.set_reply(DirectMemReply::Chunk(BlockingDirectMemAccess::ReadWrite));
+}
+
+#[test]
+fn a_cached_grant_serves_stores_without_b_transport() {
+    let target = target();
+    grant_read_write(&target);
+    let slot = slot(&target);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+
+    // The first access takes b_transport: the hint arrives with its response,
+    // and only then may the adapter query.
+    assert_eq!(
+        read(&mut port, BASE + 0x100, PhysicalWidth::Word),
+        vec![0; 4]
+    );
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+    assert_eq!(
+        slot.committed_write_version(),
+        Some(0),
+        "a load was recorded as a committed write"
+    );
+    let primed = target.transactions();
+
+    write(&mut port, BASE + 0x100, &[1, 2, 3, 4]);
+    assert_eq!(
+        target.transactions(),
+        primed,
+        "a covered store took b_transport"
+    );
+    assert_eq!(
+        target.bytes_at(BASE + 0x100, 4),
+        [1, 2, 3, 4],
+        "the direct store did not reach the target's storage"
+    );
+    assert_eq!(
+        slot.committed_write_version(),
+        Some(1),
+        "a direct store was left out of the committed-write record"
+    );
+
+    // A later direct load reads the same bytes the direct store wrote, and a
+    // fetch does too: the pointer and b_transport serve one copy.
+    assert_eq!(
+        read(&mut port, BASE + 0x100, PhysicalWidth::Word),
+        vec![1, 2, 3, 4]
+    );
+    assert_eq!(
+        fetch(&mut port, BASE + 0x100, PhysicalWidth::Word),
+        vec![1, 2, 3, 4]
+    );
+    assert_eq!(target.transactions(), primed);
+    // The store did not query the target again.
+    assert_eq!(target.queries(), 1);
+}
+
+#[test]
+fn a_store_span_crossing_a_grant_end_stays_one_transaction() {
+    let target = target();
+    grant_read_write(&target);
+    target.set_reply(DirectMemReply::Custom {
+        access: BlockingDirectMemAccess::ReadWrite,
+        start: BASE + 0x102,
+        end: BASE + 0x105,
+        read_latency: 0,
+        write_latency: 0,
+        null_pointer: false,
+    });
+    let slot = slot(&target);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    // A store inside the granted range primes the cache.
+    write(&mut port, BASE + 0x104, &[0x11, 0x22]);
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+    let primed = target.transactions();
+
+    // Four bytes from the grant's last two bytes cross its end: one
+    // transaction, never a split direct-plus-blocking pair.
+    write(&mut port, BASE + 0x104, &[0x11, 0x22, 0x33, 0x44]);
+    assert_eq!(
+        target.transactions(),
+        primed + 1,
+        "a store span crossing a grant end was served by the pointer"
+    );
+    assert_eq!(
+        target.log().last().unwrap().length,
+        4,
+        "a store span crossing a grant end was split"
+    );
+    assert_eq!(target.bytes_at(BASE + 0x104, 4), [0x11, 0x22, 0x33, 0x44]);
+}
+
+#[test]
+fn a_store_to_a_read_only_region_reaches_the_target() {
+    let target = target();
+    let slot = slot(&target);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    // The default answer is a read-only chunk grant.
+    assert_eq!(read(&mut port, BASE + 0x100, PhysicalWidth::Word).len(), 4);
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+
+    let primed = target.transactions();
+    write(&mut port, BASE + 0x100, &[9, 9, 9, 9]);
+    assert_eq!(
+        target.transactions(),
+        primed + 1,
+        "a store to a read-only region was served by the pointer"
+    );
+    assert_eq!(
+        target.log().last().unwrap().command,
+        BlockingCommand::Write,
+        "the store did not reach the target as its own transaction"
+    );
+    assert_eq!(target.bytes_at(BASE + 0x100, 4), [9, 9, 9, 9]);
+    // The hint on that completed store licensed a write query (direct-memory
+    // D3), so the target now decides the direction it offers.
+    assert_eq!(
+        target.last_query().unwrap().access(),
+        BlockingDirectMemAccess::Write,
+        "the store's hint was queried for the wrong access direction"
+    );
+
+    // A read-write grant replaces the read-only region it overlaps, and the
+    // next store uses it (direct-memory D5).
+    grant_read_write(&target);
+    let primed = target.transactions();
+    write(&mut port, BASE + 0x110, &[7, 7, 7, 7]);
+    assert_eq!(target.transactions(), primed + 1);
+    assert_eq!(
+        slot.cached_direct_mem_regions(),
+        1,
+        "the read-write grant did not replace the read-only region"
+    );
+    let after = target.transactions();
+    write(&mut port, BASE + 0x114, &[8, 8, 8, 8]);
+    assert_eq!(
+        target.transactions(),
+        after,
+        "the read-write replacement grant was not used"
+    );
+    assert_eq!(target.bytes_at(BASE + 0x114, 4), [8, 8, 8, 8]);
+}
+
+#[test]
+fn a_direct_store_charges_its_write_latency_through_the_one_accounting_path() {
+    let target = target();
+    grant_read_write(&target);
+    target.set_declared_max_delay(MAX_DELAY);
+    target.set_delay(MAX_DELAY);
+    target.set_grant_latency(MAX_DELAY, MAX_DELAY);
+    let slot = slot(&target);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+
+    // One annotated response and one granted write latency are accounted the
+    // same way: exact femtoseconds, rounded ticks, the same boundary total.
+    slot.begin_transport_turn();
+    write(&mut port, BASE + 0x100, &[1, 2, 3, 4]);
+    let blocking = slot.take_transport_turn_delay();
+    assert_eq!(blocking.femtoseconds, Femtoseconds::new(MAX_DELAY));
+    assert_eq!(blocking.ticks, 1);
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+
+    let transactions = target.transactions();
+    slot.begin_transport_turn();
+    write(&mut port, BASE + 0x104, &[5, 6, 7, 8]);
+    assert_eq!(
+        target.transactions(),
+        transactions,
+        "the second store was not direct"
+    );
+    let direct = slot.take_transport_turn_delay();
+    assert_eq!(
+        direct, blocking,
+        "a direct store charged a different delay than the annotated one"
+    );
+    assert_eq!(slot.consumed_delay(), Femtoseconds::new(MAX_DELAY * 2));
+
+    // Outside a guest turn the latency is validated but not charged, exactly
+    // as a debug-work annotation.
+    write(&mut port, BASE + 0x108, &[9, 9, 9, 9]);
+    assert_eq!(
+        slot.consumed_delay(),
+        Femtoseconds::new(MAX_DELAY * 2),
+        "a direct store outside a guest turn charged Platform time"
+    );
+}
+
+#[test]
+fn a_direct_store_is_recorded_as_a_committed_write() {
+    let target = target();
+    grant_read_write(&target);
+    let slot = slot(&target);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    assert_eq!(read(&mut port, BASE + 0x100, PhysicalWidth::Word).len(), 4);
+    assert_eq!(slot.committed_write_version(), Some(0));
+
+    let primed = target.transactions();
+    write(&mut port, BASE + 0x100, &[1, 2, 3, 4]);
+    assert_eq!(target.transactions(), primed, "the store was not direct");
+    assert_eq!(
+        slot.committed_write_version(),
+        Some(1),
+        "a direct store was left out of the committed-write record"
+    );
+    write(&mut port, BASE + 0x104, &[5, 6, 7, 8]);
+    assert_eq!(
+        slot.committed_write_version(),
+        Some(2),
+        "a second direct store was left out of the committed-write record"
+    );
+}
+
+// ---- D7: the write-suspension gate ----
+
+fn prime(target: &Arc<DirectMemTarget>) -> RamSlot {
+    grant_read_write(target);
+    let slot = slot(target);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    assert_eq!(read(&mut port, BASE + 0x100, PhysicalWidth::Word).len(), 4);
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+    slot
+}
+
+fn load_reserved(
+    port: &mut ValidatedAtomicAccess<RamSlot>,
+    address: u64,
+) -> (Vec<u8>, AtomicReservationContext) {
+    let request =
+        AtomicRequest::load_reserved(address, PhysicalWidth::Doubleword, ORDERING).unwrap();
+    let response = port.access_atomic(request).unwrap();
+    (
+        response.old_bytes().unwrap().to_vec(),
+        AtomicReservationContext {
+            reserved: PhysicalSpan {
+                paddr: address,
+                width: PhysicalWidth::Doubleword,
+            },
+            snapshot: response.snapshot().expect("load-reserved snapshot"),
+        },
+    )
+}
+
+#[test]
+fn a_guest_load_reserved_suspends_direct_stores_until_a_conclusive_store_conditional() {
+    let target = target();
+    let slot = prime(&target);
+    let mut phys = ValidatedPhysicalAccess::new(slot.clone());
+    let mut atomics = ValidatedAtomicAccess::new(slot.clone());
+
+    // A guest load-reserved opens the gate: its reservation's store-conditional
+    // must observe every later store through the target.
+    let (_, context) = load_reserved(&mut atomics, BASE + 0x100);
+    let suspended = target.transactions();
+    write(&mut phys, BASE + 0x100, &[0x11, 0x22, 0x33, 0x44]);
+    assert_eq!(
+        target.transactions(),
+        suspended + 1,
+        "a store after a guest load-reserved was served by the pointer"
+    );
+    // The gate is deliberately coarse: every store is suspended, not just an
+    // overlapping one.
+    write(&mut phys, BASE + 0x300, &[0x55, 0x66, 0x77, 0x88]);
+    assert_eq!(
+        target.transactions(),
+        suspended + 2,
+        "the gate let a non-overlapping store through the pointer"
+    );
+
+    // The store committed a version to the reserved span, so the reservation
+    // fails; that conclusive completion closes the gate.
+    let request = AtomicRequest::store_conditional(
+        BASE + 0x100,
+        PhysicalWidth::Doubleword,
+        ORDERING,
+        &[0u8; 8],
+        Some(context),
+    )
+    .unwrap();
+    let response = atomics.access_atomic(request).unwrap();
+    assert_eq!(
+        response.conditional_status(),
+        Some(ConditionalStatus::Failure),
+        "a suspended store did not reach the reservation check"
+    );
+
+    let reopened = target.transactions();
+    write(&mut phys, BASE + 0x108, &[1, 1, 1, 1]);
+    assert_eq!(
+        target.transactions(),
+        reopened,
+        "a conclusive store-conditional did not reopen the direct store path"
+    );
+    assert_eq!(target.bytes_at(BASE + 0x108, 4), [1, 1, 1, 1]);
+}
+
+#[test]
+fn a_faulted_store_conditional_leaves_the_gate_open() {
+    let target = target();
+    let slot = prime(&target);
+    let mut phys = ValidatedPhysicalAccess::new(slot.clone());
+    let mut atomics = ValidatedAtomicAccess::new(slot.clone());
+
+    let (_, context) = load_reserved(&mut atomics, BASE + 0x100);
+    // The target rejects the store-conditional: the Hart keeps its reservation.
+    target.fault_next_store_conditional();
+    let request = AtomicRequest::store_conditional(
+        BASE + 0x100,
+        PhysicalWidth::Doubleword,
+        ORDERING,
+        &[0u8; 8],
+        Some(context),
+    )
+    .unwrap();
+    let error = atomics.access_atomic(request).unwrap_err();
+    assert!(
+        matches!(error, crate::physical::AtomicAccessError::TargetRejected(_)),
+        "a rejected store-conditional was not a target fault: {error:?}"
+    );
+
+    let suspended = target.transactions();
+    write(&mut phys, BASE + 0x100, &[4, 4, 4, 4]);
+    assert_eq!(
+        target.transactions(),
+        suspended + 1,
+        "a store after a faulted store-conditional was served by the pointer"
+    );
+    assert_eq!(target.bytes_at(BASE + 0x100, 4), [4, 4, 4, 4]);
+}
+
+#[test]
+fn a_page_table_update_load_reserved_does_not_open_the_gate() {
+    let target = target();
+    let slot = prime(&target);
+    let mut phys = ValidatedPhysicalAccess::new(slot.clone());
+    let mut atomics = ValidatedAtomicAccess::new(slot.clone());
+
+    let request = AtomicRequest::load_reserved(BASE + 0x140, PhysicalWidth::Word, ORDERING)
+        .unwrap()
+        .with_page_table_update();
+    atomics.access_atomic(request).unwrap();
+    assert_eq!(target.atomics(), 1, "the A/D leg did not reach the target");
+
+    let after = target.transactions();
+    write(&mut phys, BASE + 0x140, &[5, 6, 7, 8]);
+    assert_eq!(
+        target.transactions(),
+        after,
+        "an A/D load-reserved opened the write-suspension gate"
+    );
+    assert_eq!(target.bytes_at(BASE + 0x140, 4), [5, 6, 7, 8]);
+}
+
+#[test]
+fn a_page_table_update_store_conditional_does_not_close_the_gate() {
+    let target = target();
+    let slot = prime(&target);
+    let mut phys = ValidatedPhysicalAccess::new(slot.clone());
+    let mut atomics = ValidatedAtomicAccess::new(slot.clone());
+
+    // A guest load-reserved opens the gate.
+    load_reserved(&mut atomics, BASE + 0x160);
+    // A walk-private A/D pair concludes successfully over a covered grant; it
+    // is not the Hart's reservation, so it must leave the gate open.
+    let lr = AtomicRequest::load_reserved(BASE + 0x168, PhysicalWidth::Doubleword, ORDERING)
+        .unwrap()
+        .with_page_table_update();
+    let loaded = atomics.access_atomic(lr).unwrap();
+    let context = AtomicReservationContext {
+        reserved: PhysicalSpan {
+            paddr: BASE + 0x168,
+            width: PhysicalWidth::Doubleword,
+        },
+        snapshot: loaded.snapshot().expect("A/D load-reserved snapshot"),
+    };
+    let sc = AtomicRequest::store_conditional(
+        BASE + 0x168,
+        PhysicalWidth::Doubleword,
+        ORDERING,
+        &[0x5a; 8],
+        Some(context),
+    )
+    .unwrap()
+    .with_page_table_update();
+    let stored = atomics.access_atomic(sc).unwrap();
+    assert_eq!(
+        stored.conditional_status(),
+        Some(ConditionalStatus::Success),
+        "the A/D store-conditional did not conclude"
+    );
+
+    let after = target.transactions();
+    write(&mut phys, BASE + 0x160, &[1, 2, 3, 4]);
+    assert_eq!(
+        target.transactions(),
+        after + 1,
+        "an A/D store-conditional closed the write-suspension gate"
+    );
+}
+
+// ---- D7: every atomic envelope is one transaction over a covered grant ----
+
+#[test]
+fn every_atomic_envelope_is_one_transaction_over_a_covered_grant() {
+    let target = target();
+    let slot = prime(&target);
+    let mut atomics = ValidatedAtomicAccess::new(slot.clone());
+    let queries = target.queries();
+
+    // A guest load-reserved.
+    let mut transactions = target.transactions();
+    let (_, context) = load_reserved(&mut atomics, BASE + 0x100);
+    assert_eq!(
+        target.transactions(),
+        transactions + 1,
+        "a load-reserved over a covered grant was served by the pointer"
+    );
+
+    // A guest store-conditional: one transaction whatever its conditional
+    // status, because the target decides it inside that same call.
+    transactions = target.transactions();
+    let request = AtomicRequest::store_conditional(
+        BASE + 0x100,
+        PhysicalWidth::Doubleword,
+        ORDERING,
+        &[1u8; 8],
+        Some(context),
+    )
+    .unwrap();
+    atomics.access_atomic(request).unwrap();
+    assert_eq!(
+        target.transactions(),
+        transactions + 1,
+        "a store-conditional over a covered grant was served by the pointer"
+    );
+
+    // An AMO.
+    transactions = target.transactions();
+    let operand = 1u32.to_le_bytes();
+    let request = AtomicRequest::rmw(
+        BASE + 0x120,
+        PhysicalWidth::Word,
+        ORDERING,
+        &operand,
+        crate::hart_amods::transform(crate::hart_amods::AmoOperation::Add, AmoWidth::Word),
+    )
+    .unwrap();
+    atomics.access_atomic(request).unwrap();
+    assert_eq!(
+        target.transactions(),
+        transactions + 1,
+        "an AMO over a covered grant was served by the pointer"
+    );
+
+    // Each leg of an A/D update.
+    let payload = [0u8; 8];
+    transactions = target.transactions();
+    let lr = AtomicRequest::load_reserved(BASE + 0x130, PhysicalWidth::Doubleword, ORDERING)
+        .unwrap()
+        .with_page_table_update();
+    let loaded = atomics.access_atomic(lr).unwrap();
+    assert_eq!(
+        target.transactions(),
+        transactions + 1,
+        "an A/D load-reserved over a covered grant was served by the pointer"
+    );
+    let context = AtomicReservationContext {
+        reserved: PhysicalSpan {
+            paddr: BASE + 0x130,
+            width: PhysicalWidth::Doubleword,
+        },
+        snapshot: loaded.snapshot().expect("A/D load-reserved snapshot"),
+    };
+    transactions = target.transactions();
+    let sc = AtomicRequest::store_conditional(
+        BASE + 0x130,
+        PhysicalWidth::Doubleword,
+        ORDERING,
+        &payload,
+        Some(context),
+    )
+    .unwrap()
+    .with_page_table_update();
+    atomics.access_atomic(sc).unwrap();
+    assert_eq!(
+        target.transactions(),
+        transactions + 1,
+        "an A/D store-conditional over a covered grant was served by the pointer"
+    );
+
+    assert_eq!(
+        target.atomics(),
+        5,
+        "an atomic envelope did not reach the target as its own transaction"
+    );
+    // An atomic completion is never asked for a grant.
+    assert_eq!(
+        target.queries(),
+        queries,
+        "an atomic envelope produced a direct-memory query"
+    );
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+}
+
 // ---- D13: the in-tree target ----
 
 fn data_write(address: u64, payload: &mut [u8]) -> BlockingTransaction<'_> {
@@ -805,7 +1348,7 @@ fn data_write(address: u64, payload: &mut [u8]) -> BlockingTransaction<'_> {
 }
 
 #[test]
-fn zero_delay_grants_one_read_only_chunk_with_zero_latency() {
+fn zero_delay_grants_one_read_write_chunk_with_zero_latency() {
     let target = ZeroDelayRam::new();
     let query = BlockingDirectMemQuery::new(BASE + 0x123, 4, BlockingDirectMemAccess::Read);
     assert_eq!(
@@ -828,7 +1371,7 @@ fn zero_delay_grants_one_read_only_chunk_with_zero_latency() {
     };
     assert_eq!(grant.start(), BASE);
     assert_eq!(grant.end(), BASE + 0xfff);
-    assert_eq!(grant.access(), BlockingDirectMemAccess::Read);
+    assert_eq!(grant.access(), BlockingDirectMemAccess::ReadWrite);
     assert_eq!(grant.read_latency(), Femtoseconds::ZERO);
     assert_eq!(grant.write_latency(), Femtoseconds::ZERO);
     assert_eq!(
@@ -836,6 +1379,29 @@ fn zero_delay_grants_one_read_only_chunk_with_zero_latency() {
         target.chunk_pointer(BASE + 0x123),
         "the grant does not point at the chunk b_transport serves"
     );
+
+    // A store through the read-write grant lands in the same atomics
+    // `b_transport` and debug transport serve (direct-memory D10/D13): the
+    // very byte a later blocking read returns.
+    // SAFETY: the target issued this pointer over its own live chunk and has
+    // not invalidated it.
+    unsafe {
+        AtomicU8::from_ptr(grant.pointer().add(0x104)).store(0x7e, Ordering::Relaxed);
+    }
+    let mut read = [0u8; 1];
+    let mut transaction = BlockingTransaction::new(
+        BASE + 0x104,
+        BlockingCommand::Read,
+        &mut read,
+        BlockingExtension::new(PhysicalAccessKind::DataRead, BlockingInitiator::Hart),
+    );
+    target.b_transport(&mut transaction);
+    assert_eq!(
+        transaction.data(),
+        [0x7e],
+        "a store through the pointer is not visible to b_transport"
+    );
+    assert_eq!(target.bytes_at(BASE + 0x104, 1), [0x7e]);
 
     // An atomic transaction is never hinted.
     let mut bytes = [0u8; 8];
