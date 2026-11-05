@@ -1650,5 +1650,41 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "direct-mem-u4-invalidate-wrong-thread",
+    "source": "src/capi/mod.rs",
+    "patch": "direct-mem-u4-invalidate-wrong-thread.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::an_invalidation_on_another_thread_is_rejected_and_changes_nothing",
+        "failure": [
+          "assertion `left == right` failed: an invalidation from another thread was accepted",
+          "left:\\s+0",
+          "right:\\s+2"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u4-second-entry-in-callback",
+    "source": "src/capi/mod.rs",
+    "patch": "direct-mem-u4-second-entry-in-callback.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::the_invalidation_entry_is_the_only_call_accepted_inside_a_callback",
+        "failure": [
+          "assertion `left == right` failed: a callback re-entered the C ABI through another handle",
+          "left:\\s+0",
+          "right:\\s+3"
+        ]
+      }
+    ]
   }
 ]

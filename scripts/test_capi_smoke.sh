@@ -6,8 +6,11 @@
 # and no C++ toolchain is added to a normal build, and a plain-C host can link
 # it.  The smoke covers lifecycle, profile selection, the commit log, grant time
 # fields and earlier-start rejection, wrong-thread and re-entry rejection,
-# panic poisoning, a transport status that must not pass, and an unknown
-# completion followed by reset.
+# panic poisoning, a transport status that must not pass, an unknown completion
+# followed by reset, and the direct-memory ABI: a grant, a NULL callback, a
+# denial, invalidation between grants and inside a callback, wrong-thread
+# invalidation rejection, the invalidation re-entry exception, and reset
+# restoring grants after a poisoned transport.
 #
 # A missing C compiler is a failure, never a skip: CI installs gcc on the
 # runner, so an absent compiler means the check did not run.
