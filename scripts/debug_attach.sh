@@ -992,8 +992,8 @@ assert_direct_mem_evidence() {
     local log="${dir}/openocd.log"
     local site writes
     site="$(printf '0x%x' "0x$(symbol s6_break)")"
-    if ! grep -aqF -- "M[${site}] reads 0x00100" "${log}"; then
-        echo "${name}: OpenOCD log has no system-bus read of the breakpoint site" >&2
+    if ! grep -aqF -- "M[${site}] reads 0x00100073" "${log}"; then
+        echo "${name}: OpenOCD log has no system-bus read of the planted EBREAK" >&2
         return 1
     fi
     writes="$(grep -ac -- 'Succeeded to write memory via system bus' "${log}")"
@@ -1405,9 +1405,9 @@ ruscv_zca_cmd() {
         --rbb-port "${port}" --halted --max-cycles 100000000
 }
 
-# The direct-memory U3 target: the same attach guest, on the direct-memory
-# route. `--dmi` requires `--transport tlm`, and the route keeps this profile's
-# rv64ima session profile.
+# The direct-memory U3 target: the same attach guest with the same rv64ima
+# session profile, on the direct-memory route (`--dmi` requires `--transport
+# tlm`).
 ruscv_direct_mem_cmd() {
     local port="$1"
     exec "${RUSCV_SIM}" run "${WORK}/guest.elf" --isa rv64ima \
