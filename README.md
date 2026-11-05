@@ -154,7 +154,7 @@ cc -std=c11 -Iinclude host.c target/debug/libruscv_sim.a -lpthread -ldl -lm
 `ruscv_machine_load_elf` → `ruscv_machine_set_commit_log` →
 `ruscv_machine_run_grant`（权威起点、最大结束时间、turn 预算）→
 `ruscv_machine_boundary`／`ruscv_machine_result` → `ruscv_machine_reset` →
-`ruscv_machine_destroy`。grant 返回本次消费的建模时间（完成的 turn、idle 跳进与 transport
+`ruscv_machine_invalidate_direct_mem`（可选）→ `ruscv_machine_destroy`。grant 返回本次消费的建模时间（完成的 turn、idle 跳进与 transport
 延迟），内核只按该量提交全局时间；早于 Machine 已提交时间的起点是 adapter 失败，reset 重启纪元。
 截止时间前先形成该 turn 的保守完成上界，放不下的 turn 不启动，并以 `deadline_blocked`、
 剩余 slack 与被拒绝的上界报告（ADR-0004 §7.2）。
@@ -165,8 +165,14 @@ payload 缓冲区由 Rust 拥有且只在一次回调内有效。Rust panic 在�
 （`RUSCV_ERROR_PANIC`，之后为 `RUSCV_ERROR_POISONED`），错误一律是整数状态码；TLM 状态、
 回调返回值或 host stop 都不会变成 ruscv-sim 的终态结果。未知完成毒化 transport，只有 target
 确认 transport reset 后的 `ruscv_machine_reset` 才能重新安装镜像并继续。
+回调表末尾的可空 `get_direct_mem_ptr` 选择 TLM Direct Memory Interface，`NULL` 表示不提供且行为与 `dmi`
+关闭一致；`ruscv_payload` 末尾的 `dmi_allowed` 是唯一的 grant 触发 hint。头文件完整陈述 target 的 D10
+义务（指针寿命、别名、逐字节原子访问与 invalidate-before-free 顺序），malformed grant 是被查询访问的
+protocol failure。`ruscv_machine_invalidate_direct_mem` 是唯一允许在回调内与被毒化句柄上调用的入口
+（仍限创建线程），只访问 target wrapper 的 `BlockingDirectMemRegistry`；其它入口仍拒绝回调再入。
 `scripts/test_capi_smoke.sh` 用普通 C 编译并链接静态库，覆盖生命周期、profile 选择、commit log、
-grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒化、不通过的 TLM 状态以及未知完成后的 reset。
+grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒化、不通过的 TLM 状态、未知完成后的 reset，
+以及 grant、NULL 回调、denial、grant 之间与回调内的 invalidation 和 reset 后的 grant 恢复。
 
 ## SystemC 宿主（blocking TLM U6）
 

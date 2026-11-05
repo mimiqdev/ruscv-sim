@@ -3,19 +3,24 @@
 //! The table is copied once at create time; `user` must stay valid until
 //! destroy.  Every callback runs synchronously inside a ruscv-sim call on the
 //! creating thread, so a callback that calls back into the C ABI is rejected as
-//! re-entry before it can observe or mutate any handle state.
+//! re-entry before it can observe or mutate any handle state.  The one
+//! exception is direct-memory invalidation, which a target may issue from
+//! inside a callback (direct-memory D12).
 //!
 //! The mapping is deliberately narrow and total.  A C target can only report a
-//! [`BlockingResponseStatus`], an atomic completion, an outcome-unknown flag and
-//! a delay; anything else it does to the payload struct reveals a contract
-//! violation (an unrecognized status, a consumed-but-invalid snapshot, a
-//! mutated address/command/length) and is mapped to a non-completion, so the
-//! blocking adapter keeps ownership of every D4 classification.  No C value can make ruscv-sim report a guest fault or a
+//! [`BlockingResponseStatus`], an atomic completion, an outcome-unknown flag, a
+//! delay and a direct-memory answer; anything else it does to a struct reveals
+//! a contract violation (an unrecognized status, a consumed-but-invalid
+//! snapshot, a mutated address/command/length, an unrepresentable grant) and is
+//! mapped to a non-completion, so the blocking adapter keeps ownership of every
+//! D4 classification.  No C value can make ruscv-sim report a guest fault or a
 //! completion that the target did not produce.
 
 use crate::blocking::{
-    BlockingAtomicOutcome, BlockingCommand, BlockingDebug, BlockingResponseStatus, BlockingTarget,
-    BlockingTransaction, Femtoseconds,
+    BlockingAtomicOutcome, BlockingCommand, BlockingDebug, BlockingDirectMemAccess,
+    BlockingDirectMemGrant, BlockingDirectMemQuery, BlockingDirectMemRegistry,
+    BlockingDirectMemResponse, BlockingResponseStatus, BlockingTarget, BlockingTransaction,
+    Femtoseconds,
 };
 use crate::physical::{
     CommittedWriteSnapshot, ConditionalStatus, PhysicalAccessKind,
@@ -77,6 +82,21 @@ pub(crate) mod atomic_outcome {
     pub(crate) const STORE_CONDITIONAL_FAILURE: i32 = 4;
 }
 
+/// C direct-memory access (`ruscv_dmi_access`), the IEEE 1666 values.
+pub(crate) mod dmi_access {
+    pub(crate) const NONE: i32 = 0;
+    pub(crate) const READ: i32 = 1;
+    pub(crate) const WRITE: i32 = 2;
+    pub(crate) const READ_WRITE: i32 = 3;
+}
+
+/// C direct-memory answer (`ruscv_dmi_result`).
+pub(crate) mod dmi_result {
+    pub(crate) const GRANTED: i32 = 0;
+    pub(crate) const DENIED: i32 = 1;
+    pub(crate) const FAILED: i32 = 2;
+}
+
 /// One atomic payload extension as the C target sees it (`ruscv_atomic`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -132,6 +152,34 @@ impl Default for CAtomic {
     }
 }
 
+/// One direct-memory query and answer as the C target sees it
+/// (`ruscv_direct_mem`).
+///
+/// The request half is filled by ruscv-sim; the response half is meaningful
+/// only for `RUSCV_DMI_GRANTED`.  The target owns the granted bytes and the
+/// direct-memory D10 promises behind them (see
+/// [`BlockingDirectMemGrant::new`]).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CDirectMem {
+    /// Request: physical start address of the querying access.
+    pub(crate) address: u64,
+    /// Request: querying access width in bytes.
+    pub(crate) length: usize,
+    /// Request: [`dmi_access`] of the querying access.
+    pub(crate) access: i32,
+    /// Response: inclusive physical start of the granted range.
+    pub(crate) start: u64,
+    /// Response: inclusive physical end of the granted range.
+    pub(crate) end: u64,
+    /// Response: host pointer of `start`.
+    pub(crate) pointer: *mut u8,
+    /// Response: granted read latency in exact femtoseconds per access.
+    pub(crate) read_latency_fs: u64,
+    /// Response: granted write latency in exact femtoseconds per access.
+    pub(crate) write_latency_fs: u64,
+}
+
 /// One blocking transaction as the C target sees it (`ruscv_payload`).
 ///
 /// `data` points at a Rust-owned buffer whose length is exactly `length`; it is
@@ -160,6 +208,8 @@ pub struct CPayload {
     pub(crate) delay_fs: u64,
     /// Atomic payload extension.
     pub(crate) atomic: CAtomic,
+    /// Response: nonzero when the target can serve this address by pointer.
+    pub(crate) dmi_allowed: i32,
 }
 
 /// One debug-transport request as the C target sees it (`ruscv_debug`).
@@ -190,6 +240,9 @@ pub struct CTarget {
     pub(crate) transport_dbg: Option<unsafe extern "C" fn(*mut c_void, *mut CDebug) -> usize>,
     /// Transport reset; returns nonzero when acknowledged.
     pub(crate) transport_reset: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
+    /// Optional direct-memory query; `NULL` means the target offers none.
+    pub(crate) get_direct_mem_ptr:
+        Option<unsafe extern "C" fn(*mut c_void, *mut CDirectMem) -> i32>,
 }
 
 /// A validated C callback table used as one blocking RAM target.
@@ -198,6 +251,10 @@ pub(crate) struct CBlockingTarget {
     b_transport: unsafe extern "C" fn(*mut c_void, *mut CPayload),
     transport_dbg: unsafe extern "C" fn(*mut c_void, *mut CDebug) -> usize,
     transport_reset: unsafe extern "C" fn(*mut c_void) -> i32,
+    get_direct_mem_ptr: Option<unsafe extern "C" fn(*mut c_void, *mut CDirectMem) -> i32>,
+    /// Every adapter registration this target must invalidate before it frees
+    /// or remaps granted storage (direct-memory D10/D12).
+    direct_mem: Arc<BlockingDirectMemRegistry>,
 }
 
 // SAFETY: the C ABI accepts calls only on the creating thread, and the Machine
@@ -229,7 +286,22 @@ impl CBlockingTarget {
             b_transport,
             transport_dbg,
             transport_reset,
+            get_direct_mem_ptr: table.get_direct_mem_ptr,
+            direct_mem: Arc::new(BlockingDirectMemRegistry::new()),
         }))
+    }
+
+    /// The registry every adapter of this target registers with.
+    ///
+    /// It is created with the wrapper, so it exists from `ruscv_machine_create`
+    /// and outlives every Machine replacement on reset (direct-memory D12).
+    pub(crate) fn direct_mem_registry(&self) -> &Arc<BlockingDirectMemRegistry> {
+        &self.direct_mem
+    }
+
+    /// True when this table provides a direct-memory query.
+    pub(crate) fn offers_direct_memory(&self) -> bool {
+        self.get_direct_mem_ptr.is_some()
     }
 
     /// The declared per-transaction maximum delay.
@@ -261,6 +333,7 @@ impl BlockingTarget for CBlockingTarget {
             outcome_unknown: 0,
             delay_fs: 0,
             atomic: atomic_request(transaction),
+            dmi_allowed: 0,
         };
         let _in_callback = super::CallbackScope::enter();
         // SAFETY: the table was validated at create time, the payload and its
@@ -289,6 +362,11 @@ impl BlockingTarget for CBlockingTarget {
             transaction.extension_mut().mark_outcome_unknown();
         }
         transaction.set_response_delay(Femtoseconds::new(payload.delay_fs));
+        // The hint is a response field, so it survives even a changed payload:
+        // the adapter only ever queries a completed, Hart-initiated,
+        // non-atomic transaction, and it refuses a grant whose shape or range
+        // the target cannot have promised (direct-memory D3).
+        transaction.set_dmi_allowed(payload.dmi_allowed != 0);
         record_atomic_outcome(transaction, &payload.atomic);
     }
 
@@ -309,9 +387,67 @@ impl BlockingTarget for CBlockingTarget {
     }
 
     fn transport_reset(&self) -> bool {
+        // A target invalidates every registration before it discards, moves or
+        // remaps granted storage (direct-memory D10/D13).  The wrapper owns the
+        // registry, so it drops every adapter's grants before the C reset can
+        // free anything; that covers a composition being replaced, not only the
+        // adapter that called here.
+        self.direct_mem.invalidate_all();
         let _in_callback = super::CallbackScope::enter();
         // SAFETY: as in `b_transport`; the callback takes no Rust reference.
         unsafe { (self.transport_reset)(self.table.user) != 0 }
+    }
+
+    fn get_direct_mem_ptr(&self, query: BlockingDirectMemQuery) -> BlockingDirectMemResponse {
+        let Some(callback) = self.get_direct_mem_ptr else {
+            return BlockingDirectMemResponse::Denied;
+        };
+        let mut direct = CDirectMem {
+            address: query.address(),
+            length: query.length(),
+            access: access_code(query.access()),
+            start: 0,
+            end: 0,
+            pointer: std::ptr::null_mut(),
+            read_latency_fs: 0,
+            write_latency_fs: 0,
+        };
+        let _in_callback = super::CallbackScope::enter();
+        // SAFETY: the table was validated at create time, the query struct is
+        // exclusively borrowed for this call, and the host keeps `user` valid
+        // until destroy.
+        let answer = unsafe { callback(self.table.user, &mut direct) };
+        match answer {
+            dmi_result::GRANTED => {
+                // SAFETY: the target answered with the direct-memory D10
+                // promises; the adapter checks only the grant's shape, never
+                // the promise.
+                BlockingDirectMemResponse::Granted(unsafe {
+                    BlockingDirectMemGrant::new(
+                        direct.start,
+                        direct.end,
+                        direct.pointer,
+                        granted_access(direct.access),
+                        Femtoseconds::new(direct.read_latency_fs),
+                        Femtoseconds::new(direct.write_latency_fs),
+                    )
+                })
+            }
+            dmi_result::DENIED => BlockingDirectMemResponse::Denied,
+            // A failure is the D3 contained-exception case, never a denial: the
+            // target could not establish an answer, so the access is an
+            // unknown completion.  An out-of-contract return value has the
+            // same effect, because the ABI cannot tell what it meant.
+            dmi_result::FAILED => BlockingDirectMemResponse::Failed,
+            _ => BlockingDirectMemResponse::Failed,
+        }
+    }
+
+    fn register_direct_mem_invalidator(
+        &self,
+        invalidator: crate::blocking::BlockingDirectMemInvalidator,
+    ) {
+        self.direct_mem.register(invalidator);
     }
 }
 
@@ -321,6 +457,31 @@ fn access_kind_code(kind: PhysicalAccessKind) -> i32 {
         PhysicalAccessKind::Fetch => access_kind::FETCH,
         PhysicalAccessKind::DataRead => access_kind::DATA_READ,
         PhysicalAccessKind::DataWrite => access_kind::DATA_WRITE,
+    }
+}
+
+/// C direct-memory access code for one queried or granted access.
+fn access_code(access: BlockingDirectMemAccess) -> i32 {
+    match access {
+        BlockingDirectMemAccess::NoAccess => dmi_access::NONE,
+        BlockingDirectMemAccess::Read => dmi_access::READ,
+        BlockingDirectMemAccess::Write => dmi_access::WRITE,
+        BlockingDirectMemAccess::ReadWrite => dmi_access::READ_WRITE,
+    }
+}
+
+/// The granted access for one C code.
+///
+/// `RUSCV_DMI_ACCESS_NONE` and any unrecognized value become
+/// [`BlockingDirectMemAccess::NoAccess`], which the adapter rejects as a
+/// malformed grant: the ABI never guesses a permission the target did not
+/// grant.
+fn granted_access(code: i32) -> BlockingDirectMemAccess {
+    match code {
+        dmi_access::READ => BlockingDirectMemAccess::Read,
+        dmi_access::WRITE => BlockingDirectMemAccess::Write,
+        dmi_access::READ_WRITE => BlockingDirectMemAccess::ReadWrite,
+        _ => BlockingDirectMemAccess::NoAccess,
     }
 }
 

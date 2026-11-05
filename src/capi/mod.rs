@@ -23,7 +23,10 @@
 //! * **Synchronous, non-reentrant callbacks.** A callback runs only inside a
 //!   ruscv-sim call on that thread.  Any call back into the ABI from inside a
 //!   callback is rejected with [`Status::Reentrant`] before it can observe or
-//!   mutate the handle.
+//!   mutate the handle.  The one exception is
+//!   [`ruscv_machine_invalidate_direct_mem`], which a target may call from a
+//!   callback because it touches only the direct-memory registry and no run
+//!   state (direct-memory D12).
 //! * **Panic poisoning.** A Rust panic is caught at the boundary, the handle is
 //!   poisoned, and the call returns [`Status::Panic`]; no Rust panic ever
 //!   unwinds into C.  Every later call returns [`Status::Poisoned`].
@@ -33,7 +36,7 @@
 //!   a Rust-owned buffer that is valid only for the duration of that one
 //!   callback (see [`target`]).
 
-use crate::blocking::Transport;
+use crate::blocking::{BlockingDirectMemRegistry, Transport};
 use crate::elf::LoadImage;
 use crate::machine::{IsaProfile, MachineConfig};
 use host::{GrantFacts, Session};
@@ -250,6 +253,15 @@ struct HandleState {
 /// One opaque C-ABI handle (the header's `ruscv_machine`).
 pub struct RuscvMachine {
     gate: CallGate,
+    /// The direct-memory registry owned by the C target wrapper, when a C target
+    /// is installed.
+    ///
+    /// It is created with the wrapper in [`ruscv_machine_create`], lives outside
+    /// the run-state lock and persists across Machine replacement on reset, so
+    /// [`ruscv_machine_invalidate_direct_mem`] can be accepted inside a callback
+    /// and on a poisoned handle (direct-memory D12).  A native route has no
+    /// wrapper, so there is nothing to invalidate.
+    direct_mem: Option<Arc<BlockingDirectMemRegistry>>,
     state: Mutex<HandleState>,
 }
 
@@ -463,12 +475,18 @@ pub unsafe extern "C" fn ruscv_machine_create(
         config.isa = isa_profile(isa)?;
         let period = host::tick_period(tick_period_fs)?;
         config.tick_period = period;
+        let mut direct_mem = None;
         if !target.is_null() {
             // SAFETY: the caller guarantees one readable table.
             let table = unsafe { *target };
             let tlm = CBlockingTarget::new(table)
                 .map_err(|message| ApiError::new(Status::InvalidArgument, message))?;
             host::validate_target(&tlm, period)?;
+            // A non-NULL query selects direct memory; `NULL` means the target
+            // offers nothing and behaves exactly as `dmi` off (direct-memory
+            // D12).
+            config.dmi = tlm.offers_direct_memory();
+            direct_mem = Some(tlm.direct_mem_registry().clone());
             config.transport = Transport::Tlm(tlm);
         }
         Ok(RuscvMachine {
@@ -476,6 +494,7 @@ pub unsafe extern "C" fn ruscv_machine_create(
                 creator: std::thread::current().id(),
                 active: AtomicBool::new(false),
             },
+            direct_mem,
             state: Mutex::new(HandleState {
                 poisoned: false,
                 config,
@@ -671,6 +690,52 @@ pub unsafe extern "C" fn ruscv_machine_result(
 pub unsafe extern "C" fn ruscv_machine_reset(machine: *mut RuscvMachine) -> i32 {
     // SAFETY: forwarded caller guarantee.
     unsafe { call(machine, Session::reset) }
+}
+
+/// Invalidates every cached direct-memory grant that overlaps the inclusive
+/// physical range `start..=end` (direct-memory D8/D12).
+///
+/// This is the C ABI's one deliberate exception to re-entry rejection and to
+/// poison rejection.  It is accepted inside a target callback and on a handle
+/// poisoned by an earlier callback panic, because it touches only the
+/// [`BlockingDirectMemRegistry`] owned by the C target wrapper and no run state.
+/// Every other entry point keeps rejecting a callback and a poisoned handle.
+///
+/// The registry is created with the target wrapper in [`ruscv_machine_create`]
+/// and persists across Machine replacement on reset, so an invalidation cannot
+/// deadlock on the run-state lock (which a synchronous callback already holds)
+/// and cannot fail because that lock is poisoned.  An inverted range is treated
+/// as an invalidation of the whole address space: keeping a grant through a
+/// malformed request could outlive the storage behind it.  A handle with no C
+/// target, or a target with a `NULL` query, has no grant to remove, so the call
+/// succeeds.
+///
+/// `invalidate` is safe inside `b_transport`: the adapter's direct-memory lock
+/// is never held across a target call, and a returning invalidation proves no
+/// copy through a removed pointer is still in flight (direct-memory D8).
+///
+/// # Safety
+///
+/// `machine` must be a valid handle used on the creating thread.
+#[no_mangle]
+pub unsafe extern "C" fn ruscv_machine_invalidate_direct_mem(
+    machine: *mut RuscvMachine,
+    start: u64,
+    end: u64,
+) -> i32 {
+    // Deliberately no callback or `state` lock check here: this entry is the
+    // documented exception that keeps it usable inside a callback and on a
+    // poisoned handle (direct-memory D12).
+    let Some(handle) = (unsafe { machine.as_ref() }) else {
+        return Status::InvalidArgument as i32;
+    };
+    if std::thread::current().id() != handle.gate.creator {
+        return Status::NotCreatorThread as i32;
+    }
+    if let Some(registry) = &handle.direct_mem {
+        registry.invalidate(start, end);
+    }
+    Status::Ok as i32
 }
 
 /// Copies the most recent diagnostic message into `buffer`, NUL-terminated and

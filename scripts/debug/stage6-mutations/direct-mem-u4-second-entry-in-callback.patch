@@ -1,0 +1,20 @@
+diff --git i/src/capi/mod.rs w/src/capi/mod.rs
+index 2859d89..247eb5c 100644
+--- i/src/capi/mod.rs
++++ w/src/capi/mod.rs
+@@ -299,12 +299,9 @@ unsafe fn with_handle<T>(
+             "the machine handle is null",
+         ));
+     };
+-    if in_callback() {
+-        return Err(ApiError::new(
+-            Status::Reentrant,
+-            "the C ABI is inside a target callback; a callback cannot re-enter it",
+-        ));
+-    }
++    // MUTATION: a callback's call back into the ABI is served instead of being
++    // rejected as re-entry.  Only `ruscv_machine_invalidate_direct_mem` may be
++    // accepted inside a callback.
+     if std::thread::current().id() != machine.gate.creator {
+         return Err(ApiError::new(
+             Status::NotCreatorThread,
