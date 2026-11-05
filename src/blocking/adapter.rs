@@ -3,8 +3,9 @@
 //!
 //! The adapter owns every classification rule:
 //!
-//! * one [`PhysicalRequest`] becomes exactly one `b_transport` call, never a
-//!   split, merge, cache or retry;
+//! * one [`PhysicalRequest`] becomes at most one `b_transport` call, never a
+//!   split, merge or retry; a Hart fetch or load a cached grant covers copies
+//!   through the target's pointer instead (direct-memory D4);
 //! * a changed payload or a left-incomplete status is a protocol failure;
 //! * the four fault statuses are guest-visible target faults, generic error is
 //!   a host failure, and an unknown flag, panic or non-zero annotation is
@@ -97,18 +98,18 @@ impl TlmRamAdapter {
     /// that period; an overflowing or malformed bound is a configuration
     /// failure before any access is issued.
     ///
-    /// With `dmi` selected the adapter registers its own invalidation handle
-    /// with the target here, before its first transport reset, and keeps one
-    /// dedicated direct-memory lock for the cached grants (direct-memory
+    /// With direct memory selected the adapter registers its own invalidation
+    /// handle with the target here, before its first transport reset, and keeps
+    /// one dedicated direct-memory lock for the cached grants (direct-memory
     /// D8/D9).
     pub(crate) fn with_tick_period(
         target: Arc<dyn BlockingTarget>,
         period: TickPeriod,
-        dmi: bool,
+        direct_mem: bool,
     ) -> Result<Self, DelayConversionError> {
         let declared_max = target.declared_max_delay();
         let bound = TurnCompletionBound::new(declared_max, period)?;
-        let direct = if dmi {
+        let direct = if direct_mem {
             let regions = DirectMemRegions::new();
             target.register_direct_mem_invalidator(regions.invalidator());
             Some(regions)
@@ -670,6 +671,14 @@ impl TlmRamAdapter {
     pub(crate) fn drop_regions(&self) {
         if let Some(regions) = &self.direct {
             regions.clear();
+        }
+    }
+
+    /// Installs the test-only pause point inside a direct copy.
+    #[cfg(test)]
+    pub(crate) fn set_direct_copy_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        if let Some(regions) = &self.direct {
+            regions.set_copy_hook(hook);
         }
     }
 

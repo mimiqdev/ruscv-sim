@@ -2,10 +2,11 @@
 //!
 //! Implementations model one IEEE 1666 blocking transport endpoint.  The
 //! adapter in [`super::adapter`] owns every ruscv-sim rule: one physical
-//! request becomes exactly one [`BlockingTransaction`], the request is never
-//! split, merged, cached or retried, and every status is reclassified into the
-//! ADR-0002 §4 categories.  A target therefore carries no TLM, ISA or trap
-//! dependency and cannot affect a guest outcome by itself.
+//! request becomes at most one [`BlockingTransaction`], the request is never
+//! split or merged, every status is reclassified into the ADR-0002 §4
+//! categories, and a granted host pointer may only replace a transaction the
+//! target's own hint offers (direct-memory D3/D4).  A target therefore carries
+//! no TLM, ISA or trap dependency and cannot affect a guest outcome by itself.
 
 use super::{
     BlockingDebug, BlockingDirectMemInvalidator, BlockingDirectMemQuery, BlockingDirectMemResponse,

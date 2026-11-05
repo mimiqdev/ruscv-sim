@@ -3193,10 +3193,10 @@ fn direct_mem_image(code: &[u32]) -> Arc<LoadImage> {
     Arc::new(LoadImage::parse(&elf::elf_with_code(code, 0, true, false, 0x4000)).unwrap())
 }
 
-fn direct_mem_config(target: &Arc<DirectMemTarget>, dmi: bool) -> MachineConfig {
+fn direct_mem_config(target: &Arc<DirectMemTarget>, direct_mem: bool) -> MachineConfig {
     let mut config = MachineConfig::new(PlatformKind::Native);
     config.transport = Transport::tlm(target.clone());
-    config.dmi = dmi;
+    config.dmi = direct_mem;
     config
 }
 
@@ -3209,7 +3209,7 @@ fn direct_memory_defaults_off_and_requires_the_tlm_route() {
             "{kind:?}: MachineConfig::new selected direct memory"
         );
     }
-    // `dmi` with the native route has no transport to grant it.
+    // Direct memory with the native route has no transport to grant it.
     let mut config = MachineConfig::new(PlatformKind::Native);
     config.dmi = true;
     let owner = Machine::new(config);
@@ -3218,7 +3218,7 @@ fn direct_memory_defaults_off_and_requires_the_tlm_route() {
             owner.install(image(elf::nop())),
             Err(MachineError::UnsupportedTransport)
         ),
-        "dmi with the native route was not a configuration error"
+        "direct memory with the native route was not a configuration error"
     );
 }
 
@@ -3227,10 +3227,13 @@ fn covered_fetches_and_loads_leave_b_transport_only_with_direct_memory() {
     let code = [elf::nop(), elf::ld(3, 1, 0)];
     let value = 0x1234_5678_9abc_def0u64;
 
-    let run = |dmi: bool| {
+    let run = |direct_mem: bool| {
         let target = DirectMemTarget::new(elf::BASE, 0x4000);
-        let mut owned =
-            OwnedMachine::new(direct_mem_config(&target, dmi), direct_mem_image(&code)).unwrap();
+        let mut owned = OwnedMachine::new(
+            direct_mem_config(&target, direct_mem),
+            direct_mem_image(&code),
+        )
+        .unwrap();
         owned
             .memory()
             .lock()
@@ -3265,13 +3268,15 @@ fn covered_fetches_and_loads_leave_b_transport_only_with_direct_memory() {
         )
     };
 
-    // dmi off: two fetch parcels per instruction and one load, all blocking.
+    // Direct memory off: two fetch parcels per instruction and one load, all
+    // blocking.
     assert_eq!(
         run(false),
         (2, 3, 0),
         "direct memory off changed the transactions"
     );
-    // dmi on: the first parcel obtains the grant, everything after it is direct.
+    // Direct memory on: the first parcel obtains the grant, everything after it
+    // is direct.
     assert_eq!(
         run(true),
         (1, 0, 1),
@@ -3395,10 +3400,13 @@ fn a_second_compositions_reset_on_a_shared_target_removes_the_first_regions() {
 fn a_reservation_retained_across_a_failed_build_matches_with_direct_memory_on_and_off() {
     let code = [lr_d(3, 1), sc_d(4, 0, 1)];
     let reserved = 0x1111_2222_3333_4444u64;
-    let run = |dmi: bool| {
+    let run = |direct_mem: bool| {
         let target = DirectMemTarget::new(elf::BASE, 0x4000);
-        let mut owned =
-            OwnedMachine::new(direct_mem_config(&target, dmi), direct_mem_image(&code)).unwrap();
+        let mut owned = OwnedMachine::new(
+            direct_mem_config(&target, direct_mem),
+            direct_mem_image(&code),
+        )
+        .unwrap();
         owned
             .memory()
             .lock()

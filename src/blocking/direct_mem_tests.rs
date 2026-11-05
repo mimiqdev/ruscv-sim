@@ -10,7 +10,9 @@ use crate::physical::{
 };
 use crate::ram::RamSlot;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 const BASE: u64 = 0x8000_0000;
 const SIZE: usize = 0x4000;
@@ -27,8 +29,8 @@ fn target() -> Arc<DirectMemTarget> {
 
 /// A TLM slot over `target`, with the window installed through debug transport
 /// exactly as `Platform::build` does.
-fn slot_of(target: &Arc<DirectMemTarget>, dmi: bool) -> RamSlot {
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, dmi).unwrap();
+fn slot_of(target: &Arc<DirectMemTarget>, direct_mem: bool) -> RamSlot {
+    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, direct_mem).unwrap();
     slot.begin_window().unwrap();
     slot
 }
@@ -483,6 +485,59 @@ fn a_grant_raced_by_an_invalidation_is_discarded() {
 }
 
 #[test]
+fn an_invalidation_waits_for_a_copy_that_is_in_flight() {
+    let target = target();
+    let slot = slot(&target);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    assert_eq!(read(&mut port, BASE, PhysicalWidth::Word).len(), 4);
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+
+    // A direct copy that holds the direct-memory lock until the test lets it
+    // finish.
+    let (copying, copying_rx) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    slot.set_direct_copy_hook(Some(Arc::new(move || {
+        copying.send(()).unwrap();
+        release_rx.lock().unwrap().recv().unwrap();
+    })));
+    let reader = {
+        let mut reader_port = ValidatedPhysicalAccess::new(slot.clone());
+        thread::spawn(move || read(&mut reader_port, BASE, PhysicalWidth::Word))
+    };
+    copying_rx.recv().unwrap();
+
+    // An invalidation from another thread cannot return while a copy through
+    // the removed grant is in flight (direct-memory D8).
+    let (invalidated, invalidated_rx) = mpsc::channel();
+    let invalidator = {
+        let target = target.clone();
+        thread::spawn(move || {
+            target.invalidate_everything();
+            invalidated.send(()).unwrap();
+        })
+    };
+    assert!(
+        invalidated_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "an invalidation returned while a direct copy was in flight"
+    );
+    release.send(()).unwrap();
+    assert_eq!(reader.join().unwrap(), vec![0; 4]);
+    invalidated_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the invalidation did not finish after the copy completed");
+    invalidator.join().unwrap();
+    slot.set_direct_copy_hook(None);
+    assert_eq!(
+        slot.cached_direct_mem_regions(),
+        0,
+        "the invalidation that waited for the copy did not remove the grant"
+    );
+}
+
+#[test]
 fn the_adapter_drops_its_own_grants_before_the_target_resets() {
     let target = target();
     let slot = slot(&target);
@@ -582,6 +637,55 @@ fn every_registration_is_kept_and_invalidation_reaches_all_of_them() {
 }
 
 // ---- D4/D6: bounded cache and latency accounting ----
+
+#[test]
+fn a_new_grant_replaces_every_overlapping_cached_grant() {
+    let target = target();
+    let slot = slot(&target);
+    // A first grant covers only part of the first chunk.
+    target.set_reply(DirectMemReply::Custom {
+        access: BlockingDirectMemAccess::Read,
+        start: BASE + 0x100,
+        end: BASE + 0x1ff,
+        read_latency: 0,
+        write_latency: 0,
+        null_pointer: false,
+    });
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    assert_eq!(read(&mut port, BASE + 0x100, PhysicalWidth::Word).len(), 4);
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+    let primed = target.transactions();
+    assert_eq!(read(&mut port, BASE + 0x104, PhysicalWidth::Word).len(), 4);
+    assert_eq!(
+        target.transactions(),
+        primed,
+        "the first grant was not in use"
+    );
+
+    // A wider grant that overlaps the first one replaces it, so exactly one
+    // grant stays cached and the wider one covers both addresses.
+    target.set_reply(DirectMemReply::Custom {
+        access: BlockingDirectMemAccess::Read,
+        start: BASE,
+        end: BASE + 0xfff,
+        read_latency: 0,
+        write_latency: 0,
+        null_pointer: false,
+    });
+    assert_eq!(read(&mut port, BASE, PhysicalWidth::Word).len(), 4);
+    assert_eq!(
+        slot.cached_direct_mem_regions(),
+        1,
+        "a new grant did not replace every overlapping cached grant"
+    );
+    let replaced = target.transactions();
+    assert_eq!(read(&mut port, BASE + 0x100, PhysicalWidth::Word).len(), 4);
+    assert_eq!(
+        target.transactions(),
+        replaced,
+        "the wider replacement grant is not in use"
+    );
+}
 
 #[test]
 fn the_grant_cache_is_bounded_and_eviction_only_costs_transactions() {

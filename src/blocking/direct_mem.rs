@@ -397,13 +397,29 @@ struct RegionCache {
 /// held, so an invalidation may itself arrive from inside `b_transport`.
 pub(crate) struct DirectMemRegions {
     state: Mutex<RegionCache>,
+    /// Test-only pause point inside a direct copy.  It runs while the
+    /// direct-memory lock is held, so a test can prove that an invalidation
+    /// from another thread waits for an in-flight copy.
+    #[cfg(test)]
+    copy_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl DirectMemRegions {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(RegionCache::default()),
+            #[cfg(test)]
+            copy_hook: Mutex::new(None),
         })
+    }
+
+    /// Installs or clears the test-only pause point inside a direct copy.
+    #[cfg(test)]
+    pub(crate) fn set_copy_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self
+            .copy_hook
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = hook;
     }
 
     /// The handle this adapter registers with its target.
@@ -460,6 +476,17 @@ impl DirectMemRegions {
             .iter()
             .find(|region| region.covers(paddr, width) && region.access.allows_read())?;
         let offset = paddr - region.start;
+        #[cfg(test)]
+        {
+            let hook = self
+                .copy_hook
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
         for (index, byte) in bytes.iter_mut().take(width).enumerate() {
             // SAFETY: the grant promises the range stays valid until an
             // overlapping invalidation, and this hold excludes one, so the

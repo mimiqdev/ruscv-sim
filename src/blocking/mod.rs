@@ -6,13 +6,16 @@
 //! femtosecond delays, so the Blocking TLM and SystemC Transport contract adds
 //! this adapter vocabulary and leaves `src/tlm` unchanged.
 //!
-//! One [`crate::physical::PhysicalRequest`] becomes exactly one blocking
+//! One [`crate::physical::PhysicalRequest`] becomes at most one blocking
 //! `b_transport`-style [`BlockingTransaction`]: an explicit physical address,
 //! a [`BlockingCommand`], raw little-endian bytes whose length equals the
 //! access width (the streaming width is that same length, and there are no
 //! byte enables), and a [`BlockingExtension`] carrying the existing
-//! [`PhysicalAccessKind`] and the initiator.  The adapter never splits,
-//! merges, caches or retries an access.
+//! [`PhysicalAccessKind`] and the initiator.  The adapter never splits or
+//! merges an access.  The one completion that is not a transaction is the
+//! direct-memory read path: a Hart fetch or load that a target-granted host
+//! pointer covers copies its bytes through that pointer instead, under the
+//! same address, width and all-or-nothing rule (direct-memory D4).
 //!
 //! Status mapping follows ADR-0002 §4:
 //!
