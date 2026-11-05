@@ -12,15 +12,22 @@
 // * the response status starts incomplete and must be one of the seven standard
 //   statuses on return, and the target's address, command and length are echoed
 //   back so the ruscv-sim adapter keeps its own protocol classification;
+// * the payload's `dmi_allowed` hint is the transaction's TLM hint flag, the
+//   only licence for a direct-memory query;
 // * the annotated delay is copied as exact femtoseconds, which requires the
 //   1 fs time resolution the driver establishes;
 // * the atomic extension's request half is copied in and its response half is
 //   copied out, so no Rust or C++ function pointer and no C++ type crosses the
 //   ABI.
 //
+// With `--dmi` the table's `get_direct_mem_ptr` is the IEEE 1666 query of the
+// same name, and the socket's registered `invalidate_direct_mem_ptr` forwards
+// to `ruscv_machine_invalidate_direct_mem`, the one ABI entry a target may
+// call inside a callback (direct-memory D12/D13).
+//
 // The callbacks run synchronously on the SystemC kernel thread inside one
 // ruscv-sim call, so they must not advance time, wait, or call back into the C
-// ABI.
+// ABI beyond that one entry.
 
 #ifndef RUSCV_SIM_SYSTEMC_RUSCV_INITIATOR_H
 #define RUSCV_SIM_SYSTEMC_RUSCV_INITIATOR_H
@@ -43,15 +50,24 @@ public:
     /// The initiator port the target callbacks drive.
     tlm_utils::simple_initiator_socket<RuscvInitiator> socket;
 
-    /// Binds `socket` to `ram.socket` and keeps `ram` for its transport reset.
-    RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram);
+    /// Binds `socket` to `ram.socket` and keeps `ram` for its transport reset
+    /// and the target-originated invalidation path. `direct_mem` selects
+    /// direct memory for the table (`--dmi`).
+    RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram, bool direct_mem);
 
     /// The C ABI target table naming this object as `user`.
     ///
     /// The table declares zero per-transaction maximum delay, which is this RAM
-    /// model's declared bound (dev-plan D7). The returned table is valid while
-    /// this object lives.
+    /// model's declared bound (dev-plan D7). With `direct_mem` off the table's
+    /// `get_direct_mem_ptr` stays NULL, so ruscv-sim issues no query and
+    /// ignores every hint exactly as direct memory off. The returned table is
+    /// valid while this object lives.
     ruscv_target target_table();
+
+    /// Records the live C ABI handle, or nullptr once it is gone. Every call
+    /// into the ABI, including a target-initiated invalidation inside a
+    /// callback, names this handle on the creating thread.
+    void bind_machine(ruscv_machine* machine) { machine_ = machine; }
 
     /// Serves one blocking transaction from the C ABI (one `b_transport` call).
     void serve_b_transport(ruscv_payload& payload);
@@ -62,26 +78,56 @@ public:
     /// Serves the target's transport reset; returns nonzero when acknowledged.
     int32_t serve_transport_reset();
 
+    /// Serves one direct-memory query (one `get_direct_mem_ptr` call); the
+    /// answer is `RUSCV_DMI_GRANTED`, `RUSCV_DMI_DENIED` or `RUSCV_DMI_FAILED`.
+    int32_t serve_get_direct_mem_ptr(ruscv_direct_mem& query);
+
+    /// Invalidates every grant through the target's backward call, the
+    /// `--dmi-invalidate-every` schedule the driver applies between grants.
+    /// Each call is counted so a report can prove the schedule ran.
+    void invalidate_all_direct_mem();
+
+    /// Number of direct-memory invalidations this initiator forwarded to
+    /// `ruscv_machine_invalidate_direct_mem`, from any cause.
+    uint64_t direct_mem_invalidation_count() const { return direct_mem_invalidations_; }
+    /// Number of `invalidate_all_direct_mem` calls the host scheduled.
+    uint64_t direct_mem_scheduled_count() const { return direct_mem_scheduled_; }
+    /// Number of backward invalidation calls the ABI refused.
+    uint32_t direct_mem_error_count() const { return direct_mem_errors_; }
+
 private:
-    /// The backward path is unused: this composition issues only blocking
-    /// transactions and never requests DMI, so neither callback can affect a
-    /// ruscv-sim result.
+    /// The non-blocking backward path is unused: this composition issues only
+    /// blocking transactions, so the callback can never affect a result.
     tlm::tlm_sync_enum nb_transport_bw(tlm::tlm_generic_payload& transaction,
                                        tlm::tlm_phase& phase, sc_core::sc_time& delay);
+
+    /// The target's backward invalidation forwards to
+    /// `ruscv_machine_invalidate_direct_mem`, the one ABI entry accepted
+    /// inside a callback, on the creating thread (direct-memory D8/D12). A
+    /// call while no handle is bound is a no-op: every grant of that handle's
+    /// target wrapper was already invalidated by the wrapper itself.
     void invalidate_direct_mem_ptr(sc_dt::uint64 start_range, sc_dt::uint64 end_range);
 
     RamTarget& ram_;
+    const bool direct_mem_;
+    ruscv_machine* machine_ = nullptr;
+    uint64_t direct_mem_invalidations_ = 0;
+    uint64_t direct_mem_scheduled_ = 0;
+    uint32_t direct_mem_errors_ = 0;
 };
 
 /// The C ABI callbacks, one per `ruscv_target` field.
 ///
 /// They cast `user` to the `RuscvInitiator` named in the table and forward. Each
 /// one contains every C++ exception, so none can unwind into the ruscv-sim call
-/// that made it: a blocking exception becomes an unknown completion, and a
-/// debug or reset exception becomes a failure result.
+/// that made it: a blocking exception becomes an unknown completion, a debug or
+/// reset exception becomes a failure result, and a direct-memory query
+/// exception is the `RUSCV_DMI_FAILED` answer.
 extern "C" void ruscv_systemc_b_transport(void* user, ruscv_payload* payload);
 extern "C" size_t ruscv_systemc_transport_dbg(void* user, ruscv_debug* debug);
 extern "C" int32_t ruscv_systemc_transport_reset(void* user);
+extern "C" int32_t ruscv_systemc_get_direct_mem_ptr(void* user,
+                                                  ruscv_direct_mem* direct_mem);
 
 }  // namespace ruscv_sim
 

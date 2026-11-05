@@ -60,6 +60,11 @@ struct Options {
     uint64_t stop_after_grants = 0;
     uint64_t max_grants = kMaxGrants;
     uint64_t max_turns = kMaxTurns;
+    /// The `--dmi` selection: the target table offers a direct-memory query.
+    bool direct_mem = false;
+    /// Zero: no scheduled invalidation. Otherwise the driver asks the target
+    /// to invalidate every grant after each Nth grant.
+    uint64_t direct_mem_invalidate_every = 0;
 };
 
 void print_usage(const char* program) {
@@ -68,6 +73,7 @@ void print_usage(const char* program) {
         "       [--log-commits <path>] [--turn-budget <turns>]\n"
         "       [--horizon-fs <femtoseconds>] [--stop-after-grants <grants>]\n"
         "       [--max-grants <grants>] [--max-turns <turns>]\n"
+        "       [--dmi] [--dmi-invalidate-every <grants>]\n"
         "\n"
         "Runs one ruscv-sim Machine under this SystemC kernel. The RAM target is\n"
         "the zero-delay blocking model the initiator socket is bound to. Exit\n"
@@ -76,7 +82,11 @@ void print_usage(const char* program) {
         "which leaves no run result, exits 2.\n"
         "\n"
         "--max-turns bounds completed turns, the counterpart of the public CLI's\n"
-        "--max-cycles; exhausting it without a terminal result is a failure.\n",
+        "--max-cycles; exhausting it without a terminal result is a failure.\n"
+        "--dmi lets the RAM target answer direct-memory queries so covered\n"
+        "accesses copy through a host pointer; --dmi-invalidate-every <grants>\n"
+        "makes the driver ask the target to invalidate every grant after each\n"
+        "Nth grant, and requires --dmi.\n",
         program);
 }
 
@@ -178,6 +188,16 @@ bool parse_options(int argc, char** argv, Options& options) {
                 std::fprintf(stderr, "systemc-smoke: --max-turns needs a positive count\n");
                 return false;
             }
+        } else if (std::strcmp(argument, "--dmi") == 0) {
+            options.direct_mem = true;
+        } else if (std::strcmp(argument, "--dmi-invalidate-every") == 0) {
+            const char* text = value("--dmi-invalidate-every");
+            if (text == nullptr || !parse_u64(text, options.direct_mem_invalidate_every) ||
+                options.direct_mem_invalidate_every == 0) {
+                std::fprintf(stderr,
+                             "systemc-smoke: --dmi-invalidate-every needs a positive count\n");
+                return false;
+            }
         } else if (argument[0] == '-') {
             std::fprintf(stderr, "systemc-smoke: unknown option %s\n", argument);
             return false;
@@ -191,6 +211,12 @@ bool parse_options(int argc, char** argv, Options& options) {
     }
     if (!have_elf) {
         std::fprintf(stderr, "systemc-smoke: an ELF path is required\n");
+        return false;
+    }
+    if (options.direct_mem_invalidate_every != 0 && !options.direct_mem) {
+        // Without a grant there is nothing to invalidate, so this control
+        // would check nothing: require the selection it exercises.
+        std::fprintf(stderr, "systemc-smoke: --dmi-invalidate-every requires --dmi\n");
         return false;
     }
     return true;
@@ -221,8 +247,9 @@ const char* state_name(int32_t state) {
 /// host classifies a failure.
 class MachineDriver : public sc_core::sc_module {
 public:
-    MachineDriver(sc_core::sc_module_name name, Options options, ruscv_target target)
-        : sc_core::sc_module(name), options_(std::move(options)), target_(target) {
+    MachineDriver(sc_core::sc_module_name name, Options options,
+                  ruscv_sim::RuscvInitiator& initiator)
+        : sc_core::sc_module(name), options_(std::move(options)), initiator_(initiator) {
         SC_THREAD(run);
     }
 
@@ -244,9 +271,7 @@ private:
         std::fprintf(stderr, "systemc-smoke: %s failed with status %d%s%s\n", what, status,
                      diagnostic[0] != '\0' ? ": " : "", diagnostic);
         failed_ = true;
-        if (machine != nullptr) {
-            ruscv_machine_destroy(machine);
-        }
+        destroy(machine);
         sc_core::sc_stop();
     }
 
@@ -254,19 +279,29 @@ private:
     void stop_with_message(const char* message, ruscv_machine* machine) {
         std::fprintf(stderr, "systemc-smoke: %s\n", message);
         failed_ = true;
-        if (machine != nullptr) {
-            ruscv_machine_destroy(machine);
-        }
+        destroy(machine);
         sc_core::sc_stop();
+    }
+
+    /// Unbinds the handle from the initiator, then destroys it. The unbind
+    /// keeps a late backward invalidation from naming a stale handle.
+    void destroy(ruscv_machine* machine) {
+        if (machine == nullptr) {
+            return;
+        }
+        initiator_.bind_machine(nullptr);
+        ruscv_machine_destroy(machine);
     }
 
     void run() {
         ruscv_machine* machine = nullptr;
-        int32_t status = ruscv_machine_create(&target_, options_.isa, kTickPeriodFs, &machine);
+        const ruscv_target table = initiator_.target_table();
+        int32_t status = ruscv_machine_create(&table, options_.isa, kTickPeriodFs, &machine);
         if (status != RUSCV_OK) {
             stop_with_failure("ruscv_machine_create", status, nullptr);
             return;
         }
+        initiator_.bind_machine(machine);
         status = ruscv_machine_load_elf(machine, options_.elf.c_str());
         if (status != RUSCV_OK) {
             stop_with_failure("ruscv_machine_load_elf", status, machine);
@@ -289,7 +324,7 @@ private:
                     " grant(s) before a terminal ruscv-sim result\n",
                     grants_);
                 std::fflush(stdout);
-                ruscv_machine_destroy(machine);
+                destroy(machine);
                 sc_core::sc_stop();
                 return;
             }
@@ -327,6 +362,18 @@ private:
             }
             ++grants_;
             consumed_fs_ += grant.consumed_fs;
+            if (options_.direct_mem_invalidate_every != 0 &&
+                grants_ % options_.direct_mem_invalidate_every == 0) {
+                // The scheduled invalidation is target-originated: the target
+                // issues the backward call and the initiator forwards it to
+                // ruscv_machine_invalidate_direct_mem, the one ABI entry a
+                // target callback may use (direct-memory D8/D13).
+                initiator_.invalidate_all_direct_mem();
+                if (initiator_.direct_mem_error_count() != 0) {
+                    stop_with_message("a direct-memory invalidation was refused", machine);
+                    return;
+                }
+            }
             if (grant.consumed_fs != 0) {
                 // Commit global time only from the amount the grant returned.
                 sc_core::wait(sc_core::sc_time::from_value(grant.consumed_fs));
@@ -366,7 +413,7 @@ private:
                                  diagnostic);
                     std::fflush(stderr);
                 }
-                ruscv_machine_destroy(machine);
+                destroy(machine);
                 sc_core::sc_stop();
                 return;
             }
@@ -385,7 +432,7 @@ private:
     }
 
     Options options_;
-    ruscv_target target_;
+    ruscv_sim::RuscvInitiator& initiator_;
     bool terminal_ = false;
     bool stopped_early_ = false;
     bool failed_ = false;
@@ -421,15 +468,24 @@ int sc_main(int argc, char** argv) {
     std::fflush(stdout);
 
     ruscv_sim::RamTarget ram("ram");
-    ruscv_sim::RuscvInitiator initiator("initiator", ram);
-    MachineDriver driver("driver", options, initiator.target_table());
+    ruscv_sim::RuscvInitiator initiator("initiator", ram, options.direct_mem);
+    MachineDriver driver("driver", options, initiator);
     sc_core::sc_start();
 
     std::printf(
         "systemc-smoke: ram b_transport=%" PRIu64 " transport_dbg=%" PRIu64
-        " transport_reset=%" PRIu64 "\n",
-        ram.b_transport_count(), ram.transport_dbg_count(), ram.transport_reset_count());
+        " transport_reset=%" PRIu64 " direct_mem_invalidations=%" PRIu64
+        " direct_mem_scheduled=%" PRIu64 "\n",
+        ram.b_transport_count(), ram.transport_dbg_count(), ram.transport_reset_count(),
+        initiator.direct_mem_invalidation_count(), initiator.direct_mem_scheduled_count());
     std::fflush(stdout);
+
+    if (initiator.direct_mem_error_count() != 0) {
+        std::fprintf(stderr,
+                     "systemc-smoke: %u direct-memory invalidation(s) were refused\n",
+                     initiator.direct_mem_error_count());
+        return 1;
+    }
 
     if (driver.stopped_early()) {
         std::fprintf(stderr,
