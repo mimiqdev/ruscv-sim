@@ -1584,6 +1584,74 @@
     ]
   },
   {
+    "unit": "direct-mem-u3-fetch-uses-b_transport",
+    "source": "src/blocking/adapter.rs",
+    "patch": "direct-mem-u3-fetch-uses-b_transport.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "direct_mem_u3_guests"
+        ],
+        "test": "self_modifying_code_keeps_its_store_and_its_fetch_on_the_direct_path",
+        "failure": [
+          "the fetch of the patched word took b_transport"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u3-direct-store-not-visible",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u3-direct-store-not-visible.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "direct_mem_u3_guests"
+        ],
+        "test": "self_modifying_code_keeps_its_store_and_its_fetch_on_the_direct_path",
+        "failure": [
+          "direct-memory smc run: guest failed"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u3-walk-reads-stale-pte",
+    "source": "src/core/translation.rs",
+    "patch": "direct-mem-u3-walk-reads-stale-pte.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "direct_mem_u3_guests"
+        ],
+        "test": "a_page_table_store_and_the_next_walk_stay_on_the_direct_path",
+        "failure": [
+          "direct-memory sv39 run: guest failed"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u3-suite-pass-without-dmi",
+    "source": "scripts/run_elf_tests.sh",
+    "patch": "direct-mem-u3-suite-pass-without-dmi.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "tlm_u4_guest_parity"
+        ],
+        "test": "the_guest_suite_runs_every_case_under_the_tlm_route",
+        "failure": [
+          "the third pass must select --dmi"
+        ]
+      }
+    ]
+  },
+  {
     "unit": "direct-mem-u4-invalidate-wrong-thread",
     "source": "src/capi/mod.rs",
     "patch": "direct-mem-u4-invalidate-wrong-thread.patch",

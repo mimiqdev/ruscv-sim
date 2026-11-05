@@ -39,7 +39,18 @@
 # (contract D7). Every
 # Spike side keeps its existing --isa string, and no named result changes.
 #
-# Named outputs are the S6, U4, Z5 and U6 lines in the GDB logs. The
+# Direct-memory U3 adds a session under `run --transport tlm --dmi` with the
+# system bus as the debugger's forced memory path: the debugger reads the word
+# at `s6_break`, plants a software breakpoint on it, resumes, hits it, removes
+# it, reads the restored word, and then re-executes it to the tohost exit. The
+# inserted and restored bytes are read back through the same forced path, so a
+# shadow copy in the debugger fails, and the run after removal only completes
+# if the fetch returned the restored instruction (direct-memory D11). Spike has
+# no direct-memory route, so this session has no Spike pair; the guest-visible
+# facts it checks are the ones the system-bus session already compares with
+# Spike.
+#
+# Named outputs are the S6, U4, Z5, U3 and U6 lines in the GDB logs. The
 # comparisons are those values, not a hash. dmstatus.version is not one of them. dcsr is
 # compared after setting aside two documented differences: D5 forces
 # stopcount, stoptime, and mprven to 1, and this profile's --halted is haltreq
@@ -55,6 +66,7 @@ CFG="${ROOT}/scripts/debug/openocd-remote-bitbang.cfg"
 GDB_SCRIPT="${ROOT}/scripts/debug/s6-u5-session.gdb"
 GDB_PROGBUF_SCRIPT="${ROOT}/scripts/debug/s6-u4-progbuf.gdb"
 GDB_SYSBUS_SCRIPT="${ROOT}/scripts/debug/s6-u4-sysbus.gdb"
+GDB_DIRECT_MEM_SCRIPT="${ROOT}/scripts/debug/direct-mem-u3-session.gdb"
 GDB_ZCA_SCRIPT="${ROOT}/scripts/debug/zca-u5-session.gdb"
 GDB_FD_SCRIPT="${ROOT}/scripts/debug/fd-u6-session.gdb"
 GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64i/s6_u5_attach.S"
@@ -936,6 +948,69 @@ s6_pb8 1
 TABLE
 }
 
+# The direct-memory U3 named outputs, in the order the session prints them.
+direct_mem_keys() {
+    printf 'connect original inserted restored break_pc a2 resume'
+}
+
+# The direct-memory session (direct-memory D11). OpenOCD has no memory-access
+# method other than the system bus, so the breakpoint insert and its removal
+# are both system-bus writes, and the hart's fetch of them is the same fetch
+# the direct-memory grant serves.
+run_direct_mem_session() {
+    local name="$1" named="$3"
+    start_session "${name}" "$2" "${GDB_DIRECT_MEM_SCRIPT}" 'U3 resume=ok' \
+        -d3 -c "riscv set_mem_access sysbus" || return 1
+    local keys=()
+    read -r -a keys <<<"$(direct_mem_keys)"
+    extract_named "${named}" "${WORK}/${name}/gdb.log" U3 raw "${keys[@]}" || return 1
+    assert_direct_mem_session "${name}" "${named}" || return 1
+    assert_direct_mem_evidence "${name}" "${WORK}/${name}" || return 1
+    echo "${name}: direct-memory session ok (target exit 0)"
+}
+
+# The guest's `s6_break` is `addi a2, a2, 1`; the debugger must put EBREAK
+# there, remove it, and leave the original word behind.
+assert_direct_mem_session() {
+    local name="$1" named="$2"
+    assert_eq "${name}" "$(field "${named}" connect)" "ok" "connect" || return 1
+    assert_eq "${name}" "$(field "${named}" original)" "0x00160613" \
+        "the word at s6_break" || return 1
+    assert_eq "${name}" "$(field "${named}" inserted)" "0x00100073" \
+        "the inserted breakpoint" || return 1
+    assert_eq "${name}" "$(field "${named}" break_pc)" "${BREAK_AT}" "breakpoint PC" || return 1
+    assert_eq "${name}" "$(field "${named}" a2)" "0" "a2 at the breakpoint" || return 1
+    assert_eq "${name}" "$(field "${named}" restored)" "$(field "${named}" original)" \
+        "the restored word" || return 1
+    assert_eq "${name}" "$(field "${named}" resume)" "ok" "resume after removal" || return 1
+}
+
+# Both breakpoint writes must be system-bus writes, and neither the program
+# buffer nor abstract access may have carried them.
+assert_direct_mem_evidence() {
+    local name="$1" dir="$2"
+    local log="${dir}/openocd.log"
+    local site writes
+    site="$(printf '0x%x' "0x$(symbol s6_break)")"
+    if ! grep -aqF -- "M[${site}] reads 0x00100073" "${log}"; then
+        echo "${name}: OpenOCD log has no system-bus read of the planted EBREAK" >&2
+        return 1
+    fi
+    writes="$(grep -ac -- 'Succeeded to write memory via system bus' "${log}")"
+    if [[ "${writes}" != 2 ]]; then
+        echo "${name}: the breakpoint insert and removal are not two system-bus writes (${writes})" >&2
+        return 1
+    fi
+    if grep -aq 'write_memory_progbuf' "${log}"; then
+        echo "${name}: a transfer used the disabled program buffer" >&2
+        return 1
+    fi
+    if grep -aq 'Succeeded to write memory via abstract access' "${log}"; then
+        echo "${name}: a transfer used the disabled abstract path" >&2
+        return 1
+    fi
+}
+
 # The Zca U5 named outputs, in the order the session prints them.
 zca_u5_keys() {
     printf 'connect pc gpr dcsr break2_pc break2_dpc break2_dcsr break2_a0 break2_a1'
@@ -1327,6 +1402,16 @@ ruscv_cmd() {
 ruscv_zca_cmd() {
     local port="$1"
     exec "${RUSCV_SIM}" run "${WORK}/zca-guest.elf" --isa rv64imac \
+        --rbb-port "${port}" --halted --max-cycles 100000000
+}
+
+# The direct-memory U3 target: the same attach guest with the same rv64ima
+# session profile, on the direct-memory route (`--dmi` requires `--transport
+# tlm`).
+ruscv_direct_mem_cmd() {
+    local port="$1"
+    exec "${RUSCV_SIM}" run "${WORK}/guest.elf" --isa rv64ima \
+        --transport tlm --dmi \
         --rbb-port "${port}" --halted --max-cycles 100000000
 }
 
@@ -1766,6 +1851,7 @@ echo "GDB: $(gdb-multiarch --version | head -1)"
 run_session ruscv ruscv_cmd "${WORK}/ruscv.named"
 run_progbuf_session ruscv-progbuf ruscv_cmd "${WORK}/ruscv-progbuf.named"
 run_sysbus_session ruscv-sysbus ruscv_cmd "${WORK}/ruscv-sysbus.named"
+run_direct_mem_session ruscv-direct-mem ruscv_direct_mem_cmd "${WORK}/ruscv-direct-mem.named"
 run_zca_session ruscv-zca ruscv_zca_cmd "${WORK}/ruscv-zca.named"
 run_fd_session ruscv-fd ruscv_fdc_cmd "${WORK}/ruscv-fd.named"
 run_negative_version

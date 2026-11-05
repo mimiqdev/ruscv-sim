@@ -106,7 +106,10 @@ A/D 更新的每一段包络始终各是一次 `b_transport`；guest LR 会打�
 条件失败）关闭它，faulted SC 与 A/D SC 都不关闭，reset 关闭它，而 A/D 包络既不打开也不关闭该门。target
 必须保留每一个注册的 invalidation 句柄（不替换），并在丢弃存储前 invalidate 全部注册；适配器在自身 reset、
 未知完成与 teardown 时丢弃全部 region，被 invalidation 竞态的 grant 不会被安装。`dmi` 为 `false` 时适配器
-不发起查询、忽略全部 hint，行为与轮换前的 blocking 合同完全一致。
+不发起查询、忽略全部 hint，行为与轮换前的 blocking 合同完全一致。`scripts/run_elf_tests.sh` 让每个 guest
+除 native 与 `--transport tlm` 两遍外，再以声明的 profile 跑一遍 `--transport tlm --dmi`，并要求 parity set
+在该遍的 commit log 与 native 逐字节相同；`scripts/debug_attach.sh` 另有一条 `--transport tlm --dmi` 会话，
+在强制 system-bus 访问下插入、命中并移除软件断点。
 
 `--transport tlm` 的 RAM 路径与 native 使用同一 Hart、地址映射和 DM 规则：一次物理访问对应恰好一次
 blocking 事务，长度等于访问宽度、原始字节按物理地址递增排列，状态的 guest 可见性、host/protocol/unknown

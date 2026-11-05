@@ -1,25 +1,37 @@
-//! Blocking TLM U4 (dev-plan D10): guest-suite parity under `--transport tlm`.
+//! Blocking TLM U4 (dev-plan D10) and direct-memory U3 (direct-memory D14):
+//! guest-suite parity under `--transport tlm` and `--transport tlm --dmi`.
 //!
-//! Two committed checks live here:
+//! Three committed checks live here:
 //!
 //! * [`the_guest_suite_runs_every_case_under_the_tlm_route`] drives the real
 //!   `scripts/run_elf_tests.sh` against a fake simulator. It proves every
-//!   guest gets a second pass with its declared profile and cycle bound, that
-//!   the parity set writes `--log-commits` on both passes, and that the script
-//!   compares the complete files as bytes. The injected divergence is
-//!   whitespace-only and follows an identical first line, so a first-line-only
-//!   or whitespace-insensitive comparison fails here. The fake simulator
-//!   records each invocation, so a suite that silently drops the TLM pass or
-//!   a profile fails without needing a RISC-V toolchain.
+//!   guest gets a second pass under `--transport tlm` and a third under
+//!   `--transport tlm --dmi`, each with its declared profile and cycle bound,
+//!   that the parity set writes `--log-commits` on all three passes, and that
+//!   the script compares the complete files as bytes. The fake simulator
+//!   records each invocation, so a suite that silently drops the direct pass,
+//!   the `--dmi` selection or a profile fails without needing a RISC-V
+//!   toolchain.
+//! * [`the_guest_suite_fails_when_the_tlm_commit_log_diverges`] and
+//!   [`the_guest_suite_fails_when_the_direct_commit_log_diverges`] inject a
+//!   whitespace-only divergence after an identical first line, in one pass at
+//!   a time, so a first-line-only or whitespace-insensitive comparison fails
+//!   here. The direct-divergence check also proves the TLM pass stayed
+//!   byte-identical; the TLM-divergence check stops that guest before its
+//!   third pass, which it asserts explicitly. The suite requires the TLM log
+//!   to equal the native one before it looks at the direct log, so comparing
+//!   the direct log with the TLM log would be equivalent to comparing it with
+//!   native: the script compares it with native, which is what the contract
+//!   names, and no fixture here can tell those two apart.
 //! * [`synthetic_guest_commit_logs_match_between_native_and_tlm`] runs one
 //!   synthetic guest through the public CLI on both routes and compares the
 //!   commit logs byte for byte. This is the target of the
 //!   `tlm-u4-transport-diverges` mutation control: a TLM RAM route that
 //!   changes a value the guest reads changes this log.
 //!
-//! The five-guest parity set named by the contract is also enforced against
-//! the suite script itself: a guest renamed out of the set, or a comparison
-//! weakened to a text diff, fails the invocation checks below.
+//! The parity set named by the contract is also enforced against the suite
+//! script itself: a guest renamed out of the set, or a comparison weakened to
+//! a text diff, fails the invocation checks below.
 
 #[allow(dead_code)]
 mod common;
@@ -31,18 +43,22 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The D10 parity set, in contract order.
-const PARITY_GUESTS: [&str; 5] = [
+/// The parity set, in contract order: the five guests Blocking TLM U4 names
+/// (D10 of the archived blocking-transport contract) followed by the two
+/// direct-memory U3 guests (direct-memory D14).
+const PARITY_GUESTS: [&str; 7] = [
     "hello",
     "s5_timer",
     "s5_external",
     "atomic_tohost_exit",
     "fd_fma",
+    "direct_mem_smc_fence_i",
+    "direct_mem_sv39_pt_store",
 ];
 
 /// Required `rv64i` suite members from `scripts/run_elf_tests.sh`, plus the
 /// parity guest `hello`.
-const RV64I_GUESTS: [&str; 36] = [
+const RV64I_GUESTS: [&str; 38] = [
     "trap_ecall",
     "trap_illegal",
     "trap_ebreak",
@@ -55,6 +71,8 @@ const RV64I_GUESTS: [&str; 36] = [
     "zca_straddle_fetch",
     "zca_ebreak_trap",
     "zca_hints",
+    "direct_mem_smc_fence_i",
+    "direct_mem_sv39_pt_store",
     "s4_ad_observation",
     "s4_counters",
     "s4_csr_policy",
@@ -113,22 +131,25 @@ struct Invocation {
     transport: String,
     cycles: String,
     log: String,
+    direct_mem: bool,
 }
 
 impl Invocation {
     fn parse(line: &str) -> Self {
-        let mut fields = line.splitn(5, '|');
+        let mut fields = line.splitn(6, '|');
         let guest = fields.next().expect("guest field").to_string();
         let isa = fields.next().expect("isa field").to_string();
         let transport = fields.next().expect("transport field").to_string();
         let cycles = fields.next().expect("cycles field").to_string();
         let log = fields.next().expect("log field").to_string();
+        let direct_mem = fields.next().expect("direct-memory field") == "dmi";
         Self {
             guest,
             isa,
             transport,
             cycles,
             log,
+            direct_mem,
         }
     }
 }
@@ -208,6 +229,7 @@ const FAKE_SIMULATOR: &str = r#"#!/bin/bash
 set -u
 name=""
 transport="native"
+direct=""
 isa=""
 cycles=""
 log=""
@@ -217,18 +239,26 @@ while [ "$#" -gt 0 ]; do
         --max-cycles) cycles="$2"; shift 2 ;;
         --isa) isa="$2"; shift 2 ;;
         --transport) transport="$2"; shift 2 ;;
+        --dmi) direct="dmi"; shift ;;
         --log-commits) log="$2"; shift 2 ;;
         *) shift ;;
     esac
 done
-printf '%s|%s|%s|%s|%s\n' "$name" "$isa" "$transport" "$cycles" "$log" >> "${RUNNER_INVOCATIONS}"
+printf '%s|%s|%s|%s|%s|%s\n' "$name" "$isa" "$transport" "$cycles" "$log" "$direct" >> "${RUNNER_INVOCATIONS}"
 if [ -n "$log" ]; then
     printf 'commit  %s\nscope %s\n' "$name" "$name" > "$log"
     case ",${TLM_DIVERGES:-}," in
         *",${name},"*)
-            if [ "$transport" = "tlm" ]; then
+            if [ "$transport" = "tlm" ] && [ -z "$direct" ]; then
                 # Divergence after an identical first line, whitespace only:
                 # a first-line or whitespace-insensitive comparison misses it.
+                printf 'commit  %s\nscope  %s\n' "$name" "$name" > "$log"
+            fi
+            ;;
+    esac
+    case ",${DIRECT_DIVERGES:-}," in
+        *",${name},"*)
+            if [ -n "$direct" ]; then
                 printf 'commit  %s\nscope  %s\n' "$name" "$name" > "$log"
             fi
             ;;
@@ -264,9 +294,15 @@ echo "0000000080000000 T _start"
 "#;
 
 /// Creates the suite fixtures and runs the real `scripts/run_elf_tests.sh`
-/// with the fake simulator. `diverges`/`fails` name guests whose TLM pass
-/// must write a different log or fail, to prove the script reacts.
-fn run_guest_suite(scratch: &Scratch, diverges: Option<&str>, fails: Option<&str>) -> Output {
+/// with the fake simulator. `diverges`, `direct_diverges` and `fails` name
+/// guests whose TLM pass, direct-memory pass or result must differ, to prove
+/// the script reacts.
+fn run_guest_suite(
+    scratch: &Scratch,
+    diverges: Option<&str>,
+    direct_diverges: Option<&str>,
+    fails: Option<&str>,
+) -> Output {
     // The suite output must sit directly below `target/`; this scratch
     // directory is exactly that output directory.
     let outdir = scratch.path.clone();
@@ -309,6 +345,9 @@ fn run_guest_suite(scratch: &Scratch, diverges: Option<&str>, fails: Option<&str
     if let Some(names) = diverges {
         command.env("TLM_DIVERGES", names);
     }
+    if let Some(names) = direct_diverges {
+        command.env("DIRECT_DIVERGES", names);
+    }
     if let Some(names) = fails {
         command.env("TLM_FAILS", names);
     }
@@ -324,7 +363,7 @@ fn diagnostic(output: &Output) -> String {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let tail = |text: &str| {
-        let start = text.len().saturating_sub(12_000);
+        let start = text.len().saturating_sub(40_000);
         text[start..].to_string()
     };
     format!("stdout:\n{}\nstderr:\n{}", tail(&stdout), tail(&stderr))
@@ -342,23 +381,27 @@ fn expected_guests() -> Vec<String> {
 #[test]
 fn the_guest_suite_runs_every_case_under_the_tlm_route() {
     let scratch = Scratch::new("runner");
-    let output = run_guest_suite(&scratch, None, None);
+    let output = run_guest_suite(&scratch, None, None, None);
     let text = diagnostic(&output);
     assert!(
         output.status.success(),
         "the guest suite rejected a faithful fake simulator:\n{text}"
     );
     assert!(
-        text.contains("TLM parity logs compared: 5/5"),
-        "the suite did not report five byte-identical parity logs:\n{text}"
+        text.contains("TLM parity logs compared: 7/7"),
+        "the suite did not report seven byte-identical parity logs:\n{text}"
+    );
+    assert!(
+        text.contains("Direct-memory parity logs compared: 7/7"),
+        "the suite did not report seven byte-identical direct-memory logs:\n{text}"
     );
 
     let invocations = recorded(&scratch);
     let expected = expected_guests();
     assert_eq!(
         invocations.len(),
-        expected.len() * 2,
-        "every guest must run exactly twice (native then TLM):\n{invocations:#?}"
+        expected.len() * 3,
+        "every guest must run exactly three times (native, TLM, direct memory):\n{invocations:#?}"
     );
 
     for guest in &expected {
@@ -368,58 +411,72 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
             .collect();
         assert_eq!(
             runs.len(),
-            2,
-            "{guest}: expected one native and one TLM pass, got {runs:#?}"
+            3,
+            "{guest}: expected one native, one TLM and one direct-memory pass, got {runs:#?}"
         );
         assert_eq!(
             runs[0].transport, "native",
             "{guest}: the first pass must stay on the native route"
         );
+        assert!(
+            !runs[0].direct_mem,
+            "{guest}: the native pass must not select direct memory"
+        );
         assert_eq!(
             runs[1].transport, "tlm",
             "{guest}: the second pass must run under --transport tlm"
         );
+        assert!(
+            !runs[1].direct_mem,
+            "{guest}: the second pass must not select direct memory"
+        );
+        assert_eq!(
+            runs[2].transport, "tlm",
+            "{guest}: the third pass must run under --transport tlm"
+        );
+        assert!(
+            runs[2].direct_mem,
+            "{guest}: the third pass must select --dmi"
+        );
         let profile = declared_profile(guest);
-        assert_eq!(
-            runs[0].isa, profile,
-            "{guest}: the native pass must use the declared profile"
-        );
-        assert_eq!(
-            runs[1].isa, profile,
-            "{guest}: the TLM pass must reuse the declared profile"
-        );
-        assert_eq!(
-            runs[0].cycles, "123456",
-            "{guest}: the native pass must use the suite cycle bound"
-        );
-        assert_eq!(
-            runs[1].cycles, runs[0].cycles,
-            "{guest}: the TLM pass must reuse the suite cycle bound"
-        );
+        for (index, label) in ["native", "TLM", "direct-memory"].iter().enumerate() {
+            assert_eq!(
+                runs[index].isa, profile,
+                "{guest}: the {label} pass must use the declared profile"
+            );
+            assert_eq!(
+                runs[index].cycles, "123456",
+                "{guest}: the {label} pass must use the suite cycle bound"
+            );
+        }
 
         if PARITY_GUESTS.contains(&guest.as_str()) {
             assert!(
                 runs[0].log.ends_with(&format!("{guest}.native.log"))
-                    && runs[1].log.ends_with(&format!("{guest}.tlm.log")),
-                "{guest}: both parity passes must write commit logs: {runs:#?}"
+                    && runs[1].log.ends_with(&format!("{guest}.tlm.log"))
+                    && runs[2].log.ends_with(&format!("{guest}.direct.log")),
+                "{guest}: all three parity passes must write commit logs: {runs:#?}"
             );
             let native_log = fs::read(&runs[0].log).expect("native parity log");
-            let tlm_log = fs::read(&runs[1].log).expect("tlm parity log");
             assert!(!native_log.is_empty(), "{guest}: empty native commit log");
-            assert_eq!(
-                native_log, tlm_log,
-                "{guest}: parity commit logs are not byte-identical"
-            );
+            for (index, label) in [(1, "TLM"), (2, "direct-memory")] {
+                let log = fs::read(&runs[index].log).expect("parity log");
+                assert_eq!(
+                    native_log, log,
+                    "{guest}: {label} parity commit logs are not byte-identical"
+                );
+            }
         } else {
             assert!(
-                runs[0].log.is_empty() && runs[1].log.is_empty(),
+                runs[0].log.is_empty() && runs[1].log.is_empty() && runs[2].log.is_empty(),
                 "{guest}: only the parity set needs commit logs: {runs:#?}"
             );
         }
     }
 
-    // The contract names exactly these five guests; a rename or an extra
-    // member means the checked comparison no longer matches D10.
+    // The contract names exactly these guests: U4's five (dev-plan D10) and
+    // the two direct-memory U3 guests. A rename or an extra member means the
+    // checked comparison no longer matches D10/D14.
     let compared: Vec<&String> = invocations
         .iter()
         .filter(|invocation| !invocation.log.is_empty())
@@ -431,13 +488,13 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
                 .iter()
                 .filter(|name| name.as_str() == guest)
                 .count(),
-            2,
+            3,
             "{guest}: the parity set must write one log per pass"
         );
     }
     assert_eq!(
         compared.len(),
-        PARITY_GUESTS.len() * 2,
+        PARITY_GUESTS.len() * 3,
         "unexpected commit-log writers: {compared:?}"
     );
 }
@@ -445,7 +502,7 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
 #[test]
 fn the_guest_suite_fails_when_the_tlm_commit_log_diverges() {
     let scratch = Scratch::new("runner-diverges");
-    let output = run_guest_suite(&scratch, Some("fd_fma"), None);
+    let output = run_guest_suite(&scratch, Some("fd_fma"), None, None);
     let text = diagnostic(&output);
     assert!(
         !output.status.success(),
@@ -456,10 +513,10 @@ fn the_guest_suite_fails_when_the_tlm_commit_log_diverges() {
         "the suite did not name the diverging parity guest:\n{text}"
     );
 
-    // Both passes still ran; the failure is the comparison, not a skipped
-    // TLM pass. The injected logs share their first line and differ only in
-    // whitespace, so a first-line-only or whitespace-insensitive comparison
-    // would wrongly pass.
+    // The native and TLM passes still ran; the failure is that comparison,
+    // which stops this guest before its direct-memory pass. The injected logs
+    // share their first line and differ only in whitespace, so a
+    // first-line-only or whitespace-insensitive comparison would wrongly pass.
     let invocations = recorded(&scratch);
     let runs: Vec<&Invocation> = invocations
         .iter()
@@ -467,6 +524,7 @@ fn the_guest_suite_fails_when_the_tlm_commit_log_diverges() {
         .collect();
     assert_eq!(runs.len(), 2, "fd_fma passes: {runs:#?}");
     assert_eq!(runs[1].transport, "tlm");
+    assert!(!runs[1].direct_mem);
     let native_log = fs::read_to_string(&runs[0].log).expect("native fd_fma log");
     let tlm_log = fs::read_to_string(&runs[1].log).expect("tlm fd_fma log");
     assert_eq!(
@@ -483,9 +541,57 @@ fn the_guest_suite_fails_when_the_tlm_commit_log_diverges() {
 }
 
 #[test]
+fn the_guest_suite_fails_when_the_direct_commit_log_diverges() {
+    let scratch = Scratch::new("runner-direct-diverges");
+    let output = run_guest_suite(&scratch, None, Some("fd_fma"), None);
+    let text = diagnostic(&output);
+    assert!(
+        !output.status.success(),
+        "a diverging direct-memory commit log passed the suite:\n{text}"
+    );
+    assert!(
+        text.contains("fd_fma: --transport tlm --dmi commit log differs from native"),
+        "the suite did not name the diverging direct-memory parity guest:\n{text}"
+    );
+    assert!(
+        text.contains("Direct-memory parity logs compared: 6/7"),
+        "the suite did not count the missing direct-memory comparison:\n{text}"
+    );
+
+    // The divergence is confined to the third pass: this guest's TLM log is
+    // still byte-identical to native, so the failure above can only be the
+    // direct comparison.
+    let invocations = recorded(&scratch);
+    let runs: Vec<&Invocation> = invocations
+        .iter()
+        .filter(|invocation| invocation.guest == "fd_fma")
+        .collect();
+    assert_eq!(runs.len(), 3, "fd_fma passes: {runs:#?}");
+    assert!(runs[2].direct_mem, "the third pass must select --dmi");
+    let native_log = fs::read_to_string(&runs[0].log).expect("native fd_fma log");
+    let tlm_log = fs::read_to_string(&runs[1].log).expect("tlm fd_fma log");
+    let direct_log = fs::read_to_string(&runs[2].log).expect("direct fd_fma log");
+    assert_eq!(
+        native_log, tlm_log,
+        "the injected divergence must not reach the TLM pass"
+    );
+    assert_eq!(
+        native_log.lines().next(),
+        direct_log.lines().next(),
+        "the injected divergence must follow an identical first line"
+    );
+    assert_eq!(
+        native_log.split_whitespace().collect::<Vec<_>>(),
+        direct_log.split_whitespace().collect::<Vec<_>>(),
+        "the injected divergence must be whitespace only"
+    );
+    assert_ne!(native_log, direct_log, "the injected logs must differ");
+}
+
+#[test]
 fn the_guest_suite_fails_when_a_guest_fails_only_under_tlm() {
     let scratch = Scratch::new("runner-fails");
-    let output = run_guest_suite(&scratch, None, Some("s5_timer"));
+    let output = run_guest_suite(&scratch, None, None, Some("s5_timer"));
     let text = diagnostic(&output);
     assert!(
         !output.status.success(),
