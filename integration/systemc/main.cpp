@@ -487,7 +487,7 @@ int sc_main(int argc, char** argv) {
 
     if (initiator.direct_mem_error_count() != 0) {
         std::fprintf(stderr,
-                     "systemc-smoke: %u direct-memory invalidation(s) were refused\n",
+                     "systemc-smoke: %" PRIu64 " direct-memory invalidation(s) were refused\n",
                      initiator.direct_mem_error_count());
         return 1;
     }

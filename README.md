@@ -196,7 +196,8 @@ grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒�
 `dmi_allowed` hint 并将所在 chunk 以零延迟可读写 grant 出，`b_transport` 计数必须严格低于同一 guest
 的非直接遍；`--dmi-invalidate-every <grants>` 在第 N 个 grant 后让 target 发起 backward invalidation
 （经 `invalidate_direct_mem_ptr` 转发到 `ruscv_machine_invalidate_direct_mem`），commit log 必须不变，
-转发的 invalidation 计数必须等于计划值。缺少工具链、缺少 SystemC 或任一比较失败都是失败，不是跳过。
+计划的 invalidation 计数必须恰等于 grants/N，转发的计数不得低于它（target 自身 reset 前的
+invalidate-all 会额外转发一次）。缺少工具链、缺少 SystemC 或任一比较失败都是失败，不是跳过。
 `cargo build`／`cargo test --all-features` 不需要 C++ 工具链或 SystemC。Linux x86-64 only。
 
 选定的 blocking 映射、FFI 所有权与线程、错误映射、时间单位、再入与停止行为、构建与版本 pin 的规范说明见

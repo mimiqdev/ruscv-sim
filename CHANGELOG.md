@@ -87,8 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     invalidation）；退出时报告 `b_transport` 计数与转发的 invalidation 计数
   - `scripts/test_systemc_smoke.sh` 对两个 guest 各加一遍 `--dmi`：退出码与 commit log 与 native
     逐字节一致，且 `b_transport` 计数必须严格低于同一 guest 的非直接遍（从未使用 grant 指针的
-    运行会失败）；再对 `atomic_tohost_exit` 运行 `--dmi-invalidate-every 2`，要求 commit log 不变且
-    invalidation 计数恰等于 grants/2。既有各遍与早停控制不变。C++ 检查不在 Rust mutation runner
+    运行会失败）；再对 `atomic_tohost_exit` 运行 `--dmi-invalidate-every 2`，要求 commit log 不变、
+    计划计数恰等于 grants/2 且转发的计数不低于它。既有各遍与早停控制不变。C++ 检查不在 Rust mutation runner
     覆盖内，其失败证据记录在 PR 中，未新增控制
 
 - **TLM U7: 累积验证与收尾（issue #179）**

@@ -124,7 +124,7 @@ tlm::tlm_sync_enum RuscvInitiator::nb_transport_bw(tlm::tlm_generic_payload&, tl
 }
 
 void RuscvInitiator::invalidate_direct_mem_ptr(sc_dt::uint64 start_range,
-                                             sc_dt::uint64 end_range) {
+                                               sc_dt::uint64 end_range) {
     // The one ABI entry a target may call inside a callback: it touches only
     // the handle's direct-memory registry, which the Rust target wrapper keeps
     // outside the run-state lock (direct-memory D12).
@@ -285,7 +285,7 @@ extern "C" int32_t ruscv_systemc_transport_reset(void* user) {
 }
 
 extern "C" int32_t ruscv_systemc_get_direct_mem_ptr(void* user,
-                                                  ruscv_direct_mem* direct_mem) {
+                                                    ruscv_direct_mem* direct_mem) {
     try {
         if (user == nullptr || direct_mem == nullptr) {
             // No target was reachable to establish an answer: this is the

@@ -93,7 +93,7 @@ public:
     /// Number of `invalidate_all_direct_mem` calls the host scheduled.
     uint64_t direct_mem_scheduled_count() const { return direct_mem_scheduled_; }
     /// Number of backward invalidation calls the ABI refused.
-    uint32_t direct_mem_error_count() const { return direct_mem_errors_; }
+    uint64_t direct_mem_error_count() const { return direct_mem_errors_; }
 
 private:
     /// The non-blocking backward path is unused: this composition issues only
@@ -114,7 +114,7 @@ private:
     ruscv_machine* machine_ = nullptr;
     uint64_t direct_mem_invalidations_ = 0;
     uint64_t direct_mem_scheduled_ = 0;
-    uint32_t direct_mem_errors_ = 0;
+    uint64_t direct_mem_errors_ = 0;
 };
 
 /// The C ABI callbacks, one per `ruscv_target` field.
@@ -128,7 +128,7 @@ extern "C" void ruscv_systemc_b_transport(void* user, ruscv_payload* payload);
 extern "C" size_t ruscv_systemc_transport_dbg(void* user, ruscv_debug* debug);
 extern "C" int32_t ruscv_systemc_transport_reset(void* user);
 extern "C" int32_t ruscv_systemc_get_direct_mem_ptr(void* user,
-                                                  ruscv_direct_mem* direct_mem);
+                                                    ruscv_direct_mem* direct_mem);
 
 }  // namespace ruscv_sim
 
