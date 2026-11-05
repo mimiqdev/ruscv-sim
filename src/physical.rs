@@ -2457,6 +2457,33 @@ impl<B: AtomicBackend> AtomicAccess for ValidatedAtomicAccess<B> {
     }
 }
 
+/// Why a reported store-conditional success is inadmissible for this request,
+/// or `None` when the completion is admissible.
+///
+/// A store-conditional may report [`ConditionalStatus::Success`] only when the
+/// Hart supplied a reservation context and the request's span lies inside the
+/// reserved span (dev-plan §5.2 M1, §5.4).  Anything else is a protocol failure of
+/// the envelope rather than a completion: the Hart keeps its reservation and,
+/// on the blocking route, the adapter must not close its write-suspension gate
+/// (direct-memory D7).
+pub(crate) fn store_conditional_success_rejection(
+    request: &AtomicRequest<'_>,
+) -> Option<AtomicProtocolError> {
+    let Some(reservation) = request.reservation() else {
+        return Some(AtomicProtocolError::ConditionalSuccessWithoutReservation);
+    };
+    let requested = request.span();
+    let covered = reservation.reserved.paddr <= requested.paddr
+        && requested
+            .checked_end_inclusive()
+            .zip(reservation.reserved.checked_end_inclusive())
+            .is_some_and(|(requested_end, reserved_end)| requested_end <= reserved_end);
+    (!covered).then_some(AtomicProtocolError::ConditionalSuccessOutsideReservation {
+        reserved: reservation.reserved,
+        requested,
+    })
+}
+
 fn validate_atomic_response(
     request: &AtomicRequest<'_>,
     response: AtomicResponse,
@@ -2485,24 +2512,8 @@ fn validate_atomic_response(
         completion,
         AtomicResponseCompletion::StoreConditional(ConditionalStatus::Success)
     ) {
-        let Some(reservation) = request.reservation() else {
-            return Err(AtomicAccessError::Protocol(
-                AtomicProtocolError::ConditionalSuccessWithoutReservation,
-            ));
-        };
-        let requested = request.span();
-        let covered = reservation.reserved.paddr <= requested.paddr
-            && requested
-                .checked_end_inclusive()
-                .zip(reservation.reserved.checked_end_inclusive())
-                .is_some_and(|(requested_end, reserved_end)| requested_end <= reserved_end);
-        if !covered {
-            return Err(AtomicAccessError::Protocol(
-                AtomicProtocolError::ConditionalSuccessOutsideReservation {
-                    reserved: reservation.reserved,
-                    requested,
-                },
-            ));
+        if let Some(error) = store_conditional_success_rejection(request) {
+            return Err(AtomicAccessError::Protocol(error));
         }
     }
 

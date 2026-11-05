@@ -6,8 +6,9 @@
 //! "host views use debug transport" controls can be asserted.
 
 use super::{
-    BlockingAtomicOperation, BlockingCommand, BlockingDebug, BlockingDirectMemAccess,
-    BlockingInitiator, BlockingResponseStatus, BlockingTarget, BlockingTransaction, Femtoseconds,
+    BlockingAtomicOperation, BlockingAtomicOutcome, BlockingCommand, BlockingDebug,
+    BlockingDirectMemAccess, BlockingInitiator, BlockingResponseStatus, BlockingTarget,
+    BlockingTransaction, Femtoseconds,
 };
 use crate::memory::SimpleMemory;
 use crate::physical::PhysicalAccessKind;
@@ -316,6 +317,14 @@ pub(crate) enum DirectMemReply {
     /// A grant of the queried 4 KiB chunk with this access and the target's
     /// configured grant latencies.
     Chunk(BlockingDirectMemAccess),
+    /// A grant of the queried 4 KiB chunk, but only when the queried address
+    /// lies inside `first..=last`; every other address is denied.  It models a
+    /// target that offers direct memory for its data region only.
+    ChunkWithin {
+        first: u64,
+        last: u64,
+        access: BlockingDirectMemAccess,
+    },
     /// A literal grant shape, for malformed-grant controls.
     Custom {
         access: BlockingDirectMemAccess,
@@ -349,6 +358,9 @@ pub(crate) struct DirectMemTarget {
     pub atomics: AtomicUsize,
     /// True while the next store-conditional envelope reports a target fault.
     fault_sc: AtomicBool,
+    /// True while the next store-conditional envelope reports conditional
+    /// success even though the request's reservation context does not cover it.
+    misreport_sc_success: AtomicBool,
     /// Debug-transport requests issued.
     pub debug_requests: AtomicUsize,
     /// Transport resets issued.
@@ -386,6 +398,7 @@ impl DirectMemTarget {
             queries: AtomicUsize::new(0),
             atomics: AtomicUsize::new(0),
             fault_sc: AtomicBool::new(false),
+            misreport_sc_success: AtomicBool::new(false),
             debug_requests: AtomicUsize::new(0),
             resets: AtomicUsize::new(0),
             hint: AtomicBool::new(true),
@@ -412,6 +425,12 @@ impl DirectMemTarget {
     /// Makes exactly the next store-conditional envelope report a target fault.
     pub(crate) fn fault_next_store_conditional(&self) {
         self.fault_sc.store(true, Ordering::SeqCst);
+    }
+
+    /// Makes exactly the next store-conditional envelope report conditional
+    /// success without writing, whatever its reservation context covers.
+    pub(crate) fn misreport_next_store_conditional_success(&self) {
+        self.misreport_sc_success.store(true, Ordering::SeqCst);
     }
 
     /// The last direct-memory query this target answered.
@@ -518,14 +537,23 @@ impl BlockingTarget for DirectMemTarget {
         });
         if transaction.atomic_extension().is_some() {
             self.atomics.fetch_add(1, Ordering::SeqCst);
-            if transaction.atomic_extension().is_some_and(|atomic| {
+            let store_conditional = transaction.atomic_extension().is_some_and(|atomic| {
                 matches!(
                     atomic.operation(),
                     BlockingAtomicOperation::StoreConditional
                 )
-            }) && self.fault_sc.swap(false, Ordering::SeqCst)
-            {
+            });
+            if store_conditional && self.fault_sc.swap(false, Ordering::SeqCst) {
                 transaction.set_status(BlockingResponseStatus::AddressError);
+                return;
+            }
+            if store_conditional && self.misreport_sc_success.swap(false, Ordering::SeqCst) {
+                if let Some(extension) = transaction.atomic_extension_mut() {
+                    extension.set_outcome(BlockingAtomicOutcome::StoreConditional(
+                        crate::physical::ConditionalStatus::Success,
+                    ));
+                }
+                transaction.set_status(BlockingResponseStatus::Ok);
                 return;
             }
         }
@@ -587,6 +615,25 @@ impl BlockingTarget for DirectMemTarget {
             DirectMemReply::Denied => return super::BlockingDirectMemResponse::Denied,
             DirectMemReply::Failed => return super::BlockingDirectMemResponse::Failed,
             DirectMemReply::Chunk(access) => {
+                let chunk = self.chunk_of(query.address());
+                let start = chunk << 12;
+                (
+                    access,
+                    start,
+                    start + 0xfff,
+                    self.grant_read_latency.load(Ordering::SeqCst),
+                    self.grant_write_latency.load(Ordering::SeqCst),
+                    false,
+                )
+            }
+            DirectMemReply::ChunkWithin {
+                first,
+                last,
+                access,
+            } => {
+                if !(first <= query.address() && query.address() <= last) {
+                    return super::BlockingDirectMemResponse::Denied;
+                }
                 let chunk = self.chunk_of(query.address());
                 let start = chunk << 12;
                 (

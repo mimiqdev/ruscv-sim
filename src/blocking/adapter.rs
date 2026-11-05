@@ -915,16 +915,29 @@ impl TlmRamAdapter {
         // or unresolved one leaves it open, because the Hart keeps the
         // reservation that authored it, and a translation A/D leg never closes
         // it at all.
+        //
+        // A reported success is decisive only if the validated boundary will
+        // accept it.  The boundary rejects a success that the Hart's reservation
+        // context does not cover (physical.rs's
+        // `store_conditional_success_rejection`), and that rejection is a
+        // protocol failure of the envelope, so the Hart keeps its reservation
+        // and the gate stays open.
+        let conclusive = status == BlockingResponseStatus::Ok
+            && match outcome {
+                Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
+                    crate::physical::ConditionalStatus::Success,
+                )) => crate::physical::store_conditional_success_rejection(request).is_none(),
+                Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
+                    crate::physical::ConditionalStatus::Failure,
+                )) => true,
+                _ => false,
+            };
         if !page_table_update
             && matches!(
                 descriptor.kind,
                 crate::physical::AtomicAccessKind::StoreConditional
             )
-            && status == BlockingResponseStatus::Ok
-            && matches!(
-                outcome,
-                Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(_))
-            )
+            && conclusive
         {
             state.writes_suspended = false;
         }

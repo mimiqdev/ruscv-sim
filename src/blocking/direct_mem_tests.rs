@@ -978,11 +978,15 @@ fn a_store_to_a_read_only_region_reaches_the_target() {
 
 #[test]
 fn a_direct_store_charges_its_write_latency_through_the_one_accounting_path() {
+    // Two ticks of annotated delay and a one-tick read latency, so a direct
+    // store that charged the wrong direction would be visible.
+    const WRITE_DELAY: u64 = 2_000_000;
+    const READ_DELAY: u64 = 1_000_000;
     let target = target();
     grant_read_write(&target);
-    target.set_declared_max_delay(MAX_DELAY);
-    target.set_delay(MAX_DELAY);
-    target.set_grant_latency(MAX_DELAY, MAX_DELAY);
+    target.set_declared_max_delay(WRITE_DELAY);
+    target.set_delay(WRITE_DELAY);
+    target.set_grant_latency(READ_DELAY, WRITE_DELAY);
     let slot = slot(&target);
     let mut port = ValidatedPhysicalAccess::new(slot.clone());
 
@@ -991,8 +995,8 @@ fn a_direct_store_charges_its_write_latency_through_the_one_accounting_path() {
     slot.begin_transport_turn();
     write(&mut port, BASE + 0x100, &[1, 2, 3, 4]);
     let blocking = slot.take_transport_turn_delay();
-    assert_eq!(blocking.femtoseconds, Femtoseconds::new(MAX_DELAY));
-    assert_eq!(blocking.ticks, 1);
+    assert_eq!(blocking.femtoseconds, Femtoseconds::new(WRITE_DELAY));
+    assert_eq!(blocking.ticks, 2);
     assert_eq!(slot.cached_direct_mem_regions(), 1);
 
     let transactions = target.transactions();
@@ -1008,15 +1012,127 @@ fn a_direct_store_charges_its_write_latency_through_the_one_accounting_path() {
         direct, blocking,
         "a direct store charged a different delay than the annotated one"
     );
-    assert_eq!(slot.consumed_delay(), Femtoseconds::new(MAX_DELAY * 2));
+    assert_eq!(
+        direct.femtoseconds,
+        Femtoseconds::new(WRITE_DELAY),
+        "a direct store charged the read latency instead of the write latency"
+    );
+    assert_eq!(slot.consumed_delay(), Femtoseconds::new(WRITE_DELAY * 2));
 
     // Outside a guest turn the latency is validated but not charged, exactly
     // as a debug-work annotation.
     write(&mut port, BASE + 0x108, &[9, 9, 9, 9]);
     assert_eq!(
         slot.consumed_delay(),
-        Femtoseconds::new(MAX_DELAY * 2),
+        Femtoseconds::new(WRITE_DELAY * 2),
         "a direct store outside a guest turn charged Platform time"
+    );
+}
+
+/// D6: a direct store charges the grant's *write* latency, not its read
+/// latency.  The two differ here so a wrong-direction charge cannot hide.
+#[test]
+fn a_direct_store_charges_the_write_latency_not_the_read_latency() {
+    const WRITE_DELAY: u64 = 2_000_000;
+    const READ_DELAY: u64 = 1_000_000;
+    let target = target();
+    grant_read_write(&target);
+    target.set_declared_max_delay(WRITE_DELAY);
+    target.set_grant_latency(READ_DELAY, WRITE_DELAY);
+    let slot = slot(&target);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+
+    // The first store's own b_transport obtains the grant and annotates no
+    // delay, so the direct store's charge is the only one in its turn.
+    write(&mut port, BASE + 0x100, &[1, 2, 3, 4]);
+    assert_eq!(slot.cached_direct_mem_regions(), 1);
+    let transactions = target.transactions();
+    slot.begin_transport_turn();
+    write(&mut port, BASE + 0x104, &[5, 6, 7, 8]);
+    assert_eq!(
+        target.transactions(),
+        transactions,
+        "the second store was not direct"
+    );
+    let direct = slot.take_transport_turn_delay();
+    assert_eq!(
+        direct.femtoseconds,
+        Femtoseconds::new(WRITE_DELAY),
+        "a direct store charged {} fs, not its granted {WRITE_DELAY} fs write latency",
+        direct.femtoseconds.as_u64()
+    );
+    assert_eq!(direct.ticks, 2);
+}
+
+/// D7: a reported store-conditional success that the validated boundary must
+/// reject did not complete, so it leaves the write-suspension gate open.
+#[test]
+fn a_rejected_store_conditional_success_leaves_the_gate_open() {
+    let target = target();
+    let slot = prime(&target);
+    let mut phys = ValidatedPhysicalAccess::new(slot.clone());
+    let mut atomics = ValidatedAtomicAccess::new(slot.clone());
+
+    // A guest load-reserved at 0x100 opens the gate and defines the
+    // reservation the Hart would carry into a store-conditional.
+    let (_, context) = load_reserved(&mut atomics, BASE + 0x100);
+
+    // The target claims success for a span outside that reservation.  The
+    // validated boundary rejects it as a protocol failure of the envelope.
+    target.misreport_next_store_conditional_success();
+    let request = AtomicRequest::store_conditional(
+        BASE + 0x180,
+        PhysicalWidth::Doubleword,
+        ORDERING,
+        &[0u8; 8],
+        Some(context),
+    )
+    .unwrap();
+    let error = atomics.access_atomic(request).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            crate::physical::AtomicAccessError::Protocol(
+                crate::physical::AtomicProtocolError::ConditionalSuccessOutsideReservation { .. }
+            )
+        ),
+        "an uncovered conditional success was not a protocol failure: {error:?}"
+    );
+    let suspended = target.transactions();
+    write(&mut phys, BASE + 0x100, &[1, 2, 3, 4]);
+    assert_eq!(
+        target.transactions(),
+        suspended + 1,
+        "a protocol-failed store-conditional closed the write-suspension gate"
+    );
+
+    // The same holds for a success the boundary rejects for want of any
+    // reservation context.
+    target.misreport_next_store_conditional_success();
+    let request = AtomicRequest::store_conditional(
+        BASE + 0x100,
+        PhysicalWidth::Doubleword,
+        ORDERING,
+        &[0u8; 8],
+        Option::<AtomicReservationContext>::None,
+    )
+    .unwrap();
+    let error = atomics.access_atomic(request).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            crate::physical::AtomicAccessError::Protocol(
+                crate::physical::AtomicProtocolError::ConditionalSuccessWithoutReservation
+            )
+        ),
+        "a conditional success without reservation context was not a protocol failure: {error:?}"
+    );
+    let suspended = target.transactions();
+    write(&mut phys, BASE + 0x108, &[5, 6, 7, 8]);
+    assert_eq!(
+        target.transactions(),
+        suspended + 1,
+        "a success without reservation context closed the write-suspension gate"
     );
 }
 

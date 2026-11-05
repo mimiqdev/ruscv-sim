@@ -4160,15 +4160,26 @@ fn a_target_that_faults_a_store_conditional_leaves_the_gate_open() {
 /// D6/D7: a non-zero-latency target charges a direct store's grant latency
 /// exactly as its annotated `b_transport` delay, so Platform time, `mtime` and
 /// the boundary delay total match with direct memory on and off.
+///
+/// Only the data chunk is granted, so the instruction fetch always takes
+/// `b_transport` and the store is the run's one direct access.  The granted read
+/// latency is deliberately different from the write latency, so a store that
+/// charged the wrong direction would leave the totals one tick short.
 #[test]
 fn direct_store_latency_matches_with_direct_memory_on_and_off() {
-    const DELAY: u64 = 1_000_000;
-    let code = [elf::ld(5, 1, 0), elf::sd(2, 1, 0), elf::ld(5, 1, 8)];
+    const ANNOTATED: u64 = 2_000_000; // two ticks per transaction
+    const READ_LATENCY: u64 = 1_000_000; // one tick
+    let code = [elf::sd(2, 1, 0), elf::sd(2, 1, 8)];
     let run = |direct_mem: bool| -> (Vec<(u64, u64, u64, u64)>, bool) {
         let target = direct_store_target(0x4000);
-        target.set_declared_max_delay(DELAY);
-        target.set_delay(DELAY);
-        target.set_grant_latency(DELAY, DELAY);
+        target.set_reply(DirectMemReply::ChunkWithin {
+            first: elf::BASE + 0x1000,
+            last: elf::BASE + 0x1fff,
+            access: BlockingDirectMemAccess::ReadWrite,
+        });
+        target.set_declared_max_delay(ANNOTATED);
+        target.set_delay(ANNOTATED);
+        target.set_grant_latency(READ_LATENCY, ANNOTATED);
         let mut owned = OwnedMachine::new(
             direct_mem_config(&target, direct_mem),
             direct_mem_image(&code),
@@ -4176,12 +4187,12 @@ fn direct_store_latency_matches_with_direct_memory_on_and_off() {
         .unwrap();
         {
             let state = owned.state_mut();
-            state.regs[1] = elf::BASE + 0x200;
+            state.regs[1] = elf::BASE + 0x1100;
             state.regs[2] = 0x1234_5678_9abc_def0;
         }
         let mut facts = Vec::new();
         let mut store_direct = false;
-        for turn_index in 0..3 {
+        for turn_index in 0..2 {
             let log = target.log().len();
             let turn = owned.step(false).unwrap();
             assert!(matches!(
@@ -4189,7 +4200,7 @@ fn direct_store_latency_matches_with_direct_memory_on_and_off() {
                 StepOutcome::InstructionRetired(_)
             ));
             if turn_index == 1 {
-                store_direct = !store_reached(&target, log, elf::BASE + 0x200);
+                store_direct = !store_reached(&target, log, elf::BASE + 0x1108);
             }
             let (minstret, mcycle) = guest_counters_now(&owned);
             facts.push((
@@ -4207,16 +4218,17 @@ fn direct_store_latency_matches_with_direct_memory_on_and_off() {
     let (without, _) = run(false);
     assert!(
         store_direct,
-        "the store in the second turn did not take the direct path"
+        "the second store did not take the direct path"
     );
     assert_eq!(
         with, without,
         "direct store latency changed Platform time, the boundary total or the ISA counters"
     );
-    assert!(
-        with[1].0 > with[0].0,
-        "the turns advanced no Platform time at all"
-    );
+    // Each turn issues two fetch parcels and one store, and each access is
+    // charged the annotated two ticks.  A store charged the granted read
+    // latency would leave the totals one tick short.
+    assert_eq!(with[0].1, 3 * ANNOTATED);
+    assert_eq!(with[1].1, 6 * ANNOTATED);
 }
 
 /// D6: a direct store issued by debug work (program buffer) is validated but

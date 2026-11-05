@@ -1,0 +1,13 @@
+diff --git i/src/blocking/direct_mem.rs w/src/blocking/direct_mem.rs
+index 6b599bd..4285e61 100644
+--- i/src/blocking/direct_mem.rs
++++ w/src/blocking/direct_mem.rs
+@@ -545,7 +545,7 @@ impl DirectMemRegions {
+             unsafe { AtomicU8::from_ptr(region.pointer.add(offset as usize + index)) }
+                 .store(*byte, Ordering::Relaxed);
+         }
+-        Some(region.write_latency)
++        Some(region.read_latency)
+     }
+ 
+     /// Caches one validated grant, replacing every grant it overlaps.
