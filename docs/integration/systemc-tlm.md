@@ -253,10 +253,11 @@ neither a guest loop nor a host defect can hang CI.
 
 ## Open items
 
-- Quantum, temporal decoupling and synchronization policy. Every grant here
-  ends with a `wait()` of exactly the consumed amount, so the kernel advances
-  global time only between grants; no quantum keeper exists and none is
-  selected.
+- Quantum, temporal decoupling and synchronization policy. After every grant
+  here the host `wait()`s exactly the consumed amount (a zero-consumption
+  grant waits for nothing, and a zero consumed amount cannot advance the
+  kernel clock), so the kernel advances global time only between grants; no
+  quantum keeper exists and none is selected.
 - Non-blocking transport, which needs its own timing contract.
 
 ## Direct-memory grant, permission, latency, invalidation, lifetime and FFI
@@ -273,7 +274,8 @@ this host can state.
 payload, a debug transfer or an error status. That hint is the only licence
 for the query. `register_get_direct_mem_ptr` grants the whole 4 KiB chunk that
 contains the queried address — inclusive start and end, the chunk's host
-pointer, the granted access the query asked for, zero read and write latency —
+pointer, read-write access whatever the query asked (D13 grants one storage
+chunk read-write), zero read and write latency —
 and denies a query whose chunk does not exist, so a query never allocates
 storage. The IEEE 1666 `tlm_dmi` fields cross the C ABI verbatim: the
 initiator's `serve_get_direct_mem_ptr` maps `true` to `RUSCV_DMI_GRANTED`,
@@ -296,8 +298,10 @@ and grants the same zero, so a run is time-equivalent with `--dmi` and without
 it.
 
 **Invalidation.** The initiator registers its backward
-`invalidate_direct_mem_ptr` with the target socket
-(`register_invalidate_direct_mem_ptr`); every forward of it calls
+`invalidate_direct_mem_ptr` on its initiator socket
+(`register_invalidate_direct_mem_ptr`), and the target module registers its
+forward `get_direct_mem_ptr` on its target socket; every forward of the
+backward callback calls
 `ruscv_machine_invalidate_direct_mem`, the one ABI entry accepted inside a
 callback and on a poisoned handle, always on the kernel thread that owns the
 handle. A backward call while no handle is bound is a no-op: after `destroy`
@@ -307,7 +311,9 @@ ends the run as a host failure. `--dmi-invalidate-every <grants>` asks the
 target to issue a whole-space backward invalidation after each Nth Machine
 grant, so the target→initiator→ABI path is exercised end to end; the smoke
 requires the scheduled count to equal grants/N exactly and the forwarded count
-to cover it (the wrapper's own pre-reset invalidate-all is the extra forward).
+to cover it (the extra forward is `RamTarget::transport_reset`'s own
+invalidate-all before it discards chunks, which traverses the same backward
+path).
 
 **Lifetime.** `RamTarget` invalidates every registration before it frees,
 moves or discards granted storage: its `transport_reset` calls
@@ -335,8 +341,11 @@ obligations, which bind this target exactly as they bind a C target: granted
 storage is `std::atomic<uint8_t>` and every access to it, including
 `b_transport`, `transport_dbg` and the granted pointer, is a relaxed atomic
 byte access; the pointer stays valid until a covering invalidation; and the
-invalidate-before-free order above holds. No C++ object or function pointer
-crosses the ABI; the query and its answer are plain data.
+invalidate-before-free order above holds. The query and its answer carry no
+C++ object, pointer or operation callback: `ruscv_direct_mem` is plain data,
+and the host copies the `tlm_dmi` fields into it value by value. (The
+pre-existing callback table is C-linkage function pointers, as before; this
+contract adds none.)
 
 ## Source and test map
 
