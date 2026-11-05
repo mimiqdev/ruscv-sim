@@ -819,7 +819,10 @@ impl TlmRamAdapter {
             // reservation, whose later store-conditional check reads the
             // target's committed-write versions that a direct store never
             // updates, so every store takes `b_transport` from here until a
-            // guest store-conditional completes.
+            // guest store-conditional completes.  A load-reserved that faults
+            // or never completes therefore opens the gate too: a gate left open
+            // with no store-conditional is correct and only slower, so the
+            // conservative direction is the safe one.
             state.writes_suspended = true;
         }
 
