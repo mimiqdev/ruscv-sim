@@ -1,6 +1,6 @@
 //! Controlled native backend/host-admission seams, not public recovery APIs.
 use super::*;
-use crate::blocking::test_support::{DelayingRam, ScriptTarget};
+use crate::blocking::test_support::{DelayingRam, DirectMemTarget, ScriptTarget};
 use crate::blocking::{BlockingInitiator, Transport, ZeroDelayRam};
 use crate::csr::machine;
 use crate::memory::MemoryError;
@@ -3184,5 +3184,325 @@ fn atomic_delay_advances_mtime_like_a_data_access() {
         guest_counters_now(&owned),
         (minstret_before + 1, mcycle_before + 1),
         "the atomic delay leaked into mcycle or minstret"
+    );
+}
+
+// ---- Direct memory U1: grants and read path ----
+
+fn direct_mem_image(code: &[u32]) -> Arc<LoadImage> {
+    Arc::new(LoadImage::parse(&elf::elf_with_code(code, 0, true, false, 0x4000)).unwrap())
+}
+
+fn direct_mem_config(target: &Arc<DirectMemTarget>, dmi: bool) -> MachineConfig {
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    config.dmi = dmi;
+    config
+}
+
+#[test]
+fn direct_memory_defaults_off_and_requires_the_tlm_route() {
+    for kind in [PlatformKind::Native, PlatformKind::Flat] {
+        let config = MachineConfig::new(kind);
+        assert!(
+            !config.dmi,
+            "{kind:?}: MachineConfig::new selected direct memory"
+        );
+    }
+    // `dmi` with the native route has no transport to grant it.
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.dmi = true;
+    let owner = Machine::new(config);
+    assert!(
+        matches!(
+            owner.install(image(elf::nop())),
+            Err(MachineError::UnsupportedTransport)
+        ),
+        "dmi with the native route was not a configuration error"
+    );
+}
+
+#[test]
+fn covered_fetches_and_loads_leave_b_transport_only_with_direct_memory() {
+    let code = [elf::nop(), elf::ld(3, 1, 0)];
+    let value = 0x1234_5678_9abc_def0u64;
+
+    let run = |dmi: bool| {
+        let target = DirectMemTarget::new(elf::BASE, 0x4000);
+        let mut owned =
+            OwnedMachine::new(direct_mem_config(&target, dmi), direct_mem_image(&code)).unwrap();
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_dword(0x200, value)
+            .unwrap();
+        owned.state_mut().regs[1] = elf::BASE + 0x200;
+        let start = target.transactions();
+        let turn = owned.step(false).unwrap();
+        assert!(matches!(
+            turn.hart().outcome,
+            StepOutcome::InstructionRetired(_)
+        ));
+        // The returned boundary holds its admission until it is dropped.
+        drop(turn);
+        let after_first = target.transactions();
+        let turn = owned.step(false).unwrap();
+        assert!(matches!(
+            turn.hart().outcome,
+            StepOutcome::InstructionRetired(_)
+        ));
+        drop(turn);
+        assert_eq!(
+            owned.state().regs[3],
+            value,
+            "the load returned wrong bytes"
+        );
+        (
+            after_first - start,
+            target.transactions() - after_first,
+            target.queries(),
+        )
+    };
+
+    // dmi off: two fetch parcels per instruction and one load, all blocking.
+    assert_eq!(
+        run(false),
+        (2, 3, 0),
+        "direct memory off changed the transactions"
+    );
+    // dmi on: the first parcel obtains the grant, everything after it is direct.
+    assert_eq!(
+        run(true),
+        (1, 0, 1),
+        "a covered fetch or load took b_transport"
+    );
+}
+
+#[test]
+fn a_failed_recomposition_after_reset_leaves_the_old_composition_able_to_regrant() {
+    let target = DirectMemTarget::new(elf::BASE, 0x4000);
+    let code = [elf::nop(), elf::nop(), elf::nop()];
+    let mut owned =
+        OwnedMachine::new(direct_mem_config(&target, true), direct_mem_image(&code)).unwrap();
+    let start = target.transactions();
+    owned.step(false).unwrap();
+    assert_eq!(target.transactions(), start + 1);
+    assert_eq!(target.queries(), 1);
+    let granted = target.transactions();
+    owned.step(false).unwrap();
+    assert_eq!(
+        target.transactions(),
+        granted,
+        "the cached grant was not used"
+    );
+
+    // A recomposition builds a new composition, which resets the shared target
+    // before this one is replaced, and then fails.
+    target.set_debug_short(true);
+    let error = owned.install(direct_mem_image(&code)).unwrap_err();
+    assert!(
+        matches!(&error, MachineError::Memory(MemoryError::Backend(_))),
+        "the failed build reported {error:?}"
+    );
+    target.set_debug_short(false);
+    // The failed build's registration is inert: only the still-current
+    // composition's handle is live.
+    assert_eq!(
+        target.registrations(),
+        1,
+        "the failed build left a live or a replacing registration"
+    );
+
+    // The old composition is still current, and its grant is gone: restore a
+    // decodable instruction through debug transport and step.
+    for index in 0..8 {
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_word(index * 4, elf::nop())
+            .unwrap();
+    }
+    let stale = target.transactions();
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    assert_eq!(
+        target.transactions(),
+        stale + 1,
+        "the old composition used a grant the reset removed"
+    );
+    drop(turn);
+    // That response carried the hint again, so the next turn is direct.
+    let regranted = target.transactions();
+    owned.step(false).unwrap();
+    assert_eq!(
+        target.transactions(),
+        regranted,
+        "the old composition could not obtain a new grant"
+    );
+}
+
+#[test]
+fn a_second_compositions_reset_on_a_shared_target_removes_the_first_regions() {
+    let target = DirectMemTarget::new(elf::BASE, 0x4000);
+    let config = direct_mem_config(&target, true);
+    let image = image(elf::nop());
+    let first = Platform::build(&config, &image).unwrap();
+    assert_eq!(target.registrations(), 1);
+
+    let read = || {
+        let request = PhysicalRequest::data_read(elf::BASE, PhysicalWidth::Word).unwrap();
+        first.ram.raw(&request, 0, BlockingInitiator::Hart)
+    };
+    read().unwrap();
+    assert_eq!(first.ram.cached_direct_mem_regions(), 1);
+    let covered = target.transactions();
+    read().unwrap();
+    assert_eq!(
+        target.transactions(),
+        covered,
+        "the first grant was not in use"
+    );
+
+    // The second composition's build resets the shared target while the first
+    // composition is still current.
+    let second = Platform::build(&config, &image).unwrap();
+    assert_eq!(
+        target.registrations(),
+        2,
+        "a registration replaced an earlier one"
+    );
+    assert_eq!(
+        first.ram.cached_direct_mem_regions(),
+        0,
+        "the second composition's reset left the first composition's grant live"
+    );
+    let before = target.transactions();
+    read().unwrap();
+    assert_eq!(
+        target.transactions(),
+        before + 1,
+        "the first composition served an access from a removed grant"
+    );
+    drop(second);
+}
+
+#[test]
+fn a_reservation_retained_across_a_failed_build_matches_with_direct_memory_on_and_off() {
+    let code = [lr_d(3, 1), sc_d(4, 0, 1)];
+    let reserved = 0x1111_2222_3333_4444u64;
+    let run = |dmi: bool| {
+        let target = DirectMemTarget::new(elf::BASE, 0x4000);
+        let mut owned =
+            OwnedMachine::new(direct_mem_config(&target, dmi), direct_mem_image(&code)).unwrap();
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_dword(0x200, reserved)
+            .unwrap();
+        owned.state_mut().regs[1] = elf::BASE + 0x200;
+
+        let turn = owned.step(false).unwrap();
+        assert!(matches!(
+            turn.hart().outcome,
+            StepOutcome::InstructionRetired(_)
+        ));
+        drop(turn);
+        assert_eq!(
+            owned.state().regs[3],
+            reserved,
+            "the reservation loaded wrong bytes"
+        );
+
+        // The recomposition fails after the shared target was reset.
+        target.set_debug_short(true);
+        assert!(owned.install(direct_mem_image(&code)).is_err());
+        target.set_debug_short(false);
+
+        // Restore the code and the reserved word through debug transport.
+        for (index, word) in code.iter().enumerate() {
+            owned
+                .memory()
+                .lock()
+                .unwrap()
+                .write_word(index as u64 * 4, *word)
+                .unwrap();
+        }
+        owned
+            .memory()
+            .lock()
+            .unwrap()
+            .write_dword(0x200, reserved)
+            .unwrap();
+        owned.state_mut().regs[2] = 0xaaaa_bbbb_cccc_ddddu64;
+
+        let turn = owned.step(false).unwrap();
+        assert!(matches!(
+            turn.hart().outcome,
+            StepOutcome::InstructionRetired(_)
+        ));
+        owned.state().regs[4]
+    };
+
+    let with = run(true);
+    let without = run(false);
+    assert_eq!(
+        with, without,
+        "the store-conditional outcome diverged with direct memory on"
+    );
+    assert_eq!(
+        with, 1,
+        "a reservation retained across the reset should fail its store-conditional"
+    );
+}
+
+#[test]
+fn direct_read_latency_never_reaches_the_isa_counters() {
+    let target = DirectMemTarget::new(elf::BASE, 0x4000);
+    target.set_declared_max_delay(1_000_000);
+    target.set_delay(1_000_000);
+    target.set_grant_latency(1_000_000, 1_000_000);
+    let code = [elf::nop(), elf::nop(), elf::nop()];
+    let mut owned =
+        OwnedMachine::new(direct_mem_config(&target, true), direct_mem_image(&code)).unwrap();
+
+    // The first turn's second fetch parcel is direct.
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    drop(turn);
+    let time_before = guest_time(&owned);
+    let (minstret_before, mcycle_before) = guest_counters_now(&owned);
+
+    // The second turn is two direct fetch parcels: two ticks of latency, one
+    // turn tick, and nothing in the ISA counters.
+    let transactions = target.transactions();
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    drop(turn);
+    assert_eq!(
+        target.transactions(),
+        transactions,
+        "the second turn took b_transport"
+    );
+    assert_eq!(
+        guest_time(&owned),
+        time_before + 1 + 2,
+        "direct read latency did not advance mtime by its ticks"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        (minstret_before + 1, mcycle_before + 1),
+        "direct read latency leaked into mcycle or minstret"
     );
 }

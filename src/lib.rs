@@ -29,7 +29,9 @@ pub mod tlm;
 
 pub use blocking::{
     BlockingAtomicExtension, BlockingAtomicOperation, BlockingAtomicOutcome, BlockingCommand,
-    BlockingDebug, BlockingExtension, BlockingInitiator, BlockingResponseStatus, BlockingTarget,
+    BlockingDebug, BlockingDirectMemAccess, BlockingDirectMemGrant, BlockingDirectMemInvalidator,
+    BlockingDirectMemQuery, BlockingDirectMemRegistry, BlockingDirectMemResponse,
+    BlockingExtension, BlockingInitiator, BlockingResponseStatus, BlockingTarget,
     BlockingTransaction, Femtoseconds, Transport, ZeroDelayRam,
 };
 pub use core::{

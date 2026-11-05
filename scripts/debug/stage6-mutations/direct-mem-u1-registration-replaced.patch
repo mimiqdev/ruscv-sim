@@ -1,0 +1,14 @@
+diff --git i/src/blocking/direct_mem.rs w/src/blocking/direct_mem.rs
+index 43eb8d1..f14fec3 100644
+--- i/src/blocking/direct_mem.rs
++++ w/src/blocking/direct_mem.rs
+@@ -287,7 +287,8 @@ impl BlockingDirectMemRegistry {
+             .invalidators
+             .lock()
+             .unwrap_or_else(|poisoned| poisoned.into_inner());
+-        registrations.retain(BlockingDirectMemInvalidator::is_live);
++        // MUTATION: replace the earlier registration instead of keeping it.
++        registrations.clear();
+         registrations.push(invalidator);
+     }
+ 

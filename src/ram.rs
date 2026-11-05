@@ -83,19 +83,20 @@ impl RamSlot {
     ///
     /// The target's declared maximum delay must be representable under the
     /// Machine's declared tick period; otherwise the configuration fails
-    /// before any access is issued.
-    /// A TLM slot whose delay conversion uses the Machine's declared period.
+    /// before any access is issued.  `dmi` selects the direct-memory path and
+    /// registers this slot's adapter with the target (direct-memory D2/D8).
     pub(crate) fn tlm(
         target: Arc<dyn BlockingTarget>,
         base: u64,
         size: usize,
         period: TickPeriod,
+        dmi: bool,
     ) -> Result<Self, DelayConversionError> {
         Ok(Self {
             inner: Arc::new(RamSlotInner {
                 base,
                 size,
-                kind: RamKind::Tlm(TlmRamAdapter::with_tick_period(target, period)?),
+                kind: RamKind::Tlm(TlmRamAdapter::with_tick_period(target, period, dmi)?),
             }),
         })
     }
@@ -105,6 +106,16 @@ impl RamSlot {
         match &self.inner.kind {
             RamKind::Native(memory) => Some(memory.clone()),
             RamKind::Tlm(_) => None,
+        }
+    }
+
+    /// Number of the TLM adapter's cached direct-memory grants, or zero on
+    /// native and with direct memory disabled.
+    #[cfg(test)]
+    pub(crate) fn cached_direct_mem_regions(&self) -> usize {
+        match &self.inner.kind {
+            RamKind::Native(_) => 0,
+            RamKind::Tlm(adapter) => adapter.cached_regions(),
         }
     }
 

@@ -1,0 +1,16 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 4a32994..cb14440 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -503,6 +503,11 @@ impl Installed {
+         // its known delay and no turn tick (ADR-0004 §5.3/§5.1).  Delay never
+         // enters `mcycle` or `minstret`.
+         let delay = self.platform.take_transport_turn_delay();
++        // MUTATION: charge the transport delay into the ISA counters.
++        for _ in 0..delay.ticks {
++            self.core.state_mut().csr.increment_mcycle();
++            self.core.state_mut().csr.increment_minstret();
++        }
+         let advance = delay.ticks + u64::from(completed_turn);
+         let events = if completed_turn {
+             self.platform.take_events()?

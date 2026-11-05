@@ -1,0 +1,25 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index 8e38338..cd5baa3 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -648,19 +648,7 @@ impl TlmRamAdapter {
+                 query.address()
+             )));
+         }
+-        for (latency, direction) in [
+-            (grant.read_latency(), "read"),
+-            (grant.write_latency(), "write"),
+-        ] {
+-            if latency > self.declared_max {
+-                return Err(malformed(format!(
+-                    "its {direction} latency of {} fs is above the declared per-transaction \
+-                     maximum of {} fs",
+-                    latency.as_u64(),
+-                    self.declared_max.as_u64()
+-                )));
+-            }
+-        }
++        // MUTATION: accept a latency above the declared maximum.
+         Ok(())
+     }
+ 

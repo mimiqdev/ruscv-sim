@@ -9,9 +9,12 @@
 //! Storage is a sparse map of 4 KiB chunks keyed by physical address.  The
 //! Platform bounds every transaction to the RAM window, so chunk allocation is
 //! proportional to the window the guest actually uses, not to the address
-//! value.  Alongside the bytes the target keeps exact per-byte committed-write
-//! bookkeeping: a load-reserved returns its snapshot and a store-conditional
-//! re-checks it inside the same lock hold, matching the native RAM target.
+//! value.  Chunk bytes are atomics, because the platform may reach them through
+//! a direct-memory grant while another thread's transaction reaches them
+//! through `b_transport` or debug transport (direct-memory D10/D13).  Alongside
+//! the bytes the target keeps exact per-byte committed-write bookkeeping: a
+//! load-reserved returns its snapshot and a store-conditional re-checks it
+//! inside the same lock hold, matching the native RAM target.
 //!
 //! Atomics arrive in one `b_transport` transaction carrying the ruscv-sim
 //! atomic extension.  The target applies the encoded operation under this
@@ -21,12 +24,15 @@
 
 use super::{
     BlockingAtomicExtension, BlockingAtomicOperation, BlockingAtomicOutcome, BlockingCommand,
-    BlockingDebug, BlockingResponseStatus, BlockingTarget, BlockingTransaction, Femtoseconds,
+    BlockingDebug, BlockingDirectMemAccess, BlockingDirectMemGrant, BlockingDirectMemInvalidator,
+    BlockingDirectMemQuery, BlockingDirectMemRegistry, BlockingDirectMemResponse,
+    BlockingResponseStatus, BlockingTarget, BlockingTransaction, Femtoseconds,
 };
 use crate::hart_amods::{self, AmoOperation};
 use crate::physical::{CommittedWriteSnapshot, ConditionalStatus};
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 
 /// Chunk size used to index physical addresses.
@@ -36,7 +42,7 @@ const CHUNK_SIZE: usize = 1 << CHUNK_BITS;
 /// Offset mask within a chunk.
 const CHUNK_MASK: u64 = (CHUNK_SIZE as u64) - 1;
 
-type Chunks = BTreeMap<u64, Box<[u8; CHUNK_SIZE]>>;
+type Chunks = BTreeMap<u64, Box<[AtomicU8]>>;
 
 /// Committed-write version recorded for bytes no write has covered yet.
 const NEVER_COMMITTED_VERSION: u64 = 0;
@@ -132,6 +138,15 @@ impl CommitBookkeeping {
         }
         Ok(false)
     }
+
+    /// Forgets every recorded version while keeping the clock monotonic.
+    ///
+    /// A transport reset discards the bytes, so their records go too, but a
+    /// version must never repeat: a retained reservation's snapshot must not
+    /// match a byte that a later run rewrote (direct-memory D10/D13).
+    fn reset_preserving_clock(&mut self) {
+        self.versions.clear();
+    }
 }
 
 /// Bytes and committed-write bookkeeping under one lock.
@@ -145,6 +160,10 @@ struct Storage {
 #[derive(Default)]
 pub struct ZeroDelayRam {
     storage: Mutex<Storage>,
+    /// Every adapter registration, kept without replacement so one reset
+    /// reaches the composition that is still current as well
+    /// (direct-memory D8).
+    direct: BlockingDirectMemRegistry,
 }
 
 impl ZeroDelayRam {
@@ -210,13 +229,12 @@ impl BlockingTarget for ZeroDelayRam {
                 transaction.data_mut().copy_from_slice(&bytes);
             }
             BlockingCommand::Write => {
-                write(
-                    &mut storage,
-                    transaction.address(),
-                    transaction.data().to_vec(),
-                );
+                write(&mut storage, transaction.address(), transaction.data());
             }
         }
+        // The hint is the only licence for the adapter's query, so it goes on
+        // a completed non-atomic transaction only (direct-memory D3/D13).
+        transaction.set_dmi_allowed(true);
         transaction.set_status(BlockingResponseStatus::Ok);
     }
 
@@ -232,11 +250,7 @@ impl BlockingTarget for ZeroDelayRam {
                 transaction.data_mut().copy_from_slice(&bytes);
             }
             BlockingCommand::Write => {
-                write(
-                    &mut storage,
-                    transaction.address(),
-                    transaction.data().to_vec(),
-                );
+                write(&mut storage, transaction.address(), transaction.data());
             }
         }
         len
@@ -245,12 +259,46 @@ impl BlockingTarget for ZeroDelayRam {
     fn transport_reset(&self) -> bool {
         match self.storage.lock() {
             Ok(mut storage) => {
+                // Every registration is invalidated before any chunk is
+                // discarded, and both happen under the storage lock, so no
+                // grant is issued across the window and no cached pointer
+                // outlives its storage (direct-memory D9/D13).
+                self.direct.invalidate_all();
                 storage.chunks.clear();
-                storage.commits = CommitBookkeeping::default();
+                storage.commits.reset_preserving_clock();
                 true
             }
             Err(_) => false,
         }
+    }
+
+    fn get_direct_mem_ptr(&self, query: BlockingDirectMemQuery) -> BlockingDirectMemResponse {
+        let storage = match self.storage.lock() {
+            Ok(storage) => storage,
+            Err(_) => return BlockingDirectMemResponse::Failed,
+        };
+        let Some((start, end, pointer)) = chunk_span(&storage.chunks, query.address()) else {
+            return BlockingDirectMemResponse::Denied;
+        };
+        // SAFETY: the granted chunk is this target's only copy of those bytes,
+        // `b_transport` and debug transport serve the same atomics, and the
+        // chunk stays where it is until `transport_reset`, which invalidates
+        // every registration before it discards it (direct-memory D10/D13).
+        let grant = unsafe {
+            BlockingDirectMemGrant::new(
+                start,
+                end,
+                pointer,
+                BlockingDirectMemAccess::Read,
+                Femtoseconds::ZERO,
+                Femtoseconds::ZERO,
+            )
+        };
+        BlockingDirectMemResponse::Granted(grant)
+    }
+
+    fn register_direct_mem_invalidator(&self, invalidator: BlockingDirectMemInvalidator) {
+        self.direct.register(invalidator);
     }
 }
 
@@ -273,7 +321,7 @@ fn apply_atomic(
                     return;
                 }
             };
-            write(storage, address, new[..width].to_vec());
+            write(storage, address, &new[..width]);
             transaction.data_mut().copy_from_slice(&old);
             record_outcome(transaction, BlockingAtomicOutcome::Rmw);
         }
@@ -304,7 +352,7 @@ fn apply_atomic(
                     ) {
                         Ok(true) => false,
                         Ok(false) => {
-                            write(storage, address, transaction.data().to_vec());
+                            write(storage, address, transaction.data());
                             true
                         }
                         Err(()) => {
@@ -357,26 +405,53 @@ fn read(storage: &Chunks, address: u64, len: usize) -> Vec<u8> {
         let offset = (current & CHUNK_MASK) as usize;
         let count = (CHUNK_SIZE - offset).min(len - done);
         if let Some(data) = storage.get(&chunk) {
-            bytes[done..done + count].copy_from_slice(&data[offset..offset + count]);
+            for index in 0..count {
+                bytes[done + index] = data[offset + index].load(Ordering::Relaxed);
+            }
         }
         done += count;
     }
     bytes
 }
 
-fn write(storage: &mut Storage, address: u64, bytes: Vec<u8>) {
+fn write(storage: &mut Storage, address: u64, bytes: &[u8]) {
     let mut done = 0;
     while done < bytes.len() {
         let current = address.wrapping_add(done as u64);
         let chunk = current >> CHUNK_BITS;
         let offset = (current & CHUNK_MASK) as usize;
         let count = (CHUNK_SIZE - offset).min(bytes.len() - done);
-        let data = storage
-            .chunks
-            .entry(chunk)
-            .or_insert_with(|| Box::new([0u8; CHUNK_SIZE]));
-        data[offset..offset + count].copy_from_slice(&bytes[done..done + count]);
+        let data = storage.chunks.entry(chunk).or_insert_with(alloc_chunk);
+        for index in 0..count {
+            data[offset + index].store(bytes[done + index], Ordering::Relaxed);
+        }
         done += count;
     }
     storage.commits.commit(address, bytes.len());
+}
+
+/// One zeroed 4 KiB chunk of byte atomics.
+fn alloc_chunk() -> Box<[AtomicU8]> {
+    (0..CHUNK_SIZE)
+        .map(|_| AtomicU8::new(0))
+        .collect::<Vec<_>>()
+        .into_boxed_slice()
+}
+
+/// The granted span of the chunk that contains `address`, when it exists.
+fn chunk_span(storage: &Chunks, address: u64) -> Option<(u64, u64, *mut u8)> {
+    let chunk = address >> CHUNK_BITS;
+    let bytes = storage.get(&chunk)?;
+    let start = chunk << CHUNK_BITS;
+    Some((start, start + CHUNK_MASK, bytes.as_ptr() as *mut u8))
+}
+
+/// The most grants one `ZeroDelayRam` keeps registered (direct-memory D8).
+#[cfg(test)]
+impl ZeroDelayRam {
+    /// Chunk pointer of `address`, for tests that script a grant.
+    pub(crate) fn chunk_pointer(&self, address: u64) -> Option<(u64, u64, *mut u8)> {
+        let storage = self.storage.lock().ok()?;
+        chunk_span(&storage.chunks, address)
+    }
 }

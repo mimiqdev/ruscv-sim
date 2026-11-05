@@ -1,0 +1,14 @@
+diff --git i/src/blocking/direct_mem.rs w/src/blocking/direct_mem.rs
+index 43eb8d1..60cc080 100644
+--- i/src/blocking/direct_mem.rs
++++ w/src/blocking/direct_mem.rs
+@@ -374,7 +374,8 @@ impl Region {
+         let Some(last) = paddr.checked_add(width.saturating_sub(1) as u64) else {
+             return false;
+         };
+-        self.start <= paddr && last <= self.end
++        // MUTATION: accept a span that starts inside and runs past the end.
++        self.start <= paddr
+     }
+ 
+     /// True when this region overlaps the inclusive range `start..=end`.

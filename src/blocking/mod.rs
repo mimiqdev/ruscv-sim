@@ -44,6 +44,10 @@ mod atomic;
 #[cfg(test)]
 #[path = "atomic_tests.rs"]
 mod atomic_tests;
+mod direct_mem;
+#[cfg(test)]
+#[path = "direct_mem_tests.rs"]
+mod direct_mem_tests;
 mod target;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -53,6 +57,10 @@ mod tests;
 mod zero_delay;
 
 pub use atomic::{BlockingAtomicExtension, BlockingAtomicOperation, BlockingAtomicOutcome};
+pub use direct_mem::{
+    BlockingDirectMemAccess, BlockingDirectMemGrant, BlockingDirectMemInvalidator,
+    BlockingDirectMemQuery, BlockingDirectMemRegistry, BlockingDirectMemResponse,
+};
 pub use target::BlockingTarget;
 pub use zero_delay::ZeroDelayRam;
 
@@ -403,6 +411,7 @@ pub struct BlockingTransaction<'a> {
     status: BlockingResponseStatus,
     extension: BlockingExtension,
     response_delay: Femtoseconds,
+    dmi_allowed: bool,
 }
 
 impl<'a> BlockingTransaction<'a> {
@@ -423,6 +432,7 @@ impl<'a> BlockingTransaction<'a> {
             status: BlockingResponseStatus::Incomplete,
             extension,
             response_delay: Femtoseconds::ZERO,
+            dmi_allowed: false,
         }
     }
 
@@ -500,6 +510,21 @@ impl<'a> BlockingTransaction<'a> {
         self.response_delay = delay;
     }
 
+    /// The `dmi_allowed` response hint (direct-memory D3).
+    ///
+    /// A target that can serve this address through a host pointer sets it on a
+    /// completed non-atomic transaction.  It is the only licence for the
+    /// adapter's direct-memory query, and the adapter ignores it for an atomic
+    /// transaction, a non-completion and with direct memory disabled.
+    pub const fn is_dmi_allowed(&self) -> bool {
+        self.dmi_allowed
+    }
+
+    /// Sets or clears the `dmi_allowed` response hint.
+    pub fn set_dmi_allowed(&mut self, allowed: bool) {
+        self.dmi_allowed = allowed;
+    }
+
     /// Changes the payload address.
     ///
     /// A target must not do this; the adapter reports a changed payload as a
@@ -535,6 +560,7 @@ impl fmt::Debug for BlockingTransaction<'_> {
             .field("status", &self.status)
             .field("extension", &self.extension)
             .field("response_delay", &self.response_delay)
+            .field("dmi_allowed", &self.dmi_allowed)
             .finish()
     }
 }

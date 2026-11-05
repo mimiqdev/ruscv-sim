@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Direct memory U1: 授权与读取路径（issue #188）**
+  - `MachineConfig` 新增公开 `dmi` 字段（`MachineConfig::new` 选择 `false`，破坏结构体字面量构造）；
+    `dmi` 与 `Transport::Native` 的组合是既有的 `MachineError::UnsupportedTransport`，该变体的消息加宽为
+    同时命名 `Flat` + `tlm` 与本组合；`Flat` 规则不变。`run --dmi` 暴露该选择，缺少 `--transport tlm` 时是
+    CLI 错误（状态 2）。`load_and_run_file_with_config` 按字段生效，`RiscVSimulator` 与其余 `load_and_run*`
+    facade 仍走 native
+  - `src/blocking` 新增 TLM Direct Memory Interface 词表：`BlockingDirectMemAccess`、
+    `BlockingDirectMemQuery`、`unsafe fn` 构造的 `BlockingDirectMemGrant`（D10 义务写在 `# Safety` 中）、
+    `BlockingDirectMemResponse`（granted/denied/failed）、持 adapter 弱引用的
+    `BlockingDirectMemInvalidator`、公开 `BlockingDirectMemRegistry`（追加而不替换注册、可 prune 已释放的
+    adapter、含 invalidate-all），以及 `BlockingTransaction` 上的 IEEE 命名 `dmi_allowed` 响应 hint。
+    `BlockingTarget` 新增 `get_direct_mem_ptr` 与 `register_direct_mem_invalidator`，两者都有默认实现且不提供
+    任何能力，既有实现者无需改动
+  - `TlmRamAdapter` 在既有 RAM slot 内实现直接内存读路径：hint 触发的单次查询、grant 形状校验（空指针、
+    倒置或溢出的区间、无授权、不含被查询地址、读或写延迟超过 target 声明的事务最大值均为被查询访问的
+    protocol failure）、8 个 grant 的有界 region 缓存（新 grant 替换重叠项、最旧项被逐出）、Hart 取指与 load
+    经由指针的 relaxed 逐字节原子拷贝。拷贝与查找在同一把专门 direct-memory 锁内完成，该锁不跨 target 调用，
+    因此 `b_transport` 内同步到达的 invalidation 是安全的；查询开始后到达的 invalidation 会丢弃待安装的
+    grant。读取延迟经既有的一处延迟记账路径（同一换算、同一 debug 不计时规则、同一边界总量），不进
+    `mcycle`/`minstret`。store、原子包络与 `DebugInbound` 仍走 `b_transport`，写路径、D7 门控与 A/D 标记属
+    U2
+  - `ZeroDelayRam` 的 chunk 字节改为 `AtomicU8`（`bytes_at` 签名不变），在完成的非原子事务上设置 hint，
+    为包含被查询地址的单个 4 KiB chunk 授予只读零延迟 grant，在 storage 锁内先 invalidate 全部注册再丢弃
+    chunk，并在 transport reset 之间保留 committed-write 版本时钟（版本不重复）
+  - 新增 17 个适配器级与 6 个 Machine 级测试覆盖合同 §4 U1 的验收项；合同 §4 的 14 条 U1 负控制注册进
+    `scripts/debug/stage6-mutations`（`direct-mem-u1-*`），每条都指向必须失败的已提交测试
+
 - **TLM U7: 累积验证与收尾（issue #179）**
   - 合同 §4 的十一条负控制全部在 mutation runner（`scripts/debug/stage6-mutations`）注册，并逐条指向必须
     失败的已提交测试：默认 transport 不是 native（`tlm-u1-default-not-native`）、
