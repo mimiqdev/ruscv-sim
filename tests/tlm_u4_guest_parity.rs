@@ -15,18 +15,22 @@
 //! * [`the_guest_suite_fails_when_the_tlm_commit_log_diverges`] and
 //!   [`the_guest_suite_fails_when_the_direct_commit_log_diverges`] inject a
 //!   whitespace-only divergence after an identical first line, in one pass at
-//!   a time, so a first-line-only or whitespace-insensitive comparison, or a
-//!   suite that compares the direct pass with the TLM pass instead of native,
-//!   fails here.
+//!   a time, so a first-line-only or whitespace-insensitive comparison fails
+//!   here, and each proves the other pass stayed byte-identical. The suite
+//!   requires the TLM log to equal the native one before it looks at the
+//!   direct log, so comparing the direct log with the TLM log would be
+//!   equivalent to comparing it with native; the script compares it with
+//!   native, which is what the contract names, and no fixture here can tell
+//!   those two apart.
 //! * [`synthetic_guest_commit_logs_match_between_native_and_tlm`] runs one
 //!   synthetic guest through the public CLI on both routes and compares the
 //!   commit logs byte for byte. This is the target of the
 //!   `tlm-u4-transport-diverges` mutation control: a TLM RAM route that
 //!   changes a value the guest reads changes this log.
 //!
-//! The five-guest parity set named by the contract is also enforced against
-//! the suite script itself: a guest renamed out of the set, or a comparison
-//! weakened to a text diff, fails the invocation checks below.
+//! The parity set named by the contract is also enforced against the suite
+//! script itself: a guest renamed out of the set, or a comparison weakened to
+//! a text diff, fails the invocation checks below.
 
 #[allow(dead_code)]
 mod common;
@@ -38,13 +42,16 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The D10 parity set, in contract order.
-const PARITY_GUESTS: [&str; 5] = [
+/// The parity set, in contract order: the five guests TLM U4 names (D10)
+/// followed by the two direct-memory U3 guests (direct-memory D14).
+const PARITY_GUESTS: [&str; 7] = [
     "hello",
     "s5_timer",
     "s5_external",
     "atomic_tohost_exit",
     "fd_fma",
+    "direct_mem_smc_fence_i",
+    "direct_mem_sv39_pt_store",
 ];
 
 /// Required `rv64i` suite members from `scripts/run_elf_tests.sh`, plus the
@@ -379,12 +386,12 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
         "the guest suite rejected a faithful fake simulator:\n{text}"
     );
     assert!(
-        text.contains("TLM parity logs compared: 5/5"),
-        "the suite did not report five byte-identical parity logs:\n{text}"
+        text.contains("TLM parity logs compared: 7/7"),
+        "the suite did not report seven byte-identical parity logs:\n{text}"
     );
     assert!(
-        text.contains("Direct-memory parity logs compared: 5/5"),
-        "the suite did not report five byte-identical direct-memory logs:\n{text}"
+        text.contains("Direct-memory parity logs compared: 7/7"),
+        "the suite did not report seven byte-identical direct-memory logs:\n{text}"
     );
 
     let invocations = recorded(&scratch);
@@ -465,8 +472,9 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
         }
     }
 
-    // The contract names exactly these five guests; a rename or an extra
-    // member means the checked comparison no longer matches D10.
+    // The contract names exactly these guests: U4's five (dev-plan D10) and
+    // the two direct-memory U3 guests. A rename or an extra member means the
+    // checked comparison no longer matches D10/D14.
     let compared: Vec<&String> = invocations
         .iter()
         .filter(|invocation| !invocation.log.is_empty())
@@ -544,13 +552,13 @@ fn the_guest_suite_fails_when_the_direct_commit_log_diverges() {
         "the suite did not name the diverging direct-memory parity guest:\n{text}"
     );
     assert!(
-        text.contains("Direct-memory parity logs compared: 4/5"),
+        text.contains("Direct-memory parity logs compared: 6/7"),
         "the suite did not count the missing direct-memory comparison:\n{text}"
     );
 
-    // The comparison is against native, not against the TLM pass: that pass
-    // is still byte-identical here, so a suite that compared the third pass
-    // with the second would accept the divergence.
+    // The divergence is confined to the third pass: this guest's TLM log is
+    // still byte-identical to native, so the failure above can only be the
+    // direct comparison.
     let invocations = recorded(&scratch);
     let runs: Vec<&Invocation> = invocations
         .iter()

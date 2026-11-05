@@ -47,6 +47,8 @@ def raw_sba_word(address):
     for _ in range(50):
         if (read(0x38) & (1 << 21)) == 0:
             break
+    else:
+        raise gdb.GdbError("the system bus stayed busy for address %#x" % address)
     value = read(0x3c)
     # Leave the DM with word access and no read-on-address.
     send("dmi_write 0x38 %d" % (2 << 17))

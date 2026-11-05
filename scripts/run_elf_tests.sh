@@ -56,8 +56,11 @@ fi
 # direct memory enabled, each with its declared profile. These parity guests
 # write --log-commits on every pass, and every file must be byte-identical to
 # the native one, so neither the TLM route nor a granted host pointer may
-# change a retired instruction.
-PARITY_GUESTS=(hello s5_timer s5_external atomic_tohost_exit fd_fma)
+# change a retired instruction. The five U4 guests come first; the two
+# direct-memory U3 guests that exercise self-modifying code and a page-table
+# walk join them, so their three passes are compared as bytes too.
+PARITY_GUESTS=(hello s5_timer s5_external atomic_tohost_exit fd_fma
+    direct_mem_smc_fence_i direct_mem_sv39_pt_store)
 LOG_DIR="${OUTDIR}/commit-logs"
 rm -rf "${LOG_DIR}"
 mkdir -p "${LOG_DIR}"
