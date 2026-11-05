@@ -1,0 +1,16 @@
+diff --git i/src/capi/mod.rs w/src/capi/mod.rs
+index 2859d89..e66bda7 100644
+--- i/src/capi/mod.rs
++++ w/src/capi/mod.rs
+@@ -729,9 +729,8 @@ pub unsafe extern "C" fn ruscv_machine_invalidate_direct_mem(
+     let Some(handle) = (unsafe { machine.as_ref() }) else {
+         return Status::InvalidArgument as i32;
+     };
+-    if std::thread::current().id() != handle.gate.creator {
+-        return Status::NotCreatorThread as i32;
+-    }
++    // MUTATION: an invalidation from another thread is served instead of
++    // being rejected.
+     if let Some(registry) = &handle.direct_mem {
+         registry.invalidate(start, end);
+     }
