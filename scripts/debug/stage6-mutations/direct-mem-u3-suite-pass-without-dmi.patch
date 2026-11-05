@@ -1,0 +1,13 @@
+diff --git i/scripts/run_elf_tests.sh w/scripts/run_elf_tests.sh
+index 584baab..9e8eb10 100755
+--- i/scripts/run_elf_tests.sh
++++ w/scripts/run_elf_tests.sh
+@@ -353,7 +353,7 @@ for elf in "${ELF_FILES[@]}"; do
+     # direct-memory U3 (direct-memory D14): the same guest, profile and cycle
+     # bound a third time with the direct-memory selection. A failure here is a
+     # real defect, never a skip.
+-    direct_output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" "${isa_args[@]}" --transport tlm --dmi "${direct_log_args[@]}" 2>&1)
++    direct_output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" "${isa_args[@]}" --transport tlm "${direct_log_args[@]}" 2>&1)
+     direct_status=$?
+     if ! reason=$(classify_pass "${name}" "${direct_status}" "${direct_output}"); then
+         printf '%s\n' "${direct_output}"

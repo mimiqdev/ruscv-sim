@@ -1,0 +1,14 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index 2e50497..10e0510 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -367,7 +367,8 @@ impl TlmRamAdapter {
+         }
+         let descriptor = request.descriptor();
+         let store = match descriptor.category {
+-            PhysicalAccessKind::Fetch | PhysicalAccessKind::DataRead => false,
++            PhysicalAccessKind::Fetch => return None,
++            PhysicalAccessKind::DataRead => false,
+             PhysicalAccessKind::DataWrite => true,
+         };
+         let width = descriptor.width.bytes();

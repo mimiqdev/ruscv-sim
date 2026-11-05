@@ -1,0 +1,42 @@
+diff --git i/src/core/translation.rs w/src/core/translation.rs
+index dbaaa29..45c63b6 100644
+--- i/src/core/translation.rs
++++ w/src/core/translation.rs
+@@ -243,6 +243,17 @@ impl RiscvCore {
+         port: &mut (dyn PhysicalDataAccess + Send),
+         pte_addr: u64,
+     ) -> Result<u64, Walk> {
++        use std::collections::BTreeMap;
++        use std::sync::{Mutex, OnceLock};
++        static CACHE: OnceLock<Mutex<BTreeMap<u64, u64>>> = OnceLock::new();
++        if let Some(value) = CACHE
++            .get_or_init(Default::default)
++            .lock()
++            .unwrap()
++            .get(&pte_addr)
++        {
++            return Ok(*value);
++        }
+         let issued = match hart_issued_paddr(
+             pte_addr,
+             self.base_addr,
+@@ -277,11 +288,17 @@ impl RiscvCore {
+                 format!("Sv39 walk read returned {} bytes, expected 8", bytes.len()),
+             ));
+         }
+-        Ok(u64::from_le_bytes(
++        let value = u64::from_le_bytes(
+             bytes[..8]
+                 .try_into()
+                 .expect("the length check fixes the count"),
+-        ))
++        );
++        CACHE
++            .get_or_init(Default::default)
++            .lock()
++            .unwrap()
++            .insert(pte_addr, value);
++        Ok(value)
+     }
+ 
+     /// The step-9 atomic conditional update of one leaf PTE. The
