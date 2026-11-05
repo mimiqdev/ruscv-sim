@@ -128,6 +128,15 @@ impl RamSlot {
         }
     }
 
+    /// True while a direct copy holds the direct-memory lock, for tests.
+    #[cfg(test)]
+    pub(crate) fn direct_memory_lock_held(&self) -> bool {
+        match &self.inner.kind {
+            RamKind::Native(_) => false,
+            RamKind::Tlm(adapter) => adapter.direct_memory_lock_held(),
+        }
+    }
+
     /// Why the TLM transport refuses further transactions, if it does.
     #[cfg(test)]
     pub(crate) fn poison_reason(&self) -> Option<String> {

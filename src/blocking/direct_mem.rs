@@ -427,6 +427,16 @@ impl DirectMemRegions {
         BlockingDirectMemInvalidator::new(self)
     }
 
+    /// True while a direct copy holds the direct-memory lock, for tests.
+    ///
+    /// A `try_lock` failure is the only scheduler-independent way to observe
+    /// that the lock is held, so the copy-barrier test uses this instead of a
+    /// timing window.
+    #[cfg(test)]
+    pub(crate) fn lock_held(&self) -> bool {
+        self.state.try_lock().is_err()
+    }
+
     /// The current invalidation count, sampled before one query begins.
     pub(crate) fn epoch(&self) -> u64 {
         match self.state.lock() {

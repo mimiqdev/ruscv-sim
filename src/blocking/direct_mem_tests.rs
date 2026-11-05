@@ -12,7 +12,6 @@ use crate::ram::RamSlot;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::Duration;
 
 const BASE: u64 = 0x8000_0000;
 const SIZE: usize = 0x4000;
@@ -485,16 +484,15 @@ fn a_grant_raced_by_an_invalidation_is_discarded() {
 }
 
 #[test]
-fn an_invalidation_waits_for_a_copy_that_is_in_flight() {
+fn a_direct_copy_holds_the_direct_memory_lock() {
     let target = target();
     let slot = slot(&target);
     let mut port = ValidatedPhysicalAccess::new(slot.clone());
     assert_eq!(read(&mut port, BASE, PhysicalWidth::Word).len(), 4);
     assert_eq!(slot.cached_direct_mem_regions(), 1);
 
-    // A direct copy that holds the direct-memory lock until the test releases
-    // it.  The pause point sits between the grant lookup and the byte copy, so
-    // this proves that window: an invalidation cannot slip between them.
+    // A direct copy that pauses between the grant lookup and the byte copy, so
+    // the paused moment is exactly the window an invalidation could slip into.
     let (copying, copying_rx) = mpsc::channel();
     let (release, release_rx) = mpsc::channel();
     let release_rx = Mutex::new(release_rx);
@@ -508,30 +506,28 @@ fn an_invalidation_waits_for_a_copy_that_is_in_flight() {
     };
     copying_rx.recv().unwrap();
 
-    // The copy is released only after a delay, so the assertion below reads a
-    // definite ordering rather than a timing window: a lock that the copy still
-    // holds cannot let this call return before that release.
-    let released = Arc::new(AtomicBool::new(false));
-    let releaser = {
-        let released = released.clone();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(500));
-            released.store(true, Ordering::SeqCst);
-            release.send(()).unwrap();
-        })
-    };
-    target.invalidate_everything();
+    // A failed `try_lock` is the scheduler-independent observation: the copy
+    // holds the direct-memory lock, so `invalidate`, which takes the same lock,
+    // can neither enter nor return while the copy is in flight (direct-memory
+    // D8).
     assert!(
-        released.load(Ordering::SeqCst),
-        "an invalidation returned while a direct copy was in flight"
+        slot.direct_memory_lock_held(),
+        "a direct copy did not hold the direct-memory lock"
     );
+    release.send(()).unwrap();
     assert_eq!(reader.join().unwrap(), vec![0; 4]);
-    releaser.join().unwrap();
     slot.set_direct_copy_hook(None);
+    assert!(
+        !slot.direct_memory_lock_held(),
+        "the direct-memory lock stayed held after the copy"
+    );
+
+    // The invalidation that the lock deferred now takes effect.
+    target.invalidate_everything();
     assert_eq!(
         slot.cached_direct_mem_regions(),
         0,
-        "the invalidation that waited for the copy did not remove the grant"
+        "the invalidation after the copy did not remove the grant"
     );
 }
 

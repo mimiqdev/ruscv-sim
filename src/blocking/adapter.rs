@@ -682,6 +682,14 @@ impl TlmRamAdapter {
         }
     }
 
+    /// True while a direct copy holds the direct-memory lock, for tests.
+    #[cfg(test)]
+    pub(crate) fn direct_memory_lock_held(&self) -> bool {
+        self.direct
+            .as_ref()
+            .is_some_and(|regions| regions.lock_held())
+    }
+
     /// Number of cached grants, for tests.
     #[cfg(test)]
     pub(crate) fn cached_regions(&self) -> usize {

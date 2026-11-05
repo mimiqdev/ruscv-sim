@@ -1400,9 +1400,9 @@
         "target": [
           "--lib"
         ],
-        "test": "blocking::direct_mem_tests::an_invalidation_waits_for_a_copy_that_is_in_flight",
+        "test": "blocking::direct_mem_tests::a_direct_copy_holds_the_direct_memory_lock",
         "failure": [
-          "an invalidation returned while a direct copy was in flight"
+          "a direct copy did not hold the direct-memory lock"
         ]
       }
     ]
