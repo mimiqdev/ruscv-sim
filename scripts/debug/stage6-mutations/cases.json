@@ -1374,5 +1374,37 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "direct-mem-u1-overlap-not-replaced",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u1-overlap-not-replaced.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::a_new_grant_replaces_every_overlapping_cached_grant",
+        "failure": [
+          "a new grant did not replace every overlapping cached grant"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "direct-mem-u1-copy-without-the-lock",
+    "source": "src/blocking/direct_mem.rs",
+    "patch": "direct-mem-u1-copy-without-the-lock.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::direct_mem_tests::an_invalidation_waits_for_a_copy_that_is_in_flight",
+        "failure": [
+          "an invalidation returned while a direct copy was in flight"
+        ]
+      }
+    ]
   }
 ]

@@ -1,0 +1,46 @@
+diff --git i/src/blocking/direct_mem.rs w/src/blocking/direct_mem.rs
+index af89b51..529a4d9 100644
+--- i/src/blocking/direct_mem.rs
++++ w/src/blocking/direct_mem.rs
+@@ -470,12 +470,16 @@ impl DirectMemRegions {
+     /// The lookup and the copy happen in one lock hold, so an invalidation
+     /// cannot free the storage between them.
+     pub(crate) fn read(&self, paddr: u64, width: usize, bytes: &mut [u8]) -> Option<Femtoseconds> {
+-        let cache = self.state.lock().ok()?;
+-        let region = cache
+-            .regions
+-            .iter()
+-            .find(|region| region.covers(paddr, width) && region.access.allows_read())?;
+-        let offset = paddr - region.start;
++        // MUTATION: release the direct-memory lock before the copy, so an
++        // invalidation can return while the copy is still in flight.
++        let (pointer, offset, latency) = {
++            let cache = self.state.lock().ok()?;
++            let region = cache
++                .regions
++                .iter()
++                .find(|region| region.covers(paddr, width) && region.access.allows_read())?;
++            (region.pointer, paddr - region.start, region.read_latency)
++        };
+         #[cfg(test)]
+         {
+             let hook = self
+@@ -488,15 +492,11 @@ impl DirectMemRegions {
+             }
+         }
+         for (index, byte) in bytes.iter_mut().take(width).enumerate() {
+-            // SAFETY: the grant promises the range stays valid until an
+-            // overlapping invalidation, and this hold excludes one, so the
+-            // pointer addresses `width` bytes from `paddr`.  `AtomicU8` has
+-            // byte layout and alignment, and the relaxed accesses match the
+-            // target's own (direct-memory D10).
+-            *byte = unsafe { AtomicU8::from_ptr(region.pointer.add(offset as usize + index)) }
++            // MUTATION: the pointer is no longer protected by the lock.
++            *byte = unsafe { AtomicU8::from_ptr(pointer.add(offset as usize + index)) }
+                 .load(Ordering::Relaxed);
+         }
+-        Some(region.read_latency)
++        Some(latency)
+     }
+ 
+     /// Caches one validated grant, replacing every grant it overlaps.

@@ -1,0 +1,16 @@
+diff --git i/src/blocking/direct_mem.rs w/src/blocking/direct_mem.rs
+index af89b51..ff7632a 100644
+--- i/src/blocking/direct_mem.rs
++++ w/src/blocking/direct_mem.rs
+@@ -513,10 +513,8 @@ impl DirectMemRegions {
+         if cache.invalidations != epoch {
+             return false;
+         }
++        // MUTATION: keep every cached grant that overlaps the new one.
+         let region = Region::new(grant);
+-        cache
+-            .regions
+-            .retain(|cached| !cached.overlaps(region.start, region.end));
+         if cache.regions.len() >= DIRECT_MEM_REGION_LIMIT {
+             cache.regions.remove(0);
+         }
