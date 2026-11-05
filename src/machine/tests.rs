@@ -3284,6 +3284,110 @@ fn covered_fetches_and_loads_leave_b_transport_only_with_direct_memory() {
     );
 }
 
+/// direct-memory U3 (direct-memory D11): a system-bus read and a system-bus
+/// write each stay one counted transaction while direct memory is active, and
+/// both directions observe the other route's bytes: the guest's direct load
+/// returns what the system bus wrote, and a host view returns what a direct
+/// store wrote.
+#[test]
+fn sba_access_stays_counted_and_each_route_sees_the_other() {
+    // nop, then load 0(x1) and store it to 8(x1).
+    let code = [elf::nop(), elf::ld(3, 1, 0), elf::sd(3, 1, 8)];
+    let target = DirectMemTarget::new(elf::BASE, 0x4000);
+    // The store below needs the write half of the grant (direct-memory D5).
+    target.set_reply(DirectMemReply::Chunk(BlockingDirectMemAccess::ReadWrite));
+    let mut owned =
+        OwnedMachine::new(direct_mem_config(&target, true), direct_mem_image(&code)).unwrap();
+    let address = elf::BASE + 0x200;
+    owned.state_mut().regs[1] = address;
+    halted_by_dmi(&mut owned);
+
+    // Each direction stays exactly one counted transaction.  A `DebugInbound`
+    // request never takes the direct path, and it never queries either
+    // (direct-memory D3/D4).
+    let before = target.transactions();
+    let sbcs = sba_write_word(&mut owned, address, 0x1122_3344);
+    assert_eq!(sbcs & SBBUSY, 0, "the system bus write did not complete");
+    assert_eq!(sberror_of(&mut owned), 0);
+    assert_eq!(
+        target.transactions(),
+        before + 1,
+        "an SBA write was not exactly one counted transaction"
+    );
+    let seen = sba_read_word(&mut owned, address);
+    assert_eq!(
+        seen, 0x1122_3344,
+        "the system bus read did not see its write"
+    );
+    assert_eq!(
+        target.transactions(),
+        before + 2,
+        "an SBA read was not exactly one counted transaction"
+    );
+    assert_eq!(
+        target.queries(),
+        0,
+        "a debug-initiated access queried for a grant"
+    );
+
+    // The guest's load sees the host-written bytes through the direct path.
+    // Only the run's first parcel (the cold fetch that installs the grant) is
+    // allowed to transact, and it is the third transaction since the halt.
+    owned
+        .dmi_write(DM_DMCONTROL, DM_DMACTIVE | DM_RESUMEREQ)
+        .unwrap();
+    let mut retired = 0;
+    while retired < 2 {
+        let turn = owned.step(false).unwrap();
+        if matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)) {
+            retired += 1;
+        }
+    }
+    assert_eq!(
+        owned.state().regs[3],
+        0x1122_3344,
+        "the direct load did not see the SBA write"
+    );
+    assert_eq!(
+        target.transactions(),
+        before + 3,
+        "a covered load took b_transport"
+    );
+
+    // The covered store is direct too.
+    let turn = owned.step(false).unwrap();
+    assert!(
+        matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)),
+        "the store did not retire: {:?}",
+        turn.hart().outcome
+    );
+    // The returned boundary holds its admission until it is dropped.
+    drop(turn);
+    assert_eq!(
+        target.transactions(),
+        before + 3,
+        "a covered store took b_transport"
+    );
+    let stored = owned.state().regs[3];
+    assert_eq!(
+        target.bytes_at(address + 8, 8),
+        stored.to_le_bytes().to_vec(),
+        "the direct store did not reach the target"
+    );
+
+    // A host view reads the direct store back, and it is debug transport, so
+    // it is not a transaction of its own (direct-memory D11).
+    assert_eq!(
+        storage_read(&owned, 0x208),
+        stored,
+        "the host view missed the direct store"
+    );
+    assert_eq!(
+        target.transactions(),
+        before + 3,
+        "a host view used b_transport"
+    );
+}
 #[test]
 fn a_failed_recomposition_after_reset_leaves_the_old_composition_able_to_regrant() {
     let target = DirectMemTarget::new(elf::BASE, 0x4000);
