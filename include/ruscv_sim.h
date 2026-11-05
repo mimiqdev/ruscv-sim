@@ -24,12 +24,27 @@
  *     state.
  *   - Target callbacks run synchronously inside a ruscv-sim call on that
  *     thread.  Any call back into this ABI from a callback fails with
- *     RUSCV_ERROR_REENTRANT, whichever handle it names.
+ *     RUSCV_ERROR_REENTRANT, whichever handle it names.  One call is exempt:
+ *     ruscv_machine_invalidate_direct_mem touches only the handle's
+ *     direct-memory registry, so a target may call it from inside its own
+ *     callback, and it is also accepted on a handle poisoned by a caught panic.
+ *     Every other entry point still rejects a callback and a poisoned handle.
  *   - A Rust panic is caught at the boundary: the handle is poisoned and the
  *     call returns RUSCV_ERROR_PANIC.  Every later call returns
- *     RUSCV_ERROR_POISONED.
+ *     RUSCV_ERROR_POISONED, except ruscv_machine_invalidate_direct_mem and
+ *     ruscv_machine_destroy.
  *   - Payload data pointers are owned by ruscv-sim and valid only for the
  *     duration of one callback.
+ *
+ * Layout rule:
+ *
+ *   No published struct carries a size or version field, so fields are only
+ *   ever appended: every existing field keeps its offset and its size, and the
+ *   fields added by direct memory are final in their structs
+ *   (ruscv_target.get_direct_mem_ptr, ruscv_payload.dmi_allowed).  A host
+ *   compiled against a previous header therefore keeps working source-level but
+ *   must be recompiled against this header before it links this library; the
+ *   ABI is not binary-compatible with the previous header.
  */
 
 #ifndef RUSCV_SIM_H
@@ -115,6 +130,17 @@ extern "C" {
 /* Capacity of one committed-write snapshot buffer, in bytes. */
 #define RUSCV_SNAPSHOT_MAX 64
 
+/* Direct-memory access (the IEEE 1666 DMI access values). */
+#define RUSCV_DMI_ACCESS_NONE 0
+#define RUSCV_DMI_ACCESS_READ 1
+#define RUSCV_DMI_ACCESS_WRITE 2
+#define RUSCV_DMI_ACCESS_READ_WRITE 3
+
+/* The three answers a get_direct_mem_ptr callback may give. */
+#define RUSCV_DMI_GRANTED 0
+#define RUSCV_DMI_DENIED 1
+#define RUSCV_DMI_FAILED 2
+
 /* Run classification. */
 #define RUSCV_RUN_RUNNING 0
 #define RUSCV_RUN_EXITED 1
@@ -163,6 +189,12 @@ typedef struct ruscv_atomic {
  * status; a target that leaves it or changes address/command/length has not
  * completed the transaction.  A write target must apply the write as one
  * indivisible semantic write before returning.
+ *
+ * Direct memory: a target that can serve this address through a host pointer
+ * sets `dmi_allowed` on a completed non-atomic transaction.  That hint is the
+ * only licence for ruscv-sim's one direct-memory query of this access; it is
+ * ignored with direct memory off, on a non-completion and on an atomic
+ * transaction.  The field is the final field of the struct.
  */
 typedef struct ruscv_payload {
     uint64_t address;
@@ -175,7 +207,81 @@ typedef struct ruscv_payload {
     uint32_t outcome_unknown;
     uint64_t delay_fs;
     ruscv_atomic atomic;
+    int32_t dmi_allowed;
 } ruscv_payload;
+
+/*
+ * One direct-memory query and its answer (`ruscv_target.get_direct_mem_ptr`).
+ *
+ * The request half is filled by ruscv-sim: `address` is the physical start of
+ * the completed access, `length` its width in bytes, and `access` is one of
+ * RUSCV_DMI_ACCESS_READ or RUSCV_DMI_ACCESS_WRITE, the direction that access
+ * needs.  The target answers exactly one of RUSCV_DMI_GRANTED,
+ * RUSCV_DMI_DENIED or RUSCV_DMI_FAILED:
+ *
+ *   - RUSCV_DMI_GRANTED fills the response half.  `start`..`end` is the
+ *     inclusive physical range, `pointer` addresses `start`, `access` is the
+ *     granted RUSCV_DMI_ACCESS_READ, WRITE or READ_WRITE, and the two latencies
+ *     are exact femtoseconds per access.  The range must contain the queried
+ *     address, the pointer must be non-NULL, the range must not be inverted or
+ *     overflow a representable length, `access` must not be
+ *     RUSCV_DMI_ACCESS_NONE, and neither latency may exceed the table's
+ *     `max_delay_fs`; anything else is a protocol failure of the access that
+ *     queried it (never a guest fault).
+ *   - RUSCV_DMI_DENIED caches nothing and is not an error.
+ *   - RUSCV_DMI_FAILED means the target could not establish an answer, the C
+ *     ABI's counterpart of the contained exception in the simulator's direct
+ *     memory contract.  It is not a denial: the access is an unknown
+ *     completion, the transport is poisoned and only the target's acknowledged
+ *     transport reset followed by ruscv_machine_reset recovers.
+ *
+ * Anything other than those three return values has the effect of
+ * RUSCV_DMI_FAILED: the ABI never guesses what an out-of-contract answer meant.
+ *
+ * Granting direct memory is an unsafe promise, and C has no type system to
+ * carry it.  The target must satisfy every one of these obligations until it
+ * has invalidated a covering range (see ruscv_machine_invalidate_direct_mem):
+ *
+ *   1. Pointer lifetime.  `pointer` addresses `start` and stays valid for the
+ *      whole inclusive `start`..`end` range at that address.  ruscv-sim holds no
+ *      pointer outside the adapter and never reads it after an invalidation
+ *      returns, so the target must not free, move, remap or narrow that storage
+ *      before it has invalidated the range.  Transport reset invalidates every
+ *      registration before the reset callback runs, so storage discarded by a
+ *      reset is covered too.
+ *   2. Aliasing.  The pointer addresses the same bytes b_transport and
+ *      transport_dbg serve, so a write through any of the three is visible to
+ *      the others at once.  A range may be granted only where b_transport
+ *      would complete with RUSCV_TLM_OK for the granted access, so faults stay
+ *      identical.
+ *   3. Byte-wise atomic access.  ruscv-sim copies through the pointer one byte
+ *      at a time with relaxed atomic loads and stores (it never assumes a Rust
+ *      reference or an exclusive alias).  The bytes behind the pointer must
+ *      therefore tolerate those accesses without a data race: use an array of
+ *      _Atomic unsigned char (or equally atomic storage) and access it
+ *      atomically everywhere, including in b_transport and transport_dbg.
+ *   4. Invalidate-and-free ordering.  Before the target frees, moves, remaps or
+ *      narrows a granted range, or changes the status b_transport would report
+ *      for it, it must call ruscv_machine_invalidate_direct_mem for a covering
+ *      range and must refuse new grants across that window.  A returning
+ *      invalidation proves that no copy through a removed pointer is in flight.
+ *      The target may call it between grants, from inside b_transport or from
+ *      inside transport_reset, on the creating thread only.
+ *
+ * Running several direct-memory Machines concurrently on one target is
+ * memory-safe but architecturally unspecified; sequential reuse of a shared
+ * target is specified.
+ */
+typedef struct ruscv_direct_mem {
+    uint64_t address;
+    size_t length;
+    int32_t access;
+    uint64_t start;
+    uint64_t end;
+    uint8_t *pointer;
+    uint64_t read_latency_fs;
+    uint64_t write_latency_fs;
+} ruscv_direct_mem;
 
 /* One debug-transport request (dev-plan D6): no delay, no side effects. */
 typedef struct ruscv_debug {
@@ -194,6 +300,14 @@ typedef struct ruscv_debug {
  * `transport_dbg` returns the number of bytes transferred; a short transfer is
  * a failed debug transport.  `transport_reset` returns nonzero when the target
  * has quiesced and accepts new accesses.
+ *
+ * `get_direct_mem_ptr` is optional and is the final field.  NULL means the
+ * target offers no direct memory: ruscv-sim selects direct memory off for that
+ * handle, issues no query and ignores every `dmi_allowed` hint, exactly as a
+ * handle whose Machine has direct memory disabled.  A non-NULL callback selects
+ * direct memory for the handle and must obey every obligation documented above
+ * `ruscv_direct_mem`; the callback answers RUSCV_DMI_GRANTED,
+ * RUSCV_DMI_DENIED or RUSCV_DMI_FAILED.
  */
 typedef struct ruscv_target {
     uint64_t max_delay_fs;
@@ -201,6 +315,7 @@ typedef struct ruscv_target {
     void (*b_transport)(void *user, ruscv_payload *payload);
     size_t (*transport_dbg)(void *user, ruscv_debug *debug);
     int32_t (*transport_reset)(void *user);
+    int32_t (*get_direct_mem_ptr)(void *user, ruscv_direct_mem *direct_mem);
 } ruscv_target;
 
 /* One grant's facts. */
@@ -312,6 +427,26 @@ int32_t ruscv_machine_result(ruscv_machine *machine, ruscv_result *out);
  * the handle unusable.
  */
 int32_t ruscv_machine_reset(ruscv_machine *machine);
+
+/*
+ * Invalidates every cached direct-memory grant overlapping the inclusive
+ * physical range `start`..`end` (direct-memory D8).
+ *
+ * This is the one call the ABI accepts from inside a target callback and on a
+ * handle poisoned by a caught panic, because it touches only the direct-memory
+ * registry owned by the Rust target wrapper and no run state.  It is still
+ * accepted on the creating thread only; a call from another thread fails with
+ * RUSCV_ERROR_NOT_CREATOR_THREAD and changes no state.  Every other entry point
+ * remains re-entry and poison protected.  An inverted range is treated as an
+ * invalidation of the whole address space.  A native handle, or a target with a
+ * NULL query, has no cached grant and the call succeeds.
+ *
+ * A target calls this before it frees, moves or remaps granted storage; the
+ * call returns only after every in-flight copy through a removed pointer has
+ * finished.
+ */
+int32_t ruscv_machine_invalidate_direct_mem(ruscv_machine *machine, uint64_t start,
+                                            uint64_t end);
 
 /*
  * Copies the most recent diagnostic message into `buffer`, NUL-terminated and

@@ -56,6 +56,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     跨失败的 recomposition 保留它，此时 SC 结果与 `dmi` 关闭时相同）；合同 §4 的 U2 负控制注册进
     `scripts/debug/stage6-mutations`（`direct-mem-u2-*`），每条都指向必须失败的已提交测试
 
+- **Direct memory U4: C ABI（issue #191）**
+  - `ruscv_target` 末尾新增可空 `get_direct_mem_ptr`：`NULL` 表示 target 不提供直接内存，行为与 `dmi` 关闭
+    完全一致；非 `NULL` 选择直接内存，`ruscv_machine_create` 的签名因此不变。`ruscv_payload` 末尾新增
+    `dmi_allowed` 响应 hint。新增 `ruscv_direct_mem`、`RUSCV_DMI_ACCESS_*` 与
+    granted／denied／failed 三种答案；`FAILED` 是 D3 的包含异常情形（未知完成并毒化 transport），不是
+    denial。头文件在 `ruscv_direct_mem` 上完整陈述 D10 义务：指针寿命、别名、逐字节原子访问与
+    invalidate-before-free 顺序
+  - 新增 `ruscv_machine_invalidate_direct_mem(machine, start, end)`：C ABI 唯一允许在 target 回调内、以及
+    在被毒化句柄上调用的入口，仍限创建线程。它只访问 Rust target wrapper 从 create 起持有、位于 handle
+    run-state 锁之外、并跨 reset 的 Machine 替换保留的 `BlockingDirectMemRegistry`，因此不会在回调内
+    死锁，也不会因句柄毒化而失败；其它入口仍拒绝回调与毒化句柄。target 的 `transport_reset` 在调用 C
+    reset 之前 invalidate 全部注册（D10/D13）
+  - 头文件记录布局规则：已发布结构体没有 size 或 version 字段，新字段只追加在末尾
+    （`get_direct_mem_ptr`、`dmi_allowed`），既有字段偏移不变；用旧头文件编译的宿主必须重新编译
+  - `scripts/test_capi_smoke.sh` 的普通 C smoke 与 Rust 测试覆盖 grant、NULL 回调、denial、grant 之间的
+    invalidation 与回调内 invalidation、跨线程 invalidation 拒绝、唯一的再入例外、reset，以及直接内存
+    开启时的未知完成与 reset 后 grant 恢复；新增两个 `direct-mem-u4-*` 负控制
+
 - **TLM U7: 累积验证与收尾（issue #179）**
   - 合同 §4 的十一条负控制全部在 mutation runner（`scripts/debug/stage6-mutations`）注册，并逐条指向必须
     失败的已提交测试：默认 transport 不是 native（`tlm-u1-default-not-native`）、

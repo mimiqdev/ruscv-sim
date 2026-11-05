@@ -7,32 +7,54 @@
 //! classification.  `tests/capi/smoke.c` covers the same surface from plain C.
 
 use super::host::{RunState, Session};
-use super::target::{atomic_kind, atomic_outcome, CDebug, CPayload, CTarget, SNAPSHOT_CAPACITY};
+use super::target::{
+    atomic_kind, atomic_outcome, dmi_access, dmi_result, CDebug, CDirectMem, CPayload, CTarget,
+    SNAPSHOT_CAPACITY,
+};
 use super::{
     ruscv_machine_boundary, ruscv_machine_create, ruscv_machine_destroy, ruscv_machine_diagnostic,
-    ruscv_machine_load_elf, ruscv_machine_reset, ruscv_machine_result, ruscv_machine_run_grant,
-    ruscv_machine_self_test_panic, ruscv_machine_set_commit_log, CBoundary, CGrant, CResult,
-    RuscvMachine, Status,
+    ruscv_machine_invalidate_direct_mem, ruscv_machine_load_elf, ruscv_machine_reset,
+    ruscv_machine_result, ruscv_machine_run_grant, ruscv_machine_self_test_panic,
+    ruscv_machine_set_commit_log, CBoundary, CGrant, CResult, RuscvMachine, Status,
 };
 use crate::blocking::{Femtoseconds, TickPeriod, TurnCompletionBound};
 use crate::elf::LoadImage;
 use crate::executor::observation_fixture as elf;
 use crate::machine::{IsaProfile, MachineConfig};
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// One nanosecond, the documented default tick period.
 const TICK_FS: u64 = 1_000_000;
 
 /// A RAM target whose callbacks are the C ABI's own calling convention.
+///
+/// Its granted storage is an array of `AtomicU8`, because a direct-memory
+/// grant promises relaxed byte-wise atomic access (direct-memory D10).
 struct TestTarget {
     base: u64,
-    ram: Mutex<Vec<u8>>,
+    ram: Mutex<Vec<AtomicU8>>,
     /// Status the target reports for every blocking transaction.
     status: AtomicI32,
     /// Mark every blocking transaction outcome-unknown.
     unknown: AtomicBool,
+    /// Mark a data read outcome-unknown, once the grant is cached.
+    unknown_on_data_read: AtomicBool,
+    /// Set `dmi_allowed` on every completed non-atomic transaction.
+    hint: AtomicBool,
+    /// The inclusive range a query grants, when any.
+    grant: Mutex<Option<(u64, u64)>>,
+    /// Number of direct-memory queries.
+    queries: AtomicUsize,
+    /// The request half of the most recent direct-memory query.
+    last_query: Mutex<Option<(u64, usize, i32)>>,
+    /// Invalidate the whole space from inside a data-read `b_transport`.
+    invalidate_in_read: AtomicBool,
+    /// Status the in-callback invalidation returned, or `i32::MIN`.
+    invalidate_status: AtomicI32,
+    /// Number of in-callback invalidations attempted.
+    invalidations: AtomicUsize,
     /// Number of transport resets the target acknowledged.
     reset_acks: AtomicUsize,
     /// Whether the target acknowledges a transport reset.
@@ -60,9 +82,17 @@ impl TestTarget {
     fn new(base: u64, size: usize) -> Self {
         Self {
             base,
-            ram: Mutex::new(vec![0; size]),
+            ram: Mutex::new((0..size).map(|_| AtomicU8::new(0)).collect()),
             status: AtomicI32::new(super::target::status::OK),
             unknown: AtomicBool::new(false),
+            unknown_on_data_read: AtomicBool::new(false),
+            hint: AtomicBool::new(false),
+            grant: Mutex::new(None),
+            queries: AtomicUsize::new(0),
+            last_query: Mutex::new(None),
+            invalidate_in_read: AtomicBool::new(false),
+            invalidate_status: AtomicI32::new(i32::MIN),
+            invalidations: AtomicUsize::new(0),
             reset_acks: AtomicUsize::new(0),
             reset_ack: AtomicBool::new(true),
             debug_calls: AtomicUsize::new(0),
@@ -84,6 +114,18 @@ impl TestTarget {
         self.second_status.load(Ordering::SeqCst)
     }
 
+    fn queries(&self) -> usize {
+        self.queries.load(Ordering::SeqCst)
+    }
+
+    fn transactions(&self) -> usize {
+        self.transactions.load(Ordering::SeqCst)
+    }
+
+    fn last_query(&self) -> Option<(u64, usize, i32)> {
+        *self.last_query.lock().unwrap()
+    }
+
     /// The half-open window of one access, clamped to the modeled RAM.
     ///
     /// A callback must never panic across the C ABI, so an access outside the
@@ -93,6 +135,27 @@ impl TestTarget {
         let size = self.ram.lock().unwrap().len();
         let start = offset.min(size);
         (start, (offset + len).min(size))
+    }
+
+    /// The host pointer of one granted physical address.
+    fn pointer_at(&self, address: u64) -> *mut u8 {
+        let offset = (address - self.base) as usize;
+        let ram = self.ram.lock().unwrap();
+        ram.as_ptr().wrapping_add(offset).cast_mut().cast::<u8>()
+    }
+}
+
+/// Copies words out of the target's atomic bytes.
+fn ram_read(ram: &[AtomicU8], offset: usize, bytes: &mut [u8]) {
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = ram[offset + index].load(Ordering::Relaxed);
+    }
+}
+
+/// Copies words into the target's atomic bytes.
+fn ram_write(ram: &[AtomicU8], offset: usize, bytes: &[u8]) {
+    for (index, byte) in bytes.iter().enumerate() {
+        ram[offset + index].store(*byte, Ordering::Relaxed);
     }
 }
 
@@ -119,17 +182,42 @@ unsafe extern "C" fn target_b_transport(user: *mut c_void, payload: *mut CPayloa
     // SAFETY: the ABI guarantees a Rust-owned buffer of exactly `length` bytes
     // that this callback exclusively borrows for its duration.
     let data = unsafe { std::slice::from_raw_parts_mut(payload.data, len) };
-    let (start, end) = target.window(payload.address, len);
-    let mut ram = target.ram.lock().unwrap();
+    let (start, _end) = target.window(payload.address, len);
+    let ram = target.ram.lock().unwrap();
     if payload.command == super::target::command::READ {
-        data.copy_from_slice(&ram[start..end]);
+        ram_read(&ram, start, data);
     } else {
-        ram[start..end].copy_from_slice(data);
+        ram_write(&ram, start, data);
     }
     drop(ram);
     payload.status = target.status.load(Ordering::SeqCst);
-    if target.unknown.load(Ordering::SeqCst) {
+    if target.unknown.load(Ordering::SeqCst)
+        || (target.unknown_on_data_read.load(Ordering::SeqCst)
+            && payload.access_kind == super::target::access_kind::DATA_READ)
+    {
         payload.outcome_unknown = 1;
+    }
+    // direct-memory D3: the hint is a response hint on a completed non-atomic
+    // transaction, and it is the only licence for one query.
+    if target.hint.load(Ordering::SeqCst)
+        && payload.status == super::target::status::OK
+        && payload.atomic.present == 0
+    {
+        payload.dmi_allowed = 1;
+    }
+    if target.invalidate_in_read.load(Ordering::SeqCst)
+        && payload.access_kind == super::target::access_kind::DATA_READ
+        && payload.atomic.present == 0
+        && target.invalidations.load(Ordering::SeqCst) == 0
+    {
+        // direct-memory D12: this is the one ABI entry a callback may call.  It
+        // must be accepted here even though the outer call still holds the
+        // adapter's state lock.
+        let handle = target.handle.load(Ordering::SeqCst);
+        target.invalidations.fetch_add(1, Ordering::SeqCst);
+        // SAFETY: the handle is live on this thread.
+        let status = unsafe { ruscv_machine_invalidate_direct_mem(handle, 0, u64::MAX) };
+        target.invalidate_status.store(status, Ordering::SeqCst);
     }
 }
 
@@ -149,14 +237,38 @@ unsafe extern "C" fn target_dbg(user: *mut c_void, debug: *mut CDebug) -> usize 
     }
     // SAFETY: as in `target_b_transport`.
     let data = unsafe { std::slice::from_raw_parts_mut(debug.data, len) };
-    let (start, end) = target.window(debug.address, len);
-    let mut ram = target.ram.lock().unwrap();
+    let (start, _end) = target.window(debug.address, len);
+    let ram = target.ram.lock().unwrap();
     if debug.command == super::target::command::READ {
-        data.copy_from_slice(&ram[start..end]);
+        ram_read(&ram, start, data);
     } else {
-        ram[start..end].copy_from_slice(data);
+        ram_write(&ram, start, data);
     }
     len
+}
+
+/// Answers one direct-memory query from the target's configured grant.
+unsafe extern "C" fn target_get_direct_mem_ptr(user: *mut c_void, direct: *mut CDirectMem) -> i32 {
+    // SAFETY: as in `target_b_transport`.
+    let (target, direct) = unsafe { (&*(user.cast::<TestTarget>()), &mut *direct) };
+    target.queries.fetch_add(1, Ordering::SeqCst);
+    *target.last_query.lock().unwrap() = Some((direct.address, direct.length, direct.access));
+    let grant = *target.grant.lock().unwrap();
+    let Some((start, end)) = grant else {
+        return dmi_result::DENIED;
+    };
+    if direct.address < start || direct.address > end {
+        // The range must contain the queried address; a target that cannot
+        // cover it denies instead of answering with a malformed grant.
+        return dmi_result::DENIED;
+    }
+    direct.start = start;
+    direct.end = end;
+    direct.pointer = target.pointer_at(start);
+    direct.access = dmi_access::READ_WRITE;
+    direct.read_latency_fs = 0;
+    direct.write_latency_fs = 0;
+    dmi_result::GRANTED
 }
 
 unsafe extern "C" fn target_reset(user: *mut c_void) -> i32 {
@@ -177,6 +289,16 @@ impl TestTarget {
             b_transport: Some(target_b_transport),
             transport_dbg: Some(target_dbg),
             transport_reset: Some(target_reset),
+            get_direct_mem_ptr: None,
+        }
+    }
+
+    /// The same table with a non-NULL direct-memory query, which is what
+    /// selects direct memory for the handle (direct-memory D12).
+    fn direct_table(&mut self, max_delay_fs: u64) -> CTarget {
+        CTarget {
+            get_direct_mem_ptr: Some(target_get_direct_mem_ptr),
+            ..self.table(max_delay_fs)
         }
     }
 }
@@ -222,14 +344,49 @@ fn elf_file(code: &[u32]) -> tempfile::NamedTempFile {
     file
 }
 
+/// A guest whose only data access is a load from `.tohost`.
+///
+/// The load is outside every code-page grant, so it always takes one
+/// `b_transport`.  That is the access a fixture can invalidate from inside a
+/// callback, and the fetches after it prove the invalidation took effect.
+fn direct_guest(code: u32) -> Vec<u32> {
+    vec![
+        0x0001_0001,
+        elf::lui(4, 0x80),
+        elf::addi(4, 4, 1),
+        elf::slli(4, 4, 12),
+        elf::ld(6, 4, 0),
+        elf::standard_exit(code),
+        // A store outside the declared `.tohost` word first: the exit poll
+        // clears the signal, so this is the byte a test can inspect afterwards.
+        elf::sd(5, 4, 8),
+        elf::sd(5, 4, 0),
+        0x0000_006f,
+    ]
+}
+
 fn c_text(path: &std::path::Path) -> std::ffi::CString {
     std::ffi::CString::new(path.to_str().unwrap()).unwrap()
 }
 
 impl Harness {
     fn new(isa: i32, code: &[u32], max_delay_fs: u64) -> Self {
+        Self::build(isa, code, max_delay_fs, false)
+    }
+
+    /// One handle whose target answers a direct-memory query.
+    fn direct(isa: i32, code: &[u32], max_delay_fs: u64) -> Self {
+        Self::build(isa, code, max_delay_fs, true)
+    }
+
+    fn build(isa: i32, code: &[u32], max_delay_fs: u64, direct: bool) -> Self {
         let mut target = Box::new(TestTarget::new(elf::BASE, 0x1_0000));
-        let table = target.table(max_delay_fs);
+        target.hint.store(true, Ordering::SeqCst);
+        let table = if direct {
+            target.direct_table(max_delay_fs)
+        } else {
+            target.table(max_delay_fs)
+        };
         let mut handle = std::ptr::null_mut();
         // SAFETY: the table and its user pointer stay alive in this harness.
         let status = unsafe { ruscv_machine_create(&table, isa, TICK_FS, &mut handle) };
@@ -307,6 +464,396 @@ impl Harness {
         }
         self.result()
     }
+
+    /// Configures the inclusive range this target's queries grant.
+    fn grant_range(&self, range: Option<(u64, u64)>) {
+        *self.target.grant.lock().unwrap() = range;
+    }
+
+    fn invalidate(&self, start: u64, end: u64) -> i32 {
+        // SAFETY: the handle is live and this is the creating thread.
+        unsafe { ruscv_machine_invalidate_direct_mem(self.handle, start, end) }
+    }
+}
+
+/// The code page above the first two parcels.
+///
+/// The first two fetches and the `.tohost` load are outside it, so a fixture
+/// has a deterministic `b_transport` between cached code fetches.
+fn code_grant() -> (u64, u64) {
+    (elf::BASE + 8, elf::BASE + 0x1000 - 1)
+}
+
+#[test]
+fn a_direct_memory_grant_serves_covered_accesses_without_transport() {
+    // A whole-RAM read-write grant serves the fetches, the only data load and
+    // the exit store, so the guest proves the direct path in one run.
+    let direct = Harness::direct(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    direct.grant_range(Some((elf::BASE, elf::BASE + 0x1_0000 - 1)));
+    let result = direct.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        direct.diagnostic()
+    );
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(
+        direct.target.queries(),
+        1,
+        "one hint is one query, and a grant answers every later access"
+    );
+    assert_eq!(
+        direct.target.last_query(),
+        Some((elf::BASE, 2, dmi_access::READ)),
+        "the query carries the completed access's address, width and direction; the \
+         first parcel is one compressed instruction, so it is 2 bytes wide"
+    );
+    let direct_transactions = direct.target.transactions();
+    assert_eq!(
+        direct_transactions, 1,
+        "only the first uncovered fetch may reach b_transport"
+    );
+    // The image was installed through `transport_dbg` and the fetches read it
+    // back through the granted pointer, while the direct store landed in the
+    // target's own bytes: the pointer, `transport_dbg` and the target share one
+    // storage, as D10's aliasing promise requires.  The witness is the store
+    // outside `.tohost`, because the exit poll clears the signal.
+    let offset = (elf::TOHOST + 8 - elf::BASE) as usize;
+    let ram = direct.target.ram.lock().unwrap();
+    assert_eq!(
+        ram[offset].load(Ordering::Relaxed) as u64
+            | (ram[offset + 1].load(Ordering::Relaxed) as u64) << 8,
+        5,
+        "the direct store did not reach the target's own bytes"
+    );
+    drop(ram);
+
+    // The same guest with a NULL callback: direct memory is off, and every
+    // access is one transaction.
+    let off = Harness::new(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    let result = off.run_to_result(1_000, 16);
+    assert_eq!(result.state, RunState::Exited.code());
+    assert_eq!(off.target.queries(), 0, "a NULL callback issues no query");
+    assert!(
+        direct_transactions < off.target.transactions(),
+        "a grant did not remove any transaction: {} direct vs {} blocking",
+        direct_transactions,
+        off.target.transactions()
+    );
+}
+
+#[test]
+fn a_null_direct_memory_callback_behaves_exactly_as_direct_memory_off() {
+    // A target that sets the hint but has no query is the same run as a target
+    // that never sets it: the NULL callback selected no direct memory.
+    let hinted = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    let result = hinted.run_to_result(1_000, 16);
+    assert_eq!(result.state, RunState::Exited.code());
+    assert_eq!(hinted.target.queries(), 0);
+
+    let plain = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    plain.target.hint.store(false, Ordering::SeqCst);
+    let result = plain.run_to_result(1_000, 16);
+    assert_eq!(result.state, RunState::Exited.code());
+    assert_eq!(plain.target.queries(), 0);
+    assert_eq!(
+        hinted.target.transactions(),
+        plain.target.transactions(),
+        "a NULL callback changed the blocking route"
+    );
+}
+
+#[test]
+fn a_denied_direct_memory_grant_caches_nothing() {
+    // A non-NULL callback selects direct memory, but every answer here is a
+    // denial: each hinted access queries once and then still takes its one
+    // blocking transaction.
+    let denied = Harness::direct(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    denied.grant_range(None);
+    let result = denied.run_to_result(1_000, 16);
+    assert_eq!(result.state, RunState::Exited.code());
+    assert!(denied.target.queries() > 0, "direct memory issued no query");
+
+    let off = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    let result = off.run_to_result(1_000, 16);
+    assert_eq!(result.state, RunState::Exited.code());
+    assert_eq!(
+        denied.target.transactions(),
+        off.target.transactions(),
+        "a denial cached a grant or changed the blocking route"
+    );
+}
+
+#[test]
+fn an_invalidation_between_grants_takes_effect_before_the_next_access() {
+    let invalidated = Harness::direct(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    invalidated.grant_range(Some(code_grant()));
+    let baseline = Harness::direct(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    baseline.grant_range(Some(code_grant()));
+
+    // Four turns reach the first granted fetch, so a grant is cached and the
+    // next fetch would use it without an invalidation.
+    let first = invalidated.grant(0, u64::MAX / 2, 4).unwrap();
+    let baseline_first = baseline.grant(0, u64::MAX / 2, 4).unwrap();
+    assert_eq!(first.facts.turns, 4);
+    assert_eq!(baseline_first.facts.turns, 4);
+    assert!(invalidated.target.queries() > 0, "no grant was cached");
+    let before = invalidated.target.transactions();
+    assert_eq!(before, baseline.target.transactions(), "fixture divergence");
+
+    assert_eq!(invalidated.invalidate(0, u64::MAX), Status::Ok as i32);
+    assert_eq!(
+        invalidated.target.transactions(),
+        before,
+        "invalidation itself touches no target"
+    );
+
+    // The next one-turn grant starts with a fetch.  With the grant removed it
+    // must take exactly one b_transport first; the baseline fetches directly.
+    let next = invalidated
+        .grant(first.committed_end_fs, u64::MAX / 2, 1)
+        .unwrap();
+    assert_eq!(next.facts.turns, first.facts.turns + 1);
+    assert_eq!(
+        invalidated.target.transactions(),
+        before + 1,
+        "the fetch after an invalidation did not take b_transport exactly once"
+    );
+    let baseline_next = baseline
+        .grant(baseline_first.committed_end_fs, u64::MAX / 2, 1)
+        .unwrap();
+    assert_eq!(baseline_next.facts.turns, baseline_first.facts.turns + 1);
+    assert_eq!(
+        baseline.target.transactions(),
+        before,
+        "the same fetch used the cached grant without an invalidation"
+    );
+
+    // The invalidation changed no architectural fact: both runs still exit.
+    let remaining = invalidated.grant(next.committed_end_fs, u64::MAX / 2, u64::MAX);
+    assert!(remaining.is_ok());
+    assert_eq!(
+        invalidated.result().state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        invalidated.diagnostic()
+    );
+    let baseline_remaining = baseline.grant(baseline_next.committed_end_fs, u64::MAX / 2, u64::MAX);
+    assert!(baseline_remaining.is_ok());
+    assert_eq!(baseline.result().state, RunState::Exited.code());
+}
+
+#[test]
+fn an_invalidation_inside_a_callback_takes_effect_before_the_next_access() {
+    let invalidated = Harness::direct(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    invalidated.grant_range(Some(code_grant()));
+    invalidated
+        .target
+        .invalidate_in_read
+        .store(true, Ordering::SeqCst);
+    let baseline = Harness::direct(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    baseline.grant_range(Some(code_grant()));
+
+    let invalidated_result = invalidated.run_to_result(1_000, 16);
+    let baseline_result = baseline.run_to_result(1_000, 16);
+    assert_eq!(invalidated_result.state, RunState::Exited.code());
+    assert_eq!(baseline_result.state, RunState::Exited.code());
+    assert_eq!(
+        invalidated.target.invalidate_status.load(Ordering::SeqCst),
+        Status::Ok as i32,
+        "the invalidation inside b_transport was rejected"
+    );
+    assert_eq!(
+        invalidated.target.invalidations.load(Ordering::SeqCst),
+        1,
+        "the callback did not run the invalidation exactly once"
+    );
+    assert_eq!(
+        invalidated.target.transactions(),
+        baseline.target.transactions() + 1,
+        "the granted fetch after the in-callback invalidation did not take b_transport"
+    );
+}
+
+#[test]
+fn an_invalidation_on_another_thread_is_rejected_and_changes_nothing() {
+    let harness = Harness::direct(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    harness.grant_range(Some(code_grant()));
+    let grant = harness.grant(0, u64::MAX / 2, 4).unwrap();
+    assert_eq!(grant.facts.turns, 4);
+    let before = harness.target.transactions();
+    assert!(harness.target.queries() > 0, "no grant was cached");
+
+    let handle = harness.handle as usize;
+    let status = std::thread::spawn(move || {
+        let handle = handle as *mut RuscvMachine;
+        // SAFETY: the handle is live until the join below, and the callee must
+        // reject this thread without dereferencing run state.
+        unsafe { ruscv_machine_invalidate_direct_mem(handle, 0, u64::MAX) }
+    })
+    .join()
+    .unwrap();
+    assert_eq!(
+        status,
+        Status::NotCreatorThread as i32,
+        "an invalidation from another thread was accepted"
+    );
+
+    let start = grant.committed_end_fs;
+    let next = harness.grant(start, u64::MAX / 2, 1).unwrap();
+    assert_eq!(next.facts.turns, grant.facts.turns + 1);
+    assert_eq!(
+        harness.target.transactions(),
+        before,
+        "the rejected invalidation removed a grant"
+    );
+}
+
+#[test]
+fn the_invalidation_entry_is_the_only_call_accepted_inside_a_callback() {
+    let harness = Harness::direct(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    harness.grant_range(Some(code_grant()));
+    harness
+        .target
+        .invalidate_in_read
+        .store(true, Ordering::SeqCst);
+    let other = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    harness
+        .target
+        .second_handle
+        .store(other.handle, Ordering::SeqCst);
+
+    let result = harness.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        harness.diagnostic()
+    );
+    assert_eq!(
+        harness.target.invalidate_status.load(Ordering::SeqCst),
+        Status::Ok as i32,
+        "the invalidation entry is not accepted inside its own callback"
+    );
+    assert_eq!(
+        harness.target.reentry_status(),
+        Status::Reentrant as i32,
+        "a callback re-entered the owning handle"
+    );
+    assert_eq!(
+        harness.target.second_status(),
+        Status::Reentrant as i32,
+        "a callback re-entered the C ABI through another handle"
+    );
+}
+
+#[test]
+fn an_invalidation_is_accepted_on_a_poisoned_handle() {
+    // A caught panic poisons the handle; invalidation still only touches the
+    // target wrapper's registry, so it remains usable.
+    let harness = Harness::direct(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    // SAFETY: the handle is live on this thread.
+    assert_eq!(
+        unsafe { ruscv_machine_self_test_panic(harness.handle) },
+        Status::Panic as i32
+    );
+    assert_eq!(
+        harness.invalidate(0, u64::MAX),
+        Status::Ok as i32,
+        "a panic-poisoned handle refused an invalidation"
+    );
+}
+
+#[test]
+fn an_unknown_completion_with_direct_memory_poisons_and_reset_restores_grants() {
+    let harness = Harness::direct(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    harness.grant_range(Some(code_grant()));
+    harness
+        .target
+        .unknown_on_data_read
+        .store(true, Ordering::SeqCst);
+
+    let failed = harness.grant(0, u64::MAX / 2, 100).unwrap();
+    assert_eq!(
+        failed.facts.failed, 1,
+        "an unknown completion is not a pass"
+    );
+    assert_eq!(failed.facts.uncertain, 1);
+    assert_eq!(harness.result().state, RunState::Failed.code());
+    let queries_before = harness.target.queries();
+    assert!(queries_before > 0, "no grant was cached before the failure");
+    // The transport is poisoned, not the handle: the direct-memory entry stays
+    // accepted because it touches only the wrapper's registry.
+    assert_eq!(harness.invalidate(0, u64::MAX), Status::Ok as i32);
+
+    let transactions = harness.target.transactions();
+    assert_eq!(
+        harness.grant(0, u64::MAX / 2, 100).err(),
+        Some(Status::UnknownCompletion as i32)
+    );
+    assert_eq!(
+        harness.target.transactions(),
+        transactions,
+        "a transaction reached the poisoned transport"
+    );
+
+    harness
+        .target
+        .unknown_on_data_read
+        .store(false, Ordering::SeqCst);
+    // SAFETY: the handle is live on this thread.
+    assert_eq!(
+        unsafe { ruscv_machine_reset(harness.handle) },
+        Status::Ok as i32
+    );
+    let result = harness.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "the reset domain did not reach the guest exit: {}",
+        harness.diagnostic()
+    );
+    assert_eq!(result.exit_code, 2);
+    assert!(
+        harness.target.queries() > queries_before,
+        "reset did not restore a direct-memory grant"
+    );
+
+    // The restored path removed transactions: the same guest with a NULL
+    // callback needs strictly more.
+    let off = Harness::new(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    let result = off.run_to_result(1_000, 16);
+    assert_eq!(result.state, RunState::Exited.code());
+    let after_reset = harness.target.transactions() - transactions;
+    assert!(
+        after_reset < off.target.transactions(),
+        "the post-reset run used no direct memory: {after_reset} vs {}",
+        off.target.transactions()
+    );
+}
+
+#[test]
+fn the_direct_memory_fields_are_final_in_their_structs() {
+    // The published layout is x86-64 SysV, the ABI's only target.  Appending
+    // must not move a pre-existing field; these offsets are the ones the
+    // previous header published (direct-memory D12).
+    use std::mem::{offset_of, size_of};
+    assert_eq!(offset_of!(CTarget, max_delay_fs), 0);
+    assert_eq!(offset_of!(CTarget, user), 8);
+    assert_eq!(offset_of!(CTarget, b_transport), 16);
+    assert_eq!(offset_of!(CTarget, transport_dbg), 24);
+    assert_eq!(offset_of!(CTarget, transport_reset), 32);
+    assert_eq!(offset_of!(CTarget, get_direct_mem_ptr), 40);
+    assert_eq!(size_of::<CTarget>(), 48);
+
+    assert_eq!(offset_of!(CPayload, atomic), 56);
+    assert_eq!(
+        offset_of!(CPayload, dmi_allowed),
+        offset_of!(CPayload, atomic) + size_of::<super::target::CAtomic>()
+    );
+    assert_eq!(offset_of!(CPayload, dmi_allowed), 240);
+    assert_eq!(size_of::<CPayload>(), 248);
 }
 
 #[test]
@@ -728,6 +1275,7 @@ fn an_oversized_atomic_snapshot_is_not_a_completion() {
         b_transport: Some(snapshot_transport),
         transport_dbg: Some(snapshot_debug),
         transport_reset: Some(snapshot_reset),
+        get_direct_mem_ptr: None,
     };
     let _ = SnapshotTarget;
     let adapter = super::target::CBlockingTarget::new(table).unwrap();
@@ -1338,6 +1886,7 @@ fn the_atomic_extension_maps_both_directions() {
         b_transport: Some(atomic_transport),
         transport_dbg: Some(atomic_debug),
         transport_reset: Some(atomic_reset),
+        get_direct_mem_ptr: None,
     };
     let adapter = super::target::CBlockingTarget::new(table).unwrap();
 
@@ -1496,6 +2045,7 @@ fn create_rejects_unusable_configurations() {
             b_transport: Some(target_b_transport),
             transport_dbg: None,
             transport_reset: Some(target_reset),
+            get_direct_mem_ptr: None,
         };
         assert_eq!(
             ruscv_machine_create(&incomplete, 0, TICK_FS, &mut out),
