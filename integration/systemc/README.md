@@ -6,9 +6,17 @@ ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
 
 - `ram_target.{h,cpp}`: a zero-delay blocking RAM target behind a
   `simple_target_socket`, with `b_transport`, `transport_dbg`, transport reset
-  and the ruscv-sim atomic extension.
+  and the ruscv-sim atomic extension. Its chunk bytes are
+  `std::atomic<uint8_t>`; it sets the `dmi_allowed` hint on completed
+  non-atomic transactions, grants the containing chunk read-write at zero
+  latency through `register_get_direct_mem_ptr`, and invalidates every
+  registration before its transport reset discards chunks while keeping the
+  version clock running (direct-memory D10/D13).
 - `ruscv_initiator.{h,cpp}`: the C ABI `ruscv_target` callbacks mapped onto a
-  `simple_initiator_socket` bound to that target.
+  `simple_initiator_socket` bound to that target. `--dmi` selects the
+  `get_direct_mem_ptr` query; the registered `invalidate_direct_mem_ptr`
+  forwards to `ruscv_machine_invalidate_direct_mem`, the one ABI entry a
+  target may call inside a callback.
 - `ruscv_payload_extension.h`: the TLM-2.0 payload extension carrying the access
   category, the initiator and the atomic request and response.
 - `main.cpp`: the `SC_THREAD` grant loop that starts each grant at
@@ -51,6 +59,7 @@ usage: systemc_smoke <elf> [--isa rv64ima|rv64imac|rv64imafd|rv64imafdc]
        [--log-commits <path>] [--turn-budget <turns>]
        [--horizon-fs <femtoseconds>] [--stop-after-grants <grants>]
        [--max-grants <grants>] [--max-turns <turns>]
+       [--dmi] [--dmi-invalidate-every <grants>]
 ```
 
 The exit status is the guest exit code for a terminal exited run and 1 for a
@@ -65,12 +74,22 @@ over the same run.
 `--stop-after-grants` exists for the early-`sc_stop` control: it stops the kernel
 before a run result, which must never be accepted as a pass.
 
+`--dmi` offers the C ABI's `get_direct_mem_ptr` callback, so hinted accesses
+copy through the RAM target's granted chunk pointers instead of `b_transport`.
+`--dmi-invalidate-every <grants>` requires `--dmi` and makes the driver ask the
+target to invalidate every grant after each Nth grant; the initiator's
+backward call forwards each one to `ruscv_machine_invalidate_direct_mem` and
+the forwarded count is reported at exit.
+
 The end-to-end comparison with the native run is
 [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh); the
-`SystemC transport smoke` CI job runs it inside the development image.
+`SystemC transport smoke` CI job runs it inside the development image. The
+smoke requires the direct pass's `b_transport` count strictly below the same
+guest's non-direct pass and an unchanged commit log under the scheduled
+invalidation.
 
 ## Limits
 
-Linux x86-64 only. This project selects blocking transport without DMI or
-temporal decoupling, and the RAM model annotates zero delay, so it does not
-model a timed memory.
+Linux x86-64 only. This project selects blocking transport without temporal
+decoupling, and the RAM model annotates zero delay, so it does not model a
+timed memory.

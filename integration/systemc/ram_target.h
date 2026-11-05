@@ -12,11 +12,21 @@
 // of the reservation protocol. Atomics arrive as one transaction carrying the
 // ruscv-sim atomic extension and are applied indivisibly through this module's
 // operation table; the target never performs a read followed by a write.
+//
+// Direct memory (direct-memory D13): a completed non-atomic transaction sets
+// the `dmi_allowed` hint, and `get_direct_mem_ptr` grants the whole chunk that
+// contains the queried address as read-write with zero latency. Chunk bytes are
+// `std::atomic<uint8_t>`, because the C ABI's granted pointer is served by
+// relaxed byte-wise atomic copies whose accesses must meet every target access
+// without a data race (direct-memory D10). Before its transport reset discards
+// any chunk the target invalidates every registration on the bound initiator,
+// and the version clock survives the reset so no version repeats.
 
 #ifndef RUSCV_SIM_SYSTEMC_RAM_TARGET_H
 #define RUSCV_SIM_SYSTEMC_RAM_TARGET_H
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -52,9 +62,16 @@ public:
     /// no transaction accounting. Returns the bytes transferred.
     unsigned int transport_dbg(tlm::tlm_generic_payload& transaction);
 
-    /// Transport reset: discards every byte and every committed-write version.
-    /// Returns true when the target has quiesced and accepts new accesses.
+    /// Transport reset: invalidates every direct-memory registration, then
+    /// discards every byte and every committed-write version record. The
+    /// version clock keeps running, so no committed-write version repeats
+    /// across the reset (direct-memory D10/D13). Returns true when the target
+    /// has quiesced and accepts new accesses.
     bool transport_reset();
+
+    /// Invalidates every direct-memory grant on the bound initiator with the
+    /// whole-space backward call (direct-memory D8/D13).
+    void invalidate_all_direct_mem();
 
     /// Number of blocking transactions served since construction.
     uint64_t b_transport_count() const { return b_transport_count_; }
@@ -66,7 +83,18 @@ public:
 private:
     /// Bytes and per-byte committed-write versions for one 4 KiB chunk.
     struct Chunk {
-        std::array<uint8_t, kChunkBytes> bytes{};
+        /// A fresh chunk reads as zero. `std::atomic<uint8_t>` has no zeroing
+        /// value constructor in C++17, so the bytes are filled explicitly.
+        Chunk() {
+            for (auto& byte : bytes) {
+                byte.store(0, std::memory_order_relaxed);
+            }
+        }
+
+        /// Storage the direct-memory pointer aliases. Every access, including
+        /// `b_transport` and `transport_dbg`, goes through relaxed atomic
+        /// byte operations (direct-memory D10).
+        std::array<std::atomic<uint8_t>, kChunkBytes> bytes;
         std::array<uint64_t, kChunkBytes> versions{};
     };
 
@@ -79,6 +107,11 @@ private:
 
     /// Applies one atomic transaction, or sets a failure status.
     void apply_atomic(tlm::tlm_generic_payload& transaction, PayloadExtension& extension);
+
+    /// Answers one direct-memory query: the whole chunk that contains the
+    /// queried address, read-write, zero latency (direct-memory D13).
+    bool get_direct_mem_ptr(tlm::tlm_generic_payload& transaction,
+                            tlm::tlm_dmi& data);
 
     /// Reads `length` bytes; uncovered bytes read as zero.
     std::vector<uint8_t> read(uint64_t address, size_t length) const;

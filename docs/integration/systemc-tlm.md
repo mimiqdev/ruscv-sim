@@ -16,10 +16,13 @@ The repository implements one blocking-transport integration: a C ABI facade
 ([`src/capi`](../../src/capi), [`include/ruscv_sim.h`](../../include/ruscv_sim.h))
 and a pinned SystemC host ([`integration/systemc`](../../integration/systemc)).
 This page is the normative reference for that mapping, its ownership and thread
-rules, its error and time mapping, its stop behavior, and its build pins.
-Direct memory (DMI) is the current contract's target and is not implemented
-yet. Non-blocking transport, temporal decoupling and TLM-modeled devices stay
-out of scope, as the contract's §5 records.
+rules, its error and time mapping, its stop behavior, and its build pins. It
+also records how the current direct-memory contract's D13 lands on the SystemC
+host: the rules below are the SystemC halves of that contract's grant,
+invalidation and version-clock obligations, normative where they are not
+already covered by [`docs/dev-plan.md`](../dev-plan.md) and the header's
+direct-memory obligations. Non-blocking transport, temporal decoupling and
+TLM-modeled devices stay out of scope, as the contract's §5 records.
 
 ## Selected mapping
 
@@ -33,7 +36,7 @@ out of scope, as the contract's §5 records.
 | Transport reset | The target's own reset operation |
 | Guest-RAM target | `simple_target_socket` on `RamTarget` |
 | Machine grant | Bounded grant over the C ABI, then `wait(consumed)` |
-| Direct RAM fast path | Not implemented; the current contract selects it |
+| Direct RAM fast path | `get_direct_mem_ptr`/`invalidate_direct_mem_ptr` via the C ABI (direct-memory D12) |
 
 `tlm_generic_payload` and `sc_time` stay outside the Rust side and outside ISA
 instruction functions. The only Rust/C++ boundary is the C ABI.
@@ -46,12 +49,29 @@ blocking RAM target with one `tlm_utils::simple_target_socket`:
 - `b_transport` serves reads, writes and every atomic, and always annotates zero
   delay (`dev-plan` D7). A write is applied as one indivisible semantic write
   before it returns.
+- Direct memory (direct-memory D13): a completed non-atomic transaction sets
+  the generic payload's `dmi_allowed` hint, which is the only licence for the
+  initiator's one query of that access. `get_direct_mem_ptr` grants the whole
+  4 KiB chunk that contains the queried address, read-write with zero
+  latency; a chunk that does not exist yet is denied, so a query never
+  allocates storage. A direct store lands in the same bytes `b_transport`
+  serves and bypasses the committed-write records, exactly as the adapter's
+  write-suspension gate accounts for.
+- The chunk bytes behind a granted pointer are `std::atomic<uint8_t>`, and
+  every access to them, including `b_transport` and `transport_dbg`, is a
+  relaxed atomic byte access: the granted storage must tolerate the C ABI's
+  byte-wise relaxed atomic copies without a data race (direct-memory D10).
 - `transport_dbg` serves image installation and the host views with no delay, no
   side effects beyond the bytes and no transaction accounting. It returns the
   bytes transferred; a short transfer is a failed debug transport.
-- The transport reset discards every byte and every committed-write version, so
-  the Platform's zero-fill after it starts from an empty target. It returns the
-  acknowledgement the Platform requires (D6).
+- The transport reset invalidates every direct-memory registration on the
+  bound initiator before it discards any chunk — atomically with respect to
+  new grants, because the module runs on the single kernel thread — then
+  discards every byte and every committed-write version record, so the
+  Platform's zero-fill after it starts from an empty target. The version
+  clock keeps running across the reset, so no committed-write version repeats
+  (direct-memory D10/D13). It returns the acknowledgement the Platform
+  requires (D6).
 - Storage is sparse in 4 KiB chunks. Each chunk keeps the bytes and one
   committed-write version per byte. A load-reserved returns that snapshot as
   one little-endian 64-bit version per reserved byte; a store-conditional
@@ -93,6 +113,23 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
 - The atomic extension's request half is copied into the TLM extension and its
   response half is copied back into the ABI payload. No function pointer and no
   C++ object crosses the ABI.
+- With `--dmi`, the table's `get_direct_mem_ptr` calls the IEEE 1666 forward
+  query of the same name on the initiator socket: the query's address and
+  access direction are the transaction's address and command, a `true` answer
+  becomes `RUSCV_DMI_GRANTED` with the `tlm_dmi` fields copied verbatim
+  (inclusive range, host pointer, granted access, exact femtosecond
+  latencies), and `false` becomes `RUSCV_DMI_DENIED`, which caches nothing.
+  A contained C++ exception becomes `RUSCV_DMI_FAILED`, the contained-
+  exception case: an unknown completion, never a denial. Without `--dmi` the
+  table field stays `NULL` and ruscv-sim issues no query.
+- The initiator's registered `invalidate_direct_mem_ptr` forwards to
+  `ruscv_machine_invalidate_direct_mem`, the one ABI entry a target may call
+  inside a callback and the only ABI entry this backward call uses
+  (direct-memory D12). A call while no handle is bound is a no-op: after
+  destroy the handle's target wrapper and its registry no longer exist, and no
+  live grant can still name them. The
+  `dmi_allowed` response hint on the ABI payload is the transaction's TLM
+  hint flag.
 - The annotated delay is copied as exact femtoseconds, and the declared
   per-transaction maximum is zero because this model annotates zero delay.
 - A debug request requires a complete transfer and an unchanged address, command
@@ -124,8 +161,9 @@ or host stop becomes a ruscv-sim terminal result.
   rule holds even though SystemC runs the thread as a coroutine.
 - Target callbacks run synchronously inside a ruscv-sim call on that thread. A
   callback that calls back into any ABI handle fails with
-  `RUSCV_ERROR_REENTRANT`. A callback must not wait or advance SystemC time; this
-  initiator does neither.
+  `RUSCV_ERROR_REENTRANT`, except `ruscv_machine_invalidate_direct_mem`, which
+  the direct-memory backward path uses (direct-memory D12). A callback must
+  not wait or advance SystemC time; this initiator does neither.
 - The callback table and its `user` pointer must stay valid until destroy. The
   initiator and the RAM target are members of `sc_main`, so they outlive the
   handle.
@@ -163,11 +201,19 @@ target, so a run stays time-equivalent to native (ADR-0004 §4.4, §5.3).
 - The kernel is stopped for one of three reasons. The ordinary stop follows a
   terminal result from `ruscv_machine_result`. A classified host failure stops it
   too: an ABI error, a kernel clock that disagrees with the Machine cursor, a
-  grant boundary that consumed no modeled time while the run is still live, or an
-  exhausted grant or turn bound. That is a host decision and never a ruscv-sim
-  result. The third is the deliberate `--stop-after-grants` control, which stops
-  the kernel before any result to prove that a host stop is not one; it must never
-  pass.
+  grant boundary that consumed no modeled time while the run is still live, an
+  exhausted grant or turn bound, or a refused direct-memory invalidation. That
+  is a host decision and never a ruscv-sim result. The third is the deliberate
+  `--stop-after-grants` control, which stops the kernel before any result to
+  prove that a host stop is not one; it must never pass.
+- `--dmi` selects direct memory for the target table and
+  `--dmi-invalidate-every <grants>` (which requires it) asks the RAM target to
+  invalidate every grant after each Nth Machine grant: the target issues the
+  backward `invalidate_direct_mem_ptr` call, which the initiator forwards to
+  the ABI. Invalidation is target-originated here even though the driver
+  schedules it, so the full backward path is exercised. At exit the host
+  reports the RAM target's `b_transport` count and the forwarded-invalidation
+  count.
 - The process exit status is the guest exit code for a terminal exited run and 1
   for a failed run or a host-classified failure. The early-stop control, which
   leaves no run result at all, exits 2.
@@ -191,13 +237,21 @@ target, so a run stays time-equivalent to native (ADR-0004 §4.4, §5.3).
 
 `scripts/test_systemc_smoke.sh` runs `atomic_tohost_exit` under `rv64imafdc` and
 `fd_fma` under `rv64imafd` through the public CLI and through the SystemC host
-and requires the same exit code and a byte-identical commit log. It passes the
-same turn bound as the CLI's `--max-cycles` and wraps every run in a wall-clock
-`timeout`, so neither a guest loop nor a host defect can hang CI.
+and requires the same exit code and a byte-identical commit log. It runs both
+guests again with `--dmi` and requires the same facts with a `b_transport`
+count strictly below the same guest's non-direct pass, and one guest with
+`--dmi-invalidate-every` under an unchanged commit log with the scheduled
+invalidation count equal to grants/N and the ABI-forwarded count covering it.
+It passes the same turn bound
+as the CLI's `--max-cycles` and wraps every run in a wall-clock `timeout`, so
+neither a guest loop nor a host defect can hang CI.
 
 ## Open items
 
-- DMI region qualification, lifetime and invalidation.
+- Direct-memory documentation beyond the SystemC smoke scope of this page is
+  the current contract's U6 deliverable: grant, permission, latency,
+  invalidation, lifetime, version-clock persistence across reset and FFI rules
+  are then normative here in full.
 - Quantum, temporal decoupling and synchronization policy.
 - Non-blocking transport, which needs its own timing contract.
 

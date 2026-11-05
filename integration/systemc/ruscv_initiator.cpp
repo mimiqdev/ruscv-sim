@@ -3,7 +3,20 @@
 #include "ruscv_initiator.h"
 
 #include <array>
+#include <cstdio>
 #include <cstring>
+
+// The IEEE 1666 access values are the C ABI's `RUSCV_DMI_ACCESS_*` values, so
+// the granted access crosses the boundary without a mapping table.
+static_assert(static_cast<int32_t>(tlm::tlm_dmi::DMI_ACCESS_NONE) == RUSCV_DMI_ACCESS_NONE,
+              "RUSCV_DMI_ACCESS_* must match tlm::tlm_dmi::dmi_access_e");
+static_assert(static_cast<int32_t>(tlm::tlm_dmi::DMI_ACCESS_READ) == RUSCV_DMI_ACCESS_READ,
+              "RUSCV_DMI_ACCESS_* must match tlm::tlm_dmi::dmi_access_e");
+static_assert(static_cast<int32_t>(tlm::tlm_dmi::DMI_ACCESS_WRITE) == RUSCV_DMI_ACCESS_WRITE,
+              "RUSCV_DMI_ACCESS_* must match tlm::tlm_dmi::dmi_access_e");
+static_assert(static_cast<int32_t>(tlm::tlm_dmi::DMI_ACCESS_READ_WRITE) ==
+                  RUSCV_DMI_ACCESS_READ_WRITE,
+              "RUSCV_DMI_ACCESS_* must match tlm::tlm_dmi::dmi_access_e");
 
 namespace ruscv_sim {
 namespace {
@@ -94,9 +107,12 @@ void mark_unknown_completion(ruscv_payload* payload) {
 
 }  // namespace
 
-RuscvInitiator::RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram)
-    : sc_core::sc_module(name), socket("socket"), ram_(ram) {
+RuscvInitiator::RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram,
+                               bool direct_mem)
+    : sc_core::sc_module(name), socket("socket"), ram_(ram), direct_mem_(direct_mem) {
     socket.register_nb_transport_bw(this, &RuscvInitiator::nb_transport_bw);
+    // The target reaches the handle's direct-memory registry through this
+    // backward call (direct-memory D13).
     socket.register_invalidate_direct_mem_ptr(this, &RuscvInitiator::invalidate_direct_mem_ptr);
     socket.bind(ram.socket);
 }
@@ -107,8 +123,25 @@ tlm::tlm_sync_enum RuscvInitiator::nb_transport_bw(tlm::tlm_generic_payload&, tl
     return tlm::TLM_ACCEPTED;
 }
 
-void RuscvInitiator::invalidate_direct_mem_ptr(sc_dt::uint64, sc_dt::uint64) {
-    // Unused: this contract selects blocking transport and no DMI.
+void RuscvInitiator::invalidate_direct_mem_ptr(sc_dt::uint64 start_range,
+                                               sc_dt::uint64 end_range) {
+    // The one ABI entry a target may call inside a callback: it touches only
+    // the handle's direct-memory registry, which the Rust target wrapper keeps
+    // outside the run-state lock (direct-memory D12).
+    if (machine_ == nullptr) {
+        return;
+    }
+    const int32_t status = ruscv_machine_invalidate_direct_mem(
+        machine_, static_cast<uint64_t>(start_range), static_cast<uint64_t>(end_range));
+    if (status == RUSCV_OK) {
+        ++direct_mem_invalidations_;
+    } else {
+        ++direct_mem_errors_;
+        std::fprintf(stderr,
+                     "systemc-smoke: ruscv_machine_invalidate_direct_mem failed "
+                     "with status %d\n",
+                     status);
+    }
 }
 
 ruscv_target RuscvInitiator::target_table() {
@@ -119,6 +152,10 @@ ruscv_target RuscvInitiator::target_table() {
     table.b_transport = &ruscv_systemc_b_transport;
     table.transport_dbg = &ruscv_systemc_transport_dbg;
     table.transport_reset = &ruscv_systemc_transport_reset;
+    // NULL means the target offers no direct memory: the handle then behaves
+    // exactly as direct memory off (direct-memory D12).
+    table.get_direct_mem_ptr =
+        direct_mem_ ? &ruscv_systemc_get_direct_mem_ptr : nullptr;
     return table;
 }
 
@@ -143,6 +180,9 @@ void RuscvInitiator::serve_b_transport(ruscv_payload& payload) {
     payload.status = status_code(transaction.get_response_status());
     payload.delay_fs = delay.value();
     payload.outcome_unknown = extension.outcome_unknown;
+    // The TLM hint flag is the ABI payload's `dmi_allowed` response field, the
+    // only licence for ruscv-sim's one query of this access (direct-memory D3).
+    payload.dmi_allowed = transaction.is_dmi_allowed() ? 1 : 0;
     copy_atomic_response(extension, payload.atomic);
 }
 
@@ -163,6 +203,37 @@ size_t RuscvInitiator::serve_transport_dbg(ruscv_debug& debug) {
 
 int32_t RuscvInitiator::serve_transport_reset() {
     return ram_.transport_reset() ? 1 : 0;
+}
+
+int32_t RuscvInitiator::serve_get_direct_mem_ptr(ruscv_direct_mem& query) {
+    // The forward DMI interface: the query's address and direction are the
+    // transaction's address and command. The ABI wrapper zero-initializes the
+    // answer half of the struct on the Rust side, so the target may overwrite
+    // every member of it (direct-memory D3/D13).
+    tlm::tlm_generic_payload transaction;
+    transaction.set_address(query.address);
+    transaction.set_command(query.access == RUSCV_DMI_ACCESS_READ
+                              ? tlm::TLM_READ_COMMAND
+                              : tlm::TLM_WRITE_COMMAND);
+    tlm::tlm_dmi data;
+    const bool granted = socket->get_direct_mem_ptr(transaction, data);
+    if (!granted) {
+        return RUSCV_DMI_DENIED;
+    }
+    query.start = static_cast<uint64_t>(data.get_start_address());
+    query.end = static_cast<uint64_t>(data.get_end_address());
+    query.pointer = data.get_dmi_ptr();
+    query.access = static_cast<int32_t>(data.get_granted_access());
+    query.read_latency_fs = data.get_read_latency().value();
+    query.write_latency_fs = data.get_write_latency().value();
+    return RUSCV_DMI_GRANTED;
+}
+
+void RuscvInitiator::invalidate_all_direct_mem() {
+    // The invalidation is the target's: its storage changed, so it issues the
+    // backward call on the bound initiator socket (direct-memory D8).
+    ++direct_mem_scheduled_;
+    ram_.invalidate_all_direct_mem();
 }
 
 extern "C" void ruscv_systemc_b_transport(void* user, ruscv_payload* payload) {
@@ -210,6 +281,22 @@ extern "C" int32_t ruscv_systemc_transport_reset(void* user) {
         // Without the acknowledgement the Platform keeps the handle unusable
         // instead of trusting a half-reset transport (dev-plan D6).
         return 0;
+    }
+}
+
+extern "C" int32_t ruscv_systemc_get_direct_mem_ptr(void* user,
+                                                    ruscv_direct_mem* direct_mem) {
+    try {
+        if (user == nullptr || direct_mem == nullptr) {
+            // No target was reachable to establish an answer: this is the
+            // contained-failure answer, not a denial (direct-memory D3/D12).
+            return RUSCV_DMI_FAILED;
+        }
+        return static_cast<RuscvInitiator*>(user)->serve_get_direct_mem_ptr(*direct_mem);
+    } catch (...) {
+        // A contained C++ exception is the failed answer: the access becomes an
+        // unknown completion and the transport is poisoned.
+        return RUSCV_DMI_FAILED;
     }
 }
 

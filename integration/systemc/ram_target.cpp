@@ -8,6 +8,16 @@
 namespace ruscv_sim {
 namespace {
 
+// The granted pointer addresses byte-atomic storage: the ABI's byte-wise
+// relaxed atomic copies, `b_transport` and `transport_dbg` must all meet the
+// same bytes without a data race (direct-memory D10), which requires the
+// atomic storage to be byte-sized and lock-free.
+static_assert(sizeof(std::atomic<uint8_t>) == sizeof(uint8_t) &&
+                  alignof(std::atomic<uint8_t>) == alignof(uint8_t),
+              "std::atomic<uint8_t> must be byte-sized for a direct-memory pointer");
+static_assert(std::atomic<uint8_t>::is_always_lock_free,
+              "std::atomic<uint8_t> must be lock-free for a direct-memory pointer");
+
 /// Reads one little-endian word of `width` bytes (4 or 8).
 uint64_t load_le(const uint8_t* bytes, size_t width) {
     uint64_t value = 0;
@@ -79,6 +89,9 @@ RamTarget::RamTarget(sc_core::sc_module_name name)
     : sc_core::sc_module(name), socket("socket") {
     socket.register_b_transport(this, &RamTarget::b_transport);
     socket.register_transport_dbg(this, &RamTarget::transport_dbg);
+    // direct-memory D13: this target grants direct memory, so it registers the
+    // forward query. A host that leaves the C ABI query NULL never reaches it.
+    socket.register_get_direct_mem_ptr(this, &RamTarget::get_direct_mem_ptr);
 }
 
 void RamTarget::b_transport(tlm::tlm_generic_payload& transaction, sc_core::sc_time& delay) {
@@ -134,7 +147,43 @@ void RamTarget::b_transport(tlm::tlm_generic_payload& transaction, sc_core::sc_t
             transaction.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
             return;
     }
+    // The hint is the only licence for ruscv-sim's one direct-memory query of
+    // this access, so it goes on a completed non-atomic transaction only
+    // (direct-memory D3/D13). It is ignored when the host offers no query.
+    transaction.set_dmi_allowed(true);
     transaction.set_response_status(tlm::TLM_OK_RESPONSE);
+}
+
+bool RamTarget::get_direct_mem_ptr(tlm::tlm_generic_payload& transaction,
+                                   tlm::tlm_dmi& data) {
+    const auto chunk = chunks_.find(transaction.get_address() >> kChunkBits);
+    if (chunk == chunks_.end()) {
+        // Granting the query would allocate storage; this target grants only
+        // the chunk that already exists, exactly like the in-tree
+        // `ZeroDelayRam` (direct-memory D13). A denial caches nothing.
+        return false;
+    }
+    const uint64_t start = (transaction.get_address() >> kChunkBits) << kChunkBits;
+    // SAFETY: the chunk is this target's only copy of those bytes,
+    // `b_transport` and `transport_dbg` serve the same atomics, and it is not
+    // freed before `transport_reset`, which invalidates every registration on
+    // the bound initiator first (direct-memory D10). A direct store bypasses
+    // the committed-write records, which is exactly what the adapter's
+    // write-suspension gate accounts for.
+    data.set_dmi_ptr(reinterpret_cast<unsigned char*>(chunk->second.bytes.data()));
+    data.set_start_address(start);
+    data.set_end_address(start + kChunkMask);
+    data.set_read_latency(sc_core::SC_ZERO_TIME);
+    data.set_write_latency(sc_core::SC_ZERO_TIME);
+    data.allow_read_write();
+    return true;
+}
+
+void RamTarget::invalidate_all_direct_mem() {
+    // The whole physical space is the backward call's full-invalidation range,
+    // so the initiator drops every grant this target could have issued
+    // (direct-memory D8).
+    socket->invalidate_direct_mem_ptr(0, static_cast<sc_dt::uint64>(-1));
 }
 
 void RamTarget::apply_atomic(tlm::tlm_generic_payload& transaction,
@@ -271,8 +320,16 @@ unsigned int RamTarget::transport_dbg(tlm::tlm_generic_payload& transaction) {
 
 bool RamTarget::transport_reset() {
     ++transport_reset_count_;
+    // Every grant is invalidated before any chunk is discarded, and this
+    // module runs on the single SystemC kernel thread, so no grant is issued
+    // across the window and no cached pointer outlives its storage
+    // (direct-memory D9/D13).
+    invalidate_all_direct_mem();
     chunks_.clear();
-    next_version_ = 0;
+    // The version records go with the bytes, but the clock must not restart:
+    // a repeated version could let a reservation retained across this reset
+    // pass a store-conditional that fails without direct memory
+    // (direct-memory D10).
     return true;
 }
 
@@ -285,7 +342,12 @@ std::vector<uint8_t> RamTarget::read(uint64_t address, size_t length) const {
         const size_t offset = static_cast<size_t>(current & kChunkMask);
         const size_t count = std::min(static_cast<size_t>(kChunkBytes) - offset, length - done);
         if (chunk != chunks_.end()) {
-            std::memcpy(bytes.data() + done, chunk->second.bytes.data() + offset, count);
+            // Byte-wise relaxed atomic loads: these are the same bytes a
+            // granted pointer serves (direct-memory D10).
+            for (size_t index = 0; index < count; ++index) {
+                bytes[done + index] =
+                    chunk->second.bytes[offset + index].load(std::memory_order_relaxed);
+            }
         }
         done += count;
     }
@@ -304,7 +366,9 @@ void RamTarget::store(uint64_t address, const uint8_t* bytes, size_t length) {
         const size_t offset = static_cast<size_t>(current & kChunkMask);
         const size_t count = std::min(static_cast<size_t>(kChunkBytes) - offset, length - done);
         Chunk& chunk = chunks_[current >> kChunkBits];
-        std::memcpy(chunk.bytes.data() + offset, bytes + done, count);
+        for (size_t index = 0; index < count; ++index) {
+            chunk.bytes[offset + index].store(bytes[done + index], std::memory_order_relaxed);
+        }
         done += count;
     }
 }

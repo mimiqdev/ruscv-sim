@@ -195,11 +195,16 @@ grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒�
 `scripts/test_systemc_smoke.sh` 在 CI 作业 `SystemC transport smoke` 内运行：`atomic_tohost_exit`
 （`rv64imafdc`）与 `fd_fma`（`rv64imafd`）经该内核与 blocking RAM target 运行后的退出码和
 `--log-commits` 必须与 native 公共 CLI 完全一致；早停变体（`--stop-after-grants 1`）必须在终止结果前
-停下且不得通过。缺少工具链、缺少 SystemC 或任一比较失败都是失败，不是跳过。`cargo build`／
-`cargo test --all-features` 不需要 C++ 工具链或 SystemC。Linux x86-64 only。
+停下且不得通过。`--dmi` 遍为同一 guest 提供 `get_direct_mem_ptr`：RAM target 对完成的非原子事务置
+`dmi_allowed` hint 并将所在 chunk 以零延迟可读写 grant 出，`b_transport` 计数必须严格低于同一 guest
+的非直接遍；`--dmi-invalidate-every <grants>` 在第 N 个 grant 后让 target 发起 backward invalidation
+（经 `invalidate_direct_mem_ptr` 转发到 `ruscv_machine_invalidate_direct_mem`），commit log 必须不变，
+计划的 invalidation 计数必须恰等于 grants/N，转发的计数不得低于它（target 自身 reset 前的
+invalidate-all 会额外转发一次）。缺少工具链、缺少 SystemC 或任一比较失败都是失败，不是跳过。
+`cargo build`／`cargo test --all-features` 不需要 C++ 工具链或 SystemC。Linux x86-64 only。
 
 选定的 blocking 映射、FFI 所有权与线程、错误映射、时间单位、再入与停止行为、构建与版本 pin 的规范说明见
-[SystemC/TLM 边界](docs/integration/systemc-tlm.md)；DMI 与 quantum／同步策略仍为该页的开放项。
+[SystemC/TLM 边界](docs/integration/systemc-tlm.md)；quantum／同步策略仍为该页的开放项。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 

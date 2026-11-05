@@ -100,6 +100,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     invalidation 与回调内 invalidation、跨线程 invalidation 拒绝、唯一的再入例外、reset，以及直接内存
     开启时的未知完成与 reset 后 grant 恢复；新增两个 `direct-mem-u4-*` 负控制
 
+- **Direct memory U5: SystemC smoke（issue #192）**
+  - `integration/systemc` 的 `RamTarget` 与 initiator 获得直接内存：chunk 字节改为
+    `std::atomic<uint8_t>`（`b_transport`、`transport_dbg` 与授权指针访问同一份字节，满足头文件的
+    D10 逐字节原子要求），完成的非原子事务设置 `dmi_allowed` hint，`register_get_direct_mem_ptr`
+    将包含被查询地址的单个 4 KiB chunk 以可读写、零延迟 grant 出；`transport_reset` 先经
+    `invalidate_direct_mem_ptr` invalidate 全部注册再丢弃 chunk，并在 reset 间保留 committed-write
+    版本时钟。initiator 的 backward `invalidate_direct_mem_ptr` 转发到
+    `ruscv_machine_invalidate_direct_mem`——C ABI 唯一允许在回调内调用的入口
+  - `systemc_smoke` 新增 `--dmi`（target 表提供 `get_direct_mem_ptr`，否则为 `NULL`、与 `dmi` 关闭一致）
+    与 `--dmi-invalidate-every <grants>`（要求 `--dmi`，第 N 个 grant 后由 target 发起全空间
+    invalidation）；退出时报告 `b_transport` 计数与转发的 invalidation 计数
+  - `scripts/test_systemc_smoke.sh` 对两个 guest 各加一遍 `--dmi`：退出码与 commit log 与 native
+    逐字节一致，且 `b_transport` 计数必须严格低于同一 guest 的非直接遍（从未使用 grant 指针的
+    运行会失败）；再对 `atomic_tohost_exit` 运行 `--dmi-invalidate-every 2`，要求 commit log 不变、
+    计划计数恰等于 grants/2 且转发的计数不低于它。既有各遍与早停控制不变。C++ 检查不在 Rust mutation runner
+    覆盖内，其失败证据记录在 PR 中，未新增控制
+
 - **TLM U7: 累积验证与收尾（issue #179）**
   - 合同 §4 的十一条负控制全部在 mutation runner（`scripts/debug/stage6-mutations`）注册，并逐条指向必须
     失败的已提交测试：默认 transport 不是 native（`tlm-u1-default-not-native`）、
