@@ -362,12 +362,17 @@ private:
             }
             ++grants_;
             consumed_fs_ += grant.consumed_fs;
+            // The scheduled invalidation is target-originated: the target
+            // issues the backward call and the initiator forwards it to
+            // ruscv_machine_invalidate_direct_mem, the one ABI entry a target
+            // callback may use (direct-memory D8/D13). It runs here, after the
+            // grant and before the terminal check, so the scheduled count is
+            // exactly grants/N even when the run ends on a scheduled grant;
+            // invalidating a handle that is about to be destroyed is
+            // harmless, because the wrapper's registry stays alive until
+            // destroy and destroying invokes no target callback.
             if (options_.direct_mem_invalidate_every != 0 &&
                 grants_ % options_.direct_mem_invalidate_every == 0) {
-                // The scheduled invalidation is target-originated: the target
-                // issues the backward call and the initiator forwards it to
-                // ruscv_machine_invalidate_direct_mem, the one ABI entry a
-                // target callback may use (direct-memory D8/D13).
                 initiator_.invalidate_all_direct_mem();
                 if (initiator_.direct_mem_error_count() != 0) {
                     stop_with_message("a direct-memory invalidation was refused", machine);

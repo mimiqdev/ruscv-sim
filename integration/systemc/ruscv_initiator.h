@@ -104,8 +104,9 @@ private:
     /// The target's backward invalidation forwards to
     /// `ruscv_machine_invalidate_direct_mem`, the one ABI entry accepted
     /// inside a callback, on the creating thread (direct-memory D8/D12). A
-    /// call while no handle is bound is a no-op: every grant of that handle's
-    /// target wrapper was already invalidated by the wrapper itself.
+    /// call while no handle is bound is a no-op: after destroy the handle's
+    /// target wrapper and its registry no longer exist, and no live grant can
+    /// still name them, so there is nothing left to invalidate.
     void invalidate_direct_mem_ptr(sc_dt::uint64 start_range, sc_dt::uint64 end_range);
 
     RamTarget& ram_;

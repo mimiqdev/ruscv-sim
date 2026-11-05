@@ -125,8 +125,9 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
 - The initiator's registered `invalidate_direct_mem_ptr` forwards to
   `ruscv_machine_invalidate_direct_mem`, the one ABI entry a target may call
   inside a callback and the only ABI entry this backward call uses
-  (direct-memory D12). A call while no handle is bound is a no-op, because
-  the target wrapper already invalidated its own registrations. The
+  (direct-memory D12). A call while no handle is bound is a no-op: after
+  destroy the handle's target wrapper and its registry no longer exist, and no
+  live grant can still name them. The
   `dmi_allowed` response hint on the ABI payload is the transaction's TLM
   hint flag.
 - The annotated delay is copied as exact femtoseconds, and the declared

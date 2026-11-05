@@ -293,10 +293,11 @@ done
 # call and `ruscv_machine_invalidate_direct_mem`, so the next access re-queries
 # and re-grants. The commit log must stay unchanged, which is the contract's
 # "same facts after invalidation" rule. The scheduled count must equal
-# grants/N exactly and the forwarded count must cover it, which proves the
-# schedule really ran and really reached the handle's registry. A one-turn
-# grant budget makes the run span several grants, so the schedule fires more
-# than once.
+# grants/N exactly, and the forwarded count must be at least that: every
+# scheduled invalidation is forwarded, and the handle's own pre-reset
+# invalidate-all adds one more, so anything below the scheduled count proves a
+# dropped forward. A one-turn grant budget makes the run span several grants,
+# so the schedule fires more than once.
 echo -e "${YELLOW}== --dmi-invalidate-every ${INVALIDATE_EVERY} (commit log must be unchanged)${NC}"
 read -r invalidation_guest invalidation_profile invalidation_directory <<<"${GUESTS[0]}"
 invalidation_elf="${ELF_DIR}/${invalidation_directory}/${invalidation_guest}.elf"

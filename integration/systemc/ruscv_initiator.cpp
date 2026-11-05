@@ -207,9 +207,9 @@ int32_t RuscvInitiator::serve_transport_reset() {
 
 int32_t RuscvInitiator::serve_get_direct_mem_ptr(ruscv_direct_mem& query) {
     // The forward DMI interface: the query's address and direction are the
-    // transaction's address and command, and the answer struct starts freshly
-    // initialized so the target may overwrite every member (direct-memory
-    // D3/D13).
+    // transaction's address and command. The ABI wrapper zero-initializes the
+    // answer half of the struct on the Rust side, so the target may overwrite
+    // every member of it (direct-memory D3/D13).
     tlm::tlm_generic_payload transaction;
     transaction.set_address(query.address);
     transaction.set_command(query.access == RUSCV_DMI_ACCESS_READ
