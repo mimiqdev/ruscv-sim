@@ -262,8 +262,10 @@ neither a guest loop nor a host defect can hang CI.
 
 ## Direct-memory grant, permission, latency, invalidation, lifetime and FFI
 
-This section states the SystemC host's rules for the six topics the current
-contract makes normative here (direct-memory D14). The Rust-side rules live in
+This section states the SystemC host's rules for the direct-memory topics
+D14 makes normative here — grant, permission, latency, invalidation,
+lifetime, version-clock persistence across reset, and the FFI rules — under
+the current contract. The Rust-side rules live in
 [`docs/dev-plan.md`](../dev-plan.md) D3–D10 and in the header's direct-memory
 obligations; this section binds the host of
 [`integration/systemc`](../../integration/systemc) to them and states what only
