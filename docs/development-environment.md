@@ -32,7 +32,7 @@ image referenced by archived milestone plans.
   The image build verifies the checked-out commit and the `SYSTEMC_3_0_2` version
   macro, and compiles and runs a small SystemC/TLM program, so a
   version-printing executable cannot stand in for a working kernel. The pin is
-  the `docs/dev-plan.md` D9 selection.
+  the [archived blocking-transport contract](archive/milestones/blocking-tlm-systemc-transport.md) D9 selection.
 
 The image is sufficient for the current Rust quality gate, project-authored
 assembly guests, freestanding C/C++ guests, Spike-based differential work, and
