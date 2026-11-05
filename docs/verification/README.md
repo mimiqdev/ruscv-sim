@@ -75,8 +75,10 @@ Test language follows the layer rather than the simulator implementation languag
 - [A9 T0–T3 checkpoints and local T4 progress](a9-stage2-progress.md) — frozen route inventory, Hart facts, direct-owner lifecycle, public-facade migration and R1–R4 reproductions
 - [A9 bounded acceptance assessment](a9-closeout-assessment.md) — cumulative audit, preserved checkpoint, separate final PR-head gate/review and exact merged-main CI; 58 fresh project CLI guests, Coverage skipped
 - [A9 implementation closeout record](../archive/milestones/a9-closeout-record.md) — technical acceptance 2026-10-02, closeout documents delivered 2026-10-03, approved rotation; formal completion effective on actual merge
-- [Blocking TLM and SystemC Transport contract](../dev-plan.md) — D1–D12 approved 2026-11-04 under delegated planning authority, sole Current on the successor rotation merge. Its units are implementation requirements, not runtime support claims.
-- [Approved blocking-transport proposal entry](../proposals/post-gc-blocking-tlm.md) — informational pointer to the normative contract.
+- [TLM Direct Memory Interface contract](../dev-plan.md) — D1–D14 approved 2026-11-05 under delegated planning authority, sole Current on the successor rotation merge. Its units are implementation requirements, not runtime support claims.
+- [Approved direct-memory proposal entry](../proposals/post-tlm-dmi.md) — informational pointer to the normative contract.
+- [Archived blocking-transport contract](../archive/milestones/blocking-tlm-systemc-transport.md) — completed 2026-11-05 at PR #186.
+- [Historical blocking-transport proposal entry](../proposals/post-gc-blocking-tlm.md) — informational pointer to the archived contract.
 - [Archived RV64GC default-profile contract](../archive/milestones/rv64gc-default-profile.md) — completed 2026-11-04 at PR #171.
 - [Entire approved F/D contract](../archive/milestones/selectable-fd-floating-point-profiles.md) — preserved F/D scope and limitations; historical on rotation. Implementation is PR #153 through PR #160, completed 2026-11-04. CI and PR history retain execution/review outcomes.
 - [Approved F/D proposal entry](../proposals/post-zca-floating-point.md) — historical pointer to the completed contract.
