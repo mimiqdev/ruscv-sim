@@ -56,6 +56,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     跨失败的 recomposition 保留它，此时 SC 结果与 `dmi` 关闭时相同）；合同 §4 的 U2 负控制注册进
     `scripts/debug/stage6-mutations`（`direct-mem-u2-*`），每条都指向必须失败的已提交测试
 
+- **Direct memory U3: 交互与 guest parity（issue #190）**
+  - `scripts/run_elf_tests.sh` 对每个 guest 追加第三次运行：在 `--transport tlm --dmi` 下使用其声明的
+    profile 与同一 cycle 上限，并像另外两遍一样分类失败（失败即缺陷，绝不跳过）。parity set（U4 的五个
+    guest 加上本单元新增的两个）的第三次 commit log（`<guest>.direct.log`）必须与 native 逐字节相同，
+    摘要同时报告两种 parity 比较的覆盖数
+  - 新增两个必选 guest：`direct_mem_smc_fence_i.S` 在自己的指令流上打补丁（store → `FENCE.I` → 执行被替换
+    的指令），`direct_mem_sv39_pt_store.S` 用直接 store 改写叶 PTE、执行 `sfence.vma`、再通过重映射的 VA
+    读取；两者都参与 fresh suite 的三遍运行
+  - `tests/direct_mem_u3_guests.rs` 用记录全部 `b_transport` 的 `ZeroDelayRam` 包装跑这两个镜像：开启直接
+    内存时，代码页上的 store 与 `FENCE.I` 之后对被补丁字的取指、页表 store 与 `sfence.vma` 之后的 walk
+    都不产生任何事务（每个 4 KiB chunk 只允许冷访问那一次）；关闭直接内存的同一镜像必须记录这些访问本身，
+    因此该证明既不会因“未走该路径”而空过，也不依赖调度
+  - `tests/tlm_u4_guest_parity.rs` 扩展为每 guest 三遍，断言第三遍确实带 `--dmi`，并注入仅在直接内存那一遍
+    发生的空白差异（`DIRECT_DIVERGES`），证明该差异会被 suite 检出且不波及 TLM 那一遍；脚本按合同比较
+    native 与第三遍，而在 suite 已先要求 TLM 与 native 一致的前提下，这与比较 TLM 等价，故没有 fixture
+    能区分这两种比较目标
+  - `scripts/debug_attach.sh` 增加一条 `run --transport tlm --dmi` 会话，强制 OpenOCD 只用 system bus：
+    读取 `s6_break` 处的字、写入 EBREAK、resume 命中、用 raw system-bus 访问回读植入字、恢复原字并再次
+    执行它直到 tohost 退出。读回必须绕过 GDB 自己的软件断点影子字节，插入与移除必须是恰好两次 OpenOCD
+    system-bus 写
+  - `machine::tests::sba_access_stays_counted_and_each_route_sees_the_other` 证明直接内存开启时 SBA 读与写
+    各仍是一次计数事务、直接 load 与 store 读取对方写入的字节、host view（debug transport）看到直接 store；
+    native 结果、A10 与既有 named 结果不变
+  - 合同 §4 的 U3 负控制注册进 `scripts/debug/stage6-mutations`（`direct-mem-u3-*`）：取指绕开直接路径、
+    直接 store 未落到 target、walk 读到过期 PTE、第三遍漏掉 `--dmi`，每条都指向必须失败的已提交测试
+
 - **Direct memory U4: C ABI（issue #191）**
   - `ruscv_target` 末尾新增可空 `get_direct_mem_ptr`：`NULL` 表示 target 不提供直接内存，行为与 `dmi` 关闭
     完全一致；非 `NULL` 选择直接内存，`ruscv_machine_create` 的签名因此不变。`ruscv_payload` 末尾新增

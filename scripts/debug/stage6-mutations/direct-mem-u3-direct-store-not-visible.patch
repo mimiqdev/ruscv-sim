@@ -1,0 +1,21 @@
+diff --git i/src/blocking/direct_mem.rs w/src/blocking/direct_mem.rs
+index 6b599bd..d6b2cbe 100644
+--- i/src/blocking/direct_mem.rs
++++ w/src/blocking/direct_mem.rs
+@@ -536,15 +536,7 @@ impl DirectMemRegions {
+                 hook();
+             }
+         }
+-        for (index, byte) in bytes.iter().take(width).enumerate() {
+-            // SAFETY: the grant promises the range stays valid until an
+-            // overlapping invalidation, and this hold excludes one, so the
+-            // pointer addresses `width` writable bytes from `paddr`.  The
+-            // storage behind it is atomic (direct-memory D10), so a relaxed
+-            // store through it cannot race the target's own accesses.
+-            unsafe { AtomicU8::from_ptr(region.pointer.add(offset as usize + index)) }
+-                .store(*byte, Ordering::Relaxed);
+-        }
++        let _ = (offset, bytes);
+         Some(region.write_latency)
+     }
+ 

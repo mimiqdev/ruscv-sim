@@ -71,6 +71,10 @@ linker_script_for() {
         # The F/D and Zcd guests keep data tables, scratch words and a trap
         # handler in the image, so they get the same tohost isolation.
         fd_*|fdc_*|zcd_*) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
+        # The direct-memory U3 page-table guest needs its page tables and
+        # translated pages page-aligned inside the image, with the tohost word
+        # on a page of its own (direct-memory D11).
+        direct_mem_*) printf '%s' "${TESTS_DIR}/linker-s4.ld" ;;
         *) printf '%s' "${TESTS_DIR}/linker.ld" ;;
     esac
 }
@@ -116,6 +120,8 @@ for source in "${SOURCES[@]}"; do
     march=rv64ima_zicsr
     case "$(basename "${source}")" in
         zca_*) march=rv64imac_zicsr_zifencei ;;
+        # The direct-memory U3 self-modifying-code guest needs FENCE.I.
+        direct_mem_*) march=rv64ima_zicsr_zifencei ;;
         fd_*) march=rv64imafd_zicsr_zifencei ;;
         fdc_*) march=rv64imafdc_zicsr_zifencei ;;
         zcd_*) march=rv64imafdc_zicsr_zifencei ;;

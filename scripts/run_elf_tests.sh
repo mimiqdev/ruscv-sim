@@ -51,10 +51,16 @@ if [ ! -f "${manifest}" ]; then
     exit 2
 fi
 
-# TLM U4 (dev-plan D10): every guest also runs through the blocking TLM RAM
-# route with its declared profile. These parity guests additionally write
-# --log-commits on both passes, and the two files must be byte-identical.
-PARITY_GUESTS=(hello s5_timer s5_external atomic_tohost_exit fd_fma)
+# TLM U4 (dev-plan D10) and direct-memory U3 (direct-memory D14): every guest
+# also runs through the blocking TLM RAM route and through that route with
+# direct memory enabled, each with its declared profile. These parity guests
+# write --log-commits on every pass, and every file must be byte-identical to
+# the native one, so neither the TLM route nor a granted host pointer may
+# change a retired instruction. The five U4 guests come first; the two
+# direct-memory U3 guests that exercise self-modifying code and a page-table
+# walk join them, so their three passes are compared as bytes too.
+PARITY_GUESTS=(hello s5_timer s5_external atomic_tohost_exit fd_fma
+    direct_mem_smc_fence_i direct_mem_sv39_pt_store)
 LOG_DIR="${OUTDIR}/commit-logs"
 rm -rf "${LOG_DIR}"
 mkdir -p "${LOG_DIR}"
@@ -209,6 +215,17 @@ for required in zca_ctrl_flow zca_link_values zca_straddle_fetch zca_ebreak_trap
     fi
 done
 
+# Direct-memory U3 guests are required members of the same suite: the
+# self-modifying-code guest and the page-table guest are the images the third
+# pass must carry, and tests/direct_mem_u3_guests.rs proves the direct path
+# with the same builds.
+for required in direct_mem_smc_fence_i direct_mem_sv39_pt_store; do
+    if [ ! -f "${OUTDIR}/rv64i/${required}.elf" ]; then
+        echo -e "${RED}Error: required direct-memory guest missing: ${required}.elf${NC}" >&2
+        exit 2
+    fi
+done
+
 # F/D U5 guests and the U6 FP attach guest are required members of the same
 # suite: the rv64imafd profile for the fd_* names, and rv64imafdc for
 # zcd_transfer and fdc_u6_attach.
@@ -248,6 +265,7 @@ echo "Found ${#ELF_FILES[@]} fresh ELF cases"
 passed=0
 failed=0
 parity_checked=0
+direct_checked=0
 number=0
 for elf in "${ELF_FILES[@]}"; do
     number=$((number + 1))
@@ -275,17 +293,21 @@ for elf in "${ELF_FILES[@]}"; do
         continue
     fi
 
-    # The parity set captures commit logs from both passes; every other guest
-    # still runs twice but needs no log files.
+    # The parity set captures commit logs from all three passes; every other
+    # guest still runs three times but needs no log files.
     native_log=""
     tlm_log=""
+    direct_log=""
     native_log_args=( )
     tlm_log_args=( )
+    direct_log_args=( )
     if is_parity_guest "${name}"; then
         native_log="${LOG_DIR}/${name}.native.log"
         tlm_log="${LOG_DIR}/${name}.tlm.log"
+        direct_log="${LOG_DIR}/${name}.direct.log"
         native_log_args=(--log-commits "${native_log}")
         tlm_log_args=(--log-commits "${tlm_log}")
+        direct_log_args=(--log-commits "${direct_log}")
     fi
 
     output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" "${isa_args[@]}" "${native_log_args[@]}" 2>&1)
@@ -330,6 +352,36 @@ for elf in "${ELF_FILES[@]}"; do
     else
         echo -e "${GREEN}  [PASS]${NC} --transport tlm"
     fi
+
+    # direct-memory U3 (direct-memory D14): the same guest, profile and cycle
+    # bound a third time with the direct-memory selection. A failure here is a
+    # real defect, never a skip.
+    direct_output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" "${isa_args[@]}" --transport tlm --dmi "${direct_log_args[@]}" 2>&1)
+    direct_status=$?
+    if ! reason=$(classify_pass "${name}" "${direct_status}" "${direct_output}"); then
+        printf '%s\n' "${direct_output}"
+        echo -e "${RED}  [FAIL] --transport tlm --dmi: ${reason}${NC}"
+        failed=$((failed + 1))
+        continue
+    fi
+
+    if [ -n "${native_log}" ]; then
+        if [ ! -s "${direct_log}" ]; then
+            echo -e "${RED}  [FAIL] --transport tlm --dmi commit log missing or empty for ${name}${NC}"
+            failed=$((failed + 1))
+            continue
+        fi
+        if ! cmp -s "${native_log}" "${direct_log}"; then
+            echo -e "${RED}  [FAIL] ${name}: --transport tlm --dmi commit log differs from native${NC}"
+            diff -u "${native_log}" "${direct_log}" | head -20 || true
+            failed=$((failed + 1))
+            continue
+        fi
+        direct_checked=$((direct_checked + 1))
+        echo -e "${GREEN}  [PASS]${NC} --transport tlm --dmi, commit log byte-identical to native"
+    else
+        echo -e "${GREEN}  [PASS]${NC} --transport tlm --dmi"
+    fi
     passed=$((passed + 1))
 done
 
@@ -341,6 +393,7 @@ printf '  Passed: %s\n' "${passed}"
 printf '  Failed: %s\n' "${failed}"
 printf '  Cases:  %s\n' "${#ELF_FILES[@]}"
 printf '  TLM parity logs compared: %s/%s\n' "${parity_checked}" "${#PARITY_GUESTS[@]}"
+printf '  Direct-memory parity logs compared: %s/%s\n' "${direct_checked}" "${#PARITY_GUESTS[@]}"
 printf '\n'
 
 if [ "${failed}" -ne 0 ]; then
@@ -348,12 +401,16 @@ if [ "${failed}" -ne 0 ]; then
     exit 1
 fi
 
-# A parity guest that never reached the comparison above must fail the suite
+# A parity guest that never reached the comparisons above must fail the suite
 # instead of silently shrinking the byte-identical set.
 if [ "${parity_checked}" -ne "${#PARITY_GUESTS[@]}" ]; then
     echo -e "${RED}[FAILED]${NC} TLM parity comparison covered ${parity_checked} of ${#PARITY_GUESTS[@]} guests"
     exit 1
 fi
+if [ "${direct_checked}" -ne "${#PARITY_GUESTS[@]}" ]; then
+    echo -e "${RED}[FAILED]${NC} direct-memory parity comparison covered ${direct_checked} of ${#PARITY_GUESTS[@]} guests"
+    exit 1
+fi
 
-echo -e "${GREEN}[PASS]${NC} all ${passed} fresh ELF cases passed through the public CLI on both transports"
+echo -e "${GREEN}[PASS]${NC} all ${passed} fresh ELF cases passed through the public CLI on all three passes"
 exit 0
