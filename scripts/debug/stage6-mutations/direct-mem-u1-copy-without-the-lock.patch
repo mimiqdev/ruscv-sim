@@ -1,8 +1,8 @@
 diff --git i/src/blocking/direct_mem.rs w/src/blocking/direct_mem.rs
-index af89b51..529a4d9 100644
+index 6b599bd..ba5006c 100644
 --- i/src/blocking/direct_mem.rs
 +++ w/src/blocking/direct_mem.rs
-@@ -470,12 +470,16 @@ impl DirectMemRegions {
+@@ -482,12 +482,16 @@ impl DirectMemRegions {
      /// The lookup and the copy happen in one lock hold, so an invalidation
      /// cannot free the storage between them.
      pub(crate) fn read(&self, paddr: u64, width: usize, bytes: &mut [u8]) -> Option<Femtoseconds> {
@@ -25,7 +25,7 @@ index af89b51..529a4d9 100644
          #[cfg(test)]
          {
              let hook = self
-@@ -488,15 +492,11 @@ impl DirectMemRegions {
+@@ -500,15 +504,11 @@ impl DirectMemRegions {
              }
          }
          for (index, byte) in bytes.iter_mut().take(width).enumerate() {
@@ -43,4 +43,4 @@ index af89b51..529a4d9 100644
 +        Some(latency)
      }
  
-     /// Caches one validated grant, replacing every grant it overlaps.
+     /// Copies one store span through a cached grant.
