@@ -1,8 +1,11 @@
 diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
-index 7b91a45..f948786 100644
+index 0f770ec..7c078c1 100644
 --- i/src/blocking/adapter.rs
 +++ w/src/blocking/adapter.rs
-@@ -412,7 +412,7 @@ impl TlmRamAdapter {
+@@ -443,13 +443,13 @@ impl TlmRamAdapter {
+             let latency = regions.read(descriptor.paddr, width, &mut bytes[..width])?;
+             Some(
+                 self.account_delay(
                      &mut state,
                      descriptor.paddr,
                      latency,
@@ -11,3 +14,6 @@ index 7b91a45..f948786 100644
                      DelayAccess::Physical(descriptor.category),
                  )
                  .map(|()| {
+                     PhysicalResponse::new(
+                         descriptor,
+                         PhysicalResponseCompletion::Read(PhysicalResponseBytes::from_slice(

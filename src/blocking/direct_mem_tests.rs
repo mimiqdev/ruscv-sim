@@ -29,7 +29,15 @@ fn target() -> Arc<DirectMemTarget> {
 /// A TLM slot over `target`, with the window installed through debug transport
 /// exactly as `Platform::build` does.
 fn slot_of(target: &Arc<DirectMemTarget>, direct_mem: bool) -> RamSlot {
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, direct_mem).unwrap();
+    let slot = RamSlot::tlm(
+        target.clone(),
+        BASE,
+        SIZE,
+        TickPeriod::DEFAULT,
+        direct_mem,
+        false,
+    )
+    .unwrap();
     slot.begin_window().unwrap();
     slot
 }
@@ -384,7 +392,7 @@ fn an_inbound_debug_access_never_uses_a_grant() {
 
     let request = PhysicalRequest::data_read(BASE + 0x100, PhysicalWidth::Doubleword).unwrap();
     let response = slot
-        .raw(&request, 0x100, BlockingInitiator::DebugInbound)
+        .raw(&request, 0x100, BlockingInitiator::DebugInbound, 0)
         .unwrap();
     assert_eq!(response.read_bytes().unwrap(), &[0xa5; 8]);
     assert_eq!(
@@ -422,7 +430,7 @@ fn an_invalidation_inside_b_transport_takes_effect_before_the_next_access() {
         }
     }));
     let request = PhysicalRequest::data_read(BASE + 0x300, PhysicalWidth::Word).unwrap();
-    slot.raw(&request, 0x300, BlockingInitiator::DebugInbound)
+    slot.raw(&request, 0x300, BlockingInitiator::DebugInbound, 0)
         .unwrap();
     target.clear_transport_hook();
     assert_eq!(
@@ -726,7 +734,15 @@ fn a_new_grant_replaces_every_overlapping_cached_grant() {
 #[test]
 fn the_grant_cache_is_bounded_and_eviction_only_costs_transactions() {
     let target = DirectMemTarget::new(BASE, 0xa000);
-    let slot = RamSlot::tlm(target.clone(), BASE, 0xa000, TickPeriod::DEFAULT, true).unwrap();
+    let slot = RamSlot::tlm(
+        target.clone(),
+        BASE,
+        0xa000,
+        TickPeriod::DEFAULT,
+        true,
+        false,
+    )
+    .unwrap();
     slot.begin_window().unwrap();
     let mut port = ValidatedPhysicalAccess::new(slot.clone());
     let chunks = DIRECT_MEM_REGION_LIMIT + 1;
@@ -763,7 +779,7 @@ fn the_grant_cache_is_bounded_and_eviction_only_costs_transactions() {
 #[test]
 fn the_in_tree_target_invalidates_before_it_discards_a_granted_chunk() {
     let target = Arc::new(ZeroDelayRam::new());
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, true).unwrap();
+    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, true, false).unwrap();
     slot.begin_window().unwrap();
     slot.program(0x100, &[0x5a; 4]).unwrap();
     let mut port = ValidatedPhysicalAccess::new(slot.clone());
@@ -775,7 +791,7 @@ fn the_in_tree_target_invalidates_before_it_discards_a_granted_chunk() {
 
     // A second composition's reset reaches every registration before the
     // in-tree target discards the chunk the grant points at.
-    let other = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, true).unwrap();
+    let other = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, true, false).unwrap();
     other.begin_window().unwrap();
     assert_eq!(
         slot.cached_direct_mem_regions(),
@@ -1552,7 +1568,15 @@ fn zero_delay_grants_one_read_write_chunk_with_zero_latency() {
 #[test]
 fn the_committed_write_clock_survives_a_transport_reset() {
     let target = Arc::new(ZeroDelayRam::new());
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, false).unwrap();
+    let slot = RamSlot::tlm(
+        target.clone(),
+        BASE,
+        SIZE,
+        TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .unwrap();
     slot.begin_window().unwrap();
     slot.program(0x40, &0x1111_2222_3333_4444u64.to_le_bytes())
         .unwrap();

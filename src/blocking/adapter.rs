@@ -42,6 +42,11 @@ pub(crate) struct TlmRamAdapter {
     declared_max: Femtoseconds,
     /// The target's declared maximum delay reserved by one guest turn.
     bound: TurnCompletionBound,
+    /// quantum D11: whether a quantum is selected at all.  It is a build-time
+    /// property of the Platform, not a per-turn value, because a transaction's
+    /// offset is zero whenever the quantum is off -- including a turn that has
+    /// already charged delay, which is why the per-turn base cannot decide it.
+    quantum: bool,
     /// The cached grants, when direct memory is selected (direct-memory D4/D8).
     /// `None` means the adapter issues no query and ignores every hint.
     /// Dropping the adapter drops the cache, which is the teardown rule; the
@@ -113,6 +118,7 @@ impl TlmRamAdapter {
         target: Arc<dyn BlockingTarget>,
         period: TickPeriod,
         direct_mem: bool,
+        quantum: bool,
     ) -> Result<Self, DelayConversionError> {
         let declared_max = target.declared_max_delay();
         let bound = TurnCompletionBound::new(declared_max, period)?;
@@ -128,6 +134,7 @@ impl TlmRamAdapter {
             period,
             declared_max,
             bound,
+            quantum,
             direct,
             state: Mutex::new(AdapterState::default()),
         })
@@ -202,6 +209,31 @@ impl TlmRamAdapter {
             Ok(state) => state.poisoned.clone(),
             Err(_) => Some("TLM adapter state lock is poisoned".into()),
         }
+    }
+
+    /// quantum D11: the local-time offset one transaction carries.
+    ///
+    /// It is the turn's `L - E` in Platform ticks, which the caller passes
+    /// because committed time, the offset and the anchor live on the bus, plus
+    /// the delay ticks this turn already charged, which live here.  Measuring
+    /// from `E` keeps the value correct after an F1 flush, which moves `C` and
+    /// `O` but not the anchor.  A `DebugInbound` request carries none: debug
+    /// work never adds to `O` (quantum D4).
+    fn local_offset(
+        &self,
+        state: &AdapterState,
+        local_base_ticks: u64,
+        initiator: BlockingInitiator,
+    ) -> Femtoseconds {
+        if initiator != BlockingInitiator::Hart || !self.quantum {
+            return Femtoseconds::ZERO;
+        }
+        let ticks = local_base_ticks.wrapping_add(state.pending.ticks);
+        // quantum D2 makes `(Q + t + 1) x tick_period` representable, and a
+        // turn's `L - E` plus its delay stays under `Q + t`, so this product
+        // cannot overflow under a validated selection; saturation keeps an
+        // unvalidated test configuration from wrapping into a small value.
+        Femtoseconds::new(ticks.saturating_mul(self.period.femtoseconds().as_u64()))
     }
 
     /// Validates and accounts one completed response's annotated delay
@@ -319,11 +351,13 @@ impl TlmRamAdapter {
     /// inbound system bus access (dev-plan D3).  A Hart-initiated read that a
     /// cached grant covers completes through the target's host pointer without
     /// a `b_transport` call; every other request takes one blocking transaction
-    /// unchanged (direct-memory D4).
+    /// unchanged (direct-memory D4).  `local_base_ticks` is the turn's `L - E`,
+    /// which every Hart transaction publishes as its D11 local offset.
     pub(crate) fn transact(
         &self,
         request: &PhysicalRequest<'_>,
         initiator: BlockingInitiator,
+        local_base_ticks: u64,
     ) -> PhysicalBackendResult {
         request
             .validate()
@@ -341,7 +375,7 @@ impl TlmRamAdapter {
         if let Some(result) = self.direct_transact(request, initiator) {
             return result;
         }
-        self.blocking_transact(request, initiator)
+        self.blocking_transact(request, initiator, local_base_ticks)
     }
 
     /// The direct-memory read and write path (direct-memory D4–D7).
@@ -432,6 +466,7 @@ impl TlmRamAdapter {
         &self,
         request: &PhysicalRequest<'_>,
         initiator: BlockingInitiator,
+        local_base_ticks: u64,
     ) -> PhysicalBackendResult {
         let mut state = self.state.lock().map_err(|_| {
             PhysicalBackendError::host("TLM adapter state lock is poisoned by an earlier panic")
@@ -457,6 +492,7 @@ impl TlmRamAdapter {
         let extension = BlockingExtension::new(descriptor.category, initiator);
         let mut transaction =
             BlockingTransaction::new(descriptor.paddr, command, &mut bytes[..width], extension);
+        transaction.set_local_offset(self.local_offset(&state, local_base_ticks, initiator));
 
         let panic = catch_unwind(AssertUnwindSafe(|| {
             self.target.b_transport(&mut transaction);
@@ -751,7 +787,11 @@ impl TlmRamAdapter {
     /// store-conditional conclusively completes, and a translation A/D
     /// envelope, marked by the walker, changes neither direction of that gate
     /// (direct-memory D7).
-    pub(crate) fn transact_atomic(&self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+    pub(crate) fn transact_atomic(
+        &self,
+        request: &AtomicRequest<'_>,
+        local_base_ticks: u64,
+    ) -> AtomicBackendResult {
         request
             .validate()
             .map_err(|error| PhysicalBackendError::protocol(error.to_string()))?;
@@ -846,6 +886,13 @@ impl TlmRamAdapter {
             &mut bytes[..width.bytes()],
             extension,
         );
+        // Every atomic envelope is Hart-origin, so it publishes the turn's
+        // offset too (quantum D11).
+        transaction.set_local_offset(self.local_offset(
+            &state,
+            local_base_ticks,
+            BlockingInitiator::Hart,
+        ));
 
         let panic = catch_unwind(AssertUnwindSafe(|| {
             self.target.b_transport(&mut transaction);

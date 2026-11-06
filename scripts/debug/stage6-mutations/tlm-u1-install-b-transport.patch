@@ -20,7 +20,7 @@
 +                    )
 +                    .map_err(|error| MemoryError::Protocol(error.to_string()))?;
 +                    adapter
-+                        .transact(&request, BlockingInitiator::Hart)
++                        .transact(&request, BlockingInitiator::Hart, 0)
 +                        .map_err(memory_error)?;
 +                    done += count;
 +                }

@@ -135,6 +135,17 @@ pub(crate) struct GrantFacts {
     pub(crate) lifecycle: Lifecycle,
     /// Completed Hart turns since the current image was installed.
     pub(crate) turns: u64,
+    /// The selected quantum in Platform ticks, zero when off (quantum D12).
+    pub(crate) quantum_ticks: u64,
+    /// The declared interrupt-latency bound in ticks (quantum D8/D10).
+    pub(crate) interrupt_latency_bound_ticks: u64,
+    /// The cumulative counted-sync count, read after the return sync (D12).
+    pub(crate) quantum_syncs: u64,
+    /// quantum D5's threshold result at the grant's last boundary.
+    pub(crate) quantum_reached: bool,
+    /// A counted sync at a turn boundary ended a non-terminal grant
+    /// (quantum D12).
+    pub(crate) quantum_sync: bool,
 }
 
 impl Default for GrantFacts {
@@ -155,6 +166,11 @@ impl Default for GrantFacts {
             transport_delay_fs: 0,
             lifecycle: Lifecycle::Running,
             turns: 0,
+            quantum_ticks: 0,
+            interrupt_latency_bound_ticks: 0,
+            quantum_syncs: 0,
+            quantum_reached: false,
+            quantum_sync: false,
         }
     }
 }
@@ -167,6 +183,22 @@ impl GrantFacts {
             || self.deadline_blocked
             || self.waiting
             || self.no_progress
+            || self.quantum_sync
+    }
+
+    /// quantum D12: take the last boundary's quantum facts into the grant.
+    ///
+    /// The four reported fields are `GrantFacts::default()`'s zeros until the
+    /// first grant of a load or reset, which is what
+    /// `ruscv_machine_boundary` reports even with a quantum selected.
+    fn record_quantum(&mut self, boundary: Option<crate::machine::QuantumFacts>) {
+        let Some(facts) = boundary else {
+            return;
+        };
+        self.quantum_ticks = facts.ticks;
+        self.interrupt_latency_bound_ticks = facts.interrupt_latency_bound_ticks;
+        self.quantum_syncs = facts.syncs;
+        self.quantum_reached = facts.reached;
     }
 }
 
@@ -366,6 +398,10 @@ impl Session {
             committed_end_fs: committed_start_fs,
             lifecycle: Lifecycle::Running,
             turns: self.facts.turns,
+            // quantum D12: the sync count is cumulative for the generation, so
+            // this grant compares its boundaries against the previous grant's
+            // count instead of starting from zero.
+            quantum_syncs: self.facts.quantum_syncs,
             ..GrantFacts::default()
         };
         // One step can complete a waiting turn and its wake, and each reserves
@@ -382,10 +418,17 @@ impl Session {
         let wake_bound_ticks = turn_bound
             .checked_add(1)
             .ok_or_else(|| ApiError::new(Status::Config, "the completion bound overflows"))?;
-        let committed = |machine: &mut OwnedMachine| -> Result<u64, ApiError> {
-            let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
+        // quantum D12: the grant's horizon, `deadline_blocked` and
+        // `residual_slack_fs` tests read the Hart's local time `L`, not
+        // committed time.  Every grant return syncs first, so the caller's
+        // committed clock ends at `L`, and a step granted against `C` could
+        // put that clock past the horizon (quantum D8's zero overshoot).
+        let local = |machine: &mut OwnedMachine| -> Result<u64, ApiError> {
+            let now = machine
+                .platform_local_time()
+                .map_err(MachineRefusal::status)?;
             now.checked_mul(period)
-                .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the committed time overflows"))
+                .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the local time overflows"))
         };
         // The caller's own clock: its start plus everything the grant consumed.
         let caller_now = |consumed_fs: u64| -> Result<u64, ApiError> {
@@ -396,7 +439,7 @@ impl Session {
         let mut deadline_stop_seen = false;
 
         loop {
-            let now_fs = committed(machine)?;
+            let now_fs = local(machine)?;
             let elapsed_fs = now_fs - facts.committed_start_fs;
             let at_horizon = caller_now(elapsed_fs)? >= max_end_fs;
             if !control.may_execute() || at_horizon {
@@ -406,7 +449,9 @@ impl Session {
                 facts.deadline_reached = at_horizon;
                 break;
             }
-            let now_ticks = machine.platform_mtime().map_err(MachineRefusal::status)?;
+            let now_ticks = machine
+                .platform_local_time()
+                .map_err(MachineRefusal::status)?;
             // ADR-0004 §7.2: start a step only when its conservative completion
             // bound fits the inclusive deadline; otherwise report the residual
             // slack and the refused bound instead of speculative work.
@@ -433,6 +478,13 @@ impl Session {
             facts.no_progress |= turn.boundary().no_progress;
             deadline_stop_seen |= turn.boundary().deadline_stop;
             facts.uncertain |= turn.boundary().uncertain;
+            // quantum D12: the grant reports the last boundary's quantum facts,
+            // and a counted sync at a turn boundary ends a non-terminal grant.
+            // The count before this boundary is kept for the comparison the
+            // `Exit::Absent` arm makes, because F2 can sync inside
+            // `observe_exit` and refresh the boundary's count.
+            let syncs_before = facts.quantum_syncs;
+            facts.record_quantum(turn.boundary().quantum);
 
             // A completed Hart outcome is accounted before fallible observer
             // delivery: a commit-log write cannot unretire or drop a committed
@@ -517,16 +569,36 @@ impl Session {
             match self.observe_exit(machine, &mut turn) {
                 Exit::Code(code) => {
                     facts.turns = self.facts.turns + control.cycles();
-                    facts.committed_end_fs = committed(machine)?;
+                    facts.committed_end_fs = self.grant_end_fs(machine)?;
                     facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
                     let caller_end = caller_now(facts.consumed_fs)?;
                     // A terminal exit does not discard coincident bound facts.
                     facts.budget_exhausted = !control.may_execute();
                     finalize_horizon(&mut facts, caller_end, max_end_fs, false);
+                    self.refresh_quantum_syncs(machine, &mut facts)?;
                     self.commit_run(facts, caller_end, RunState::Exited, code)?;
                     return Ok(());
                 }
-                Exit::Absent => {}
+                Exit::Absent => {
+                    // quantum D12: a counted sync at a turn boundary ends the
+                    // grant before another turn starts, so the next grant's
+                    // transactions begin at the anchor again and `E` stays `C`
+                    // for a whole grant.  A terminal exit and a waiting
+                    // settlement keep their own exits, and a jump-ended grant
+                    // is `waiting`'s.  This comparison reads the boundary the
+                    // F2 helper may have refreshed, so a sync that a non-zero
+                    // RAM `tohost` sample triggered ends its own grant too.
+                    let synced = turn
+                        .boundary()
+                        .quantum
+                        .is_some_and(|quantum| quantum.syncs > syncs_before);
+                    facts.record_quantum(turn.boundary().quantum);
+                    if synced {
+                        facts.quantum_sync = true;
+                        facts.budget_exhausted = !control.may_execute();
+                        break;
+                    }
+                }
                 Exit::HostFailure(message) => {
                     return self.finish_failure(
                         machine,
@@ -542,12 +614,51 @@ impl Session {
             }
         }
 
-        facts.committed_end_fs = committed(machine)?;
+        facts.committed_end_fs = self.grant_end_fs(machine)?;
         facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
         facts.turns = self.facts.turns + control.cycles();
         let caller_end = caller_now(facts.consumed_fs)?;
         finalize_horizon(&mut facts, caller_end, max_end_fs, deadline_stop_seen);
+        self.refresh_quantum_syncs(machine, &mut facts)?;
         self.commit_run(facts, caller_end, RunState::Running, 0)?;
+        Ok(())
+    }
+
+    /// quantum F7: sync the pending local offset and read the committed end.
+    ///
+    /// Every grant return goes through this one helper, before facts are
+    /// reported, so `committed_end_fs` and `consumed_fs` are post-sync and the
+    /// caller's `wait(consumed)` stays exact.  The sync is the bus-lock update
+    /// alone: the Hart sees no further turn in this grant, so nothing needs
+    /// republishing.  A no-op sync is not counted (quantum D3).
+    fn grant_end_fs(&self, machine: &OwnedMachine) -> Result<u64, ApiError> {
+        machine
+            .commit_local_time(true)
+            .map_err(MachineRefusal::status)?;
+        let period = self.period.femtoseconds().as_u64();
+        let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
+        now.checked_mul(period)
+            .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the committed time overflows"))
+    }
+
+    /// quantum D12: report the sync count read after the grant-return sync.
+    ///
+    /// The four reported quantum facts otherwise keep the grant's last boundary
+    /// values, including `reached`, which a forced sync does not change.
+    fn refresh_quantum_syncs(
+        &self,
+        machine: &OwnedMachine,
+        facts: &mut GrantFacts,
+    ) -> Result<(), ApiError> {
+        let Some(boundary) = machine
+            .quantum_facts(false)
+            .map_err(MachineRefusal::status)?
+        else {
+            return Ok(());
+        };
+        facts.quantum_ticks = boundary.ticks;
+        facts.interrupt_latency_bound_ticks = boundary.interrupt_latency_bound_ticks;
+        facts.quantum_syncs = boundary.syncs;
         Ok(())
     }
 
@@ -693,11 +804,7 @@ impl Session {
         message: String,
         unknown: bool,
     ) -> Result<(), ApiError> {
-        let period = self.period.femtoseconds().as_u64();
-        let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
-        facts.committed_end_fs = now
-            .checked_mul(period)
-            .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the committed time overflows"))?;
+        facts.committed_end_fs = self.grant_end_fs(machine)?;
         facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
         facts.turns = self.facts.turns + completed_turns;
         facts.failed = true;
@@ -711,6 +818,7 @@ impl Session {
             .checked_add(facts.consumed_fs)
             .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the caller clock overflows"))?;
         finalize_horizon(&mut facts, caller_end, max_end_fs, false);
+        self.refresh_quantum_syncs(machine, &mut facts)?;
         self.facts = facts;
         self.state = RunState::Failed;
         self.exit_code = 0;
@@ -805,6 +913,59 @@ pub(crate) fn tick_period(femtoseconds: u64) -> Result<TickPeriod, ApiError> {
         ));
     }
     Ok(TickPeriod::new(Femtoseconds::new(femtoseconds)))
+}
+
+/// Validates a selected quantum before a Machine is built (quantum D2).
+///
+/// The Machine itself is built later, at load, so `ruscv_machine_create` runs
+/// the same two rules here: a quantum needs the TLM route, and
+/// `(Q + t + 1) x tick_period` must be representable as `u64` femtoseconds,
+/// where `t` is the target's conservative turn completion bound.  `Q` = 0
+/// accepts everything accepted today.  A NULL table selects the native route,
+/// which has no local offset to bound, so it cannot select a quantum.
+pub(crate) fn validate_quantum(
+    quantum: u64,
+    target: Option<&CBlockingTarget>,
+    period: TickPeriod,
+) -> Result<(), ApiError> {
+    if quantum == 0 {
+        return Ok(());
+    }
+    let Some(target) = target else {
+        return Err(ApiError::new(
+            Status::Config,
+            "a quantum needs a TLM RAM target; a NULL target selects the native route, which has \
+             no local offset to bound",
+        ));
+    };
+    let turn_bound = TurnCompletionBound::new(target.declared_max_delay(), period)
+        .map_err(|error| {
+            ApiError::new(
+                Status::Config,
+                format!(
+                    "the target's declared per-transaction maximum delay {} fs is not \
+                     representable under the declared tick period: {error}",
+                    target.declared_max_delay().as_u64()
+                ),
+            )
+        })?
+        .ticks();
+    let period_fs = period.femtoseconds().as_u64();
+    let represented = quantum
+        .checked_add(turn_bound)
+        .and_then(|sum| sum.checked_add(1))
+        .and_then(|sum| sum.checked_mul(period_fs));
+    if represented.is_none() {
+        return Err(ApiError::new(
+            Status::Config,
+            format!(
+                "quantum {quantum} ticks plus the route's turn completion bound of \
+                 {turn_bound} ticks cannot be represented under the declared tick period of \
+                 {period_fs} fs"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Validates a target's declared maximum before a Machine is built.

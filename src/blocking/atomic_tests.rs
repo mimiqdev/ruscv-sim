@@ -84,7 +84,15 @@ impl BlockingTarget for CountingTarget {
 }
 
 fn tlm_slot(target: &Arc<CountingTarget>) -> RamSlot {
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, false).unwrap();
+    let slot = RamSlot::tlm(
+        target.clone(),
+        BASE,
+        SIZE,
+        TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .unwrap();
     slot.begin_window().unwrap();
     slot
 }
@@ -465,7 +473,15 @@ fn an_opaque_compact_snapshot_round_trips_through_the_adapter() {
         snapshot: vec![0xab; 8],
         sc_seen: AtomicUsize::new(0),
     });
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, false).unwrap();
+    let slot = RamSlot::tlm(
+        target.clone(),
+        BASE,
+        SIZE,
+        TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .unwrap();
     let mut port = ValidatedAtomicAccess::new(slot);
     let lr =
         AtomicRequest::load_reserved(BASE + 0x60, PhysicalWidth::Doubleword, ORDERING).unwrap();
@@ -836,7 +852,7 @@ fn an_mmu_ad_update_neither_opens_nor_closes_the_write_suspension_gate() {
     target.set_reply(super::test_support::DirectMemReply::Chunk(
         BlockingDirectMemAccess::ReadWrite,
     ));
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, true).unwrap();
+    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, true, false).unwrap();
     slot.begin_window().unwrap();
     let pointer = |ppn: u64| PageTableEntry::new_pointer(ppn).bits().to_le_bytes();
     slot.program(0, &pointer(ROOT_PPN + 1)).unwrap();
@@ -926,7 +942,15 @@ fn an_mmu_ad_update_neither_opens_nor_closes_the_write_suspension_gate() {
 #[test]
 fn atomic_delay_is_converted_and_charged_once() {
     let target = DelayingRam::new(1_000_000, 1_000_000);
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, false).unwrap();
+    let slot = RamSlot::tlm(
+        target.clone(),
+        BASE,
+        SIZE,
+        TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .unwrap();
     slot.begin_window().unwrap();
     let mut port = ValidatedAtomicAccess::new(slot.clone());
     slot.begin_transport_turn();
@@ -955,7 +979,15 @@ fn atomic_delay_is_converted_and_charged_once() {
 #[test]
 fn an_overshooting_atomic_delay_is_a_failure() {
     let target = DelayingRam::new(1_000_000, 3_000_000);
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, false).unwrap();
+    let slot = RamSlot::tlm(
+        target.clone(),
+        BASE,
+        SIZE,
+        TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .unwrap();
     slot.begin_window().unwrap();
     let mut port = ValidatedAtomicAccess::new(slot.clone());
     slot.begin_transport_turn();

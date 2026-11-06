@@ -415,11 +415,12 @@ pub struct BlockingTransaction<'a> {
     extension: BlockingExtension,
     response_delay: Femtoseconds,
     dmi_allowed: bool,
+    local_offset: Femtoseconds,
 }
 
 impl<'a> BlockingTransaction<'a> {
-    /// Creates one transaction whose status starts incomplete and whose delay
-    /// starts at zero.
+    /// Creates one transaction whose status starts incomplete, whose delay
+    /// starts at zero and whose local offset starts at zero.
     pub fn new(
         address: u64,
         command: BlockingCommand,
@@ -436,6 +437,7 @@ impl<'a> BlockingTransaction<'a> {
             extension,
             response_delay: Femtoseconds::ZERO,
             dmi_allowed: false,
+            local_offset: Femtoseconds::ZERO,
         }
     }
 
@@ -508,6 +510,28 @@ impl<'a> BlockingTransaction<'a> {
         self.response_delay
     }
 
+    /// The Hart's local time offset for this request (quantum D11).
+    ///
+    /// Read-only timing metadata, the counterpart of the IEEE 1666
+    /// `b_transport` delay argument: the Hart's local time `L` minus the anchor
+    /// `E`, plus the delay ticks this turn already charged, in exact
+    /// femtoseconds.  It is zero when no quantum is selected, for every
+    /// `DebugInbound` request and for debug transport.  Address, width, bytes,
+    /// category and status never depend on it, and it is never charged as a
+    /// delay.
+    pub const fn local_offset(&self) -> Femtoseconds {
+        self.local_offset
+    }
+
+    /// Sets the local-time offset of this request.
+    ///
+    /// Only the adapter sets it, once, before the target sees the transaction; a
+    /// target must not do this.  It is request metadata, so a target that
+    /// reports something else in a copied payload changes nothing here.
+    pub(crate) fn set_local_offset(&mut self, offset: Femtoseconds) {
+        self.local_offset = offset;
+    }
+
     /// Annotates the response delay.
     pub fn set_response_delay(&mut self, delay: Femtoseconds) {
         self.response_delay = delay;
@@ -564,6 +588,7 @@ impl fmt::Debug for BlockingTransaction<'_> {
             .field("extension", &self.extension)
             .field("response_delay", &self.response_delay)
             .field("dmi_allowed", &self.dmi_allowed)
+            .field("local_offset", &self.local_offset)
             .finish()
     }
 }

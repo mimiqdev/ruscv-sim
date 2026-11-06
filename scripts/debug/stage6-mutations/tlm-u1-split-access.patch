@@ -1,8 +1,10 @@
---- a/src/blocking/adapter.rs
-+++ b/src/blocking/adapter.rs
-@@ -127,9 +127,40 @@
-         let mut transaction =
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index 59aa324..a7f8cba 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -487,9 +487,40 @@ impl TlmRamAdapter {
              BlockingTransaction::new(descriptor.paddr, command, &mut bytes[..width], extension);
+         transaction.set_local_offset(self.local_offset(&state, local_base_ticks, initiator));
  
 -        let panic = catch_unwind(AssertUnwindSafe(|| {
 -            self.target.b_transport(&mut transaction);

@@ -210,6 +210,9 @@ pub struct CPayload {
     pub(crate) atomic: CAtomic,
     /// Response: nonzero when the target can serve this address by pointer.
     pub(crate) dmi_allowed: i32,
+    /// Request: the Hart's local time offset in exact femtoseconds
+    /// (quantum D11), zero when no quantum is selected and for debug transport.
+    pub(crate) local_offset_fs: u64,
 }
 
 /// One debug-transport request as the C target sees it (`ruscv_debug`).
@@ -243,6 +246,8 @@ pub struct CTarget {
     /// Optional direct-memory query; `NULL` means the target offers none.
     pub(crate) get_direct_mem_ptr:
         Option<unsafe extern "C" fn(*mut c_void, *mut CDirectMem) -> i32>,
+    /// The selected quantum in Platform ticks; zero is off (quantum D12).
+    pub(crate) quantum_ticks: u64,
 }
 
 /// A validated C callback table used as one blocking RAM target.
@@ -308,6 +313,11 @@ impl CBlockingTarget {
     pub(crate) fn declared_max_delay(&self) -> Femtoseconds {
         Femtoseconds::new(self.table.max_delay_fs)
     }
+
+    /// The quantum this table selects, in Platform ticks (quantum D12).
+    pub(crate) fn quantum_ticks(&self) -> u64 {
+        self.table.quantum_ticks
+    }
 }
 
 impl BlockingTarget for CBlockingTarget {
@@ -334,6 +344,7 @@ impl BlockingTarget for CBlockingTarget {
             delay_fs: 0,
             atomic: atomic_request(transaction),
             dmi_allowed: 0,
+            local_offset_fs: transaction.local_offset().as_u64(),
         };
         let _in_callback = super::CallbackScope::enter();
         // SAFETY: the table was validated at create time, the payload and its

@@ -2365,5 +2365,41 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "quantum-u4-f7-grant-return",
+    "source": "src/capi/host.rs",
+    "patch": "quantum-u4-f7-grant-return.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::quantum_grant_near_its_horizon_never_overshoots",
+        "failure": [
+          "the grant return did not carry the parity run's committed time",
+          "left:\\s+0",
+          "right:\\s+4000000"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u4-horizon-uses-committed",
+    "source": "src/capi/host.rs",
+    "patch": "quantum-u4-horizon-uses-committed.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::quantum_grant_near_its_horizon_never_overshoots",
+        "failure": [
+          "the grant near its horizon did not report the blocked turn",
+          "left:\\s+0",
+          "right:\\s+1"
+        ]
+      }
+    ]
   }
 ]

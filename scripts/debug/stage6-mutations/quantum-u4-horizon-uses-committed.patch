@@ -1,0 +1,26 @@
+diff --git i/src/capi/host.rs w/src/capi/host.rs
+index ed97a7b..6b9b7a3 100644
+--- i/src/capi/host.rs
++++ w/src/capi/host.rs
+@@ -424,9 +424,7 @@ impl Session {
+         // committed clock ends at `L`, and a step granted against `C` could
+         // put that clock past the horizon (quantum D8's zero overshoot).
+         let local = |machine: &mut OwnedMachine| -> Result<u64, ApiError> {
+-            let now = machine
+-                .platform_local_time()
+-                .map_err(MachineRefusal::status)?;
++            let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
+             now.checked_mul(period)
+                 .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the local time overflows"))
+         };
+@@ -449,9 +447,7 @@ impl Session {
+                 facts.deadline_reached = at_horizon;
+                 break;
+             }
+-            let now_ticks = machine
+-                .platform_local_time()
+-                .map_err(MachineRefusal::status)?;
++            let now_ticks = machine.platform_mtime().map_err(MachineRefusal::status)?;
+             // ADR-0004 §7.2: start a step only when its conservative completion
+             // bound fits the inclusive deadline; otherwise report the residual
+             // slack and the refused bound instead of speculative work.

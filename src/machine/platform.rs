@@ -102,6 +102,9 @@ impl Platform {
                 image.memory_size(),
                 config.tick_period,
                 config.dmi,
+                // quantum D11: with the quantum off every transaction's local
+                // offset is zero, whatever this turn has already charged.
+                config.quantum != 0,
             )
             .map_err(|error| {
                 MachineError::Placement(format!(

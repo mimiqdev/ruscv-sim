@@ -1100,7 +1100,6 @@ impl OwnedMachine {
     }
 
     /// quantum D3: the Hart's local time `L` of the installed domain.
-    #[cfg(test)]
     pub(crate) fn platform_local_time(&self) -> Result<u64, MachineError> {
         self.domain().platform.read_local_time()
     }

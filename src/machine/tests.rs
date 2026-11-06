@@ -3465,7 +3465,7 @@ fn a_second_compositions_reset_on_a_shared_target_removes_the_first_regions() {
 
     let read = || {
         let request = PhysicalRequest::data_read(elf::BASE, PhysicalWidth::Word).unwrap();
-        first.ram.raw(&request, 0, BlockingInitiator::Hart)
+        first.ram.raw(&request, 0, BlockingInitiator::Hart, 0)
     };
     read().unwrap();
     assert_eq!(first.ram.cached_direct_mem_regions(), 1);

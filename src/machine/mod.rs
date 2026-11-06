@@ -622,7 +622,7 @@ impl Installed {
                     idle_stop = (false, true);
                     break hart;
                 }
-                WaitSettlement::Jumped | WaitSettlement::NotWaiting => {
+                settlement @ (WaitSettlement::Jumped | WaitSettlement::NotWaiting) => {
                     // A settlement at or after the inclusive deadline admits the
                     // event due there but starts no normal turn (ADR-0004 §7.2),
                     // so the exchange returns `DeadlineReached` instead of a
@@ -638,6 +638,19 @@ impl Installed {
                     // host re-evaluates the bound before any further work.
                     if !self.wake_turn_fits() {
                         wake_blocked = true;
+                        break hart;
+                    }
+                    // quantum D12: a bounded exchange with a quantum ends at the
+                    // idle jump, before the wake turn, so the exchange returns a
+                    // grant boundary with `waiting` set and `deadline_blocked`
+                    // clear, and the next grant runs the wake turn at zero
+                    // offset.  The Runner sets no virtual deadline and has no
+                    // external clock, so it keeps the jump and its wake turn in
+                    // one `turn()`.
+                    if matches!(settlement, WaitSettlement::Jumped)
+                        && self.quantum != 0
+                        && self.virtual_deadline.is_some()
+                    {
                         break hart;
                     }
                     jumped = true;

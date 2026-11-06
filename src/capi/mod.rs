@@ -151,6 +151,14 @@ pub struct CBoundary {
     pub transport_delay_fs: u64,
     /// Completed Hart turns since the current image was installed.
     pub turns: u64,
+    /// The selected quantum in Platform ticks, zero when off (quantum D12).
+    pub quantum_ticks: u64,
+    /// The declared interrupt-latency bound in ticks (quantum D8/D10).
+    pub interrupt_latency_bound_ticks: u64,
+    /// Cumulative counted syncs, read after the grant-return sync (D10/D12).
+    pub quantum_syncs: u64,
+    /// quantum D5's threshold result at the grant's last boundary.
+    pub quantum_reached: i32,
 }
 
 /// One grant result (`ruscv_grant`).
@@ -440,6 +448,10 @@ fn boundary(facts: GrantFacts) -> CBoundary {
         candidate_bound_fs: facts.candidate_bound_fs,
         transport_delay_fs: facts.transport_delay_fs,
         turns: facts.turns,
+        quantum_ticks: facts.quantum_ticks,
+        interrupt_latency_bound_ticks: facts.interrupt_latency_bound_ticks,
+        quantum_syncs: facts.quantum_syncs,
+        quantum_reached: i32::from(facts.quantum_reached),
     }
 }
 
@@ -448,7 +460,9 @@ fn boundary(facts: GrantFacts) -> CBoundary {
 /// `target` may be null, which selects the native `SimpleMemory` RAM route; a
 /// non-null table is copied, and its `user` pointer must stay valid until
 /// [`ruscv_machine_destroy`].  `tick_period_fs` is the declared Platform tick
-/// period (1 ns is the documented default).
+/// period (1 ns is the documented default).  A non-zero `quantum_ticks` in the
+/// copied table selects the quantum, which a null table therefore cannot do
+/// (quantum D2/D12).
 ///
 /// # Safety
 ///
@@ -476,19 +490,28 @@ pub unsafe extern "C" fn ruscv_machine_create(
         let period = host::tick_period(tick_period_fs)?;
         config.tick_period = period;
         let mut direct_mem = None;
+        let mut tlm = None;
         if !target.is_null() {
             // SAFETY: the caller guarantees one readable table.
             let table = unsafe { *target };
-            let tlm = CBlockingTarget::new(table)
+            let built = CBlockingTarget::new(table)
                 .map_err(|message| ApiError::new(Status::InvalidArgument, message))?;
-            host::validate_target(&tlm, period)?;
+            host::validate_target(&built, period)?;
+            // quantum D12: the quantum is part of the copied table, so it
+            // persists across a reset, and a NULL table selects the native
+            // route, which cannot select one.
+            config.quantum = built.quantum_ticks();
             // A non-NULL query selects direct memory; `NULL` means the target
             // offers nothing and behaves exactly as `dmi` off (direct-memory
             // D12).
-            config.dmi = tlm.offers_direct_memory();
-            direct_mem = Some(tlm.direct_mem_registry().clone());
-            config.transport = Transport::Tlm(tlm);
+            config.dmi = built.offers_direct_memory();
+            direct_mem = Some(built.direct_mem_registry().clone());
+            config.transport = Transport::Tlm(built.clone());
+            tlm = Some(built);
         }
+        // quantum D2: the Machine is built later, at load, so create applies
+        // the same refusal rules here.
+        host::validate_quantum(config.quantum, tlm.as_deref(), period)?;
         Ok(RuscvMachine {
             gate: CallGate {
                 creator: std::thread::current().id(),
