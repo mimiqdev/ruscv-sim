@@ -1939,8 +1939,8 @@
         "test": "machine::tests::quantum_wait_boundary_counts_one_sync_and_keeps_reached",
         "failure": [
           "one waiting boundary counted more than one sync",
-          "left:\\s+6",
-          "right:\\s+5"
+          "left:\\s+7",
+          "right:\\s+6"
         ]
       }
     ]

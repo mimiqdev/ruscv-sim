@@ -5033,17 +5033,18 @@ fn quantum_d4_clock_failure_syncs_the_pre_existing_offset() {
 /// `reached` true when that forced sync coincides.
 #[test]
 fn quantum_wait_boundary_counts_one_sync_and_keeps_reached() {
-    // MTIE, mtimecmp = 100, and a RAM store after WFI as the wake turn.
+    // MTIE, mtimecmp = 100, a store that ends the turn before WFI in a sync,
+    // and a RAM store after WFI as the wake turn.
     let code = [
         elf::addi(6, 0, 0x80),
         csrrs(0, MIE, 6),
         elf::lui(4, 0x2004),
         elf::addi(5, 0, 100),
         elf::sd(5, 4, 0),
-        elf::nop(),
-        elf::addi(2, 0, 0x55),
         elf::lui(1, 0x40000),
         elf::slli(1, 1, 1),
+        elf::addi(2, 0, 0x55),
+        elf::sd(2, 1, 0),
         WFI,
         elf::sd(2, 1, 0),
     ];
