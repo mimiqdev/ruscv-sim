@@ -497,8 +497,8 @@ struct Installed {
     virtual_deadline: Option<u64>,
     #[cfg(test)]
     before_turn: Option<Arc<dyn Fn() + Send + Sync>>,
-    /// Runs after the turn-start mark clear, so a test can inject state that
-    /// only a turn in progress can hold (quantum F1's flush).
+    /// Runs inside the turn, after the turn-start sample and before the Hart's
+    /// own access, so a test can inject the flush only a turn in progress holds.
     #[cfg(test)]
     after_turn_start: Option<AfterTurnStart>,
     /// quantum D9: see [`TimeLedger`].
@@ -577,10 +577,6 @@ impl Installed {
         // acceptance sample. An idle jump republishes and uses that same
         // sample again. It is not a second Hart entry point.
         self.platform.begin_transport_turn()?;
-        #[cfg(test)]
-        if let Some(hook) = &self.after_turn_start {
-            hook(&self.platform);
-        }
         let mut idle_stop = (false, false);
         let mut jumped = false;
         let mut wake_blocked = false;
@@ -598,6 +594,12 @@ impl Installed {
                 .csr
                 .set_machine_interrupt_lines(lines.msip, lines.mtip, lines.meip);
             self.core.state_mut().csr.set_seip_external(lines.seip);
+            // A test injects the mid-turn device flush here, after the turn-start
+            // sample and before the Hart's own access (quantum F1).
+            #[cfg(test)]
+            if let Some(hook) = &self.after_turn_start {
+                hook(&self.platform);
+            }
             let hart = self.core.step_transition(observe);
             if !matches!(hart.outcome, StepOutcome::Waiting) || single_step || jumped {
                 if jumped && matches!(hart.outcome, StepOutcome::Waiting) {
