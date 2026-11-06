@@ -1,0 +1,13 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index eb32d37..c33a48d 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -401,7 +401,7 @@ impl SystemBus {
+     /// offset after one; the RAM adapter adds this turn's already-charged
+     /// ticks to publish the transaction's local time.
+     pub(crate) fn turn_local_base(&self) -> u64 {
+-        self.local_time().wrapping_sub(self.anchor)
++        self.local_offset
+     }
+ 
+     /// quantum D3: the anchor `E` in Platform ticks, `C` at the last sync,

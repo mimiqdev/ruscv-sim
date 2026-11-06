@@ -165,6 +165,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     F7 同步与时钟等式、horizon 使用本地时间（零 overshoot）、两个故障控制及其断言；开放项只余非阻塞传输。
     `integration/systemc/README.md` 同步列出新选项
 
+- **Quantum U6: 退出审计（issue #206）**
+  - 按 D14 校正文档：README 的 quantum 段落说明 U1–U5 已全部实现，并引用实现测试与脚本；CLI `--quantum`
+    帮助说明该选项即使取 0 也要求 `--transport tlm`；`docs/verification/README.md` 更新变异 runner 的 unit
+    数与合同状态；`docs/integration/systemc-tlm.md` 保持为偏移、grant、sync 与上界规则的规范说明，开放项
+    只余非阻塞传输
+  - 补齐 §4 的其余负控制：`quantum-u4-local-offset-off`、`quantum-u4-local-offset-after-flush`、
+    `quantum-u2-debug-delay-offset`、`quantum-u4-grant-past-sync`、`quantum-u4-grant-past-jump` 与
+    `quantum-u4-boundary-reached` 注册进 `scripts/debug/stage6-mutations`；`quantum-u2-debug-delay-offset`
+    由新增的 `machine::tests::quantum_debug_transport_delay_does_not_enter_the_offset` 观察。每条都由已提交
+    测试在变异下失败、还原后通过
+  - 本单元不改变仿真行为、A10 oracle、认证推迟或合同文本；CI 的 `Quality and tests`、`Debug mutation
+    controls`、`Debug attach` 与 `SystemC transport smoke` 作业继续覆盖完整质量门、guest suite、C ABI、
+    SystemC、工具脚本与 mutation runner
+
 - **Direct memory U1: 授权与读取路径（issue #188）**
   - `MachineConfig` 新增公开 `dmi` 字段（`MachineConfig::new` 选择 `false`，破坏结构体字面量构造）；
     `dmi` 与 `Transport::Native` 的组合是既有的 `MachineError::UnsupportedTransport`，该变体的消息加宽为

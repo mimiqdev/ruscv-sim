@@ -2401,5 +2401,101 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "quantum-u4-local-offset-off",
+    "source": "src/blocking/adapter.rs",
+    "patch": "quantum-u4-local-offset-off.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::quantum_local_offset_is_zero_when_off_even_after_charged_delay",
+        "failure": [
+          "a transaction published a local offset with the quantum off"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u4-local-offset-after-flush",
+    "source": "src/executor.rs",
+    "patch": "quantum-u4-local-offset-after-flush.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::quantum_sv39_walk_through_the_clint_publishes_the_local_time",
+        "failure": [
+          "the fetch after the walk did not add its one charged tick"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-debug-delay-offset",
+    "source": "src/machine/owned.rs",
+    "patch": "quantum-u2-debug-delay-offset.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_debug_transport_delay_does_not_enter_the_offset",
+        "failure": [
+          "debug work added its delay to the local offset"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u4-grant-past-sync",
+    "source": "src/capi/host.rs",
+    "patch": "quantum-u4-grant-past-sync.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::quantum_grant_ends_at_a_sync_without_reaching_the_threshold",
+        "failure": [
+          "the forced sync was not counted exactly once"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u4-grant-past-jump",
+    "source": "src/machine/mod.rs",
+    "patch": "quantum-u4-grant-past-jump.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::quantum_idle_jump_ends_the_grant_and_the_wake_starts_at_zero_offset",
+        "failure": [
+          "the grant ended at a time other than the jump target"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u4-boundary-reached",
+    "source": "src/capi/host.rs",
+    "patch": "quantum-u4-boundary-reached.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::quantum_grant_ends_at_a_sync_without_reaching_the_threshold",
+        "failure": [
+          "a counted sync did not end the grant with boundary_reached"
+        ]
+      }
+    ]
   }
 ]

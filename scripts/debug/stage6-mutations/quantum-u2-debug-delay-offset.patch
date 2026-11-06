@@ -1,0 +1,16 @@
+diff --git i/src/machine/owned.rs w/src/machine/owned.rs
+index dfac60f..cb9cb5a 100644
+--- i/src/machine/owned.rs
++++ w/src/machine/owned.rs
+@@ -857,7 +857,10 @@ impl OwnedMachine {
+     fn capture_debug_events(&mut self) -> Result<(), MachineError> {
+         self.debug_events
+             .extend(self.domain().platform.take_events()?);
+-        self.domain().platform.discard_transport_turn_delay();
++        let delay = self.domain().platform.take_transport_turn_delay();
++        self.domain()
++            .platform
++            .accumulate_local_offset(delay.ticks, true)?;
+         // quantum D9: a debug store to `mtime` is a rebase, as a guest store is.
+         #[cfg(test)]
+         self.domain_mut().reconcile_ledger()?;

@@ -79,8 +79,8 @@ enum Commands {
 
         /// Temporal-decoupling quantum in Platform ticks: the Hart may lead
         /// committed time by less than this, syncing at the threshold and at
-        /// the contract's forced points. Requires `--transport tlm`; omitted
-        /// or `0` keeps precise execution.
+        /// the contract's forced points. Requires `--transport tlm` even for
+        /// `0`; with that transport, `0` keeps precise execution.
         #[arg(long, value_name = "TICKS")]
         quantum: Option<u64>,
     },
