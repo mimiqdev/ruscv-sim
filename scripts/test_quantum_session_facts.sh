@@ -144,6 +144,19 @@ sed -i 's/^mtime_break=.*/mtime_break=43/' "${late_halt}"
 assert_reject "a halt at the compare" "${late_halt}" "${good_target}" \
     "is outside"
 
+# A wholly absent row is not a zero: a missing arming sample must fail.
+missing="${temporary}/missing.named"
+valid_facts "${missing}" "a" "4e"
+sed -i '/^arm=/d' "${missing}"
+assert_reject "a missing field" "${missing}" "${good_target}" \
+    "the arming sample is not a Platform tick value"
+
+missing_lateness="${temporary}/missing-lateness.named"
+valid_facts "${missing_lateness}" "a" "4e"
+sed -i '/^lateness=/d' "${missing_lateness}"
+assert_reject "a missing lateness field" "${missing_lateness}" "${good_target}" \
+    "the recorded lateness is not a Platform tick count"
+
 # The withheld report line: the session must see the same D8 bound.
 no_line="${temporary}/no-line.target"
 printf 'Cycles:     128\n' >"${no_line}"

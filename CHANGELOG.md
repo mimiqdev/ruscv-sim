@@ -94,9 +94,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `scripts/debug/quantum_session_facts.sh`：超出 bash 有符号 64-bit 的 64-bit 值（例如相减得到的
     `0xffffffffffffffff`）被拒绝，而不是读成负的小数后通过 `> 上界` 检查
   - `scripts/test_quantum_session_facts.sh` 直接以构造的事实文件覆盖上述检查的接受与拒绝路径（含上述回绕
-    延迟的负控制），无需 OpenOCD、GDB 或 RISC-V 工具链；CI 的 guest-script 步骤运行它。`run_elf_tests.sh` 的
-    `--dmi --quantum 1024` 行要求 `Quantum:` 与 `Cycles:` 各恰好一行、两个字段都是不超过 18 位的十进制数，
-    并在解析或比较失败时判该行失败，而不是让 shell 错误落成通过条件
+    延迟的负控制，缺失或空字段按非法值拒绝而不是读成 0），无需 OpenOCD、GDB 或 RISC-V 工具链；CI 的
+    guest-script 步骤运行它。`run_elf_tests.sh` 的 `--dmi --quantum 1024` 行要求 `Quantum:` 与 `Cycles:` 各
+    恰好一行、两个字段都是不超过 18 位的十进制数，并在解析或比较失败时判该行失败，而不是让 shell 错误落成
+    通过条件；`quantum_u3_timer.elf` 同时是 suite 的必需成员，缺失时 suite 以状态 2 失败而不是静默缩小
   - 新增变异控制 `quantum-u3-cli-requires-tlm`（`src/main.rs`）：去掉 CLI 的 `--quantum` 传输检查后，
     `tests/quantum_cli.rs::the_quantum_option_requires_the_tlm_transport` 必须以非状态 2 的结果失败，还原后
     通过

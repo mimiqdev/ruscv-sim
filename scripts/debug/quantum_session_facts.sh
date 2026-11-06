@@ -30,10 +30,15 @@ quantum_field() {
 #   signed arithmetic represents exactly. A 64-bit subtraction that underflowed
 #   sits at 2^64 - n, so it fails here instead of becoming a small negative
 #   number that a `> bound` test would accept (quantum D8: MTIP is never early,
-#   so 0 <= R - X).
+#   so 0 <= R - X). An absent or empty row is not a fact either, so it fails
+#   instead of reading as zero.
 quantum_narrow() {
-    local value
-    value="$(quantum_norm "$1")"
+    local raw value
+    raw="$1"
+    if [[ -z "${raw}" ]]; then
+        return 1
+    fi
+    value="$(quantum_norm "${raw}")"
     if [[ ! "${value}" =~ ^[0-9a-f]+$ ]]; then
         return 1
     fi

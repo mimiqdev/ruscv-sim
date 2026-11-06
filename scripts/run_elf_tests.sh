@@ -227,6 +227,15 @@ for required in zca_ctrl_flow zca_link_values zca_straddle_fetch zca_ebreak_trap
     fi
 done
 
+# quantum U3's timer guest is a required member: it is the image the live
+# debug-attach session assembles from the same source, and it is the one suite
+# guest whose MTIP comes from a time-derived crossing, so a missing build must
+# fail the suite rather than silently shrink the quantum passes.
+if [ ! -f "${OUTDIR}/rv64i/quantum_u3_timer.elf" ]; then
+    echo -e "${RED}Error: required quantum guest missing: quantum_u3_timer.elf${NC}" >&2
+    exit 2
+fi
+
 # Direct-memory U3 guests are required members of the same suite: the
 # self-modifying-code guest and the page-table guest are the images the third
 # pass must carry, and tests/direct_mem_u3_guests.rs proves the direct path

@@ -69,8 +69,8 @@ const PARITY_GUESTS: [&str; 7] = [
 ];
 
 /// Required `rv64i` suite members from `scripts/run_elf_tests.sh`, plus the
-/// parity guest `hello`.
-const RV64I_GUESTS: [&str; 38] = [
+/// parity guest `hello` and the quantum session guest `quantum_u3_timer`.
+const RV64I_GUESTS: [&str; 39] = [
     "trap_ecall",
     "trap_illegal",
     "trap_ebreak",
@@ -109,6 +109,7 @@ const RV64I_GUESTS: [&str; 38] = [
     "s5_wfi_masked",
     "s5_wfi_none",
     "hello",
+    "quantum_u3_timer",
 ];
 
 /// Required `rv64a` suite members.
