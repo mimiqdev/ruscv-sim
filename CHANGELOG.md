@@ -169,7 +169,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 按 D14 校正文档：README 的 quantum 段落说明 U1–U5 已全部实现，并引用实现测试与脚本；CLI `--quantum`
     帮助说明该选项即使取 0 也要求 `--transport tlm`；`docs/verification/README.md` 更新变异 runner 的 unit
     数与合同状态；`docs/integration/systemc-tlm.md` 保持为偏移、grant、sync 与上界规则的规范说明，开放项
-    只余非阻塞传输
+    只余非阻塞传输；C ABI header 的 `quantum_ticks` 说明区分 0（关闭）、1（逐边界同步且精确）与 ≥2
+    （显式降低精度）
   - 补齐 §4 的其余负控制：`quantum-u4-local-offset-off`、`quantum-u4-local-offset-after-flush`、
     `quantum-u2-debug-delay-offset`、`quantum-u4-grant-past-sync`、`quantum-u4-grant-past-jump` 与
     `quantum-u4-boundary-reached` 注册进 `scripts/debug/stage6-mutations`；`quantum-u2-debug-delay-offset`
