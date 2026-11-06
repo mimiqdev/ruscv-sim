@@ -2331,5 +2331,21 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "quantum-u2-flush-only-publish",
+    "source": "src/executor.rs",
+    "patch": "quantum-u2-flush-only-publish.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_flush_only_failure_publishes_the_boundary_lines",
+        "failure": [
+          "the flush-only failure left the machine lines unpresented"
+        ]
+      }
+    ]
   }
 ]

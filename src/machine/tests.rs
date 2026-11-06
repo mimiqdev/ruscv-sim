@@ -5503,6 +5503,70 @@ fn quantum_turn_start_clears_a_stale_mark() {
     assert_eq!(owned.platform_local_offset().unwrap(), 1);
 }
 
+/// quantum D3/F1/F6: a turn whose Hart device access flushed the offset and
+/// whose own commit then moves no further time still republishes `time` and the
+/// machine lines from the new committed time, so MTIP is not left stale.
+///
+/// The real path needs an unknown completion behind a translation walk; the
+/// test injects exactly the mid-turn flush state instead.
+#[test]
+fn quantum_flush_only_failure_publishes_the_boundary_lines() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    // Hart 0's compare is 1: committed time 0 leaves MTIP clear, and the flush
+    // below moves committed time to 2.
+    dm_active(&mut owned);
+    let address = clint_device_offset(crate::peripherals::clint::reg_offset::MTIMECMP_BASE);
+    sba_set_address(&mut owned, address);
+    // The compare resets to all ones, so both halves are written.
+    assert_eq!(sba_write_word(&mut owned, address + 4, 0) & SBERROR_MASK, 0);
+    assert_eq!(sba_write_word(&mut owned, address, 1) & SBERROR_MASK, 0);
+    assert_eq!(owned.platform_mtime().unwrap(), 0);
+    assert!(!mtip_presented(&owned));
+    owned.test_seed_offset(2).unwrap();
+    let flushed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let once = std::sync::Arc::clone(&flushed);
+    owned.test_after_turn_start(std::sync::Arc::new(move |platform| {
+        if once.swap(false, Ordering::SeqCst) {
+            platform.test_device_flush().unwrap();
+        }
+    }));
+    // The zero-delay target's next access completes unknown, so the turn fails
+    // with no completed tick and no delay ticks.
+    target.set_unknown(true);
+    let turn = owned.step_request(false, false, false).unwrap();
+    assert!(
+        matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+        "the turn did not fail: {:?}",
+        turn.hart().outcome
+    );
+    assert!(turn.boundary().uncertain);
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        2,
+        "the flush did not commit the pending offset"
+    );
+    assert_eq!(owned.platform_local_time().unwrap(), 2);
+    assert_eq!(owned.platform_local_offset().unwrap(), 0);
+    assert_eq!(
+        owned.platform_quantum_syncs().unwrap(),
+        1,
+        "the flush-only boundary did not count its one sync"
+    );
+    assert!(
+        mtip_presented(&owned),
+        "the flush-only failure left the machine lines unpresented"
+    );
+    assert_eq!(guest_time(&owned), 2);
+}
+
+/// `sbcs.sberror`, all three bits.
+const SBERROR_MASK: u32 = 7 << SBERROR_SHIFT;
+
 /// quantum D3/D9: a guest store that lowers `mtime` is a rebase. MTIP falls at
 /// the next turn as in a parity run, and `E` = `C` = `L` afterwards.
 #[test]

@@ -1072,6 +1072,13 @@ impl OwnedMachine {
         dm.dmi_write(core, SBADDRESS0, address as u32);
     }
 
+    /// Run `hook` at every turn start, after the F1 mark clear, so a test can
+    /// inject the flush only a turn in progress can hold.
+    #[cfg(test)]
+    pub(super) fn test_after_turn_start(&mut self, hook: AfterTurnStart) {
+        self.domain_mut().after_turn_start = Some(hook);
+    }
+
     /// Sead an F1 turn mark with no device access behind it.
     #[cfg(test)]
     pub(crate) fn test_seed_turn_mark(&self) -> Result<(), MachineError> {

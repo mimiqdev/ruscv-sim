@@ -311,6 +311,22 @@ impl Platform {
         Ok(None)
     }
 
+    /// quantum F1: flush the pending offset exactly as a Hart device access
+    /// does, for the flush-only boundary state a test cannot otherwise reach
+    /// without an unknown completion behind a translation walk.
+    #[cfg(test)]
+    pub(super) fn test_device_flush(&self) -> Result<bool, MachineError> {
+        match &self.bus {
+            Some(bus) => {
+                bus.lock()
+                    .map_err(|_| MachineError::Poisoned)?
+                    .flush_local_time_for_test();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     /// Sead an F1 turn mark with no device access behind it, so a test can
     /// check that a turn start clears it (quantum F1).
     #[cfg(test)]

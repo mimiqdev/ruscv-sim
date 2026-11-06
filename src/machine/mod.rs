@@ -481,6 +481,10 @@ pub struct MachineStatus {
     /// Original failure diagnostic, retained without attempting another turn.
     pub last_failure: Option<crate::core::SimulatorFailure>,
 }
+/// A test hook that runs at every turn start with the installed Platform.
+#[cfg(test)]
+type AfterTurnStart = Arc<dyn Fn(&Platform) + Send + Sync>;
+
 struct Installed {
     core: RiscvCore,
     platform: Platform,
@@ -493,6 +497,10 @@ struct Installed {
     virtual_deadline: Option<u64>,
     #[cfg(test)]
     before_turn: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Runs after the turn-start mark clear, so a test can inject state that
+    /// only a turn in progress can hold (quantum F1's flush).
+    #[cfg(test)]
+    after_turn_start: Option<AfterTurnStart>,
     /// quantum D9: see [`TimeLedger`].
     #[cfg(test)]
     ledger: std::cell::Cell<TimeLedger>,
@@ -522,6 +530,8 @@ impl Installed {
             virtual_deadline: None,
             #[cfg(test)]
             before_turn: None,
+            #[cfg(test)]
+            after_turn_start: None,
             #[cfg(test)]
             ledger: std::cell::Cell::new(TimeLedger::default()),
         })
@@ -567,6 +577,10 @@ impl Installed {
         // acceptance sample. An idle jump republishes and uses that same
         // sample again. It is not a second Hart entry point.
         self.platform.begin_transport_turn()?;
+        #[cfg(test)]
+        if let Some(hook) = &self.after_turn_start {
+            hook(&self.platform);
+        }
         let mut idle_stop = (false, false);
         let mut jumped = false;
         let mut wake_blocked = false;
