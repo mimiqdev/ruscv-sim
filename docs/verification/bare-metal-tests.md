@@ -70,15 +70,21 @@ The scripts build into a disposable target directory directly below the
 canonical repository `target/` directory, remove it before each normal compile,
 record the source Git HEAD in `manifest.txt`, verify ELF entry `== _start`, and
 run the original RV64I/RV64M guests followed by the A8 RV64A atomic additions
-and the F/D U5 additions through the public CLI. Every guest then runs a second
-time under `--transport tlm` with the same declared profile and the same cycle
-bound, and the TLM pass is classified exactly like the native pass: a guest
-that fails or times out only on the TLM route fails the suite instead of being
-skipped. The parity set named by D10 (`hello`, `s5_timer`, `s5_external`,
-`atomic_tohost_exit`, `fd_fma`) writes `--log-commits` on both passes; the
+and the F/D U5 additions through the public CLI. Every guest then runs four
+more times along the same routes with the same declared profile and the same
+cycle bound: `--transport tlm`, `--transport tlm --dmi`, `--transport tlm
+--quantum 1` and `--transport tlm --quantum 1024`. Every pass is classified
+exactly like the native pass: a guest that fails or times out only on one route
+fails the suite instead of being skipped. The parity set named by D10
+(`hello`, `s5_timer`, `s5_external`, `atomic_tohost_exit`, `fd_fma`) and
+extended by the direct-memory guests (`direct_mem_smc_fence_i`,
+`direct_mem_sv39_pt_store`) writes `--log-commits` on all five passes; the
 files under `commit-logs/` in the suite output directory are compared with
-`cmp`, and a missing, empty or unequal log fails the suite. The summary line
-`TLM parity logs compared: 5/5` is part of the acceptance evidence. The five A6 trap guests, the
+`cmp`, and a missing, empty or unequal log fails the suite. The summary lines
+`TLM parity logs compared: 7/7`, `Direct-memory parity logs compared: 7/7` and
+`Quantum parity logs compared: 14/14` are part of the acceptance evidence.
+`hello` also runs once with `--transport tlm --dmi --quantum 1024`, and its
+`Quantum:` line must report fewer syncs than its completed turns. The five A6 trap guests, the
 five Zca U4 compressed guests, the eight F/D U5 guests and the U6 FP attach
 guest remain required members; the Zca guests run with `--isa rv64imac`, the
 `fd_*` guests with `--isa rv64imafd`, `zcd_transfer` and `fdc_u6_attach` with

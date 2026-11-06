@@ -1098,7 +1098,7 @@
         ],
         "test": "the_guest_suite_runs_every_case_under_the_tlm_route",
         "failure": [
-          "the second pass must run under --transport tlm"
+          "the TLM pass must run under --transport tlm"
         ]
       }
     ]
@@ -1646,7 +1646,7 @@
         ],
         "test": "the_guest_suite_runs_every_case_under_the_tlm_route",
         "failure": [
-          "the third pass must select --dmi"
+          "the direct-memory pass's --dmi selection"
         ]
       }
     ]
@@ -2344,6 +2344,24 @@
         "test": "machine::tests::quantum_flush_only_failure_publishes_the_boundary_lines",
         "failure": [
           "the flush-only failure left the machine lines unpresented"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u3-cli-requires-tlm",
+    "source": "src/main.rs",
+    "patch": "quantum-u3-cli-requires-tlm.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "quantum_cli"
+        ],
+        "test": "the_quantum_option_requires_the_tlm_transport",
+        "failure": [
+          "--quantum 1 without the TLM route was accepted",
+          "right:\\s+Some\\(2\\)"
         ]
       }
     ]

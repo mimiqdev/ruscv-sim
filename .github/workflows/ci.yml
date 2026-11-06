@@ -103,8 +103,11 @@ jobs:
           bash -n scripts/test_riscv_elf_guards.sh
           bash -n scripts/riscv_elf_result.sh
           bash -n scripts/test_riscv_elf_result.sh
+          bash -n scripts/debug/quantum_session_facts.sh
+          bash -n scripts/test_quantum_session_facts.sh
           bash scripts/test_riscv_elf_guards.sh
           bash scripts/test_riscv_elf_result.sh
+          bash scripts/test_quantum_session_facts.sh
 
       # The release binary and the project ELF suite, including every Stage 4
       # s4_* guest, run on pull requests and on main. A green Quality and

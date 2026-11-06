@@ -1,0 +1,17 @@
+diff --git a/src/main.rs b/src/main.rs
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -146,13 +146,6 @@
+                 eprintln!("error: --dmi requires --transport tlm");
+                 std::process::exit(2);
+             }
+-            // quantum D2: the native route has no local offset, so the option
+-            // is a CLI error whenever the TLM route is not selected, including
+-            // `--quantum 0` (which selects nothing but was still given).
+-            if quantum.is_some() && transport != TransportArg::Tlm {
+-                eprintln!("error: --quantum requires --transport tlm");
+-                std::process::exit(2);
+-            }
+ 
+             if verbose {
+                 eprintln!("Loading ELF file: {:?}", elf);

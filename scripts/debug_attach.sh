@@ -50,6 +50,18 @@
 # facts it checks are the ones the system-bus session already compares with
 # Spike.
 #
+# quantum U3 adds one live attach session under `run --transport tlm
+# --quantum 1024`, also with the system bus as the forced memory path. It
+# halts, reads `mtime` by system-bus access, resumes to the guest's armed
+# timer compare, halts inside the quantum and reads `mtime` again, then
+# resumes through the timer trap and reads the lateness the guest recorded.
+# Every halt is F4's forced sync, so committed time equals local time at each
+# read. The row asserts the D8 bound on that lateness and never one exact
+# value: the debugger's F4 syncs move the phase of the threshold syncs, so an
+# exact lateness belongs only to a run whose sync points the guest and `Q`
+# determine (quantum D6). Spike has no quantum route, so this session has no
+# Spike pair either.
+#
 # Named outputs are the S6, U4, Z5, U3 and U6 lines in the GDB logs. The
 # comparisons are those values, not a hash. dmstatus.version is not one of them. dcsr is
 # compared after setting aside two documented differences: D5 forces
@@ -62,16 +74,22 @@ set -euo pipefail
 set +m
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if ! source "${ROOT}/scripts/debug/quantum_session_facts.sh"; then
+    echo "cannot load the quantum session fact checks" >&2
+    exit 2
+fi
 CFG="${ROOT}/scripts/debug/openocd-remote-bitbang.cfg"
 GDB_SCRIPT="${ROOT}/scripts/debug/s6-u5-session.gdb"
 GDB_PROGBUF_SCRIPT="${ROOT}/scripts/debug/s6-u4-progbuf.gdb"
 GDB_SYSBUS_SCRIPT="${ROOT}/scripts/debug/s6-u4-sysbus.gdb"
 GDB_DIRECT_MEM_SCRIPT="${ROOT}/scripts/debug/direct-mem-u3-session.gdb"
+GDB_QUANTUM_SCRIPT="${ROOT}/scripts/debug/quantum-u3-session.gdb"
 GDB_ZCA_SCRIPT="${ROOT}/scripts/debug/zca-u5-session.gdb"
 GDB_FD_SCRIPT="${ROOT}/scripts/debug/fd-u6-session.gdb"
 GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64i/s6_u5_attach.S"
 ZCA_GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64i/zca_u5_attach.S"
 FD_GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64ifd/fdc_u6_attach.S"
+QUANTUM_GUEST_SRC="${ROOT}/tests/bare-metal-riscv-test/rv64i/quantum_u3_timer.S"
 LINKER="${ROOT}/tests/bare-metal-riscv-test/linker.ld"
 LINKER_S4="${ROOT}/tests/bare-metal-riscv-test/linker-s4.ld"
 
@@ -229,6 +247,30 @@ symbol() {
     local name="$1"
     "${NM}" "${WORK}/guest.elf" | awk -v name="${name}" '$3 == name { print $1; exit }'
 }
+
+# quantum U3. The session image is a separate rv64ima build because the same
+# source is also a fresh-suite guest under the default profile's RV64I subset.
+# The D8 timer crossing and the guest's recorded lateness are the session's
+# subject, so a binutils that cannot assemble it fails the run.
+if ! "${AS}" -march=rv64ima_zicsr -mabi=lp64 "${QUANTUM_GUEST_SRC}" \
+    -o "${WORK}/quantum-guest.o" 2>"${WORK}/quantum-assemble.err"; then
+    echo "failed to assemble the quantum session guest" >&2
+    cat "${WORK}/quantum-assemble.err" >&2 || true
+    exit 1
+fi
+"${LD}" -T "${LINKER}" "${WORK}/quantum-guest.o" -o "${WORK}/quantum-guest.elf"
+
+quantum_symbol() {
+    local name="$1"
+    "${NM}" "${WORK}/quantum-guest.elf" | awk -v name="${name}" '$3 == name { print $1; exit }'
+}
+
+for label in _start q3_spin q3_report q3_arm_time q3_compare q3_mcause q3_mepc q3_traps q3_trap_time q3_lateness; do
+    if [[ -z "$(quantum_symbol "${label}")" ]]; then
+        echo "quantum session guest is missing ${label}" >&2
+        exit 1
+    fi
+done
 
 ENTRY="$(symbol _start)"
 BREAK_AT="$(symbol s6_break)"
@@ -1011,6 +1053,55 @@ assert_direct_mem_evidence() {
     fi
 }
 
+# quantum U3 (quantum D6/D8/D10). The live attach session on the decoupled
+# route. This session forces `riscv set_mem_access sysbus`, so every transfer
+# it reports is a system-bus transfer, and every halt is F4's forced sync, so
+# committed time equals local time at each read.
+run_quantum_session() {
+    local name="$1"
+    local named="$3"
+    local SESSION_ELF="${WORK}/quantum-guest.elf"
+    start_session "${name}" "$2" "${GDB_QUANTUM_SCRIPT}" 'Q3q resume=ok' \
+        -d3 -c "riscv set_mem_access sysbus" || return 1
+    local keys=()
+    read -r -a keys <<<"$(quantum_u3_keys)"
+    extract_named "${named}" "${WORK}/${name}/gdb.log" Q3q norm "${keys[@]}" || return 1
+    assert_quantum_session "${name}" "${named}" "${WORK}/${name}/target.log" || return 1
+    assert_quantum_evidence "${name}" "${WORK}/${name}" || return 1
+    echo "${name}: quantum session ok (target exit 0)"
+}
+
+# The named outputs, in the order the session prints them.
+quantum_u3_keys() {
+    printf 'connect mtime_halted halted mtime_break arm compare mcause mepc traps trap_time lateness resume'
+}
+
+# quantum U3: the fact checks live in scripts/debug/quantum_session_facts.sh,
+# where scripts/test_quantum_session_facts.sh exercises their rejection paths
+# without OpenOCD, GDB or a RISC-V toolchain.
+assert_quantum_session() {
+    local name="$1" named="$2" target="$3"
+    quantum_session_facts "${name}" "${named}" "${target}" "$(quantum_symbol q3_spin)"
+}
+
+# The `mtime` samples must be system-bus reads, so they are the committed time
+# a live debugger sees rather than an abstract-access copy of the image.
+assert_quantum_evidence() {
+    local name="$1" dir="$2"
+    local log="${dir}/openocd.log"
+    local pattern
+    for pattern in \
+        'Succeeded to read memory via system bus' \
+        'M[0x200bff8] reads 0x'
+    do
+        if ! grep -aqF -- "${pattern}" "${log}"; then
+            echo "${name}: OpenOCD log lacks [${pattern}]" >&2
+            return 1
+        fi
+    done
+    return 0
+}
+
 # The Zca U5 named outputs, in the order the session prints them.
 zca_u5_keys() {
     printf 'connect pc gpr dcsr break2_pc break2_dpc break2_dcsr break2_a0 break2_a1'
@@ -1412,6 +1503,16 @@ ruscv_direct_mem_cmd() {
     local port="$1"
     exec "${RUSCV_SIM}" run "${WORK}/guest.elf" --isa rv64ima \
         --transport tlm --dmi \
+        --rbb-port "${port}" --halted --max-cycles 100000000
+}
+
+# The quantum U3 target: the same attach guest on the decoupled TLM route at
+# `Q` = 1024. The option requires `--transport tlm` (quantum D2), and this
+# guest's timer crossing is the D8 fact the session measures.
+ruscv_quantum_cmd() {
+    local port="$1"
+    exec "${RUSCV_SIM}" run "${WORK}/quantum-guest.elf" --isa rv64ima \
+        --transport tlm --quantum 1024 \
         --rbb-port "${port}" --halted --max-cycles 100000000
 }
 
@@ -1852,6 +1953,7 @@ run_session ruscv ruscv_cmd "${WORK}/ruscv.named"
 run_progbuf_session ruscv-progbuf ruscv_cmd "${WORK}/ruscv-progbuf.named"
 run_sysbus_session ruscv-sysbus ruscv_cmd "${WORK}/ruscv-sysbus.named"
 run_direct_mem_session ruscv-direct-mem ruscv_direct_mem_cmd "${WORK}/ruscv-direct-mem.named"
+run_quantum_session ruscv-quantum ruscv_quantum_cmd "${WORK}/ruscv-quantum.named"
 run_zca_session ruscv-zca ruscv_zca_cmd "${WORK}/ruscv-zca.named"
 run_fd_session ruscv-fd ruscv_fdc_cmd "${WORK}/ruscv-fd.named"
 run_negative_version
