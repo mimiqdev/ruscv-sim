@@ -2436,7 +2436,7 @@
   },
   {
     "unit": "quantum-u2-debug-delay-offset",
-    "source": "src/machine/owned.rs",
+    "source": "src/machine/platform.rs",
     "patch": "quantum-u2-debug-delay-offset.patch",
     "tests": [
       {
