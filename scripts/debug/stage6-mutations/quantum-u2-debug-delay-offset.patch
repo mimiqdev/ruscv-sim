@@ -1,0 +1,16 @@
+diff --git i/src/machine/platform.rs w/src/machine/platform.rs
+index bfc4ae3..118fd63 100644
+--- i/src/machine/platform.rs
++++ w/src/machine/platform.rs
+@@ -364,6 +364,11 @@ impl Platform {
+     /// time (ADR-0004 2026-10-28 and 2026-10-30 amendments).
+     pub(super) fn discard_transport_turn_delay(&self) {
+         self.ram.discard_transport_turn_delay();
++        if let Some(bus) = &self.bus {
++            if let Ok(mut bus) = bus.lock() {
++                let _ = bus.accumulate_local_offset(1, true);
++            }
++        }
+     }
+ 
+     /// One guest turn's conservative completion bound in Platform ticks.

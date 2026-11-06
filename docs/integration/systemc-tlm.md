@@ -251,6 +251,15 @@ offset `O`, bounded by the selected quantum (quantum D3–D5). This host's rules
 - The grant's horizon, `deadline_blocked` and `residual_slack_fs` tests use the
   Machine's local time, so `committed_end_fs` never passes the horizon and
   deadline overshoot is zero (quantum D8/D12).
+- The timer-lateness rule this page fixes is D8's: a time-derived MTIP crossing
+  has zero lateness for `Q` <= 1; for `Q` >= 2 the run's first presentation `R`
+  follows its own first turn-start local time `X` at or past the armed
+  `mtimecmp` by at most `Q - 1 + t` ticks, where `t` is the target's declared
+  turn completion bound. The bound is measured inside that run after the first
+  differing recognition, not against the parity run. MTIP is never early;
+  MSIP, MEIP and SEIP, a compare or `mtime` store and a crossing during a wait
+  have zero lateness (quantum D8, F1, F3). `Q` = 1 is precise; `Q` >= 2 is the
+  explicit reduced-accuracy request (quantum D10).
 - `--quantum 1` syncs at every turn boundary, so each grant ends after one turn
   and the same guest takes about one grant per completed turn. `--quantum 1024`
   commits once per quantum, so a RAM-only stretch takes far fewer grants.

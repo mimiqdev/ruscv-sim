@@ -1,0 +1,12 @@
+diff --git i/src/capi/host.rs w/src/capi/host.rs
+index ee073d9..b5cd1ab 100644
+--- i/src/capi/host.rs
++++ w/src/capi/host.rs
+@@ -596,7 +596,6 @@ impl Session {
+                     if synced {
+                         facts.quantum_sync = true;
+                         facts.budget_exhausted = !control.may_execute();
+-                        break;
+                     }
+                 }
+                 Exit::HostFailure(message) => {

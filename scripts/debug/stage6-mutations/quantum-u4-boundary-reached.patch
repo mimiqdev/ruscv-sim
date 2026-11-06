@@ -1,0 +1,12 @@
+diff --git i/src/capi/host.rs w/src/capi/host.rs
+index ee073d9..aa3916c 100644
+--- i/src/capi/host.rs
++++ w/src/capi/host.rs
+@@ -183,7 +183,6 @@ impl GrantFacts {
+             || self.deadline_blocked
+             || self.waiting
+             || self.no_progress
+-            || self.quantum_sync
+     }
+ 
+     /// quantum D12: take the last boundary's quantum facts into the grant.

@@ -5381,6 +5381,43 @@ fn quantum_f4_apply_dmi_syncs_before_the_debug_sample() {
     assert_eq!(owned.platform_anchor().unwrap(), local);
 }
 
+/// quantum D4: debug-work delay is validated and discarded, so it never
+/// enters the local offset and a later guest turn charges only its own delay.
+#[test]
+fn quantum_debug_transport_delay_does_not_enter_the_offset() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned =
+        OwnedMachine::new(quantum_config(&target, 64), image(elf::sd(2, 1, 0))).unwrap();
+    halted_by_dmi(&mut owned);
+    let committed = owned.platform_mtime().unwrap();
+    // Two program-buffer words store and load one RAM word, each with a one-tick
+    // annotated delay.
+    write_gpr(&mut owned, 5, elf::BASE + 0x200);
+    write_gpr(&mut owned, 6, 0x1234_5678);
+    postexec_buffer(&mut owned, [sw_word(6, 5, 0), lw_word(7, 5, 0)]);
+    let facts = run_grants(&mut owned);
+    assert!(facts.failure.is_none());
+    assert!(
+        target.transactions.load(Ordering::SeqCst) >= 2,
+        "the program-buffer RAM accesses bypassed the TLM route"
+    );
+    assert_eq!(
+        owned.platform_local_offset().unwrap(),
+        0,
+        "debug work added its delay to the local offset"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        committed,
+        "debug work committed its delay"
+    );
+    assert_eq!(
+        owned.platform_local_time().unwrap(),
+        committed,
+        "debug work moved the Hart's local time"
+    );
+}
+
 /// quantum F4: a busy program-buffer command is pending debug work. The test
 /// seeds the offset the debug path cannot otherwise reach, and the grant's own
 /// sync keeps `time` and `mtime` at `L` across it.

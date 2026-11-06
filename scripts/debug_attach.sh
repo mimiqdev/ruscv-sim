@@ -119,8 +119,13 @@ if ! command -v openocd >/dev/null 2>&1 || ! command -v gdb-multiarch >/dev/null
     echo "openocd and gdb-multiarch are required" >&2
     exit 1
 fi
-if ! openocd --version 2>&1 | head -1 | grep -q '0\.12\.0'; then
-    echo "OpenOCD 0.12.0 is required; found: $(openocd --version 2>&1 | head -1)" >&2
+# `openocd --version` can emit more than one line; `head -1` closes the pipe and
+# `pipefail` would then report OpenOCD's SIGPIPE as a version mismatch even
+# though the first line names 0.12.0. Capture the line without the pipeline's
+# status.
+OPENOCD_VERSION="$(openocd --version 2>&1 | head -1 || true)"
+if [[ "${OPENOCD_VERSION}" != *"0.12.0"* ]]; then
+    echo "OpenOCD 0.12.0 is required; found: ${OPENOCD_VERSION}" >&2
     exit 1
 fi
 
@@ -1946,7 +1951,7 @@ note_divergence() {
     return 1
 }
 
-echo "OpenOCD: $(openocd --version 2>&1 | head -1)"
+echo "OpenOCD: ${OPENOCD_VERSION}"
 echo "GDB: $(gdb-multiarch --version | head -1)"
 
 run_session ruscv ruscv_cmd "${WORK}/ruscv.named"

@@ -1,0 +1,17 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index c619ffc..71a25c8 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -647,12 +647,6 @@ impl Installed {
+                     // offset.  The Runner sets no virtual deadline and has no
+                     // external clock, so it keeps the jump and its wake turn in
+                     // one `turn()`.
+-                    if matches!(settlement, WaitSettlement::Jumped)
+-                        && self.quantum != 0
+-                        && self.virtual_deadline.is_some()
+-                    {
+-                        break hart;
+-                    }
+                     jumped = true;
+                 }
+             }
