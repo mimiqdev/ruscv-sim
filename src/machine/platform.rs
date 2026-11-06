@@ -400,14 +400,14 @@ impl Platform {
     }
 
     /// quantum D3: one boundary sync.  Committed time takes the local offset
-    /// and the offset returns to zero under the bus lock; the sync is counted
-    /// once when it moved committed time.  It makes no target call, charges no
-    /// delay and changes no architectural or delay counter.  Returns whether
-    /// it moved committed time.
-    pub(super) fn commit_local_time(&self) -> Result<bool, MachineError> {
+    /// and the offset returns to zero under the bus lock; the boundary counts
+    /// its sync once, so `count` is true only for its first moving sync.  It
+    /// makes no target call, charges no delay and changes no architectural or
+    /// delay counter.  Returns whether it moved committed time.
+    pub(super) fn commit_local_time(&self, count: bool) -> Result<bool, MachineError> {
         if let Some(bus) = &self.bus {
             let mut bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
-            return Ok(bus.commit_local_time());
+            return Ok(bus.commit_local_time(count));
         }
         Ok(false)
     }

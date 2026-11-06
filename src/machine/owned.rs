@@ -188,26 +188,14 @@ impl OwnedMachine {
             ..BoundaryFacts::default()
         })
     }
-    /// quantum D10: the cumulative quantum report for a result boundary.
-    ///
-    /// `None` when no quantum is selected.  A poisoned bus reports zero syncs;
-    /// the poisoned run has already failed elsewhere.
-    pub(crate) fn quantum_report(&self) -> Option<QuantumFacts> {
-        let quantum = self.control.inner.config.quantum;
-        if quantum == 0 {
-            return None;
-        }
-        let bound = self.domain().platform.turn_completion_bound_ticks();
-        Some(QuantumFacts {
-            ticks: quantum,
-            interrupt_latency_bound_ticks: interrupt_latency_bound_ticks(quantum, bound),
-            reduced_accuracy: quantum >= 2,
-            syncs: self.domain().platform.quantum_syncs().unwrap_or(0),
-            reached: false,
-        })
-    }
-    /// quantum D10: this boundary's quantum facts for the installed domain.
-    fn quantum_facts(&self, reached: bool) -> Result<Option<QuantumFacts>, MachineError> {
+    /// quantum D10: this boundary's quantum facts for the installed domain,
+    /// present only when a quantum is selected.  `reached` is the D5 threshold
+    /// result; a control or result boundary reports false.  A poisoned bus is
+    /// `MachineError::Poisoned`, as `D3` names it.
+    pub(crate) fn quantum_facts(
+        &self,
+        reached: bool,
+    ) -> Result<Option<QuantumFacts>, MachineError> {
         let quantum = self.control.inner.config.quantum;
         if quantum == 0 {
             return Ok(None);
@@ -216,7 +204,10 @@ impl OwnedMachine {
             ticks: quantum,
             interrupt_latency_bound_ticks: interrupt_latency_bound_ticks(
                 quantum,
-                self.domain().platform.turn_completion_bound_ticks(),
+                self.domain()
+                    .platform
+                    .turn_completion_bound_ticks()
+                    .unwrap_or(0),
             ),
             reduced_accuracy: quantum >= 2,
             syncs: self.domain().platform.quantum_syncs()?,

@@ -4938,7 +4938,7 @@ fn quantum_facts_report_the_selected_quantum() {
     let turn = owned.step_request(false, false, false).unwrap();
     assert!(turn.boundary().quantum.is_none());
     assert!(owned.control_boundary(false).unwrap().quantum.is_none());
-    assert!(owned.quantum_report().is_none());
+    assert!(owned.quantum_facts(false).unwrap().is_none());
 
     // Q = 1 is precise: zero bound, no reduced accuracy, reached every turn.
     let target = delay_target(1_000_000, 1_000_000);
@@ -4974,8 +4974,117 @@ fn quantum_facts_report_the_selected_quantum() {
     assert_eq!(control.syncs, 0);
     // The result report carries the same cumulative facts.
     let report = owned
-        .quantum_report()
+        .quantum_facts(false)
+        .unwrap()
         .expect("Q = 4 must report result facts");
     assert_eq!(report.ticks, 4);
     assert!(report.reduced_accuracy);
+}
+
+/// quantum D4/F6: a turn that fails only the clock check still syncs the offset
+/// it already knows, so committed time equals local time and the D9 sum holds.
+#[test]
+fn quantum_d4_clock_failure_syncs_the_pre_existing_offset() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop(), elf::sd(2, 1, 0)]),
+    )
+    .unwrap();
+    prepare_store(&mut owned, 0x42);
+    for _ in 0..2 {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(!turn.boundary().quantum.unwrap().reached);
+    }
+    let known = owned.platform_local_time().unwrap();
+    let transactions = target.transactions.load(Ordering::SeqCst) as u64;
+    assert_eq!(known, 2 + transactions);
+    // A committed time near u64::MAX makes the delayed store's checked advance
+    // fail, but the two turns' offset is still the run's known sum.
+    owned.set_platform_mtime(u64::MAX - 6).unwrap();
+    let turn = owned.step_request(false, false, false).unwrap();
+    let StepOutcome::SimulatorFailure(failure) = &turn.hart().outcome else {
+        panic!(
+            "the delayed clock check did not fail: {:?}",
+            turn.hart().outcome
+        );
+    };
+    assert!(
+        failure.message.contains("overflow"),
+        "the clock failure lost its diagnostic: {failure:?}"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        u64::MAX,
+        "F6 did not commit the known offset after the clock check failed"
+    );
+    assert_eq!(owned.platform_local_time().unwrap(), u64::MAX);
+    assert_eq!(owned.platform_local_offset().unwrap(), 0);
+    let facts = turn.boundary().quantum.expect("Q = 1024 must report facts");
+    assert_eq!(
+        facts.syncs, 1,
+        "the clock-failure boundary sync was not counted once"
+    );
+    assert!(!facts.reached);
+}
+
+/// quantum D3/D5: a waiting boundary counts one sync even though F3's sync and
+/// the wake turn's threshold sync both move committed time, and D5's test keeps
+/// `reached` true when that forced sync coincides.
+#[test]
+fn quantum_wait_boundary_counts_one_sync_and_keeps_reached() {
+    // MTIE, mtimecmp = 100, and a RAM store after WFI as the wake turn.
+    let code = [
+        elf::addi(6, 0, 0x80),
+        csrrs(0, MIE, 6),
+        elf::lui(4, 0x2004),
+        elf::addi(5, 0, 100),
+        elf::sd(5, 4, 0),
+        elf::nop(),
+        elf::addi(2, 0, 0x55),
+        elf::lui(1, 0x40000),
+        elf::slli(1, 1, 1),
+        WFI,
+        elf::sd(2, 1, 0),
+    ];
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned = OwnedMachine::new(quantum_config(&target, 4), quantum_image(&code)).unwrap();
+    let mut local = 0u64;
+    let mut committed = 0u64;
+    let mut syncs = 0u64;
+    for _ in 0..10 {
+        let before = target.transactions.load(Ordering::SeqCst) as u64;
+        let turn = owned.step_request(false, false, false).unwrap();
+        local += 1 + (target.transactions.load(Ordering::SeqCst) as u64 - before);
+        let pending = local - committed;
+        let facts = turn.boundary().quantum.expect("Q = 4 must report facts");
+        assert_eq!(facts.reached, pending >= 4);
+        if facts.reached {
+            committed += pending;
+            syncs += 1;
+        }
+        assert_eq!(facts.syncs, syncs);
+        assert_eq!(owned.platform_mtime().unwrap(), committed);
+    }
+    // The waiting exchange: F3 commits the pre-jump offset, the jump lands on
+    // mtimecmp, and the wake store's advance re-reaches the threshold.
+    let before = target.transactions.load(Ordering::SeqCst) as u64;
+    let turn = owned.step_request(false, false, false).unwrap();
+    let wake_advance = 1 + (target.transactions.load(Ordering::SeqCst) as u64 - before);
+    let facts = turn.boundary().quantum.expect("Q = 4 must report facts");
+    assert!(
+        facts.reached,
+        "a coincident forced sync cleared the threshold result"
+    );
+    assert_eq!(
+        facts.syncs,
+        syncs + 1,
+        "one waiting boundary counted more than one sync"
+    );
+    assert_eq!(owned.platform_local_offset().unwrap(), 0);
+    assert_eq!(owned.platform_mtime().unwrap(), 100 + wake_advance);
+    assert_eq!(
+        owned.platform_local_time().unwrap(),
+        owned.platform_mtime().unwrap()
+    );
 }

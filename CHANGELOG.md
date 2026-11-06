@@ -10,11 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Quantum U1: 本地时间与阈值（issue #201）**
-  - `MachineConfig` 新增 `pub(crate)` 字段 `quantum`（Platform tick；`MachineConfig::new` 选择 0）。U2 完成前
-    该字段保持 crate 私有，因此没有公开调用方可以选择尚未完整同步的 quantum。非零选择要求
-    `Transport::Tlm`：与 `Transport::Native` 的组合是既有的 `MachineError::UnsupportedTransport`，该变体的
-    消息加宽为命名 quantum 情形；`(Q + t + 1) × tick_period` 无法以 u64 飞秒表示时，构建以
-    `MachineError::Placement` 拒绝，`Q` = 0 不运行该检查
+  - `MachineConfig` 新增 `pub(crate)` 字段 `quantum`（Platform tick；`MachineConfig::new` 选择 0），该新增字段
+    使外部代码无法再以穷举结构体字面量构造 `MachineConfig`。U2 完成前该字段保持 crate 私有，因此没有公开
+    调用方可以选择尚未完整同步的 quantum。非零选择要求 `Transport::Tlm`：与 `Transport::Native` 的组合是既有
+    的 `MachineError::UnsupportedTransport`，该变体的消息加宽为命名 quantum 情形；
+    `(Q + t + 1) × tick_period` 无法以 u64 飞秒表示时，构建以 `MachineError::Placement` 拒绝，`Q` = 0 不运行
+    该检查
   - `SystemBus` 在 CLINT 旁、同一把总线锁下保存本地偏移 `O` 与累计同步计数；`L = C + O`（回绕加法）。
     每个 turn 起点与 `publish_platform_time` 通过 `csr.set_time` 呈现 `L`，中断线仍由 `C` 派生。
     一次 sync 把 `C` 设为 `L`、清零 `O`，只在移动了 `C` 时计数；它不做 target 调用、不计延迟、不改任何
@@ -29,9 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `interrupt_latency_bound_ticks`、`reduced_accuracy`、`syncs`、`reached`）；`ControlBoundary` 上报
     `reached` 为 false。新增 `QuantumFacts` 类型，`ExecutionResult` 的新字段破坏外部穷举结构体字面量。
     `print_result` 仅在该事实存在时输出一行 `Quantum:`，`Q` = 0 的 stdout 保持逐字节相同
-  - 新增 10 个 Machine 级测试覆盖合同 §4 U1 的验收项；U1 拥有的 12 条负控制注册进
-    `scripts/debug/stage6-mutations`（`quantum-u1-*`，含四个逐点控制），每条都由已提交测试在变异下失败、
-    还原后通过
+  - 新增 12 个 Machine 级测试覆盖合同 §4 U1 的验收项；U1 拥有的 20 条负控制注册进
+    `scripts/debug/stage6-mutations`（`quantum-u1-*`，含四个逐点控制、逐边界计数、D5 与强制同步重合、
+    D10 误报、延迟重复、同步偏差与计数器记账），每条都由已提交测试在变异下失败、还原后通过
 
 - **Direct memory U1: 授权与读取路径（issue #188）**
   - `MachineConfig` 新增公开 `dmi` 字段（`MachineConfig::new` 选择 `false`，破坏结构体字面量构造）；

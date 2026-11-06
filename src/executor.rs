@@ -399,17 +399,21 @@ impl SystemBus {
     }
 
     /// quantum D3: one boundary sync.  Committed time takes the local offset
-    /// (wrapping, quantum F10) and the offset returns to zero.  The sync is
-    /// counted once when it moved committed time; a zero offset is a no-op and
-    /// is not counted.  It makes no target call and charges no delay.
-    pub(crate) fn commit_local_time(&mut self) -> bool {
+    /// (wrapping, quantum F10) and the offset returns to zero.  A boundary
+    /// counts its sync once when it moved committed time, so `count` is true
+    /// only for the exchange's first moving sync; a second moving sync in the
+    /// same boundary commits time without counting again.  A zero offset is a
+    /// no-op and is not counted.  It makes no target call and charges no delay.
+    pub(crate) fn commit_local_time(&mut self, count: bool) -> bool {
         if self.local_offset == 0 {
             return false;
         }
         let committed = self.clint.read_mtime().wrapping_add(self.local_offset);
         self.clint.write_mtime(committed);
         self.local_offset = 0;
-        self.quantum_syncs += 1;
+        if count {
+            self.quantum_syncs += 1;
+        }
         true
     }
 
@@ -1401,9 +1405,10 @@ fn cli_result(
     timed_out: bool,
     error: Option<String>,
 ) -> ExecutionResult {
-    // quantum D10: the result carries the run's cumulative quantum report,
-    // present only when a quantum is selected.
-    let quantum = machine.quantum_report();
+    // quantum D10: the result carries the run's cumulative quantum facts,
+    // present only when a quantum is selected.  A poisoned bus cannot report
+    // them; the poisoned run has already failed elsewhere.
+    let quantum = machine.quantum_facts(false).ok().flatten();
     let mut result = ResultInputs::new(
         exit_code,
         cycles,
@@ -3092,7 +3097,7 @@ impl RiscVSimulator {
     ) -> ExecutionResult {
         // quantum D10: the flat configuration never selects a quantum, so its
         // report is absent and its stdout stays byte-identical.
-        let quantum = self.machine.quantum_report();
+        let quantum = self.machine.quantum_facts(false).ok().flatten();
         let mut result = ResultInputs::new(
             exit_code,
             cycles,

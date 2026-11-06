@@ -314,11 +314,11 @@ pub struct QuantumFacts {
 ///
 /// It is zero for `Q` = 1 and `Q - 1 + t` otherwise.  The build-time quantum
 /// validation guarantees the sum is representable.
-pub(crate) fn interrupt_latency_bound_ticks(quantum: u64, turn_bound: Option<u64>) -> u64 {
+pub(crate) fn interrupt_latency_bound_ticks(quantum: u64, turn_bound: u64) -> u64 {
     if quantum == 1 {
         0
     } else {
-        quantum - 1 + turn_bound.unwrap_or(0)
+        quantum - 1 + turn_bound
     }
 }
 
@@ -517,7 +517,7 @@ impl Installed {
             // `settle_wait` and the idle jump see committed local time and
             // the jump lands with a zero offset.
             if self.quantum != 0 {
-                synced |= self.platform.commit_local_time()?;
+                synced |= self.platform.commit_local_time(!synced)?;
             }
             match self.settle_wait() {
                 WaitSettlement::NoProgress => {
@@ -614,26 +614,29 @@ impl Installed {
                 && self.platform.read_local_time()? < self.platform.read_mtime()?;
             // quantum D5: the threshold test runs first, on `O` after the
             // advance, so a coincident forced sync cannot clear `reached`.
+            // A refused advance left `O` unchanged, so the test still reads
+            // the pre-turn offset, which D5 keeps below `Q`.
             quantum_reached = self.platform.local_offset()? >= self.quantum;
             if quantum_reached {
-                synced |= self.platform.commit_local_time()?;
+                synced |= self.platform.commit_local_time(!synced)?;
             }
-            if outcome_failed {
-                // quantum F6: a failed turn syncs the offset it knows,
-                // including known delay, without touching the transport.
-                synced |= self.platform.commit_local_time()?;
+            // quantum F6: a failed turn, including one that fails only this
+            // D4 clock check, syncs the offset it knows, including known
+            // delay, without touching the transport.
+            if outcome_failed || clock_failure.is_some() {
+                synced |= self.platform.commit_local_time(!synced)?;
             } else if single_step {
                 // quantum F5: a single-step turn ends in a sync, so every
                 // shared Machine control runs at a zero offset.
-                synced |= self.platform.commit_local_time()?;
+                synced |= self.platform.commit_local_time(!synced)?;
             }
             if wrapped {
                 // quantum F10: the wrapped value presents as in a parity run,
                 // so committed time takes the wrapped offset at turn end and
                 // MTIP is never stale high.
-                synced |= self.platform.commit_local_time()?;
+                synced |= self.platform.commit_local_time(!synced)?;
             }
-            if clock_failure.is_none() && (advance != 0 || synced) {
+            if synced || (clock_failure.is_none() && advance != 0) {
                 self.publish_platform_time()?;
             }
         }
@@ -695,7 +698,7 @@ impl Installed {
             ticks: self.quantum,
             interrupt_latency_bound_ticks: interrupt_latency_bound_ticks(
                 self.quantum,
-                self.platform.turn_completion_bound_ticks(),
+                self.platform.turn_completion_bound_ticks().unwrap_or(0),
             ),
             reduced_accuracy: self.quantum >= 2,
             syncs: self.platform.quantum_syncs()?,
