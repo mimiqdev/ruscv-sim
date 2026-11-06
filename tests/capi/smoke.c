@@ -11,6 +11,14 @@
  * and inside a callback, wrong-thread rejection, the re-entry exception, and
  * reset restoring grants after a poisoned transport.
  *
+ * The quantum additions (quantum U4, D11/D12) are covered from plain C too:
+ * the three layout pins, a `quantum_ticks` selection of 0, 1 and 4, the
+ * published `local_offset_fs` sequence, `committed_end_fs` advancing by
+ * exactly `consumed_fs`, `quantum_reached` with and without a coincident
+ * forced sync, a forced sync that ends a grant, an unknown completion at a
+ * non-zero local offset, reset restoring the selection, and the configuration
+ * refusal.
+ *
  * The guest is a hand-built ELF fixture (the same shape as
  * `tests/common/public_elf.rs`) so the smoke needs only a host C compiler.
  */
@@ -232,7 +240,63 @@ static int build_direct_guest(const char *path, uint32_t code)
     return write_guest(path, instructions, sizeof(instructions) / sizeof(instructions[0]));
 }
 
+/* A guest that runs `nops` no-ops and then reports HTIF exit 2. */
+static int build_ram_only_guest(const char *path, size_t nops, uint32_t code)
+{
+    uint32_t instructions[64];
+    size_t count = 0;
+    size_t i;
+
+    if (nops + 6u > sizeof(instructions) / sizeof(instructions[0])) {
+        return -1;
+    }
+    for (i = 0; i < nops; i += 1) {
+        instructions[count++] = enc_addi(0, 0, 0);
+    }
+    instructions[count++] = enc_lui(4, 0x80);
+    instructions[count++] = enc_addi(4, 4, 1);
+    instructions[count++] = enc_slli(4, 4, 12);
+    instructions[count++] = enc_addi(5, 0, (int)(code * 2 + 1));
+    instructions[count++] = enc_sd(5, 4, 0);
+    instructions[count++] = 0x0000006fu;
+    return write_guest(path, instructions, count);
+}
+
+/*
+ * The same shape with one load from the CLINT's `mtime` before the exit.
+ *
+ * A Hart device access flushes the local offset and marks the turn, so the
+ * turn ends in a counted sync that ends the grant (quantum F1/D12): the case
+ * a forced sync, rather than the threshold, ends a grant.
+ */
+static int build_device_read_guest(const char *path, uint32_t code)
+{
+    const uint32_t instructions[] = {
+        enc_addi(0, 0, 0),
+        enc_lui(3, 0x200C),              /* x3 = 0x0200c000 */
+        enc_addi(3, 3, -8),              /* x3 = 0x0200bff8 (mtime) */
+        enc_lw(6, 3, 0),                 /* the device read */
+        enc_lui(4, 0x80),
+        enc_addi(4, 4, 1),
+        enc_slli(4, 4, 12),
+        enc_addi(5, 0, (int)(code * 2 + 1)),
+        enc_sd(5, 4, 0),
+        0x0000006fu,
+    };
+
+    return write_guest(path, instructions, sizeof(instructions) / sizeof(instructions[0]));
+}
+
 /* ------------------------------------------------------------ test target */
+
+/* One blocking transaction as the ABI published it (quantum D11). */
+typedef struct recorded_call {
+    uint64_t address;
+    int access_kind;
+    uint64_t local_offset_fs;
+} recorded_call;
+
+#define MAX_CALLS 512
 
 typedef struct test_target {
     /* A direct-memory grant promises relaxed byte-wise atomic access
@@ -259,6 +323,9 @@ typedef struct test_target {
     int32_t invalidate_status;
     /* Mark the `.tohost` load outcome-unknown. */
     int unknown_on_data_read;
+    /* Every blocking transaction in order, with its published local offset. */
+    recorded_call calls[MAX_CALLS];
+    int call_count;
 } test_target;
 
 /* The target's storage is atomic, so every access goes through these. */
@@ -288,6 +355,12 @@ static void target_b_transport(void *user, ruscv_payload *payload)
     size_t length = payload->length;
 
     target->transactions += 1;
+    if (target->call_count < MAX_CALLS) {
+        target->calls[target->call_count].address = payload->address;
+        target->calls[target->call_count].access_kind = payload->access_kind;
+        target->calls[target->call_count].local_offset_fs = payload->local_offset_fs;
+        target->call_count += 1;
+    }
     if (target->attempt_reentry && target->reentry_status == 0) {
         ruscv_boundary ignored;
         /* A callback runs inside a ruscv-sim call, so this must be refused. */
@@ -374,6 +447,14 @@ static ruscv_target target_table(test_target *target, uint64_t max_delay_fs)
     table.b_transport = target_b_transport;
     table.transport_dbg = target_transport_dbg;
     table.transport_reset = target_transport_reset;
+    return table;
+}
+
+/* The same table selecting a quantum (quantum D12). */
+static ruscv_target quantum_target_table(test_target *target, uint64_t quantum_ticks)
+{
+    ruscv_target table = target_table(target, 0);
+    table.quantum_ticks = quantum_ticks;
     return table;
 }
 
@@ -1150,12 +1231,274 @@ static void header_case(void)
      * no earlier offset moved (see the header's layout rule). */
     check(offsetof(ruscv_target, transport_reset) == 32 &&
               offsetof(ruscv_target, get_direct_mem_ptr) == 40 &&
-              sizeof(ruscv_target) == 48,
-          "get_direct_mem_ptr is the final ruscv_target field");
+              offsetof(ruscv_target, quantum_ticks) == 48 &&
+              sizeof(ruscv_target) == 56,
+          "quantum_ticks is the final ruscv_target field");
     check(offsetof(ruscv_payload, atomic) == 56 &&
               offsetof(ruscv_payload, dmi_allowed) == 240 &&
-              sizeof(ruscv_payload) == 248,
-          "dmi_allowed is the final ruscv_payload field");
+              offsetof(ruscv_payload, local_offset_fs) == 248 &&
+              sizeof(ruscv_payload) == 256,
+          "local_offset_fs is the final ruscv_payload field");
+    check(offsetof(ruscv_boundary, quantum_ticks) == 64 &&
+              offsetof(ruscv_boundary, interrupt_latency_bound_ticks) == 72 &&
+              offsetof(ruscv_boundary, quantum_syncs) == 80 &&
+              offsetof(ruscv_boundary, quantum_reached) == 88 &&
+              sizeof(ruscv_boundary) == 96,
+          "the quantum fields are the final ruscv_boundary fields");
+    free(target);
+}
+
+/* The distinct local-offset values of the recorded transactions, in order. */
+static size_t distinct_offsets(const test_target *target, uint64_t *out, size_t capacity)
+{
+    size_t count = 0;
+    int i;
+
+    for (i = 0; i < target->call_count; i += 1) {
+        uint64_t value = target->calls[i].local_offset_fs;
+        if (count == 0 || out[count - 1] != value) {
+            if (count < capacity) {
+                out[count] = value;
+                count += 1;
+            }
+        }
+    }
+    return count;
+}
+
+/*
+ * quantum U4 (D11/D12): the selection, its declared bound and the published
+ * `local_offset_fs` sequence, for a quantum of 0, 1 and 4.
+ *
+ * Three turns per grant keep a larger quantum below its threshold, so the F7
+ * grant return is the only sync and the cycle restarts at each grant.
+ */
+static void quantum_selection_case(const char *guest)
+{
+    static const uint64_t quanta[] = {0, 1, 4};
+    size_t q;
+
+    for (q = 0; q < sizeof(quanta) / sizeof(quanta[0]); q += 1) {
+        uint64_t quantum = quanta[q];
+        test_target *target = calloc(1, sizeof(test_target));
+        ruscv_machine *handle = NULL;
+        ruscv_target table;
+        ruscv_boundary facts;
+        uint64_t start = 0;
+        uint64_t offsets[64];
+        size_t count;
+        int status;
+        int g;
+        int ok;
+
+        init_target(target, NULL, 0);
+        table = quantum_target_table(target, quantum);
+        handle = create_machine(&table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+        check(status == RUSCV_OK && handle != NULL, "create a quantum handle");
+        check(status == RUSCV_OK &&
+                  ruscv_machine_load_elf(handle, guest) == RUSCV_OK,
+              "install the RAM-only guest");
+        /* Before the first grant the four fields are the D12 defaults. */
+        memset(&facts, 0, sizeof(facts));
+        check(ruscv_machine_boundary(handle, &facts) == RUSCV_OK &&
+                  facts.quantum_ticks == 0 && facts.interrupt_latency_bound_ticks == 0 &&
+                  facts.quantum_syncs == 0 && facts.quantum_reached == 0,
+              "a boundary before the first grant reports the quantum defaults");
+
+        ok = 1;
+        for (g = 0; g < 3; g += 1) {
+            ruscv_grant grant_result;
+            if (grant(handle, start, UINT64_MAX / 2, 3, &grant_result) != RUSCV_OK) {
+                ok = 0;
+                break;
+            }
+            if (grant_result.committed_end_fs !=
+                grant_result.committed_start_fs + grant_result.consumed_fs) {
+                ok = 0;
+            }
+            if (grant_result.facts.quantum_ticks != quantum) {
+                ok = 0;
+            }
+            if (grant_result.facts.interrupt_latency_bound_ticks !=
+                (quantum > 1 ? quantum - 1 : 0)) {
+                ok = 0;
+            }
+            if (quantum == 0 && grant_result.facts.quantum_syncs != 0) {
+                ok = 0;
+            }
+            if (quantum == 1 && grant_result.facts.quantum_reached != 1) {
+                ok = 0;
+            }
+            if (quantum > 1 && grant_result.facts.quantum_reached != 0) {
+                ok = 0;
+            }
+            start = grant_result.committed_end_fs;
+        }
+        check(ok,
+              "each grant returns committed_end = start + consumed with the right "
+              "quantum facts");
+
+        count = distinct_offsets(target, offsets, 64);
+        if (quantum <= 1) {
+            check(count == 1 && offsets[0] == 0,
+                  "no transaction carries a local offset with the quantum off or at 1");
+        } else {
+            /* Each grant restarts the cycle at the F7 return sync, so the
+             * recorded sequence is 0, 1, 2 repeated once per grant. */
+            size_t i;
+            int cycle = count == 9;
+            for (i = 0; i < count; i += 1) {
+                if (offsets[i] != (uint64_t)(i % 3u) * TICK_FS) {
+                    cycle = 0;
+                }
+            }
+            check(cycle, "the published local-offset sequence is the turn cycle");
+        }
+        ruscv_machine_destroy(handle);
+        free(target);
+    }
+}
+
+/*
+ * quantum U4 (D12 with F1): a forced sync alone ends a grant without the
+ * threshold, and a coincident threshold test keeps `quantum_reached`.
+ */
+static void quantum_forced_sync_case(const char *guest)
+{
+    {
+        /* The device read is the third turn; at a quantum of 64 the threshold
+         * is far away, so only the forced sync ends the grant. */
+        test_target *target = calloc(1, sizeof(test_target));
+        ruscv_machine *handle = NULL;
+        ruscv_target table;
+        ruscv_grant result;
+        int status;
+
+        init_target(target, NULL, 0);
+        table = quantum_target_table(target, 64);
+        handle = create_machine(&table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+        check(status == RUSCV_OK && ruscv_machine_load_elf(handle, guest) == RUSCV_OK,
+              "install the device-read guest");
+        check(grant(handle, 0, UINT64_MAX / 2, 64, &result) == RUSCV_OK,
+              "the forced-sync grant completed");
+        check(result.boundary_reached == 1,
+              "a forced sync ended the grant with boundary_reached");
+        check(result.facts.quantum_reached == 0,
+              "a forced sync alone leaves the threshold unreached");
+        check(result.facts.quantum_ticks == 64 && result.facts.quantum_syncs == 1,
+              "the forced grant reported its quantum and one counted sync");
+        check(result.committed_end_fs == result.consumed_fs,
+              "the forced grant consumed exactly its committed advance");
+        ruscv_machine_destroy(handle);
+        free(target);
+    }
+    {
+        /* A quantum of 1 syncs every boundary; the device-read turn's threshold
+         * test coincides with its forced sync and must survive it. */
+        test_target *target = calloc(1, sizeof(test_target));
+        ruscv_machine *handle = NULL;
+        ruscv_target table;
+        ruscv_grant result;
+        uint64_t start = 0;
+        int status;
+        int g;
+        int reached = 0;
+        int syncs = 0;
+
+        init_target(target, NULL, 0);
+        table = quantum_target_table(target, 1);
+        handle = create_machine(&table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+        check(status == RUSCV_OK && ruscv_machine_load_elf(handle, guest) == RUSCV_OK,
+              "install the device-read guest at a quantum of 1");
+        for (g = 0; g < 3; g += 1) {
+            if (grant(handle, start, UINT64_MAX / 2, 1, &result) != RUSCV_OK) {
+                break;
+            }
+            start = result.committed_end_fs;
+            syncs = (int)result.facts.quantum_syncs;
+            reached = result.facts.quantum_reached;
+        }
+        check(reached == 1,
+              "a coincident forced sync keeps the threshold result");
+        check(syncs == 3,
+              "three one-turn grants counted three syncs");
+        ruscv_machine_destroy(handle);
+        free(target);
+    }
+}
+
+/*
+ * quantum U4 (F6/D12): an unknown completion at a non-zero local offset syncs
+ * that offset, and reset restores the configured quantum.
+ */
+static void quantum_unknown_completion_case(const char *guest)
+{
+    test_target *target = calloc(1, sizeof(test_target));
+    ruscv_machine *handle = NULL;
+    ruscv_target table;
+    ruscv_grant result;
+    ruscv_result run;
+    int status;
+
+    init_target(target, NULL, 0);
+    table = quantum_target_table(target, 8);
+    handle = create_machine(&table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    check(status == RUSCV_OK && ruscv_machine_load_elf(handle, guest) == RUSCV_OK,
+          "install the data-loading guest at a quantum of 8");
+    target->unknown_on_data_read = 1;
+    check(grant(handle, 0, UINT64_MAX / 2, 16, &result) == RUSCV_OK,
+          "the failing grant returned its classified result");
+    run = result_of(handle);
+    check(run.state == RUSCV_RUN_FAILED && result.facts.uncertain == 1,
+          "an unknown completion at a non-zero offset fails the run");
+    check(target->call_count > 0 &&
+              target->calls[target->call_count - 1].local_offset_fs == 5 * TICK_FS,
+          "the failing turn started at a non-zero local offset");
+    check(result.committed_end_fs == 5 * TICK_FS,
+          "F6 commits the offset of the unknown completion");
+
+    target->unknown_on_data_read = 0;
+    check(ruscv_machine_reset(handle) == RUSCV_OK,
+          "reset is the acknowledged recovery path for the quantum");
+    target->call_count = 0;
+    check(grant(handle, 0, 4 * TICK_FS, 4, &result) == RUSCV_OK,
+          "the reset generation accepts grants");
+    check(result.facts.quantum_ticks == 8,
+          "reset restores the configured quantum");
+    check(result.committed_start_fs == 0,
+          "the reset generation restarts the epoch");
+    ruscv_machine_destroy(handle);
+    free(target);
+}
+
+/* quantum D2/D12: a refused quantum is RUSCV_ERROR_CONFIG, and a NULL target
+ * with no quantum stays native. */
+static void quantum_config_case(const char *guest)
+{
+    test_target *target = calloc(1, sizeof(test_target));
+    ruscv_machine *handle = NULL;
+    ruscv_target table;
+    int status;
+
+    init_target(target, NULL, 0);
+    table = quantum_target_table(target, UINT64_MAX - 100);
+    check(create_machine(&table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status) == NULL &&
+              status == RUSCV_ERROR_CONFIG,
+          "an unrepresentable quantum is a configuration failure");
+    check(create_machine(NULL, RUSCV_ISA_RV64IMA, TICK_FS, &status) != NULL &&
+              status == RUSCV_OK,
+          "a NULL target with no quantum stays native");
+    handle = create_machine(NULL, RUSCV_ISA_RV64IMA, TICK_FS, &status);
+    if (handle != NULL) {
+        ruscv_grant result;
+        check(ruscv_machine_load_elf(handle, guest) == RUSCV_OK,
+              "the native handle loads the RAM-only guest");
+        check(grant(handle, 0, UINT64_MAX / 2, 4, &result) == RUSCV_OK &&
+                  result.facts.quantum_ticks == 0 && result.facts.quantum_syncs == 0 &&
+                  result.facts.quantum_reached == 0,
+              "the native route reports no quantum facts");
+        ruscv_machine_destroy(handle);
+    }
     free(target);
 }
 
@@ -1164,6 +1507,8 @@ int main(int argc, char **argv)
     const char *work = argc > 1 ? argv[1] : ".";
     char guest[4096];
     char direct_guest[4096];
+    char ram_guest[4096];
+    char device_guest[4096];
     char log_path[4096];
     ruscv_machine *handle = NULL;
     int status;
@@ -1172,17 +1517,27 @@ int main(int argc, char **argv)
             (int)sizeof(guest) ||
         snprintf(direct_guest, sizeof(direct_guest), "%s/capi-smoke-direct-guest.elf",
                  work) >= (int)sizeof(direct_guest) ||
+        snprintf(ram_guest, sizeof(ram_guest), "%s/capi-smoke-ram-guest.elf", work) >=
+            (int)sizeof(ram_guest) ||
+        snprintf(device_guest, sizeof(device_guest), "%s/capi-smoke-device-guest.elf",
+                 work) >= (int)sizeof(device_guest) ||
         snprintf(log_path, sizeof(log_path), "%s/capi-smoke-commits.log", work) >=
             (int)sizeof(log_path)) {
         fprintf(stderr, "work path too long\n");
         return 2;
     }
-    if (build_guest(guest, 2) != 0 || build_direct_guest(direct_guest, 2) != 0) {
+    if (build_guest(guest, 2) != 0 || build_direct_guest(direct_guest, 2) != 0 ||
+        build_ram_only_guest(ram_guest, 12, 2) != 0 ||
+        build_device_read_guest(device_guest, 2) != 0) {
         fprintf(stderr, "cannot write the guest fixture\n");
         return 2;
     }
 
     header_case();
+    quantum_selection_case(ram_guest);
+    quantum_forced_sync_case(device_guest);
+    quantum_unknown_completion_case(direct_guest);
+    quantum_config_case(ram_guest);
     lifecycle_and_profile_case(guest);
     grants_and_commit_log_case(guest, log_path);
     reentry_case(guest);

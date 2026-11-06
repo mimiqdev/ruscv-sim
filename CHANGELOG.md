@@ -69,6 +69,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `time` 与 MTIP 逐 turn 等于 native 路由，`Q` = 16 的识别延迟按 guest 的 F1 同步相位与 `Q` 算出并逐值
     相等（6 tick，在 D8 内），运行经 F7 的 `last_slot` 同步收尾，最终 `platform_mtime` 满足 D9
 
+- **Quantum U4: C ABI（issue #204）**
+  - `BlockingTransaction` 新增只读请求访问器 `local_offset() -> Femtoseconds`（quantum D11）：Hart 事务的
+    `L - E`（回绕减法）加上该 turn 已计入的延迟 tick，再乘以 tick 周期。以 `E` 而非 `O` 计量，所以 F1 flush
+    把 `O` 移入 `C` 后该值仍是完整累积偏移；`Q` = 0、`DebugInbound` 与 debug transport 一律为零。它是时序
+    元数据，地址、字节、状态与权限从不依赖它，`set_response_delay` 的含义与 D4 的记账路径都不变
+  - 同一把总线锁下的偏移经 `RamSlot` 传给适配器：`SystemBus::native_transact_from` 的 Hart RAM 分支与
+    `native_transact_atomic` 传入 `turn_local_base()`，适配器加上本 turn 已计费的 tick 后写入事务。
+    `BlockingTransaction::set_local_offset` 为 crate 内可见，target 无法通过复制载荷改写它
+  - `include/ruscv_sim.h`：`ruscv_target` 追加 `uint64_t quantum_ticks`（零为关闭；`NULL` target 选择 native
+    路由，因而无法选择 quantum；table 在 create 时复制，值跨 `ruscv_machine_reset` 保持）、`ruscv_payload`
+    追加 `uint64_t local_offset_fs` 请求字段、`ruscv_boundary` 追加 `quantum_ticks`、
+    `interrupt_latency_bound_ticks`、`quantum_syncs` 与 `int32_t quantum_reached`。三处布局 pin 同步更新
+    （`the_direct_memory_fields_are_final_in_their_structs`、`tests/capi/smoke.c` 的布局检查、header 的
+    Layout rule 与 final field 文本）：`ruscv_target` 48 → 56 字节，`ruscv_payload` 248 → 256 字节
+  - `ruscv_machine_create` 在 `host::validate_target` 旁调用新的 `host::validate_quantum`，在 Machine 于 load
+    时构建之前执行同一套 D2 规则，被拒绝的值返回 `RUSCV_ERROR_CONFIG`
+  - `GrantFacts` 新增四个 `ruscv_boundary` 量子字段与 `quantum_sync`；`boundary()` 照抄这四个字段，
+    `boundary_reached()` 包含 `quantum_sync`。`quantum_syncs` 是 D10 的累计 `syncs`，在 grant 返回同步之后
+    读取；load 或 reset 后的第一次 grant 之前仍是 `GrantFacts::default()` 的零值
+  - grant 返回路径：新增 `Session::grant_end_fs` 作为唯一的 grant 结束时间来源，先同步再读 `C`，所以
+    `committed_end_fs` 与 `consumed_fs` 都是同步后的值；`Q` 非零时一次被计数的 turn 边界 sync 结束 grant
+    （`boundary_reached` 为 1），空闲跳转在虚拟截止设置时先于唤醒 turn 结束 grant（`waiting` 为 1、
+    `deadline_blocked` 为 0）。`Installed::turn` 在 `reached_virtual_deadline` 与 `wake_turn_fits` 之后加该
+    判定；Runner 不设虚拟截止，仍把跳转与唤醒放在同一个 `turn()` 内
+  - grant 的 horizon、`deadline_blocked` 与 `residual_slack_fs` 测试改用 `L`（quantum D8/D12）：每次 grant
+    返回都先同步，所以调用方的已提交时钟结束时等于 `L`，按 `C` 授予 turn 会让该时钟越过 horizon。新增测试
+    证明非零 `O` 下档位内的 grant 满足 `committed_end_fs <= max_end_fs`，且 `deadline_blocked` 在与 parity
+    路由同一 turn 上报告
+  - 新增 8 个 C ABI 级 Rust 测试（含手编的 `wfi` 唤醒 guest 与经 CLINT 常驻 PTE 的 Sv39 walk guest）与
+    plain-C smoke 的对应用例：`Q` = 0/1/4 的事实与声明上界、`local_offset_fs` 的 turn 序列（关闭与 `Q` = 1
+    时为零）、`committed_end_fs` 恰为 `committed_start_fs + consumed_fs`、阈值与强制同步重合、强制同步单独
+    结束 grant、空闲跳转结束 grant 且唤醒 turn 首个事务的本地时间等于跳转目标、Sv39 walk 在 flush 后发布
+    `L - E` 加已计费 tick、每事务延迟只计一次、非零 `O` 的 unknown completion 之后 reset 恢复所选 quantum、
+    `RUSCV_ERROR_CONFIG`，以及无 quantum 的 `NULL` target 仍走 native
+  - U4 拥有的两条负控制（`quantum-u4-f7-grant-return`、`quantum-u4-horizon-uses-committed`）注册进
+    `scripts/debug/stage6-mutations`，每条都由已提交测试在变异下失败、还原后通过
+
 - **Direct memory U1: 授权与读取路径（issue #188）**
   - `MachineConfig` 新增公开 `dmi` 字段（`MachineConfig::new` 选择 `false`，破坏结构体字面量构造）；
     `dmi` 与 `Transport::Native` 的组合是既有的 `MachineError::UnsupportedTransport`，该变体的消息加宽为
@@ -443,6 +480,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - push 前自动 clippy
 
 ### Changed
+
+- **Quantum U4：C ABI 需要重新编译**
+  - `ruscv_target`、`ruscv_payload` 与 `ruscv_boundary` 只追加字段，既有字段的偏移与大小不变，但结构体
+    大小改变（`ruscv_target` 48 → 56、`ruscv_payload` 248 → 256 字节）。本 ABI 与上一版 header 不二进制
+    兼容：针对旧 header 编译的宿主必须在链接本版本前用新 header 重新编译
+  - CI 把 debug mutation controls 从 "Quality and tests" 拆成独立的 "Debug mutation controls" job（同样的
+    Rust 与 RISC-V 工具链、同样的触发条件与 90 分钟上限），因为该步骤在 U2 的 head 上占用了质量 job 1 小时
+    15 分钟预算的大部分；质量 job 的其余步骤不变
 
 - **Sprint 11: TLM2.0 + 外设**
   - TLM2.0 抽象层完整实现

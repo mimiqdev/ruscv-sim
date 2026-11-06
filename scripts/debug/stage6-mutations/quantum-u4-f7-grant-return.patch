@@ -1,0 +1,14 @@
+diff --git i/src/capi/host.rs w/src/capi/host.rs
+index ed97a7b..6b7d5aa 100644
+--- i/src/capi/host.rs
++++ w/src/capi/host.rs
+@@ -624,9 +624,6 @@ impl Session {
+     /// alone: the Hart sees no further turn in this grant, so nothing needs
+     /// republishing.  A no-op sync is not counted (quantum D3).
+     fn grant_end_fs(&self, machine: &OwnedMachine) -> Result<u64, ApiError> {
+-        machine
+-            .commit_local_time(true)
+-            .map_err(MachineRefusal::status)?;
+         let period = self.period.femtoseconds().as_u64();
+         let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
+         now.checked_mul(period)

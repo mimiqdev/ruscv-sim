@@ -1,9 +1,12 @@
 # RISC-V ISS Simulator CI
 # ========================
-# Pull requests run the Rust quality job, the OpenOCD debug-attach job and the
-# SystemC transport smoke.
+# Pull requests run the Rust quality job, the debug mutation controls, the
+# OpenOCD debug-attach job and the SystemC transport smoke.
 # The quality job includes the release binary and the project ELF suite, so a
-# green check is the repository quality gate. Coverage stays manual.
+# green check is the repository quality gate.  The mutation controls are one
+# test build per control, which took over an hour next to the quality job's own
+# steps, so they run as their own job: same triggers, same toolchain, and the
+# same required-check weight.  Coverage stays manual.
 # debug-attach builds the development image from the Dockerfile and runs
 # scripts/debug_attach.sh --require-spike inside it.
 # systemc-smoke builds the same image, whose SystemC layer pins Accellera
@@ -85,9 +88,6 @@ jobs:
         # rather than skipping when it is missing.
         run: ./scripts/test_capi_smoke.sh
 
-      - name: Run debug mutation controls
-        run: python3 scripts/verify_stage6_mutations.py --source-ref HEAD
-
       - name: Check documentation
         run: cargo doc --all-features --no-deps
 
@@ -118,6 +118,39 @@ jobs:
         env:
           RISCV_TEST_SKIP_BUILD: "1"
         run: ./scripts/run_elf_tests.sh
+
+  # Every registered negative control runs one `cargo test --all-features` build
+  # against a mutated copy of the committed source, so this job is CPU-bound and
+  # long.  It sits beside the quality job rather than inside it: the quality
+  # job's 90-minute budget was being spent here, and a failure of either job
+  # still blocks the pull request.  The runner assembles bare-metal ELFs, so it
+  # needs the same RISC-V toolchain the Rust tests do.
+  mutation-controls:
+    name: Debug mutation controls
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Setup Rust
+        # stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: stable
+
+      # test_add_direct assembles a bare-metal ELF during Rust tests.
+      - name: Install RISC-V GNU toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            gcc-riscv64-unknown-elf \
+            binutils-riscv64-unknown-elf
+
+      - name: Run debug mutation controls
+        run: python3 scripts/verify_stage6_mutations.py --source-ref HEAD
 
   # Stage 6 U5. Build ruscv-sim-dev:ci from this checkout's Dockerfile, using
   # the same inputs as the development-container workflow, and run the attach
