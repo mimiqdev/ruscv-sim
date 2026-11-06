@@ -1,5 +1,6 @@
 #!/bin/bash
-# Build and run the pinned-SystemC smoke (dev-plan D9/D10; direct-memory D13).
+# Build and run the pinned-SystemC smoke (dev-plan D9/D10; direct-memory D13;
+# quantum D13).
 #
 # The smoke proves the SystemC host path end to end on the same guests the
 # contract names:
@@ -20,7 +21,13 @@
 #      stay unchanged, the scheduled invalidation count must equal grants/2,
 #      and the ABI-forwarded count must cover it;
 #   8. run the early-`sc_stop` control, which must not pass: a host stop before
-#      a terminal ruscv-sim result is never a run result.
+#      a terminal ruscv-sim result is never a run result;
+#   9. run both guests at `--quantum 1` and `--quantum 1024`, with and without
+#      `--dmi`: the native exit code and a byte-identical commit log, a kernel
+#      clock equal to `committed_end_fs` after every grant, and strictly fewer
+#      grants at `--quantum 1024` than the same guest's `--quantum 1` pass;
+#  10. run the two quantum fault-option controls under `--quantum 1024`, each of
+#      which must fail the run with its own named diagnostic.
 #
 # Linux x86-64 only. Prerequisites are the pinned SystemC installation, CMake,
 # a C++17 compiler and the RISC-V cross toolchain. A missing prerequisite is a
@@ -120,6 +127,13 @@ ram_direct_mem_scheduled() {
         | sed -n 's/^systemc-smoke: ram .* direct_mem_scheduled=\([0-9][0-9]*\)$/\1/p' | head -1
 }
 
+# The number of grants whose kernel clock equalled `committed_end_fs`, or an
+# empty string.
+smoke_clock_checks() {
+    printf '%s\n' "$1" \
+        | sed -n 's/^systemc-smoke: kernel clock matched committed_end_fs after \([0-9][0-9]*\) grant(s)$/\1/p' | head -1
+}
+
 echo -e "${BLUE}== checking the SystemC smoke prerequisites${NC}"
 for tool in "${CMAKECMD}" "${CXXCMD}" "${RISCV_PREFIX:-riscv64-unknown-elf-}as" \
     "${RISCV_PREFIX:-riscv64-unknown-elf-}ld"; do
@@ -179,6 +193,13 @@ SMOKE_BIN="${BUILD_DIR}/systemc_smoke"
 # driver invalidates every grant after each Nth grant, so the forwarded count
 # is grants/N.
 INVALIDATE_EVERY=2
+
+# The two quantum selections every guest runs under (quantum D13/U5): `1` syncs
+# at every turn boundary, so a grant ends after one turn, and `1024` lets a
+# RAM-only stretch commit once per quantum. The fault-option controls run under
+# the larger one, where a grant spans several turns.
+QUANTUMS=(1 1024)
+FAULT_QUANTUM=1024
 
 # Each guest's native exit code, for the later pass comparisons.
 declare -A NATIVE_EXITS=()
@@ -286,6 +307,79 @@ for entry in "${GUESTS[@]}"; do
         fail "${guest}: direct memory served ${direct_transactions} b_transport call(s), not strictly below the non-direct pass's ${transactions}; no granted pointer was ever used"
     fi
     echo -e "  ${GREEN}[PASS]${NC} --dmi matches native with b_transport ${direct_transactions} < ${transactions}"
+
+    # The quantum passes (quantum D13/U5). Both guests run at `--quantum 1` and
+    # `--quantum 1024`, with and without `--dmi`: a quantum defers only when the
+    # Machine commits the local offset, so every pass keeps the native exit code
+    # and a byte-identical commit log. The binary compares the kernel clock with
+    # `committed_end_fs` after every grant and fails the run on a mismatch, and
+    # the grant and clock-check counts must agree, so a passing run proves every
+    # grant was checked. `--quantum 1` syncs at every turn boundary and a counted
+    # sync ends its grant, so the same guest must take strictly more grants there
+    # than at `--quantum 1024`.
+    for direct in 0 1; do
+        direct_flag=()
+        direct_suffix=""
+        if [ "${direct}" -eq 1 ]; then
+            direct_flag=(--dmi)
+            direct_suffix=".dmi"
+            direct_label=" --dmi"
+        else
+            direct_label=""
+        fi
+        grants_by_quantum=()
+        for quantum in "${QUANTUMS[@]}"; do
+            quantum_log="${OUTDIR}/logs/${guest}.systemc.q${quantum}${direct_suffix}.log"
+            capture quantum_output quantum_status \
+                timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${elf}" --isa "${profile}" \
+                --max-turns "${MAX_CYCLES}" --log-commits "${quantum_log}" \
+                --quantum "${quantum}" ${direct_flag[@]+"${direct_flag[@]}"}
+            [ "${quantum_status}" -ne 124 ] \
+                || fail "${guest}: the --quantum ${quantum}${direct_label} run timed out after ${RUN_TIMEOUT}s"
+            quantum_exit="$(smoke_exit_code "${quantum_output}")"
+            quantum_grants="$(smoke_grant_count "${quantum_output}")"
+            quantum_checks="$(smoke_clock_checks "${quantum_output}")"
+            if [ "${quantum_status}" -ne 0 ]; then
+                printf '%s\n' "${quantum_output}"
+                fail "${guest}: the --quantum ${quantum}${direct_label} run exited with status ${quantum_status}"
+            fi
+            if ! printf '%s\n' "${quantum_output}" | grep -q '^systemc-smoke: result state=exited '; then
+                printf '%s\n' "${quantum_output}"
+                fail "${guest}: the --quantum ${quantum}${direct_label} run did not report a terminal ruscv-sim result"
+            fi
+            if ! printf '%s\n' "${quantum_output}" \
+                | grep -q "^systemc-smoke: running .* --quantum ${quantum}$"; then
+                printf '%s\n' "${quantum_output}"
+                fail "${guest}: the --quantum ${quantum}${direct_label} run did not report its quantum selection"
+            fi
+            [ -n "${quantum_exit}" ] \
+                || fail "${guest}: the --quantum ${quantum}${direct_label} run reported no exit code"
+            [ -n "${quantum_grants}" ] \
+                || fail "${guest}: the --quantum ${quantum}${direct_label} run reported no grant count"
+            [ -n "${quantum_checks}" ] \
+                || fail "${guest}: the --quantum ${quantum}${direct_label} run reported no clock-check count"
+            if [ "${quantum_checks}" -ne "${quantum_grants}" ]; then
+                printf '%s\n' "${quantum_output}"
+                fail "${guest}: the --quantum ${quantum}${direct_label} run checked the kernel clock after ${quantum_checks} of its ${quantum_grants} grant(s)"
+            fi
+            if [ "${quantum_exit}" != "${native_exit}" ]; then
+                printf '%s\n' "${quantum_output}"
+                fail "${guest}: the --quantum ${quantum}${direct_label} exit code ${quantum_exit} differs from native ${native_exit}"
+            fi
+            [ -s "${quantum_log}" ] \
+                || fail "${guest}: the --quantum ${quantum}${direct_label} commit log is empty"
+            if ! cmp -s "${native_log}" "${quantum_log}"; then
+                diff -u "${native_log}" "${quantum_log}" | head -20 || true
+                fail "${guest}: the --quantum ${quantum}${direct_label} commit log differs from native"
+            fi
+            grants_by_quantum+=("${quantum_grants}")
+            echo "  quantum ${quantum}${direct_label}: exit ${quantum_exit}, grants ${quantum_grants}, clock checks ${quantum_checks}"
+        done
+        if [ "${grants_by_quantum[1]}" -ge "${grants_by_quantum[0]}" ]; then
+            fail "${guest}: --quantum 1024${direct_label} took ${grants_by_quantum[1]} grant(s), not strictly below --quantum 1's ${grants_by_quantum[0]}"
+        fi
+        echo -e "  ${GREEN}[PASS]${NC} --quantum 1024${direct_label} took ${grants_by_quantum[1]} grant(s) < --quantum 1's ${grants_by_quantum[0]} with the same commit log"
+    done
 done
 
 # The scheduled-invalidation pass (direct-memory D8/U5): every grant is
@@ -380,6 +474,75 @@ if [ -n "$(smoke_exit_code "${early_output}")" ]; then
 fi
 echo -e "  ${GREEN}[PASS]${NC} the early stop exited ${early_status} without a run result"
 
+# The two quantum fault-option controls (quantum §4). The mutation runner cannot
+# own them: it builds only Rust (`cargo test --offline --all-features`) and D14
+# keeps `--all-features` free of a C++ toolchain, so each is an option of this
+# binary in the style of `--stop-after-grants` instead. Both run under
+# `--quantum 1024`, where a grant spans several turns and every turn after the
+# first carries a non-zero local offset, so both faults are reachable.
+# `main.cpp` prints `exit_code` for every terminal state, so neither assertion
+# tests for its absence: each requires `result state=failed`, the C ABI's
+# classification of the failed grant and its own named diagnostic.
+read -r fault_guest fault_profile fault_directory <<<"${GUESTS[0]}"
+fault_elf="${ELF_DIR}/${fault_directory}/${fault_guest}.elf"
+
+# --fault-keep-offset: the initiator reports the full delay argument, offset
+# included, as an added delay. It exceeds this target's declared
+# per-transaction maximum of zero, so the grant fails as a host failure rather
+# than an unknown completion, and the diagnostic must name that maximum.
+echo -e "${YELLOW}== --fault-keep-offset under --quantum ${FAULT_QUANTUM} (must not pass)${NC}"
+capture keep_output keep_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${fault_elf}" --isa "${fault_profile}" \
+    --max-turns "${MAX_CYCLES}" --quantum "${FAULT_QUANTUM}" --fault-keep-offset
+[ "${keep_status}" -ne 124 ] || fail "the --fault-keep-offset control timed out"
+if [ "${keep_status}" -eq 0 ]; then
+    printf '%s\n' "${keep_output}"
+    fail "the --fault-keep-offset control passed; a reported offset above the declared maximum must fail"
+fi
+if ! printf '%s\n' "${keep_output}" | grep -q '^systemc-smoke: result state=failed '; then
+    printf '%s\n' "${keep_output}"
+    fail "the --fault-keep-offset control did not report a failed run"
+fi
+if ! printf '%s\n' "${keep_output}" \
+    | grep -q 'above its declared per-transaction maximum of 0 fs'; then
+    printf '%s\n' "${keep_output}"
+    fail "the --fault-keep-offset control's diagnostic did not name the exceeded declared maximum"
+fi
+if ! printf '%s\n' "${keep_output}" | grep -q '^systemc-smoke: failed run facts uncertain=0$'; then
+    printf '%s\n' "${keep_output}"
+    fail "the --fault-keep-offset control was not classified as a host failure"
+fi
+echo -e "  ${GREEN}[PASS]${NC} the exceeded declared maximum failed the run (status ${keep_status})"
+
+# --fault-decrease-delay: the target lowers the delay below the offset it
+# received. A delay below the offset cannot be represented as an added delay,
+# and the target may already have committed the write, so the initiator reports
+# the transaction as an unknown completion, which the boundary's `uncertain`
+# flag records.
+echo -e "${YELLOW}== --fault-decrease-delay under --quantum ${FAULT_QUANTUM} (must not pass)${NC}"
+capture decrease_output decrease_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${fault_elf}" --isa "${fault_profile}" \
+    --max-turns "${MAX_CYCLES}" --quantum "${FAULT_QUANTUM}" --fault-decrease-delay
+[ "${decrease_status}" -ne 124 ] || fail "the --fault-decrease-delay control timed out"
+if [ "${decrease_status}" -eq 0 ]; then
+    printf '%s\n' "${decrease_output}"
+    fail "the --fault-decrease-delay control passed; a delay below the offset must fail"
+fi
+if ! printf '%s\n' "${decrease_output}" | grep -q '^systemc-smoke: result state=failed '; then
+    printf '%s\n' "${decrease_output}"
+    fail "the --fault-decrease-delay control did not report a failed run"
+fi
+if ! printf '%s\n' "${decrease_output}" \
+    | grep -q 'could not establish the outcome of '; then
+    printf '%s\n' "${decrease_output}"
+    fail "the --fault-decrease-delay control's diagnostic did not name the unestablished outcome"
+fi
+if ! printf '%s\n' "${decrease_output}" | grep -q '^systemc-smoke: failed run facts uncertain=1$'; then
+    printf '%s\n' "${decrease_output}"
+    fail "the --fault-decrease-delay control was not classified as an unknown completion"
+fi
+echo -e "  ${GREEN}[PASS]${NC} the delay below the offset failed the run as an unknown completion (status ${decrease_status})"
+
 printf '\n============================================\n'
 printf '  SystemC smoke summary\n'
 printf '============================================\n'
@@ -389,5 +552,8 @@ printf '  Native comparison:    exit code and commit log per guest\n'
 printf '  Direct memory:        --dmi exit/log parity, b_transport strictly below\n'
 printf '  Invalidation:         --dmi-invalidate-every %s, unchanged commit log\n' \
     "${INVALIDATE_EVERY}"
+printf '  Quantum passes:       --quantum %s and %s, with and without --dmi\n' \
+    "${QUANTUMS[0]}" "${QUANTUMS[1]}"
+printf '  Fault controls:       the exceeded maximum and the unknown completion refused\n'
 printf '  Early sc_stop:        refused, as required\n\n'
 echo -e "${GREEN}[PASS]${NC} the pinned SystemC host matched native for every smoke guest"

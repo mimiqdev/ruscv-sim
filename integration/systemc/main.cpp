@@ -14,6 +14,20 @@
 //   turn bound). A host stop before a result is never a run result and never
 //   passes: the `--stop-after-grants` control proves that.
 //
+// With `--quantum` the Machine may run ahead of the kernel's committed time by
+// a bounded local offset (quantum D12/D13). This loop stays the only quantum
+// keeper: there is one initiator, so `tlm_quantumkeeper` and
+// `tlm_global_quantum` are not used. A counted sync at a turn boundary ends the
+// grant, and every grant return syncs before it reports its facts, so
+// `committed_end_fs` is the Machine's committed time at each return and the
+// kernel's `wait(grant.consumed_fs)` keeps `sc_time_stamp()` equal to it. The
+// check below therefore holds after every grant, and a mismatch fails the run.
+//
+// `--fault-keep-offset` and `--fault-decrease-delay` are the contract's two
+// SystemC fault-option controls (quantum §4): each breaks the offset arithmetic
+// in one place so the smoke can require its own named failure. Neither is a
+// normal host.
+//
 // The C ABI handle is created and destroyed on this thread, which is the
 // SystemC kernel thread, so the ABI's creator-thread affinity holds for every
 // call and every target callback. The 1 fs time resolution the adapter's exact
@@ -65,6 +79,12 @@ struct Options {
     /// Zero: no scheduled invalidation. Otherwise the driver asks the target
     /// to invalidate every grant after each Nth grant.
     uint64_t direct_mem_invalidate_every = 0;
+    /// The quantum selection in Platform ticks; zero is off (quantum D2/D13).
+    uint64_t quantum = 0;
+    /// The two fault-option controls (quantum §4). Each requires a quantum: with
+    /// no local offset neither could produce its failure.
+    bool fault_keep_offset = false;
+    bool fault_decrease_delay = false;
 };
 
 void print_usage(const char* program) {
@@ -73,7 +93,8 @@ void print_usage(const char* program) {
         "       [--log-commits <path>] [--turn-budget <turns>]\n"
         "       [--horizon-fs <femtoseconds>] [--stop-after-grants <grants>]\n"
         "       [--max-grants <grants>] [--max-turns <turns>]\n"
-        "       [--dmi] [--dmi-invalidate-every <grants>]\n"
+        "       [--dmi] [--dmi-invalidate-every <grants>] [--quantum <ticks>]\n"
+        "       [--fault-keep-offset] [--fault-decrease-delay]\n"
         "\n"
         "Runs one ruscv-sim Machine under this SystemC kernel. The RAM target is\n"
         "the zero-delay blocking model the initiator socket is bound to. Exit\n"
@@ -86,7 +107,15 @@ void print_usage(const char* program) {
         "--dmi lets the RAM target answer direct-memory queries so covered\n"
         "accesses copy through a host pointer; --dmi-invalidate-every <grants>\n"
         "makes the driver ask the target to invalidate every grant after each\n"
-        "Nth grant, and requires --dmi.\n",
+        "Nth grant, and requires --dmi.\n"
+        "\n"
+        "--quantum <ticks> selects temporal decoupling in Platform ticks (zero is\n"
+        "off), so the Machine may run ahead of the kernel clock by a bounded local\n"
+        "offset; the kernel still commits only what a grant returns, so the clock\n"
+        "equals committed_end_fs after every grant. --fault-keep-offset and\n"
+        "--fault-decrease-delay are the two fault-option controls of the quantum\n"
+        "contract: each requires --quantum, they are taken one at a time, and each\n"
+        "must fail the run with its own diagnostic.\n",
         program);
 }
 
@@ -198,6 +227,16 @@ bool parse_options(int argc, char** argv, Options& options) {
                              "systemc-smoke: --dmi-invalidate-every needs a positive count\n");
                 return false;
             }
+        } else if (std::strcmp(argument, "--quantum") == 0) {
+            const char* text = value("--quantum");
+            if (text == nullptr || !parse_u64(text, options.quantum)) {
+                std::fprintf(stderr, "systemc-smoke: --quantum needs a tick count\n");
+                return false;
+            }
+        } else if (std::strcmp(argument, "--fault-keep-offset") == 0) {
+            options.fault_keep_offset = true;
+        } else if (std::strcmp(argument, "--fault-decrease-delay") == 0) {
+            options.fault_decrease_delay = true;
         } else if (argument[0] == '-') {
             std::fprintf(stderr, "systemc-smoke: unknown option %s\n", argument);
             return false;
@@ -217,6 +256,21 @@ bool parse_options(int argc, char** argv, Options& options) {
         // Without a grant there is nothing to invalidate, so this control
         // would check nothing: require the selection it exercises.
         std::fprintf(stderr, "systemc-smoke: --dmi-invalidate-every requires --dmi\n");
+        return false;
+    }
+    if (options.fault_keep_offset && options.fault_decrease_delay) {
+        // The two fault controls break the same offset arithmetic in different
+        // places, so one run cannot exercise both: require one at a time.
+        std::fprintf(stderr, "systemc-smoke: --fault-keep-offset and --fault-decrease-delay "
+                             "cannot be combined\n");
+        return false;
+    }
+    if ((options.fault_keep_offset || options.fault_decrease_delay) && options.quantum == 0) {
+        // Both fault controls break the offset arithmetic of quantum D13, so
+        // with no local offset neither could fail: require the selection they
+        // exercise instead of silently passing.
+        std::fprintf(stderr, "systemc-smoke: --fault-keep-offset and --fault-decrease-delay "
+                             "require --quantum\n");
         return false;
     }
     return true;
@@ -259,6 +313,8 @@ public:
     bool stopped_early() const { return stopped_early_; }
     /// True when the calls or the Machine failed the run.
     bool failed() const { return failed_; }
+    /// Number of grants whose kernel clock equalled `committed_end_fs`.
+    uint64_t clock_checks() const { return clock_checks_; }
     const ruscv_result& result() const { return result_; }
 
 private:
@@ -393,6 +449,10 @@ private:
                 stop_with_message(message, machine);
                 return;
             }
+            // quantum D12/D13: a grant return is a sync, so after `wait(consumed)`
+            // the kernel clock is the Machine's committed time. Counting the
+            // comparisons lets the smoke assert that every grant was checked.
+            ++clock_checks_;
             ruscv_result result{};
             status = ruscv_machine_result(machine, &result);
             if (status != RUSCV_OK) {
@@ -416,6 +476,14 @@ private:
                     ruscv_machine_diagnostic(machine, diagnostic, sizeof(diagnostic));
                     std::fprintf(stderr, "systemc-smoke: failed run diagnostic: %s\n",
                                  diagnostic);
+                    // quantum §4: the failed grant's `uncertain` flag is the C
+                    // ABI's unknown-completion classification, so a fault-option
+                    // control can require that class and not only a message.
+                    ruscv_boundary facts{};
+                    if (ruscv_machine_boundary(machine, &facts) == RUSCV_OK) {
+                        std::fprintf(stderr, "systemc-smoke: failed run facts uncertain=%d\n",
+                                     facts.uncertain);
+                    }
                     std::fflush(stderr);
                 }
                 destroy(machine);
@@ -444,6 +512,8 @@ private:
     ruscv_result result_{};
     uint64_t grants_ = 0;
     uint64_t consumed_fs_ = 0;
+    /// Grants whose kernel clock matched `committed_end_fs` (quantum D12).
+    uint64_t clock_checks_ = 0;
     /// Completed turns observed after the last grant.
     uint64_t turns_seen_ = 0;
 };
@@ -468,12 +538,20 @@ int sc_main(int argc, char** argv) {
     std::printf("systemc-smoke: SystemC %s (IEEE 1666-%ld, SYSTEMC_VERSION %d), resolution %s\n",
                 sc_core::sc_release(), IEEE_1666_SYSTEMC, SYSTEMC_VERSION,
                 resolution.to_string().c_str());
-    std::printf("systemc-smoke: running %s under --isa %s\n", options.elf.c_str(),
-                isa_name(options.isa));
+    if (options.quantum == 0) {
+        // A run with no quantum keeps the banner it printed before this unit: the
+        // selection appears only when one is selected.
+        std::printf("systemc-smoke: running %s under --isa %s\n", options.elf.c_str(),
+                    isa_name(options.isa));
+    } else {
+        std::printf("systemc-smoke: running %s under --isa %s --quantum %" PRIu64 "\n",
+                    options.elf.c_str(), isa_name(options.isa), options.quantum);
+    }
     std::fflush(stdout);
 
-    ruscv_sim::RamTarget ram("ram");
-    ruscv_sim::RuscvInitiator initiator("initiator", ram, options.direct_mem);
+    ruscv_sim::RamTarget ram("ram", options.fault_decrease_delay);
+    ruscv_sim::RuscvInitiator initiator("initiator", ram, options.direct_mem, options.quantum,
+                                       options.fault_keep_offset);
     MachineDriver driver("driver", options, initiator);
     sc_core::sc_start();
 
@@ -483,6 +561,9 @@ int sc_main(int argc, char** argv) {
         " direct_mem_scheduled=%" PRIu64 "\n",
         ram.b_transport_count(), ram.transport_dbg_count(), ram.transport_reset_count(),
         initiator.direct_mem_invalidation_count(), initiator.direct_mem_scheduled_count());
+    std::printf("systemc-smoke: kernel clock matched committed_end_fs after %" PRIu64
+                " grant(s)\n",
+                driver.clock_checks());
     std::fflush(stdout);
 
     if (initiator.direct_mem_error_count() != 0) {

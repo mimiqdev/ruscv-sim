@@ -85,8 +85,10 @@ uint64_t amo_result(int32_t operation, size_t width, uint64_t old_value, uint64_
 
 }  // namespace
 
-RamTarget::RamTarget(sc_core::sc_module_name name)
-    : sc_core::sc_module(name), socket("socket") {
+RamTarget::RamTarget(sc_core::sc_module_name name, bool fault_decrease_delay)
+    : sc_core::sc_module(name),
+      socket("socket"),
+      fault_decrease_delay_(fault_decrease_delay) {
     socket.register_b_transport(this, &RamTarget::b_transport);
     socket.register_transport_dbg(this, &RamTarget::transport_dbg);
     // direct-memory D13: this target grants direct memory, so it registers the
@@ -95,9 +97,18 @@ RamTarget::RamTarget(sc_core::sc_module_name name)
 }
 
 void RamTarget::b_transport(tlm::tlm_generic_payload& transaction, sc_core::sc_time& delay) {
-    // dev-plan D7: this RAM model declares zero delay, so the response never
-    // charges modeled time and a TLM run stays time-equivalent to native.
-    delay = sc_core::SC_ZERO_TIME;
+    // quantum D13: the delay argument arrives as the Hart's local offset, which
+    // this zero-delay RAM model adds nothing to. Leaving it unchanged is what
+    // its declared per-transaction maximum of zero requires: the initiator
+    // subtracts the offset and reports the zero added delay, so the run stays
+    // time-equivalent to native with the quantum on and off.
+    if (fault_decrease_delay_ && delay > sc_core::SC_ZERO_TIME) {
+        // The smoke's --fault-decrease-delay control (quantum §4): a returned
+        // delay below the offset cannot be represented as an added delay, and
+        // this target may already have committed the write, so the initiator
+        // must report an unknown completion.
+        delay -= sc_core::sc_time(1, sc_core::SC_FS);
+    }
     ++b_transport_count_;
 
     PayloadExtension* extension = transaction.get_extension<PayloadExtension>();

@@ -138,6 +138,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `tests/quantum_cli.rs::the_quantum_option_requires_the_tlm_transport` 必须以非状态 2 的结果失败，还原后
     通过
 
+- **Quantum U5: SystemC smoke（issue #205）**
+  - `integration/systemc` 的 `RamTarget::b_transport` 不再把 `delay` 赋为 `SC_ZERO_TIME`，而是原样保留该参数：
+    它到达时是 Hart 的本地偏移（`ruscv_payload.local_offset_fs`，精确飞秒），这个零延迟模型不添加任何延迟，
+    所以 quantum 开启与关闭的 committed time 逐值相同（quantum D13）
+  - initiator 把 `payload.local_offset_fs` 作为 `b_transport` 的 `delay` 实参传入，返回时只上报 `delay - offset`
+    作为新增延迟；返回的 `delay` 低于 offset 时无法表示为新增延迟，且 target 可能已提交写，因此经既有
+    `mark_unknown_completion` 上报并设置 `outcome_unknown`（unknown completion，而不是普通
+    `TLM_INCOMPLETE_RESPONSE`）。target 表新增的 `quantum_ticks` 由 `--quantum <ticks>` 选择（零为关闭）
+  - `systemc_smoke` 新增 `--quantum <ticks>` 与合同 §4 的两个故障选项：`--fault-keep-offset`（initiator 把
+    完整 `delay` 当作新增延迟上报，超出 target 声明的零上限）与 `--fault-decrease-delay`（`RamTarget` 把
+    `delay` 降到收到的 offset 之下）；两者都要求 `--quantum`，都不会静默落成通过。每次 grant 后打印内核时钟
+    与 `committed_end_fs` 的比较次数，失败结果另打印边界的 `uncertain`，使两条故障断言各自指向一个具名分类
+  - `scripts/test_systemc_smoke.sh` 对两个 guest 各增加 `--quantum 1` 与 `--quantum 1024`、带与不带 `--dmi`
+    的四遍：每遍退出码与 commit log 与 native 逐字节一致，内核时钟比较次数恰等于 grant 数，且 `--quantum
+    1024` 的 grant 数严格低于同一 guest、同一 `--dmi` 状态的 `--quantum 1`（`atomic_tohost_exit` 1 对 4、
+    `fd_fma` 1 对 132）。既有各遍与早停控制不变；现有 grant 上限（10000）已足够覆盖 `--quantum 1` 的逐 turn
+    grant，因此未改动
+  - 两个故障控制各在 `--quantum 1024` 下运行，并要求 `result state=failed` 加各自具名诊断：
+    `--fault-keep-offset` 须命中 `above its declared per-transaction maximum of 0 fs` 且 `uncertain=0`
+    （host failure），`--fault-decrease-delay` 须命中 `could not establish the outcome of` 且 `uncertain=1`
+    （unknown completion）。变异 runner 只构建 Rust，所以按 D14 这两条是 smoke 二进制的选项、不是变异行；
+    其失败证据由上述断言在每次 smoke 运行中重新产生
+  - `docs/integration/systemc-tlm.md` 按 quantum D14 成为本 host 偏移、grant、sync 与上界规则的规范说明：
+    `b_transport` 的 delay 实参、`delay - offset` 上报规则与低于 offset 的 unknown completion、grant 返回的
+    F7 同步与时钟等式、horizon 使用本地时间（零 overshoot）、两个故障控制及其断言；开放项只余非阻塞传输。
+    `integration/systemc/README.md` 同步列出新选项
+
 - **Direct memory U1: 授权与读取路径（issue #188）**
   - `MachineConfig` 新增公开 `dmi` 字段（`MachineConfig::new` 选择 `false`，破坏结构体字面量构造）；
     `dmi` 与 `Transport::Native` 的组合是既有的 `MachineError::UnsupportedTransport`，该变体的消息加宽为

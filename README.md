@@ -212,6 +212,12 @@ grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒�
 的预算夹到剩余 turn 额度，是公共 CLI `--max-cycles` 的对应物，永不终止的 guest 以诊断失败
 而不是让 kernel 空转。
 
+`--quantum <ticks>` 把该选择放进 C ABI target 表（`ruscv_target.quantum_ticks`，零为关闭）：Machine 可在所
+选量子内领先内核时钟一段本地偏移，`b_transport` 的 `delay` 实参携带该偏移，RAM target 不添加任何延迟，
+initiator 只上报 `delay - offset`；一次被计数的 turn 边界 sync 会结束 grant，且每次 grant 返回先同步，所以
+`wait()` 之后内核时钟仍等于 `committed_end_fs`。合同 §4 的两个故障选项 `--fault-keep-offset` 与
+`--fault-decrease-delay` 要求 `--quantum`，各自必须以具名诊断失败。
+
 `scripts/test_systemc_smoke.sh` 在 CI 作业 `SystemC transport smoke` 内运行：`atomic_tohost_exit`
 （`rv64imafdc`）与 `fd_fma`（`rv64imafd`）经该内核与 blocking RAM target 运行后的退出码和
 `--log-commits` 必须与 native 公共 CLI 完全一致；早停变体（`--stop-after-grants 1`）必须在终止结果前
@@ -220,7 +226,10 @@ grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒�
 的非直接遍；`--dmi-invalidate-every <grants>` 在第 N 个 grant 后让 target 发起 backward invalidation
 （经 `invalidate_direct_mem_ptr` 转发到 `ruscv_machine_invalidate_direct_mem`），commit log 必须不变，
 计划的 invalidation 计数必须恰等于 grants/N，转发的计数不得低于它（target 自身 reset 前的
-invalidate-all 会额外转发一次）。缺少工具链、缺少 SystemC 或任一比较失败都是失败，不是跳过。
+invalidate-all 会额外转发一次）。两个 guest 另各跑 `--quantum 1` 与 `--quantum 1024`（带与不带 `--dmi`）：
+退出码与 commit log 仍须与 native 逐字节一致，内核时钟比较次数须等于 grant 数，且 `--quantum 1024` 的
+grant 数须严格低于同一 guest 的 `--quantum 1`；两个故障选项在 `--quantum 1024` 下各须以各自诊断失败。
+缺少工具链、缺少 SystemC 或任一比较失败都是失败，不是跳过。
 `cargo build`／`cargo test --all-features` 不需要 C++ 工具链或 SystemC。Linux x86-64 only。
 
 选定的 blocking 映射、FFI 所有权与线程、错误映射、时间单位、再入与停止行为、构建与版本 pin 的规范说明见
