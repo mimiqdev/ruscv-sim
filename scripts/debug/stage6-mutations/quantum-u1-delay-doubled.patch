@@ -1,0 +1,15 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index b670648..cc85d70 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -394,7 +394,9 @@ impl SystemBus {
+                 ));
+             }
+         }
+-        self.local_offset = self.local_offset.wrapping_add(advance);
++        self.local_offset = self
++            .local_offset
++            .wrapping_add(advance.wrapping_mul(2));
+         Ok(())
+     }
+ 

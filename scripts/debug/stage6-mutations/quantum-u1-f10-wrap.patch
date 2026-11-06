@@ -1,15 +1,15 @@
 diff --git i/src/machine/mod.rs w/src/machine/mod.rs
-index 24860cc..f4271d7 100644
+index 6e6ee38..d60364e 100644
 --- i/src/machine/mod.rs
 +++ w/src/machine/mod.rs
-@@ -628,10 +628,6 @@ impl Installed {
-                 synced |= self.platform.commit_local_time()?;
+@@ -631,10 +631,6 @@ impl Installed {
+                 synced |= self.platform.commit_local_time(!synced)?;
              }
              if wrapped {
 -                // quantum F10: the wrapped value presents as in a parity run,
 -                // so committed time takes the wrapped offset at turn end and
 -                // MTIP is never stale high.
--                synced |= self.platform.commit_local_time()?;
+-                synced |= self.platform.commit_local_time(!synced)?;
              }
-             if clock_failure.is_none() && (advance != 0 || synced) {
+             if synced || (clock_failure.is_none() && advance != 0) {
                  self.publish_platform_time()?;

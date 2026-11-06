@@ -1,0 +1,18 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 6e6ee38..cc03646 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -616,10 +616,11 @@ impl Installed {
+             // advance, so a coincident forced sync cannot clear `reached`.
+             // A refused advance left `O` unchanged, so the test still reads
+             // the pre-turn offset, which D5 keeps below `Q`.
+-            quantum_reached = self.platform.local_offset()? >= self.quantum;
+-            if quantum_reached {
++            let threshold = self.platform.local_offset()? >= self.quantum;
++            if threshold {
+                 synced |= self.platform.commit_local_time(!synced)?;
+             }
++            quantum_reached = self.platform.local_offset()? >= self.quantum;
+             // quantum F6: a failed turn, including one that fails only this
+             // D4 clock check, syncs the offset it knows, including known
+             // delay, without touching the transport.

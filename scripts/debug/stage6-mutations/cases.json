@@ -1738,6 +1738,17 @@
           "left:\\s+0",
           "right:\\s+6"
         ]
+      },
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_d4_clock_failure_syncs_the_pre_existing_offset",
+        "failure": [
+          "F6 did not commit the known offset after the clock check failed",
+          "left:\\s+18446744073709551609",
+          "right:\\s+18446744073709551615"
+        ]
       }
     ]
   },
@@ -1894,6 +1905,126 @@
           "assertion `left == right` failed",
           "left:\\s+Some\\(\"Quantum:\\s+off\"\\)",
           "right:\\s+None"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u1-reached-coincident",
+    "source": "src/machine/mod.rs",
+    "patch": "quantum-u1-reached-coincident.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_wait_boundary_counts_one_sync_and_keeps_reached",
+        "failure": [
+          "D5's threshold result must survive the boundary's own sync",
+          "left:\\s+false",
+          "right:\\s+true"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u1-boundary-counted-twice",
+    "source": "src/executor.rs",
+    "patch": "quantum-u1-boundary-counted-twice.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_wait_boundary_counts_one_sync_and_keeps_reached",
+        "failure": [
+          "one waiting boundary counted more than one sync",
+          "left:\\s+6",
+          "right:\\s+5"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u1-delay-doubled",
+    "source": "src/executor.rs",
+    "patch": "quantum-u1-delay-doubled.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_offset_stays_below_the_threshold_until_a_boundary_syncs",
+        "failure": [
+          "local time must accumulate exactly one advance per turn"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u1-bound-misreported",
+    "source": "src/machine/mod.rs",
+    "patch": "quantum-u1-bound-misreported.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_facts_report_the_selected_quantum",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+22",
+          "right:\\s+21"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u1-reduced-accuracy-misreported",
+    "source": "src/machine/mod.rs",
+    "patch": "quantum-u1-reduced-accuracy-misreported.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_facts_report_the_selected_quantum",
+        "failure": [
+          "assertion `left == right` failed",
+          "left:\\s+true",
+          "right:\\s+false"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u1-counters-charged",
+    "source": "src/machine/mod.rs",
+    "patch": "quantum-u1-counters-charged.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_syncs_do_not_touch_the_isa_counters",
+        "failure": [
+          "a sync or a delay charged an ISA counter"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u1-sync-gains-a-tick",
+    "source": "src/executor.rs",
+    "patch": "quantum-u1-sync-gains-a-tick.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_offset_stays_below_the_threshold_until_a_boundary_syncs",
+        "failure": [
+          "the threshold sync committed the wrong amount"
         ]
       }
     ]

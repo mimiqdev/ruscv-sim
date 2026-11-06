@@ -5058,7 +5058,11 @@ fn quantum_wait_boundary_counts_one_sync_and_keeps_reached() {
         local += 1 + (target.transactions.load(Ordering::SeqCst) as u64 - before);
         let pending = local - committed;
         let facts = turn.boundary().quantum.expect("Q = 4 must report facts");
-        assert_eq!(facts.reached, pending >= 4);
+        assert_eq!(
+            facts.reached,
+            pending >= 4,
+            "D5's threshold result must survive the boundary's own sync"
+        );
         if facts.reached {
             committed += pending;
             syncs += 1;

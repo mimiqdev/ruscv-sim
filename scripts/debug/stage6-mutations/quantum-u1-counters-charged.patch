@@ -1,0 +1,16 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 6e6ee38..f72bcfd 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -619,6 +619,11 @@ impl Installed {
+             quantum_reached = self.platform.local_offset()? >= self.quantum;
+             if quantum_reached {
+                 synced |= self.platform.commit_local_time(!synced)?;
++                // MUTATION: charge the boundary sync into the ISA counters.
++                for _ in 0..advance {
++                    self.core.state_mut().csr.increment_mcycle();
++                    self.core.state_mut().csr.increment_minstret();
++                }
+             }
+             // quantum F6: a failed turn, including one that fails only this
+             // D4 clock check, syncs the offset it knows, including known

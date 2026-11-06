@@ -1,0 +1,13 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 6e6ee38..c16ab20 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -318,7 +318,7 @@ pub(crate) fn interrupt_latency_bound_ticks(quantum: u64, turn_bound: u64) -> u6
+     if quantum == 1 {
+         0
+     } else {
+-        quantum - 1 + turn_bound
++        quantum + turn_bound
+     }
+ }
+ 

@@ -1,0 +1,13 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 6e6ee38..6bd1631 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -700,7 +700,7 @@ impl Installed {
+                 self.quantum,
+                 self.platform.turn_completion_bound_ticks().unwrap_or(0),
+             ),
+-            reduced_accuracy: self.quantum >= 2,
++            reduced_accuracy: self.quantum >= 1,
+             syncs: self.platform.quantum_syncs()?,
+             reached,
+         }))
