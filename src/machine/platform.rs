@@ -84,6 +84,12 @@ impl Platform {
         if config.dmi && config.transport.is_native() {
             return Err(MachineError::UnsupportedTransport);
         }
+        // quantum D2: a non-zero quantum is a TLM-route selection. The native
+        // route has no local offset to bound, and a flat Platform has no TLM
+        // route at all.
+        if config.quantum != 0 && config.transport.is_native() {
+            return Err(MachineError::UnsupportedTransport);
+        }
         let ram = match &config.transport {
             Transport::Native => RamSlot::native(
                 Arc::new(Mutex::new(SimpleMemory::new(image.memory_size()))),
@@ -106,6 +112,26 @@ impl Platform {
         // After every transport reset and before installation, zero-fill the
         // whole RAM window so no prior run's contents survive (dev-plan D6).
         ram.begin_window()?;
+        // quantum D2: the selected quantum's declared maximum turn bound
+        // `(Q + t + 1) x tick_period` must fit as u64 femtoseconds, where `t`
+        // is the route's conservative turn completion bound.  The check does
+        // not run for `Q` = 0, which accepts everything accepted today.
+        if config.quantum != 0 {
+            let turn_bound = ram.turn_completion_bound_ticks().unwrap_or(0);
+            let period = config.tick_period.femtoseconds().as_u64();
+            let represented = config
+                .quantum
+                .checked_add(turn_bound)
+                .and_then(|sum| sum.checked_add(1))
+                .and_then(|sum| sum.checked_mul(period));
+            if represented.is_none() {
+                return Err(MachineError::Placement(format!(
+                    "quantum {} ticks plus the route's turn completion bound of {} ticks cannot \
+                     be represented under the declared tick period of {} fs",
+                    config.quantum, turn_bound, period
+                )));
+            }
+        }
         Self::place(&ram, image)?;
         let events = Arc::new(Mutex::new(Vec::new()));
         let (typed, fetch, data, uart, bus): (
@@ -322,6 +348,68 @@ impl Platform {
             ))
         })?;
         Ok(self.flat_mtime)
+    }
+
+    /// quantum D3: the Hart's local time `L`, committed time plus the local
+    /// offset with wrapping addition.  The offset is zero when the quantum is
+    /// off, so this is committed time on the pre-quantum path.
+    pub(super) fn read_local_time(&self) -> Result<u64, MachineError> {
+        if let Some(bus) = &self.bus {
+            let bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            return Ok(bus.mtime().wrapping_add(bus.local_offset()));
+        }
+        Ok(self.flat_mtime)
+    }
+
+    /// quantum D3: the Platform's local offset `O` in Platform ticks.
+    pub(super) fn local_offset(&self) -> Result<u64, MachineError> {
+        if let Some(bus) = &self.bus {
+            let bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            return Ok(bus.local_offset());
+        }
+        Ok(0)
+    }
+
+    /// quantum D3/D10: the cumulative boundary-sync count of this Platform.
+    pub(super) fn quantum_syncs(&self) -> Result<u64, MachineError> {
+        if let Some(bus) = &self.bus {
+            let bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            return Ok(bus.quantum_syncs());
+        }
+        Ok(0)
+    }
+
+    /// quantum D4: one turn's `advance` enters the local offset `O` in place
+    /// of committed time.  A turn with delay ticks is checked and a refused
+    /// advance enters neither committed time nor the offset; a turn with no
+    /// delay ticks wraps `L` like the native one-tick path (quantum F10).
+    pub(super) fn accumulate_local_offset(
+        &self,
+        advance: u64,
+        checked: bool,
+    ) -> Result<(), MachineError> {
+        if let Some(bus) = &self.bus {
+            let mut bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            return bus
+                .accumulate_local_offset(advance, checked)
+                .map_err(MachineError::Placement);
+        }
+        // A non-zero quantum is refused without the native bus (quantum D2),
+        // so a flat Platform never accumulates an offset.
+        Ok(())
+    }
+
+    /// quantum D3: one boundary sync.  Committed time takes the local offset
+    /// and the offset returns to zero under the bus lock; the boundary counts
+    /// its sync once, so `count` is true only for its first moving sync.  It
+    /// makes no target call, charges no delay and changes no architectural or
+    /// delay counter.  Returns whether it moved committed time.
+    pub(super) fn commit_local_time(&self, count: bool) -> Result<bool, MachineError> {
+        if let Some(bus) = &self.bus {
+            let mut bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+            return Ok(bus.commit_local_time(count));
+        }
+        Ok(false)
     }
 
     /// One active RAM allocation; image descriptions are immutable restoration

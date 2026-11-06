@@ -1,0 +1,13 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 24860cc..1705762 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -195,7 +195,7 @@ impl MachineConfig {
+             isa: IsaProfile::default(),
+             transport: Transport::Native,
+             dmi: false,
+-            quantum: 0,
++            quantum: 1,
+             tick_period: TickPeriod::DEFAULT,
+             verbose: false,
+             tohost_override: None,

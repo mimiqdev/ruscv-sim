@@ -1,0 +1,12 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 6e6ee38..51af724 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -624,7 +624,6 @@ impl Installed {
+             // D4 clock check, syncs the offset it knows, including known
+             // delay, without touching the transport.
+             if outcome_failed || clock_failure.is_some() {
+-                synced |= self.platform.commit_local_time(!synced)?;
+             } else if single_step {
+                 // quantum F5: a single-step turn ends in a sync, so every
+                 // shared Machine control runs at a zero offset.

@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Quantum U1: 本地时间与阈值（issue #201）**
+  - `MachineConfig` 新增 `pub(crate)` 字段 `quantum`（Platform tick；`MachineConfig::new` 选择 0），该新增字段
+    使外部代码无法再以穷举结构体字面量构造 `MachineConfig`。U2 完成前该字段保持 crate 私有，因此没有公开
+    调用方可以选择尚未完整同步的 quantum。非零选择要求 `Transport::Tlm`：与 `Transport::Native` 的组合是既有
+    的 `MachineError::UnsupportedTransport`，该变体的消息加宽为命名 quantum 情形；
+    `(Q + t + 1) × tick_period` 无法以 u64 飞秒表示时，构建以 `MachineError::Placement` 拒绝，`Q` = 0 不运行
+    该检查
+  - `SystemBus` 在 CLINT 旁、同一把总线锁下保存本地偏移 `O` 与累计同步计数；`L = C + O`（回绕加法）。
+    每个 turn 起点与 `publish_platform_time` 通过 `csr.set_time` 呈现 `L`，中断线仍由 `C` 派生。
+    一次 sync 把 `C` 设为 `L`、清零 `O`，只在移动了 `C` 时计数；它不做 target 调用、不计延迟、不改任何
+    架构或延迟计数器
+  - 唯一累积路径（D4）：turn 的 `advance = delay.ticks + completed_turn` 在 quantum 开启时进入 `O` 而非
+    `C`；无延迟 tick 的 turn 回绕，带延迟 tick 的 turn 做检查，检查失败沿用今天的 simulator failure 并
+    保留已完成事实，该 turn 的 advance 既不进入 `C` 也不进入 `O`。阈值（D5）在推进后先测 `O >= Q`，
+    达阈值即在边界 sync；`Q` = 1 每个边界同步，`Q` = 0 完全走原路径
+  - U1 拥有的强制同步点：F3（等待中在 `settle_wait` 之前同步，唤醒与 parity 一致）、F5（single step
+    边界）、F6（失败 turn 含已知延迟的同步）、F10（零延迟 turn 使 `L` 回绕后同步，MTIP 不会滞后为高）
+  - `BoundaryFacts` 与 `ExecutionResult` 新增 `quantum: Option<QuantumFacts>`（`ticks`、
+    `interrupt_latency_bound_ticks`、`reduced_accuracy`、`syncs`、`reached`）；`ControlBoundary` 上报
+    `reached` 为 false。新增 `QuantumFacts` 类型，`ExecutionResult` 的新字段破坏外部穷举结构体字面量。
+    `print_result` 仅在该事实存在时输出一行 `Quantum:`，`Q` = 0 的 stdout 保持逐字节相同
+  - 新增 12 个 Machine 级测试覆盖合同 §4 U1 的验收项；U1 拥有的 20 条负控制注册进
+    `scripts/debug/stage6-mutations`（`quantum-u1-*`，含四个逐点控制、逐边界计数、D5 与强制同步重合、
+    D10 误报、延迟重复、同步偏差与计数器记账），每条都由已提交测试在变异下失败、还原后通过
+
 - **Direct memory U1: 授权与读取路径（issue #188）**
   - `MachineConfig` 新增公开 `dmi` 字段（`MachineConfig::new` 选择 `false`，破坏结构体字面量构造）；
     `dmi` 与 `Transport::Native` 的组合是既有的 `MachineError::UnsupportedTransport`，该变体的消息加宽为

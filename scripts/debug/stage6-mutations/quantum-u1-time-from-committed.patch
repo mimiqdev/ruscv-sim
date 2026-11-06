@@ -1,0 +1,13 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 24860cc..23b1f85 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -705,7 +705,7 @@ impl Installed {
+     /// Publish the post-advance local time `L` and the machine lines derived
+     /// from committed time (quantum D3).
+     fn publish_platform_time(&mut self) -> Result<(), MachineError> {
+-        let mtime = self.platform.read_local_time()?;
++        let mtime = self.platform.read_mtime()?;
+         self.core.state_mut().csr.set_time(mtime);
+         let lines = self.platform.machine_interrupt_lines()?;
+         self.core

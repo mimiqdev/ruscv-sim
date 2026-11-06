@@ -1,0 +1,12 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 6e6ee38..3cff354 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -517,7 +517,6 @@ impl Installed {
+             // `settle_wait` and the idle jump see committed local time and
+             // the jump lands with a zero offset.
+             if self.quantum != 0 {
+-                synced |= self.platform.commit_local_time(!synced)?;
+             }
+             match self.settle_wait() {
+                 WaitSettlement::NoProgress => {

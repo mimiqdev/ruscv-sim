@@ -182,8 +182,37 @@ impl OwnedMachine {
             lifecycle: status.lifecycle,
             uncertain: status.uncertain,
             transport_delay_femtoseconds: self.domain().platform.transport_delay_femtoseconds(),
+            // quantum D10: a control boundary starts no turn, so its
+            // threshold result is false.
+            quantum: self.quantum_facts(false)?,
             ..BoundaryFacts::default()
         })
+    }
+    /// quantum D10: this boundary's quantum facts for the installed domain,
+    /// present only when a quantum is selected.  `reached` is the D5 threshold
+    /// result; a control or result boundary reports false.  A poisoned bus is
+    /// `MachineError::Poisoned`, as `D3` names it.
+    pub(crate) fn quantum_facts(
+        &self,
+        reached: bool,
+    ) -> Result<Option<QuantumFacts>, MachineError> {
+        let quantum = self.control.inner.config.quantum;
+        if quantum == 0 {
+            return Ok(None);
+        }
+        Ok(Some(QuantumFacts {
+            ticks: quantum,
+            interrupt_latency_bound_ticks: interrupt_latency_bound_ticks(
+                quantum,
+                self.domain()
+                    .platform
+                    .turn_completion_bound_ticks()
+                    .unwrap_or(0),
+            ),
+            reduced_accuracy: quantum >= 2,
+            syncs: self.domain().platform.quantum_syncs()?,
+            reached,
+        }))
     }
     #[cfg(test)]
     pub(crate) fn test_data(&self) -> crate::core::SharedDataAccess {
@@ -954,6 +983,24 @@ impl OwnedMachine {
     #[cfg(any(test, feature = "capi"))]
     pub(crate) fn platform_mtime(&self) -> Result<u64, MachineError> {
         self.domain().platform.read_mtime()
+    }
+
+    /// quantum D3: the Hart's local time `L` of the installed domain.
+    #[cfg(test)]
+    pub(crate) fn platform_local_time(&self) -> Result<u64, MachineError> {
+        self.domain().platform.read_local_time()
+    }
+
+    /// quantum D3: the installed domain's local offset `O`.
+    #[cfg(test)]
+    pub(crate) fn platform_local_offset(&self) -> Result<u64, MachineError> {
+        self.domain().platform.local_offset()
+    }
+
+    /// quantum D3/D10: the installed domain's cumulative sync count.
+    #[cfg(test)]
+    pub(crate) fn platform_quantum_syncs(&self) -> Result<u64, MachineError> {
+        self.domain().platform.quantum_syncs()
     }
 
     /// The guest/bus address of the selected RAM exit signal.

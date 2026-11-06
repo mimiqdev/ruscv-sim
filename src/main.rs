@@ -287,6 +287,12 @@ fn print_result(result: &ExecutionResult) {
         println!("Error:      {}", error);
     }
 
+    // quantum D10: one line, only when a quantum was selected, so a run with
+    // the quantum off keeps byte-identical stdout.
+    if let Some(line) = quantum_report_line(&result.quantum) {
+        println!("{line}");
+    }
+
     if let Some(addr) = result.signature_addr {
         println!(
             "Signature:  0x{:016x} ({} bytes)",
@@ -296,6 +302,24 @@ fn print_result(result: &ExecutionResult) {
     }
 
     println!("=====================================");
+}
+
+/// quantum D10: the single `Quantum:` report line, or `None` when the run has
+/// no quantum fact so the stdout stays byte-identical.
+fn quantum_report_line(quantum: &Option<ruscv_sim::machine::QuantumFacts>) -> Option<String> {
+    quantum.as_ref().map(|quantum| {
+        format!(
+            "Quantum:    {} ticks, {} syncs, latency bound {} ticks{}",
+            quantum.ticks,
+            quantum.syncs,
+            quantum.interrupt_latency_bound_ticks,
+            if quantum.reduced_accuracy {
+                " (reduced accuracy)"
+            } else {
+                ""
+            }
+        )
+    })
 }
 
 #[cfg(test)]
@@ -309,6 +333,40 @@ mod tests {
             error: error.map(str::to_string),
             ..ExecutionResult::default()
         }
+    }
+
+    // quantum D10: the `Quantum:` line exists only when the run has a
+    // quantum fact, and it reports the selected facts exactly.
+    #[test]
+    fn no_quantum_line_is_reported_when_the_fact_is_absent() {
+        assert_eq!(quantum_report_line(&None), None);
+        assert_eq!(quantum_report_line(&result(0, false, None).quantum), None);
+    }
+
+    #[test]
+    fn the_quantum_line_reports_the_selected_facts() {
+        let facts = ruscv_sim::machine::QuantumFacts {
+            ticks: 1024,
+            interrupt_latency_bound_ticks: 1041,
+            reduced_accuracy: true,
+            syncs: 3,
+            reached: true,
+        };
+        let line = quantum_report_line(&Some(facts)).expect("a quantum fact must print");
+        assert!(line.starts_with("Quantum:    "), "{line}");
+        assert!(line.contains("1024 ticks"), "{line}");
+        assert!(line.contains("3 syncs"), "{line}");
+        assert!(line.contains("1041 ticks"), "{line}");
+        assert!(line.contains("reduced accuracy"), "{line}");
+        let precise = ruscv_sim::machine::QuantumFacts {
+            ticks: 1,
+            interrupt_latency_bound_ticks: 0,
+            reduced_accuracy: false,
+            syncs: 2,
+            reached: true,
+        };
+        let line = quantum_report_line(&Some(precise)).expect("a quantum fact must print");
+        assert!(!line.contains("reduced accuracy"), "{line}");
     }
 
     #[test]

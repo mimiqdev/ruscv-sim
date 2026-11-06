@@ -232,6 +232,7 @@ fn test_execution_result_custom() {
         error: Some("timeout".to_string()),
         signature_addr: Some(0x8000_2000),
         signature_data: Some(vec![0xAA, 0xBB]),
+        quantum: None,
     };
 
     assert_eq!(result.exit_code, 1);
@@ -1046,6 +1047,7 @@ fn test_execution_result_display() {
         error: Some("test error".to_string()),
         signature_addr: Some(0x8000_2000),
         signature_data: Some(vec![0xAA, 0xBB]),
+        quantum: None,
     };
 
     // Debug format should work
