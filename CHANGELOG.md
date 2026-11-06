@@ -483,8 +483,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Quantum U4：C ABI 需要重新编译**
   - `ruscv_target`、`ruscv_payload` 与 `ruscv_boundary` 只追加字段，既有字段的偏移与大小不变，但结构体
-    大小改变（`ruscv_target` 48 → 56、`ruscv_payload` 248 → 256 字节）。本 ABI 与上一版 header 不二进制
-    兼容：针对旧 header 编译的宿主必须在链接本版本前用新 header 重新编译
+    大小改变（`ruscv_target` 48 → 56、`ruscv_payload` 248 → 256、`ruscv_boundary` 64 → 96 字节）。本 ABI 与
+    上一版 header 不二进制兼容：针对旧 header 编译的宿主必须在链接本版本前用新 header 重新编译
   - CI 把 debug mutation controls 从 "Quality and tests" 拆成独立的 "Debug mutation controls" job（同样的
     Rust 与 RISC-V 工具链、同样的触发条件与 90 分钟上限），因为该步骤在 U2 的 head 上占用了质量 job 1 小时
     15 分钟预算的大部分；质量 job 的其余步骤不变
