@@ -94,6 +94,7 @@ cargo run -- run path/to/program.elf --max-cycles 100000
 | `--isa <PROFILE>` | 选择 Machine ISA profile：`rv64imafdc`（默认，+F/D+Zca，IALIGN=16、`misa` `0x800000000014112D`）、`rv64ima`（IALIGN=32、`misa` `0x8000000000141101`）、`rv64imac`（Zca：16-bit parcel 取指、IALIGN=16、`misa` `0x8000000000141105`）、`rv64imafd`（+F/D、IALIGN=32、`misa` `0x8000000000141129`）。FP profile 提供 32 个普通 64-bit FPR、`fflags`/`frm`/`fcsr`、可写 `mstatus.FS`，以及只读且由 `FS==Dirty` 派生的 `SD`；FP profile 下全部 F/D 指令在公共 Hart 路径上执行，且 commit log 按 pinned Spike 格式打印 FPR 与 `fcsr` 写入；`rv64imafdc` 另支持 Zcd 压缩双精度加载/存储，`rv64imac`/`rv64imafd` 下 Zcd 仍按非法指令陷入。profile 不会从 ELF `e_flags` 推断，运行期间不可改变 |
 | `--transport <KIND>` | 选择 guest-RAM 传输：`native`（默认，现有 `SimpleMemory` 路径，行为不变）或 `tlm`。`tlm` 通过 blocking `b_transport` 目标服务全部 RAM 访问，并使用 in-tree 零延迟 Rust RAM target；它要求 native Platform（`Flat` + `tlm` 是配置错误）。镜像安装、`tohost` 轮询、`read_mem`/`write_mem`/`Machine::memory()` 与签名提取走 `transport_dbg`，不计为事务。标注延迟按声明的 Platform tick 周期（默认 1 ns）换算并计入 `mtime`：能整除时精确换算，否则向上取整；超过 target 声明的单事务最大值是 simulator failure，SBA 与 Debug Mode 的延迟只校验、不计时。U2 之前原子操作以原生 access-fault 原因失败关闭 |
 | `--dmi` | 允许 target 为 guest RAM 的取指、load 与 store 授予 host 指针（TLM Direct Memory Interface）。要求 `--transport tlm`；单独使用是 CLI 错误（状态 2） |
+| `--quantum <TICKS>` | 选择 temporal-decoupling quantum（Platform tick）：Hart 的本地时间最多领先 committed time 一个 quantum，在阈值与合同的强制同步点同步（quantum D2–D5）。要求 `--transport tlm`；不带该传输时无论取值（含 `--quantum 0`）都是 CLI 错误（状态 2）。省略或 0 是精确运行，stdout 与不带该选项时逐字节相同；选中时结果多一行 `Quantum:`（`ticks`、`syncs`、`interrupt_latency_bound_ticks`，`Q` ≥ 2 另标 `reduced accuracy`）。`Q` = 1 每个边界同步且精确，`Q` ≥ 2 是 ADR-0004 §6.3 的降低精度请求，时间派生的定时器识别最多晚 `Q - 1 + t` tick |
 
 `--transport tlm --dmi` 启用 TLM Direct Memory Interface：target 可以在完成的非原子事务上设置 `dmi_allowed`
 提示，适配器据此按该访问的方向查询一次 `get_direct_mem_ptr`，并把合法 grant 保存在适配器内部的有界 region
@@ -110,6 +111,22 @@ A/D 更新的每一段包络始终各是一次 `b_transport`；guest LR 会打�
 除 native 与 `--transport tlm` 两遍外，再以声明的 profile 跑一遍 `--transport tlm --dmi`，并要求 parity set
 在该遍的 commit log 与 native 逐字节相同；`scripts/debug_attach.sh` 另有一条 `--transport tlm --dmi` 会话，
 在强制 system-bus 访问下插入、命中并移除软件断点。
+
+`--quantum` 是同一 TLM 路由上的 temporal-decoupling 选择：`Q` 非零时每个 turn 的 `advance` 进入本地偏移
+`O`，而不是直接推进 committed time `C`；`O >= Q` 在每个边界同步，§3 的强制同步点（设备访问、`tohost`、
+WFI、调试、single step、失败、run stop、quiesce、`u64` 回绕）则无条件同步。一次同步把 `C` 设为 `L = C + O`
+并清零 `O`，不做 target 调用、不计延迟、不改 `mcycle`/`minstret`。`Q` = 0 完全不建本地偏移，走轮换前的
+路径。`--quantum` 可与 `--dmi`、`--rbb-port` 组合。
+
+`scripts/run_elf_tests.sh` 因此对每个 guest 跑五遍：native、`--transport tlm`、`--transport tlm --dmi`、
+`--transport tlm --quantum 1` 与 `--transport tlm --quantum 1024`，都用该 guest 声明的 profile 和同一个
+`--max-cycles`。parity set 在两条 quantum 遍上的 `--log-commits` 必须与 native 逐字节相同（`Q` = 1 精确，
+`Q` ≥ 2 对无时间派生 crossing 的运行与 parity 一致），其余 guest 保持各自退出码；`hello` 另跑一次
+`--transport tlm --dmi --quantum 1024`，并要求 `Quantum:` 行的 `syncs` 严格低于 `Cycles:`。
+`scripts/debug_attach.sh` 有一条 `--transport tlm --quantum 1024` 的实时 attach 会话：连接后以 system-bus
+访问读 `mtime`，resume 到 guest 装载的定时器 compare 后再读一次，resume 经过定时器陷入并读取 guest 记录的
+D8 延迟；该会话只断言 `Q - 1 + t` 上界，不断言某个精确延迟，因为调试器自身的 F4 同步会移动阈值同步的相位
+（quantum D6）。
 
 `--transport tlm` 的 RAM 路径与 native 使用同一 Hart、地址映射和 DM 规则：一次物理访问对应恰好一次
 blocking 事务，长度等于访问宽度、原始字节按物理地址递增排列，状态的 guest 可见性、host/protocol/unknown
@@ -211,8 +228,9 @@ invalidate-all 会额外转发一次）。缺少工具链、缺少 SystemC 或�
 
 quantum／同步策略由当前合同选定。其 Machine 核心已在 U1／U2 落地：`MachineConfig.quantum`（Platform tick，0 为
 关闭）、本地偏移 `O` 与锚点 `E`、阈值同步、§3 的强制同步点、D9 的 tick 守恒与 D8 的延迟上界，以及
-`BoundaryFacts.quantum` 的降低精度报告。公共 CLI 仍无法选择 quantum：`--quantum`、guest suite 的 quantum
-遍、C ABI 字段与 SystemC smoke 分属后续单元，尚未实现。
+`BoundaryFacts.quantum` 的降低精度报告。U3 把该选择接到公共入口：`run --quantum <ticks>`、guest suite 的
+`--quantum 1` 与 `--quantum 1024` 两遍及实时 debug-attach 会话（见上文 CLI 选项与 `scripts/run_elf_tests.sh`）。
+C ABI 的 `quantum_ticks` 与 grant 侧字段（U4）和 SystemC smoke 的 `--quantum`（U5）属后续单元，尚未实现。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 
@@ -364,7 +382,7 @@ cargo test --all-features
 cargo test --test test_add_direct
 ```
 
-集成测试里既有纯 Rust 用例，也有 `tests/bare-metal-riscv-test/` 下的汇编程序（包括 RV64I、RV64M 和新增的 RV64A 原子 guest）。A6 的五个陷阱 guest 会在临时目录中 fresh assemble/link，并分别验证 `ruscv-sim run`、`load_and_run` 和 `RiscVSimulator`；缺少交叉编译器时本地用例明确打印 `[SKIP]`，CI 通过 `RISCV_REQUIRE_RISCV_TOOLCHAIN=1` 将缺失视为失败。完整 ELF 脚本会在隔离的 `target/` 输出目录中重建，并检查真实 `_start` 入口；每个 guest 还会以声明的 profile 再跑一次 `--transport tlm`，并对 `hello`、`s5_timer`、`s5_external`、`atomic_tohost_exit`、`fd_fma` 比较两次 `--log-commits` 输出逐字节一致；`cargo test` 成功不能冒充完整 ELF suite。详见 [裸机验证指南](docs/verification/bare-metal-tests.md) 和 [A6 证据矩阵](docs/verification/a6-capability-assessment.md)。
+集成测试里既有纯 Rust 用例，也有 `tests/bare-metal-riscv-test/` 下的汇编程序（包括 RV64I、RV64M 和新增的 RV64A 原子 guest）。A6 的五个陷阱 guest 会在临时目录中 fresh assemble/link，并分别验证 `ruscv-sim run`、`load_and_run` 和 `RiscVSimulator`；缺少交叉编译器时本地用例明确打印 `[SKIP]`，CI 通过 `RISCV_REQUIRE_RISCV_TOOLCHAIN=1` 将缺失视为失败。完整 ELF 脚本会在隔离的 `target/` 输出目录中重建，并检查真实 `_start` 入口；每个 guest 还会以声明的 profile 分别跑 `--transport tlm`、`--transport tlm --dmi`、`--transport tlm --quantum 1` 与 `--transport tlm --quantum 1024`，并对 `hello`、`s5_timer`、`s5_external`、`atomic_tohost_exit`、`fd_fma`、`direct_mem_smc_fence_i`、`direct_mem_sv39_pt_store` 比较每遍的 `--log-commits` 输出与 native 逐字节一致；`cargo test` 成功不能冒充完整 ELF suite。详见 [裸机验证指南](docs/verification/bare-metal-tests.md) 和 [A6 证据矩阵](docs/verification/a6-capability-assessment.md)。
 
 ## 参考
 

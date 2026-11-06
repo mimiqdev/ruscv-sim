@@ -1,19 +1,24 @@
-//! Blocking TLM U4 (dev-plan D10) and direct-memory U3 (direct-memory D14):
-//! guest-suite parity under `--transport tlm` and `--transport tlm --dmi`.
+//! Blocking TLM U4 (dev-plan D10), direct-memory U3 (direct-memory D14) and
+//! quantum U3 (quantum D7/D14): guest-suite parity under `--transport tlm`,
+//! `--transport tlm --dmi`, `--transport tlm --quantum 1` and
+//! `--transport tlm --quantum 1024`.
 //!
-//! Three committed checks live here:
+//! Four committed checks live here:
 //!
 //! * [`the_guest_suite_runs_every_case_under_the_tlm_route`] drives the real
 //!   `scripts/run_elf_tests.sh` against a fake simulator. It proves every
-//!   guest gets a second pass under `--transport tlm` and a third under
-//!   `--transport tlm --dmi`, each with its declared profile and cycle bound,
-//!   that the parity set writes `--log-commits` on all three passes, and that
-//!   the script compares the complete files as bytes. The fake simulator
-//!   records each invocation, so a suite that silently drops the direct pass,
-//!   the `--dmi` selection or a profile fails without needing a RISC-V
-//!   toolchain.
-//! * [`the_guest_suite_fails_when_the_tlm_commit_log_diverges`] and
-//!   [`the_guest_suite_fails_when_the_direct_commit_log_diverges`] inject a
+//!   guest gets four further passes, under `--transport tlm`, `--transport tlm
+//!   --dmi`, `--transport tlm --quantum 1` and `--transport tlm --quantum
+//!   1024`, each with its declared profile and cycle bound, that the parity set
+//!   writes `--log-commits` on all five passes, and that the script compares
+//!   the complete files as bytes. `hello` adds the one `--dmi --quantum 1024`
+//!   pass whose report must carry fewer syncs than completed turns. The fake
+//!   simulator records each invocation, so a suite that silently drops a pass,
+//!   the `--dmi` or `--quantum` selection, or a profile fails without needing a
+//!   RISC-V toolchain.
+//! * [`the_guest_suite_fails_when_the_tlm_commit_log_diverges`],
+//!   [`the_guest_suite_fails_when_the_direct_commit_log_diverges`] and
+//!   [`the_guest_suite_fails_when_a_quantum_commit_log_diverges`] inject a
 //!   whitespace-only divergence after an identical first line, in one pass at
 //!   a time, so a first-line-only or whitespace-insensitive comparison fails
 //!   here. The direct-divergence check also proves the TLM pass stayed
@@ -22,7 +27,9 @@
 //!   to equal the native one before it looks at the direct log, so comparing
 //!   the direct log with the TLM log would be equivalent to comparing it with
 //!   native: the script compares it with native, which is what the contract
-//!   names, and no fixture here can tell those two apart.
+//!   names, and no fixture here can tell those two apart. The quantum
+//!   divergence is injected on the `Q` = 1 pass, so that guest stops before its
+//!   `Q` = 1024 pass and the summary counts two missing comparisons.
 //! * [`synthetic_guest_commit_logs_match_between_native_and_tlm`] runs one
 //!   synthetic guest through the public CLI on both routes and compares the
 //!   commit logs byte for byte. This is the target of the
@@ -132,17 +139,19 @@ struct Invocation {
     cycles: String,
     log: String,
     direct_mem: bool,
+    quantum: String,
 }
 
 impl Invocation {
     fn parse(line: &str) -> Self {
-        let mut fields = line.splitn(6, '|');
+        let mut fields = line.splitn(7, '|');
         let guest = fields.next().expect("guest field").to_string();
         let isa = fields.next().expect("isa field").to_string();
         let transport = fields.next().expect("transport field").to_string();
         let cycles = fields.next().expect("cycles field").to_string();
         let log = fields.next().expect("log field").to_string();
         let direct_mem = fields.next().expect("direct-memory field") == "dmi";
+        let quantum = fields.next().expect("quantum field").to_string();
         Self {
             guest,
             isa,
@@ -150,6 +159,7 @@ impl Invocation {
             cycles,
             log,
             direct_mem,
+            quantum,
         }
     }
 }
@@ -233,6 +243,7 @@ direct=""
 isa=""
 cycles=""
 log=""
+quantum=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         run) shift; name="$(basename "$1" .elf)"; shift ;;
@@ -241,10 +252,11 @@ while [ "$#" -gt 0 ]; do
         --transport) transport="$2"; shift 2 ;;
         --dmi) direct="dmi"; shift ;;
         --log-commits) log="$2"; shift 2 ;;
+        --quantum) quantum="$2"; shift 2 ;;
         *) shift ;;
     esac
 done
-printf '%s|%s|%s|%s|%s|%s\n' "$name" "$isa" "$transport" "$cycles" "$log" "$direct" >> "${RUNNER_INVOCATIONS}"
+printf '%s|%s|%s|%s|%s|%s|%s\n' "$name" "$isa" "$transport" "$cycles" "$log" "$direct" "$quantum" >> "${RUNNER_INVOCATIONS}"
 if [ -n "$log" ]; then
     printf 'commit  %s\nscope %s\n' "$name" "$name" > "$log"
     case ",${TLM_DIVERGES:-}," in
@@ -259,6 +271,13 @@ if [ -n "$log" ]; then
     case ",${DIRECT_DIVERGES:-}," in
         *",${name},"*)
             if [ -n "$direct" ]; then
+                printf 'commit  %s\nscope  %s\n' "$name" "$name" > "$log"
+            fi
+            ;;
+    esac
+    case ",${QUANTUM_DIVERGES:-}," in
+        *",${name},"*)
+            if [ -n "$quantum" ]; then
                 printf 'commit  %s\nscope  %s\n' "$name" "$name" > "$log"
             fi
             ;;
@@ -279,6 +298,16 @@ if [ "$name" = "s5_wfi_none" ]; then
 fi
 if [ "$name" = "hello" ]; then
     echo "Hello!"
+fi
+if [ -n "$quantum" ]; then
+    # quantum D10: the report's one quantum line, with the D8 bound the guest
+    # session asserts, and fewer syncs than the run's completed turns.
+    echo "Cycles:     10"
+    if [ "$quantum" = "1" ]; then
+        echo "Quantum:    1 ticks, 10 syncs, latency bound 0 ticks"
+    else
+        echo "Quantum:    ${quantum} ticks, 1 syncs, latency bound $((quantum - 1)) ticks (reduced accuracy)"
+    fi
 fi
 echo "Status:     SUCCESS"
 echo "Exit Code:  0"
@@ -301,6 +330,7 @@ fn run_guest_suite(
     scratch: &Scratch,
     diverges: Option<&str>,
     direct_diverges: Option<&str>,
+    quantum_diverges: Option<&str>,
     fails: Option<&str>,
 ) -> Output {
     // The suite output must sit directly below `target/`; this scratch
@@ -348,6 +378,9 @@ fn run_guest_suite(
     if let Some(names) = direct_diverges {
         command.env("DIRECT_DIVERGES", names);
     }
+    if let Some(names) = quantum_diverges {
+        command.env("QUANTUM_DIVERGES", names);
+    }
     if let Some(names) = fails {
         command.env("TLM_FAILS", names);
     }
@@ -381,7 +414,7 @@ fn expected_guests() -> Vec<String> {
 #[test]
 fn the_guest_suite_runs_every_case_under_the_tlm_route() {
     let scratch = Scratch::new("runner");
-    let output = run_guest_suite(&scratch, None, None, None);
+    let output = run_guest_suite(&scratch, None, None, None, None);
     let text = diagnostic(&output);
     assert!(
         output.status.success(),
@@ -395,13 +428,19 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
         text.contains("Direct-memory parity logs compared: 7/7"),
         "the suite did not report seven byte-identical direct-memory logs:\n{text}"
     );
+    assert!(
+        text.contains("Quantum parity logs compared: 14/14"),
+        "the suite did not report fourteen byte-identical quantum logs:\n{text}"
+    );
 
     let invocations = recorded(&scratch);
     let expected = expected_guests();
+    // quantum D14: every guest runs five times, and `hello` adds the one
+    // `--dmi --quantum 1024` sync-count pass after them.
     assert_eq!(
         invocations.len(),
-        expected.len() * 3,
-        "every guest must run exactly three times (native, TLM, direct memory):\n{invocations:#?}"
+        expected.len() * 5 + 1,
+        "every guest must run exactly five times plus hello's sync-count pass:\n{invocations:#?}"
     );
 
     for guest in &expected {
@@ -409,37 +448,44 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
             .iter()
             .filter(|invocation| &invocation.guest == guest)
             .collect();
+        let passes = if guest == "hello" { 6 } else { 5 };
         assert_eq!(
             runs.len(),
-            3,
-            "{guest}: expected one native, one TLM and one direct-memory pass, got {runs:#?}"
+            passes,
+            "{guest}: expected {passes} passes, got {runs:#?}"
         );
-        assert_eq!(
-            runs[0].transport, "native",
-            "{guest}: the first pass must stay on the native route"
-        );
-        assert!(
-            !runs[0].direct_mem,
-            "{guest}: the native pass must not select direct memory"
-        );
-        assert_eq!(
-            runs[1].transport, "tlm",
-            "{guest}: the second pass must run under --transport tlm"
-        );
-        assert!(
-            !runs[1].direct_mem,
-            "{guest}: the second pass must not select direct memory"
-        );
-        assert_eq!(
-            runs[2].transport, "tlm",
-            "{guest}: the third pass must run under --transport tlm"
-        );
-        assert!(
-            runs[2].direct_mem,
-            "{guest}: the third pass must select --dmi"
-        );
+        let shape = [
+            ("native", "native", false, ""),
+            ("TLM", "tlm", false, ""),
+            ("direct-memory", "tlm", true, ""),
+            ("quantum 1", "tlm", false, "1"),
+            ("quantum 1024", "tlm", false, "1024"),
+        ];
+        for (index, (label, transport, direct, quantum)) in shape.iter().enumerate() {
+            assert_eq!(
+                runs[index].transport, *transport,
+                "{guest}: the {label} pass must run under --transport {transport}"
+            );
+            assert_eq!(
+                runs[index].direct_mem, *direct,
+                "{guest}: the {label} pass's --dmi selection"
+            );
+            assert_eq!(
+                runs[index].quantum, *quantum,
+                "{guest}: the {label} pass's --quantum selection"
+            );
+        }
         let profile = declared_profile(guest);
-        for (index, label) in ["native", "TLM", "direct-memory"].iter().enumerate() {
+        for (index, label) in [
+            "native",
+            "TLM",
+            "direct-memory",
+            "quantum 1",
+            "quantum 1024",
+        ]
+        .iter()
+        .enumerate()
+        {
             assert_eq!(
                 runs[index].isa, profile,
                 "{guest}: the {label} pass must use the declared profile"
@@ -449,17 +495,50 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
                 "{guest}: the {label} pass must use the suite cycle bound"
             );
         }
+        if guest == "hello" {
+            assert_eq!(
+                runs[5].transport, "tlm",
+                "hello: the sync-count pass must run under --transport tlm"
+            );
+            assert!(
+                runs[5].direct_mem,
+                "hello: the sync-count pass must select --dmi"
+            );
+            assert_eq!(
+                runs[5].quantum, "1024",
+                "hello: the sync-count pass must select --quantum 1024"
+            );
+            assert_eq!(
+                runs[5].isa, profile,
+                "hello: the sync-count pass must use the declared profile"
+            );
+            assert_eq!(
+                runs[5].cycles, "123456",
+                "hello: the sync-count pass must use the suite cycle bound"
+            );
+            assert!(
+                runs[5].log.is_empty(),
+                "hello: the sync-count pass needs no commit log"
+            );
+        }
 
         if PARITY_GUESTS.contains(&guest.as_str()) {
             assert!(
                 runs[0].log.ends_with(&format!("{guest}.native.log"))
                     && runs[1].log.ends_with(&format!("{guest}.tlm.log"))
-                    && runs[2].log.ends_with(&format!("{guest}.direct.log")),
-                "{guest}: all three parity passes must write commit logs: {runs:#?}"
+                    && runs[2].log.ends_with(&format!("{guest}.direct.log"))
+                    && runs[3].log.ends_with(&format!("{guest}.quantum1.log"))
+                    && runs[4].log.ends_with(&format!("{guest}.quantum1024.log")),
+                "{guest}: all five parity passes must write commit logs: {runs:#?}"
             );
             let native_log = fs::read(&runs[0].log).expect("native parity log");
             assert!(!native_log.is_empty(), "{guest}: empty native commit log");
-            for (index, label) in [(1, "TLM"), (2, "direct-memory")] {
+            for (index, label) in [
+                (1, "TLM"),
+                (2, "direct-memory"),
+                (3, "quantum 1"),
+                (4, "quantum 1024"),
+            ] {
                 let log = fs::read(&runs[index].log).expect("parity log");
                 assert_eq!(
                     native_log, log,
@@ -467,16 +546,19 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
                 );
             }
         } else {
-            assert!(
-                runs[0].log.is_empty() && runs[1].log.is_empty() && runs[2].log.is_empty(),
-                "{guest}: only the parity set needs commit logs: {runs:#?}"
-            );
+            for index in 0..5 {
+                assert!(
+                    runs[index].log.is_empty(),
+                    "{guest}: only the parity set needs commit logs: {runs:#?}"
+                );
+            }
         }
     }
 
     // The contract names exactly these guests: U4's five (dev-plan D10) and
     // the two direct-memory U3 guests. A rename or an extra member means the
-    // checked comparison no longer matches D10/D14.
+    // checked comparison no longer matches D10/D14. quantum D14 adds both
+    // quantum passes to the same set.
     let compared: Vec<&String> = invocations
         .iter()
         .filter(|invocation| !invocation.log.is_empty())
@@ -488,13 +570,13 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
                 .iter()
                 .filter(|name| name.as_str() == guest)
                 .count(),
-            3,
+            5,
             "{guest}: the parity set must write one log per pass"
         );
     }
     assert_eq!(
         compared.len(),
-        PARITY_GUESTS.len() * 3,
+        PARITY_GUESTS.len() * 5,
         "unexpected commit-log writers: {compared:?}"
     );
 }
@@ -502,7 +584,7 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
 #[test]
 fn the_guest_suite_fails_when_the_tlm_commit_log_diverges() {
     let scratch = Scratch::new("runner-diverges");
-    let output = run_guest_suite(&scratch, Some("fd_fma"), None, None);
+    let output = run_guest_suite(&scratch, Some("fd_fma"), None, None, None);
     let text = diagnostic(&output);
     assert!(
         !output.status.success(),
@@ -543,7 +625,7 @@ fn the_guest_suite_fails_when_the_tlm_commit_log_diverges() {
 #[test]
 fn the_guest_suite_fails_when_the_direct_commit_log_diverges() {
     let scratch = Scratch::new("runner-direct-diverges");
-    let output = run_guest_suite(&scratch, None, Some("fd_fma"), None);
+    let output = run_guest_suite(&scratch, None, Some("fd_fma"), None, None);
     let text = diagnostic(&output);
     assert!(
         !output.status.success(),
@@ -589,9 +671,59 @@ fn the_guest_suite_fails_when_the_direct_commit_log_diverges() {
 }
 
 #[test]
+fn the_guest_suite_fails_when_a_quantum_commit_log_diverges() {
+    let scratch = Scratch::new("runner-quantum-diverges");
+    let output = run_guest_suite(&scratch, None, None, Some("fd_fma"), None);
+    let text = diagnostic(&output);
+    assert!(
+        !output.status.success(),
+        "a diverging quantum commit log passed the suite:\n{text}"
+    );
+    assert!(
+        text.contains("fd_fma: --transport tlm --quantum 1 commit log differs from native"),
+        "the suite did not name the diverging quantum parity guest:\n{text}"
+    );
+    assert!(
+        text.contains("Quantum parity logs compared: 12/14"),
+        "the suite did not count the two missing quantum comparisons:\n{text}"
+    );
+
+    // The divergence is confined to the quantum passes: the native, TLM and
+    // direct-memory logs are still byte-identical, and the guest stops before
+    // its `Q` = 1024 pass.
+    let invocations = recorded(&scratch);
+    let runs: Vec<&Invocation> = invocations
+        .iter()
+        .filter(|invocation| invocation.guest == "fd_fma")
+        .collect();
+    assert_eq!(runs.len(), 4, "fd_fma passes: {runs:#?}");
+    assert_eq!(runs[3].quantum, "1");
+    let native_log = fs::read_to_string(&runs[0].log).expect("native fd_fma log");
+    for run in runs.iter().take(3).skip(1) {
+        assert_eq!(
+            native_log,
+            fs::read_to_string(&run.log).expect("fd_fma log"),
+            "the injected divergence must not reach an earlier pass"
+        );
+    }
+    let quantum_log = fs::read_to_string(&runs[3].log).expect("quantum fd_fma log");
+    assert_eq!(
+        native_log.lines().next(),
+        quantum_log.lines().next(),
+        "the injected divergence must follow an identical first line"
+    );
+    assert_eq!(
+        native_log.split_whitespace().collect::<Vec<_>>(),
+        quantum_log.split_whitespace().collect::<Vec<_>>(),
+        "the injected divergence must be whitespace only"
+    );
+    assert_ne!(native_log, quantum_log, "the injected logs must differ");
+}
+
+#[test]
 fn the_guest_suite_fails_when_a_guest_fails_only_under_tlm() {
     let scratch = Scratch::new("runner-fails");
-    let output = run_guest_suite(&scratch, None, None, Some("s5_timer"));
+    let output = run_guest_suite(&scratch, None, None, None, Some("s5_timer"));
     let text = diagnostic(&output);
     assert!(
         !output.status.success(),

@@ -69,6 +69,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `time` 与 MTIP 逐 turn 等于 native 路由，`Q` = 16 的识别延迟按 guest 的 F1 同步相位与 `Q` 算出并逐值
     相等（6 tick，在 D8 内），运行经 F7 的 `last_slot` 同步收尾，最终 `platform_mtime` 满足 D9
 
+- **Quantum U3: CLI 与 guest parity（issue #203）**
+  - `run --quantum <ticks>` 把 `MachineConfig.quantum` 接到公共入口：选项可选，未给出时不设置 quantum；
+    给出时按 D2 要求 `--transport tlm`，无论取值（含 `--quantum 0`）不带该传输都是 CLI 错误并以状态 2
+    退出。`--quantum` 与 `--dmi`、`--rbb-port` 组合仍走同一条 `load_and_run_file_with_config`；`--verbose`
+    另打印所选 tick。帮助文本列出该选项及其 TLM 要求。选中 quantum 时结果块多一行 `Quantum:`（U1 已加入
+    的 D10 报告），`Q` = 0 的 stdout 逐字节不变
+  - 新增 `tests/quantum_cli.rs`：状态 2 拒绝（含 `--quantum 0`）、`Q` = 0 与 `Q` = 1 的报告除 `Quantum:`
+    行外与 native 逐字节相同（`Q` = 1 的上界为 0、无 `reduced accuracy`），以及 `--transport tlm --dmi
+    --quantum 1024` 的 RAM-only 运行报告 `syncs` 低于 `Cycles` 且带 D8 上界
+  - `scripts/run_elf_tests.sh` 对每个 guest 增加 `--transport tlm --quantum 1` 与 `--transport tlm
+    --quantum 1024` 两遍（各用其声明的 profile 与同一 `--max-cycles`）：parity set 两遍的 commit log 均须与
+    native 逐字节相同，其余 guest 保持退出码，且汇总在任一遍覆盖不足时失败。`hello` 另跑一次
+    `--transport tlm --dmi --quantum 1024`，要求 `Quantum:` 行的 `syncs` 严格低于 `Cycles:` 并带
+    `latency bound 1023 ticks`；没有 guest 需要按名字列出的时间派生例外
+  - 新增 guest `tests/bare-metal-riscv-test/rv64i/quantum_u3_timer.S`：经 CLINT 装载 `mtimecmp` 并置 MTIE
+    自旋，使 MTIP 只由时间到达 compare 引起；陷入处理记录 `mcause`、`mepc`、识别次数与 D8 延迟，未接入调试器
+    时自行以 tohost 退出，因此它也作为普通 suite guest 在五遍上运行
+  - `scripts/debug_attach.sh` 新增一条 `--transport tlm --quantum 1024` 实时 attach 会话（
+    `scripts/debug/quantum-u3-session.gdb`）：强制 system-bus 访问，在初始停机与量子中途的 spin 停机各读一次
+    `mtime`（OpenOCD 日志须有 `mtime` 的 system-bus 读），resume 经过定时器陷入后读取 guest 记录的事实。
+    会话断言 `mcause` 为 machine timer、`mepc` 为自旋点、识别恰一次、延迟在 `Q - 1 + t` 内，并不断言某个精确
+    延迟（D6：调试器的 F4 同步，包括 DMI poll 引起的同步，会移动阈值同步的相位）
+  - 新增变异控制 `quantum-u3-cli-requires-tlm`（`src/main.rs`）：去掉 CLI 的 `--quantum` 传输检查后，
+    `tests/quantum_cli.rs::the_quantum_option_requires_the_tlm_transport` 必须以非状态 2 的结果失败，还原后
+    通过
+
 - **Direct memory U1: 授权与读取路径（issue #188）**
   - `MachineConfig` 新增公开 `dmi` 字段（`MachineConfig::new` 选择 `false`，破坏结构体字面量构造）；
     `dmi` 与 `Transport::Native` 的组合是既有的 `MachineError::UnsupportedTransport`，该变体的消息加宽为

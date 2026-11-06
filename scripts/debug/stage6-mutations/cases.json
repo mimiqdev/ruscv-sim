@@ -2347,5 +2347,23 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "quantum-u3-cli-requires-tlm",
+    "source": "src/main.rs",
+    "patch": "quantum-u3-cli-requires-tlm.patch",
+    "tests": [
+      {
+        "target": [
+          "--test",
+          "quantum_cli"
+        ],
+        "test": "the_quantum_option_requires_the_tlm_transport",
+        "failure": [
+          "--quantum 1 without the TLM route was accepted",
+          "right:\\s+Some\\(2\\)"
+        ]
+      }
+    ]
   }
 ]
