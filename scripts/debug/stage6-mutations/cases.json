@@ -2507,7 +2507,7 @@
         "target": [
           "--lib"
         ],
-        "test": "machine::tests::quantum_charges_one_transport_delay_exactly_once_with_direct_memory_on_and_off",
+        "test": "capi::tests::quantum_sv39_walk_through_the_clint_publishes_the_local_time",
         "failure": []
       }
     ]
