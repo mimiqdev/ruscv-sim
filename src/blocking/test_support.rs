@@ -37,6 +37,8 @@ pub(crate) struct Call {
     pub length: usize,
     pub access_kind: PhysicalAccessKind,
     pub initiator: BlockingInitiator,
+    /// The request's D11 local-time offset in exact femtoseconds.
+    pub local_offset_fs: u64,
 }
 
 /// A scriptable blocking target over one `SimpleMemory` backing store.
@@ -173,6 +175,7 @@ impl BlockingTarget for ScriptTarget {
             length: transaction.data_length(),
             access_kind: transaction.extension().access_kind(),
             initiator: transaction.extension().initiator(),
+            local_offset_fs: transaction.local_offset().as_u64(),
         });
         if self.panic.load(Ordering::SeqCst) {
             panic!("scripted blocking target panic");
@@ -534,6 +537,7 @@ impl BlockingTarget for DirectMemTarget {
             length: transaction.data_length(),
             access_kind: transaction.extension().access_kind(),
             initiator: transaction.extension().initiator(),
+            local_offset_fs: transaction.local_offset().as_u64(),
         });
         if transaction.atomic_extension().is_some() {
             self.atomics.fetch_add(1, Ordering::SeqCst);

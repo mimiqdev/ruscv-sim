@@ -180,6 +180,7 @@ fn one_access_issues_exactly_one_transaction() {
                 length: 8,
                 access_kind: PhysicalAccessKind::DataWrite,
                 initiator: BlockingInitiator::Hart,
+                local_offset_fs: 0,
             },
             Call {
                 address: BASE + 8,
@@ -187,6 +188,7 @@ fn one_access_issues_exactly_one_transaction() {
                 length: 1,
                 access_kind: PhysicalAccessKind::DataRead,
                 initiator: BlockingInitiator::Hart,
+                local_offset_fs: 0,
             },
             Call {
                 address: BASE + 16,
@@ -194,6 +196,7 @@ fn one_access_issues_exactly_one_transaction() {
                 length: 4,
                 access_kind: PhysicalAccessKind::Fetch,
                 initiator: BlockingInitiator::Hart,
+                local_offset_fs: 0,
             },
         ],
         "one physical access must become exactly one blocking transaction"

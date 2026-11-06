@@ -384,7 +384,7 @@ fn an_inbound_debug_access_never_uses_a_grant() {
 
     let request = PhysicalRequest::data_read(BASE + 0x100, PhysicalWidth::Doubleword).unwrap();
     let response = slot
-        .raw(&request, 0x100, BlockingInitiator::DebugInbound)
+        .raw(&request, 0x100, BlockingInitiator::DebugInbound, 0)
         .unwrap();
     assert_eq!(response.read_bytes().unwrap(), &[0xa5; 8]);
     assert_eq!(
@@ -422,7 +422,7 @@ fn an_invalidation_inside_b_transport_takes_effect_before_the_next_access() {
         }
     }));
     let request = PhysicalRequest::data_read(BASE + 0x300, PhysicalWidth::Word).unwrap();
-    slot.raw(&request, 0x300, BlockingInitiator::DebugInbound)
+    slot.raw(&request, 0x300, BlockingInitiator::DebugInbound, 0)
         .unwrap();
     target.clear_transport_hook();
     assert_eq!(

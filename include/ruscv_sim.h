@@ -39,12 +39,13 @@
  * Layout rule:
  *
  *   No published struct carries a size or version field, so fields are only
- *   ever appended: every existing field keeps its offset and its size, and the
- *   fields added by direct memory are final in their structs
- *   (ruscv_target.get_direct_mem_ptr, ruscv_payload.dmi_allowed).  A host
- *   compiled against a previous header therefore keeps working source-level but
- *   must be recompiled against this header before it links this library; the
- *   ABI is not binary-compatible with the previous header.
+ *   ever appended: every existing field keeps its offset and its size.  The
+ *   final fields are ruscv_target.quantum_ticks, ruscv_payload.local_offset_fs
+ *   and ruscv_boundary.quantum_reached, which follow the direct-memory
+ *   additions (ruscv_target.get_direct_mem_ptr, ruscv_payload.dmi_allowed).  A
+ *   host compiled against a previous header therefore keeps working
+ *   source-level but must be recompiled against this header before it links
+ *   this library; the ABI is not binary-compatible with the previous header.
  */
 
 #ifndef RUSCV_SIM_H
@@ -194,7 +195,17 @@ typedef struct ruscv_atomic {
  * sets `dmi_allowed` on a completed non-atomic transaction.  That hint is the
  * only licence for ruscv-sim's one direct-memory query of this access; it is
  * ignored with direct memory off, on a non-completion and on an atomic
- * transaction.  The field is the final field of the struct.
+ * transaction.
+ *
+ * Quantum: `local_offset_fs` is request metadata, the Hart's local time minus
+ * the anchor plus the delay ticks this turn already charged, in exact
+ * femtoseconds.  It is the counterpart of the IEEE 1666 `b_transport` delay
+ * argument, so `sc_time_stamp() + delay` is the transaction's local time while
+ * the grant's start is the kernel's clock.  It is timing metadata only: no
+ * status, address, length or permission may depend on it, it is never charged
+ * back as a delay and it is not an added latency.  It is zero with no quantum
+ * selected, for every DebugInbound request and for debug transport.  The field
+ * is the final field of the struct.
  */
 typedef struct ruscv_payload {
     uint64_t address;
@@ -208,6 +219,7 @@ typedef struct ruscv_payload {
     uint64_t delay_fs;
     ruscv_atomic atomic;
     int32_t dmi_allowed;
+    uint64_t local_offset_fs;
 } ruscv_payload;
 
 /*
@@ -310,13 +322,23 @@ typedef struct ruscv_debug {
  * a failed debug transport.  `transport_reset` returns nonzero when the target
  * has quiesced and accepts new accesses.
  *
- * `get_direct_mem_ptr` is optional and is the final field.  NULL means the
- * target offers no direct memory: ruscv-sim selects direct memory off for that
- * handle, issues no query and ignores every `dmi_allowed` hint, exactly as a
- * handle whose Machine has direct memory disabled.  A non-NULL callback selects
- * direct memory for the handle and must obey every obligation documented above
- * `ruscv_direct_mem`; the callback answers RUSCV_DMI_GRANTED,
- * RUSCV_DMI_DENIED or RUSCV_DMI_FAILED.
+ * `get_direct_mem_ptr` is optional.  NULL means the target offers no direct
+ * memory: ruscv-sim selects direct memory off for that handle, issues no query
+ * and ignores every `dmi_allowed` hint, exactly as a handle whose Machine has
+ * direct memory disabled.  A non-NULL callback selects direct memory for the
+ * handle and must obey every obligation documented above `ruscv_direct_mem`;
+ * the callback answers RUSCV_DMI_GRANTED, RUSCV_DMI_DENIED or
+ * RUSCV_DMI_FAILED.
+ *
+ * `quantum_ticks` is the selected quantum in Platform ticks and is the final
+ * field.  Zero is off, which runs exactly as the previous header's ABI did.  A
+ * non-zero value is the explicit reduced-accuracy request: a time-derived timer
+ * crossing may be recognized up to `quantum_ticks - 1` ticks plus the target's
+ * declared turn completion bound late, while committed time never drifts.  The
+ * table is copied at create, so the selection persists across
+ * ruscv_machine_reset, and a NULL table cannot select one because the native
+ * route has no local offset to bound.  A value ruscv_machine_create cannot
+ * represent is RUSCV_ERROR_CONFIG.
  */
 typedef struct ruscv_target {
     uint64_t max_delay_fs;
@@ -325,6 +347,7 @@ typedef struct ruscv_target {
     size_t (*transport_dbg)(void *user, ruscv_debug *debug);
     int32_t (*transport_reset)(void *user);
     int32_t (*get_direct_mem_ptr)(void *user, ruscv_direct_mem *direct_mem);
+    uint64_t quantum_ticks;
 } ruscv_target;
 
 /* One grant's facts. */
@@ -348,6 +371,18 @@ typedef struct ruscv_boundary {
     uint64_t candidate_bound_fs;
     uint64_t transport_delay_fs;
     uint64_t turns;
+    /* The selected quantum in Platform ticks; zero when off. */
+    uint64_t quantum_ticks;
+    /* The declared interrupt-latency bound in ticks: zero for a quantum of 1,
+     * for a larger one `quantum_ticks - 1` plus the target's conservative turn
+     * completion bound. */
+    uint64_t interrupt_latency_bound_ticks;
+    /* Cumulative counted syncs of this generation, read after the grant-return
+     * sync, so the last grant of a run includes it. */
+    uint64_t quantum_syncs;
+    /* Nonzero when the quantum threshold was reached at the last boundary,
+     * including when a forced sync coincided with it. */
+    int32_t quantum_reached;
 } ruscv_boundary;
 
 /*
@@ -385,10 +420,14 @@ typedef struct ruscv_machine ruscv_machine;
  * Creates one handle.
  *
  * `target` may be NULL, which selects the native SimpleMemory RAM route; a
- * non-NULL table is copied and its `user` pointer must stay valid until destroy.
- * `tick_period_fs` is the declared Platform tick period in femtoseconds
- * (1000000, one nanosecond, is the documented default).  On success writes a
- * handle to *out and returns RUSCV_OK.
+ * non-NULL table is copied and its `user` pointer must stay valid and unchanged
+ * until destroy.  `tick_period_fs` is the declared Platform tick period in
+ * femtoseconds (1000000, one nanosecond, is the documented default).  On
+ * success writes a handle to *out and returns RUSCV_OK.
+ *
+ * A table whose declared maximum, or whose quantum, cannot be represented
+ * under `tick_period_fs` is RUSCV_ERROR_CONFIG.  A quantum needs the TLM route,
+ * so a non-zero quantum with no table is also RUSCV_ERROR_CONFIG.
  */
 int32_t ruscv_machine_create(const ruscv_target *target, int32_t isa,
                              uint64_t tick_period_fs, ruscv_machine **out);

@@ -22,11 +22,22 @@ use crate::elf::LoadImage;
 use crate::executor::observation_fixture as elf;
 use crate::machine::{IsaProfile, MachineConfig};
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicPtr, AtomicU64, AtomicU8, AtomicUsize, Ordering,
+};
 use std::sync::{Arc, Mutex};
 
 /// One nanosecond, the documented default tick period.
 const TICK_FS: u64 = 1_000_000;
+
+/// One `b_transport` the C target served, as the ABI published it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AbiCall {
+    address: u64,
+    access_kind: i32,
+    /// The `ruscv_payload.local_offset_fs` request field (quantum D11).
+    local_offset_fs: u64,
+}
 
 /// A RAM target whose callbacks are the C ABI's own calling convention.
 ///
@@ -76,6 +87,10 @@ struct TestTarget {
     fail_dbg_reads: AtomicBool,
     /// Make debug-transport writes fail (a short transfer) after installation.
     fail_dbg_writes: AtomicBool,
+    /// Delay annotated on every blocking transaction, in femtoseconds.
+    delay_fs: AtomicU64,
+    /// Every blocking transaction in order, with its published local offset.
+    calls: Mutex<Vec<AbiCall>>,
 }
 
 impl TestTarget {
@@ -103,7 +118,23 @@ impl TestTarget {
             second_status: AtomicI32::new(i32::MIN),
             fail_dbg_reads: AtomicBool::new(false),
             fail_dbg_writes: AtomicBool::new(false),
+            delay_fs: AtomicU64::new(0),
+            calls: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The recorded transactions, in order.
+    fn calls(&self) -> Vec<AbiCall> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    /// Forgets the recorded transactions.
+    fn clear_calls(&self) {
+        self.calls.lock().unwrap().clear();
+    }
+
+    fn set_delay(&self, delay_fs: u64) {
+        self.delay_fs.store(delay_fs, Ordering::SeqCst);
     }
 
     fn reentry_status(&self) -> i32 {
@@ -164,6 +195,11 @@ unsafe extern "C" fn target_b_transport(user: *mut c_void, payload: *mut CPayloa
     // is one live Rust-owned payload struct for this call.
     let (target, payload) = unsafe { (&*(user.cast::<TestTarget>()), &mut *payload) };
     target.transactions.fetch_add(1, Ordering::SeqCst);
+    target.calls.lock().unwrap().push(AbiCall {
+        address: payload.address,
+        access_kind: payload.access_kind,
+        local_offset_fs: payload.local_offset_fs,
+    });
     let handle = target.handle.load(Ordering::SeqCst);
     if !handle.is_null() && target.reentry_status.load(Ordering::SeqCst) == i32::MIN {
         let mut facts = CBoundary::default();
@@ -191,6 +227,7 @@ unsafe extern "C" fn target_b_transport(user: *mut c_void, payload: *mut CPayloa
     }
     drop(ram);
     payload.status = target.status.load(Ordering::SeqCst);
+    payload.delay_fs = target.delay_fs.load(Ordering::SeqCst);
     if target.unknown.load(Ordering::SeqCst)
         || (target.unknown_on_data_read.load(Ordering::SeqCst)
             && payload.access_kind == super::target::access_kind::DATA_READ)
@@ -283,6 +320,11 @@ unsafe extern "C" fn target_reset(user: *mut c_void) -> i32 {
 
 impl TestTarget {
     fn table(&mut self, max_delay_fs: u64) -> CTarget {
+        self.quantum_table(max_delay_fs, 0)
+    }
+
+    /// The same table selecting a quantum (quantum D2/D12).
+    fn quantum_table(&mut self, max_delay_fs: u64, quantum: u64) -> CTarget {
         CTarget {
             max_delay_fs,
             user: std::ptr::from_mut(self).cast::<c_void>(),
@@ -290,6 +332,7 @@ impl TestTarget {
             transport_dbg: Some(target_dbg),
             transport_reset: Some(target_reset),
             get_direct_mem_ptr: None,
+            quantum_ticks: quantum,
         }
     }
 
@@ -379,13 +422,30 @@ impl Harness {
         Self::build(isa, code, max_delay_fs, true)
     }
 
+    /// One handle whose copied target table selects `quantum` (D12).
+    fn quantum(isa: i32, code: &[u32], max_delay_fs: u64, quantum: u64) -> Self {
+        Self::build_quantum(isa, code, max_delay_fs, false, quantum, 0)
+    }
+
     fn build(isa: i32, code: &[u32], max_delay_fs: u64, direct: bool) -> Self {
+        Self::build_quantum(isa, code, max_delay_fs, direct, 0, 0)
+    }
+
+    fn build_quantum(
+        isa: i32,
+        code: &[u32],
+        max_delay_fs: u64,
+        direct: bool,
+        quantum: u64,
+        delay_fs: u64,
+    ) -> Self {
         let mut target = Box::new(TestTarget::new(elf::BASE, 0x1_0000));
         target.hint.store(true, Ordering::SeqCst);
+        target.set_delay(delay_fs);
         let table = if direct {
             target.direct_table(max_delay_fs)
         } else {
-            target.table(max_delay_fs)
+            target.quantum_table(max_delay_fs, quantum)
         };
         let mut handle = std::ptr::null_mut();
         // SAFETY: the table and its user pointer stay alive in this harness.
@@ -837,7 +897,9 @@ fn an_unknown_completion_with_direct_memory_poisons_and_reset_restores_grants() 
 fn the_direct_memory_fields_are_final_in_their_structs() {
     // The published layout is x86-64 SysV, the ABI's only target.  Appending
     // must not move a pre-existing field; these offsets are the ones the
-    // previous header published (direct-memory D12).
+    // previous header published (direct-memory D12).  The name is the one the
+    // direct-memory contract gave this pin; the quantum fields are appended
+    // after it (quantum D12), and the two sizes it publishes grow with them.
     use std::mem::{offset_of, size_of};
     assert_eq!(offset_of!(CTarget, max_delay_fs), 0);
     assert_eq!(offset_of!(CTarget, user), 8);
@@ -845,7 +907,8 @@ fn the_direct_memory_fields_are_final_in_their_structs() {
     assert_eq!(offset_of!(CTarget, transport_dbg), 24);
     assert_eq!(offset_of!(CTarget, transport_reset), 32);
     assert_eq!(offset_of!(CTarget, get_direct_mem_ptr), 40);
-    assert_eq!(size_of::<CTarget>(), 48);
+    assert_eq!(offset_of!(CTarget, quantum_ticks), 48);
+    assert_eq!(size_of::<CTarget>(), 56);
 
     assert_eq!(offset_of!(CPayload, atomic), 56);
     assert_eq!(
@@ -853,7 +916,17 @@ fn the_direct_memory_fields_are_final_in_their_structs() {
         offset_of!(CPayload, atomic) + size_of::<super::target::CAtomic>()
     );
     assert_eq!(offset_of!(CPayload, dmi_allowed), 240);
-    assert_eq!(size_of::<CPayload>(), 248);
+    assert_eq!(offset_of!(CPayload, local_offset_fs), 248);
+    assert_eq!(size_of::<CPayload>(), 256);
+
+    // The three appended `ruscv_boundary` fields, so a host's reads of them
+    // match the header's (quantum D12).
+    assert_eq!(offset_of!(CBoundary, turns), 56);
+    assert_eq!(offset_of!(CBoundary, quantum_ticks), 64);
+    assert_eq!(offset_of!(CBoundary, interrupt_latency_bound_ticks), 72);
+    assert_eq!(offset_of!(CBoundary, quantum_syncs), 80);
+    assert_eq!(offset_of!(CBoundary, quantum_reached), 88);
+    assert_eq!(size_of::<CBoundary>(), 96);
 }
 
 #[test]
@@ -1276,6 +1349,7 @@ fn an_oversized_atomic_snapshot_is_not_a_completion() {
         transport_dbg: Some(snapshot_debug),
         transport_reset: Some(snapshot_reset),
         get_direct_mem_ptr: None,
+        quantum_ticks: 0,
     };
     let _ = SnapshotTarget;
     let adapter = super::target::CBlockingTarget::new(table).unwrap();
@@ -1887,6 +1961,7 @@ fn the_atomic_extension_maps_both_directions() {
         transport_dbg: Some(atomic_debug),
         transport_reset: Some(atomic_reset),
         get_direct_mem_ptr: None,
+        quantum_ticks: 0,
     };
     let adapter = super::target::CBlockingTarget::new(table).unwrap();
 
@@ -2046,6 +2121,7 @@ fn create_rejects_unusable_configurations() {
             transport_dbg: None,
             transport_reset: Some(target_reset),
             get_direct_mem_ptr: None,
+            quantum_ticks: 0,
         };
         assert_eq!(
             ruscv_machine_create(&incomplete, 0, TICK_FS, &mut out),
@@ -2188,4 +2264,670 @@ fn quantum_session_reset_starts_with_no_local_offset() {
         TICK_FS,
         "the reset generation committed an inherited local offset"
     );
+}
+
+// ---- Quantum U4: the C ABI surface (issue 204) ----
+//
+// The contract's U4 row (docs/dev-plan.md §4) drives these tests: D11's
+// transaction offset and D12's header, `capi` and grant facts, with the grant
+// side of F7.
+
+/// `wfi`.
+const WFI: u32 = 0x1050_0073;
+/// `mret`.
+const MRET: u32 = 0x3020_0073;
+
+/// `csrrw rd, csr, rs1`.
+fn csrrw(rd: u8, csr: u16, rs1: u8) -> u32 {
+    (u32::from(csr) << 20) | (u32::from(rs1) << 15) | (1 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
+/// `or rd, rs1, rs2`.
+fn or(rd: u8, rs1: u8, rs2: u8) -> u32 {
+    (u32::from(rs2) << 20) | (u32::from(rs1) << 15) | (6 << 12) | (u32::from(rd) << 7) | 0x33
+}
+
+/// A RAM-only guest: `nops` no-ops followed by the HTIF exit `code`.
+fn ram_only_exit_guest(nops: usize, code: u32) -> Vec<u32> {
+    let mut program = vec![elf::nop(); nops];
+    program.extend(exit_guest(code));
+    program
+}
+
+/// The `mtimecmp` value the idle-jump guest arms, in Platform ticks.
+const WAKE_TICKS: u64 = 40;
+
+/// A guest that arms `mtimecmp`, enables `MTIE` with `mstatus.MIE` clear,
+/// waits, and then stores to RAM.
+///
+/// The wait is a time-derived crossing with no trap: `mie.MTIE` is set, so the
+/// wake is due, and `mstatus.MIE` is clear, so the wake runs at the next PC
+/// instead of entering a trap handler.  The store after `wfi` is the wake
+/// turn's first data transaction.
+fn wfi_wake_guest() -> Vec<u32> {
+    vec![
+        // x4 = the declared `.tohost` word, the wake turn's store target.
+        elf::lui(4, 0x80),
+        elf::addi(4, 4, 1),
+        elf::slli(4, 4, 12),
+        // x5 = the compare value, x6 = hart 0's `mtimecmp`.
+        elf::addi(5, 0, WAKE_TICKS as i32),
+        elf::lui(6, 0x2004),
+        elf::sd(5, 6, 0),
+        // MTIE on, MIE left clear.
+        elf::addi(7, 0, 0x80),
+        csrrs(0, crate::csr::machine::MIE, 7),
+        WFI,
+        // The wake turn: a RAM store, never a trap.
+        elf::sd(0, 4, 0),
+        // Spin so a bounded grant can sample further turns.
+        elf::beq(0, 0, 0),
+    ]
+}
+
+/// `sv39_clint_pte_guest`'s trap-handler index, so the test can name it.
+const SV39_TRAP: usize = 35;
+
+/// A guest whose Sv39 walk reads a CLINT-resident PTE, then touches RAM.
+///
+/// The root table lives at `0x8000_3000` and its entry 2 points at
+/// `mtimecmp`, so the level-1 walk of the guest's identity megapage reads its
+/// PTE from the CLINT device window.  That read is an F1 flush; the fetch and
+/// the data access after it are RAM transactions of the same turn, so their
+/// published local offset is `L - E` plus the ticks already charged.  The
+/// megapage leaf value is `mtimecmp` itself, which stays far above `mtime`, so
+/// MTIP stays low and no timer crossing is involved.
+fn sv39_clint_pte_guest() -> Vec<u32> {
+    let mut code = vec![
+        // x1 = &trap_handler.
+        elf::auipc(1, 0),
+        elf::addi(1, 1, (SV39_TRAP * 4) as i32),
+        csrrw(0, crate::csr::machine::MTVEC, 1),
+        // x4 = the data VA and PA: the declared `.tohost` word.
+        elf::lui(4, 0x80),
+        elf::addi(4, 4, 1),
+        elf::slli(4, 4, 12),
+        // x2 = the root table at 0x8000_3000.
+        elf::lui(2, 0x80),
+        elf::addi(2, 2, 3),
+        elf::slli(2, 2, 12),
+        // x3 = hart 0's `mtimecmp`.
+        elf::lui(3, 0x2004),
+        // root[2] = non-leaf PTE at the CLINT's `mtimecmp` word: PPN 0x02004.
+        elf::lui(5, 2),
+        elf::addi(5, 5, 4),
+        elf::slli(5, 5, 10),
+        elf::ori(5, 5, 1),
+        elf::sd(5, 2, 16),
+        // `mtimecmp` = the level-1 leaf: PA 0x8000_0000, R|W|X|A|D.
+        elf::lui(6, 0x80),
+        elf::slli(6, 6, 10),
+        elf::ori(6, 6, 0xcf),
+        elf::sd(6, 3, 0),
+        // satp = Sv39 with PPN 0x80003 (the root table).
+        elf::addi(7, 0, 8),
+        elf::slli(7, 7, 60),
+        elf::lui(8, 0x80),
+        elf::addi(8, 8, 3),
+        or(7, 7, 8),
+        csrrw(0, crate::csr::supervisor::SATP, 7),
+        // mstatus = MPP = S, MPRV = 0.
+        elf::addi(1, 0, 1),
+        elf::slli(1, 1, 11),
+        csrrw(0, crate::csr::machine::MSTATUS, 1),
+        // mepc = the S-mode entry, then enter it.
+        elf::auipc(1, 0),
+        elf::addi(1, 1, ((SV39_ENTRY - 28) * 4) as i32),
+        csrrw(0, crate::csr::machine::MEPC, 1),
+        MRET,
+        // The S-mode entry: two no-ops, then the data load whose walk reads the
+        // CLINT-resident PTE before the RAM access.
+        elf::nop(),
+        elf::nop(),
+        elf::ld(5, 4, 0),
+    ];
+    debug_assert_eq!(code.len(), SV39_ENTRY + 3);
+    code.extend(trap_exit_from_htif(1));
+    debug_assert_eq!(code.len() - 7, SV39_TRAP);
+    code
+}
+
+/// The index of the first S-mode instruction in `sv39_clint_pte_guest`.
+const SV39_ENTRY: usize = 32;
+
+/// A trap handler that reports a failure through the HTIF exit.
+fn trap_exit_from_htif(code: u32) -> Vec<u32> {
+    let payload = code
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(1))
+        .unwrap();
+    vec![
+        elf::lui(9, 0x80),
+        elf::addi(9, 9, 1),
+        elf::slli(9, 9, 12),
+        elf::addi(10, 0, payload as i32),
+        elf::sd(10, 9, 0),
+        0x0000_006f,
+        elf::nop(),
+    ]
+}
+
+/// quantum D12: the four `ruscv_boundary` quantum fields report the selection,
+/// its declared bound and the cumulative sync count, and stay at the defaults
+/// until the first grant of a generation.
+#[test]
+fn quantum_grant_facts_report_the_selection_and_its_bound() {
+    // Before the first grant, `GrantFacts::default()` applies even with a
+    // quantum selected (quantum D12).
+    let pending = Harness::quantum(
+        IsaProfile::Rv64imafdc as i32,
+        &ram_only_exit_guest(2, 2),
+        0,
+        4,
+    );
+    let facts = pending.facts();
+    assert_eq!(
+        (
+            facts.quantum_ticks,
+            facts.interrupt_latency_bound_ticks,
+            facts.quantum_syncs,
+            facts.quantum_reached,
+        ),
+        (0, 0, 0, 0),
+        "a boundary before the first grant did not report the D12 defaults"
+    );
+
+    for (quantum, bound) in [(0, 0), (1, 0), (4, 3)] {
+        let harness = Harness::quantum(
+            IsaProfile::Rv64imafdc as i32,
+            &ram_only_exit_guest(2, 2),
+            0,
+            quantum,
+        );
+        // Three turns keep a larger quantum below its threshold, so only the
+        // return sync is counted and only Q = 1 reports the test as reached.
+        let grant = harness.grant(0, u64::MAX / 2, 3).expect("grant");
+        let facts = grant.facts;
+        assert_eq!(facts.quantum_ticks, quantum, "the quantum was misreported");
+        assert_eq!(
+            facts.interrupt_latency_bound_ticks, bound,
+            "Q = {quantum}: the declared interrupt-latency bound is wrong"
+        );
+        // Q = 1 syncs at every boundary; a larger quantum does not reach its
+        // threshold inside a four-turn grant with no forced sync.  With the
+        // quantum off there is no offset and no sync to count.
+        assert_eq!(
+            facts.quantum_syncs,
+            u64::from(quantum != 0),
+            "Q = {quantum}: the return sync was not counted exactly once"
+        );
+        assert_eq!(
+            facts.quantum_reached,
+            i32::from(quantum == 1),
+            "Q = {quantum}: the threshold result is wrong"
+        );
+        // The sync count is cumulative for the generation, so a second grant
+        // continues from it (quantum D10/D12).
+        let before = facts.quantum_syncs;
+        let second = harness
+            .grant(grant.committed_end_fs, u64::MAX / 2, 3)
+            .expect("second grant");
+        assert!(
+            second.facts.quantum_syncs >= before,
+            "the cumulative sync count went backwards"
+        );
+    }
+}
+
+/// quantum D12: a counted sync at a turn boundary ends a grant, and a forced
+/// sync alone leaves `quantum_reached` false while a coincident threshold test
+/// keeps it true.
+#[test]
+fn quantum_grant_ends_at_a_sync_without_reaching_the_threshold() {
+    // The guest stores to `mtimecmp`: an F1 device access, so the turn ends in
+    // a sync that is not D5's.
+    let forced = Harness::quantum(IsaProfile::Rv64imafdc as i32, &wfi_wake_guest(), 0, 64);
+    let first = forced.grant(0, u64::MAX / 2, 32).expect("grant");
+    assert_eq!(
+        first.facts.quantum_reached, 0,
+        "a forced sync alone must not report the threshold as reached"
+    );
+    assert_eq!(
+        first.facts.quantum_syncs, 1,
+        "the forced sync was not counted exactly once"
+    );
+    assert_eq!(
+        first.boundary_reached, 1,
+        "a counted sync did not end the grant with boundary_reached"
+    );
+    assert_eq!(
+        (first.facts.budget_exhausted, first.facts.deadline_blocked),
+        (0, 0),
+        "the grant ended on a bound it did not report"
+    );
+
+    // Q = 1 makes the same turn's D5 test pass, so the coincident forced sync
+    // cannot clear `reached` (quantum D5/D12).
+    let coincident = Harness::quantum(IsaProfile::Rv64imafdc as i32, &wfi_wake_guest(), 0, 1);
+    let grant = coincident.grant(0, u64::MAX / 2, 32).expect("grant");
+    assert_eq!(
+        grant.facts.quantum_reached, 1,
+        "a coincident forced sync cleared the threshold result"
+    );
+    assert_eq!(grant.facts.quantum_ticks, 1);
+    assert_eq!(grant.boundary_reached, 1);
+}
+
+/// quantum D11: the request field carries the turn's `L - E` plus that turn's
+/// charged ticks, in the cycle the quantum imposes, and is zero when off.
+#[test]
+fn quantum_local_offset_publishes_the_turn_sequence_and_is_zero_when_off() {
+    // Three turns per grant keep every grant below the threshold, so the F7
+    // return sync is the only sync and the cycle restarts at each grant.
+    for (quantum, expected) in [(0, vec![0]), (1, vec![0]), (4, vec![0, 1, 2])] {
+        let harness = Harness::quantum(
+            IsaProfile::Rv64imafdc as i32,
+            &ram_only_exit_guest(9, 2),
+            0,
+            quantum,
+        );
+        let mut start = 0;
+        let mut observed = Vec::new();
+        for _ in 0..3 {
+            let grant = harness.grant(start, u64::MAX / 2, 3).expect("grant");
+            for call in harness.target.calls() {
+                let offset = call.local_offset_fs / TICK_FS;
+                if observed.last() != Some(&offset) {
+                    observed.push(offset);
+                }
+            }
+            harness.target.clear_calls();
+            start = grant.committed_end_fs;
+        }
+        let cycle: Vec<u64> = (0..observed.len())
+            .map(|index| expected[index % expected.len()])
+            .collect();
+        assert_eq!(
+            observed, cycle,
+            "Q = {quantum}: the published local-offset sequence is wrong"
+        );
+    }
+}
+
+/// quantum D8/D12 with the F7 grant return: a grant near its horizon stops
+/// inside it, reports `deadline_blocked` at the same turn as the parity run's
+/// committed time, and the return sync makes `committed_end_fs` and
+/// `consumed_fs` match that parity run.
+#[test]
+fn quantum_grant_near_its_horizon_never_overshoots() {
+    // Every turn costs one tick, so the parity run's committed time after `n`
+    // turns is `n` ticks; the completion bound is two ticks (18 worst-case
+    // transactions of a zero-delay target plus the turn tick, twice).
+    let guest = ram_only_exit_guest(24, 2);
+    let parity_harness = Harness::new(IsaProfile::Rv64imafdc as i32, &guest, 0);
+    let parity = parity_harness
+        .grant(0, 5 * TICK_FS, 32)
+        .expect("the parity grant");
+    // The horizon is five ticks and the two-tick completion bound fits a turn
+    // only while the cursor is at or below three, so both routes stop after
+    // four completed turns and report the fifth as blocked.
+    assert_eq!(
+        parity.committed_end_fs,
+        4 * TICK_FS,
+        "the parity run did not stop at its horizon"
+    );
+    assert_eq!(
+        parity.facts.deadline_blocked, 1,
+        "the parity run did not report the blocked turn"
+    );
+
+    let harness = Harness::quantum(IsaProfile::Rv64imafdc as i32, &guest, 0, 64);
+    let grant = harness
+        .grant(0, 5 * TICK_FS, 32)
+        .expect("the quantum grant");
+    assert_eq!(
+        grant.facts.deadline_blocked, 1,
+        "the grant near its horizon did not report the blocked turn"
+    );
+    assert!(
+        grant.committed_end_fs <= 5 * TICK_FS,
+        "the grant overshot its horizon: committed {} fs against {} fs",
+        grant.committed_end_fs,
+        5 * TICK_FS
+    );
+    // Four completed turns have committed at the parity run's rate, and the F7
+    // sync is what makes `committed_end_fs` (and therefore `consumed_fs`) equal
+    // the parity run's at the same turn.
+    assert_eq!(
+        grant.facts.turns, 4,
+        "the quantum grant completed a different number of turns"
+    );
+    assert_eq!(
+        grant.committed_end_fs, parity.committed_end_fs,
+        "the grant return did not carry the parity run's committed time"
+    );
+    assert_eq!(
+        grant.consumed_fs, parity.consumed_fs,
+        "the grant return did not carry the parity run's consumed time"
+    );
+}
+
+/// quantum D11/D12 with F3: an idle jump ends its grant, and the wake turn's
+/// transactions are at the jump target with a zero local offset.
+#[test]
+fn quantum_idle_jump_ends_the_grant_and_the_wake_starts_at_zero_offset() {
+    let harness = Harness::quantum(IsaProfile::Rv64imafdc as i32, &wfi_wake_guest(), 0, 64);
+    // First grant: the `mtimecmp` store's forced sync ends it.
+    let first = harness.grant(0, u64::MAX / 2, 32).expect("first grant");
+    assert_eq!(first.boundary_reached, 1);
+    harness.target.clear_calls();
+    // Second grant: turns to the wait, whose idle jump ends it.
+    let jump = harness
+        .grant(first.committed_end_fs, u64::MAX / 2, 32)
+        .expect("jump");
+    assert_eq!(
+        jump.facts.waiting, 1,
+        "the idle jump did not report the waiting state"
+    );
+    assert_eq!(
+        jump.facts.deadline_blocked, 0,
+        "the jump-ended grant reported a blocked deadline"
+    );
+    assert_eq!(
+        jump.boundary_reached, 1,
+        "an idle jump did not end the grant with boundary_reached"
+    );
+    let target_fs = WAKE_TICKS * TICK_FS;
+    assert_eq!(
+        jump.committed_end_fs, target_fs,
+        "the grant ended at a time other than the jump target"
+    );
+    harness.target.clear_calls();
+    // The wake turn's first transaction is the local time the jump landed on,
+    // and its own offset is zero: F3's sync already made `C` and `E` the target.
+    let wake = harness
+        .grant(jump.committed_end_fs, u64::MAX / 2, 1)
+        .expect("wake");
+    assert_eq!(
+        wake.committed_start_fs, target_fs,
+        "the wake grant did not start at the jump target"
+    );
+    let calls = harness.target.calls();
+    let first = calls.first().expect("the wake turn issued no transaction");
+    assert_eq!(
+        first.local_offset_fs, 0,
+        "the wake turn's first transaction carried a stale local offset"
+    );
+    assert_eq!(
+        wake.committed_start_fs + first.local_offset_fs,
+        target_fs,
+        "the wake transaction's local time is not the jump target"
+    );
+    // The store after `wfi` ran, so the wake took no trap.
+    assert!(
+        calls.iter().any(|call| call.address == elf::TOHOST
+            && call.access_kind == super::target::access_kind::DATA_WRITE),
+        "the wake turn did not execute the store after `wfi`: {calls:?}"
+    );
+}
+
+/// quantum D11 with F1: a Sv39 walk that reads a CLINT-resident PTE publishes
+/// `L - E` plus the ticks already charged, and an annotated delay is charged
+/// once per transaction.
+#[test]
+fn quantum_sv39_walk_through_the_clint_publishes_the_local_time() {
+    /// The root table `sv39_clint_pte_guest` builds, and its entry 2.
+    const ROOT_ENTRY: u64 = elf::BASE + 0x3010;
+    let harness = Harness::build_quantum(
+        IsaProfile::Rv64imafdc as i32,
+        &sv39_clint_pte_guest(),
+        2 * TICK_FS,
+        false,
+        64,
+        TICK_FS,
+    );
+    let mut start = 0;
+    let mut sdkept = None;
+    for _ in 0..8 {
+        let grant = harness.grant(start, u64::MAX / 2, 32).expect("grant");
+        let calls = harness.target.calls();
+        harness.target.clear_calls();
+        // The first S-mode turn: its fetch walks the page table, which reads
+        // the CLINT-resident level-1 PTE (an F1 flush) before the RAM fetch.
+        if sdkept.is_none() {
+            if let Some(index) = calls.iter().position(|call| {
+                call.address == ROOT_ENTRY
+                    && call.access_kind == super::target::access_kind::DATA_READ
+                    && call.local_offset_fs > 0
+            }) {
+                let base = calls[index].local_offset_fs;
+                assert!(
+                    base > 0,
+                    "the walk read the root entry at a zero local offset"
+                );
+                assert_eq!(
+                    calls[index + 1].local_offset_fs,
+                    base + TICK_FS,
+                    "the fetch after the walk did not add its one charged tick"
+                );
+                assert_eq!(
+                    calls[index + 2].address,
+                    ROOT_ENTRY,
+                    "the second walk did not read the root entry"
+                );
+                assert_eq!(
+                    calls[index + 2].local_offset_fs,
+                    base + 2 * TICK_FS,
+                    "the F1 flush lost the local time between the two walks"
+                );
+                assert_eq!(
+                    calls[index + 3].local_offset_fs,
+                    base + 3 * TICK_FS,
+                    "the fetch after the flushed offset lost a charged tick"
+                );
+                sdkept = Some(base);
+            }
+        }
+        start = grant.committed_end_fs;
+        if harness.result().state != RunState::Running.code() {
+            break;
+        }
+    }
+    assert!(
+        sdkept.is_some(),
+        "the S-mode walk never published a non-zero local offset"
+    );
+
+    // The data load's turn: two walks and the data access, each charging the
+    // target's one-tick delay exactly once.
+    let harness = Harness::build_quantum(
+        IsaProfile::Rv64imafdc as i32,
+        &sv39_clint_pte_guest(),
+        2 * TICK_FS,
+        false,
+        64,
+        TICK_FS,
+    );
+    let mut start = 0;
+    let mut load = None;
+    for _ in 0..16 {
+        let grant = harness.grant(start, u64::MAX / 2, 32).expect("grant");
+        let calls = harness.target.calls();
+        harness.target.clear_calls();
+        if let Some(index) = calls.iter().position(|call| {
+            call.address == elf::TOHOST && call.access_kind == super::target::access_kind::DATA_READ
+        }) {
+            let turn = &calls[index.saturating_sub(5)..=index];
+            assert_eq!(
+                turn.iter()
+                    .map(|call| call.local_offset_fs)
+                    .collect::<Vec<_>>(),
+                vec![
+                    0,
+                    TICK_FS,
+                    2 * TICK_FS,
+                    3 * TICK_FS,
+                    4 * TICK_FS,
+                    5 * TICK_FS
+                ],
+                "the load's turn did not charge its delay once per transaction"
+            );
+            assert_eq!(
+                turn.iter().map(|call| call.address).collect::<Vec<_>>(),
+                vec![
+                    ROOT_ENTRY,
+                    elf::BASE + 0x88,
+                    ROOT_ENTRY,
+                    elf::BASE + 0x8a,
+                    ROOT_ENTRY,
+                    elf::TOHOST,
+                ],
+                "the load's turn did not walk twice and then read RAM"
+            );
+            load = Some(index);
+        }
+        start = grant.committed_end_fs;
+        if harness.result().state != RunState::Running.code() {
+            break;
+        }
+    }
+    load.expect("the data load never reached RAM");
+}
+
+/// quantum D12 with F6: an unknown completion at non-zero `O` syncs its offset,
+/// and a reset restores the configured quantum.
+#[test]
+fn quantum_unknown_completion_syncs_and_reset_restores_the_quantum() {
+    let harness = Harness::build_quantum(
+        IsaProfile::Rv64imafdc as i32,
+        &direct_guest(2),
+        0,
+        false,
+        8,
+        0,
+    );
+    harness
+        .target
+        .unknown_on_data_read
+        .store(true, Ordering::SeqCst);
+    let failed = harness.grant(0, u64::MAX / 2, 16).expect("grant");
+    let result = harness.result();
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "the unknown completion did not fail the run: {}",
+        harness.diagnostic()
+    );
+    assert_eq!(failed.facts.uncertain, 1);
+    assert_eq!(
+        harness
+            .target
+            .calls()
+            .last()
+            .expect("a transaction")
+            .local_offset_fs,
+        5 * TICK_FS,
+        "the failing turn did not start at a non-zero local offset"
+    );
+    // F6 committed the offset the failed turn knew, which is the parity run's
+    // committed time at the same turn.
+    assert_eq!(
+        failed.committed_end_fs,
+        5 * TICK_FS,
+        "F6 did not commit the offset of the unknown completion"
+    );
+    let parity = Harness::new(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    parity
+        .target
+        .unknown_on_data_read
+        .store(true, Ordering::SeqCst);
+    let parity_failed = parity.grant(0, u64::MAX / 2, 16).expect("parity grant");
+    assert_eq!(
+        failed.committed_end_fs, parity_failed.committed_end_fs,
+        "the failing turn's committed time diverged from the parity run"
+    );
+
+    // Reset is the acknowledged recovery path and keeps the selection.
+    harness
+        .target
+        .unknown_on_data_read
+        .store(false, Ordering::SeqCst);
+    // SAFETY: the handle is live on this thread.
+    assert_eq!(
+        unsafe { ruscv_machine_reset(harness.handle) },
+        Status::Ok as i32,
+        "reset did not recover the unknown completion"
+    );
+    harness.target.clear_calls();
+    let after = harness.grant(0, 4 * TICK_FS, 4).expect("post-reset grant");
+    assert_eq!(
+        after.facts.quantum_ticks, 8,
+        "reset did not restore the configured quantum"
+    );
+    assert_eq!(
+        after.committed_start_fs, 0,
+        "the reset generation did not restart the epoch"
+    );
+    assert!(
+        after.facts.quantum_syncs > 0,
+        "the reset generation did not sync through the quantum path"
+    );
+}
+
+/// quantum D2/D12: a refused quantum is `RUSCV_ERROR_CONFIG`, and a NULL target
+/// with no quantum stays native.
+#[test]
+fn quantum_config_refusals_are_config_and_a_null_target_stays_native() {
+    let mut target = Box::new(TestTarget::new(elf::BASE, 0x1_0000));
+    // `(Q + t + 1) x tick_period` overflows u64 femtoseconds.
+    let table = target.quantum_table(0, u64::MAX - 100);
+    let mut handle = std::ptr::null_mut();
+    // SAFETY: the table and the handle slot are live.
+    let status = unsafe { ruscv_machine_create(&table, 3, TICK_FS, &mut handle) };
+    assert_eq!(
+        status,
+        Status::Config as i32,
+        "an unrepresentable quantum was not a configuration failure"
+    );
+    assert!(handle.is_null(), "a rejected create published a handle");
+
+    // A NULL target selects the native route, so no quantum can be selected and
+    // a grant reports no quantum facts at all.
+    let elf = elf_file(&exit_guest(2));
+    let path = c_text(elf.path());
+    let mut native = std::ptr::null_mut();
+    // SAFETY: the handle slot and the path are live.
+    unsafe {
+        assert_eq!(
+            ruscv_machine_create(std::ptr::null(), 3, TICK_FS, &mut native),
+            Status::Ok as i32,
+            "a native create failed"
+        );
+        assert_eq!(
+            ruscv_machine_load_elf(native, path.as_ptr()),
+            Status::Ok as i32,
+            "the native handle did not load the image"
+        );
+        let mut grant = CGrant::default();
+        assert_eq!(
+            ruscv_machine_run_grant(native, 0, u64::MAX / 2, 8, &mut grant),
+            Status::Ok as i32
+        );
+        assert_eq!(
+            (
+                grant.facts.quantum_ticks,
+                grant.facts.quantum_syncs,
+                grant.facts.quantum_reached,
+            ),
+            (0, 0, 0),
+            "a native handle reported quantum facts"
+        );
+        let mut facts = CBoundary::default();
+        assert_eq!(
+            ruscv_machine_boundary(native, &mut facts),
+            Status::Ok as i32
+        );
+        assert_eq!(facts.quantum_ticks, 0);
+        assert_eq!(ruscv_machine_destroy(native), Status::Ok as i32);
+    }
 }

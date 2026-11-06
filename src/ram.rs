@@ -217,11 +217,15 @@ impl RamSlot {
     }
 
     /// One raw non-atomic RAM transaction at `offset` within the window.
+    ///
+    /// `local_base_ticks` is the turn's `L - E` (quantum D11), which only the
+    /// TLM adapter publishes; the native slot has no transaction to carry it.
     pub(crate) fn raw(
         &self,
         request: &PhysicalRequest<'_>,
         offset: u64,
         initiator: BlockingInitiator,
+        local_base_ticks: u64,
     ) -> PhysicalBackendResult {
         let width = request.width().bytes();
         self.check_span(offset, width)
@@ -261,17 +265,21 @@ impl RamSlot {
                     }
                 }
             }
-            RamKind::Tlm(adapter) => adapter.transact(request, initiator),
+            RamKind::Tlm(adapter) => adapter.transact(request, initiator, local_base_ticks),
         }
     }
 
     /// One atomic RAM envelope at the request's physical address.
-    pub(crate) fn atomic(&self, request: &AtomicRequest<'_>) -> AtomicBackendResult {
+    pub(crate) fn atomic(
+        &self,
+        request: &AtomicRequest<'_>,
+        local_base_ticks: u64,
+    ) -> AtomicBackendResult {
         match &self.inner.kind {
             RamKind::Native(memory) => {
                 native_ram_atomic_transact(memory, self.inner.base, self.inner.size, request)
             }
-            RamKind::Tlm(adapter) => adapter.transact_atomic(request),
+            RamKind::Tlm(adapter) => adapter.transact_atomic(request, local_base_ticks),
         }
     }
 
@@ -497,7 +505,9 @@ impl PhysicalBackend for RamSlot {
             ));
         }
         let offset = request.paddr() - self.inner.base;
-        self.raw(request, offset, BlockingInitiator::Hart)
+        // This direct slot path carries no turn clock, because the Hart's own
+        // ports are the bus, which publishes `L - E` itself (quantum D11).
+        self.raw(request, offset, BlockingInitiator::Hart, 0)
     }
 }
 
@@ -522,7 +532,7 @@ impl AtomicBackend for RamSlot {
                 ),
             ));
         }
-        self.atomic(request)
+        self.atomic(request, 0)
     }
 }
 

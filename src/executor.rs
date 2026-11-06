@@ -389,6 +389,21 @@ impl SystemBus {
         self.local_offset
     }
 
+    /// quantum D3: the Hart's local time `L` = `C + O`, wrapping.
+    fn local_time(&self) -> u64 {
+        self.clint.read_mtime().wrapping_add(self.local_offset)
+    }
+
+    /// quantum D11: this turn's local time measured from the anchor `E`.
+    ///
+    /// `L - E` with wrapping subtraction.  A flush moves `C` and `O` without
+    /// moving `E`, so measuring from the anchor keeps the whole accumulated
+    /// offset after one; the RAM adapter adds this turn's already-charged
+    /// ticks to publish the transaction's local time.
+    pub(crate) fn turn_local_base(&self) -> u64 {
+        self.local_time().wrapping_sub(self.anchor)
+    }
+
     /// quantum D3: the anchor `E` in Platform ticks, `C` at the last sync,
     /// idle jump, `mtime` store or direct `Q` = 0 advance.
     #[cfg(test)]
@@ -877,7 +892,14 @@ impl SystemBus {
                     "RAM address is below its configured base",
                 )
             })?;
-            return self.ram.raw(request, offset, initiator);
+            // quantum D11: a Hart transaction carries the turn's local time
+            // from the anchor; a Debug Module inbound request carries none.
+            let local_base_ticks = if initiator == BlockingInitiator::Hart {
+                self.turn_local_base()
+            } else {
+                0
+            };
+            return self.ram.raw(request, offset, initiator, local_base_ticks);
         }
 
         // quantum F1: a Hart-origin access routed to a device window flushes
@@ -1069,7 +1091,9 @@ impl SystemBus {
             descriptor.paddr,
             descriptor.width.bytes(),
         ) {
-            return self.ram.atomic(request);
+            // quantum D11: every atomic envelope is Hart-origin, so it carries
+            // the turn's local time from the anchor.
+            return self.ram.atomic(request, self.turn_local_base());
         }
 
         // quantum F1: an atomic envelope routed to a device window flushes the
