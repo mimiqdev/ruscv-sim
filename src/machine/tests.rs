@@ -5841,6 +5841,40 @@ fn quantum_timer_spin_recognizes_mtip_within_the_bound() {
     }
     let parity = route(0, &code);
     let one = route(1, &code);
+    // The native route takes no quantum (quantum D2) and is the reference the
+    // contract's U2 row names for `Q` = 1.
+    let native = {
+        let mut owned = OwnedMachine::new(
+            MachineConfig::new(PlatformKind::Native),
+            quantum_image(&code),
+        )
+        .unwrap();
+        (0..TURNS)
+            .map(|_| {
+                let turn = owned.step_request(false, false, false).unwrap();
+                assert!(
+                    !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+                    "the native timer guest failed: {:?}",
+                    turn.hart().outcome
+                );
+                (
+                    owned.state().pc,
+                    owned.platform_mtime().unwrap(),
+                    owned.platform_local_time().unwrap(),
+                    mtip_presented(&owned),
+                    owned.test_ledger(),
+                )
+            })
+            .collect::<Vec<Recorded>>()
+    };
+    assert_eq!(
+        one.iter().map(|r| (r.0, r.1, r.2, r.3)).collect::<Vec<_>>(),
+        native
+            .iter()
+            .map(|r| (r.0, r.1, r.2, r.3))
+            .collect::<Vec<_>>(),
+        "Q = 1 diverged from the native route in PC, times or MTIP"
+    );
     assert_eq!(
         parity
             .iter()
