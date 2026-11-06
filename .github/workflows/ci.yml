@@ -3,14 +3,13 @@
 # Pull requests run the Rust quality job, the debug mutation controls, the
 # OpenOCD debug-attach job and the SystemC transport smoke.
 # The quality job includes the release binary and the project ELF suite, so a
-# green `Quality and tests` check is the repository quality gate, and it is the
-# one status check the `Protect main` ruleset requires.  The mutation controls
-# are one test build per control, which took over an hour next to the quality
-# job's own steps, so they run as their own job on the same triggers and with
-# the same toolchain.  D14 as amended by PR #212 places them beside `Quality
-# and tests` as a required status check; until the ruleset lists `Debug
-# mutation controls`, this file does not claim otherwise.  Coverage stays
-# manual.
+# green `Quality and tests` check is the repository quality gate.  The mutation
+# controls are one test build per control, which took over an hour next to that
+# job's own steps, so they run as their own job on the same triggers with the
+# same toolchain.  D14 of the Quantum contract makes `Debug mutation controls` a
+# required status check beside `Quality and tests`; the `Protect main` ruleset
+# lists the checks a merge must pass, and its entry for this job is the owner's
+# repository-settings change.  Coverage stays manual.
 # debug-attach builds the development image from the Dockerfile and runs
 # scripts/debug_attach.sh --require-spike inside it.
 # systemc-smoke builds the same image, whose SystemC layer pins Accellera
@@ -129,12 +128,11 @@ jobs:
   # Every registered negative control runs one `cargo test --all-features` build
   # against a mutated copy of the committed source, so this job is CPU-bound and
   # long.  It sits beside the quality job rather than inside it because that
-  # job's 90-minute budget was being spent here.  D14 as amended by PR #212
-  # places this job beside `Quality and tests` as a required status check; that
-  # is a repository-settings change the owner makes, and the `Protect main`
-  # ruleset requires only `Quality and tests` today, so this workflow does not
-  # claim a block it cannot enforce.  The runner assembles bare-metal ELFs, so
-  # it needs the same RISC-V toolchain the Rust tests do.
+  # job's 90-minute budget was being spent here.  D14 makes this job a required
+  # status check beside `Quality and tests`; the `Protect main` ruleset lists it
+  # through the owner's repository-settings change, so this workflow claims
+  # exactly what D14 and that ruleset give it.  The runner assembles bare-metal
+  # ELFs, so it needs the same RISC-V toolchain the Rust tests do.
   mutation-controls:
     name: Debug mutation controls
     runs-on: ubuntu-latest
