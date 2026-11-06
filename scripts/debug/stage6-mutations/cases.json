@@ -2325,9 +2325,9 @@
         ],
         "test": "machine::tests::quantum_timer_spin_recognizes_mtip_within_the_bound",
         "failure": [
-          "MTIP was presented at a turn whose committed time had not reached the compare",
-          "left:\\s+204",
-          "right:\\s+210"
+          "the recognition's committed time was not the sync phase plus a whole quantum",
+          "left:\\s+195",
+          "right:\\s+211"
         ]
       }
     ]
