@@ -1,8 +1,8 @@
 diff --git i/src/machine/mod.rs w/src/machine/mod.rs
-index 6e6ee38..cc03646 100644
+index 6dba093..4f1252c 100644
 --- i/src/machine/mod.rs
 +++ w/src/machine/mod.rs
-@@ -616,10 +616,11 @@ impl Installed {
+@@ -698,10 +698,11 @@ impl Installed {
              // advance, so a coincident forced sync cannot clear `reached`.
              // A refused advance left `O` unchanged, so the test still reads
              // the pre-turn offset, which D5 keeps below `Q`.
@@ -13,6 +13,6 @@ index 6e6ee38..cc03646 100644
                  synced |= self.platform.commit_local_time(!synced)?;
              }
 +            quantum_reached = self.platform.local_offset()? >= self.quantum;
-             // quantum F6: a failed turn, including one that fails only this
-             // D4 clock check, syncs the offset it knows, including known
-             // delay, without touching the transport.
+             // quantum F4: a debug halt of either form ends the turn in a sync,
+             // so a debugger and its DMI work see parity time.
+             if matches!(hart.outcome, StepOutcome::DebugHalted { .. }) {
