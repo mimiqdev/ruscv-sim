@@ -2477,7 +2477,7 @@
         ],
         "test": "capi::tests::quantum_idle_jump_ends_the_grant_and_the_wake_starts_at_zero_offset",
         "failure": [
-          "the grant ended at a time other than the jump target"
+          "the idle jump did not report the waiting state"
         ]
       }
     ]
