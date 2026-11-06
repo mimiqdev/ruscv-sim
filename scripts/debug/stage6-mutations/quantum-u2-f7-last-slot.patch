@@ -1,0 +1,12 @@
+diff --git i/src/machine/owned.rs w/src/machine/owned.rs
+index a98151f..6ccee75 100644
+--- i/src/machine/owned.rs
++++ w/src/machine/owned.rs
+@@ -173,7 +173,6 @@ impl OwnedMachine {
+         if last_slot {
+             // quantum F7: a run's last slot syncs before the facts are reported,
+             // so the `--max-cycles` boundary carries `C` = `L`.
+-            self.commit_local_time(true)?;
+             self.refresh_quantum_syncs(&mut turn)?;
+         }
+         Ok(turn)

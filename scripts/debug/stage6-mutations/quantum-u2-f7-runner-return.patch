@@ -1,0 +1,13 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index 5f8ee08..a09c193 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -1553,7 +1553,7 @@ fn cli_result(
+     // the final result carries `C` = `L`. This is the bus-lock update F8
+     // defines; no turn runs afterwards to need the Hart CSR republish. A
+     // poisoned bus cannot report, so it appends to the run's error.
+-    let error = match machine.commit_local_time(true) {
++    let error = match Ok::<bool, crate::machine::MachineError>(true) {
+         Ok(_) => error,
+         Err(failure) => Some(match error {
+             Some(error) => format!("{error}; {failure}"),

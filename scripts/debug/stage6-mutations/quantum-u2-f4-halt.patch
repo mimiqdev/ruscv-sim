@@ -1,0 +1,12 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 6dba093..04c5699 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -705,7 +705,6 @@ impl Installed {
+             // quantum F4: a debug halt of either form ends the turn in a sync,
+             // so a debugger and its DMI work see parity time.
+             if matches!(hart.outcome, StepOutcome::DebugHalted { .. }) {
+-                synced |= self.platform.commit_local_time(!synced)?;
+             }
+             // quantum F1: a marked turn ends with a sync, even when the flush
+             // found `O` zero and this turn added nothing, so `C` = `L` and

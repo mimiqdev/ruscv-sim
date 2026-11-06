@@ -1,0 +1,12 @@
+diff --git i/src/machine/owned.rs w/src/machine/owned.rs
+index a98151f..7faba6c 100644
+--- i/src/machine/owned.rs
++++ w/src/machine/owned.rs
+@@ -694,7 +694,6 @@ impl OwnedMachine {
+         };
+         // quantum F4: a busy program-buffer command is pending debug work, so
+         // it starts at `O` = 0 and `sample_debug_inputs` writes parity time.
+-        self.commit_local_time(true)?;
+         self.sample_debug_inputs()?;
+         let (outcome, failure, uncertain) = {
+             let core = &mut self

@@ -1,0 +1,12 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index 5f8ee08..e12804c 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -423,6 +423,7 @@ impl SystemBus {
+             let committed = self.clint.read_mtime().wrapping_add(self.local_offset);
+             self.clint.write_mtime(committed);
+             self.local_offset = 0;
++            self.quantum_syncs += 1;
+             self.flush_moved = true;
+         }
+         self.device_marked = true;

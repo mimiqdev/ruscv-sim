@@ -1,0 +1,12 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index 5f8ee08..68932ee 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -432,7 +432,6 @@ impl SystemBus {
+     /// records the rebase the contract's ledger checks.
+     fn store_anchors_mtime(&mut self) {
+         let committed = self.clint.read_mtime();
+-        self.anchor = committed;
+         #[cfg(test)]
+         {
+             self.mtime_store = Some(committed);
