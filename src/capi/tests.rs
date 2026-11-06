@@ -2150,3 +2150,42 @@ impl crate::blocking::BlockingTarget for DelayedTarget {
         true
     }
 }
+
+/// quantum F9: the in-crate `Session::reset` builds a fresh Platform, so no
+/// local offset crosses the generation. `Q` = 1 syncs every turn, so a
+/// one-turn grant after reset reports exactly that turn's committed time; a
+/// seeded or inherited offset would show up as a larger committed end.
+#[test]
+fn quantum_session_reset_starts_with_no_local_offset() {
+    let target = std::sync::Arc::new(crate::blocking::test_support::ScriptTarget::new(
+        elf::BASE,
+        0x1_0000,
+    ));
+    target.set_declared_max_delay(0);
+    target.set_delay(0);
+    let mut config = MachineConfig::new(crate::machine::PlatformKind::Native);
+    config.transport = crate::blocking::Transport::tlm(target);
+    // In-crate selection only: the C ABI's quantum field arrives in U4.
+    config.quantum = 1;
+    let image = Arc::new(
+        LoadImage::parse(&elf::elf_with_code(
+            &[elf::nop(), elf::nop(), elf::nop(), elf::nop()],
+            0,
+            true,
+            false,
+            0x4000,
+        ))
+        .unwrap(),
+    );
+    let mut session = Session::new(config, image).unwrap();
+    // Leave the first generation with a non-zero local offset.
+    session.run_grant(0, 0x1000 * TICK_FS, 2).unwrap();
+    assert!(session.facts().committed_end_fs > 0);
+    session.reset().unwrap();
+    session.run_grant(0, 0x1000 * TICK_FS, 1).unwrap();
+    assert_eq!(
+        session.facts().committed_end_fs,
+        TICK_FS,
+        "the reset generation committed an inherited local offset"
+    );
+}

@@ -2246,6 +2246,17 @@
           "left:\\s+5",
           "right:\\s+0"
         ]
+      },
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::quantum_session_reset_starts_with_no_local_offset",
+        "failure": [
+          "the reset generation committed an inherited local offset",
+          "left:\\s+6000000",
+          "right:\\s+1000000"
+        ]
       }
     ]
   },

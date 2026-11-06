@@ -5796,9 +5796,11 @@ fn quantum_f9_fresh_generations_start_with_no_offset() {
 }
 
 /// quantum D3/D6/D8/D9: a timer guest that spins on `mip` after arming
-/// `mtimecmp` through the CLINT. `Q` = 1 reproduces the parity run turn by
-/// turn; at `Q` >= 2 MTIP is presented at the first turn whose committed time
-/// reached the compare, so the lateness is non-zero and inside D8.
+/// `mtimecmp` through the CLINT. `Q` = 0 and `Q` = 1 reproduce the native route
+/// turn by turn in PC, `time` and MTIP; at `Q` = 16 the crossing is recognized
+/// with exactly the lateness its sync phase and quantum predict, inside D8; and
+/// the run's final committed time is its D9 identity after the F7 last-slot
+/// sync.
 #[test]
 fn quantum_timer_spin_recognizes_mtip_within_the_bound() {
     const MTIMECMP: i32 = 205;
@@ -5814,29 +5816,52 @@ fn quantum_timer_spin_recognizes_mtip_within_the_bound() {
         SPIN,
     ];
     const TURNS: usize = 320;
-    /// What one boundary recorded: PC, committed time, local time, the turn-end
-    /// MTIP publish, and the D9 ledger at that boundary.
-    type Recorded = (u64, u64, u64, bool, TimeLedger);
-    fn route(quantum: u64, code: &[u32]) -> Vec<Recorded> {
+    /// One boundary's record. `presented` is the CSR `time` the guest reads
+    /// after that boundary, and `ledger` is the D9 ledger at it.
+    struct SpinRecord {
+        pc: u64,
+        committed: u64,
+        local: u64,
+        presented: u64,
+        mtip: bool,
+        ledger: TimeLedger,
+    }
+    impl SpinRecord {
+        /// The turn-by-turn facts the parity comparison names.
+        fn key(&self) -> (u64, u64, u64, u64, bool) {
+            (
+                self.pc,
+                self.committed,
+                self.local,
+                self.presented,
+                self.mtip,
+            )
+        }
+    }
+    fn step(owned: &mut OwnedMachine, last_slot: bool) -> SpinRecord {
+        let turn = owned.step_request(false, false, last_slot).unwrap();
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the timer guest failed: {:?}",
+            turn.hart().outcome
+        );
+        SpinRecord {
+            pc: owned.state().pc,
+            committed: owned.platform_mtime().unwrap(),
+            local: owned.platform_local_time().unwrap(),
+            presented: guest_time(owned),
+            mtip: mtip_presented(owned),
+            ledger: owned.test_ledger(),
+        }
+    }
+    fn route(quantum: u64, code: &[u32]) -> Vec<SpinRecord> {
         let target = delay_target(0, 0);
         let mut owned =
             OwnedMachine::new(quantum_config(&target, quantum), quantum_image(code)).unwrap();
         (0..TURNS)
-            .map(|_| {
-                let turn = owned.step_request(false, false, false).unwrap();
-                assert!(
-                    !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
-                    "the timer guest failed: {:?}",
-                    turn.hart().outcome
-                );
-                (
-                    owned.state().pc,
-                    owned.platform_mtime().unwrap(),
-                    owned.platform_local_time().unwrap(),
-                    mtip_presented(&owned),
-                    owned.test_ledger(),
-                )
-            })
+            // The final turn is the run's last slot, so F7 syncs it and the run
+            // ends at `C` = `L`.
+            .map(|index| step(&mut owned, index + 1 == TURNS))
             .collect()
     }
     let parity = route(0, &code);
@@ -5850,87 +5875,79 @@ fn quantum_timer_spin_recognizes_mtip_within_the_bound() {
         )
         .unwrap();
         (0..TURNS)
-            .map(|_| {
-                let turn = owned.step_request(false, false, false).unwrap();
-                assert!(
-                    !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
-                    "the native timer guest failed: {:?}",
-                    turn.hart().outcome
-                );
-                (
-                    owned.state().pc,
-                    owned.platform_mtime().unwrap(),
-                    owned.platform_local_time().unwrap(),
-                    mtip_presented(&owned),
-                    owned.test_ledger(),
-                )
-            })
-            .collect::<Vec<Recorded>>()
+            .map(|index| step(&mut owned, index + 1 == TURNS))
+            .collect::<Vec<SpinRecord>>()
     };
+    let native_keys = native.iter().map(SpinRecord::key).collect::<Vec<_>>();
     assert_eq!(
-        one.iter().map(|r| (r.0, r.1, r.2, r.3)).collect::<Vec<_>>(),
-        native
-            .iter()
-            .map(|r| (r.0, r.1, r.2, r.3))
-            .collect::<Vec<_>>(),
-        "Q = 1 diverged from the native route in PC, times or MTIP"
+        parity.iter().map(SpinRecord::key).collect::<Vec<_>>(),
+        native_keys,
+        "Q = 0 diverged from the native route in PC, time or MTIP"
     );
     assert_eq!(
-        parity
-            .iter()
-            .map(|r| (r.0, r.1, r.2, r.3))
-            .collect::<Vec<_>>(),
-        one.iter().map(|r| (r.0, r.1, r.2, r.3)).collect::<Vec<_>>(),
-        "Q = 1 diverged from the parity run in PC, times or MTIP"
+        one.iter().map(SpinRecord::key).collect::<Vec<_>>(),
+        native_keys,
+        "Q = 1 diverged from the native route in PC, time or MTIP"
     );
     let quantum = route(16, &code);
-    // A turn start's `(C, L)` is the previous boundary's, and (0, 0) before the
-    // first turn.
-    let mut starts = vec![(0u64, 0u64)];
-    starts.extend(quantum.iter().map(|record| (record.1, record.2)));
-    let crossing = starts
-        .iter()
-        .position(|start| start.1 >= u64::try_from(MTIMECMP).unwrap())
-        .unwrap();
-    // MTIP after a boundary is the turn-end publish from committed time, so it
-    // is what the next turn's start presents to the guest.
-    let expected = quantum
-        .iter()
-        .position(|record| record.1 >= u64::try_from(MTIMECMP).unwrap())
-        .unwrap();
+    // The guest's own F1 `mtimecmp` store turn ends in a sync that commits the
+    // store's turn, so committed time afterwards moves in steps of `Q` from that
+    // phase. The presentation at or past the compare is therefore computable
+    // from the guest's sync phase and `Q` alone, and `X` is the compare itself.
+    const STORE_PHASE: u64 = 3;
+    const QUANTUM: u64 = 16;
+    let compare = u64::try_from(MTIMECMP).unwrap();
+    let expected_presentation = STORE_PHASE + (compare - STORE_PHASE).div_ceil(QUANTUM) * QUANTUM;
+    let expected_lateness = expected_presentation - compare;
     let presented = quantum
         .iter()
-        .position(|record| record.3)
+        .position(|record| record.mtip)
         .expect("MTIP was never presented");
     assert_eq!(
-        presented, expected,
-        "MTIP was presented at a turn whose committed time had not reached the compare"
+        quantum[presented].committed, expected_presentation,
+        "the recognition's committed time was not the sync phase plus a whole quantum"
     );
-    let lateness = quantum[presented].2 - starts[crossing].1;
+    assert_eq!(
+        quantum[presented].local - compare,
+        expected_lateness,
+        "the recognition's turn-start local time was not `X` plus the computed lateness"
+    );
+    assert_eq!(
+        expected_lateness, 6,
+        "the computed D8 lateness is not the contract's `R - X` for this run"
+    );
     assert!(
-        lateness > 0,
-        "Q = 16 recognized the crossing with no lateness"
+        expected_lateness <= QUANTUM - 1,
+        "the computed recognition exceeded the D8 bound"
     );
-    assert!(lateness <= 15, "the recognition exceeded the D8 bound");
     // quantum D9: after every sync, committed time is the run's charged
-    // completed turns, delay ticks and idle-jump distance.
-    let last_sync = quantum
-        .iter()
-        .rposition(|record| record.1 == record.2)
-        .expect("Q = 16 never synced");
+    // completed turns, delay ticks and idle-jump distance, with the guest's
+    // `mtime` stores rebasing it; the run ends on the F7 last-slot sync with no
+    // pending offset.
+    for record in &quantum {
+        if record.committed == record.local {
+            assert_eq!(
+                record.ledger.expected_mtime(),
+                record.committed,
+                "the ledger's D9 identity diverged from committed time at a sync"
+            );
+        }
+    }
+    let last = quantum.last().unwrap();
     assert_eq!(
-        quantum[last_sync].4.expected_mtime(),
-        quantum[last_sync].1,
-        "the ledger's D9 identity diverged from committed time at a sync"
+        last.committed, last.local,
+        "the last-slot sync left a pending offset"
     );
-    assert!(
-        quantum[last_sync].4.charged() > 0,
-        "the ledger charged nothing"
-    );
-    let last = parity.last().unwrap();
     assert_eq!(
-        last.4.expected_mtime(),
-        last.1,
+        last.ledger.expected_mtime(),
+        last.committed,
+        "the timer run's final committed time is not its D9 identity"
+    );
+    assert!(last.ledger.charged() > 0, "the ledger charged nothing");
+    let parity_last = parity.last().unwrap();
+    assert_eq!(
+        parity_last.ledger.expected_mtime(),
+        parity_last.committed,
         "the parity ledger's D9 identity diverged from committed time"
     );
 }

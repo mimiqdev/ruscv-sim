@@ -60,12 +60,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     F9 不变：reset 不运行 sync，新 Platform 以 `C` = `O` = `E` = 0 开始，不跨代继承偏移
   - `Installed` 新增 `#[cfg(test)]` 时间账本（D9）：记录每个 turn 的已计费 tick、完成 tick 与每次空闲跳转
     距离，`mtime` 写作为 rebase，测试以 `OwnedMachine::platform_mtime` 在 tick 上核对守恒恒等式
-  - 新增 16 个 Machine 级与 1 个 Runner 级测试覆盖合同 §4 U2 的验收项，包括量子中途的 CLINT `mtime` 读返回
+  - 新增 18 个 Machine 级、1 个 C ABI `Session` 级与 1 个 Runner 级测试覆盖合同 §4 U2 的验收项，包括量子中途的 CLINT `mtime` 读返回
     parity 值、`mtimecmp` 等于 `C` 加该 turn `advance` 的下一个 turn 呈现 MTIP、运行中与停机下的 SBA
     `mtime` 读、guest 下调 `mtime`、SBA 与 abstract command 的 debug `mtime` 写后的 `E` = `C` = `L` 与标记
-    清除、`last_slot` 与 Runner 返回的计数、drain、新代无偏移，以及 `quantum_timer_spin`（手编 guest 经 CLINT
-    装载 `mtimecmp` 并置 MTIE 自旋）：`Q` = 1 与 parity 逐 turn 相同，`Q` = 16 的识别延迟非零且在 D8 内，
-    最终 `platform_mtime` 满足 D9
+    清除、`last_slot` 与 Runner 返回的计数、drain、`OwnedMachine` 与 `Session` 两条新代路径无偏移，以及
+    `quantum_timer_spin`（手编 guest 经 CLINT 装载 `mtimecmp` 并置 MTIE 自旋）：`Q` = 0 与 `Q` = 1 的 PC、
+    `time` 与 MTIP 逐 turn 等于 native 路由，`Q` = 16 的识别延迟按 guest 的 F1 同步相位与 `Q` 算出并逐值
+    相等（6 tick，在 D8 内），运行经 F7 的 `last_slot` 同步收尾，最终 `platform_mtime` 满足 D9
 
 - **Direct memory U1: 授权与读取路径（issue #188）**
   - `MachineConfig` 新增公开 `dmi` 字段（`MachineConfig::new` 选择 `false`，破坏结构体字面量构造）；
