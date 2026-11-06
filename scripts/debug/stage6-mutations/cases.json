@@ -1098,7 +1098,7 @@
         ],
         "test": "the_guest_suite_runs_every_case_under_the_tlm_route",
         "failure": [
-          "the second pass must run under --transport tlm"
+          "the TLM pass must run under --transport tlm"
         ]
       }
     ]
@@ -1646,7 +1646,7 @@
         ],
         "test": "the_guest_suite_runs_every_case_under_the_tlm_route",
         "failure": [
-          "the third pass must select --dmi"
+          "the direct-memory pass's --dmi selection"
         ]
       }
     ]
