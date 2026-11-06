@@ -2497,5 +2497,19 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "quantum-u4-local-offset-charged",
+    "source": "src/blocking/adapter.rs",
+    "patch": "quantum-u4-local-offset-charged.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_charges_one_transport_delay_exactly_once_with_direct_memory_on_and_off",
+        "failure": []
+      }
+    ]
   }
 ]
