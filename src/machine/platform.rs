@@ -311,6 +311,18 @@ impl Platform {
         Ok(None)
     }
 
+    /// Sead an F1 turn mark with no device access behind it, so a test can
+    /// check that a turn start clears it (quantum F1).
+    #[cfg(test)]
+    pub(super) fn seed_turn_mark(&self) -> Result<(), MachineError> {
+        if let Some(bus) = &self.bus {
+            bus.lock()
+                .map_err(|_| MachineError::Poisoned)?
+                .seed_turn_mark();
+        }
+        Ok(())
+    }
+
     /// Sead a local offset without moving committed time. Only a test seeds a
     /// boundary with `O` non-zero, because every production boundary syncs
     /// (quantum D6/F7).

@@ -1072,6 +1072,12 @@ impl OwnedMachine {
         dm.dmi_write(core, SBADDRESS0, address as u32);
     }
 
+    /// Sead an F1 turn mark with no device access behind it.
+    #[cfg(test)]
+    pub(crate) fn test_seed_turn_mark(&self) -> Result<(), MachineError> {
+        self.domain().platform.seed_turn_mark()
+    }
+
     /// Sead a local offset at a boundary whose production path always syncs
     /// (quantum D6). Used to reach F4's busy-command sync, which `run_command`
     /// and `next_word` otherwise only reach at `O` = 0.

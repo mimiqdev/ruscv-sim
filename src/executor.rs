@@ -454,6 +454,13 @@ impl SystemBus {
         self.local_offset = offset;
     }
 
+    /// Sead an F1 turn mark with no device access behind it, so a test can
+    /// check that a turn start clears it (quantum F1).
+    #[cfg(test)]
+    pub(crate) fn seed_turn_mark(&mut self) {
+        self.device_marked = true;
+    }
+
     /// quantum D3/D10: the cumulative count of counted boundary syncs in this
     /// Platform generation.
     pub(crate) fn quantum_syncs(&self) -> u64 {

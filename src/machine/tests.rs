@@ -5473,6 +5473,36 @@ fn quantum_f4_sba_mtime_under_a_halted_hart_returns_committed_time() {
     );
 }
 
+/// quantum F1: a turn start clears the F1 mark, so a marked device access that
+/// debug work made with no turn in progress cannot sync the next guest turn.
+#[test]
+fn quantum_turn_start_clears_a_stale_mark() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    owned.test_seed_turn_mark().unwrap();
+    let turn = owned.step_request(false, false, false).unwrap();
+    assert!(
+        !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+        "the guest failed: {:?}",
+        turn.hart().outcome
+    );
+    assert_eq!(
+        owned.platform_quantum_syncs().unwrap(),
+        0,
+        "a stale F1 mark synced a guest turn that flushed nothing"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        0,
+        "a stale F1 mark committed time before the guest advanced it"
+    );
+    assert_eq!(owned.platform_local_offset().unwrap(), 1);
+}
+
 /// quantum D3/D9: a guest store that lowers `mtime` is a rebase. MTIP falls at
 /// the next turn as in a parity run, and `E` = `C` = `L` afterwards.
 #[test]
