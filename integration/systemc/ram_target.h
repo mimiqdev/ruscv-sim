@@ -13,6 +13,12 @@
 // ruscv-sim atomic extension and are applied indivisibly through this module's
 // operation table; the target never performs a read followed by a write.
 //
+// Temporal decoupling (quantum D13): `b_transport`'s delay argument arrives as
+// the Hart's local offset in exact femtoseconds and this zero-delay model adds
+// nothing to it, so the argument is left unchanged. The initiator subtracts the
+// offset before it reports the added delay, which keeps the run's committed
+// time identical with the quantum on and off.
+//
 // Direct memory (direct-memory D13): a completed non-atomic transaction sets
 // the `dmi_allowed` hint, and `get_direct_mem_ptr` grants the whole chunk that
 // contains the queried address as read-write with zero latency. Chunk bytes are
@@ -53,9 +59,14 @@ public:
     /// ruscv-sim side of the same calls.
     tlm_utils::simple_target_socket<RamTarget> socket;
 
-    explicit RamTarget(sc_core::sc_module_name name);
+    /// `fault_decrease_delay` is the smoke's `--fault-decrease-delay` control
+    /// (quantum §4): the target lowers the received delay below the offset it
+    /// was given, which the initiator must report as an unknown completion. It
+    /// exists to prove that assertion and is never a normal model.
+    explicit RamTarget(sc_core::sc_module_name name, bool fault_decrease_delay = false);
 
-    /// Serves one blocking transaction and annotates zero delay.
+    /// Serves one blocking transaction. This model declares zero delay, so it
+    /// adds nothing to `delay` and leaves the argument unchanged (quantum D13).
     void b_transport(tlm::tlm_generic_payload& transaction, sc_core::sc_time& delay);
 
     /// Serves one debug access: no delay, no side effects beyond the bytes, and
@@ -97,6 +108,9 @@ private:
         std::array<std::atomic<uint8_t>, kChunkBytes> bytes;
         std::array<uint64_t, kChunkBytes> versions{};
     };
+
+    /// The smoke's `--fault-decrease-delay` control (quantum §4).
+    const bool fault_decrease_delay_;
 
     std::map<uint64_t, Chunk> chunks_;
     /// Monotonic committed-write clock; zero marks a byte no write has covered.

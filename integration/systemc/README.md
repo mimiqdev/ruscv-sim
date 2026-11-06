@@ -11,18 +11,26 @@ ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
   non-atomic transactions, grants the containing chunk read-write at zero
   latency through `register_get_direct_mem_ptr`, and invalidates every
   registration before its transport reset discards chunks while keeping the
-  version clock running (direct-memory D10/D13).
+  version clock running (direct-memory D10/D13). `b_transport` leaves the
+  `delay` argument unchanged, which carries the Hart's local offset: this model
+  adds no delay (quantum D13).
 - `ruscv_initiator.{h,cpp}`: the C ABI `ruscv_target` callbacks mapped onto a
   `simple_initiator_socket` bound to that target. `--dmi` selects the
   `get_direct_mem_ptr` query; the registered `invalidate_direct_mem_ptr`
   forwards to `ruscv_machine_invalidate_direct_mem`, the one ABI entry a
-  target may call inside a callback.
+  target may call inside a callback. The callbacks pass the payload's
+  `local_offset_fs` in as the `b_transport` delay argument and report only what
+  the target returned above it (quantum D13).
 - `ruscv_payload_extension.h`: the TLM-2.0 payload extension carrying the access
   category, the initiator and the atomic request and response.
 - `main.cpp`: the `SC_THREAD` grant loop that starts each grant at
   `sc_time_stamp()`, waits the returned consumed time, and stops the kernel after
-  a terminal `ruscv_machine_result` or a host-classified failure. The
-  `--stop-after-grants` control stops it deliberately, without a result.
+  a terminal `ruscv_machine_result` or a host-classified failure. It compares the
+  kernel clock with `committed_end_fs` after every grant, which with a quantum
+  selected also proves each grant return synced its local offset. The
+  `--stop-after-grants` control stops it deliberately, without a result, and
+  `--fault-keep-offset` and `--fault-decrease-delay` are the quantum contract's
+  two fault-option controls.
 
 See [`docs/integration/systemc-tlm.md`](../../docs/integration/systemc-tlm.md)
 for the mapping, ownership and time rules.
@@ -59,7 +67,8 @@ usage: systemc_smoke <elf> [--isa rv64ima|rv64imac|rv64imafd|rv64imafdc]
        [--log-commits <path>] [--turn-budget <turns>]
        [--horizon-fs <femtoseconds>] [--stop-after-grants <grants>]
        [--max-grants <grants>] [--max-turns <turns>]
-       [--dmi] [--dmi-invalidate-every <grants>]
+       [--dmi] [--dmi-invalidate-every <grants>] [--quantum <ticks>]
+       [--fault-keep-offset] [--fault-decrease-delay]
 ```
 
 The exit status is the guest exit code for a terminal exited run and 1 for a
@@ -81,6 +90,20 @@ target to invalidate every grant after each Nth grant; the initiator's
 backward call forwards each one to `ruscv_machine_invalidate_direct_mem` and
 the forwarded count is reported at exit.
 
+`--quantum <ticks>` selects temporal decoupling in Platform ticks (zero is off)
+and travels in the C ABI target table (quantum D12/D13). The Machine may then
+run ahead of the kernel clock by a bounded local offset; the callback's `delay`
+argument carries that offset, `RamTarget` adds nothing to it, and the initiator
+reports only the delay above it, so `committed_end_fs` stays exactly the amount
+the kernel commits. A counted sync at a turn boundary ends the grant, so
+`--quantum 1024` needs far fewer grants than `--quantum 1` for the same guest.
+
+`--fault-keep-offset` and `--fault-decrease-delay` are the quantum contract's two
+fault-option controls and require `--quantum`. The first reports the offset as
+an added delay, above this target's declared maximum of zero; the second lowers
+the target's delay below the offset it received. Each must fail the run with its
+own diagnostic, and a control that passes is a smoke failure.
+
 The end-to-end comparison with the native run is
 [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh); the
 `SystemC transport smoke` CI job runs it inside the development image. The
@@ -90,6 +113,6 @@ invalidation.
 
 ## Limits
 
-Linux x86-64 only. This project selects blocking transport without temporal
-decoupling, and the RAM model annotates zero delay, so it does not model a
-timed memory.
+Linux x86-64 only. The RAM model annotates zero delay, so it does not model a
+timed memory; the quantum defers the Machine's committed time by a bounded local
+offset, but the target still adds no modeled delay of its own.

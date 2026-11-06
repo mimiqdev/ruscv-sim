@@ -108,8 +108,14 @@ void mark_unknown_completion(ruscv_payload* payload) {
 }  // namespace
 
 RuscvInitiator::RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram,
-                               bool direct_mem)
-    : sc_core::sc_module(name), socket("socket"), ram_(ram), direct_mem_(direct_mem) {
+                               bool direct_mem, uint64_t quantum_ticks,
+                               bool fault_keep_offset)
+    : sc_core::sc_module(name),
+      socket("socket"),
+      ram_(ram),
+      direct_mem_(direct_mem),
+      quantum_ticks_(quantum_ticks),
+      fault_keep_offset_(fault_keep_offset) {
     socket.register_nb_transport_bw(this, &RuscvInitiator::nb_transport_bw);
     // The target reaches the handle's direct-memory registry through this
     // backward call (direct-memory D13).
@@ -156,6 +162,9 @@ ruscv_target RuscvInitiator::target_table() {
     // exactly as direct memory off (direct-memory D12).
     table.get_direct_mem_ptr =
         direct_mem_ ? &ruscv_systemc_get_direct_mem_ptr : nullptr;
+    // quantum D12/D13: the selection travels in the copied target table, so the
+    // Machine bounds the local offset and every grant return syncs it.
+    table.quantum_ticks = quantum_ticks_;
     return table;
 }
 
@@ -168,7 +177,11 @@ void RuscvInitiator::serve_b_transport(ruscv_payload& payload) {
     tlm::tlm_generic_payload transaction;
     prepare(transaction, payload.address, payload.command, payload.data, payload.length);
     transaction.set_extension(&extension);
-    sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+    // quantum D13: the IEEE 1666 delay argument carries the Hart's local offset
+    // on entry. This model's declared maximum is zero, so the target adds
+    // nothing and the callback reports only what it returned above the offset.
+    const uint64_t offset_fs = payload.local_offset_fs;
+    sc_core::sc_time delay = sc_core::sc_time::from_value(offset_fs);
     socket->b_transport(transaction, delay);
 
     // Echo every request field a target could have changed. ruscv-sim compares
@@ -178,12 +191,24 @@ void RuscvInitiator::serve_b_transport(ruscv_payload& payload) {
     payload.command = command_code(transaction.get_command());
     payload.length = transaction.get_data_length();
     payload.status = status_code(transaction.get_response_status());
-    payload.delay_fs = delay.value();
     payload.outcome_unknown = extension.outcome_unknown;
     // The TLM hint flag is the ABI payload's `dmi_allowed` response field, the
     // only licence for ruscv-sim's one query of this access (direct-memory D3).
     payload.dmi_allowed = transaction.is_dmi_allowed() ? 1 : 0;
     copy_atomic_response(extension, payload.atomic);
+    if (fault_keep_offset_) {
+        // The smoke's --fault-keep-offset control (quantum §4): the full delay
+        // argument is reported as an added delay, so the offset this target was
+        // given exceeds the declared maximum of zero.
+        payload.delay_fs = delay.value();
+    } else if (delay.value() < offset_fs) {
+        // quantum D13: a returned delay below the offset cannot be represented
+        // as an added delay, and the target may already have committed a write,
+        // so this is an unknown completion rather than an incomplete response.
+        mark_unknown_completion(&payload);
+    } else {
+        payload.delay_fs = delay.value() - offset_fs;
+    }
 }
 
 size_t RuscvInitiator::serve_transport_dbg(ruscv_debug& debug) {

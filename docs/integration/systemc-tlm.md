@@ -1,6 +1,7 @@
 # SystemC/TLM Boundary
 
-**Status:** Implemented for the selected blocking-transport mapping
+**Status:** Implemented for the selected blocking-transport mapping, including
+direct memory and the quantum selection
 
 **Authority:** Normative for the selected blocking-transport mapping, FFI
 ownership and threads, error mapping, the time unit, re-entrancy and stop
@@ -10,12 +11,13 @@ to which this page's `dev-plan` D numbers refer), and for direct memory: grant,
 permission, latency, invalidation, lifetime, version-clock persistence across
 reset and the FFI rules (direct-memory D3–D10, D12 and D13 of the
 [archived direct-memory contract](../archive/milestones/tlm-direct-memory-interface.md);
-this page's `direct-memory D<n>` citations name that contract). Bounded by
+this page's `direct-memory D<n>` citations name that contract). Quantum D14 makes
+this page normative for the local offset, the grant return, the sync and the
+bound rules on this host, and this page's `quantum D<n>` citations name the
+Current contract. Bounded by
 ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
-with them. The Current contract selects quantum and synchronization policy but
-has not implemented it; quantum D14 makes this page normative for it at U6, and
-the page end records the state until then.
+with them.
 
 **Last reviewed:** 2026-11-06
 
@@ -28,7 +30,10 @@ records the SystemC halves of the direct-memory contract's grant,
 permission, latency, invalidation, lifetime and version-clock obligations and
 its FFI rules, normative where they are not already covered by the
 [archived contract](../archive/milestones/tlm-direct-memory-interface.md) and the
-header's direct-memory obligations. Non-blocking transport and TLM-modeled
+header's direct-memory obligations. It also records the SystemC halves of the
+quantum contract: the local offset as the `b_transport` delay argument, the
+grant return as the only quantum keeper, the sync and commit rule, and the two
+fault-option controls of its §4. Non-blocking transport and TLM-modeled
 devices stay out of scope, as the Current contract's §5 records.
 
 ## Selected mapping
@@ -43,6 +48,9 @@ devices stay out of scope, as the Current contract's §5 records.
 | Transport reset | The target's own reset operation |
 | Guest-RAM target | `simple_target_socket` on `RamTarget` |
 | Machine grant | Bounded grant over the C ABI, then `wait(consumed)` |
+| Hart local offset (quantum D11) | The `b_transport` `delay` argument |
+| Quantum selection (quantum D12) | `ruscv_target.quantum_ticks` |
+| Counted sync ending a grant (quantum D12) | The grant returns, then `wait(consumed)` |
 | Direct RAM fast path | `get_direct_mem_ptr`/`invalidate_direct_mem_ptr` via the C ABI (direct-memory D12) |
 
 `tlm_generic_payload` and `sc_time` stay outside the Rust side and outside ISA
@@ -53,9 +61,11 @@ instruction functions. The only Rust/C++ boundary is the C ABI.
 [`ram_target.h`](../../integration/systemc/ram_target.h) is a zero-delay
 blocking RAM target with one `tlm_utils::simple_target_socket`:
 
-- `b_transport` serves reads, writes and every atomic, and always annotates zero
-  delay (`dev-plan` D7). A write is applied as one indivisible semantic write
-  before it returns.
+- `b_transport` serves reads, writes and every atomic, and adds no delay: it
+  leaves the `delay` argument unchanged (quantum D13). That argument arrives as
+  the Hart's local offset in exact femtoseconds, so a model that adds nothing
+  keeps the run's committed time identical with the quantum on and off. A write
+  is applied as one indivisible semantic write before it returns.
 - Direct memory (direct-memory D13): a completed non-atomic transaction sets
   the generic payload's `dmi_allowed` hint, which is the only licence for the
   initiator's one query of that access. `get_direct_mem_ptr` grants the whole
@@ -137,8 +147,27 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
   live grant can still name them. The
   `dmi_allowed` response hint on the ABI payload is the transaction's TLM
   hint flag.
-- The annotated delay is copied as exact femtoseconds, and the declared
-  per-transaction maximum is zero because this model annotates zero delay.
+- The annotated delay is the delay the target adds, reported in exact
+  femtoseconds. The `delay`
+  argument is seeded with the payload's `local_offset_fs` before the call, so
+  the request carries the Hart's local time in the sense of IEEE 1666: with the
+  grant's start as the kernel clock, `sc_time_stamp() + delay` is the
+  transaction's local time. On return the callback subtracts that offset and
+  reports only `delay - offset` as `delay_fs`, so the offset is never charged as
+  a delay and is not an added latency (quantum D11/D13). The declared
+  per-transaction maximum is zero because this model adds no delay.
+- A returned `delay` below the offset cannot be represented as an added delay,
+  and the target may already have committed the write, so the callback reports
+  that transaction through the existing `mark_unknown_completion` path with
+  `outcome_unknown` set, which ruscv-sim classifies as an unknown completion
+  rather than a plain incomplete response (quantum D13).
+- The target table's `quantum_ticks` carries the `--quantum` selection (zero is
+  off) and is copied at create, so the selection persists across a reset
+  (quantum D12). A NULL table selects the native route and cannot select one.
+- With `--fault-keep-offset` the callback reports the full `delay` argument,
+  offset included, as an added delay. That exceeds the declared maximum, which
+  is the `--fault-keep-offset` control's failure and never a normal bridge
+  (quantum §4).
 - A debug request requires a complete transfer and an unchanged address, command
   and length; a short transfer or any changed request field is a failed debug
   transfer.
@@ -194,8 +223,55 @@ Each grant starts at the current `sc_time_stamp()`. The kernel owns global time
 and commits only the amount a grant returns: the host `wait()`s exactly the
 returned consumed amount and never advances SystemC time on its own. After the
 wait it checks that the kernel clock equals the grant's committed end, and a
-mismatch ends the run as a host failure. Transport delay annotates zero for this
-target, so a run stays time-equivalent to native (ADR-0004 §4.4, §5.3).
+mismatch ends the run as a host failure. This target adds no transport delay, so
+a run stays time-equivalent to native (ADR-0004 §4.4, §5.3).
+
+### Quantum and temporal decoupling
+
+With `--quantum` the Machine may run ahead of committed Platform time by a local
+offset `O`, bounded by the selected quantum (quantum D3–D5). This host's rules:
+
+- The kernel clock is the origin of the offset for a whole grant: the anchor
+  `E` equals the committed time at grant start, and each counted sync that moves
+  committed time ends the grant, as does an idle jump with a virtual deadline
+  (quantum D12). The grant loop is therefore the only quantum keeper; this
+  composition has one initiator, so `tlm_quantumkeeper` and
+  `tlm_global_quantum` are not used (quantum D13).
+- A transaction's `delay` argument is the offset: `local_offset_fs`, the Hart's
+  local time minus the anchor plus the turn's already-charged ticks, in exact
+  femtoseconds. A device access inside a turn commits time mid-turn, which moves
+  `O` and not `E`, so a later RAM access in the same turn still carries its
+  correct local time (ADR-0002's 2026-11-06 amendment). The offset is timing
+  metadata only: no address, length, status or permission depends on it.
+- Every grant return is a sync, so `committed_end_fs` and `consumed_fs` are
+  post-sync, `committed_start_fs + consumed_fs == committed_end_fs`, and
+  `wait(consumed_fs)` leaves `sc_time_stamp()` equal to `committed_end_fs`
+  (quantum F7/D12). The host checks that equality after every grant and ends the
+  run as a host failure on a mismatch.
+- The grant's horizon, `deadline_blocked` and `residual_slack_fs` tests use the
+  Machine's local time, so `committed_end_fs` never passes the horizon and
+  deadline overshoot is zero (quantum D8/D12).
+- `--quantum 1` syncs at every turn boundary, so each grant ends after one turn
+  and the same guest takes about one grant per completed turn. `--quantum 1024`
+  commits once per quantum, so a RAM-only stretch takes far fewer grants.
+
+### Fault-option controls
+
+`--fault-keep-offset` and `--fault-decrease-delay` are the two fault-option
+controls of the contract's §4, in the style of `--stop-after-grants`, and both
+require `--quantum`. They exist because the mutation runner builds only Rust, so
+a C++ fault cannot be a control row there (quantum D14). Neither is a normal
+host, and a run that passes with either one set is a smoke failure:
+
+- `--fault-keep-offset` reports the full `delay` argument as an added delay. The
+  run must report `result state=failed`, the failed boundary's `uncertain` flag
+  must be 0, and its diagnostic must name the exceeded declared maximum, which
+  is zero for this target.
+- `--fault-decrease-delay` makes `RamTarget` lower `delay` below the offset it
+  received. The run must report `result state=failed`, the failed boundary's
+  `uncertain` flag must be 1, and its diagnostic must name the outcome the
+  target could not establish, which is the C ABI's unknown-completion
+  classification.
 
 ## Reentrancy and stop behavior
 
@@ -249,17 +325,17 @@ guests again with `--dmi` and requires the same facts with a `b_transport`
 count strictly below the same guest's non-direct pass, and one guest with
 `--dmi-invalidate-every` under an unchanged commit log with the scheduled
 invalidation count equal to grants/N and the ABI-forwarded count covering it.
-It passes the same turn bound
+It then runs both guests at `--quantum 1` and `--quantum 1024`, with and without
+`--dmi`, and requires the native exit code and commit log in every pass, a
+number of kernel-clock checks equal to the number of grants, and a grant count
+at `--quantum 1024` strictly below the same guest's `--quantum 1` count. It runs
+the two fault-option controls under `--quantum 1024` and requires each to fail
+with its own assertion. It passes the same turn bound
 as the CLI's `--max-cycles` and wraps every run in a wall-clock `timeout`, so
 neither a guest loop nor a host defect can hang CI.
 
 ## Open items
 
-- Quantum and temporal decoupling are selected by the Current contract and not
-  implemented. Until they are, after every grant here the host `wait()`s exactly
-  the consumed amount (a zero-consumption grant waits for nothing, and a zero
-  consumed amount cannot advance the kernel clock), so the kernel advances
-  global time only between grants, and `b_transport` receives a zero `delay`.
 - Non-blocking transport, which needs its own timing contract.
 
 ## Direct-memory grant, permission, latency, invalidation, lifetime and FFI
@@ -358,8 +434,8 @@ contract adds none.)
 - [`integration/systemc`](../../integration/systemc): the CMake project, the RAM
   target, the initiator bridge and the grant loop.
 - [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh): native
-  comparison, the `--dmi` and `--dmi-invalidate-every` passes and the
-  early-`sc_stop` control.
+  comparison, the `--dmi` and `--dmi-invalidate-every` passes, the `--quantum`
+  passes, the two fault-option controls and the early-`sc_stop` control.
 - [`scripts/test_capi_smoke.sh`](../../scripts/test_capi_smoke.sh): the plain-C
   compile-and-link smoke of the same ABI, including its direct-memory cases.
 - [`tests/tlm_u4_guest_parity.rs`](../../tests/tlm_u4_guest_parity.rs): guest

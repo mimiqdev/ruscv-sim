@@ -14,8 +14,12 @@
 //   back so the ruscv-sim adapter keeps its own protocol classification;
 // * the payload's `dmi_allowed` hint is the transaction's TLM hint flag, the
 //   only licence for a direct-memory query;
-// * the annotated delay is copied as exact femtoseconds, which requires the
-//   1 fs time resolution the driver establishes;
+// * the added delay is reported as exact femtoseconds, which requires the 1 fs
+//   time resolution the driver establishes;
+// * the delay argument is the Hart's local offset (quantum D13): the request
+//   field `local_offset_fs` is passed in as that argument, and the ABI's
+//   `delay_fs` response carries only what the target added above it, so an
+//   offset is never charged as a delay;
 // * the atomic extension's request half is copied in and its response half is
 //   copied out, so no Rust or C++ function pointer and no C++ type crosses the
 //   ABI.
@@ -52,13 +56,23 @@ public:
 
     /// Binds `socket` to `ram.socket` and keeps `ram` for its transport reset
     /// and the target-originated invalidation path. `direct_mem` selects
-    /// direct memory for the table (`--dmi`).
-    RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram, bool direct_mem);
+    /// direct memory for the table (`--dmi`), and `quantum_ticks` selects the
+    /// quantum in Platform ticks (`--quantum`), zero for off (quantum D13).
+    ///
+    /// `fault_keep_offset` is the smoke's `--fault-keep-offset` control
+    /// (quantum §4): the callbacks report the full delay argument, offset
+    /// included, as an added delay, which exceeds this target's declared
+    /// maximum of zero. It exists to prove that assertion and is never a
+    /// normal bridge.
+    RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram, bool direct_mem,
+                   uint64_t quantum_ticks, bool fault_keep_offset);
 
     /// The C ABI target table naming this object as `user`.
     ///
     /// The table declares zero per-transaction maximum delay, which is this RAM
-    /// model's declared bound (dev-plan D7). With `direct_mem` off the table's
+    /// model's declared bound (dev-plan D7), and it carries the selected quantum
+    /// (`--quantum`, zero for off) in `quantum_ticks` (quantum D12/D13). With
+    /// `direct_mem` off the table's
     /// `get_direct_mem_ptr` stays NULL, so ruscv-sim issues no query and
     /// ignores every hint exactly as direct memory off. The returned table is
     /// valid while this object lives.
@@ -111,6 +125,8 @@ private:
 
     RamTarget& ram_;
     const bool direct_mem_;
+    const uint64_t quantum_ticks_;
+    const bool fault_keep_offset_;
     ruscv_machine* machine_ = nullptr;
     uint64_t direct_mem_invalidations_ = 0;
     uint64_t direct_mem_scheduled_ = 0;
