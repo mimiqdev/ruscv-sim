@@ -149,6 +149,12 @@ jobs:
             gcc-riscv64-unknown-elf \
             binutils-riscv64-unknown-elf
 
+      # The runner copies the committed tree to a temporary directory and runs
+      # `cargo test --offline` there, so this job owes the registry its own
+      # fetch: it no longer inherits one from the quality job's earlier steps.
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
       - name: Run debug mutation controls
         run: python3 scripts/verify_stage6_mutations.py --source-ref HEAD
 

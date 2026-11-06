@@ -92,12 +92,15 @@ impl RamSlot {
         size: usize,
         period: TickPeriod,
         direct_mem: bool,
+        quantum: bool,
     ) -> Result<Self, DelayConversionError> {
         Ok(Self {
             inner: Arc::new(RamSlotInner {
                 base,
                 size,
-                kind: RamKind::Tlm(TlmRamAdapter::with_tick_period(target, period, direct_mem)?),
+                kind: RamKind::Tlm(TlmRamAdapter::with_tick_period(
+                    target, period, direct_mem, quantum,
+                )?),
             }),
         })
     }

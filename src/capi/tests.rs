@@ -2297,6 +2297,12 @@ fn ram_only_exit_guest(nops: usize, code: u32) -> Vec<u32> {
 /// The `mtimecmp` value the idle-jump guest arms, in Platform ticks.
 const WAKE_TICKS: u64 = 40;
 
+/// `wfi_wake_guest`'s `mtimecmp` store: the device access of its F1 turn.
+///
+/// A device store reaches the native CLINT, never the C target, so a test can
+/// only name the turn by the instruction it executes.
+const WFI_MTIMECMP_STORE: usize = 5;
+
 /// A guest that arms `mtimecmp`, enables `MTIE` with `mstatus.MIE` clear,
 /// waits, and then stores to RAM.
 ///
@@ -2506,16 +2512,49 @@ fn quantum_grant_ends_at_a_sync_without_reaching_the_threshold() {
         "the grant ended on a bound it did not report"
     );
 
-    // Q = 1 makes the same turn's D5 test pass, so the coincident forced sync
-    // cannot clear `reached` (quantum D5/D12).
+    // Q = 1 makes the same boundary's D5 test pass, so the coincident forced
+    // sync cannot clear `reached` (quantum D5/D12).  Every boundary syncs
+    // there, so each grant retires one turn: advance to the device store's own
+    // turn, whose fetch names it.
     let coincident = Harness::quantum(IsaProfile::Rv64imafdc as i32, &wfi_wake_guest(), 0, 1);
-    let grant = coincident.grant(0, u64::MAX / 2, 32).expect("grant");
+    let mut start = 0;
+    let mut store_grant = None;
+    for index in 0..=WFI_MTIMECMP_STORE {
+        // One slot spare, so the turn's own sync ends the grant and not its
+        // budget: the two facts are reported apart.
+        let grant = coincident.grant(start, u64::MAX / 2, 2).expect("grant");
+        let calls = coincident.target.calls();
+        coincident.target.clear_calls();
+        start = grant.committed_end_fs;
+        if index == WFI_MTIMECMP_STORE {
+            assert!(
+                calls
+                    .iter()
+                    .any(|call| call.address == elf::BASE + (WFI_MTIMECMP_STORE * 4) as u64),
+                "the grant did not execute the device store's own turn: {calls:?}"
+            );
+            store_grant = Some(grant);
+        }
+    }
+    let grant = store_grant.expect("the device store's turn was never reached");
+    assert_eq!(
+        grant.facts.quantum_ticks, 1,
+        "the device store's turn ran under another quantum"
+    );
     assert_eq!(
         grant.facts.quantum_reached, 1,
         "a coincident forced sync cleared the threshold result"
     );
-    assert_eq!(grant.facts.quantum_ticks, 1);
+    assert_eq!(
+        grant.facts.budget_exhausted, 0,
+        "the device store's turn ended on its budget, not its own sync"
+    );
     assert_eq!(grant.boundary_reached, 1);
+    // Q = 1 syncs every completed turn, so the cumulative count is its turns.
+    assert_eq!(
+        grant.facts.quantum_syncs, grant.facts.turns,
+        "Q = 1 did not count one sync per completed turn"
+    );
 }
 
 /// quantum D11: the request field carries the turn's `L - E` plus that turn's
@@ -2524,7 +2563,14 @@ fn quantum_grant_ends_at_a_sync_without_reaching_the_threshold() {
 fn quantum_local_offset_publishes_the_turn_sequence_and_is_zero_when_off() {
     // Three turns per grant keep every grant below the threshold, so the F7
     // return sync is the only sync and the cycle restarts at each grant.
-    for (quantum, expected) in [(0, vec![0]), (1, vec![0]), (4, vec![0, 1, 2])] {
+    for (quantum, expected) in [
+        (0, vec![0]),
+        (1, vec![0]),
+        // Three grants of three turns each: one group per turn, because the
+        // turn's offset changes at every boundary.  The expectation is fixed,
+        // so an implementation that publishes zero everywhere fails here.
+        (4, vec![0, 1, 2, 0, 1, 2, 0, 1, 2]),
+    ] {
         let harness = Harness::quantum(
             IsaProfile::Rv64imafdc as i32,
             &ram_only_exit_guest(9, 2),
@@ -2544,11 +2590,8 @@ fn quantum_local_offset_publishes_the_turn_sequence_and_is_zero_when_off() {
             harness.target.clear_calls();
             start = grant.committed_end_fs;
         }
-        let cycle: Vec<u64> = (0..observed.len())
-            .map(|index| expected[index % expected.len()])
-            .collect();
         assert_eq!(
-            observed, cycle,
+            observed, expected,
             "Q = {quantum}: the published local-offset sequence is wrong"
         );
     }
@@ -2930,4 +2973,92 @@ fn quantum_config_refusals_are_config_and_a_null_target_stays_native() {
         assert_eq!(facts.quantum_ticks, 0);
         assert_eq!(ruscv_machine_destroy(native), Status::Ok as i32);
     }
+}
+
+/// quantum D11: with the quantum off, no transaction carries a local offset,
+/// even in a turn that has already charged delay before it.
+#[test]
+fn quantum_local_offset_is_zero_when_off_even_after_charged_delay() {
+    // A one-tick response delay makes a multi-access turn's *second*
+    // transaction see accumulated delay, which is exactly the value a guard on
+    // "quantum off" must drop.  Without it the two fetch parcels of one
+    // instruction publish 0 and 1,000,000 fs.
+    let harness = Harness::build_quantum(
+        IsaProfile::Rv64imafdc as i32,
+        &ram_only_exit_guest(3, 2),
+        TICK_FS,
+        false,
+        0,
+        TICK_FS,
+    );
+    let grant = harness.grant(0, u64::MAX / 2, 3).expect("grant");
+    let calls = harness.target.calls();
+    assert!(
+        calls.len() > 2,
+        "the off-mode turn issued too few transactions to expose charged delay"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .map(|call| call.local_offset_fs)
+            .collect::<Vec<_>>(),
+        vec![0; calls.len()],
+        "a transaction published a local offset with the quantum off"
+    );
+    // The delay is still charged to committed time exactly once.
+    assert_eq!(
+        grant.consumed_fs,
+        grant.facts.turns * TICK_FS + grant.facts.transport_delay_fs,
+        "the off-mode grant did not charge its delay exactly once"
+    );
+}
+
+/// quantum D12 with F2: a sync that a non-zero RAM `tohost` sample triggers
+/// ends its own grant, so no later turn starts in that grant.
+#[test]
+fn quantum_tohost_sync_ends_its_grant() {
+    // The guest writes a non-zero, non-terminal value to RAM `tohost`, which F2
+    // syncs before the exit rule decodes it, and then keeps running.
+    let code = vec![
+        elf::lui(4, 0x80),
+        elf::addi(4, 4, 1),
+        elf::slli(4, 4, 12),
+        elf::addi(5, 0, 2),
+        elf::sd(5, 4, 0),
+        elf::nop(),
+        elf::nop(),
+        elf::nop(),
+    ];
+    let harness = Harness::quantum(IsaProfile::Rv64imafdc as i32, &code, 0, 64);
+    let grant = harness.grant(0, u64::MAX / 2, 16).expect("grant");
+    let calls = harness.target.calls();
+    assert_eq!(
+        grant.facts.quantum_syncs, 1,
+        "the tohost sync was not counted exactly once"
+    );
+    assert_eq!(
+        grant.boundary_reached, 1,
+        "the tohost sync did not end its grant"
+    );
+    assert_eq!(
+        grant.facts.turns, 5,
+        "the grant ran past the tohost store's turn"
+    );
+    let last = calls.last().expect("a transaction");
+    assert_eq!(
+        (last.address, last.access_kind),
+        (elf::TOHOST, super::target::access_kind::DATA_WRITE),
+        "the grant did not end on the tohost store: {calls:?}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call.address == elf::BASE + (5 * 4) as u64),
+        "the grant fetched the instruction after the tohost sync: {calls:?}"
+    );
+    assert_eq!(
+        last.local_offset_fs,
+        (grant.facts.turns - 1) * TICK_FS,
+        "the store's turn did not publish its own local offset"
+    );
 }

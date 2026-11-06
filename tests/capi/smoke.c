@@ -326,6 +326,8 @@ typedef struct test_target {
     /* Every blocking transaction in order, with its published local offset. */
     recorded_call calls[MAX_CALLS];
     int call_count;
+    /* Delay annotated on every blocking transaction, in femtoseconds. */
+    uint64_t delay_fs;
 } test_target;
 
 /* The target's storage is atomic, so every access goes through these. */
@@ -376,6 +378,7 @@ static void target_b_transport(void *user, ruscv_payload *payload)
         ram_write(target, offset, payload->data, length);
     }
     payload->status = target->status;
+    payload->delay_fs = target->delay_fs;
     if (target->unknown ||
         (target->unknown_on_data_read && payload->access_kind == RUSCV_ACCESS_DATA_READ)) {
         payload->outcome_unknown = 1;
@@ -1354,6 +1357,40 @@ static void quantum_selection_case(const char *guest)
             }
             check(cycle, "the published local-offset sequence is the turn cycle");
         }
+        ruscv_machine_destroy(handle);
+        free(target);
+    }
+    {
+        /* A one-tick response delay makes a multi-access turn's second
+         * transaction see charged delay, which is the value a guard on "the
+         * quantum is off" must drop: the offset stays zero. */
+        test_target *target = calloc(1, sizeof(test_target));
+        ruscv_machine *handle = NULL;
+        ruscv_target table;
+        ruscv_grant result;
+        int status;
+        int i;
+        int zero = 1;
+
+        init_target(target, NULL, 0);
+        target->delay_fs = TICK_FS;
+        table = quantum_target_table(target, 0);
+        table.max_delay_fs = TICK_FS;
+        handle = create_machine(&table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+        check(status == RUSCV_OK && ruscv_machine_load_elf(handle, guest) == RUSCV_OK,
+              "install the delayed RAM-only guest with the quantum off");
+        check(grant(handle, 0, UINT64_MAX / 2, 3, &result) == RUSCV_OK,
+              "the delayed off-mode grant completed");
+        for (i = 0; i < target->call_count; i += 1) {
+            if (target->calls[i].local_offset_fs != 0) {
+                zero = 0;
+            }
+        }
+        check(target->call_count > 2 && zero,
+              "a delayed off-mode turn publishes no local offset");
+        check(result.consumed_fs ==
+                  result.facts.turns * TICK_FS + result.facts.transport_delay_fs,
+              "the delayed off-mode grant charges its delay exactly once");
         ruscv_machine_destroy(handle);
         free(target);
     }

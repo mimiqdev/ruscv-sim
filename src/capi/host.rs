@@ -480,10 +480,11 @@ impl Session {
             facts.uncertain |= turn.boundary().uncertain;
             // quantum D12: the grant reports the last boundary's quantum facts,
             // and a counted sync at a turn boundary ends a non-terminal grant.
-            let boundary = turn.boundary().quantum;
-            let quantum_synced =
-                boundary.is_some_and(|quantum| quantum.syncs > facts.quantum_syncs);
-            facts.record_quantum(boundary);
+            // The count before this boundary is kept for the comparison the
+            // `Exit::Absent` arm makes, because F2 can sync inside
+            // `observe_exit` and refresh the boundary's count.
+            let syncs_before = facts.quantum_syncs;
+            facts.record_quantum(turn.boundary().quantum);
 
             // A completed Hart outcome is accounted before fallible observer
             // delivery: a commit-log write cannot unretire or drop a committed
@@ -584,8 +585,15 @@ impl Session {
                     // transactions begin at the anchor again and `E` stays `C`
                     // for a whole grant.  A terminal exit and a waiting
                     // settlement keep their own exits, and a jump-ended grant
-                    // is `waiting`'s.
-                    if quantum_synced {
+                    // is `waiting`'s.  This comparison reads the boundary the
+                    // F2 helper may have refreshed, so a sync that a non-zero
+                    // RAM `tohost` sample triggered ends its own grant too.
+                    let synced = turn
+                        .boundary()
+                        .quantum
+                        .is_some_and(|quantum| quantum.syncs > syncs_before);
+                    facts.record_quantum(turn.boundary().quantum);
+                    if synced {
                         facts.quantum_sync = true;
                         facts.budget_exhausted = !control.may_execute();
                         break;

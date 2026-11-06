@@ -42,6 +42,11 @@ pub(crate) struct TlmRamAdapter {
     declared_max: Femtoseconds,
     /// The target's declared maximum delay reserved by one guest turn.
     bound: TurnCompletionBound,
+    /// quantum D11: whether a quantum is selected at all.  It is a build-time
+    /// property of the Platform, not a per-turn value, because a transaction's
+    /// offset is zero whenever the quantum is off -- including a turn that has
+    /// already charged delay, which is why the per-turn base cannot decide it.
+    quantum: bool,
     /// The cached grants, when direct memory is selected (direct-memory D4/D8).
     /// `None` means the adapter issues no query and ignores every hint.
     /// Dropping the adapter drops the cache, which is the teardown rule; the
@@ -113,6 +118,7 @@ impl TlmRamAdapter {
         target: Arc<dyn BlockingTarget>,
         period: TickPeriod,
         direct_mem: bool,
+        quantum: bool,
     ) -> Result<Self, DelayConversionError> {
         let declared_max = target.declared_max_delay();
         let bound = TurnCompletionBound::new(declared_max, period)?;
@@ -128,6 +134,7 @@ impl TlmRamAdapter {
             period,
             declared_max,
             bound,
+            quantum,
             direct,
             state: Mutex::new(AdapterState::default()),
         })
@@ -218,7 +225,7 @@ impl TlmRamAdapter {
         local_base_ticks: u64,
         initiator: BlockingInitiator,
     ) -> Femtoseconds {
-        if initiator != BlockingInitiator::Hart {
+        if initiator != BlockingInitiator::Hart || !self.quantum {
             return Femtoseconds::ZERO;
         }
         let ticks = local_base_ticks.wrapping_add(state.pending.ticks);

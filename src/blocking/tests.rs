@@ -21,7 +21,15 @@ fn native_slot(size: usize) -> RamSlot {
 }
 
 fn tlm_slot(target: &Arc<ScriptTarget>, size: usize) -> RamSlot {
-    RamSlot::tlm(target.clone(), BASE, size, TickPeriod::DEFAULT, false).unwrap()
+    RamSlot::tlm(
+        target.clone(),
+        BASE,
+        size,
+        TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .unwrap()
 }
 
 #[test]
@@ -464,7 +472,8 @@ fn delay_overflow_and_a_malformed_period_are_adapter_failures() {
     // A zero declared tick period cannot represent any positive delay.
     let target = Arc::new(ScriptTarget::new(BASE, SIZE));
     assert_eq!(
-        TlmRamAdapter::with_tick_period(target, TickPeriod::new(Femtoseconds::ZERO), false).err(),
+        TlmRamAdapter::with_tick_period(target, TickPeriod::new(Femtoseconds::ZERO), false, false,)
+            .err(),
         Some(DelayConversionError::Malformed)
     );
 }
@@ -681,7 +690,15 @@ fn a_completed_write_is_recorded_before_delay_accounting_fails() {
 #[test]
 fn the_declared_maximum_is_a_construction_snapshot() {
     let target = crate::blocking::test_support::DelayingRam::new(1_000_000, 1_000_000);
-    let slot = RamSlot::tlm(target.clone(), BASE, SIZE, TickPeriod::DEFAULT, false).unwrap();
+    let slot = RamSlot::tlm(
+        target.clone(),
+        BASE,
+        SIZE,
+        TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .unwrap();
     let mut port = ValidatedPhysicalAccess::new(slot.clone());
     target.set_declared_max_delay(0);
 
