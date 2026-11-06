@@ -1956,7 +1956,9 @@
         ],
         "test": "machine::tests::quantum_offset_stays_below_the_threshold_until_a_boundary_syncs",
         "failure": [
-          "local time must accumulate exactly one advance per turn"
+          "reached must be D5's test on O after the advance",
+          "left:\\s+true",
+          "right:\\s+false"
         ]
       }
     ]
@@ -1990,9 +1992,7 @@
         ],
         "test": "machine::tests::quantum_facts_report_the_selected_quantum",
         "failure": [
-          "assertion `left == right` failed",
-          "left:\\s+true",
-          "right:\\s+false"
+          "assertion failed: !facts.reduced_accuracy"
         ]
       }
     ]
@@ -2008,7 +2008,9 @@
         ],
         "test": "machine::tests::quantum_syncs_do_not_touch_the_isa_counters",
         "failure": [
-          "a sync or a delay charged an ISA counter"
+          "a sync or a delay charged an ISA counter",
+          "left:\\s+\\(5, 5\\)",
+          "right:\\s+\\(1, 1\\)"
         ]
       }
     ]
@@ -2024,7 +2026,9 @@
         ],
         "test": "machine::tests::quantum_offset_stays_below_the_threshold_until_a_boundary_syncs",
         "failure": [
-          "the threshold sync committed the wrong amount"
+          "assertion `left == right` failed",
+          "left:\\s+8",
+          "right:\\s+7"
         ]
       }
     ]
