@@ -177,6 +177,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `scripts/debug/stage6-mutations`；`quantum-u2-debug-delay-offset` 由新增的
     `machine::tests::quantum_debug_transport_delay_does_not_enter_the_offset` 观察。每条都由已提交测试在变异下
     失败、还原后通过
+  - 修复 `scripts/debug_attach.sh` 的 OpenOCD 版本检查：在 `pipefail` 下 `openocd --version | head -1`
+    可能因 SIGPIPE 把已找到的 0.12.0 误报为版本不匹配（CI 的 debug-attach 作业曾因此失败一次）；现在先
+    捕获首行再匹配，版本输出只打印一次
   - 本单元不改变仿真行为、A10 oracle、认证推迟或合同文本；CI 的 `Quality and tests`、`Debug mutation
     controls`、`Debug attach` 与 `SystemC transport smoke` 作业继续覆盖完整质量门、guest suite、C ABI、
     SystemC、工具脚本与 mutation runner
