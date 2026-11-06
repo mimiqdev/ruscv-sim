@@ -59,6 +59,18 @@ fi
 # change a retired instruction. The five U4 guests come first; the two
 # direct-memory U3 guests that exercise self-modifying code and a page-table
 # walk join them, so their three passes are compared as bytes too.
+#
+# quantum U3 (quantum D7/D14): the same TLM route runs every guest two more
+# times, at `Q` = 1 and at `Q` = 1024, still under the guest's declared
+# profile. `Q` = 1 syncs at every boundary and is precise, and `Q` = 1024 is
+# the explicit ADR-0004 §6.3 reduced-accuracy request, so each pass writes
+# --log-commits for the same parity set and every log must stay byte-identical
+# to native: D7 allows no retired-instruction change on either pass. Every
+# other guest keeps its exit code; no guest needs a time-derived exception,
+# because `s5_timer` raises MTIP by a store to `mtimecmp` and the one guest
+# with a time-derived crossing, `quantum_u3_timer`, still exits zero on both
+# passes. One parity guest also runs with `--dmi --quantum 1024` to show the
+# D10 report's sync count below its completed turns.
 PARITY_GUESTS=(hello s5_timer s5_external atomic_tohost_exit fd_fma
     direct_mem_smc_fence_i direct_mem_sv39_pt_store)
 LOG_DIR="${OUTDIR}/commit-logs"
@@ -215,6 +227,15 @@ for required in zca_ctrl_flow zca_link_values zca_straddle_fetch zca_ebreak_trap
     fi
 done
 
+# quantum U3's timer guest is a required member: it is the image the live
+# debug-attach session assembles from the same source, and it is the one suite
+# guest whose MTIP comes from a time-derived crossing, so a missing build must
+# fail the suite rather than silently shrink the quantum passes.
+if [ ! -f "${OUTDIR}/rv64i/quantum_u3_timer.elf" ]; then
+    echo -e "${RED}Error: required quantum guest missing: quantum_u3_timer.elf${NC}" >&2
+    exit 2
+fi
+
 # Direct-memory U3 guests are required members of the same suite: the
 # self-modifying-code guest and the page-table guest are the images the third
 # pass must carry, and tests/direct_mem_u3_guests.rs proves the direct path
@@ -266,6 +287,10 @@ passed=0
 failed=0
 parity_checked=0
 direct_checked=0
+quantum_checked=0
+quantum_precise_checked=0
+quantum_reduced_checked=0
+quantum_dmi_checked=0
 number=0
 for elf in "${ELF_FILES[@]}"; do
     number=$((number + 1))
@@ -382,6 +407,108 @@ for elf in "${ELF_FILES[@]}"; do
     else
         echo -e "${GREEN}  [PASS]${NC} --transport tlm --dmi"
     fi
+
+    # quantum D14: the quantum passes. A failure or a differing log is a real
+    # defect, never a skip, and the parity set's logs are compared as bytes.
+    for quantum in 1 1024; do
+        quantum_log=""
+        quantum_log_args=( )
+        if is_parity_guest "${name}"; then
+            quantum_log="${LOG_DIR}/${name}.quantum${quantum}.log"
+            quantum_log_args=(--log-commits "${quantum_log}")
+        fi
+        quantum_output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" "${isa_args[@]}" \
+            --transport tlm --quantum "${quantum}" "${quantum_log_args[@]}" 2>&1)
+        quantum_status=$?
+        if ! reason=$(classify_pass "${name}" "${quantum_status}" "${quantum_output}"); then
+            printf '%s\n' "${quantum_output}"
+            echo -e "${RED}  [FAIL] --transport tlm --quantum ${quantum}: ${reason}${NC}"
+            failed=$((failed + 1))
+            continue 2
+        fi
+        if [ -n "${native_log}" ]; then
+            if [ ! -s "${quantum_log}" ]; then
+                echo -e "${RED}  [FAIL] --quantum ${quantum} commit log missing or empty for ${name}${NC}"
+                failed=$((failed + 1))
+                continue 2
+            fi
+            if ! cmp -s "${native_log}" "${quantum_log}"; then
+                echo -e "${RED}  [FAIL] ${name}: --transport tlm --quantum ${quantum} commit log differs from native${NC}"
+                diff -u "${native_log}" "${quantum_log}" | head -20 || true
+                failed=$((failed + 1))
+                continue 2
+            fi
+            quantum_checked=$((quantum_checked + 1))
+            if [ "${quantum}" = "1" ]; then
+                quantum_precise_checked=$((quantum_precise_checked + 1))
+            else
+                quantum_reduced_checked=$((quantum_reduced_checked + 1))
+            fi
+            echo -e "${GREEN}  [PASS]${NC} --transport tlm --quantum ${quantum}, commit log byte-identical to native"
+        else
+            echo -e "${GREEN}  [PASS]${NC} --transport tlm --quantum ${quantum}"
+        fi
+    done
+
+    # quantum D10: one parity guest also runs at `Q` = 1024 with direct memory,
+    # and the report's sync count must be below its completed turns. A RAM-only
+    # run syncs only at the contract's forced points, so equal counts would
+    # mean the run synced at every boundary instead of at the threshold.
+    if [ "${name}" = "hello" ]; then
+        quantum_dmi_args=(--transport tlm --dmi --quantum 1024)
+        quantum_dmi_output=$("${RUSCV_BIN}" run "${elf}" --max-cycles "${MAX_CYCLES}" \
+            "${isa_args[@]}" "${quantum_dmi_args[@]}" 2>&1)
+        quantum_dmi_status=$?
+        if ! reason=$(classify_pass "${name}" "${quantum_dmi_status}" "${quantum_dmi_output}"); then
+            printf '%s\n' "${quantum_dmi_output}"
+            echo -e "${RED}  [FAIL] --transport tlm --dmi --quantum 1024: ${reason}${NC}"
+            failed=$((failed + 1))
+            continue
+        fi
+        # Exactly one report and exactly one integer per field: a repeated or
+        # non-numeric line must fail the row instead of reaching a comparison
+        # that a shell error would turn into a passing condition.
+        quantum_dmi_quantum_lines=$(printf '%s\n' "${quantum_dmi_output}" | grep -c '^Quantum:')
+        quantum_dmi_cycle_lines=$(printf '%s\n' "${quantum_dmi_output}" | grep -c '^Cycles:')
+        quantum_dmi_syncs=$(printf '%s\n' "${quantum_dmi_output}" \
+            | sed -n 's/^Quantum: *[0-9][0-9]* ticks, \([0-9][0-9]*\) syncs,.*/\1/p')
+        quantum_dmi_turns=$(printf '%s\n' "${quantum_dmi_output}" \
+            | sed -n 's/^Cycles: *\([0-9][0-9]*\)$/\1/p')
+        quantum_dmi_bad=0
+        if [ "${quantum_dmi_quantum_lines}" -ne 1 ] || [ "${quantum_dmi_cycle_lines}" -ne 1 ]; then
+            quantum_dmi_bad=1
+        fi
+        for quantum_dmi_value in "${quantum_dmi_syncs}" "${quantum_dmi_turns}"; do
+            case "${quantum_dmi_value}" in
+                ''|*[!0-9]*) quantum_dmi_bad=1 ;;
+            esac
+            # More digits than a signed 64-bit integer can hold would make the
+            # comparison below fail open.
+            if [ "${#quantum_dmi_value}" -gt 18 ]; then
+                quantum_dmi_bad=1
+            fi
+        done
+        if [ "${quantum_dmi_bad}" -ne 0 ]; then
+            printf '%s\n' "${quantum_dmi_output}"
+            echo -e "${RED}  [FAIL] --transport tlm --dmi --quantum 1024: ${name} did not report exactly one sync count and one cycle count${NC}"
+            failed=$((failed + 1))
+            continue
+        fi
+        if [ "${quantum_dmi_syncs}" -ge "${quantum_dmi_turns}" ]; then
+            printf '%s\n' "${quantum_dmi_output}"
+            echo -e "${RED}  [FAIL] ${name}: ${quantum_dmi_syncs} syncs are not below ${quantum_dmi_turns} completed turns${NC}"
+            failed=$((failed + 1))
+            continue
+        fi
+        if ! printf '%s\n' "${quantum_dmi_output}" | grep -qF 'latency bound 1023 ticks'; then
+            printf '%s\n' "${quantum_dmi_output}"
+            echo -e "${RED}  [FAIL] ${name}: --dmi --quantum 1024 did not report the D8 bound${NC}"
+            failed=$((failed + 1))
+            continue
+        fi
+        quantum_dmi_checked=$((quantum_dmi_checked + 1))
+        echo -e "${GREEN}  [PASS]${NC} --transport tlm --dmi --quantum 1024: ${quantum_dmi_syncs} syncs below ${quantum_dmi_turns} turns"
+    fi
     passed=$((passed + 1))
 done
 
@@ -394,6 +521,7 @@ printf '  Failed: %s\n' "${failed}"
 printf '  Cases:  %s\n' "${#ELF_FILES[@]}"
 printf '  TLM parity logs compared: %s/%s\n' "${parity_checked}" "${#PARITY_GUESTS[@]}"
 printf '  Direct-memory parity logs compared: %s/%s\n' "${direct_checked}" "${#PARITY_GUESTS[@]}"
+printf '  Quantum parity logs compared: %s/%s\n' "${quantum_checked}" "$((2 * ${#PARITY_GUESTS[@]}))"
 printf '\n'
 
 if [ "${failed}" -ne 0 ]; then
@@ -411,6 +539,21 @@ if [ "${direct_checked}" -ne "${#PARITY_GUESTS[@]}" ]; then
     echo -e "${RED}[FAILED]${NC} direct-memory parity comparison covered ${direct_checked} of ${#PARITY_GUESTS[@]} guests"
     exit 1
 fi
+# Both quantum passes compare every parity guest's log, and the reduced-accuracy
+# sync-count row always covers one guest. A pass that silently shrank would
+# otherwise read as green.
+if [ "${quantum_precise_checked}" -ne "${#PARITY_GUESTS[@]}" ]; then
+    echo -e "${RED}[FAILED]${NC} quantum 1 parity comparison covered ${quantum_precise_checked} of ${#PARITY_GUESTS[@]} guests"
+    exit 1
+fi
+if [ "${quantum_reduced_checked}" -ne "${#PARITY_GUESTS[@]}" ]; then
+    echo -e "${RED}[FAILED]${NC} quantum 1024 parity comparison covered ${quantum_reduced_checked} of ${#PARITY_GUESTS[@]} guests"
+    exit 1
+fi
+if [ "${quantum_dmi_checked}" -ne 1 ]; then
+    echo -e "${RED}[FAILED]${NC} the direct-memory quantum sync-count row did not run"
+    exit 1
+fi
 
-echo -e "${GREEN}[PASS]${NC} all ${passed} fresh ELF cases passed through the public CLI on all three passes"
+echo -e "${GREEN}[PASS]${NC} all ${passed} fresh ELF cases passed through the public CLI on all five passes"
 exit 0

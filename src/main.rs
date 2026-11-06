@@ -76,6 +76,13 @@ enum Commands {
         /// loads and stores. Requires `--transport tlm`.
         #[arg(long = "dmi")]
         direct_mem: bool,
+
+        /// Temporal-decoupling quantum in Platform ticks: the Hart may lead
+        /// committed time by less than this, syncing at the threshold and at
+        /// the contract's forced points. Requires `--transport tlm`; omitted
+        /// or `0` keeps precise execution.
+        #[arg(long, value_name = "TICKS")]
+        quantum: Option<u64>,
     },
 }
 
@@ -129,6 +136,7 @@ fn main() {
             isa,
             transport,
             direct_mem,
+            quantum,
         } => {
             if halted && rbb_port.is_none() {
                 eprintln!("error: --halted requires --rbb-port");
@@ -136,6 +144,13 @@ fn main() {
             }
             if direct_mem && transport != TransportArg::Tlm {
                 eprintln!("error: --dmi requires --transport tlm");
+                std::process::exit(2);
+            }
+            // quantum D2: the native route has no local offset, so the option
+            // is a CLI error whenever the TLM route is not selected, including
+            // `--quantum 0` (which selects nothing but was still given).
+            if quantum.is_some() && transport != TransportArg::Tlm {
+                eprintln!("error: --quantum requires --transport tlm");
                 std::process::exit(2);
             }
 
@@ -149,6 +164,9 @@ fn main() {
                 eprintln!("Transport: {:?}", transport);
                 if direct_mem {
                     eprintln!("Direct memory: enabled");
+                }
+                if let Some(ticks) = quantum {
+                    eprintln!("Quantum: {} ticks", ticks);
                 }
                 if let Some(port) = rbb_port {
                     eprintln!("remote_bitbang port: {port}");
@@ -170,6 +188,7 @@ fn main() {
                     isa: isa.0,
                     transport,
                     direct_mem,
+                    quantum: quantum.unwrap_or(0),
                 },
             ) {
                 Ok(result) => {
@@ -196,6 +215,8 @@ struct RunOptions {
     isa: IsaProfile,
     transport: TransportArg,
     direct_mem: bool,
+    /// quantum D2: the selected quantum in Platform ticks; zero is off.
+    quantum: u64,
 }
 
 fn run_elf(elf_path: &std::path::Path, options: RunOptions) -> Result<ExecutionResult, String> {
@@ -228,6 +249,7 @@ fn run_elf(elf_path: &std::path::Path, options: RunOptions) -> Result<ExecutionR
             config.uart_output = Some(Arc::new(|byte| print!("{}", byte as char)));
             config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
             config.dmi = options.direct_mem;
+            config.quantum = options.quantum;
             let debug = options
                 .rbb_port
                 .map(|port| RemoteBitbangConfig::listen(port).halted(options.halted));
@@ -367,6 +389,21 @@ mod tests {
         };
         let line = quantum_report_line(&Some(precise)).expect("a quantum fact must print");
         assert!(!line.contains("reduced accuracy"), "{line}");
+    }
+
+    // quantum D2: the option is documented with its TLM requirement, so
+    // `run --help` is the discoverable statement of the refusal below.
+    #[test]
+    fn the_run_help_documents_the_quantum_option() {
+        use clap::CommandFactory;
+        let mut command = Args::command();
+        let help = command
+            .find_subcommand_mut("run")
+            .expect("run subcommand")
+            .render_long_help()
+            .to_string();
+        assert!(help.contains("--quantum <TICKS>"), "{help}");
+        assert!(help.contains("Requires `--transport tlm`"), "{help}");
     }
 
     #[test]
