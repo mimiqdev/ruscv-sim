@@ -5565,10 +5565,10 @@ fn quantum_debug_mtime_store_reanchors_and_leaves_no_mark() {
     let address = clint_device_offset(crate::peripherals::clint::reg_offset::MTIME);
     dm_active(&mut owned);
     sba_set_address(&mut owned, address);
-    assert_eq!(
-        sba_write_word(&mut owned, address, 0x40) & SBERROR_SHIFT_MASK,
-        0
-    );
+    owned.dmi_write(DM_SBCS, SBACCESS_WORD).unwrap();
+    // The store runs inside this DMI write and no sync follows it, so the
+    // anchor it leaves is the one a later boundary would publish.
+    owned.dmi_write(DM_SBDATA0, 0x40).unwrap();
     assert_eq!(owned.platform_mtime().unwrap(), 0x40);
     assert_eq!(
         owned.platform_anchor().unwrap(),
@@ -5584,9 +5584,6 @@ fn quantum_debug_mtime_store_reanchors_and_leaves_no_mark() {
         "a debug mtime store left a turn mark for the next guest turn"
     );
 }
-
-/// `sbcs.sberror`, all three bits.
-const SBERROR_SHIFT_MASK: u32 = 7 << SBERROR_SHIFT;
 
 /// quantum D3: an abstract-command store to `mtime` on the Hart data port while
 /// the Hart is halted re-anchors `E` = `C` = `L`, and its F1 mark is cleared at
@@ -5623,6 +5620,48 @@ fn quantum_abstract_mtime_store_reanchors_and_clears_its_mark() {
         owned.platform_local_time().unwrap(),
         0x41,
         "the guest turn did not advance local time"
+    );
+}
+
+/// quantum F1: a program-buffer word is debug work on the Hart port, so its
+/// device store flushes and marks with no turn in progress. The mark must not
+/// survive into the next guest turn, which would then sync an offset no guest
+/// turn flushed.
+#[test]
+fn quantum_program_buffer_device_store_leaves_no_mark() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop(), elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    halted_by_dmi(&mut owned);
+    write_gpr(&mut owned, 5, crate::executor::SYSTEM_BUS_PLIC_GATEWAY);
+    write_gpr(&mut owned, 6, 1);
+    // Two words, so the last executed word is the device store.
+    postexec_buffer(&mut owned, [elf::nop(), sw_word(6, 5, 0)]);
+    let facts = run_grants(&mut owned);
+    assert!(facts.failure.is_none(), "{:?}", facts.failure);
+    assert_eq!(owned.platform_local_offset().unwrap(), 0);
+    owned
+        .dmi_write(DM_DMCONTROL, DM_DMACTIVE | DM_RESUMEREQ)
+        .unwrap();
+    let syncs = owned.platform_quantum_syncs().unwrap();
+    let turn = owned.step_request(false, false, false).unwrap();
+    assert!(
+        !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+        "the guest failed: {:?}",
+        turn.hart().outcome
+    );
+    assert_eq!(
+        owned.platform_quantum_syncs().unwrap(),
+        syncs,
+        "a debug device store left a mark that synced the next guest turn"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        0,
+        "a debug device store committed time before the guest advanced it"
     );
 }
 
