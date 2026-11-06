@@ -90,7 +90,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `scripts/debug/quantum-u3-session.gdb`）：强制 system-bus 访问，在初始停机与量子中途的 spin 停机各读一次
     `mtime`（OpenOCD 日志须有 `mtime` 的 system-bus 读），resume 经过定时器陷入后读取 guest 记录的事实。
     会话断言 `mcause` 为 machine timer、`mepc` 为自旋点、识别恰一次、延迟在 `Q - 1 + t` 内，并不断言某个精确
-    延迟（D6：调试器的 F4 同步，包括 DMI poll 引起的同步，会移动阈值同步的相位）
+    延迟（D6：调试器的 F4 同步，包括 DMI poll 引起的同步，会移动阈值同步的相位）。这些事实检查放在
+    `scripts/debug/quantum_session_facts.sh`：超出 bash 有符号 64-bit 的 64-bit 值（例如相减得到的
+    `0xffffffffffffffff`）被拒绝，而不是读成负的小数后通过 `> 上界` 检查
+  - `scripts/test_quantum_session_facts.sh` 直接以构造的事实文件覆盖上述检查的接受与拒绝路径（含上述回绕
+    延迟的负控制），无需 OpenOCD、GDB 或 RISC-V 工具链；CI 的 guest-script 步骤运行它。`run_elf_tests.sh` 的
+    `--dmi --quantum 1024` 行要求 `Quantum:` 与 `Cycles:` 各恰好一行、两个字段都是不超过 18 位的十进制数，
+    并在解析或比较失败时判该行失败，而不是让 shell 错误落成通过条件
   - 新增变异控制 `quantum-u3-cli-requires-tlm`（`src/main.rs`）：去掉 CLI 的 `--quantum` 传输检查后，
     `tests/quantum_cli.rs::the_quantum_option_requires_the_tlm_transport` 必须以非状态 2 的结果失败，还原后
     通过

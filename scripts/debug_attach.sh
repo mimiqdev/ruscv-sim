@@ -74,6 +74,10 @@ set -euo pipefail
 set +m
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if ! source "${ROOT}/scripts/debug/quantum_session_facts.sh"; then
+    echo "cannot load the quantum session fact checks" >&2
+    exit 2
+fi
 CFG="${ROOT}/scripts/debug/openocd-remote-bitbang.cfg"
 GDB_SCRIPT="${ROOT}/scripts/debug/s6-u5-session.gdb"
 GDB_PROGBUF_SCRIPT="${ROOT}/scripts/debug/s6-u4-progbuf.gdb"
@@ -1072,76 +1076,12 @@ quantum_u3_keys() {
     printf 'connect mtime_halted halted mtime_break arm compare mcause mepc traps trap_time lateness resume'
 }
 
-# One named value as a decimal integer. The session keeps these values far
-# below 2^63, so bash's signed 64-bit arithmetic is exact.
-decimal() {
-    printf '%d' "$(( 0x$(norm "$1") ))"
-}
-
+# quantum U3: the fact checks live in scripts/debug/quantum_session_facts.sh,
+# where scripts/test_quantum_session_facts.sh exercises their rejection paths
+# without OpenOCD, GDB or a RISC-V toolchain.
 assert_quantum_session() {
     local name="$1" named="$2" target="$3"
-    assert_eq "${name}" "$(field "${named}" connect)" "ok" "connect" || return 1
-    assert_eq "${name}" "$(field "${named}" halted)" "ok" "the spin halt" || return 1
-    assert_eq "${name}" "$(field "${named}" resume)" "ok" "the resume after the report" || return 1
-    # quantum F9: install leaves committed time at zero, so the system-bus read
-    # at the initial halt is zero on a decoupled run too.
-    assert_eq "${name}" "$(field "${named}" mtime_halted)" "0" \
-        "mtime at the initial halt" || return 1
-    # quantum D8: the trap is the timer interrupt this guest armed, and it
-    # interrupted the spin exactly once, so the recorded lateness is one
-    # recognition of one crossing.
-    assert_eq "${name}" "$(field "${named}" mcause)" "8000000000000007" \
-        "the trap cause" || return 1
-    assert_eq "${name}" "$(field "${named}" mepc)" "$(quantum_symbol q3_spin)" \
-        "the interrupted PC" || return 1
-    assert_eq "${name}" "$(field "${named}" traps)" "1" \
-        "the recognition count" || return 1
-    local arm compare mtime_break trap_time lateness delta bound
-    arm="$(decimal "$(field "${named}" arm)")"
-    compare="$(decimal "$(field "${named}" compare)")"
-    mtime_break="$(decimal "$(field "${named}" mtime_break)")"
-    trap_time="$(decimal "$(field "${named}" trap_time)")"
-    lateness="$(decimal "$(field "${named}" lateness)")"
-    delta=$(( compare - arm ))
-    if [[ "${delta}" -ne 64 ]]; then
-        echo "${name}: the guest armed ${delta} ticks past its sample, expected 64" >&2
-        return 1
-    fi
-    # The halt is inside the quantum: committed time is at or past the arming
-    # sample and still below the compare, so the crossing happens after the
-    # resume and not before the debugger lets the Hart run again.
-    if (( mtime_break < arm || mtime_break >= compare )); then
-        echo "${name}: the halted mtime ${mtime_break} is outside [${arm}, ${compare})" >&2
-        return 1
-    fi
-    # quantum D8: the guest's own `R - X` is inside the declared bound. It is
-    # never compared with one exact value (D6): the debugger's F4 syncs move
-    # the phase of the threshold syncs, so an exact lateness belongs only to a
-    # run whose sync points the guest and `Q` determine.
-    bound=1023
-    if (( lateness > bound )); then
-        echo "${name}: the interrupt lateness ${lateness} exceeds the D8 bound ${bound}" >&2
-        return 1
-    fi
-    # The guest's own accounting: the handler's first `time` is the trap turn
-    # plus one, so `trap_time - 1 - compare` is the lateness it stored.
-    if (( trap_time - 1 - compare != lateness )); then
-        echo "${name}: trap time ${trap_time} does not match lateness ${lateness}" >&2
-        return 1
-    fi
-    # quantum D10: the run reports the same bound and the reduced-accuracy
-    # request, so the session's `mtime` reads and the report agree.
-    if ! grep -qF -- 'Quantum:    1024 ticks' "${target}"; then
-        echo "${name}: the target report carries no quantum line" >&2
-        cat "${target}" >&2 || true
-        return 1
-    fi
-    if ! grep -qF -- 'latency bound 1023 ticks (reduced accuracy)' "${target}"; then
-        echo "${name}: the target report does not name the D8 bound" >&2
-        cat "${target}" >&2 || true
-        return 1
-    fi
-    return 0
+    quantum_session_facts "${name}" "${named}" "${target}" "$(quantum_symbol q3_spin)"
 }
 
 # The `mtime` samples must be system-bus reads, so they are the committed time

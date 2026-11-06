@@ -3,7 +3,7 @@
 //! `--transport tlm --dmi`, `--transport tlm --quantum 1` and
 //! `--transport tlm --quantum 1024`.
 //!
-//! Four committed checks live here:
+//! Seven committed checks live here:
 //!
 //! * [`the_guest_suite_runs_every_case_under_the_tlm_route`] drives the real
 //!   `scripts/run_elf_tests.sh` against a fake simulator. It proves every
@@ -30,6 +30,11 @@
 //!   names, and no fixture here can tell those two apart. The quantum
 //!   divergence is injected on the `Q` = 1 pass, so that guest stops before its
 //!   `Q` = 1024 pass and the summary counts two missing comparisons.
+//! * [`the_guest_suite_fails_when_the_quantum_report_cannot_be_compared`]
+//!   makes the fake simulator repeat a report field and, separately, report as
+//!   many syncs as completed turns. The `--dmi --quantum 1024` row must fail in
+//!   both cases instead of letting a shell error turn its condition into a
+//!   passing one.
 //! * [`synthetic_guest_commit_logs_match_between_native_and_tlm`] runs one
 //!   synthetic guest through the public CLI on both routes and compares the
 //!   commit logs byte for byte. This is the target of the
@@ -301,10 +306,17 @@ if [ "$name" = "hello" ]; then
 fi
 if [ -n "$quantum" ]; then
     # quantum D10: the report's one quantum line, with the D8 bound the guest
-    # session asserts, and fewer syncs than the run's completed turns.
+    # session asserts, and fewer syncs than the run's completed turns. The
+    # "duplicate" and "equal" modes are the malformed-report controls: the
+    # first repeats a field, the second reports as many syncs as turns.
     echo "Cycles:     10"
+    if [ "${QUANTUM_REPORT_BAD:-}" = "duplicate" ]; then
+        echo "Cycles:     10"
+    fi
     if [ "$quantum" = "1" ]; then
         echo "Quantum:    1 ticks, 10 syncs, latency bound 0 ticks"
+    elif [ "${QUANTUM_REPORT_BAD:-}" = "equal" ]; then
+        echo "Quantum:    ${quantum} ticks, 10 syncs, latency bound $((quantum - 1)) ticks (reduced accuracy)"
     else
         echo "Quantum:    ${quantum} ticks, 1 syncs, latency bound $((quantum - 1)) ticks (reduced accuracy)"
     fi
@@ -332,6 +344,26 @@ fn run_guest_suite(
     direct_diverges: Option<&str>,
     quantum_diverges: Option<&str>,
     fails: Option<&str>,
+) -> Output {
+    run_guest_suite_with_report(
+        scratch,
+        diverges,
+        direct_diverges,
+        quantum_diverges,
+        fails,
+        None,
+    )
+}
+
+/// As [`run_guest_suite`], with a malformed quantum report mode for the fake
+/// simulator (`duplicate` or `equal`).
+fn run_guest_suite_with_report(
+    scratch: &Scratch,
+    diverges: Option<&str>,
+    direct_diverges: Option<&str>,
+    quantum_diverges: Option<&str>,
+    fails: Option<&str>,
+    report: Option<&str>,
 ) -> Output {
     // The suite output must sit directly below `target/`; this scratch
     // directory is exactly that output directory.
@@ -383,6 +415,9 @@ fn run_guest_suite(
     }
     if let Some(names) = fails {
         command.env("TLM_FAILS", names);
+    }
+    if let Some(mode) = report {
+        command.env("QUANTUM_REPORT_BAD", mode);
     }
     command.output().expect("run scripts/run_elf_tests.sh")
 }
@@ -718,6 +753,32 @@ fn the_guest_suite_fails_when_a_quantum_commit_log_diverges() {
         "the injected divergence must be whitespace only"
     );
     assert_ne!(native_log, quantum_log, "the injected logs must differ");
+}
+
+#[test]
+fn the_guest_suite_fails_when_the_quantum_report_cannot_be_compared() {
+    // A repeated field and a sync count equal to the completed turns both make
+    // the `--dmi --quantum 1024` row uncomparable. The row must fail instead of
+    // letting a shell error turn its condition into a passing one.
+    for (mode, expected) in [
+        (
+            "duplicate",
+            "did not report exactly one sync count and one cycle count",
+        ),
+        ("equal", "10 syncs are not below 10 completed turns"),
+    ] {
+        let scratch = Scratch::new("runner-quantum-report");
+        let output = run_guest_suite_with_report(&scratch, None, None, None, None, Some(mode));
+        let text = diagnostic(&output);
+        assert!(
+            !output.status.success(),
+            "a {mode} quantum report passed the suite:\n{text}"
+        );
+        assert!(
+            text.contains(expected),
+            "the suite did not report the {mode} quantum report:\n{text}"
+        );
+    }
 }
 
 #[test]

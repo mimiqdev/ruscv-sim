@@ -456,13 +456,32 @@ for elf in "${ELF_FILES[@]}"; do
             failed=$((failed + 1))
             continue
         fi
+        # Exactly one report and exactly one integer per field: a repeated or
+        # non-numeric line must fail the row instead of reaching a comparison
+        # that a shell error would turn into a passing condition.
+        quantum_dmi_quantum_lines=$(printf '%s\n' "${quantum_dmi_output}" | grep -c '^Quantum:')
+        quantum_dmi_cycle_lines=$(printf '%s\n' "${quantum_dmi_output}" | grep -c '^Cycles:')
         quantum_dmi_syncs=$(printf '%s\n' "${quantum_dmi_output}" \
-            | sed -n 's/^Quantum: *[0-9]* ticks, \([0-9]*\) syncs.*/\1/p')
+            | sed -n 's/^Quantum: *[0-9][0-9]* ticks, \([0-9][0-9]*\) syncs,.*/\1/p')
         quantum_dmi_turns=$(printf '%s\n' "${quantum_dmi_output}" \
-            | sed -n 's/^Cycles: *\([0-9]*\).*/\1/p')
-        if [ -z "${quantum_dmi_syncs}" ] || [ -z "${quantum_dmi_turns}" ]; then
+            | sed -n 's/^Cycles: *\([0-9][0-9]*\)$/\1/p')
+        quantum_dmi_bad=0
+        if [ "${quantum_dmi_quantum_lines}" -ne 1 ] || [ "${quantum_dmi_cycle_lines}" -ne 1 ]; then
+            quantum_dmi_bad=1
+        fi
+        for quantum_dmi_value in "${quantum_dmi_syncs}" "${quantum_dmi_turns}"; do
+            case "${quantum_dmi_value}" in
+                ''|*[!0-9]*) quantum_dmi_bad=1 ;;
+            esac
+            # More digits than a signed 64-bit integer can hold would make the
+            # comparison below fail open.
+            if [ "${#quantum_dmi_value}" -gt 18 ]; then
+                quantum_dmi_bad=1
+            fi
+        done
+        if [ "${quantum_dmi_bad}" -ne 0 ]; then
             printf '%s\n' "${quantum_dmi_output}"
-            echo -e "${RED}  [FAIL] --transport tlm --dmi --quantum 1024 reported no sync count or cycle count${NC}"
+            echo -e "${RED}  [FAIL] --transport tlm --dmi --quantum 1024: ${name} did not report exactly one sync count and one cycle count${NC}"
             failed=$((failed + 1))
             continue
         fi
