@@ -97,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     返回都先同步，所以调用方的已提交时钟结束时等于 `L`，按 `C` 授予 turn 会让该时钟越过 horizon。新增测试
     证明非零 `O` 下档位内的 grant 满足 `committed_end_fs <= max_end_fs`，且 `deadline_blocked` 在与 parity
     路由同一 turn 上报告
-  - 新增 8 个 C ABI 级 Rust 测试（含手编的 `wfi` 唤醒 guest 与经 CLINT 常驻 PTE 的 Sv39 walk guest）与
+  - 新增 10 个 C ABI 级 Rust 测试（含手编的 `wfi` 唤醒 guest 与经 CLINT 常驻 PTE 的 Sv39 walk guest）与
     plain-C smoke 的对应用例：`Q` = 0/1/4 的事实与声明上界、`local_offset_fs` 的 turn 序列（关闭与 `Q` = 1
     时为零）、`committed_end_fs` 恰为 `committed_start_fs + consumed_fs`、阈值与强制同步重合、强制同步单独
     结束 grant、空闲跳转结束 grant 且唤醒 turn 首个事务的本地时间等于跳转目标、Sv39 walk 在 flush 后发布
