@@ -4386,3 +4386,593 @@ fn debug_mode_store_latency_is_not_charged_with_direct_memory() {
         "debug store latency changed an ISA counter"
     );
 }
+
+// ---- Quantum U1: local time and threshold (issue 201) ----
+//
+// The contract's U1 row (docs/dev-plan.md §4) drives every test here: D2–D5
+// and D10, with the F3, F5, F6 and F10 forced syncs that this unit owns.
+
+/// A hand-encoded WFI opcode for the F3 wait tests.
+const WFI: u32 = 0x1050_0073;
+/// The `mie` CSR number used by the F3 wait tests.
+const MIE: u16 = 0x304;
+
+/// `csrrs rd, csr, rs1` (RISC-V privileged CSR instruction encoding).
+fn csrrs(rd: u8, csr: u16, rs1: u8) -> u32 {
+    (u32::from(csr) << 20) | (u32::from(rs1) << 15) | (2 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
+fn quantum_image(code: &[u32]) -> Arc<LoadImage> {
+    Arc::new(LoadImage::parse(&elf::elf_with_code(code, 0, true, false, 0x4000)).unwrap())
+}
+
+fn quantum_config(target: &Arc<ScriptTarget>, quantum: u64) -> MachineConfig {
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    config.quantum = quantum;
+    config
+}
+
+/// `C` read through the shared owner's installed domain, as the contract's
+/// U1 controls name their observables.
+fn domain_mtime(owner: &Machine) -> u64 {
+    owner
+        .inner
+        .installed
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .platform
+        .read_mtime()
+        .unwrap()
+}
+
+/// `L` read through the shared owner's installed domain.
+fn domain_local_time(owner: &Machine) -> u64 {
+    owner
+        .inner
+        .installed
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .platform
+        .read_local_time()
+        .unwrap()
+}
+
+/// `O` read through the shared owner's installed domain.
+fn domain_local_offset(owner: &Machine) -> u64 {
+    owner
+        .inner
+        .installed
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .platform
+        .local_offset()
+        .unwrap()
+}
+
+fn domain_syncs(owner: &Machine) -> u64 {
+    owner
+        .inner
+        .installed
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .platform
+        .quantum_syncs()
+        .unwrap()
+}
+
+/// quantum D2: the selection defaults off, and a non-zero quantum requires the
+/// TLM route and a representable `(Q + t + 1) x tick_period` bound.
+#[test]
+fn quantum_defaults_off_and_refuses_native_and_oversized_selections() {
+    for kind in [PlatformKind::Native, PlatformKind::Flat] {
+        assert_eq!(
+            MachineConfig::new(kind).quantum,
+            0,
+            "{kind:?}: a fresh MachineConfig selected a quantum"
+        );
+    }
+    // A non-zero quantum on the native transport is the widened transport error.
+    let mut native = MachineConfig::new(PlatformKind::Native);
+    native.quantum = 4;
+    let owner = Machine::new(native);
+    let error = owner
+        .install(image(elf::nop()))
+        .expect_err("a native quantum selection was accepted");
+    assert!(
+        matches!(error, MachineError::UnsupportedTransport),
+        "the native quantum selection was not a transport error: {error:?}"
+    );
+    assert!(
+        error.to_string().contains("quantum"),
+        "the widened transport message does not name the quantum case: {error}"
+    );
+    // An oversized quantum cannot represent its declared maximum turn bound.
+    let target = delay_target(1_000_000, 0);
+    let owner = Machine::new(quantum_config(&target, u64::MAX - 100));
+    let error = owner
+        .install(image(elf::nop()))
+        .expect_err("an unrepresentable quantum bound was accepted");
+    assert!(
+        matches!(error, MachineError::Placement(_)),
+        "an unrepresentable quantum bound was not a placement error: {error:?}"
+    );
+    // The check does not run for Q = 0: the same oversized target is accepted.
+    let oversized = delay_target(2_000_000_000_000_000_000, 0);
+    let owner = Machine::new(quantum_config(&oversized, 0));
+    owner
+        .install(image(elf::nop()))
+        .expect("Q = 0 ran the quantum bound check");
+}
+
+/// quantum D5/D7: a run with `Q` = 1 has the same committed time, presented
+/// time, ISA counters and delay total as the base `Q` = 0 route, turn by turn;
+/// every boundary syncs through the sync path and leaves the counters alone.
+#[test]
+fn quantum_zero_and_one_match_the_base_route_turn_by_turn() {
+    // (committed time C, presented time L, minstret, mcycle, delay total fs)
+    type Record = (u64, u64, u64, u64, u64);
+
+    fn route(quantum: u64, target: &Arc<ScriptTarget>) -> Vec<Record> {
+        let mut owned = OwnedMachine::new(
+            quantum_config(target, quantum),
+            quantum_image(&[elf::nop(), elf::sd(2, 1, 0), elf::nop()]),
+        )
+        .unwrap();
+        prepare_store(&mut owned, 0x1234_5678);
+        (0..3)
+            .map(|_| {
+                let turn = owned.step_request(false, false, false).unwrap();
+                assert!(
+                    !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+                    "the parity guest failed: {:?}",
+                    turn.hart().outcome
+                );
+                let (minstret, mcycle) = guest_counters_now(&owned);
+                (
+                    owned.platform_mtime().unwrap(),
+                    owned.platform_local_time().unwrap(),
+                    minstret,
+                    mcycle,
+                    turn.boundary().transport_delay_femtoseconds,
+                )
+            })
+            .collect()
+    }
+
+    let parity_target = delay_target(1_000_000, 1_000_000);
+    let parity = route(0, &parity_target);
+    let one_target = delay_target(1_000_000, 1_000_000);
+    let one = route(1, &one_target);
+    assert_eq!(
+        parity, one,
+        "Q = 1 diverged from the base route in committed time, time, counters or delay"
+    );
+    assert_eq!(
+        parity[0].0, 3,
+        "the delay target did not charge one tick per transaction"
+    );
+
+    // The Q = 1 route syncs at every boundary and never touches a counter.
+    let mut owned = OwnedMachine::new(
+        quantum_config(&delay_target(1_000_000, 1_000_000), 1),
+        quantum_image(&[elf::nop(), elf::sd(2, 1, 0), elf::nop()]),
+    )
+    .unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    for boundary in 1..=3u64 {
+        let turn = owned.step_request(false, false, false).unwrap();
+        let facts = turn
+            .boundary()
+            .quantum
+            .expect("Q = 1 must report quantum facts");
+        assert_eq!(facts.ticks, 1);
+        assert_eq!(facts.interrupt_latency_bound_ticks, 0);
+        assert!(!facts.reduced_accuracy);
+        assert!(facts.reached, "Q = 1 must reach the threshold every turn");
+        assert_eq!(
+            facts.syncs, boundary,
+            "the boundary sync was not counted once"
+        );
+        assert_eq!(owned.platform_local_offset().unwrap(), 0);
+        assert_eq!(
+            guest_counters_now(&owned).0,
+            boundary,
+            "a sync charged a counter"
+        );
+    }
+}
+
+/// quantum D4/D5/D10: the advance enters `O`, `O < Q` at every unsynced
+/// boundary, and the threshold test syncs once `O >= Q`, reporting `reached`
+/// from the test on `O` after the advance.
+#[test]
+fn quantum_offset_stays_below_the_threshold_until_a_boundary_syncs() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 4),
+        quantum_image(&[elf::nop(), elf::sd(2, 1, 0), elf::nop()]),
+    )
+    .unwrap();
+    prepare_store(&mut owned, 0x55);
+
+    let mut local = 0u64;
+    let mut committed = 0u64;
+    let mut syncs = 0u64;
+    for _ in 0..3 {
+        let before = target.transactions.load(Ordering::SeqCst) as u64;
+        let turn = owned.step_request(false, false, false).unwrap();
+        let charged = target.transactions.load(Ordering::SeqCst) as u64 - before;
+        local += 1 + charged;
+        // `O` after the advance, before this boundary's own sync.
+        let pending = local - committed;
+        let facts = turn
+            .boundary()
+            .quantum
+            .expect("Q = 4 must report quantum facts");
+        assert_eq!(
+            facts.reached,
+            pending >= 4,
+            "reached must be D5's test on O after the advance"
+        );
+        if facts.reached {
+            committed += pending;
+            syncs += 1;
+        }
+        assert_eq!(facts.syncs, syncs);
+        assert_eq!(owned.platform_mtime().unwrap(), committed);
+        assert_eq!(
+            owned.platform_local_offset().unwrap(),
+            local - committed,
+            "an unsynced boundary must keep O and a synced one must clear it"
+        );
+        assert!(
+            owned.platform_local_offset().unwrap() < 4,
+            "a boundary kept O >= Q"
+        );
+        assert_eq!(
+            owned.platform_local_time().unwrap(),
+            local,
+            "local time must accumulate exactly one advance per turn"
+        );
+        assert_eq!(
+            guest_time(&owned),
+            local,
+            "the turn-end publish must present L"
+        );
+    }
+    assert_eq!(syncs, 1, "the threshold did not sync exactly once");
+    assert_eq!(
+        committed, 7,
+        "the threshold sync committed the wrong amount"
+    );
+    assert_eq!(local, 10, "the parity local total is wrong");
+}
+
+/// quantum D4: with direct memory on and off, one turn's transport delay enters
+/// the offset exactly once, so committed local time is the same as the base
+/// route and no delay is converted twice by a sync.
+#[test]
+fn quantum_charges_one_transport_delay_exactly_once_with_direct_memory_on_and_off() {
+    for direct_mem in [false, true] {
+        let run = |quantum: u64| -> (u64, u64) {
+            let target = DirectMemTarget::new(elf::BASE, 0x4000);
+            target.set_declared_max_delay(1_000_000);
+            target.set_delay(1_000_000);
+            target.set_grant_latency(1_000_000, 1_000_000);
+            let mut config = MachineConfig::new(PlatformKind::Native);
+            config.transport = Transport::tlm(target.clone());
+            config.dmi = direct_mem;
+            config.quantum = quantum;
+            let mut owned =
+                OwnedMachine::new(config, direct_mem_image(&[elf::nop(), elf::sd(2, 1, 0)]))
+                    .unwrap();
+            prepare_store(&mut owned, 0x77);
+            let mut delay_fs = 0;
+            for _ in 0..2 {
+                let turn = owned.step_request(false, false, false).unwrap();
+                assert!(
+                    !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+                    "dmi {direct_mem}: the guest failed: {:?}",
+                    turn.hart().outcome
+                );
+                delay_fs = turn.boundary().transport_delay_femtoseconds;
+            }
+            (owned.platform_local_time().unwrap(), delay_fs)
+        };
+        let parity = run(0);
+        let quantum = run(1024);
+        assert_eq!(
+            parity, quantum,
+            "dmi {direct_mem}: the quantum offset converted a delay differently"
+        );
+        assert_eq!(
+            quantum.0,
+            2 + quantum.1 / 1_000_000,
+            "dmi {direct_mem}: the delay was not charged exactly once"
+        );
+    }
+}
+
+/// quantum D4: a sync never reaches `mcycle` or `minstret`; the delay enters
+/// committed time once and only once.
+#[test]
+fn quantum_syncs_do_not_touch_the_isa_counters() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1),
+        quantum_image(&[elf::sd(2, 1, 0)]),
+    )
+    .unwrap();
+    prepare_store(&mut owned, 0x99);
+    let (minstret, mcycle) = guest_counters_now(&owned);
+    let turn = owned.step_request(false, false, false).unwrap();
+    let facts = turn
+        .boundary()
+        .quantum
+        .expect("Q = 1 must report quantum facts");
+    assert_eq!(facts.syncs, 1);
+    assert!(facts.reached);
+    assert_eq!(
+        guest_counters_now(&owned),
+        (minstret + 1, mcycle + 1),
+        "a sync or a delay charged an ISA counter"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        4,
+        "the synced delay did not enter committed time exactly once"
+    );
+}
+
+/// quantum D4/F10: the overflow split at `u64::MAX` — a zero-delay turn wraps
+/// and syncs the wrapped value like the parity run, and a delayed turn is
+/// checked as today's simulator failure without moving committed time.
+#[test]
+fn quantum_overflow_splits_at_u64_max() {
+    // Zero-delay: the wrapping rule, then the F10 turn-end sync.
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(quantum_config(&target, 1024), image(elf::nop())).unwrap();
+    owned.set_platform_mtime(u64::MAX).unwrap();
+    let turn = owned.step_request(false, false, false).unwrap();
+    assert!(
+        matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)),
+        "the zero-delay wrap failed: {:?}",
+        turn.hart().outcome
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        0,
+        "the zero-delay wrap did not commit the wrapped local time"
+    );
+    assert_eq!(owned.platform_local_time().unwrap(), 0);
+    assert_eq!(guest_time(&owned), 0);
+
+    // Delayed: the checked rule, today's simulator failure, and neither C nor
+    // O takes the refused advance.
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::sd(2, 1, 0)]),
+    )
+    .unwrap();
+    prepare_store(&mut owned, 0x99);
+    owned.set_platform_mtime(u64::MAX).unwrap();
+    let turn = owned.step_request(false, false, false).unwrap();
+    let StepOutcome::SimulatorFailure(failure) = &turn.hart().outcome else {
+        panic!(
+            "a delayed advance past u64::MAX was accepted: {:?}",
+            turn.hart().outcome
+        );
+    };
+    assert!(
+        failure.message.contains("overflow"),
+        "the delayed overflow lost its diagnostic: {failure:?}"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        u64::MAX,
+        "a refused delayed advance moved committed time"
+    );
+    assert_eq!(
+        owned.platform_local_offset().unwrap(),
+        0,
+        "a refused delayed advance entered the offset"
+    );
+}
+
+/// quantum F3: with a non-zero-delay target, a WFI wake presents the same
+/// time as the parity run, because the waiting turn syncs before the jump.
+#[test]
+fn quantum_wfi_wake_time_matches_the_parity_run() {
+    // mtimecmp = 200 with MTIE set, then WFI; the wake turn retires the next
+    // instruction.  mie is set without mstatus.MIE so no trap is taken.
+    let code = [
+        elf::lui(4, 0x2004),
+        elf::addi(5, 0, 200),
+        elf::sd(5, 4, 0),
+        elf::addi(6, 0, 0x80),
+        csrrs(0, MIE, 6),
+        WFI,
+        elf::nop(),
+    ];
+    type Record = (u64, u64, u64, u64);
+    let route = |quantum: u64, target: &Arc<ScriptTarget>| -> Vec<Record> {
+        let mut owned =
+            OwnedMachine::new(quantum_config(target, quantum), quantum_image(&code)).unwrap();
+        (0..7)
+            .map(|_| {
+                let turn = owned.step_request(false, false, false).unwrap();
+                assert!(
+                    !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+                    "the wait guest failed: {:?}",
+                    turn.hart().outcome
+                );
+                let (minstret, mcycle) = guest_counters_now(&owned);
+                (
+                    owned.platform_local_time().unwrap(),
+                    guest_time(&owned),
+                    minstret,
+                    mcycle,
+                )
+            })
+            .collect()
+    };
+    let parity = route(0, &delay_target(1_000_000, 1_000_000));
+    let quantum = route(1024, &delay_target(1_000_000, 1_000_000));
+    assert_eq!(
+        parity, quantum,
+        "the wake presented a different time than the parity run"
+    );
+    assert_eq!(
+        parity[6].0, 203,
+        "the parity run did not land the wake on mtimecmp plus one turn"
+    );
+}
+
+/// quantum F5: a single-step turn ends in a sync through both entry points, so
+/// committed time equals local time after every `Machine::step` and every
+/// `OwnedMachine::step`.
+#[test]
+fn quantum_single_step_syncs_the_offset() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let owner = Machine::new(quantum_config(&target, 1024));
+    owner.install(image(elf::sd(2, 1, 0))).unwrap();
+    owner.resume().unwrap();
+    for boundary in 1..=2u64 {
+        let turn = owner.step(false).unwrap();
+        assert!(!matches!(
+            turn.hart().outcome,
+            StepOutcome::SimulatorFailure(_)
+        ));
+        assert_eq!(
+            domain_mtime(&owner),
+            domain_local_time(&owner),
+            "Machine::step left the offset unsynced"
+        );
+        assert_eq!(domain_local_offset(&owner), 0);
+        assert_eq!(domain_syncs(&owner), boundary);
+    }
+
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::sd(2, 1, 0)]),
+    )
+    .unwrap();
+    prepare_store(&mut owned, 0x11);
+    for boundary in 1..=2u64 {
+        owned.step(false).unwrap();
+        assert_eq!(
+            owned.platform_mtime().unwrap(),
+            owned.platform_local_time().unwrap(),
+            "OwnedMachine::step left the offset unsynced"
+        );
+        assert_eq!(owned.platform_local_offset().unwrap(), 0);
+        assert_eq!(owned.platform_quantum_syncs().unwrap(), boundary);
+    }
+}
+
+/// quantum F6: a failed turn syncs the offset it knows, including known delay,
+/// without touching the transport, so committed time equals the D9 sum.
+#[test]
+fn quantum_failed_turn_syncs_its_known_delay() {
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(!turn.boundary().quantum.unwrap().reached);
+    }
+    let known = owned.platform_local_time().unwrap();
+    assert_eq!(owned.platform_mtime().unwrap(), 0);
+    let transactions = target.transactions.load(Ordering::SeqCst) as u64;
+    assert_eq!(
+        known,
+        2 + transactions,
+        "two delayed turns did not charge their turns plus transactions"
+    );
+
+    target.set_unknown(true);
+    let turn = owned.step_request(false, false, false).unwrap();
+    assert!(
+        matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+        "the unknown completion did not fail the turn: {:?}",
+        turn.hart().outcome
+    );
+    assert!(turn.boundary().uncertain);
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        owned.platform_local_time().unwrap(),
+        "a failed turn left its offset unsynced"
+    );
+    assert!(
+        owned.platform_mtime().unwrap() >= known,
+        "F6 lost the run's known offset"
+    );
+    assert_eq!(owned.platform_local_offset().unwrap(), 0);
+}
+
+/// quantum D10: the boundary and control facts report the selected quantum,
+/// the declared latency bound, the reduced-accuracy request and the sync count;
+/// they are absent when the quantum is off.
+#[test]
+fn quantum_facts_report_the_selected_quantum() {
+    // Off: no fact at all.
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned = OwnedMachine::new(quantum_config(&target, 0), image(elf::nop())).unwrap();
+    let turn = owned.step_request(false, false, false).unwrap();
+    assert!(turn.boundary().quantum.is_none());
+    assert!(owned.control_boundary(false).unwrap().quantum.is_none());
+    assert!(owned.quantum_report().is_none());
+
+    // Q = 1 is precise: zero bound, no reduced accuracy, reached every turn.
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned = OwnedMachine::new(quantum_config(&target, 1), image(elf::nop())).unwrap();
+    let turn = owned.step_request(false, false, false).unwrap();
+    let facts = turn.boundary().quantum.expect("Q = 1 must report facts");
+    assert_eq!(facts.ticks, 1);
+    assert_eq!(facts.interrupt_latency_bound_ticks, 0);
+    assert!(!facts.reduced_accuracy);
+    assert!(facts.reached);
+    assert_eq!(facts.syncs, 1);
+
+    // Q >= 2: `Q - 1 + t` bound with `t` the route's turn completion bound.
+    let target = delay_target(1_000_000, 1_000_000);
+    let mut owned = OwnedMachine::new(quantum_config(&target, 4), image(elf::nop())).unwrap();
+    let turn = owned.step_request(false, false, false).unwrap();
+    let facts = turn.boundary().quantum.expect("Q = 4 must report facts");
+    let bound = crate::blocking::MAX_GUEST_TRANSACTIONS_PER_TURN;
+    assert_eq!(facts.ticks, 4);
+    assert_eq!(facts.interrupt_latency_bound_ticks, 4 - 1 + bound);
+    assert!(facts.reduced_accuracy);
+    assert!(!facts.reached);
+    assert_eq!(facts.syncs, 0);
+    // A control boundary populates the same facts and reports `reached` false.
+    let control = owned
+        .control_boundary(false)
+        .unwrap()
+        .quantum
+        .expect("Q = 4 must report control facts");
+    assert_eq!(control.ticks, 4);
+    assert_eq!(control.interrupt_latency_bound_ticks, 4 - 1 + bound);
+    assert!(!control.reached);
+    assert_eq!(control.syncs, 0);
+    // The result report carries the same cumulative facts.
+    let report = owned
+        .quantum_report()
+        .expect("Q = 4 must report result facts");
+    assert_eq!(report.ticks, 4);
+    assert!(report.reduced_accuracy);
+}
