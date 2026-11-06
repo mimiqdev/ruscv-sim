@@ -3163,6 +3163,11 @@ impl RiscVSimulator {
                     return None;
                 }
                 self.machine.observe_tohost(&mut turn, tohost);
+                // quantum F2: a non-zero RAM sample syncs before the shared
+                // exit rule decodes it, exactly as the native Runner's
+                // observer does. A flat Platform cannot select a quantum
+                // (quantum D2), so this is the same no-op as a `Q` = 0 run.
+                let _ = self.machine.sync_after_tohost(&mut turn);
                 let observed = &turn.tohost().expect("requested signal fact").value;
                 match observed {
                     Ok(value) => {
