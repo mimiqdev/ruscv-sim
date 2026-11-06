@@ -160,6 +160,19 @@ pub struct MachineConfig {
     /// `dmi_allowed` hint.  `true` requires a [`Transport::Tlm`] selection;
     /// [`MachineError::UnsupportedTransport`] reports a native combination.
     pub dmi: bool,
+    /// The temporal-coupling quantum in Platform ticks (quantum D2).
+    ///
+    /// Zero (the default) is off: every turn advances committed time directly
+    /// on exactly the pre-quantum path.  A non-zero selection lets the Hart
+    /// lead committed time by a bounded local offset that synchronizes at the
+    /// threshold and at the contract's forced points (quantum D3–D5).
+    ///
+    /// It stays `pub(crate)` until the contract's U2 unit completes, so no
+    /// public caller can select a partially synchronized quantum (issue 201
+    /// U1).  A non-zero value requires a [`Transport::Tlm`] selection and
+    /// [`MachineError::Placement`] reports a bound that does not fit the
+    /// declared tick period.
+    pub(crate) quantum: u64,
     /// The declared Platform tick period (dev-plan D7).
     ///
     /// One tick is one virtual-time unit and one `mtime` unit.  A blocking
@@ -182,6 +195,7 @@ impl MachineConfig {
             isa: IsaProfile::default(),
             transport: Transport::Native,
             dmi: false,
+            quantum: 0,
             tick_period: TickPeriod::DEFAULT,
             verbose: false,
             tohost_override: None,
@@ -215,8 +229,8 @@ pub enum MachineError {
     Placement(String),
     #[error(
         "unsupported transport configuration: a TLM transport requires PlatformKind::Native (Flat \
-         has no TLM route), and direct memory requires a TLM transport (the native route has no \
-         direct memory)"
+         has no TLM route), direct memory requires a TLM transport (the native route has no direct \
+         memory), and a quantum requires a TLM transport (the native route has no local offset)"
     )]
     UnsupportedTransport,
     #[error("this configuration has no UART")]
@@ -257,6 +271,9 @@ pub struct BoundaryFacts {
     /// zero-delay target, and excludes SBA/Debug Mode delay, which is
     /// validated but not charged.
     pub transport_delay_femtoseconds: u64,
+    /// The boundary's quantum facts (quantum D10); `None` when the quantum
+    /// is off, whose stdout stays byte-identical.
+    pub quantum: Option<QuantumFacts>,
 }
 impl Default for BoundaryFacts {
     fn default() -> Self {
@@ -270,7 +287,38 @@ impl Default for BoundaryFacts {
             no_progress: false,
             deadline_stop: false,
             transport_delay_femtoseconds: 0,
+            quantum: None,
         }
+    }
+}
+
+/// The reduced-accuracy facts of one boundary under a selected quantum
+/// (quantum D10).  Present only when the quantum is non-zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuantumFacts {
+    /// The selected quantum `Q` in Platform ticks.
+    pub ticks: u64,
+    /// The declared interrupt-latency bound: zero for `Q` = 1, otherwise
+    /// `Q - 1 + t`, with `t` the selected route's turn completion bound
+    /// (quantum D8/D10).
+    pub interrupt_latency_bound_ticks: u64,
+    /// True for `Q` >= 2: the explicit ADR-0004 §6.3 reduced-accuracy request.
+    pub reduced_accuracy: bool,
+    /// The cumulative `D3` sync count for the current Platform generation.
+    pub syncs: u64,
+    /// Whether quantum D5's threshold test passed at this boundary.
+    pub reached: bool,
+}
+
+/// The declared interrupt-latency bound of a selected quantum (quantum D10).
+///
+/// It is zero for `Q` = 1 and `Q - 1 + t` otherwise.  The build-time quantum
+/// validation guarantees the sum is representable.
+pub(crate) fn interrupt_latency_bound_ticks(quantum: u64, turn_bound: Option<u64>) -> u64 {
+    if quantum == 1 {
+        0
+    } else {
+        quantum - 1 + turn_bound.unwrap_or(0)
     }
 }
 
@@ -387,6 +435,9 @@ struct Installed {
     core: RiscvCore,
     platform: Platform,
     image: Arc<LoadImage>,
+    /// The Machine's selected temporal-coupling quantum in Platform ticks
+    /// (quantum D2/D3); zero is off.
+    quantum: u64,
     /// Stops an idle jump when it is earlier than the next `mtimecmp`.
     /// Not a CLI flag.
     virtual_deadline: Option<u64>,
@@ -414,6 +465,7 @@ impl Installed {
             core,
             platform,
             image,
+            quantum: config.quantum,
             virtual_deadline: None,
             #[cfg(test)]
             before_turn: None,
@@ -440,8 +492,13 @@ impl Installed {
         let mut idle_stop = (false, false);
         let mut jumped = false;
         let mut wake_blocked = false;
+        // Whether a boundary sync moved committed time during this exchange,
+        // so the turn-end publish re-presents it (quantum D3).
+        let mut synced = false;
         let mut hart = loop {
-            let mtime = self.platform.read_mtime()?;
+            // quantum D3: each turn start presents the Hart's local time `L`,
+            // which is committed time when the quantum is off.
+            let mtime = self.platform.read_local_time()?;
             self.core.state_mut().csr.set_time(mtime);
             let lines = self.platform.machine_interrupt_lines()?;
             self.core
@@ -455,6 +512,12 @@ impl Installed {
                     idle_stop = (true, false);
                 }
                 break hart;
+            }
+            // quantum F3: a waiting turn syncs ahead of the wake check, so
+            // `settle_wait` and the idle jump see committed local time and
+            // the jump lands with a zero offset.
+            if self.quantum != 0 {
+                synced |= self.platform.commit_local_time()?;
             }
             match self.settle_wait() {
                 WaitSettlement::NoProgress => {
@@ -509,39 +572,86 @@ impl Installed {
         } else {
             Vec::new()
         };
-        if advance != 0 {
-            // Native and zero-delay turns keep the existing wrapping one-tick
-            // path.  A transport-derived advance is checked, and an overflow
-            // becomes a simulator failure that retains the completed facts
-            // and the already-accounted delay instead of rewinding time.
-            let advanced = if delay.ticks == 0 {
-                self.platform.advance_mtime()
-            } else {
-                self.platform.advance_mtime_by(advance)
-            };
-            match advanced {
-                // The instruction read the pre-turn snapshot. Park `time` and
-                // the machine lines on the post-tick device so a host inspect
-                // matches the store plus the tick.
-                Ok(mtime) => self.publish_platform_time(mtime)?,
-                Err(error) => {
-                    // Preserve a transport-failure diagnostic already produced
-                    // by this turn and append the clock failure, so the
-                    // original overshoot/maximum context is not lost.
-                    match &mut hart.outcome {
-                        StepOutcome::SimulatorFailure(existing) => {
-                            existing.message.push_str("; clock advance also failed: ");
-                            existing.message.push_str(&error.to_string());
-                        }
-                        _ => {
-                            hart.outcome =
-                                StepOutcome::SimulatorFailure(crate::core::SimulatorFailure {
-                                    pc: self.core.state().pc,
-                                    kind: crate::core::SimulatorFailureKind::Invariant,
-                                    message: format!("Platform time: {error}"),
-                                });
-                        }
-                    }
+        let mut clock_failure = None;
+        let mut quantum_reached = false;
+        if self.quantum == 0 {
+            if advance != 0 {
+                // Native and zero-delay turns keep the existing wrapping one-tick
+                // path.  A transport-derived advance is checked, and an overflow
+                // becomes a simulator failure that retains the completed facts
+                // and the already-accounted delay instead of rewinding time.
+                let advanced = if delay.ticks == 0 {
+                    self.platform.advance_mtime()
+                } else {
+                    self.platform.advance_mtime_by(advance)
+                };
+                match advanced {
+                    // The instruction read the pre-turn snapshot. Park `time`
+                    // and the machine lines on the post-tick device so a host
+                    // inspect matches the store plus the tick.
+                    Ok(_) => self.publish_platform_time()?,
+                    Err(error) => clock_failure = Some(error),
+                }
+            }
+        } else {
+            // quantum D4: with a quantum selected the same once-converted
+            // `advance` enters the Platform's local offset `O` in place of
+            // committed time.  The two overflow rules apply to `L` at the same
+            // point: a turn with no delay ticks wraps, a turn with delay ticks
+            // is checked, and a failed check is today's simulator failure,
+            // retaining the completed facts.  That turn's advance enters
+            // neither `C` nor `O`.
+            if advance != 0 {
+                let checked = delay.ticks != 0;
+                if let Err(error) = self.platform.accumulate_local_offset(advance, checked) {
+                    clock_failure = Some(error);
+                }
+            }
+            // quantum F10: a zero-delay turn that left local time below
+            // committed time wrapped past `u64::MAX`.
+            let wrapped = advance != 0
+                && delay.ticks == 0
+                && self.platform.read_local_time()? < self.platform.read_mtime()?;
+            // quantum D5: the threshold test runs first, on `O` after the
+            // advance, so a coincident forced sync cannot clear `reached`.
+            quantum_reached = self.platform.local_offset()? >= self.quantum;
+            if quantum_reached {
+                synced |= self.platform.commit_local_time()?;
+            }
+            if outcome_failed {
+                // quantum F6: a failed turn syncs the offset it knows,
+                // including known delay, without touching the transport.
+                synced |= self.platform.commit_local_time()?;
+            } else if single_step {
+                // quantum F5: a single-step turn ends in a sync, so every
+                // shared Machine control runs at a zero offset.
+                synced |= self.platform.commit_local_time()?;
+            }
+            if wrapped {
+                // quantum F10: the wrapped value presents as in a parity run,
+                // so committed time takes the wrapped offset at turn end and
+                // MTIP is never stale high.
+                synced |= self.platform.commit_local_time()?;
+            }
+            if clock_failure.is_none() && (advance != 0 || synced) {
+                self.publish_platform_time()?;
+            }
+        }
+        if let Some(error) = clock_failure {
+            // Preserve a transport-failure diagnostic already produced
+            // by this turn and append the clock failure, so the
+            // original overshoot/maximum context is not lost.
+            match &mut hart.outcome {
+                StepOutcome::SimulatorFailure(existing) => {
+                    existing.message.push_str("; clock advance also failed: ");
+                    existing.message.push_str(&error.to_string());
+                }
+                _ => {
+                    hart.outcome = StepOutcome::SimulatorFailure(crate::core::SimulatorFailure {
+                        pc: self.core.state().pc,
+                        kind: crate::core::SimulatorFailureKind::Invariant,
+                        message: format!("Platform time: {error}"),
+                    });
                 }
             }
         }
@@ -568,14 +678,34 @@ impl Installed {
                 no_progress: idle_stop.0,
                 deadline_stop: idle_stop.1,
                 transport_delay_femtoseconds: self.platform.transport_delay_femtoseconds(),
+                quantum: self.quantum_facts(quantum_reached)?,
                 ..BoundaryFacts::default()
             },
             wake_blocked,
             _receipt: receipt,
         })
     }
-    /// Publish the post-advance `mtime` and the machine lines derived from it.
-    fn publish_platform_time(&mut self, mtime: u64) -> Result<(), MachineError> {
+    /// quantum D10: this boundary's quantum facts, present only when a
+    /// quantum is selected.  `reached` is the D5 threshold test's result.
+    fn quantum_facts(&self, reached: bool) -> Result<Option<QuantumFacts>, MachineError> {
+        if self.quantum == 0 {
+            return Ok(None);
+        }
+        Ok(Some(QuantumFacts {
+            ticks: self.quantum,
+            interrupt_latency_bound_ticks: interrupt_latency_bound_ticks(
+                self.quantum,
+                self.platform.turn_completion_bound_ticks(),
+            ),
+            reduced_accuracy: self.quantum >= 2,
+            syncs: self.platform.quantum_syncs()?,
+            reached,
+        }))
+    }
+    /// Publish the post-advance local time `L` and the machine lines derived
+    /// from committed time (quantum D3).
+    fn publish_platform_time(&mut self) -> Result<(), MachineError> {
+        let mtime = self.platform.read_local_time()?;
         self.core.state_mut().csr.set_time(mtime);
         let lines = self.platform.machine_interrupt_lines()?;
         self.core

@@ -131,6 +131,7 @@ fn test_execution_result_error() {
         error: Some("Test error".to_string()),
         signature_addr: None,
         signature_data: None,
+        quantum: None,
     };
 
     assert_eq!(result.exit_code, 1);
@@ -150,6 +151,7 @@ fn test_execution_result_timeout() {
         error: Some("Timeout".to_string()),
         signature_addr: None,
         signature_data: None,
+        quantum: None,
     };
 
     assert!(result.timed_out);
@@ -169,6 +171,7 @@ fn test_execution_result_signature() {
         error: None,
         signature_addr: Some(0x8000_2000),
         signature_data: Some(sig_data.clone()),
+        quantum: None,
     };
 
     assert!(result.signature_addr.is_some());

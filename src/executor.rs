@@ -49,6 +49,9 @@ pub struct ExecutionResult {
     pub signature_addr: Option<u64>,
     /// Signature data (if available)
     pub signature_data: Option<Vec<u8>>,
+    /// The run's quantum facts (quantum D10); `None` when the quantum is off,
+    /// whose stdout stays byte-identical.
+    pub quantum: Option<crate::machine::QuantumFacts>,
 }
 
 /// What a configuration's attempt to read its declared signature region produced.
@@ -156,6 +159,7 @@ impl<'a> ResultInputs<'a> {
             error,
             signature_addr: self.signature.map(|info| info.vaddr),
             signature_data,
+            quantum: None,
         }
     }
 }
@@ -272,6 +276,12 @@ pub struct SystemBus {
     /// so the counter exists to keep the endpoint's commit bookkeeping exact
     /// and uniform with the RAM domain rather than to feed a live snapshot.
     htif_committed_writes: u64,
+    /// quantum D3: the Hart's local offset `O` in Platform ticks and the
+    /// cumulative boundary-sync count, beside the CLINT under the bus lock, so
+    /// a device access can flush the offset (quantum F1, unit U2) and a fresh
+    /// Platform cannot inherit either.
+    local_offset: u64,
+    quantum_syncs: u64,
 }
 
 impl SystemBus {
@@ -307,6 +317,10 @@ impl SystemBus {
             htif_size: HTIF_SIZE,
             htif_write_callback: None,
             htif_committed_writes: 0,
+            // quantum D3: a fresh Platform starts with no local offset and no
+            // counted syncs, so no prior generation can inherit one.
+            local_offset: 0,
+            quantum_syncs: 0,
             // clock_freq is the unused TLM crystal. The public clock is
             // advance_mtime, one tick per completed Hart turn.
             clint: Clint::new(SYSTEM_BUS_CLINT_BASE, 1, 0),
@@ -345,6 +359,58 @@ impl SystemBus {
     /// Add one tick. Does not touch `mcycle` or `minstret`.
     pub fn advance_mtime(&mut self) {
         self.clint.advance_one_tick();
+    }
+
+    /// quantum D3: the Hart's local offset `O` in Platform ticks.
+    pub(crate) fn local_offset(&self) -> u64 {
+        self.local_offset
+    }
+
+    /// quantum D3/D10: the cumulative count of counted boundary syncs in this
+    /// Platform generation.
+    pub(crate) fn quantum_syncs(&self) -> u64 {
+        self.quantum_syncs
+    }
+
+    /// quantum D4: one turn's `advance` enters the local offset `O` in place of
+    /// committed time.  A turn with delay ticks checks that local time
+    /// `L = C + O + advance` stays representable and a refused advance enters
+    /// neither `C` nor `O`; a turn with no delay ticks wraps, like the native
+    /// one-tick path (quantum F10).
+    pub(crate) fn accumulate_local_offset(
+        &mut self,
+        advance: u64,
+        checked: bool,
+    ) -> Result<(), String> {
+        if checked {
+            let fits = self
+                .clint
+                .read_mtime()
+                .checked_add(self.local_offset)
+                .and_then(|local| local.checked_add(advance));
+            if fits.is_none() {
+                return Err(format!(
+                    "Platform local time overflow advancing by {advance} ticks"
+                ));
+            }
+        }
+        self.local_offset = self.local_offset.wrapping_add(advance);
+        Ok(())
+    }
+
+    /// quantum D3: one boundary sync.  Committed time takes the local offset
+    /// (wrapping, quantum F10) and the offset returns to zero.  The sync is
+    /// counted once when it moved committed time; a zero offset is a no-op and
+    /// is not counted.  It makes no target call and charges no delay.
+    pub(crate) fn commit_local_time(&mut self) -> bool {
+        if self.local_offset == 0 {
+            return false;
+        }
+        let committed = self.clint.read_mtime().wrapping_add(self.local_offset);
+        self.clint.write_mtime(committed);
+        self.local_offset = 0;
+        self.quantum_syncs += 1;
+        true
     }
 
     /// Hart 0 compare. Reset is all-ones.
@@ -1335,7 +1401,10 @@ fn cli_result(
     timed_out: bool,
     error: Option<String>,
 ) -> ExecutionResult {
-    ResultInputs::new(
+    // quantum D10: the result carries the run's cumulative quantum report,
+    // present only when a quantum is selected.
+    let quantum = machine.quantum_report();
+    let mut result = ResultInputs::new(
         exit_code,
         cycles,
         final_pc,
@@ -1344,7 +1413,9 @@ fn cli_result(
         placement.signature_info(),
         ArtifactPolicy::Suppress,
     )
-    .build(machine_artifact(machine))
+    .build(machine_artifact(machine));
+    result.quantum = quantum;
+    result
 }
 
 use std::path::Path;
@@ -3019,7 +3090,10 @@ impl RiscVSimulator {
         timed_out: bool,
         error: Option<String>,
     ) -> ExecutionResult {
-        ResultInputs::new(
+        // quantum D10: the flat configuration never selects a quantum, so its
+        // report is absent and its stdout stays byte-identical.
+        let quantum = self.machine.quantum_report();
+        let mut result = ResultInputs::new(
             exit_code,
             cycles,
             self.machine.state().pc,
@@ -3028,7 +3102,9 @@ impl RiscVSimulator {
             self.image.signature_info(),
             ArtifactPolicy::Report,
         )
-        .build(self.artifact_outcome())
+        .build(self.artifact_outcome());
+        result.quantum = quantum;
+        result
     }
 
     /// Read the image's declared signature region from the flat image.
