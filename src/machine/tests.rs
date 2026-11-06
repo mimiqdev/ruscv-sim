@@ -5053,10 +5053,11 @@ fn quantum_wait_boundary_counts_one_sync_and_keeps_reached() {
     let mut local = 0u64;
     let mut committed = 0u64;
     let mut syncs = 0u64;
-    for _ in 0..10 {
+    for index in 1..=10usize {
         let before = target.transactions.load(Ordering::SeqCst) as u64;
         let turn = owned.step_request(false, false, false).unwrap();
         local += 1 + (target.transactions.load(Ordering::SeqCst) as u64 - before);
+        // `O` after the advance, before this boundary's own sync.
         let pending = local - committed;
         let facts = turn.boundary().quantum.expect("Q = 4 must report facts");
         assert_eq!(
@@ -5064,8 +5065,10 @@ fn quantum_wait_boundary_counts_one_sync_and_keeps_reached() {
             pending >= 4,
             "D5's threshold result must survive the boundary's own sync"
         );
-        if facts.reached {
-            committed += pending;
+        // Turn 5 stores `mtimecmp` through the CLINT, so F1 marks it and that
+        // boundary syncs even though D5's threshold was not reached.
+        if facts.reached || index == 5 {
+            committed = local;
             syncs += 1;
         }
         assert_eq!(facts.syncs, syncs);
@@ -5091,5 +5094,740 @@ fn quantum_wait_boundary_counts_one_sync_and_keeps_reached() {
     assert_eq!(
         owned.platform_local_time().unwrap(),
         owned.platform_mtime().unwrap()
+    );
+}
+
+/// `andi rd, rs1, imm` (RISC-V I-type logical immediate).
+fn andi(rd: u8, rs1: u8, imm: i32) -> u32 {
+    (((imm as u32) & 0xfff) << 20)
+        | (u32::from(rs1) << 15)
+        | (7 << 12)
+        | (u32::from(rd) << 7)
+        | 0x13
+}
+
+/// `jal x0, 0`: a self-loop, so a recognized guest can never run past its code.
+const SPIN: u32 = 0x0000_006f;
+
+/// The CLINT device window's base, as a physical address.
+const CLINT_BASE_ADDRESS: u64 = 0x0200_0000;
+
+/// The `mip` machine-timer bit.
+const MTIP: u64 = 1 << 7;
+
+fn mtip_presented(owned: &OwnedMachine) -> bool {
+    owned.state().csr.read(machine::MIP).unwrap() & MTIP != 0
+}
+
+fn clint_device_offset(offset: u64) -> u64 {
+    CLINT_BASE_ADDRESS + offset
+}
+
+/// quantum F1/D8: a CLINT `mtime` load in the middle of a quantum returns the
+/// parity value, because the Hart device access flushes the offset under the
+/// bus lock before the device sees it. The marked turn then ends in a counted
+/// sync, so the boundary carries `C` = `L`.
+#[test]
+fn quantum_f1_clint_mtime_read_mid_quantum_returns_the_parity_value() {
+    // x4 = 0x0200_bff8 (the CLINT mtime dword), then ld x5, 0(x4).
+    let code = [
+        elf::lui(4, 0x200c),
+        elf::addi(4, 4, -8),
+        elf::nop(),
+        elf::ld(5, 4, 0),
+    ];
+    // (loaded mtime, committed time, local time, counted syncs) after the F1
+    // turn.
+    fn route(quantum: u64, code: &[u32]) -> (u64, u64, u64, u64) {
+        let target = delay_target(0, 0);
+        let mut owned =
+            OwnedMachine::new(quantum_config(&target, quantum), quantum_image(code)).unwrap();
+        let mut record = (0, 0, 0, 0);
+        for turn in 1..=4u64 {
+            let boundary = owned.step_request(false, false, false).unwrap();
+            assert!(
+                !matches!(boundary.hart().outcome, StepOutcome::SimulatorFailure(_)),
+                "the CLINT load guest failed: {:?}",
+                boundary.hart().outcome
+            );
+            if turn == 4 {
+                record = (
+                    owned.state().regs[5],
+                    owned.platform_mtime().unwrap(),
+                    owned.platform_local_time().unwrap(),
+                    boundary.boundary().quantum.map_or(0, |facts| facts.syncs),
+                );
+            }
+        }
+        record
+    }
+    let parity = route(0, &code);
+    let quantum = route(1024, &code);
+    assert_eq!(
+        quantum.0, parity.0,
+        "the CLINT mtime load did not return the parity value"
+    );
+    assert_eq!(
+        quantum.1, quantum.2,
+        "the marked turn did not sync committed time to local time"
+    );
+    assert_eq!(
+        (quantum.1, quantum.2, quantum.3),
+        (parity.1, parity.2, 1),
+        "the marked boundary did not count exactly one sync"
+    );
+}
+
+/// quantum F1/D8: a store of `mtimecmp` equal to `C` plus that turn's `advance`
+/// presents MTIP at the next turn, because the marked turn ends in a sync that
+/// moves `C` to `L`. A compare at or below `C` cannot expose the mark.
+#[test]
+fn quantum_f1_mtimecmp_store_presents_mtip_at_the_next_turn() {
+    // mtimecmp = 0x0200_4000; the preloaded x6 holds the compare.
+    let code = [
+        elf::nop(),
+        elf::nop(),
+        elf::nop(),
+        elf::lui(4, 0x2004),
+        elf::sd(6, 4, 0),
+        elf::nop(),
+    ];
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(quantum_config(&target, 8), quantum_image(&code)).unwrap();
+    for _ in 0..4 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    // This boundary is the store turn's start: `L` = 4, and the DMI write below
+    // syncs (F4), so `C` = 4 as well. One completed turn adds exactly one tick.
+    let compare = owned.platform_local_time().unwrap() + 1;
+    write_gpr(&mut owned, 6, compare);
+    assert_eq!(owned.platform_mtime().unwrap(), 4);
+    owned.step_request(false, false, false).unwrap();
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        compare,
+        "the marked turn did not commit the compare's own local time"
+    );
+    assert_eq!(owned.platform_local_time().unwrap(), compare);
+    owned.step_request(false, false, false).unwrap();
+    assert!(
+        mtip_presented(&owned),
+        "MTIP was not presented at the turn after the marked sync"
+    );
+}
+
+/// quantum F1: an atomic envelope routed to a device window flushes the offset
+/// under the bus lock, so `platform_mtime` equals `L` at the boundary, both for
+/// an HTIF AMO that commits and for a CLINT AMO the device rejects.
+#[test]
+fn quantum_f1_atomic_device_envelope_flushes_the_offset() {
+    let code = [elf::nop(), elf::nop(), amoadd_d(7, 6, 4)];
+    // (committed time, local time, AMO old value, trapped)
+    fn route(address: u64, code: &[u32]) -> (u64, u64, u64, bool) {
+        let target = delay_target(0, 0);
+        let mut owned =
+            OwnedMachine::new(quantum_config(&target, 1024), quantum_image(code)).unwrap();
+        {
+            let state = owned.state_mut();
+            state.regs[4] = address;
+            state.regs[6] = 1;
+        }
+        let mut turn = owned.step_request(false, false, false).unwrap();
+        for _ in 0..2 {
+            assert!(
+                !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+                "the AMO guest failed: {:?}",
+                turn.hart().outcome
+            );
+            drop(turn);
+            turn = owned.step_request(false, false, false).unwrap();
+        }
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the AMO guest failed: {:?}",
+            turn.hart().outcome
+        );
+        (
+            owned.platform_mtime().unwrap(),
+            owned.platform_local_time().unwrap(),
+            owned.state().regs[7],
+            matches!(turn.hart().outcome, StepOutcome::TrapEntered(_)),
+        )
+    }
+    let htif = route(crate::executor::SYSTEM_BUS_HTIF_BASE, &code);
+    assert_eq!(
+        (htif.0, htif.1),
+        (3, 3),
+        "the HTIF AMO did not flush the offset at the boundary"
+    );
+    assert_eq!(htif.2, 0, "the HTIF endpoint did not return its zero read");
+    assert!(!htif.3, "the HTIF AMO did not complete its turn");
+    let clint = route(
+        clint_device_offset(crate::peripherals::clint::reg_offset::MTIMECMP_BASE),
+        &code,
+    );
+    assert_eq!(
+        (clint.0, clint.1),
+        (3, 3),
+        "the rejected CLINT AMO did not flush the offset at the boundary"
+    );
+    assert!(clint.3, "the rejected CLINT AMO did not fault");
+}
+
+/// quantum F2/D10: a non-zero RAM `tohost` sample syncs before the exit rule
+/// decodes it and refreshes the boundary's count; a zero poll is not a sync.
+#[test]
+fn quantum_f2_tohost_sync_refreshes_the_boundary() {
+    let code = [elf::nop(), elf::nop(), elf::sd(2, 1, 0)];
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(quantum_config(&target, 1024), quantum_image(&code)).unwrap();
+    {
+        let state = owned.state_mut();
+        state.regs[1] = elf::TOHOST;
+        // Not an exit command: the shared exit rule decodes nothing.
+        state.regs[2] = 0x1234;
+    }
+    for _ in 0..2 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    let mut turn = owned.step_request(false, false, false).unwrap();
+    assert!(
+        !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+        "the tohost guest failed: {:?}",
+        turn.hart().outcome
+    );
+    let local = owned.platform_local_time().unwrap();
+    assert_eq!(turn.boundary().quantum.unwrap().syncs, 0);
+    owned.observe_tohost(&mut turn, elf::TOHOST);
+    owned.sync_after_tohost(&mut turn).unwrap();
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        local,
+        "F2 did not sync before the exit decode"
+    );
+    assert_eq!(
+        turn.boundary().quantum.unwrap().syncs,
+        1,
+        "the F2 boundary did not count its sync"
+    );
+    // A zero poll is not a sync.
+    storage_write(&owned, elf::TOHOST_SEGMENT_OFFSET, 0);
+    owned.observe_tohost(&mut turn, elf::TOHOST);
+    owned.sync_after_tohost(&mut turn).unwrap();
+    assert_eq!(
+        turn.boundary().quantum.unwrap().syncs,
+        1,
+        "a zero tohost poll counted a sync"
+    );
+}
+
+/// quantum F4/D10: an in-crate `step_request` enters a debug halt at a
+/// non-zero offset below the threshold, so neither the threshold nor F5 nor F7
+/// masks the halt's own sync. `E`, `C` and the presented `time` all equal `L`.
+#[test]
+fn quantum_f4_halt_syncs_the_offset() {
+    // EBREAK with dcsr.ebreakm set halts the Hart.
+    let code = [elf::nop(), elf::nop(), 0x0010_0073];
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(quantum_config(&target, 1024), quantum_image(&code)).unwrap();
+    owned.write_dcsr(1 << 15);
+    for _ in 0..2 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    let turn = owned.step_request(false, false, false).unwrap();
+    assert!(
+        matches!(turn.hart().outcome, StepOutcome::DebugHalted { .. }),
+        "EBREAK with dcsr.ebreakm did not halt: {:?}",
+        turn.hart().outcome
+    );
+    let local = owned.platform_local_time().unwrap();
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        local,
+        "the debug halt left its offset unsynced"
+    );
+    assert_eq!(owned.platform_anchor().unwrap(), local);
+    assert_eq!(guest_time(&owned), local);
+    assert_eq!(owned.platform_local_offset().unwrap(), 0);
+    assert_eq!(
+        turn.boundary().quantum.unwrap().syncs,
+        1,
+        "the halted boundary did not count its sync"
+    );
+}
+
+/// quantum F4: a queued DMI batch is pending debug work, so it synced before
+/// `sample_debug_inputs`; the debugger reads `time` and `mtime` at `L`.
+#[test]
+fn quantum_f4_apply_dmi_syncs_before_the_debug_sample() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    let local = owned.platform_local_time().unwrap();
+    assert_eq!(owned.platform_mtime().unwrap(), 0);
+    dm_active(&mut owned);
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        local,
+        "a queued DMI batch did not sync before the debug sample"
+    );
+    assert_eq!(guest_time(&owned), local);
+    assert_eq!(owned.platform_anchor().unwrap(), local);
+}
+
+/// quantum F4: a busy program-buffer command is pending debug work. The test
+/// seeds the offset the debug path cannot otherwise reach, and the grant's own
+/// sync keeps `time` and `mtime` at `L` across it.
+#[test]
+fn quantum_f4_busy_command_syncs_the_seeded_offset() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    halted_by_dmi(&mut owned);
+    postexec_buffer(&mut owned, [elf::nop(), elf::nop()]);
+    owned.debug_boundary(false).unwrap();
+    assert!(owned.debug_command_busy().unwrap());
+    owned.test_seed_offset(2).unwrap();
+    assert_eq!(owned.platform_local_time().unwrap(), 2);
+    owned.debug_boundary(false).unwrap();
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        2,
+        "the busy command's grant did not sync the seeded offset"
+    );
+    assert_eq!(guest_time(&owned), 2);
+    assert_eq!(owned.platform_local_offset().unwrap(), 0);
+}
+
+/// The recorded `sbdata0` value of the last staged system bus read.
+fn staged_sba_value(owned: &mut OwnedMachine) -> u64 {
+    u64::from(owned.dmi_read(DM_SBDATA0).unwrap())
+}
+
+/// quantum F4/D8: staged system bus work is pending debug work, so the idle
+/// debug path syncs it and the SBA `mtime` read between the turns of a running
+/// Hart returns `L`.
+#[test]
+fn quantum_f4_staged_sba_syncs_and_reads_local_time() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    let local = owned.platform_local_time().unwrap();
+    assert_eq!(local, 2);
+    owned.test_stage_sba_read(clint_device_offset(
+        crate::peripherals::clint::reg_offset::MTIME,
+    ));
+    owned.debug_boundary(false).unwrap();
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        local,
+        "staged system bus work did not sync the offset"
+    );
+    assert_eq!(
+        staged_sba_value(&mut owned),
+        local,
+        "the SBA mtime read did not return local time"
+    );
+}
+
+/// quantum F4/D8: under a halted Hart the offset is zero, so the same SBA read
+/// is the positive control: it returns `C` = `L`.
+#[test]
+fn quantum_f4_sba_mtime_under_a_halted_hart_returns_committed_time() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    dm_active(&mut owned);
+    halted_by_dmi(&mut owned);
+    let committed = owned.platform_mtime().unwrap();
+    assert_eq!(owned.platform_local_offset().unwrap(), 0);
+    owned.test_stage_sba_read(clint_device_offset(
+        crate::peripherals::clint::reg_offset::MTIME,
+    ));
+    owned.debug_boundary(false).unwrap();
+    assert_eq!(
+        staged_sba_value(&mut owned),
+        committed,
+        "an SBA mtime read under a halted Hart did not return committed time"
+    );
+}
+
+/// quantum D3/D9: a guest store that lowers `mtime` is a rebase. MTIP falls at
+/// the next turn as in a parity run, and `E` = `C` = `L` afterwards.
+#[test]
+fn quantum_guest_mtime_store_rebases_and_lowers_mtip() {
+    // x1 = mtimecmp, x2 = the mtime dword: arm the compare at 8, spin, then
+    // lower mtime to 1.
+    let code = [
+        elf::lui(1, 0x2004),
+        elf::addi(5, 0, 8),
+        elf::sd(5, 1, 0),
+        elf::lui(2, 0x200c),
+        elf::addi(2, 2, -8),
+        elf::nop(),
+        elf::nop(),
+        elf::nop(),
+        elf::nop(),
+        elf::nop(),
+        elf::addi(6, 0, 1),
+        elf::sd(6, 2, 0),
+        elf::nop(),
+    ];
+    fn route(quantum: u64, code: &[u32]) -> Vec<bool> {
+        let target = delay_target(0, 0);
+        let mut owned =
+            OwnedMachine::new(quantum_config(&target, quantum), quantum_image(code)).unwrap();
+        (0..13)
+            .map(|_| {
+                let turn = owned.step_request(false, false, false).unwrap();
+                assert!(
+                    !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+                    "the mtime-store guest failed: {:?}",
+                    turn.hart().outcome
+                );
+                mtip_presented(&owned)
+            })
+            .collect()
+    }
+    let parity = route(0, &code);
+    let quantum = route(2, &code);
+    assert!(
+        parity[..12].iter().any(|&mtip| mtip),
+        "MTIP never rose before the lowering store"
+    );
+    assert!(
+        quantum[..12].iter().any(|&mtip| mtip),
+        "Q = 2 never presented MTIP before the lowering store"
+    );
+    assert_eq!(
+        parity[11..],
+        quantum[11..],
+        "the lowering mtime store presented MTIP differently from the parity run"
+    );
+    assert!(
+        !parity[12],
+        "the lowering mtime store did not clear MTIP at the next turn"
+    );
+
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(quantum_config(&target, 2), quantum_image(&code)).unwrap();
+    for _ in 0..12 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    let committed = owned.platform_mtime().unwrap();
+    assert_eq!(
+        committed, 2,
+        "the store turn did not commit the store's value plus its advance"
+    );
+    assert_eq!(owned.platform_local_time().unwrap(), committed);
+    assert_eq!(
+        owned.platform_anchor().unwrap(),
+        committed,
+        "E was not re-anchored by the guest mtime store"
+    );
+}
+
+/// quantum D3: a debug store to `mtime` through the DM inbound port between the
+/// turns of a running Hart re-anchors `E` = `C` = `L`, and its F1 mark does not
+/// survive into the next guest turn.
+#[test]
+fn quantum_debug_mtime_store_reanchors_and_leaves_no_mark() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    let address = clint_device_offset(crate::peripherals::clint::reg_offset::MTIME);
+    dm_active(&mut owned);
+    sba_set_address(&mut owned, address);
+    assert_eq!(
+        sba_write_word(&mut owned, address, 0x40) & SBERROR_SHIFT_MASK,
+        0
+    );
+    assert_eq!(owned.platform_mtime().unwrap(), 0x40);
+    assert_eq!(
+        owned.platform_anchor().unwrap(),
+        0x40,
+        "E was not re-anchored by the debug mtime store"
+    );
+    assert_eq!(owned.platform_local_time().unwrap(), 0x40);
+    let syncs = owned.platform_quantum_syncs().unwrap();
+    owned.step_request(false, false, false).unwrap();
+    assert_eq!(
+        owned.platform_quantum_syncs().unwrap(),
+        syncs,
+        "a debug mtime store left a turn mark for the next guest turn"
+    );
+}
+
+/// `sbcs.sberror`, all three bits.
+const SBERROR_SHIFT_MASK: u32 = 7 << SBERROR_SHIFT;
+
+/// quantum D3: an abstract-command store to `mtime` on the Hart data port while
+/// the Hart is halted re-anchors `E` = `C` = `L`, and its F1 mark is cleared at
+/// the next guest turn's start.
+#[test]
+fn quantum_abstract_mtime_store_reanchors_and_clears_its_mark() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    halted_by_dmi(&mut owned);
+    let address = clint_device_offset(crate::peripherals::clint::reg_offset::MTIME);
+    abstract_write_dword(&mut owned, address, 0x40);
+    assert_eq!(owned.platform_mtime().unwrap(), 0x40);
+    assert_eq!(
+        owned.platform_anchor().unwrap(),
+        0x40,
+        "E was not re-anchored by the abstract mtime store"
+    );
+    assert_eq!(owned.platform_local_time().unwrap(), 0x40);
+    owned
+        .dmi_write(DM_DMCONTROL, DM_DMACTIVE | DM_RESUMEREQ)
+        .unwrap();
+    let syncs = owned.platform_quantum_syncs().unwrap();
+    owned.step_request(false, false, false).unwrap();
+    assert_eq!(
+        owned.platform_quantum_syncs().unwrap(),
+        syncs,
+        "the F1 turn mark survived into the next guest turn"
+    );
+    assert_eq!(
+        owned.platform_local_time().unwrap(),
+        0x41,
+        "the guest turn did not advance local time"
+    );
+}
+
+/// quantum F7/D10: an in-crate `last_slot` stop syncs the offset even when the
+/// threshold leaves it pending, and refreshes the boundary's sync count.
+#[test]
+fn quantum_f7_last_slot_syncs_and_refreshes_the_count() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    let turn = owned.step_request(false, false, true).unwrap();
+    let facts = turn.boundary().quantum.expect("Q = 1024 reports facts");
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        owned.platform_local_time().unwrap(),
+        "the last slot did not sync the offset"
+    );
+    assert!(!facts.reached, "the last slot is not the D5 threshold");
+    assert_eq!(
+        facts.syncs, 1,
+        "the last-slot boundary did not refresh its sync count"
+    );
+    assert!(turn.boundary().budget_exhausted);
+}
+
+/// quantum F8: an in-crate stop that leaves `O` non-zero commits it in the
+/// drain report's generation. No public path reaches this.
+#[test]
+fn quantum_f8_drain_commits_the_offset() {
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(
+        quantum_config(&target, 1024),
+        quantum_image(&[elf::nop(), elf::nop(), elf::nop()]),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    let local = owned.platform_local_time().unwrap();
+    let generation = owned.control_boundary(false).unwrap();
+    assert_eq!(generation.quantum.unwrap().syncs, 0);
+    assert_eq!(owned.platform_mtime().unwrap(), 0);
+    let report = owned.quiesce().unwrap();
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        local,
+        "the drain acknowledgment did not commit the offset"
+    );
+    assert_eq!(owned.platform_local_offset().unwrap(), 0);
+    assert_eq!(owned.platform_anchor().unwrap(), local);
+    assert_eq!(owned.platform_quantum_syncs().unwrap(), 1);
+    assert_eq!(report.lifecycle, Lifecycle::DrainComplete);
+}
+
+/// quantum F9: no offset crosses a generation. A fresh Platform starts with
+/// `C` = `O` = `E` = 0, so the first turn of `install` and `fresh_reset`
+/// presents `time` = 0.
+#[test]
+fn quantum_f9_fresh_generations_start_with_no_offset() {
+    // The guest samples `time` first, so the value it reads is the turn-start
+    // `L` of the fresh generation.
+    let code = [csrrs(5, crate::csr::unprivileged::TIME, 0), elf::nop()];
+    fn first_time(owned: &mut OwnedMachine) -> u64 {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the guest failed: {:?}",
+            turn.hart().outcome
+        );
+        assert_eq!(
+            owned.platform_mtime().unwrap(),
+            0,
+            "a fresh generation committed time on its first turn"
+        );
+        assert_eq!(owned.platform_anchor().unwrap(), 0);
+        assert_eq!(
+            owned.state().regs[5],
+            0,
+            "the first turn's `time` was not `C`"
+        );
+        owned.state().regs[5]
+    }
+    let target = delay_target(0, 0);
+    let mut owned = OwnedMachine::new(quantum_config(&target, 1024), quantum_image(&code)).unwrap();
+    assert_eq!(first_time(&mut owned), 0, "install started with an offset");
+    for _ in 0..2 {
+        owned.step_request(false, false, false).unwrap();
+    }
+    assert!(owned.platform_local_offset().unwrap() > 0);
+    owned.fresh_reset().unwrap();
+    assert_eq!(
+        first_time(&mut owned),
+        0,
+        "fresh_reset started with an offset"
+    );
+}
+
+/// quantum D3/D6/D8/D9: a timer guest that spins on `mip` after arming
+/// `mtimecmp` through the CLINT. `Q` = 1 reproduces the parity run turn by
+/// turn; at `Q` >= 2 MTIP is presented at the first turn whose committed time
+/// reached the compare, so the lateness is non-zero and inside D8.
+#[test]
+fn quantum_timer_spin_recognizes_mtip_within_the_bound() {
+    const MTIMECMP: i32 = 205;
+    let code = [
+        elf::lui(4, 0x2004),
+        elf::addi(5, 0, MTIMECMP),
+        elf::sd(5, 4, 0),
+        elf::addi(6, 0, 0x80),
+        csrrs(0, MIE, 6),
+        csrrs(7, machine::MIP, 0),
+        andi(7, 7, 0x80),
+        elf::beq(7, 0, -8),
+        SPIN,
+    ];
+    const TURNS: usize = 320;
+    /// What one boundary recorded: PC, committed time, local time, the turn-end
+    /// MTIP publish, and the D9 ledger at that boundary.
+    type Recorded = (u64, u64, u64, bool, TimeLedger);
+    fn route(quantum: u64, code: &[u32]) -> Vec<Recorded> {
+        let target = delay_target(0, 0);
+        let mut owned =
+            OwnedMachine::new(quantum_config(&target, quantum), quantum_image(code)).unwrap();
+        (0..TURNS)
+            .map(|_| {
+                let turn = owned.step_request(false, false, false).unwrap();
+                assert!(
+                    !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+                    "the timer guest failed: {:?}",
+                    turn.hart().outcome
+                );
+                (
+                    owned.state().pc,
+                    owned.platform_mtime().unwrap(),
+                    owned.platform_local_time().unwrap(),
+                    mtip_presented(&owned),
+                    owned.test_ledger(),
+                )
+            })
+            .collect()
+    }
+    let parity = route(0, &code);
+    let one = route(1, &code);
+    assert_eq!(
+        parity
+            .iter()
+            .map(|r| (r.0, r.1, r.2, r.3))
+            .collect::<Vec<_>>(),
+        one.iter().map(|r| (r.0, r.1, r.2, r.3)).collect::<Vec<_>>(),
+        "Q = 1 diverged from the parity run in PC, times or MTIP"
+    );
+    let quantum = route(16, &code);
+    // A turn start's `(C, L)` is the previous boundary's, and (0, 0) before the
+    // first turn.
+    let mut starts = vec![(0u64, 0u64)];
+    starts.extend(quantum.iter().map(|record| (record.1, record.2)));
+    let crossing = starts
+        .iter()
+        .position(|start| start.1 >= u64::try_from(MTIMECMP).unwrap())
+        .unwrap();
+    // MTIP after a boundary is the turn-end publish from committed time, so it
+    // is what the next turn's start presents to the guest.
+    let expected = quantum
+        .iter()
+        .position(|record| record.1 >= u64::try_from(MTIMECMP).unwrap())
+        .unwrap();
+    let presented = quantum
+        .iter()
+        .position(|record| record.3)
+        .expect("MTIP was never presented");
+    assert_eq!(
+        presented, expected,
+        "MTIP was presented at a turn whose committed time had not reached the compare"
+    );
+    let lateness = quantum[presented].2 - starts[crossing].1;
+    assert!(
+        lateness > 0,
+        "Q = 16 recognized the crossing with no lateness"
+    );
+    assert!(lateness <= 15, "the recognition exceeded the D8 bound");
+    // quantum D9: after every sync, committed time is the run's charged
+    // completed turns, delay ticks and idle-jump distance.
+    let last_sync = quantum
+        .iter()
+        .rposition(|record| record.1 == record.2)
+        .expect("Q = 16 never synced");
+    assert_eq!(
+        quantum[last_sync].4.expected_mtime(),
+        quantum[last_sync].1,
+        "the ledger's D9 identity diverged from committed time at a sync"
+    );
+    assert!(
+        quantum[last_sync].4.charged() > 0,
+        "the ledger charged nothing"
+    );
+    let last = parity.last().unwrap();
+    assert_eq!(
+        last.4.expected_mtime(),
+        last.1,
+        "the parity ledger's D9 identity diverged from committed time"
     );
 }

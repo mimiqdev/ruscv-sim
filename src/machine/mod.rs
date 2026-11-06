@@ -167,12 +167,10 @@ pub struct MachineConfig {
     /// lead committed time by a bounded local offset that synchronizes at the
     /// threshold and at the contract's forced points (quantum D3–D5).
     ///
-    /// It stays `pub(crate)` until the contract's U2 unit completes, so no
-    /// public caller can select a partially synchronized quantum (issue 201
-    /// U1).  A non-zero value requires a [`Transport::Tlm`] selection and
+    /// A non-zero value requires a [`Transport::Tlm`] selection and
     /// [`MachineError::Placement`] reports a bound that does not fit the
     /// declared tick period.
-    pub(crate) quantum: u64,
+    pub quantum: u64,
     /// The declared Platform tick period (dev-plan D7).
     ///
     /// One tick is one virtual-time unit and one `mtime` unit.  A blocking
@@ -289,6 +287,58 @@ impl Default for BoundaryFacts {
             transport_delay_femtoseconds: 0,
             quantum: None,
         }
+    }
+}
+
+/// quantum D9: the in-crate conservation ledger of one Platform generation.
+///
+/// Committed time equals `base` plus the run's completed turns, charged delay
+/// ticks and idle-jump distance, with any guest or debug `mtime` store
+/// rebasing `base` exactly as in a parity run. It is checked in ticks because
+/// no public fact exposes them (quantum D9).
+#[cfg(test)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TimeLedger {
+    /// Committed time at install, a fresh Platform, or the last rebase.
+    base: u64,
+    /// Completed Hart turns charged since that rebase.
+    completed_turns: u64,
+    /// Converted blocking-transport delay ticks charged since that rebase.
+    delay_ticks: u64,
+    /// Idle-jump distance in ticks since that rebase.
+    jump_ticks: u64,
+}
+
+#[cfg(test)]
+impl TimeLedger {
+    /// Everything charged since the last rebase.
+    pub(crate) fn charged(&self) -> u64 {
+        self.completed_turns + self.delay_ticks + self.jump_ticks
+    }
+
+    /// The committed time this ledger's identity requires.
+    pub(crate) fn expected_mtime(&self) -> u64 {
+        self.base.wrapping_add(self.charged())
+    }
+
+    /// A rebase: a guest, debug or in-crate `mtime` store replaces committed
+    /// time, so the identity restarts from the stored value.
+    fn rebase(&mut self, committed: u64) {
+        self.base = committed;
+        self.completed_turns = 0;
+        self.delay_ticks = 0;
+        self.jump_ticks = 0;
+    }
+
+    fn charge_turn(&mut self, delay_ticks: u64, completed: bool) {
+        if completed {
+            self.completed_turns += 1;
+        }
+        self.delay_ticks += delay_ticks;
+    }
+
+    fn charge_jump(&mut self, ticks: u64) {
+        self.jump_ticks += ticks;
     }
 }
 
@@ -443,6 +493,9 @@ struct Installed {
     virtual_deadline: Option<u64>,
     #[cfg(test)]
     before_turn: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// quantum D9: see [`TimeLedger`].
+    #[cfg(test)]
+    ledger: std::cell::Cell<TimeLedger>,
 }
 impl Installed {
     fn build(config: &MachineConfig, image: Arc<LoadImage>) -> Result<Self, MachineError> {
@@ -469,7 +522,32 @@ impl Installed {
             virtual_deadline: None,
             #[cfg(test)]
             before_turn: None,
+            #[cfg(test)]
+            ledger: std::cell::Cell::new(TimeLedger::default()),
         })
+    }
+    /// quantum D9: the generation's conservation ledger, for an in-crate check
+    /// against `C` (`OwnedMachine::platform_mtime`).
+    #[cfg(test)]
+    fn ledger(&self) -> TimeLedger {
+        self.ledger.get()
+    }
+    /// quantum D9: a guest or debug `mtime` store rebases the ledger.
+    #[cfg(test)]
+    fn reconcile_ledger(&mut self) -> Result<(), MachineError> {
+        if let Some(committed) = self.platform.take_mtime_store()? {
+            let mut ledger = self.ledger.get();
+            ledger.rebase(committed);
+            self.ledger.set(ledger);
+        }
+        Ok(())
+    }
+    /// quantum D9: an in-crate `mtime` store rebases the ledger.
+    #[cfg(test)]
+    fn rebase_ledger(&mut self, committed: u64) {
+        let mut ledger = self.ledger.get();
+        ledger.rebase(committed);
+        self.ledger.set(ledger);
     }
     /// Sole Machine-to-Hart invocation used by shared controls and facades.
     fn turn(
@@ -488,7 +566,7 @@ impl Installed {
         // (privileged §3.2.1, contract D1). This pre-fetch sample is the only
         // acceptance sample. An idle jump republishes and uses that same
         // sample again. It is not a second Hart entry point.
-        self.platform.begin_transport_turn();
+        self.platform.begin_transport_turn()?;
         let mut idle_stop = (false, false);
         let mut jumped = false;
         let mut wake_blocked = false;
@@ -567,6 +645,10 @@ impl Installed {
         // enters `mcycle` or `minstret`.
         let delay = self.platform.take_transport_turn_delay();
         let advance = delay.ticks + u64::from(completed_turn);
+        // quantum D9: a guest store to `mtime` during this turn is a rebase that
+        // starts the identity at the stored value, before this turn's charges.
+        #[cfg(test)]
+        self.reconcile_ledger()?;
         let events = if completed_turn {
             self.platform.take_events()?
         } else {
@@ -620,6 +702,17 @@ impl Installed {
             if quantum_reached {
                 synced |= self.platform.commit_local_time(!synced)?;
             }
+            // quantum F4: a debug halt of either form ends the turn in a sync,
+            // so a debugger and its DMI work see parity time.
+            if matches!(hart.outcome, StepOutcome::DebugHalted { .. }) {
+                synced |= self.platform.commit_local_time(!synced)?;
+            }
+            // quantum F1: a marked turn ends with a sync, even when the flush
+            // found `O` zero and this turn added nothing, so `C` = `L` and
+            // `E` is re-anchored before the boundary returns.
+            if self.platform.device_access_marked()? {
+                synced |= self.platform.commit_local_time(!synced)?;
+            }
             // quantum F6: a failed turn, including one that fails only this
             // D4 clock check, syncs the offset it knows, including known
             // delay, without touching the transport.
@@ -639,6 +732,14 @@ impl Installed {
             if synced || (clock_failure.is_none() && advance != 0) {
                 self.publish_platform_time()?;
             }
+        }
+        // quantum D9: charged ticks, the completed tick and no idle jump here.
+        // A turn refused by the D4 clock check adds nothing.
+        #[cfg(test)]
+        if clock_failure.is_none() {
+            let mut ledger = self.ledger.get();
+            ledger.charge_turn(delay.ticks, completed_turn);
+            self.ledger.set(ledger);
         }
         if let Some(error) = clock_failure {
             // Preserve a transport-failure diagnostic already produced
@@ -791,6 +892,13 @@ impl Installed {
         if self.platform.set_mtime(target).is_err() {
             return WaitSettlement::NoProgress;
         }
+        // quantum D9: the idle jump is charged as its distance in ticks.
+        #[cfg(test)]
+        {
+            let mut ledger = self.ledger.get();
+            ledger.charge_jump(target.saturating_sub(mtime));
+            self.ledger.set(ledger);
+        }
         let _ = self.platform.read_mtime().map(|mtime| {
             self.core.state_mut().csr.set_time(mtime);
         });
@@ -810,7 +918,15 @@ fn acknowledge_drain(
 ) -> Result<DrainReport, MachineError> {
     admission.drain_allowed()?;
     let (tohost, events) = match installed {
-        Some(domain) => (Some(domain.sample()), domain.platform.take_events()?),
+        Some(domain) => {
+            // quantum F8: commit the local offset at this stopping point before
+            // the drain facts are sampled. `quiesce` takes `&self` and this
+            // holds `Option<&Installed>`, so it is the bus-lock update alone:
+            // it moves `C`, zeroes `O`, re-anchors `E` and counts under D3, and
+            // omits only the Hart CSR republish.
+            domain.platform.commit_local_time(true)?;
+            (Some(domain.sample()), domain.platform.take_events()?)
+        }
         None => (None, Vec::new()),
     };
     admission.lifecycle = Lifecycle::DrainComplete;
