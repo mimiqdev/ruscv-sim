@@ -1,41 +1,13 @@
 diff --git i/src/executor.rs w/src/executor.rs
-index 669ef53..1440156 100644
+index 1ccd3dd..1440156 100644
 --- i/src/executor.rs
 +++ w/src/executor.rs
-@@ -461,6 +461,14 @@ impl SystemBus {
-         self.device_marked = true;
-     }
- 
-+    /// quantum F1: flush the pending offset exactly as a Hart device access
-+    /// does. A test uses it to reach a flush-only failing turn, whose real path
-+    /// needs an unknown completion behind a translation walk.
-+    #[cfg(test)]
-+    pub(crate) fn flush_local_time_for_test(&mut self) {
-+        self.flush_local_time();
-+    }
-+
-     /// quantum D3/D10: the cumulative count of counted boundary syncs in this
-     /// Platform generation.
-     pub(crate) fn quantum_syncs(&self) -> u64 {
-@@ -503,6 +511,11 @@ impl SystemBus {
-     /// commits time without counting again, and a boundary whose sync and flush
-     /// both found `O` zero is a no-op and is not counted.  It makes no target
-     /// call and charges no delay.
-+    ///
-+    /// The result is whether committed time moved during this boundary at all,
-+    /// by this commit or by an earlier flush in the same turn, so a flush-only
-+    /// failing turn still republishes `time` and the machine lines from the new
-+    /// committed time (quantum D3, F1, F6).
-     pub(crate) fn commit_local_time(&mut self, count: bool) -> bool {
-         let moved = self.local_offset != 0;
-         if moved {
-@@ -511,7 +524,8 @@ impl SystemBus {
-             self.local_offset = 0;
-         }
-         self.anchor = self.clint.read_mtime();
--        if count && (moved || self.flush_moved) {
-+        let flushed = self.flush_moved;
-+        if count && (moved || flushed) {
-             self.quantum_syncs += 1;
+@@ -530,7 +530,7 @@ impl SystemBus {
          }
          self.device_marked = false;
+         self.flush_moved = false;
+-        moved || flushed
++        moved
+     }
+ 
+     /// Hart 0 compare. Reset is all-ones.
