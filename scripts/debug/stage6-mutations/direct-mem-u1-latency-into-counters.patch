@@ -1,8 +1,8 @@
 diff --git i/src/machine/mod.rs w/src/machine/mod.rs
-index 4a32994..cb14440 100644
+index 6dba093..ccb7bbc 100644
 --- i/src/machine/mod.rs
 +++ w/src/machine/mod.rs
-@@ -503,6 +503,11 @@ impl Installed {
+@@ -644,6 +644,11 @@ impl Installed {
          // its known delay and no turn tick (ADR-0004 §5.3/§5.1).  Delay never
          // enters `mcycle` or `minstret`.
          let delay = self.platform.take_transport_turn_delay();
@@ -12,5 +12,5 @@ index 4a32994..cb14440 100644
 +            self.core.state_mut().csr.increment_minstret();
 +        }
          let advance = delay.ticks + u64::from(completed_turn);
-         let events = if completed_turn {
-             self.platform.take_events()?
+         // quantum D9: a guest store to `mtime` during this turn is a rebase that
+         // starts the identity at the stored value, before this turn's charges.

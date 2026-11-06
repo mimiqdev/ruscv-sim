@@ -652,6 +652,11 @@ impl Session {
         }
         let tohost = self.tohost;
         machine.observe_tohost(turn, tohost);
+        // quantum F2: a non-zero RAM `tohost` value syncs before the exit rule
+        // decodes it; the sample itself is RAM and does not depend on time.
+        if let Err(error) = machine.sync_after_tohost(turn) {
+            return Exit::HostFailure(format!("tohost sync failed: {error}"));
+        }
         let Some(sample) = turn.tohost() else {
             return Exit::Absent;
         };

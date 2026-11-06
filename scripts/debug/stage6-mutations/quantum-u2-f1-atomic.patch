@@ -1,0 +1,12 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index 5f8ee08..086edb0 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -1055,7 +1055,6 @@ impl SystemBus {
+         // local offset under this same bus lock and marks the turn, exactly as
+         // the plain path does. Every atomic envelope is Hart-origin.
+         if self.in_device(descriptor.paddr, descriptor.width.bytes()) {
+-            self.flush_local_time();
+         }
+ 
+         if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {

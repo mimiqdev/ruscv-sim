@@ -1,0 +1,13 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index 5f8ee08..a16423d 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -334,7 +334,7 @@ impl SystemBus {
+             // quantum D3/F9: a fresh Platform starts with no local offset, no
+             // counted syncs and `E` = `C` = 0, so no prior generation can
+             // inherit an offset or an anchor.
+-            local_offset: 0,
++            local_offset: 5,
+             quantum_syncs: 0,
+             anchor: 0,
+             device_marked: false,

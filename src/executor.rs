@@ -278,10 +278,24 @@ pub struct SystemBus {
     htif_committed_writes: u64,
     /// quantum D3: the Hart's local offset `O` in Platform ticks and the
     /// cumulative boundary-sync count, beside the CLINT under the bus lock, so
-    /// a device access can flush the offset (quantum F1, unit U2) and a fresh
-    /// Platform cannot inherit either.
+    /// a device access can flush the offset (quantum F1) and a fresh Platform
+    /// cannot inherit any of them.
     local_offset: u64,
     quantum_syncs: u64,
+    /// quantum D3: the anchor `E`, committed time at the last sync, idle jump,
+    /// `mtime` store or direct `Q` = 0 advance. A flush moves `C` without
+    /// moving it, so `L - E` is the whole accumulated offset (quantum D11).
+    anchor: u64,
+    /// quantum F1: a Hart device access flushed the offset during the current
+    /// turn, so that turn's boundary syncs even when the flush found `O` zero.
+    device_marked: bool,
+    /// quantum D3: a flush moved committed time during the current turn, so the
+    /// boundary counts its sync even when its own commit is a no-op.
+    flush_moved: bool,
+    /// quantum D3/D9: the value of the last guest or debug store to `mtime`.
+    /// A store re-anchors `E` and rebases the contract's in-crate ledger.
+    #[cfg(test)]
+    mtime_store: Option<u64>,
 }
 
 impl SystemBus {
@@ -317,10 +331,16 @@ impl SystemBus {
             htif_size: HTIF_SIZE,
             htif_write_callback: None,
             htif_committed_writes: 0,
-            // quantum D3: a fresh Platform starts with no local offset and no
-            // counted syncs, so no prior generation can inherit one.
+            // quantum D3/F9: a fresh Platform starts with no local offset, no
+            // counted syncs and `E` = `C` = 0, so no prior generation can
+            // inherit an offset or an anchor.
             local_offset: 0,
             quantum_syncs: 0,
+            anchor: 0,
+            device_marked: false,
+            flush_moved: false,
+            #[cfg(test)]
+            mtime_store: None,
             // clock_freq is the unused TLM crystal. The public clock is
             // advance_mtime, one tick per completed Hart turn.
             clint: Clint::new(SYSTEM_BUS_CLINT_BASE, 1, 0),
@@ -359,11 +379,94 @@ impl SystemBus {
     /// Add one tick. Does not touch `mcycle` or `minstret`.
     pub fn advance_mtime(&mut self) {
         self.clint.advance_one_tick();
+        // quantum D3: a direct advance of committed time re-anchors `E`. This
+        // is the `Q` = 0 path, where `E` therefore always equals `C`.
+        self.anchor = self.clint.read_mtime();
     }
 
     /// quantum D3: the Hart's local offset `O` in Platform ticks.
     pub(crate) fn local_offset(&self) -> u64 {
         self.local_offset
+    }
+
+    /// quantum D3: the anchor `E` in Platform ticks, `C` at the last sync,
+    /// idle jump, `mtime` store or direct `Q` = 0 advance.
+    #[cfg(test)]
+    pub(crate) fn anchor(&self) -> u64 {
+        self.anchor
+    }
+
+    /// quantum F1: open a guest turn. A Hart device access by debug work marks
+    /// with no turn in progress, so no mark and no flush crosses into the next
+    /// guest turn.
+    pub(crate) fn begin_transport_turn(&mut self) {
+        self.device_marked = false;
+        self.flush_moved = false;
+    }
+
+    /// quantum F1: whether this turn's Hart device access marked it for a
+    /// boundary sync.
+    pub(crate) fn device_marked(&self) -> bool {
+        self.device_marked
+    }
+
+    /// quantum F1: flush `O` into `C` under this same bus lock, before a Hart
+    /// device access sees it, and mark the turn.
+    ///
+    /// The current turn's delay is still pending, so the device observes the
+    /// parity `mtime`. A flush is not a boundary: it makes no target call,
+    /// charges no delay, changes no counter, republishes nothing, is not
+    /// counted and leaves `E` unchanged (quantum D3). It marks the turn even
+    /// when it found `O` zero, because that turn ends in a sync either way.
+    fn flush_local_time(&mut self) {
+        if self.local_offset != 0 {
+            let committed = self.clint.read_mtime().wrapping_add(self.local_offset);
+            self.clint.write_mtime(committed);
+            self.local_offset = 0;
+            self.flush_moved = true;
+        }
+        self.device_marked = true;
+    }
+
+    /// quantum D3/D9: one guest or debug store to `mtime` re-anchors `E` and
+    /// records the rebase the contract's ledger checks.
+    fn store_anchors_mtime(&mut self) {
+        let committed = self.clint.read_mtime();
+        self.anchor = committed;
+        #[cfg(test)]
+        {
+            self.mtime_store = Some(committed);
+        }
+    }
+
+    /// quantum D3/D9: the last guest or debug store to `mtime`, for the
+    /// in-crate rebase of the conservation ledger.
+    #[cfg(test)]
+    pub(crate) fn take_mtime_store(&mut self) -> Option<u64> {
+        self.mtime_store.take()
+    }
+
+    /// Sead a local offset without moving committed time or the anchor. Only a
+    /// test seeds a boundary with `O` non-zero, because every production
+    /// boundary syncs (quantum D6/F7).
+    #[cfg(test)]
+    pub(crate) fn seed_local_offset(&mut self, offset: u64) {
+        self.local_offset = offset;
+    }
+
+    /// Sead an F1 turn mark with no device access behind it, so a test can
+    /// check that a turn start clears it (quantum F1).
+    #[cfg(test)]
+    pub(crate) fn seed_turn_mark(&mut self) {
+        self.device_marked = true;
+    }
+
+    /// quantum F1: flush the pending offset exactly as a Hart device access
+    /// does. A test uses it to reach a flush-only failing turn, whose real path
+    /// needs an unknown completion behind a translation walk.
+    #[cfg(test)]
+    pub(crate) fn flush_local_time_for_test(&mut self) {
+        self.flush_local_time();
     }
 
     /// quantum D3/D10: the cumulative count of counted boundary syncs in this
@@ -399,22 +502,35 @@ impl SystemBus {
     }
 
     /// quantum D3: one boundary sync.  Committed time takes the local offset
-    /// (wrapping, quantum F10) and the offset returns to zero.  A boundary
-    /// counts its sync once when it moved committed time, so `count` is true
-    /// only for the exchange's first moving sync; a second moving sync in the
-    /// same boundary commits time without counting again.  A zero offset is a
-    /// no-op and is not counted.  It makes no target call and charges no delay.
+    /// (wrapping, quantum F10) and the offset returns to zero.  Every sync
+    /// re-anchors `E` and clears the F1 turn mark.
+    ///
+    /// A boundary counts its sync once when it moved committed time or an F1
+    /// flush moved it during that turn, so `count` is true only for the
+    /// exchange's first moving sync; a second moving sync in the same boundary
+    /// commits time without counting again, and a boundary whose sync and flush
+    /// both found `O` zero is a no-op and is not counted.  It makes no target
+    /// call and charges no delay.
+    ///
+    /// The result is whether committed time moved during this boundary at all,
+    /// by this commit or by an earlier flush in the same turn, so a flush-only
+    /// failing turn still republishes `time` and the machine lines from the new
+    /// committed time (quantum D3, F1, F6).
     pub(crate) fn commit_local_time(&mut self, count: bool) -> bool {
-        if self.local_offset == 0 {
-            return false;
+        let moved = self.local_offset != 0;
+        if moved {
+            let committed = self.clint.read_mtime().wrapping_add(self.local_offset);
+            self.clint.write_mtime(committed);
+            self.local_offset = 0;
         }
-        let committed = self.clint.read_mtime().wrapping_add(self.local_offset);
-        self.clint.write_mtime(committed);
-        self.local_offset = 0;
-        if count {
+        self.anchor = self.clint.read_mtime();
+        let flushed = self.flush_moved;
+        if count && (moved || flushed) {
             self.quantum_syncs += 1;
         }
-        true
+        self.device_marked = false;
+        self.flush_moved = false;
+        moved || flushed
     }
 
     /// Hart 0 compare. Reset is all-ones.
@@ -423,8 +539,12 @@ impl SystemBus {
     }
 
     /// Idle-jump `mtime`. Does not tick `mcycle` or `minstret`.
+    ///
+    /// quantum D3: every write to committed time except a flush re-anchors `E`,
+    /// so an idle jump and the in-crate `set_platform_mtime` keep `E` = `C`.
     pub fn set_mtime(&mut self, value: u64) {
         self.clint.write_mtime(value);
+        self.anchor = self.clint.read_mtime();
     }
 
     /// Set callback for HTIF write events
@@ -457,6 +577,24 @@ impl SystemBus {
 
     fn is_uart(&self, addr: u64) -> bool {
         contains_range(self.uart_base, self.uart_size, addr, 1)
+    }
+
+    fn in_uart(&self, addr: u64, width: usize) -> bool {
+        contains_range(self.uart_base, self.uart_size, addr, width)
+    }
+
+    fn in_htif(&self, addr: u64, width: usize) -> bool {
+        contains_range(self.htif_base, self.htif_size, addr, width)
+    }
+
+    /// quantum F1: whether a request is routed to a device window. An unmapped
+    /// address is not a device and does not flush.
+    fn in_device(&self, addr: u64, width: usize) -> bool {
+        self.in_clint(addr, width)
+            || self.in_plic(addr, width)
+            || self.in_gateway(addr, width)
+            || self.in_uart(addr, width)
+            || self.in_htif(addr, width)
     }
 
     fn in_clint(&self, addr: u64, width: usize) -> bool {
@@ -549,6 +687,14 @@ impl SystemBus {
                             error.to_string(),
                         )
                     })?;
+                // quantum D3/D9: a guest or debug store to `mtime` re-anchors
+                // the anchor, because it is a write to committed time that is
+                // not a flush.
+                if offset == crate::peripherals::clint::reg_offset::MTIME
+                    || offset == crate::peripherals::clint::reg_offset::MTIME + 4
+                {
+                    self.store_anchors_mtime();
+                }
                 Ok(PhysicalResponse::new(
                     descriptor,
                     PhysicalResponseCompletion::WriteAcknowledgement,
@@ -734,6 +880,18 @@ impl SystemBus {
             return self.ram.raw(request, offset, initiator);
         }
 
+        // quantum F1: a Hart-origin access routed to a device window flushes
+        // the local offset under this same bus lock, before the device sees
+        // the access, so the device observes the parity `mtime`; this turn's
+        // delay is still pending. The turn is marked either way, so a marked
+        // turn ends in a boundary sync. An unmapped address is not a device,
+        // and a `DebugInbound` request is F4's.
+        if initiator == BlockingInitiator::Hart
+            && self.in_device(descriptor.paddr, descriptor.width.bytes())
+        {
+            self.flush_local_time();
+        }
+
         if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {
             return self.transact_clint(request);
         }
@@ -912,6 +1070,13 @@ impl SystemBus {
             descriptor.width.bytes(),
         ) {
             return self.ram.atomic(request);
+        }
+
+        // quantum F1: an atomic envelope routed to a device window flushes the
+        // local offset under this same bus lock and marks the turn, exactly as
+        // the plain path does. Every atomic envelope is Hart-origin.
+        if self.in_device(descriptor.paddr, descriptor.width.bytes()) {
+            self.flush_local_time();
         }
 
         if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {
@@ -1405,6 +1570,17 @@ fn cli_result(
     timed_out: bool,
     error: Option<String>,
 ) -> ExecutionResult {
+    // quantum F7: every Runner return syncs before the facts are reported, so
+    // the final result carries `C` = `L`. This is the bus-lock update F8
+    // defines; no turn runs afterwards to need the Hart CSR republish. A
+    // poisoned bus cannot report, so it appends to the run's error.
+    let error = match machine.commit_local_time(true) {
+        Ok(_) => error,
+        Err(failure) => Some(match error {
+            Some(error) => format!("{error}; {failure}"),
+            None => failure.to_string(),
+        }),
+    };
     // quantum D10: the result carries the run's cumulative quantum facts,
     // present only when a quantum is selected.  A poisoned bus cannot report
     // them; the poisoned run has already failed elsewhere.
@@ -2234,6 +2410,11 @@ fn run_native_inner(
             }
             {
                 machine.observe_tohost(&mut turn, tohost_pa);
+                // quantum F2: a non-zero RAM `tohost` value syncs before the
+                // shared exit rule decodes it; a zero poll is not a sync.
+                if let Err(error) = machine.sync_after_tohost(&mut turn) {
+                    poll_error = Some(format!("tohost sync failed: {error}"));
+                }
                 match &turn.tohost().expect("requested signal fact").value {
                     Ok(value) => {
                         let tohost_value = *value;
@@ -2996,6 +3177,11 @@ impl RiscVSimulator {
                     return None;
                 }
                 self.machine.observe_tohost(&mut turn, tohost);
+                // quantum F2: a non-zero RAM sample syncs before the shared
+                // exit rule decodes it, exactly as the native Runner's
+                // observer does. A flat Platform cannot select a quantum
+                // (quantum D2), so this is the same no-op as a `Q` = 0 run.
+                let _ = self.machine.sync_after_tohost(&mut turn);
                 let observed = &turn.tohost().expect("requested signal fact").value;
                 match observed {
                     Ok(value) => {

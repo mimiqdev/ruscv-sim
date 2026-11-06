@@ -1,0 +1,12 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 6dba093..0d38280 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -924,7 +924,6 @@ fn acknowledge_drain(
+             // holds `Option<&Installed>`, so it is the bus-lock update alone:
+             // it moves `C`, zeroes `O`, re-anchors `E` and counts under D3, and
+             // omits only the Hart CSR republish.
+-            domain.platform.commit_local_time(true)?;
+             (Some(domain.sample()), domain.platform.take_events()?)
+         }
+         None => (None, Vec::new()),

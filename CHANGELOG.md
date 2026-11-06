@@ -30,9 +30,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `interrupt_latency_bound_ticks`、`reduced_accuracy`、`syncs`、`reached`）；`ControlBoundary` 上报
     `reached` 为 false。新增 `QuantumFacts` 类型，`ExecutionResult` 的新字段破坏外部穷举结构体字面量。
     `print_result` 仅在该事实存在时输出一行 `Quantum:`，`Q` = 0 的 stdout 保持逐字节相同
-  - 新增 12 个 Machine 级测试覆盖合同 §4 U1 的验收项；U1 拥有的 20 条负控制注册进
+  - 新增 12 个 Machine 级测试覆盖合同 §4 U1 的验收项；U1 拥有的 19 条负控制（20 条测试行）注册进
     `scripts/debug/stage6-mutations`（`quantum-u1-*`，含四个逐点控制、逐边界计数、D5 与强制同步重合、
     D10 误报、延迟重复、同步偏差与计数器记账），每条都由已提交测试在变异下失败、还原后通过
+
+- **Quantum U2: 强制同步与延迟上界（issue #202）**
+  - `MachineConfig` 的 `quantum` 字段改为公开（`MachineConfig::new` 仍选择 0），合同要求该字段在 U2 的同步点
+    完成后再公开，因此现在公开调用方可以选择 quantum；其余公开签名不变，`run --quantum`、guest suite、C ABI
+    与 SystemC smoke 仍分别属于 U3、U4、U5
+  - `SystemBus` 在 CLINT 旁、同一把总线锁下保存锚点 `E`（quantum D3）：install 时 `E` = `C`，每次 sync、空闲
+    跳转、guest 或 debug 的 CLINT `mtime` 写、crate 内 `set_platform_mtime`、以及 `Q` = 0 时
+    `advance_mtime`/`advance_mtime_by` 的直接推进都重设它；flush 不重设，所以 `L - E` 在 flush 后仍是完整的
+    累积偏移（D11）。真正的一次边界 sync 只在移动了 `C`、或该 turn 内有 flush 移动了 `C` 时计入一次；两次都
+    没移动的边界是 no-op，不计入
+  - F1：`SystemBus::native_transact_from` 的 Hart 设备窗口（CLINT、PLIC、gateway、UART、HTIF，含设备拒绝的
+    访问）与 `native_transact_atomic` 的设备分支在同一把总线锁下、设备看到访问之前 flush，并标记该 turn；本
+    turn 的延迟仍在 pending，因此设备看到 parity 的 `mtime`。被标记的 turn 即使 flush 时 `O` 为零也在边界
+    sync，sync 清除标记；debug 工作经 Hart 端口产生的标记在 `begin_transport_turn` 清除，`Platform`
+    `begin_transport_turn` 因此返回 `Result<(), MachineError>`。未映射地址不是设备，`DebugInbound` 属 F4
+  - F2：新增 `OwnedMachine::sync_after_tohost(&mut self, turn: &mut MachineTurn)`，在 Runner 的 `observe_ram`
+    与 `Session::observe_exit` 读取到非零 RAM `tohost` 之后、共享退出规则解码之前 sync，并刷新
+    `turn.boundary.quantum.syncs`；零值轮询不是 sync
+  - F4：`DebugHalted`（两种形式）在 turn 结束 sync；`apply_dmi` 的排队批次、`advance_debug_command` 的忙碌
+    命令与 `service_sba` 取到暂存请求时，都在 `sample_debug_inputs` 之前 sync，所以调试器与 SBA 看到 parity
+    时间，debug 工作不进入 `O`
+  - F7：`OwnedMachine::step_request` 的 `last_slot` sync 并刷新边界计数；`cli_result` 在报告事实之前经总线锁
+    完成一次 sync，使最终结果携带 `C` = `L`，总线锁中毒时以 `; ` 追加到运行错误
+  - F8：`acknowledge_drain` 在采样前提交偏移（仅总线锁更新，省略 Hart CSR 重发布），按 D3 计数并重设 `E`；
+    F9 不变：reset 不运行 sync，新 Platform 以 `C` = `O` = `E` = 0 开始，不跨代继承偏移
+  - `Installed` 新增 `#[cfg(test)]` 时间账本（D9）：记录每个 turn 的已计费 tick、完成 tick 与每次空闲跳转
+    距离，`mtime` 写作为 rebase，测试以 `OwnedMachine::platform_mtime` 在 tick 上核对守恒恒等式
+  - 新增 19 个 Machine 级、1 个 C ABI `Session` 级与 1 个 Runner 级测试覆盖合同 §4 U2 的验收项，包括量子中途的 CLINT `mtime` 读返回
+    parity 值、`mtimecmp` 等于 `C` 加该 turn `advance` 的下一个 turn 呈现 MTIP、运行中与停机下的 SBA
+    `mtime` 读、guest 下调 `mtime`、SBA 与 abstract command 的 debug `mtime` 写后的 `E` = `C` = `L` 与标记
+    清除、flush-only 失败边界按新提交时间重新发布中断线、`last_slot` 与 Runner 返回的计数、drain、
+    `OwnedMachine` 与 `Session` 两条新代路径无偏移，以及
+    `quantum_timer_spin`（手编 guest 经 CLINT 装载 `mtimecmp` 并置 MTIE 自旋）：`Q` = 0 与 `Q` = 1 的 PC、
+    `time` 与 MTIP 逐 turn 等于 native 路由，`Q` = 16 的识别延迟按 guest 的 F1 同步相位与 `Q` 算出并逐值
+    相等（6 tick，在 D8 内），运行经 F7 的 `last_slot` 同步收尾，最终 `platform_mtime` 满足 D9
 
 - **Direct memory U1: 授权与读取路径（issue #188）**
   - `MachineConfig` 新增公开 `dmi` 字段（`MachineConfig::new` 选择 `false`，破坏结构体字面量构造）；

@@ -1,0 +1,12 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index 5f8ee08..a1fd8ce 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -868,7 +868,6 @@ impl SystemBus {
+         if initiator == BlockingInitiator::Hart
+             && self.in_device(descriptor.paddr, descriptor.width.bytes())
+         {
+-            self.flush_local_time();
+         }
+ 
+         if self.in_clint(descriptor.paddr, descriptor.width.bytes()) {

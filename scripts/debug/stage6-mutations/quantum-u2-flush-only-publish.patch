@@ -1,0 +1,13 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index 1ccd3dd..1440156 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -530,7 +530,7 @@ impl SystemBus {
+         }
+         self.device_marked = false;
+         self.flush_moved = false;
+-        moved || flushed
++        moved
+     }
+ 
+     /// Hart 0 compare. Reset is all-ones.

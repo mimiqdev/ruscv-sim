@@ -264,9 +264,92 @@ impl Platform {
         self.ram.consumed_delay().as_u64()
     }
 
-    /// Opens one guest turn's transport-delay accounting.
-    pub(super) fn begin_transport_turn(&self) {
+    /// Opens one guest turn's transport-delay accounting and clears the F1
+    /// turn mark, so a Hart device access by debug work cannot sync the next
+    /// guest turn (quantum F1).
+    pub(super) fn begin_transport_turn(&self) -> Result<(), MachineError> {
         self.ram.begin_transport_turn();
+        if let Some(bus) = &self.bus {
+            bus.lock()
+                .map_err(|_| MachineError::Poisoned)?
+                .begin_transport_turn();
+        }
+        Ok(())
+    }
+
+    /// quantum F1: whether this turn's Hart device access marked it for a
+    /// boundary sync.
+    pub(super) fn device_access_marked(&self) -> Result<bool, MachineError> {
+        if let Some(bus) = &self.bus {
+            return Ok(bus
+                .lock()
+                .map_err(|_| MachineError::Poisoned)?
+                .device_marked());
+        }
+        Ok(false)
+    }
+
+    /// quantum D3: the anchor `E` in Platform ticks.
+    #[cfg(test)]
+    pub(super) fn anchor(&self) -> Result<u64, MachineError> {
+        if let Some(bus) = &self.bus {
+            return Ok(bus.lock().map_err(|_| MachineError::Poisoned)?.anchor());
+        }
+        Ok(self.flat_mtime)
+    }
+
+    /// quantum D3/D9: the last guest or debug store to `mtime`, for the
+    /// in-crate rebase of the conservation ledger.
+    #[cfg(test)]
+    pub(super) fn take_mtime_store(&self) -> Result<Option<u64>, MachineError> {
+        if let Some(bus) = &self.bus {
+            return Ok(bus
+                .lock()
+                .map_err(|_| MachineError::Poisoned)?
+                .take_mtime_store());
+        }
+        Ok(None)
+    }
+
+    /// quantum F1: flush the pending offset exactly as a Hart device access
+    /// does, for the flush-only boundary state a test cannot otherwise reach
+    /// without an unknown completion behind a translation walk.
+    #[cfg(test)]
+    pub(super) fn test_device_flush(&self) -> Result<bool, MachineError> {
+        match &self.bus {
+            Some(bus) => {
+                bus.lock()
+                    .map_err(|_| MachineError::Poisoned)?
+                    .flush_local_time_for_test();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Sead an F1 turn mark with no device access behind it, so a test can
+    /// check that a turn start clears it (quantum F1).
+    #[cfg(test)]
+    pub(super) fn seed_turn_mark(&self) -> Result<(), MachineError> {
+        if let Some(bus) = &self.bus {
+            bus.lock()
+                .map_err(|_| MachineError::Poisoned)?
+                .seed_turn_mark();
+        }
+        Ok(())
+    }
+
+    /// Sead a local offset without moving committed time. Only a test seeds a
+    /// boundary with `O` non-zero, because every production boundary syncs
+    /// (quantum D6/F7).
+    #[cfg(test)]
+    pub(super) fn seed_local_offset(&self, offset: u64) -> Result<(), MachineError> {
+        if let Some(bus) = &self.bus {
+            bus.lock()
+                .map_err(|_| MachineError::Poisoned)?
+                .seed_local_offset(offset);
+        }
+        Ok(())
     }
 
     /// Consumes one guest turn's transport delay into Platform time once.

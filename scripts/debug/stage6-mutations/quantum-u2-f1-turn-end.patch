@@ -1,0 +1,12 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 6dba093..8b9954b 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -711,7 +711,6 @@ impl Installed {
+             // found `O` zero and this turn added nothing, so `C` = `L` and
+             // `E` is re-anchored before the boundary returns.
+             if self.platform.device_access_marked()? {
+-                synced |= self.platform.commit_local_time(!synced)?;
+             }
+             // quantum F6: a failed turn, including one that fails only this
+             // D4 clock check, syncs the offset it knows, including known

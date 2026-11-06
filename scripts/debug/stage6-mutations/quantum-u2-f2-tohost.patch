@@ -1,0 +1,12 @@
+diff --git i/src/machine/owned.rs w/src/machine/owned.rs
+index a98151f..76bda26 100644
+--- i/src/machine/owned.rs
++++ w/src/machine/owned.rs
+@@ -212,7 +212,6 @@ impl OwnedMachine {
+         if !non_zero {
+             return Ok(());
+         }
+-        self.commit_local_time(true)?;
+         self.refresh_quantum_syncs(turn)
+     }
+     pub(crate) fn control_boundary(

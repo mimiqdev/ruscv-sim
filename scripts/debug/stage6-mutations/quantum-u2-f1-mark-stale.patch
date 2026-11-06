@@ -1,0 +1,12 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index 5f8ee08..fbf9067 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -400,7 +400,6 @@ impl SystemBus {
+     /// with no turn in progress, so no mark and no flush crosses into the next
+     /// guest turn.
+     pub(crate) fn begin_transport_turn(&mut self) {
+-        self.device_marked = false;
+         self.flush_moved = false;
+     }
+ 

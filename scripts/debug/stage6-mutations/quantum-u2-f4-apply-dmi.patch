@@ -1,0 +1,12 @@
+diff --git i/src/machine/owned.rs w/src/machine/owned.rs
+index a98151f..16a31b1 100644
+--- i/src/machine/owned.rs
++++ w/src/machine/owned.rs
+@@ -902,7 +902,6 @@ impl OwnedMachine {
+         // quantum F4: a queued batch is pending debug work, so it starts at
+         // `O` = 0 and `sample_debug_inputs` writes parity time. It also covers
+         // `reload_for_ndmreset`, which runs later in this call.
+-        self.commit_local_time(true)?;
+         self.sample_debug_inputs()?;
+         let uncertain = lease.boundary_state()?.1;
+         let (value, before, after, failure) = {

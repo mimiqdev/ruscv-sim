@@ -683,3 +683,82 @@ fn native_debug_abstract_platform_exit_is_classified_at_its_boundary() {
     assert_eq!(result.cycles, cycles, "{result:?}");
     drop(port);
 }
+
+/// quantum F7/D10: a Runner return that is not a `last_slot` stop still syncs
+/// before the facts are reported. A remote-bitbang quit ends a RAM-only run of
+/// an infinite loop, so no forced sync precedes the return and the result's
+/// cumulative `syncs` is exactly the one F7 contributes.
+#[test]
+fn quantum_runner_return_syncs_before_the_facts() {
+    use crate::blocking::test_support::ScriptTarget;
+    use crate::blocking::Transport;
+    use crate::jtag::RemoteBitbangConfig;
+    use crate::machine::{MachineConfig, PlatformKind};
+    use std::io::Write;
+    use std::net::TcpStream;
+    use std::sync::atomic::{AtomicU16, Ordering};
+
+    fn wait_for_rbb_port(slot: &AtomicU16) -> u16 {
+        let start = Instant::now();
+        loop {
+            let port = slot.load(Ordering::Acquire);
+            if port != 0 {
+                return port;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "remote_bitbang port was not published"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    let target = std::sync::Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    target.set_declared_max_delay(0);
+    target.set_delay(0);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target);
+    // Far larger than the run, so the threshold never syncs.
+    config.quantum = 1_000_000_000_000;
+    let bytes = program(&[0x0000_006f]);
+    let slot = std::sync::Arc::new(AtomicU16::new(0));
+    let bound = std::sync::Arc::clone(&slot);
+    let hooks = NativeHooks {
+        config: Some(config),
+        debug: Some(RemoteBitbangConfig {
+            port: 0,
+            halted: false,
+            bound_port: Some(bound),
+        }),
+        ..NativeHooks::default()
+    };
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(super::run_native_inner(
+            &bytes,
+            Some(1_000_000_000),
+            None,
+            None,
+            false,
+            None,
+            hooks,
+        ));
+    });
+    let port = wait_for_rbb_port(&slot);
+    thread::sleep(Duration::from_millis(20));
+    let mut client = TcpStream::connect(("127.0.0.1", port)).expect("bitbang client");
+    client.write_all(b"Q").expect("quit command");
+    let result = rx
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the run did not finish")
+        .expect("native run");
+    assert!(result.cycles >= 1, "{result:?}");
+    assert!(!result.timed_out, "{result:?}");
+    let facts = result
+        .quantum
+        .expect("a selected quantum must report its facts");
+    assert_eq!(
+        facts.syncs, 1,
+        "the Runner return did not count exactly its one F7 sync"
+    );
+}

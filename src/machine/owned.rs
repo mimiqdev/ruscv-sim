@@ -170,7 +170,50 @@ impl OwnedMachine {
         turn.boundary.single_step = single_step;
         turn.boundary.budget_exhausted =
             last_slot && !matches!(turn.hart.outcome, StepOutcome::SimulatorFailure(_));
+        if last_slot {
+            // quantum F7: a run's last slot syncs before the facts are reported,
+            // so the `--max-cycles` boundary carries `C` = `L`.
+            self.commit_local_time(true)?;
+            self.refresh_quantum_syncs(&mut turn)?;
+        }
         Ok(turn)
+    }
+
+    /// quantum D3: commit this boundary's local offset through the bus lock
+    /// alone, without the Hart CSR republish. Every forced sync outside
+    /// `Installed::turn` shares it (quantum F2, F4, F7, F8).
+    pub(crate) fn commit_local_time(&self, count: bool) -> Result<bool, MachineError> {
+        self.domain().platform.commit_local_time(count)
+    }
+
+    /// quantum D10: refresh `syncs` of a boundary `Installed::turn` already
+    /// built, keeping `reached`. The `last_slot` sync and the F2 sync run after
+    /// the boundary was built, so each refreshes it from `control_boundary`.
+    fn refresh_quantum_syncs(&self, turn: &mut MachineTurn) -> Result<(), MachineError> {
+        let Some(syncs) = self
+            .control_boundary(false)?
+            .quantum
+            .map(|facts| facts.syncs)
+        else {
+            return Ok(());
+        };
+        if let Some(facts) = &mut turn.boundary.quantum {
+            facts.syncs = syncs;
+        }
+        Ok(())
+    }
+
+    /// quantum F2: sync after a RAM-resident `tohost` sample, before the Runner
+    /// decodes it. A zero poll is not a sync. The sample itself is RAM and does
+    /// not depend on time, so it is read first; a non-zero value then makes the
+    /// boundary's sync count and refreshes it (quantum D10).
+    pub(crate) fn sync_after_tohost(&mut self, turn: &mut MachineTurn) -> Result<(), MachineError> {
+        let non_zero = matches!(turn.tohost.as_ref().map(|sample| &sample.value), Some(Ok(value)) if *value != 0);
+        if !non_zero {
+            return Ok(());
+        }
+        self.commit_local_time(true)?;
+        self.refresh_quantum_syncs(turn)
     }
     pub(crate) fn control_boundary(
         &self,
@@ -649,6 +692,9 @@ impl OwnedMachine {
             lease.boundary(false, None)?;
             return Ok(DebugBoundary::default());
         };
+        // quantum F4: a busy program-buffer command is pending debug work, so
+        // it starts at `O` = 0 and `sample_debug_inputs` writes parity time.
+        self.commit_local_time(true)?;
         self.sample_debug_inputs()?;
         let (outcome, failure, uncertain) = {
             let core = &mut self
@@ -720,6 +766,9 @@ impl OwnedMachine {
         let Some(request) = request else {
             return Ok(SbaService::default());
         };
+        // quantum F4: staged system bus work is pending debug work, so it runs
+        // at `O` = 0 and observes parity time.
+        self.commit_local_time(true)?;
         // The DM lock is released above; only the Platform's target is reached.
         let result = self.domain().platform.sba_access(request);
         let mut dm = hub.debug.dm.lock().map_err(|_| MachineError::Poisoned)?;
@@ -809,6 +858,9 @@ impl OwnedMachine {
         self.debug_events
             .extend(self.domain().platform.take_events()?);
         self.domain().platform.discard_transport_turn_delay();
+        // quantum D9: a debug store to `mtime` is a rebase, as a guest store is.
+        #[cfg(test)]
+        self.domain_mut().reconcile_ledger()?;
         Ok(())
     }
 
@@ -847,6 +899,10 @@ impl OwnedMachine {
     fn apply_dmi(&mut self, addr: u8, write: Option<u32>) -> Result<u32, MachineError> {
         let hub = Arc::clone(&self.control.inner);
         let lease = Lease::debug(&hub.gate)?;
+        // quantum F4: a queued batch is pending debug work, so it starts at
+        // `O` = 0 and `sample_debug_inputs` writes parity time. It also covers
+        // `reload_for_ndmreset`, which runs later in this call.
+        self.commit_local_time(true)?;
         self.sample_debug_inputs()?;
         let uncertain = lease.boundary_state()?.1;
         let (value, before, after, failure) = {
@@ -979,6 +1035,64 @@ impl OwnedMachine {
         self.domain().platform.turn_completion_bound_ticks()
     }
 
+    /// quantum D9: the installed generation's conservation ledger.
+    #[cfg(test)]
+    pub(crate) fn test_ledger(&self) -> TimeLedger {
+        self.domain().ledger()
+    }
+
+    /// quantum D3: the installed generation's anchor `E`.
+    #[cfg(test)]
+    pub(crate) fn platform_anchor(&self) -> Result<u64, MachineError> {
+        self.domain().platform.anchor()
+    }
+
+    /// Stage one system bus read on the DM without the DMI path, so F4's
+    /// `service_sba` point is not preceded by `apply_dmi`'s own sync.
+    #[cfg(test)]
+    pub(super) fn test_stage_sba_read(&mut self, address: u64) {
+        // Debug Specification 1.0 §3.14 `sbcs`/`sbaddress`: the same register
+        // block `src/dm/regs.rs` names.
+        const DMCONTROL: u8 = 0x10;
+        const SBCS: u8 = 0x38;
+        const SBADDRESS0: u8 = 0x39;
+        const SBADDRESS1: u8 = 0x3a;
+        const SBACCESS_WORD: u32 = 2 << 17;
+        const SBREADONADDR: u32 = 1 << 20;
+        let hub = Arc::clone(&self.control.inner);
+        let mut dm = hub.debug.dm.lock().expect("debug module lock");
+        let core = &mut self
+            .installed
+            .as_mut()
+            .expect("exclusive installed Machine")
+            .core;
+        dm.dmi_write(core, DMCONTROL, 1);
+        dm.dmi_write(core, SBCS, SBACCESS_WORD | SBREADONADDR);
+        dm.dmi_write(core, SBADDRESS1, (address >> 32) as u32);
+        dm.dmi_write(core, SBADDRESS0, address as u32);
+    }
+
+    /// Run `hook` at every turn start, after the F1 mark clear, so a test can
+    /// inject the flush only a turn in progress can hold.
+    #[cfg(test)]
+    pub(super) fn test_after_turn_start(&mut self, hook: AfterTurnStart) {
+        self.domain_mut().after_turn_start = Some(hook);
+    }
+
+    /// Sead an F1 turn mark with no device access behind it.
+    #[cfg(test)]
+    pub(crate) fn test_seed_turn_mark(&self) -> Result<(), MachineError> {
+        self.domain().platform.seed_turn_mark()
+    }
+
+    /// Sead a local offset at a boundary whose production path always syncs
+    /// (quantum D6). Used to reach F4's busy-command sync, which `run_command`
+    /// and `next_word` otherwise only reach at `O` = 0.
+    #[cfg(test)]
+    pub(crate) fn test_seed_offset(&self, offset: u64) -> Result<(), MachineError> {
+        self.domain().platform.seed_local_offset(offset)
+    }
+
     /// Current Platform `mtime` of the installed domain.
     #[cfg(any(test, feature = "capi"))]
     pub(crate) fn platform_mtime(&self) -> Result<u64, MachineError> {
@@ -1016,7 +1130,10 @@ impl OwnedMachine {
     /// Replace Platform `mtime` directly, as a guest CLINT write would.
     #[cfg(test)]
     pub(crate) fn set_platform_mtime(&mut self, value: u64) -> Result<(), MachineError> {
-        self.domain_mut().platform.set_mtime(value).map(|_| ())
+        self.domain_mut().platform.set_mtime(value)?;
+        // quantum D9: an in-crate `mtime` store is a rebase, as a guest store is.
+        self.domain_mut().rebase_ledger(value);
+        Ok(())
     }
 
     #[cfg(test)]

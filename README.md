@@ -207,7 +207,12 @@ invalidate-all 会额外转发一次）。缺少工具链、缺少 SystemC 或�
 `cargo build`／`cargo test --all-features` 不需要 C++ 工具链或 SystemC。Linux x86-64 only。
 
 选定的 blocking 映射、FFI 所有权与线程、错误映射、时间单位、再入与停止行为、构建与版本 pin 的规范说明见
-[SystemC/TLM 边界](docs/integration/systemc-tlm.md)；quantum／同步策略已由当前合同选定，尚未实现。
+[SystemC/TLM 边界](docs/integration/systemc-tlm.md)。
+
+quantum／同步策略由当前合同选定。其 Machine 核心已在 U1／U2 落地：`MachineConfig.quantum`（Platform tick，0 为
+关闭）、本地偏移 `O` 与锚点 `E`、阈值同步、§3 的强制同步点、D9 的 tick 守恒与 D8 的延迟上界，以及
+`BoundaryFacts.quantum` 的降低精度报告。公共 CLI 仍无法选择 quantum：`--quantum`、guest suite 的 quantum
+遍、C ABI 字段与 SystemC smoke 分属后续单元，尚未实现。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 

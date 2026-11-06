@@ -1,17 +1,17 @@
 diff --git i/src/executor.rs w/src/executor.rs
-index b670648..559d869 100644
+index 1ccd3dd..9e68290 100644
 --- i/src/executor.rs
 +++ w/src/executor.rs
-@@ -408,7 +408,11 @@ impl SystemBus {
-         if self.local_offset == 0 {
-             return false;
+@@ -519,7 +519,11 @@ impl SystemBus {
+     pub(crate) fn commit_local_time(&mut self, count: bool) -> bool {
+         let moved = self.local_offset != 0;
+         if moved {
+-            let committed = self.clint.read_mtime().wrapping_add(self.local_offset);
++            let committed = self
++                .clint
++                .read_mtime()
++                .wrapping_add(self.local_offset)
++                .wrapping_add(1);
+             self.clint.write_mtime(committed);
+             self.local_offset = 0;
          }
--        let committed = self.clint.read_mtime().wrapping_add(self.local_offset);
-+        let committed = self
-+            .clint
-+            .read_mtime()
-+            .wrapping_add(self.local_offset)
-+            .wrapping_add(1);
-         self.clint.write_mtime(committed);
-         self.local_offset = 0;
-         if count {

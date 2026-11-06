@@ -1,13 +1,13 @@
 diff --git i/src/executor.rs w/src/executor.rs
-index b670648..cb3645a 100644
+index 1ccd3dd..6d4c7c3 100644
 --- i/src/executor.rs
 +++ w/src/executor.rs
-@@ -411,7 +411,7 @@ impl SystemBus {
-         let committed = self.clint.read_mtime().wrapping_add(self.local_offset);
-         self.clint.write_mtime(committed);
-         self.local_offset = 0;
--        if count {
-+        if true {
+@@ -525,7 +525,7 @@ impl SystemBus {
+         }
+         self.anchor = self.clint.read_mtime();
+         let flushed = self.flush_moved;
+-        if count && (moved || flushed) {
++        if moved || flushed {
              self.quantum_syncs += 1;
          }
-         true
+         self.device_marked = false;

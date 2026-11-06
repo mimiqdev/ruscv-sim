@@ -1700,7 +1700,7 @@
         "failure": [
           "the wake presented a different time than the parity run",
           "\\(203, 203, 7, 7\\)",
-          "\\(221, 221, 7, 7\\)"
+          "\\(212, 212, 7, 7\\)"
         ]
       }
     ]
@@ -2029,6 +2029,321 @@
           "assertion `left == right` failed",
           "left:\\s+8",
           "right:\\s+7"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f1-route",
+    "source": "src/executor.rs",
+    "patch": "quantum-u2-f1-route.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f1_clint_mtime_read_mid_quantum_returns_the_parity_value",
+        "failure": [
+          "the CLINT mtime load did not return the parity value",
+          "left:\\s+0",
+          "right:\\s+3"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f1-atomic",
+    "source": "src/executor.rs",
+    "patch": "quantum-u2-f1-atomic.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f1_atomic_device_envelope_flushes_the_offset",
+        "failure": [
+          "the HTIF AMO did not flush the offset at the boundary",
+          "left:\\s+\\(0, 3\\)",
+          "right:\\s+\\(3, 3\\)"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f1-turn-end",
+    "source": "src/machine/mod.rs",
+    "patch": "quantum-u2-f1-turn-end.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f1_mtimecmp_store_presents_mtip_at_the_next_turn",
+        "failure": [
+          "the marked turn did not commit the compare's own local time",
+          "left:\\s+4",
+          "right:\\s+5"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f2-tohost",
+    "source": "src/machine/owned.rs",
+    "patch": "quantum-u2-f2-tohost.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f2_tohost_sync_refreshes_the_boundary",
+        "failure": [
+          "F2 did not sync before the exit decode",
+          "left:\\s+0",
+          "right:\\s+3"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f4-halt",
+    "source": "src/machine/mod.rs",
+    "patch": "quantum-u2-f4-halt.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f4_halt_syncs_the_offset",
+        "failure": [
+          "the debug halt left its offset unsynced",
+          "left:\\s+0",
+          "right:\\s+2"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f4-apply-dmi",
+    "source": "src/machine/owned.rs",
+    "patch": "quantum-u2-f4-apply-dmi.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f4_apply_dmi_syncs_before_the_debug_sample",
+        "failure": [
+          "a queued DMI batch did not sync before the debug sample",
+          "left:\\s+0",
+          "right:\\s+2"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f4-advance-command",
+    "source": "src/machine/owned.rs",
+    "patch": "quantum-u2-f4-advance-command.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f4_busy_command_syncs_the_seeded_offset",
+        "failure": [
+          "the busy command's grant did not sync the seeded offset",
+          "left:\\s+0",
+          "right:\\s+2"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f4-service-sba",
+    "source": "src/machine/owned.rs",
+    "patch": "quantum-u2-f4-service-sba.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f4_staged_sba_syncs_and_reads_local_time",
+        "failure": [
+          "staged system bus work did not sync the offset",
+          "left:\\s+0",
+          "right:\\s+2"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f7-last-slot",
+    "source": "src/machine/owned.rs",
+    "patch": "quantum-u2-f7-last-slot.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f7_last_slot_syncs_and_refreshes_the_count",
+        "failure": [
+          "the last slot did not sync the offset",
+          "left:\\s+0",
+          "right:\\s+3"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f7-runner-return",
+    "source": "src/executor.rs",
+    "patch": "quantum-u2-f7-runner-return.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "executor::u3_tests::quantum_runner_return_syncs_before_the_facts",
+        "failure": [
+          "the Runner return did not count exactly its one F7 sync",
+          "left:\\s+0",
+          "right:\\s+1"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f8-drain",
+    "source": "src/machine/mod.rs",
+    "patch": "quantum-u2-f8-drain.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f8_drain_commits_the_offset",
+        "failure": [
+          "the drain acknowledgment did not commit the offset",
+          "left:\\s+0",
+          "right:\\s+2"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f9-seeded-offset",
+    "source": "src/executor.rs",
+    "patch": "quantum-u2-f9-seeded-offset.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f9_fresh_generations_start_with_no_offset",
+        "failure": [
+          "the first turn's `time` was not `C`",
+          "left:\\s+5",
+          "right:\\s+0"
+        ]
+      },
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::quantum_session_reset_starts_with_no_local_offset",
+        "failure": [
+          "the reset generation committed an inherited local offset",
+          "left:\\s+6000000",
+          "right:\\s+1000000"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-flush-counted",
+    "source": "src/executor.rs",
+    "patch": "quantum-u2-flush-counted.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_f1_clint_mtime_read_mid_quantum_returns_the_parity_value",
+        "failure": [
+          "the marked boundary did not count exactly one sync",
+          "left:\\s+\\(4, 4, 2\\)",
+          "right:\\s+\\(4, 4, 1\\)"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-anchor-after-store",
+    "source": "src/executor.rs",
+    "patch": "quantum-u2-anchor-after-store.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_debug_mtime_store_reanchors_and_leaves_no_mark",
+        "failure": [
+          "E was not re-anchored by the debug mtime store",
+          "left:\\s+2",
+          "right:\\s+64"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-f1-mark-stale",
+    "source": "src/executor.rs",
+    "patch": "quantum-u2-f1-mark-stale.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_turn_start_clears_a_stale_mark",
+        "failure": [
+          "a stale F1 mark synced a guest turn that flushed nothing",
+          "left:\\s+1",
+          "right:\\s+0"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-mtip-from-local",
+    "source": "src/executor.rs",
+    "patch": "quantum-u2-mtip-from-local.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_timer_spin_recognizes_mtip_within_the_bound",
+        "failure": [
+          "the recognition's committed time was not the sync phase plus a whole quantum",
+          "left:\\s+195",
+          "right:\\s+211"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "quantum-u2-flush-only-publish",
+    "source": "src/executor.rs",
+    "patch": "quantum-u2-flush-only-publish.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::quantum_flush_only_failure_publishes_the_boundary_lines",
+        "failure": [
+          "the flush-only failure left the machine lines unpresented"
         ]
       }
     ]

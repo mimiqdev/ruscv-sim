@@ -1,0 +1,13 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index 5f8ee08..f59997b 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -361,7 +361,7 @@ impl SystemBus {
+ 
+     pub fn machine_interrupt_lines(&self) -> PresentedInterruptLines {
+         let msip = self.clint.read_msip(0).is_some_and(|value| value & 1 != 0);
+-        let mtime = self.clint.read_mtime();
++        let mtime = self.clint.read_mtime().wrapping_add(self.local_offset);
+         let mtip = self
+             .clint
+             .read_mtimecmp(0)
