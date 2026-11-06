@@ -331,14 +331,15 @@ typedef struct ruscv_debug {
  * RUSCV_DMI_FAILED.
  *
  * `quantum_ticks` is the selected quantum in Platform ticks and is the final
- * field.  Zero is off, which runs exactly as the previous header's ABI did.  A
- * non-zero value is the explicit reduced-accuracy request: a time-derived timer
- * crossing may be recognized up to `quantum_ticks - 1` ticks plus the target's
- * declared turn completion bound late, while committed time never drifts.  The
- * table is copied at create, so the selection persists across
- * ruscv_machine_reset, and a NULL table cannot select one because the native
- * route has no local offset to bound.  A value ruscv_machine_create cannot
- * represent is RUSCV_ERROR_CONFIG.
+ * field.  Zero is off, which runs exactly as the previous header's ABI did.
+ * One syncs at every turn boundary and is precise.  A value of 2 or more is the
+ * explicit reduced-accuracy request: a time-derived timer crossing may be
+ * recognized up to `quantum_ticks - 1` ticks plus the target's declared turn
+ * completion bound late, while committed time never drifts.  The table is
+ * copied at create, so the selection persists across ruscv_machine_reset, and
+ * a NULL table cannot select one because the native route has no local offset
+ * to bound.  A value ruscv_machine_create cannot represent is
+ * RUSCV_ERROR_CONFIG.
  */
 typedef struct ruscv_target {
     uint64_t max_delay_fs;
