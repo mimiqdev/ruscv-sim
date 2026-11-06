@@ -1,0 +1,13 @@
+diff --git i/src/executor.rs w/src/executor.rs
+index 8c83251..a47cb3b 100644
+--- i/src/executor.rs
++++ w/src/executor.rs
+@@ -382,7 +382,7 @@ impl SystemBus {
+         advance: u64,
+         checked: bool,
+     ) -> Result<(), String> {
+-        if checked {
++        if false {
+             let fits = self
+                 .clint
+                 .read_mtime()

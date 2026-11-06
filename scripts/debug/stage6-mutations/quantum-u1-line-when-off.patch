@@ -1,0 +1,22 @@
+diff --git i/src/main.rs w/src/main.rs
+index 67c548c..5f3f078 100644
+--- i/src/main.rs
++++ w/src/main.rs
+@@ -307,7 +307,7 @@ fn print_result(result: &ExecutionResult) {
+ /// quantum D10: the single `Quantum:` report line, or `None` when the run has
+ /// no quantum fact so the stdout stays byte-identical.
+ fn quantum_report_line(quantum: &Option<ruscv_sim::machine::QuantumFacts>) -> Option<String> {
+-    quantum.as_ref().map(|quantum| {
++    Some(quantum.map_or("Quantum:    off".to_string(), |quantum| {
+         format!(
+             "Quantum:    {} ticks, {} syncs, latency bound {} ticks{}",
+             quantum.ticks,
+@@ -319,7 +319,7 @@ fn quantum_report_line(quantum: &Option<ruscv_sim::machine::QuantumFacts>) -> Op
+                 ""
+             }
+         )
+-    })
++    }))
+ }
+ 
+ #[cfg(test)]

@@ -1,0 +1,13 @@
+diff --git i/src/machine/platform.rs w/src/machine/platform.rs
+index c64eb2d..31aaabb 100644
+--- i/src/machine/platform.rs
++++ w/src/machine/platform.rs
+@@ -116,7 +116,7 @@ impl Platform {
+         // `(Q + t + 1) x tick_period` must fit as u64 femtoseconds, where `t`
+         // is the route's conservative turn completion bound.  The check does
+         // not run for `Q` = 0, which accepts everything accepted today.
+-        if config.quantum != 0 {
++        if true {
+             let turn_bound = ram.turn_completion_bound_ticks().unwrap_or(0);
+             let period = config.tick_period.femtoseconds().as_u64();
+             let represented = config

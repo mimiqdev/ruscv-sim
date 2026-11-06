@@ -1,0 +1,16 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 24860cc..c9bb582 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -513,11 +513,7 @@ impl Installed {
+                 }
+                 break hart;
+             }
+-            // quantum F3: a waiting turn syncs ahead of the wake check, so
+-            // `settle_wait` and the idle jump see committed local time and
+-            // the jump lands with a zero offset.
+             if self.quantum != 0 {
+-                synced |= self.platform.commit_local_time()?;
+             }
+             match self.settle_wait() {
+                 WaitSettlement::NoProgress => {

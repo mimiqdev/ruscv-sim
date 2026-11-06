@@ -1,0 +1,15 @@
+diff --git i/src/machine/platform.rs w/src/machine/platform.rs
+index c64eb2d..e02816c 100644
+--- i/src/machine/platform.rs
++++ w/src/machine/platform.rs
+@@ -390,9 +390,7 @@ impl Platform {
+     ) -> Result<(), MachineError> {
+         if let Some(bus) = &self.bus {
+             let mut bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+-            return bus
+-                .accumulate_local_offset(advance, checked)
+-                .map_err(MachineError::Placement);
++            return Ok(());
+         }
+         // A non-zero quantum is refused without the native bus (quantum D2),
+         // so a flat Platform never accumulates an offset.

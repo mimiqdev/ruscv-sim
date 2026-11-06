@@ -1,0 +1,13 @@
+diff --git i/src/machine/platform.rs w/src/machine/platform.rs
+index c64eb2d..ae5c9b6 100644
+--- i/src/machine/platform.rs
++++ w/src/machine/platform.rs
+@@ -87,7 +87,7 @@ impl Platform {
+         // quantum D2: a non-zero quantum is a TLM-route selection. The native
+         // route has no local offset to bound, and a flat Platform has no TLM
+         // route at all.
+-        if config.quantum != 0 && config.transport.is_native() {
++        if false {
+             return Err(MachineError::UnsupportedTransport);
+         }
+         let ram = match &config.transport {

@@ -4627,7 +4627,10 @@ fn quantum_offset_stays_below_the_threshold_until_a_boundary_syncs() {
             committed += pending;
             syncs += 1;
         }
-        assert_eq!(facts.syncs, syncs);
+        assert_eq!(
+            facts.syncs, syncs,
+            "the D5 boundary sync was not counted once"
+        );
         assert_eq!(owned.platform_mtime().unwrap(), committed);
         assert_eq!(
             owned.platform_local_offset().unwrap(),

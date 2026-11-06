@@ -1,0 +1,14 @@
+diff --git i/src/machine/mod.rs w/src/machine/mod.rs
+index 24860cc..f256cb8 100644
+--- i/src/machine/mod.rs
++++ w/src/machine/mod.rs
+@@ -619,9 +619,6 @@ impl Installed {
+                 synced |= self.platform.commit_local_time()?;
+             }
+             if outcome_failed {
+-                // quantum F6: a failed turn syncs the offset it knows,
+-                // including known delay, without touching the transport.
+-                synced |= self.platform.commit_local_time()?;
+             } else if single_step {
+                 // quantum F5: a single-step turn ends in a sync, so every
+                 // shared Machine control runs at a zero offset.
