@@ -99,10 +99,11 @@ the kernel commits. A counted sync at a turn boundary ends the grant, so
 `--quantum 1024` needs far fewer grants than `--quantum 1` for the same guest.
 
 `--fault-keep-offset` and `--fault-decrease-delay` are the quantum contract's two
-fault-option controls and require `--quantum`. The first reports the offset as
-an added delay, above this target's declared maximum of zero; the second lowers
-the target's delay below the offset it received. Each must fail the run with its
-own diagnostic, and a control that passes is a smoke failure.
+fault-option controls: each requires `--quantum`, they are taken one at a time,
+and each must fail the run with its own diagnostic. The first reports the offset
+as an added delay, above this target's declared maximum of zero; the second
+lowers the target's delay below the offset it received. A control that passes is
+a smoke failure.
 
 The end-to-end comparison with the native run is
 [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh); the

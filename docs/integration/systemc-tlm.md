@@ -148,8 +148,8 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
   `dmi_allowed` response hint on the ABI payload is the transaction's TLM
   hint flag.
 - The annotated delay is the delay the target adds, reported in exact
-  femtoseconds. The `delay`
-  argument is seeded with the payload's `local_offset_fs` before the call, so
+  femtoseconds. The delay argument is seeded with the payload's
+  `local_offset_fs` before the call, so
   the request carries the Hart's local time in the sense of IEEE 1666: with the
   grant's start as the kernel clock, `sc_time_stamp() + delay` is the
   transaction's local time. On return the callback subtracts that offset and
@@ -258,8 +258,8 @@ offset `O`, bounded by the selected quantum (quantum D3–D5). This host's rules
 ### Fault-option controls
 
 `--fault-keep-offset` and `--fault-decrease-delay` are the two fault-option
-controls of the contract's §4, in the style of `--stop-after-grants`, and both
-require `--quantum`. They exist because the mutation runner builds only Rust, so
+controls of the contract's §4, in the style of `--stop-after-grants`. Both
+require `--quantum` and they cannot be combined. They exist because the mutation runner builds only Rust, so
 a C++ fault cannot be a control row there (quantum D14). Neither is a normal
 host, and a run that passes with either one set is a smoke failure:
 

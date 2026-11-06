@@ -114,8 +114,8 @@ void print_usage(const char* program) {
         "offset; the kernel still commits only what a grant returns, so the clock\n"
         "equals committed_end_fs after every grant. --fault-keep-offset and\n"
         "--fault-decrease-delay are the two fault-option controls of the quantum\n"
-        "contract and require --quantum; each must fail the run with its own\n"
-        "diagnostic.\n",
+        "contract: each requires --quantum, they are taken one at a time, and each\n"
+        "must fail the run with its own diagnostic.\n",
         program);
 }
 
@@ -256,6 +256,13 @@ bool parse_options(int argc, char** argv, Options& options) {
         // Without a grant there is nothing to invalidate, so this control
         // would check nothing: require the selection it exercises.
         std::fprintf(stderr, "systemc-smoke: --dmi-invalidate-every requires --dmi\n");
+        return false;
+    }
+    if (options.fault_keep_offset && options.fault_decrease_delay) {
+        // The two fault controls break the same offset arithmetic in different
+        // places, so one run cannot exercise both: require one at a time.
+        std::fprintf(stderr, "systemc-smoke: --fault-keep-offset and --fault-decrease-delay "
+                             "cannot be combined\n");
         return false;
     }
     if ((options.fault_keep_offset || options.fault_decrease_delay) && options.quantum == 0) {
@@ -531,8 +538,15 @@ int sc_main(int argc, char** argv) {
     std::printf("systemc-smoke: SystemC %s (IEEE 1666-%ld, SYSTEMC_VERSION %d), resolution %s\n",
                 sc_core::sc_release(), IEEE_1666_SYSTEMC, SYSTEMC_VERSION,
                 resolution.to_string().c_str());
-    std::printf("systemc-smoke: running %s under --isa %s --quantum %" PRIu64 "\n",
-                options.elf.c_str(), isa_name(options.isa), options.quantum);
+    if (options.quantum == 0) {
+        // A run with no quantum keeps the banner it printed before this unit: the
+        // selection appears only when one is selected.
+        std::printf("systemc-smoke: running %s under --isa %s\n", options.elf.c_str(),
+                    isa_name(options.isa));
+    } else {
+        std::printf("systemc-smoke: running %s under --isa %s --quantum %" PRIu64 "\n",
+                    options.elf.c_str(), isa_name(options.isa), options.quantum);
+    }
     std::fflush(stdout);
 
     ruscv_sim::RamTarget ram("ram", options.fault_decrease_delay);
