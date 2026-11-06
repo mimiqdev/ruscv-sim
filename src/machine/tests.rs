@@ -5917,7 +5917,7 @@ fn quantum_timer_spin_recognizes_mtip_within_the_bound() {
         "the computed D8 lateness is not the contract's `R - X` for this run"
     );
     assert!(
-        expected_lateness <= QUANTUM - 1,
+        expected_lateness < QUANTUM,
         "the computed recognition exceeded the D8 bound"
     );
     // quantum D9: after every sync, committed time is the run's charged
