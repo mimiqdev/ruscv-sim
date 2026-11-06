@@ -1,10 +1,10 @@
-diff --git a/src/capi/host.rs b/src/capi/host.rs
-index 61a15e3..613c3c4 100644
---- a/src/capi/host.rs
-+++ b/src/capi/host.rs
-@@ -707,7 +707,8 @@ impl Session {
-             .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the caller clock overflows"))?;
+diff --git i/src/capi/host.rs w/src/capi/host.rs
+index ed97a7b..32e0b33 100644
+--- i/src/capi/host.rs
++++ w/src/capi/host.rs
+@@ -812,7 +812,8 @@ impl Session {
          finalize_horizon(&mut facts, caller_end, max_end_fs, false);
+         self.refresh_quantum_syncs(machine, &mut facts)?;
          self.facts = facts;
 -        self.state = RunState::Failed;
 +        // MUTATION: a terminal failure is reported as a passing guest exit.
