@@ -277,14 +277,21 @@ quantum／同步策略已由归档的 quantum 合同实现：`MachineConfig.quan
 `scripts/run_elf_tests.sh` 与 `scripts/test_systemc_smoke.sh` 提供。该合同于 2026-11-06 在 PR #214 完成，
 已归档为 [quantum 合同](docs/archive/milestones/quantum-temporal-decoupling.md)。
 
-non-blocking（base protocol）传输与可挂起回调由当前合同实现：Rust 侧的 `BlockingTarget::suspends_host_time`、
-`BlockingTransaction` 的 `may_suspend`/`host_elapsed` 与 `BoundaryFacts::host_elapsed_femtoseconds`，C ABI 的
-挂起声明、payload 的请求/响应字段与 grant 的 host elapsed 增量，SystemC 的 `--nb` AT 路径、超时退休、
-late phase 与 drain，以及五个故障选项，均见上文各节。实现证据由 `src/blocking/tests.rs`、
-`src/machine/tests.rs`、`src/capi/tests.rs`、`tests/capi/smoke.c`、`scripts/test_systemc_smoke.sh` 与
-`scripts/debug/stage6-mutations`（15 个 `nb-u1-*`/`nb-u2-*` 控制）提供。规范映射、时间规则与开放项见
-[SystemC/TLM 边界](docs/integration/systemc-tlm.md)；开放项只余 TLM 建模设备、SystemC 建模中断线与多笔
-未完成事务。
+non-blocking（base protocol）传输与可挂起回调已由归档的 non-blocking 合同实现：Rust 侧的
+`BlockingTarget::suspends_host_time`、`BlockingTransaction` 的 `may_suspend`/`host_elapsed` 与
+`BoundaryFacts::host_elapsed_femtoseconds`，C ABI 的挂起声明、payload 的请求/响应字段与 grant 的 host
+elapsed 增量，SystemC 的 `--nb` AT 路径、超时退休、late phase 与 drain，以及五个故障选项，均见上文各节。
+实现证据由 `src/blocking/tests.rs`、`src/machine/tests.rs`、`src/capi/tests.rs`、`tests/capi/smoke.c`、
+`scripts/test_systemc_smoke.sh` 与 `scripts/debug/stage6-mutations`（15 个 `nb-u1-*`/`nb-u2-*` 控制）提供。
+该合同于 2026-11-07 在 PR #225 完成，已归档为
+[non-blocking 合同](docs/archive/milestones/non-blocking-tlm-transport.md)。
+
+TLM 建模设备由当前合同选定，尚未实现：UART 窗口（`0x1000_0000`/`0x100`）与 HTIF 端点（`0x4000_8000`/8）
+在 TLM 路由上成为 blocking device target，默认由 in-tree Rust 设备应答，SystemC 宿主可经 C ABI 的
+`ruscv_machine_attach_device` 替换 UART；一次设备访问仍是一笔零延迟、零 host elapsed 的 `b_transport`
+事务，被接受的 THR 写至多上报一个 `UartTransmit` 事件。CLINT、PLIC 与 source-1 gateway 仍属 Platform 状态，
+`mtime`/`mtimecmp` 与四条中断线不由 target 拥有；SystemC 建模中断线仍属后续合同。规范映射与开放项见
+[SystemC/TLM 边界](docs/integration/systemc-tlm.md)。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 

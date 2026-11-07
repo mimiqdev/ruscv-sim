@@ -1,6 +1,6 @@
 # Quantum and Temporal Decoupling contract
 
-**Status:** Historical. Completed 2026-11-06 at PR #214; the [Non-blocking TLM Transport contract](../../dev-plan.md) succeeds it as the sole Current contract on the actual rotation merge.
+**Status:** Historical. Completed 2026-11-06 at PR #214; the [Non-blocking TLM Transport contract](non-blocking-tlm-transport.md) succeeded it, completed 2026-11-07 at PR #225.
 
 **Authority:** Preserved approved contract, not an active plan or an execution report. CI and PR history retain check and review outcomes.
 
