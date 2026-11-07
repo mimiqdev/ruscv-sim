@@ -926,20 +926,24 @@ fn only_a_hart_request_in_an_open_turn_carries_may_suspend() {
 /// every debug path is outside it.
 #[test]
 fn begin_transport_turn_has_one_guest_turn_call_site() {
-    let machine = include_str!("../machine/mod.rs");
-    let owned = include_str!("../machine/owned.rs");
-    let executor = include_str!("../executor.rs");
-    assert_eq!(
-        machine.matches(".begin_transport_turn()").count(),
-        1,
-        "the guest-turn window gained a second opener, which D3's flag relies on"
-    );
-    // The `SystemBus` definition in `executor.rs` is the delegation target; no
-    // other caller of the Platform entry point may appear.
-    for (file, source) in [("owned.rs", owned), ("executor.rs", executor)] {
-        assert!(
-            !source.contains(".begin_transport_turn()"),
-            "{file} now opens the guest-turn window"
+    // The whole dotted-call set of the crate's turn drivers: `Installed::turn`
+    // opens the window and `Platform` forwards it to the RAM slot and the bus.
+    // Every other turn driver must stay outside, so a debug path cannot open
+    // the window D3's flag relies on.
+    for (file, source, expected) in [
+        ("machine/mod.rs", include_str!("../machine/mod.rs"), 1),
+        (
+            "machine/platform.rs",
+            include_str!("../machine/platform.rs"),
+            2,
+        ),
+        ("machine/owned.rs", include_str!("../machine/owned.rs"), 0),
+        ("executor.rs", include_str!("../executor.rs"), 0),
+    ] {
+        assert_eq!(
+            source.matches(".begin_transport_turn()").count(),
+            expected,
+            "{file} changed its guest-turn window call sites"
         );
     }
 }
