@@ -6,6 +6,12 @@
 // `transport_reset` is the acknowledgement the Platform needs before it
 // zero-fills and reinstalls.
 //
+// Under `--nb` the same module also serves the TLM-2.0 base protocol on the
+// forward path (nb D8). It applies the access once at `BEGIN_REQ`, schedules
+// the later phases through its own phase queue, withholds a transport reset
+// acknowledgement while a transaction is open, and reports the phase counts a
+// drain waits on (nb D9).
+//
 // Storage is sparse and byte-exact. Alongside the bytes it keeps one
 // committed-write version per byte: a load-reserved returns that snapshot and a
 // store-conditional re-checks it inside the same hold, which is the target half
@@ -63,6 +69,23 @@ enum class AtPath {
     Completed,
 };
 
+/// The smoke's fault-option controls that belong to the RAM target (nb §4).
+///
+/// Each one breaks this model in one named place so the smoke can require its
+/// own failure.  They are taken one at a time and are never a normal model.
+struct TargetFaults {
+    /// `--fault-decrease-delay` (quantum §4): lower the received delay below the
+    /// offset it was given.
+    bool decrease_delay = false;
+    /// `--fault-late-response`: delay the run's first AT access's final phase to
+    /// one tick after the declared maximum.
+    bool late_response = false;
+    /// `--fault-wait-blocking`: wait one tick in `b_transport`.
+    bool wait_blocking = false;
+    /// `--fault-wait-debug`: wait one tick in `transport_dbg`.
+    bool wait_debug = false;
+};
+
 /// A zero-delay blocking RAM target with the ruscv-sim atomic extension.
 class RamTarget : public sc_core::sc_module {
 public:
@@ -76,15 +99,11 @@ public:
     /// ruscv-sim side of the same calls.
     tlm_utils::simple_target_socket<RamTarget> socket;
 
-    /// `fault_decrease_delay` is the smoke's `--fault-decrease-delay` control
-    /// (quantum §4): the target lowers the received delay below the offset it
-    /// was given, which the initiator must report as an unknown completion. It
-    /// exists to prove that assertion and is never a normal model.
-    ///
-    /// `non_blocking` registers the AT `nb_transport_fw` path (nb D8), with
-    /// `nb_latency_fs` as `lambda` and `nb_path` as its return path. The
-    /// blocking, debug and direct-memory callbacks stay unchanged.
-    explicit RamTarget(sc_core::sc_module_name name, bool fault_decrease_delay = false,
+    /// `faults` carries the smoke's fault-option controls and is empty in every
+    /// normal run.  `non_blocking` registers the AT `nb_transport_fw` path
+    /// (nb D8), with `nb_latency_fs` as `lambda` and `nb_path` as its return
+    /// path. The blocking, debug and direct-memory callbacks stay unchanged.
+    explicit RamTarget(sc_core::sc_module_name name, TargetFaults faults = {},
                        bool non_blocking = false, uint64_t nb_latency_fs = 0,
                        AtPath nb_path = AtPath::Accepted);
 
@@ -117,6 +136,15 @@ public:
     uint64_t begin_req_count() const { return begin_req_count_; }
     /// Number of accesses applied by the AT path (nb D8).
     uint64_t applied_access_count() const { return applied_access_count_; }
+    /// True while a transaction is open at this target, from its `BEGIN_REQ`
+    /// until the target has sent or received its final phase (nb D8).
+    bool has_open_transaction() const { return open_transaction_ != nullptr; }
+    /// Phases this target has scheduled through `phase_queue_` and not yet
+    /// delivered (nb D9).  The drain waits for this to reach zero.
+    uint64_t scheduled_phase_count() const { return scheduled_phases_.size(); }
+    /// The host time of the earliest scheduled phase; meaningful only when
+    /// `scheduled_phase_count()` is non-zero.
+    sc_core::sc_time next_scheduled_phase() const;
 
 private:
     /// Bytes and per-byte committed-write versions for one 4 KiB chunk.
@@ -136,14 +164,18 @@ private:
         std::array<uint64_t, kChunkBytes> versions{};
     };
 
-    /// The smoke's `--fault-decrease-delay` control (quantum §4).
-    const bool fault_decrease_delay_;
+    /// The smoke's fault-option controls (quantum §4, nb §4).
+    const TargetFaults faults_;
     const bool non_blocking_;
     const uint64_t nb_latency_fs_;
     const AtPath nb_path_;
     /// The target's own phase queue (nb D8): it carries the phase and gives
     /// zero-time notifications their delta separation.
     tlm_utils::peq_with_cb_and_phase<RamTarget> phase_queue_;
+    /// Effective host times of the phases scheduled through `phase_queue_` and
+    /// not yet delivered.  The contract's one-outstanding-transaction model
+    /// schedules at most one at a time, so the drain can wait exactly for it.
+    std::vector<sc_core::sc_time> scheduled_phases_;
     /// The one AT transaction from `BEGIN_REQ` to its final phase.
     tlm::tlm_generic_payload* open_transaction_ = nullptr;
     uint64_t begin_req_count_ = 0;
@@ -162,6 +194,16 @@ private:
 
     /// Sends one phase the target scheduled through `phase_queue_`.
     void handle_phase(tlm::tlm_generic_payload& transaction, const tlm::tlm_phase& phase);
+
+    /// Schedules one phase through `phase_queue_` after `delay` and records its
+    /// effective host time for the drain (nb D9).
+    void schedule_phase(tlm::tlm_generic_payload& transaction, const tlm::tlm_phase& phase,
+                        const sc_core::sc_time& delay);
+
+    /// The host time between `BEGIN_REQ` and the final phase, with the
+    /// `--fault-late-response` control's one-tick offset on the run's first AT
+    /// access (nb §4).
+    sc_core::sc_time final_phase_latency();
 
     /// Applies one request exactly as `b_transport` does; returns true when
     /// the access was applied.

@@ -27,9 +27,19 @@
 // `--nb` selects the non-blocking AT path (nb D7/D8), with `--nb-latency` and
 // `--nb-path`; `--grant-trace` writes one line per grant for the smoke's D10
 // comparisons. `--fault-keep-offset` and `--fault-decrease-delay` are the
-// contract's two quantum fault-option controls (quantum §4): each breaks the
-// offset arithmetic in one place so the smoke can require its own named
-// failure. Neither is a normal host.
+// contract's two quantum fault-option controls (quantum §4), and
+// `--fault-late-response`, `--fault-uncounted-elapsed`, `--fault-short-delay`,
+// `--fault-wait-blocking` and `--fault-wait-debug` are the five non-blocking
+// ones (nb §4): each breaks the host or the target in one named place so the
+// smoke can require its own named failure. None is a normal host.
+//
+// At every stop after a retirement the driver first probes the transport reset
+// while the target still holds the transaction, then runs the kernel until the
+// target has no scheduled phase and the initiator holds no drain state, and
+// only then destroys the handle and stops the kernel, so every late phase is
+// delivered and ignored (nb D9). The exit summary reports the late-phase count,
+// the retirement count, the drain's forward `END_RESP` phases and whether a
+// transaction is still open at the target.
 //
 // The C ABI handle is created and destroyed on this thread, which is the
 // SystemC kernel thread, so the ABI's creator-thread affinity holds for every
@@ -53,6 +63,10 @@
 
 namespace {
 
+/// nb D9: the most steps the drain takes before the host calls it a failure.
+/// A legitimate drain needs a handful: each step waits for the next scheduled
+/// phase or the retained `END_RESP` time, not a fixed increment.
+constexpr uint64_t kMaxDrainSteps = 1000;
 /// The documented default Platform tick period: one nanosecond, in femtoseconds.
 constexpr uint64_t kTickPeriodFs = 1000000;
 /// One bounded grant never crosses more than this much modeled time: 1 ms.
@@ -101,6 +115,15 @@ struct Options {
     /// no local offset neither could produce its failure.
     bool fault_keep_offset = false;
     bool fault_decrease_delay = false;
+    /// The five non-blocking fault-option controls (nb §4). `--fault-late-response`,
+    /// `--fault-uncounted-elapsed` and `--fault-short-delay` need `--nb`; the
+    /// blocking-mode controls `--fault-wait-blocking` and `--fault-wait-debug`
+    /// must not be combined with it.
+    bool fault_late_response = false;
+    bool fault_uncounted_elapsed = false;
+    bool fault_short_delay = false;
+    bool fault_wait_blocking = false;
+    bool fault_wait_debug = false;
 };
 
 void print_usage(const char* program) {
@@ -114,6 +137,8 @@ void print_usage(const char* program) {
         "       [--nb-path accepted|updated|early|annotated|completed]\n"
         "       [--grant-trace <path>]\n"
         "       [--fault-keep-offset] [--fault-decrease-delay]\n"
+        "       [--fault-late-response] [--fault-uncounted-elapsed]\n"
+        "       [--fault-short-delay] [--fault-wait-blocking] [--fault-wait-debug]\n"
         "\n"
         "Runs one ruscv-sim Machine under this SystemC kernel. The RAM target is\n"
         "the zero-delay blocking model the initiator socket is bound to. Exit\n"
@@ -139,7 +164,11 @@ void print_usage(const char* program) {
         "grant (nb D10). --fault-keep-offset and --fault-decrease-delay are the\n"
         "two fault-option controls of the quantum contract: each requires\n"
         "--quantum, they are taken one at a time, and each must fail the run with\n"
-        "its own diagnostic.\n",
+        "its own diagnostic. The five non-blocking fault options are the same kind\n"
+        "of control (nb §4): --fault-late-response, --fault-uncounted-elapsed and\n"
+        "--fault-short-delay require --nb, while --fault-wait-blocking and\n"
+        "--fault-wait-debug are blocking-mode controls and must not be combined\n"
+        "with it. Exactly one fault option may be selected in a run.\n",
         program);
 }
 
@@ -304,6 +333,16 @@ bool parse_options(int argc, char** argv, Options& options) {
             options.fault_keep_offset = true;
         } else if (std::strcmp(argument, "--fault-decrease-delay") == 0) {
             options.fault_decrease_delay = true;
+        } else if (std::strcmp(argument, "--fault-late-response") == 0) {
+            options.fault_late_response = true;
+        } else if (std::strcmp(argument, "--fault-uncounted-elapsed") == 0) {
+            options.fault_uncounted_elapsed = true;
+        } else if (std::strcmp(argument, "--fault-short-delay") == 0) {
+            options.fault_short_delay = true;
+        } else if (std::strcmp(argument, "--fault-wait-blocking") == 0) {
+            options.fault_wait_blocking = true;
+        } else if (std::strcmp(argument, "--fault-wait-debug") == 0) {
+            options.fault_wait_debug = true;
         } else if (argument[0] == '-') {
             std::fprintf(stderr, "systemc-smoke: unknown option %s\n", argument);
             return false;
@@ -352,6 +391,37 @@ bool parse_options(int argc, char** argv, Options& options) {
                              "require --quantum\n");
         return false;
     }
+    const int fault_options = static_cast<int>(options.fault_keep_offset) +
+                              static_cast<int>(options.fault_decrease_delay) +
+                              static_cast<int>(options.fault_late_response) +
+                              static_cast<int>(options.fault_uncounted_elapsed) +
+                              static_cast<int>(options.fault_short_delay) +
+                              static_cast<int>(options.fault_wait_blocking) +
+                              static_cast<int>(options.fault_wait_debug);
+    if (fault_options > 1) {
+        // Every fault option changes one place and produces its own named
+        // failure, so one run cannot exercise two of them.
+        std::fprintf(stderr, "systemc-smoke: the fault options are taken one at a time\n");
+        return false;
+    }
+    if ((options.fault_late_response || options.fault_uncounted_elapsed ||
+         options.fault_short_delay) &&
+        !options.non_blocking) {
+        // Each of these three breaks the AT path, so without --nb it would check
+        // nothing: require the selection it exercises.
+        std::fprintf(stderr,
+                     "systemc-smoke: --fault-late-response, --fault-uncounted-elapsed and "
+                     "--fault-short-delay require --nb\n");
+        return false;
+    }
+    if ((options.fault_wait_blocking || options.fault_wait_debug) && options.non_blocking) {
+        // These two break a blocking callback, whose requests carry no
+        // `may_suspend`; under --nb they are not the control they name.
+        std::fprintf(stderr,
+                     "systemc-smoke: --fault-wait-blocking and --fault-wait-debug must not be "
+                     "combined with --nb\n");
+        return false;
+    }
     return true;
 }
 
@@ -393,10 +463,12 @@ const char* state_name(int32_t state) {
 class MachineDriver : public sc_core::sc_module {
 public:
     MachineDriver(sc_core::sc_module_name name, Options options,
-                  ruscv_sim::RuscvInitiator& initiator, std::thread::id creator_thread)
+                  ruscv_sim::RuscvInitiator& initiator, ruscv_sim::RamTarget& ram,
+                  std::thread::id creator_thread)
         : sc_core::sc_module(name),
           options_(std::move(options)),
           initiator_(initiator),
+          ram_(ram),
           creator_thread_(creator_thread) {
         SC_THREAD(run);
     }
@@ -415,7 +487,7 @@ public:
     const ruscv_result& result() const { return result_; }
 
 private:
-    /// Reports one failed call, destroys the handle and stops the kernel.
+    /// Reports one failed call, then drains and destroys the handle.
     void stop_with_failure(const char* what, int32_t status, ruscv_machine* machine) {
         char diagnostic[512] = {};
         if (machine != nullptr) {
@@ -424,16 +496,83 @@ private:
         std::fprintf(stderr, "systemc-smoke: %s failed with status %d%s%s\n", what, status,
                      diagnostic[0] != '\0' ? ": " : "", diagnostic);
         failed_ = true;
+        finish(machine);
+    }
+
+    /// Reports one host-level failure, then drains and destroys the handle.
+    void stop_with_message(const char* message, ruscv_machine* machine) {
+        std::fprintf(stderr, "systemc-smoke: %s\n", message);
+        failed_ = true;
+        finish(machine);
+    }
+
+    /// Drains after a retirement, destroys the handle and stops the kernel.
+    void finish(ruscv_machine* machine) {
+        if (machine != nullptr) {
+            drain_after_retirement(machine);
+        }
         destroy(machine);
         sc_core::sc_stop();
     }
 
-    /// Reports one host-level failure, destroys the handle and stops the kernel.
-    void stop_with_message(const char* message, ruscv_machine* machine) {
-        std::fprintf(stderr, "systemc-smoke: %s\n", message);
+    /// nb D9: at every stop after a retirement the host first withholds the
+    /// transport reset while the target is still open, then runs the kernel
+    /// until the RAM target has no scheduled phase and the initiator holds no
+    /// drain state, so every late phase is delivered and ignored. Only then is
+    /// the handle destroyed and the kernel stopped.
+    void drain_after_retirement(ruscv_machine* machine) {
+        if (initiator_.retirement_count() == 0) {
+            return;
+        }
+        if (initiator_.target_holds_transaction()) {
+            // nb D8/D9: while a transaction is open at the target, its
+            // transport reset must withhold the acknowledgement, so the
+            // recovery path reports a non-OK status.
+            const int32_t reset = ruscv_machine_reset(machine);
+            std::printf(
+                "systemc-smoke: reset with an open AT transaction returned status %d\n", reset);
+            std::fflush(stdout);
+            if (reset == RUSCV_OK) {
+                std::fprintf(stderr,
+                             "systemc-smoke: the target acknowledged a transport reset while an "
+                             "AT transaction was still open\n");
+                failed_ = true;
+            }
+        } else {
+            // The forward path completed the transaction, so no target state
+            // stays open and there is no acknowledgement to withhold.
+            std::printf(
+                "systemc-smoke: reset probe skipped: the target holds no open AT transaction\n");
+            std::fflush(stdout);
+        }
+        for (uint64_t step = 0; step < kMaxDrainSteps; ++step) {
+            initiator_.drain_step();
+            if (!initiator_.drain_pending() && ram_.scheduled_phase_count() == 0) {
+                return;
+            }
+            const sc_core::sc_time now = sc_core::sc_time_stamp();
+            bool have_next = false;
+            sc_core::sc_time next = now;
+            if (ram_.scheduled_phase_count() != 0) {
+                next = ram_.next_scheduled_phase();
+                have_next = true;
+            }
+            sc_core::sc_time end_resp_due = now;
+            if (initiator_.drain_end_resp_due(end_resp_due) &&
+                (!have_next || end_resp_due < next)) {
+                next = end_resp_due;
+                have_next = true;
+            }
+            if (have_next && next > now) {
+                // Run the kernel to the next late phase rather than stepping.
+                sc_core::wait(next - now);
+            } else {
+                sc_core::wait(sc_core::SC_ZERO_TIME);
+            }
+        }
+        std::fprintf(stderr,
+                     "systemc-smoke: the drain did not release the retired transaction\n");
         failed_ = true;
-        destroy(machine);
-        sc_core::sc_stop();
     }
 
     /// Unbinds the handle from the initiator, then destroys it. The unbind
@@ -498,8 +637,7 @@ private:
                     " grant(s) before a terminal ruscv-sim result\n",
                     grants_);
                 std::fflush(stdout);
-                destroy(machine);
-                sc_core::sc_stop();
+                finish(machine);
                 return;
             }
             if (grants_ >= options_.max_grants) {
@@ -630,8 +768,7 @@ private:
                     }
                     std::fflush(stderr);
                 }
-                destroy(machine);
-                sc_core::sc_stop();
+                finish(machine);
                 return;
             }
             if (elapsed_exceeds_consumed) {
@@ -661,6 +798,7 @@ private:
 
     Options options_;
     ruscv_sim::RuscvInitiator& initiator_;
+    ruscv_sim::RamTarget& ram_;
     std::thread::id creator_thread_;
     std::ofstream grant_trace_;
     bool terminal_ = false;
@@ -712,12 +850,18 @@ int sc_main(int argc, char** argv) {
     }
     std::fflush(stdout);
 
-    ruscv_sim::RamTarget ram("ram", options.fault_decrease_delay, options.non_blocking,
-                             options.nb_latency_fs, options.nb_path);
-    ruscv_sim::RuscvInitiator initiator("initiator", ram, options.direct_mem, options.quantum,
-                                       options.fault_keep_offset, options.non_blocking,
-                                       options.nb_latency_fs);
-    MachineDriver driver("driver", options, initiator, std::this_thread::get_id());
+    ruscv_sim::RamTarget ram("ram",
+                             ruscv_sim::TargetFaults{options.fault_decrease_delay,
+                                                    options.fault_late_response,
+                                                    options.fault_wait_blocking,
+                                                    options.fault_wait_debug},
+                             options.non_blocking, options.nb_latency_fs, options.nb_path);
+    ruscv_sim::RuscvInitiator initiator(
+        "initiator", ram, options.direct_mem, options.quantum,
+        ruscv_sim::InitiatorFaults{options.fault_keep_offset, options.fault_uncounted_elapsed,
+                                   options.fault_short_delay},
+        options.non_blocking, options.nb_latency_fs);
+    MachineDriver driver("driver", options, initiator, ram, std::this_thread::get_id());
     sc_core::sc_start();
 
     std::printf(
@@ -727,6 +871,13 @@ int sc_main(int argc, char** argv) {
         ram.b_transport_count(), ram.transport_dbg_count(), ram.transport_reset_count(),
         ram.begin_req_count(), ram.applied_access_count(),
         initiator.direct_mem_invalidation_count(), initiator.direct_mem_scheduled_count());
+    std::printf(
+        "systemc-smoke: AT late_phases=%" PRIu64 " retirements=%" PRIu64
+        " drain_end_resp=%" PRIu64 " drain_end_resp_fs=%" PRIu64
+        " open_transaction=%d\n",
+        initiator.late_phase_count(), initiator.retirement_count(),
+        initiator.drain_end_resp_count(), initiator.drain_end_resp_fs(),
+        ram.has_open_transaction() ? 1 : 0);
     std::printf(
         "systemc-smoke: totals consumed_fs=%" PRIu64 " host_elapsed_fs=%" PRIu64
         " transport_delay_fs=%" PRIu64 "\n",
