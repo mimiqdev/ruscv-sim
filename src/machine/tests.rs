@@ -3384,19 +3384,12 @@ fn host_elapsed_without_the_flag_is_a_protocol_failure() {
 #[test]
 fn an_incomplete_or_unknown_response_charges_its_elapsed_time() {
     let fetch_transactions = 2u64;
-    for (kind, outcome) in [
-        (
-            "load",
-            crate::blocking::test_support::ScriptedOutcome::Status(
-                crate::blocking::BlockingResponseStatus::Incomplete,
-            ),
+    for outcome in [
+        crate::blocking::test_support::ScriptedOutcome::Status(
+            crate::blocking::BlockingResponseStatus::Incomplete,
         ),
-        (
-            "load",
-            crate::blocking::test_support::ScriptedOutcome::Unknown,
-        ),
+        crate::blocking::test_support::ScriptedOutcome::Unknown,
     ] {
-        let _ = kind;
         let target = suspending_target(SUSPEND_DECLARED_MAX, ELAPSED_FS, DELAY_FS);
         target.set_data_outcome(outcome);
         let mut owned =
@@ -3559,6 +3552,26 @@ fn debug_work_carries_no_may_suspend_flag() {
             .filter(|call| call.may_suspend)
             .collect::<Vec<_>>()
     );
+
+    // §3: the same Hart-port path reporting host elapsed time is the
+    // unmarked-elapsed rule, so a program-buffer load cannot let time pass.
+    // The Machine records the failure, which refuses further debug work.
+    target.set_elapsed(ELAPSED_FS);
+    write_gpr(&mut owned, 5, elf::BASE + 0x200);
+    postexec_buffer(&mut owned, [lw_word(6, 5, 0), elf::nop()]);
+    let _ = owned.debug_boundary(false);
+    let failure = owned
+        .test_control()
+        .status()
+        .unwrap()
+        .last_failure
+        .expect("a program-buffer access's host elapsed time was not rejected");
+    assert!(
+        failure
+            .message
+            .contains("host elapsed time on a request that may not suspend"),
+        "a program-buffer access lost the unmarked-elapsed rule: {failure:?}"
+    );
 }
 
 /// nb D3: a guest request to a non-suspending target never carries the flag,
@@ -3710,20 +3723,34 @@ fn a_suspending_target_with_a_quantum_is_refused() {
 /// validated but neither charged nor totalled.
 #[test]
 fn host_elapsed_femtoseconds_excludes_debug_work() {
+    // Two guest turns, so the total is proven cumulative for the generation and
+    // not just per turn.
+    let code = [elf::sd(2, 1, 0), elf::ld(5, 1, 0)];
     let target = suspending_target(SUSPEND_DECLARED_MAX, ELAPSED_FS, DELAY_FS);
-    let mut owned =
-        OwnedMachine::new(suspending_config(&target, false), image(elf::sd(2, 1, 0))).unwrap();
+    let mut owned = OwnedMachine::new(
+        suspending_config(&target, false),
+        direct_mem_image_of(&code, 0x4000),
+    )
+    .unwrap();
     prepare_store(&mut owned, 0x1234_5678);
-    {
+    for (turn_index, expected) in [(0u64, 3 * ELAPSED_FS), (1, 6 * ELAPSED_FS)] {
         let turn = owned.step(false).unwrap();
-        assert!(matches!(
-            turn.hart().outcome,
-            StepOutcome::InstructionRetired(_)
-        ));
-        assert_eq!(turn.boundary().host_elapsed_femtoseconds, 3 * ELAPSED_FS);
+        assert!(
+            matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)),
+            "guest turn {turn_index} did not retire: {:?}",
+            turn.hart().outcome
+        );
+        assert_eq!(
+            turn.boundary().host_elapsed_femtoseconds,
+            expected,
+            "guest turn {turn_index} did not add to the generation total"
+        );
     }
     let counted = target.transactions.load(Ordering::SeqCst) as u64;
-    assert_eq!(counted, 3, "two fetch parcels and one store transaction");
+    assert_eq!(
+        counted, 6,
+        "two turns of two fetch parcels and one data access"
+    );
 
     halted_by_dmi(&mut owned);
     // The system bus read reports `e`, which the unmarked-elapsed rule rejects:

@@ -2714,8 +2714,8 @@
         "test": "machine::tests::host_elapsed_femtoseconds_excludes_debug_work",
         "failure": [
           "debug work entered the generation's host elapsed total",
-          "left:\\s+6000000",
-          "right:\\s+4500000"
+          "left:\\s+10500000",
+          "right:\\s+9000000"
         ]
       }
     ]

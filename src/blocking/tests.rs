@@ -743,12 +743,13 @@ fn suspending_slot(target: &Arc<super::test_support::SuspendingTarget>) -> RamSl
 /// overshoot rule, whichever `e` it carries.
 #[test]
 fn an_unknown_completion_outranks_the_new_rules() {
-    // The flag is clear and the target reports 0.5 ticks of host time within a
-    // 0.9-tick delay: the unmarked-elapsed rule must not reclassify it.
+    // The flag is clear and the target reports 1.5 ticks of host time within a
+    // 2.5-tick delay: the unmarked-elapsed rule must not reclassify it, and the
+    // two amounts round to different tick counts, so the charge is observable.
     let target = Arc::new(ScriptTarget::new(BASE, SIZE));
-    target.set_declared_max_delay(1_000_000);
-    target.set_elapsed(500_000);
-    target.set_delay(900_000);
+    target.set_declared_max_delay(10_000_000);
+    target.set_elapsed(1_500_000);
+    target.set_delay(2_500_000);
     target.set_unknown(true);
     let slot = tlm_slot(&target, SIZE);
     let mut port = ValidatedPhysicalAccess::new(slot.clone());
@@ -765,8 +766,13 @@ fn an_unknown_completion_outranks_the_new_rules() {
     );
     assert_eq!(
         slot.take_transport_turn_delay().ticks,
-        1,
+        2,
         "the unknown completion did not charge its rounded e"
+    );
+    assert_eq!(
+        slot.consumed_delay(),
+        Femtoseconds::new(1_500_000),
+        "the unknown completion charged a different amount than its e"
     );
 
     // The same response with `e` above the declared maximum: still an unknown
@@ -890,19 +896,50 @@ fn an_incomplete_response_charges_its_elapsed_time_despite_an_overshoot() {
     assert_eq!(slot.host_elapsed(), Femtoseconds::new(1_500_000));
 }
 
+/// nb D3: the flag needs a Hart initiator, so a debug inbound request in an
+/// open turn carries none while a Hart request in the same turn does.
+#[test]
+fn only_a_hart_request_in_an_open_turn_carries_may_suspend() {
+    let target = super::test_support::SuspendingTarget::new();
+    let slot = suspending_slot(&target);
+    slot.begin_transport_turn();
+    for initiator in [BlockingInitiator::Hart, BlockingInitiator::DebugInbound] {
+        let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+        slot.raw(&request, 0, initiator, 0).unwrap();
+    }
+    let flags: Vec<_> = target
+        .log()
+        .into_iter()
+        .map(|call| (call.initiator, call.may_suspend))
+        .collect();
+    assert_eq!(
+        flags,
+        vec![
+            (BlockingInitiator::Hart, true),
+            (BlockingInitiator::DebugInbound, false),
+        ],
+        "the flag ignored the initiator"
+    );
+}
+
 /// nb D3: the guest-turn window the flag depends on has exactly one opener, so
 /// every debug path is outside it.
 #[test]
 fn begin_transport_turn_has_one_guest_turn_call_site() {
     let machine = include_str!("../machine/mod.rs");
     let owned = include_str!("../machine/owned.rs");
+    let executor = include_str!("../executor.rs");
     assert_eq!(
         machine.matches(".begin_transport_turn()").count(),
         1,
         "the guest-turn window gained a second opener, which D3's flag relies on"
     );
-    assert!(
-        !owned.contains("begin_transport_turn"),
-        "a debug boundary now opens the guest-turn window"
-    );
+    // The `SystemBus` definition in `executor.rs` is the delegation target; no
+    // other caller of the Platform entry point may appear.
+    for (file, source) in [("owned.rs", owned), ("executor.rs", executor)] {
+        assert!(
+            !source.contains(".begin_transport_turn()"),
+            "{file} now opens the guest-turn window"
+        );
+    }
 }

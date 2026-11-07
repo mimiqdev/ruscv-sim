@@ -30,13 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     其手写 `Default` 与两处构造（`src/machine/mod.rs` 中 `..BoundaryFacts::default()` 结尾的 turn 字面量，以及
     `src/machine/owned.rs` 的 `control_boundary`）都显式给出该字段。该公开字段破坏外部穷举结构体字面量。其余公开
     签名不变
-  - 新增 16 个 crate 内测试覆盖合同 §4 U1 的验收项：guest fetch、load、store、AMO、LR、SC 与 Sv39 walk 读、
+  - 新增 17 个 crate 内测试覆盖合同 §4 U1 的验收项：guest fetch、load、store、AMO、LR、SC 与 Sv39 walk 读、
     A/D envelope 携带 `may_suspend` true；同一 target 上的 SBA 读、abstract-command 内存访问与 program-buffer
-    读携带 false，非挂起 target 的每个 guest 请求也携带 false；`e` 与 `d` 取不同 tick 数时的每条 D4 规则、
-    计费金额、`platform_mtime`、`transport_delay_femtoseconds` 与 `host_elapsed_femtoseconds`；`mcycle` 与
-    `minstret` 不变；SBA 报告的 `e` 不进入总量（在 `control_boundary` 读取，因为 `DebugBoundary` 不携带
-    `BoundaryFacts`）；`dmi` 下的直接拷贝不产生事务也没有标志；带 `quantum` 的挂起 target 被拒；`e` 全为零时
-    与不挂起的同一镜像逐 turn 相同；以及 `begin_transport_turn` 只有一个 guest-turn 调用点
+    读携带 false，非挂起 target 的每个 guest 请求也携带 false，open turn 内只有 Hart 请求携带该标志，而
+    SBA 与 program-buffer 访问报告的 `e` 都是 unmarked-elapsed 规则；`e` 与 `d` 取不同 tick 数时的每条 D4
+    规则、计费金额、`platform_mtime`、`transport_delay_femtoseconds` 与按代累计的
+    `host_elapsed_femtoseconds`（两个 turn）；`mcycle` 与 `minstret` 不变；SBA 报告的 `e` 不进入总量（在
+    `control_boundary` 读取，因为 `DebugBoundary` 不携带 `BoundaryFacts`）；`dmi` 下的直接拷贝不产生事务也没有
+    标志；带 `quantum` 的挂起 target 被拒；`e` 全为零时与不挂起的同一镜像逐 turn 相同；以及
+    `begin_transport_turn` 只有一个 guest-turn 调用点
   - U1 拥有的 12 条负控制（`nb-u1-*`）注册进 `scripts/debug/stage6-mutations`，每条由已提交测试在变异下失败、
     还原后通过
 
