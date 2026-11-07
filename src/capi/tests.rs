@@ -3609,6 +3609,10 @@ struct TestDevice {
     hint: AtomicBool,
     /// Mark every transaction outcome-unknown.
     unknown: AtomicBool,
+    /// Overwrite the request's `local_offset_fs` before returning.
+    mutate_local_offset: AtomicBool,
+    /// Overwrite the request's `may_suspend` before returning.
+    mutate_may_suspend: AtomicBool,
     /// Number of blocking transactions.
     transactions: AtomicUsize,
     /// Number of transport resets the target acknowledged.
@@ -3647,6 +3651,8 @@ impl TestDevice {
             host_elapsed_fs: AtomicU64::new(0),
             hint: AtomicBool::new(false),
             unknown: AtomicBool::new(false),
+            mutate_local_offset: AtomicBool::new(false),
+            mutate_may_suspend: AtomicBool::new(false),
             transactions: AtomicUsize::new(0),
             resets: AtomicUsize::new(0),
             reset_ack: AtomicBool::new(true),
@@ -3763,6 +3769,14 @@ unsafe extern "C" fn device_b_transport(user: *mut c_void, payload: *mut CPayloa
     }
     if payload.command == super::target::command::WRITE {
         payload.device_event = device.event.load(Ordering::SeqCst);
+    }
+    // device D8: these two are request metadata, and a host that changes either
+    // one must be refused rather than silently ignored.
+    if device.mutate_local_offset.load(Ordering::SeqCst) {
+        payload.local_offset_fs = TICK_FS;
+    }
+    if device.mutate_may_suspend.load(Ordering::SeqCst) {
+        payload.may_suspend = 1;
     }
 }
 
@@ -4022,6 +4036,26 @@ fn every_documented_attach_refusal_returns_its_code() {
     // SAFETY: the handle is destroyed exactly once.
     unsafe { ruscv_machine_destroy(handle) };
 
+    // The cutoff is the first load call, not the first successful load: a load
+    // that cannot be read installs nothing but still closes the composition.
+    let (handle, _ram) = tlm_handle();
+    let missing = std::ffi::CString::new("/nonexistent/ruscv-u3-attach.elf").unwrap();
+    // SAFETY: the handle and the path are live on this thread.
+    unsafe {
+        assert_eq!(
+            ruscv_machine_load_elf(handle, missing.as_ptr()),
+            Status::Io as i32,
+            "a missing image is an IO failure"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::UART, &device.table()),
+            Config as i32,
+            "an attach after a failed first load is a configuration refusal"
+        );
+    }
+    // SAFETY: the handle is destroyed exactly once.
+    unsafe { ruscv_machine_destroy(handle) };
+
     // A handle created with a NULL ruscv_target has no TLM route, so it cannot
     // serve a device window.
     let mut native = std::ptr::null_mut();
@@ -4138,9 +4172,11 @@ fn a_uart_transmit_tag_is_accepted_while_an_htif_write_tag_fails_the_run() {
 }
 
 #[test]
-fn a_host_device_delay_elapsed_time_or_hint_is_a_protocol_failure() {
-    // device D2/D4: a device transaction annotates nothing, so each of the three
-    // response fields a host can set is a protocol failure of that access.
+fn a_host_device_annotation_or_changed_request_is_a_protocol_failure() {
+    // device D2/D4/D8: a device transaction annotates nothing and leaves the
+    // whole request half as it received it, so each response field a host can set
+    // and each request field it can overwrite is a protocol failure of that
+    // access.
     let delay = DeviceHarness::new(&uart_guest(2));
     delay.device.delay_fs.store(TICK_FS, Ordering::SeqCst);
     let result = delay.run_to_result(1_000, 16);
@@ -4191,6 +4227,34 @@ fn a_host_device_delay_elapsed_time_or_hint_is_a_protocol_failure() {
     // device D5: a device window never offers direct memory, so no grant is
     // cached and nothing is charged.
     assert_eq!(hinted.facts().transport_delay_fs, 0);
+
+    // The two request fields: writing either one is a changed request, so the
+    // response is an incomplete one rather than a silently ignored write.
+    let offset = DeviceHarness::new(&uart_guest(2));
+    offset
+        .device
+        .mutate_local_offset
+        .store(true, Ordering::SeqCst);
+    let result = offset.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "an overwritten local offset was accepted: {}",
+        offset.diagnostic()
+    );
+
+    let suspend = DeviceHarness::new(&uart_guest(2));
+    suspend
+        .device
+        .mutate_may_suspend
+        .store(true, Ordering::SeqCst);
+    let result = suspend.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "an overwritten may_suspend was accepted: {}",
+        suspend.diagnostic()
+    );
 }
 
 #[test]

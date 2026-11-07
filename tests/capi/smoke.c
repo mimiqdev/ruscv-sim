@@ -1456,11 +1456,17 @@ static void device_case(const char *guest)
           "attach before load is accepted");
     check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, &table) == RUSCV_ERROR_CONFIG,
           "a second attach is an attach configuration refusal");
+    ruscv_machine_destroy(handle);
+
+    /* A fresh handle with no device attached, loaded and then attached: the
+     * late-attach refusal stands on its own instead of reusing the second-attach
+     * answer above. */
+    handle = create_machine(&ram_table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    check(status == RUSCV_OK, "create a handle for the late attach");
     check(ruscv_machine_load_elf(handle, guest) == RUSCV_OK, "load the UART guest");
     check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, &table) == RUSCV_ERROR_CONFIG,
           "an attach after the first load is an attach configuration refusal");
     ruscv_machine_destroy(handle);
-    free(ram);
 
     /* A handle created with a NULL ruscv_target has no TLM route. */
     handle = create_machine(NULL, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
@@ -1472,6 +1478,7 @@ static void device_case(const char *guest)
         ruscv_machine_destroy(handle);
     }
     free(device);
+    free(ram);
 
     device = attached_device_run(guest, RUSCV_DEVICE_EVENT_UART_TRANSMIT, 1);
     check(device->transactions >= 2,

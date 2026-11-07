@@ -405,7 +405,14 @@ impl BlockingTarget for CBlockingTarget {
         // is suspended the callback flag stays set, so no ABI entry reaches this
         // callback again (nb D6).
         unsafe { (self.b_transport)(self.table.user, &mut payload) };
-        apply_response(transaction, &payload);
+        // A RAM target must echo the request's address, command and length.  Its
+        // timing metadata is different: nb D3/D4 make `may_suspend` and
+        // `local_offset_fs` read-only request fields, so a target that copies
+        // something else there changes nothing and is not a failure.
+        let echoed = payload.address == transaction.address()
+            && payload.command == command_code(transaction.command())
+            && payload.length == transaction.data_length();
+        apply_response(transaction, &payload, echoed);
     }
 
     fn transport_dbg(&self, transaction: &mut BlockingDebug<'_>) -> usize {
@@ -536,13 +543,24 @@ impl CDeviceTarget {
 impl BlockingDeviceTarget for CDeviceTarget {
     fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
         let mut payload = payload_request(transaction);
+        // device D8: a device target must leave the whole request half as it
+        // received it, including the two timing fields.  The copy is taken
+        // before the callback, so a host that writes either one is caught here
+        // rather than silently ignored: the Rust transaction's metadata is the
+        // adapter's and cannot be changed through the C struct.
+        let request = payload;
         let _in_callback = super::CallbackScope::enter();
         // SAFETY: the table was validated at attach, the payload and its data
         // buffer stay alive and exclusively borrowed for this call, and the host
         // keeps `user` valid until destroy.  A device transaction's
         // `may_suspend` is clear, so this callback may not suspend.
         unsafe { (self.b_transport)(self.table.user, &mut payload) };
-        apply_response(transaction, &payload);
+        let echoed = payload.address == request.address
+            && payload.command == request.command
+            && payload.length == request.length
+            && payload.local_offset_fs == request.local_offset_fs
+            && payload.may_suspend == request.may_suspend;
+        apply_response(transaction, &payload, echoed);
     }
 
     fn receive(&self, byte: u8) {
@@ -592,18 +610,19 @@ fn payload_request(transaction: &mut BlockingTransaction<'_>) -> CPayload {
 
 /// Copies one C response back onto the transaction.
 ///
-/// A target has no way to change the Rust payload through the C struct, so a
-/// changed address, command or length in the copy is a contract violation, and
-/// an unrecognized device-event tag is a value the ABI cannot carry.  Both map
-/// to the untouched `Incomplete` status, so the adapter's D4 classification ("a
-/// payload the target changed is not a completion") stays in charge instead of
-/// this layer inventing a status.
-fn apply_response(transaction: &mut BlockingTransaction<'_>, payload: &CPayload) {
-    let unchanged = payload.address == transaction.address()
-        && payload.command == command_code(transaction.command())
-        && payload.length == transaction.data_length();
+/// `request_echoed` is the calling wrapper's verdict on the request fields its
+/// table must leave as it received them.  A request the target did not echo, or
+/// an unrecognized device-event tag, is not a value the ABI can carry, and both
+/// map to the untouched `Incomplete` status, so the adapter's D4 classification
+/// ("a payload the target changed is not a completion") stays in charge instead
+/// of this layer inventing a status.
+fn apply_response(
+    transaction: &mut BlockingTransaction<'_>,
+    payload: &CPayload,
+    request_echoed: bool,
+) {
     let event = reported_device_event(transaction.data(), payload.device_event);
-    transaction.set_status(if unchanged && event.is_ok() {
+    transaction.set_status(if request_echoed && event.is_ok() {
         response_status(payload.status)
     } else {
         BlockingResponseStatus::Incomplete

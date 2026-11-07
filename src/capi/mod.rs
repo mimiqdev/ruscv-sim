@@ -268,6 +268,15 @@ struct HandleState {
     poisoned: bool,
     config: MachineConfig,
     session: Option<Session>,
+    /// device D8: a `ruscv_machine_load_elf` call reached this handle.
+    ///
+    /// A device target is composition configuration, and attachment must
+    /// precede the first load.  The cutoff is the first load call, not the first
+    /// successful one: a load that fails to read or parse installs nothing, but
+    /// the composition still stops accepting a new window selection at that
+    /// point, so the boundary does not depend on whether a host's file happened
+    /// to be readable.
+    first_load_seen: bool,
     /// The most recent API-level diagnostic, when no session produced one.
     diagnostic: Option<String>,
 }
@@ -536,6 +545,7 @@ pub unsafe extern "C" fn ruscv_machine_create(
                 poisoned: false,
                 config,
                 session: None,
+                first_load_seen: false,
                 diagnostic: None,
             }),
         })
@@ -584,12 +594,12 @@ fn attach_device(
     let target = CDeviceTarget::new(device)
         .map_err(|message| ApiError::new(Status::InvalidArgument, message))?;
     // device D8: a device target is composition configuration, chosen after
-    // create and before the first load, so no installed generation can have its
-    // windows rewired under it.
-    if state.session.is_some() {
+    // create and before the first load, so the windows cannot be rewired under a
+    // running generation.  The cutoff is the first load call, successful or not.
+    if state.first_load_seen {
         return Err(ApiError::new(
             Status::Config,
-            "a device target must be attached before the first ELF image is installed",
+            "a device target must be attached before the first ruscv_machine_load_elf call",
         ));
     }
     if device.window_base != window.base || device.window_size != window.size {
@@ -680,6 +690,7 @@ pub unsafe extern "C" fn ruscv_machine_load_elf(
     // SAFETY: forwarded caller guarantees.
     unsafe {
         match with_handle(machine, |state| {
+            state.first_load_seen = true;
             let path = c_path(path)?;
             let data = std::fs::read(path).map_err(|error| {
                 ApiError::new(
