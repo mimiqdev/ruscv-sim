@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     跳过 reset 探测。退出时报告 late phase 数、退休数、drain 发送的 `END_RESP` 数及其发送的 host
     时间与 target 是否仍有开启的事务
   - `RamTarget` 新增 `TargetFaults`、已调度阶段计数（供 drain 等待）、开放事务查询，并把
-    最终阶段延迟集中到 `final_phase_latency()`；四个新 fault 选项在命名位置破坏模型：
+    最终阶段延迟集中到 `final_phase_latency()`；三个新 fault 选项在命名位置破坏模型：
     `--fault-late-response` 把本次运行第一笔 AT 访问的最终阶段推迟到声明上限后一个 tick，
     `--fault-wait-blocking` 与 `--fault-wait-debug` 分别在 `b_transport` 与 `transport_dbg`
     等待一个 tick。`RuscvInitiator` 新增 `InitiatorFaults`（含既有 `--fault-keep-offset`）与
@@ -36,12 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `--fault-short-delay` 报告比 `e` 小 1 fs 的 `d`
   - 五个 fault 选项按契约 §4 在 `scripts/test_systemc_smoke.sh` 中以各自模式运行并各自断言：
     `--fault-late-response` 在 `accepted`/`early`/`completed`（`uncertain`=1、诊断命名未能
-    确定结果、late phase ≥ 1、已应用计数等于 `BEGIN_REQ` 计数、`early` 的 drain 发出保留的
-    `END_RESP`、`completed` 跳过 reset 探测）；`--fault-uncounted-elapsed` 以 kernel 时钟与
-    Machine 游标不一致的 host failure 停止；`--fault-short-delay`、`--fault-wait-blocking`
-    与 `--fault-wait-debug` 各自命名诊断（后两者 `uncertain`=0，最后一项使
-    `ruscv_machine_load_elf` 失败）。正常 `--nb` pass 必须报告 late phase 数为零；每个选项在
-    错误模式下是用法错误，且一次运行只取一个
+    确定结果、恰好一个 late phase、退休时间恰为声明上限 + 1 fs、已应用计数等于
+    `BEGIN_REQ` 计数、`early` 的 drain 在阶段生效时间发出保留的 `END_RESP`、`completed`
+    跳过 reset 探测）；`--fault-uncounted-elapsed` 以 kernel 时钟与 Machine 游标不一致的
+    host failure 停止；`--fault-short-delay`、`--fault-wait-blocking` 与 `--fault-wait-debug`
+    各自命名诊断（前两者 `uncertain`=0，最后一项使 `ruscv_machine_load_elf` 失败）。
+    正常 `--nb` pass 必须报告 late phase 数为零；每个选项在错误模式下是用法错误，且一次
+    运行只取一个
   - U4 不拥有 mutation-runner 控制，fault 选项即其控制
 
 - **Non-blocking U3: SystemC 基础协议与 AT target 模式（issue #218）**
