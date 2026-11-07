@@ -8,16 +8,17 @@
 
 use super::host::{RunState, Session};
 use super::target::{
-    atomic_kind, atomic_outcome, dmi_access, dmi_result, CDebug, CDirectMem, CPayload, CTarget,
-    SNAPSHOT_CAPACITY,
+    atomic_kind, atomic_outcome, device_event, device_window, dmi_access, dmi_result, CDebug,
+    CDevice, CDirectMem, CPayload, CTarget, SNAPSHOT_CAPACITY,
 };
 use super::{
-    ruscv_machine_boundary, ruscv_machine_create, ruscv_machine_destroy, ruscv_machine_diagnostic,
-    ruscv_machine_invalidate_direct_mem, ruscv_machine_load_elf, ruscv_machine_reset,
-    ruscv_machine_result, ruscv_machine_run_grant, ruscv_machine_self_test_panic,
-    ruscv_machine_set_commit_log, CBoundary, CGrant, CResult, RuscvMachine, Status,
+    ruscv_machine_attach_device, ruscv_machine_boundary, ruscv_machine_create,
+    ruscv_machine_destroy, ruscv_machine_diagnostic, ruscv_machine_invalidate_direct_mem,
+    ruscv_machine_load_elf, ruscv_machine_reset, ruscv_machine_result, ruscv_machine_run_grant,
+    ruscv_machine_self_test_panic, ruscv_machine_set_commit_log, CBoundary, CGrant, CResult,
+    RuscvMachine, Status,
 };
-use crate::blocking::{Femtoseconds, TickPeriod, TurnCompletionBound};
+use crate::blocking::{BlockingDeviceTarget, Femtoseconds, TickPeriod, TurnCompletionBound};
 use crate::elf::LoadImage;
 use crate::executor::observation_fixture as elf;
 use crate::machine::{IsaProfile, MachineConfig};
@@ -105,6 +106,8 @@ struct TestTarget {
     suspends: AtomicBool,
     /// The host elapsed time `e` every blocking transaction reports (nb D4).
     host_elapsed_fs: AtomicU64,
+    /// The device-event tag every blocking transaction reports (device D8).
+    event: AtomicI32,
     /// Probe the entries a suspended callback leaves refused (nb D6).
     probe_entries: AtomicBool,
     /// Status `ruscv_machine_run_grant` returned from inside a callback, or
@@ -146,6 +149,7 @@ impl TestTarget {
             mutate_payload: AtomicBool::new(false),
             suspends: AtomicBool::new(false),
             host_elapsed_fs: AtomicU64::new(0),
+            event: AtomicI32::new(device_event::NONE),
             probe_entries: AtomicBool::new(false),
             run_grant_status: AtomicI32::new(i32::MIN),
             destroy_status: AtomicI32::new(i32::MIN),
@@ -294,6 +298,9 @@ unsafe extern "C" fn target_b_transport(user: *mut c_void, payload: *mut CPayloa
     }
     drop(ram);
     payload.status = target.status.load(Ordering::SeqCst);
+    // device D8: the field is a response field for every table, so a RAM
+    // target that reports one is refused by the RAM adapter, not ignored here.
+    payload.device_event = target.event.load(Ordering::SeqCst);
     payload.delay_fs = target.delay_fs.load(Ordering::SeqCst);
     // nb D4: the host time that passed inside this callback.  The fixture
     // reports a scripted value instead of really suspending.
@@ -493,6 +500,75 @@ fn c_text(path: &std::path::Path) -> std::ffi::CString {
     std::ffi::CString::new(path.to_str().unwrap()).unwrap()
 }
 
+/// Runs one grant through the real entry point.
+fn handle_grant(
+    handle: *mut RuscvMachine,
+    start_fs: u64,
+    max_end_fs: u64,
+    budget: u64,
+) -> Result<CGrant, i32> {
+    let mut grant = CGrant::default();
+    // SAFETY: the handle is live.
+    let status =
+        unsafe { ruscv_machine_run_grant(handle, start_fs, max_end_fs, budget, &mut grant) };
+    if status == Status::Ok as i32 {
+        Ok(grant)
+    } else {
+        Err(status)
+    }
+}
+
+/// Reads the run classification through the real entry point.
+fn handle_result(handle: *mut RuscvMachine) -> CResult {
+    let mut result = CResult::default();
+    // SAFETY: the handle is live.
+    let status = unsafe { ruscv_machine_result(handle, &mut result) };
+    assert_eq!(status, Status::Ok as i32, "result");
+    result
+}
+
+/// Reads the last grant's facts through the real entry point.
+fn handle_facts(handle: *mut RuscvMachine) -> CBoundary {
+    let mut facts = CBoundary::default();
+    // SAFETY: the handle is live.
+    let status = unsafe { ruscv_machine_boundary(handle, &mut facts) };
+    assert_eq!(status, Status::Ok as i32, "boundary");
+    facts
+}
+
+/// Reads the handle's diagnostic message.
+fn handle_diagnostic(handle: *mut RuscvMachine) -> String {
+    let mut buffer = vec![0 as std::ffi::c_char; 1024];
+    // SAFETY: the handle is live and the buffer is writable.
+    unsafe { ruscv_machine_diagnostic(handle, buffer.as_mut_ptr(), buffer.len()) };
+    let text: Vec<u8> = buffer
+        .iter()
+        .map(|byte| *byte as u8)
+        .take_while(|byte| *byte != 0)
+        .collect();
+    String::from_utf8(text).unwrap()
+}
+
+/// Runs bounded grants until the guest exits or the grant count runs out.
+///
+/// Each grant starts at the Machine's committed time the previous grant
+/// returned, which is exactly what an external kernel commits (ADR-0004
+/// §4.4).
+fn handle_run_to_result(handle: *mut RuscvMachine, budget: u64, grants: usize) -> CResult {
+    let mut start = 0;
+    for _ in 0..grants {
+        let Ok(grant) = handle_grant(handle, start, u64::MAX / 2, budget) else {
+            break;
+        };
+        start = grant.committed_end_fs;
+        let result = handle_result(handle);
+        if result.state != RunState::Running.code() {
+            return result;
+        }
+    }
+    handle_result(handle)
+}
+
 impl Harness {
     fn new(isa: i32, code: &[u32], max_delay_fs: u64) -> Self {
         Self::build(isa, code, max_delay_fs, false)
@@ -585,64 +661,23 @@ impl Harness {
     }
 
     fn grant(&self, start_fs: u64, max_end_fs: u64, budget: u64) -> Result<CGrant, i32> {
-        let mut grant = CGrant::default();
-        // SAFETY: the handle is live.
-        let status = unsafe {
-            ruscv_machine_run_grant(self.handle, start_fs, max_end_fs, budget, &mut grant)
-        };
-        if status == Status::Ok as i32 {
-            Ok(grant)
-        } else {
-            Err(status)
-        }
+        handle_grant(self.handle, start_fs, max_end_fs, budget)
     }
 
     fn result(&self) -> CResult {
-        let mut result = CResult::default();
-        // SAFETY: the handle is live.
-        let status = unsafe { ruscv_machine_result(self.handle, &mut result) };
-        assert_eq!(status, Status::Ok as i32, "result");
-        result
+        handle_result(self.handle)
     }
 
     fn facts(&self) -> CBoundary {
-        let mut facts = CBoundary::default();
-        // SAFETY: the handle is live.
-        let status = unsafe { ruscv_machine_boundary(self.handle, &mut facts) };
-        assert_eq!(status, Status::Ok as i32, "boundary");
-        facts
+        handle_facts(self.handle)
     }
 
     fn diagnostic(&self) -> String {
-        let mut buffer = vec![0 as std::ffi::c_char; 512];
-        // SAFETY: the handle is live and the buffer is writable.
-        unsafe { ruscv_machine_diagnostic(self.handle, buffer.as_mut_ptr(), buffer.len()) };
-        let text: Vec<u8> = buffer
-            .iter()
-            .map(|byte| *byte as u8)
-            .take_while(|byte| *byte != 0)
-            .collect();
-        String::from_utf8(text).unwrap()
+        handle_diagnostic(self.handle)
     }
 
-    /// Runs bounded grants until the guest exits or the grant count runs out.
-    ///
-    /// Each grant starts at the Machine's committed time the previous grant
-    /// returned, which is exactly what an external kernel commits (ADR-0004
-    /// §4.4).
     fn run_to_result(&self, budget: u64, grants: usize) -> CResult {
-        let mut start = 0;
-        for _ in 0..grants {
-            let Ok(grant) = self.grant(start, u64::MAX / 2, budget) else {
-                break;
-            };
-            start = grant.committed_end_fs;
-            let result = self.result();
-            if result.state != RunState::Running.code() {
-                return result;
-            }
-        }
-        self.result()
+        handle_run_to_result(self.handle, budget, grants)
     }
 
     /// Configures the inclusive range this target's queries grant.
@@ -1024,8 +1059,8 @@ fn the_direct_memory_fields_are_final_in_their_structs() {
     // must not move a pre-existing field; these offsets are the ones the
     // previous header published (direct-memory D12).  The name is the one the
     // direct-memory contract gave this pin; the quantum fields are appended
-    // after it (quantum D12), then the suspension fields (nb D6), and every
-    // size it publishes grows with them.
+    // after it (quantum D12), then the suspension fields (nb D6), then the
+    // device event (device D8), and every size it publishes grows with them.
     use std::mem::{offset_of, size_of};
     assert_eq!(offset_of!(CTarget, max_delay_fs), 0);
     assert_eq!(offset_of!(CTarget, user), 8);
@@ -1046,7 +1081,18 @@ fn the_direct_memory_fields_are_final_in_their_structs() {
     assert_eq!(offset_of!(CPayload, local_offset_fs), 248);
     assert_eq!(offset_of!(CPayload, may_suspend), 256);
     assert_eq!(offset_of!(CPayload, host_elapsed_fs), 264);
-    assert_eq!(size_of::<CPayload>(), 272);
+    assert_eq!(offset_of!(CPayload, device_event), 272);
+    assert_eq!(size_of::<CPayload>(), 280);
+
+    // The device table the attach entry copies (device D8).  Its size and the
+    // offset of every callback are as published, so a host's layout matches.
+    assert_eq!(offset_of!(CDevice, window_base), 0);
+    assert_eq!(offset_of!(CDevice, window_size), 8);
+    assert_eq!(offset_of!(CDevice, user), 16);
+    assert_eq!(offset_of!(CDevice, b_transport), 24);
+    assert_eq!(offset_of!(CDevice, receive), 32);
+    assert_eq!(offset_of!(CDevice, transport_reset), 40);
+    assert_eq!(size_of::<CDevice>(), 48);
 
     // The three appended `ruscv_boundary` fields, so a host's reads of them
     // match the header's (quantum D12).
@@ -3512,4 +3558,702 @@ fn quantum_tohost_sync_ends_its_grant() {
         (grant.facts.turns - 1) * TICK_FS,
         "the store's turn did not publish its own local offset"
     );
+}
+
+// ---- TLM-Modeled Devices U3: the C ABI device table and attach ----
+
+/// The UART window the C device table names (device D8).
+const DEVICE_WINDOW_BASE: u64 = crate::executor::SYSTEM_BUS_UART_BASE;
+/// The UART window's published size, in bytes.
+const DEVICE_WINDOW_SIZE: u64 = crate::executor::SYSTEM_BUS_UART_WINDOW as u64;
+/// The window's line-status register offset.
+const DEVICE_LSR: u64 = crate::peripherals::uart16550::reg_offset::LSR;
+/// The window's receive/transmit holding register offset.
+const DEVICE_RBR_THR: u64 = crate::peripherals::uart16550::reg_offset::RBR_THR;
+/// The bit a polling guest needs in `LSR` so it stops waiting.
+const DEVICE_LSR_TRANSMIT_EMPTY: u8 = 0x20;
+
+/// One device transaction as the C payload published it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DeviceCall {
+    address: u64,
+    access_kind: i32,
+    length: usize,
+    /// The request's `device_event`, which is always `NONE` (device D8).
+    device_event: i32,
+    delay_fs: u64,
+    host_elapsed_fs: u64,
+    may_suspend: i32,
+    local_offset_fs: u64,
+}
+
+/// A device target whose callbacks are the C ABI's own calling convention.
+///
+/// It models the two UART registers the fixture guest touches: `LSR` answers
+/// the transmit-empty bit and a `THR` write records its byte.  Every other
+/// answer is scripted per test, which is how a test makes the target report a
+/// protocol violation the Rust side must classify.
+struct TestDevice {
+    /// The window this table declares.
+    window_base: u64,
+    window_size: u64,
+    /// Status every blocking transaction reports.
+    status: AtomicI32,
+    /// The tag every completed write reports (device D8).
+    event: AtomicI32,
+    /// Delay annotated on every transaction, in femtoseconds.
+    delay_fs: AtomicU64,
+    /// The host elapsed time `e` every transaction reports (nb D4).
+    host_elapsed_fs: AtomicU64,
+    /// Set `dmi_allowed` on every completed transaction.
+    hint: AtomicBool,
+    /// Mark every transaction outcome-unknown.
+    unknown: AtomicBool,
+    /// Number of blocking transactions.
+    transactions: AtomicUsize,
+    /// Number of transport resets the target acknowledged.
+    resets: AtomicUsize,
+    /// Whether the target acknowledges a transport reset.
+    reset_ack: AtomicBool,
+    /// The bytes a `THR` write carried, in order.
+    transmitted: Mutex<Vec<u8>>,
+    /// The bytes `receive` delivered, in order.
+    receives: Mutex<Vec<u8>>,
+    /// Every blocking transaction in order.
+    calls: Mutex<Vec<DeviceCall>>,
+    /// The handle a callback re-enters, when set.
+    handle: AtomicPtr<RuscvMachine>,
+    /// Probe the entries a callback leaves refused, once.
+    probe_entries: AtomicBool,
+    /// Status `ruscv_machine_run_grant` returned from inside a callback, or
+    /// `i32::MIN` before the attempt.
+    run_grant_status: AtomicI32,
+    /// Status `ruscv_machine_attach_device` returned from inside a callback, or
+    /// `i32::MIN` before the attempt.
+    attach_status: AtomicI32,
+    /// Status `ruscv_machine_invalidate_direct_mem` returned from inside a
+    /// callback, or `i32::MIN` before the attempt.
+    invalidate_status: AtomicI32,
+}
+
+impl TestDevice {
+    fn new() -> Self {
+        Self {
+            window_base: DEVICE_WINDOW_BASE,
+            window_size: DEVICE_WINDOW_SIZE,
+            status: AtomicI32::new(super::target::status::OK),
+            event: AtomicI32::new(device_event::NONE),
+            delay_fs: AtomicU64::new(0),
+            host_elapsed_fs: AtomicU64::new(0),
+            hint: AtomicBool::new(false),
+            unknown: AtomicBool::new(false),
+            transactions: AtomicUsize::new(0),
+            resets: AtomicUsize::new(0),
+            reset_ack: AtomicBool::new(true),
+            transmitted: Mutex::new(Vec::new()),
+            receives: Mutex::new(Vec::new()),
+            calls: Mutex::new(Vec::new()),
+            handle: AtomicPtr::new(std::ptr::null_mut()),
+            probe_entries: AtomicBool::new(false),
+            run_grant_status: AtomicI32::new(i32::MIN),
+            attach_status: AtomicI32::new(i32::MIN),
+            invalidate_status: AtomicI32::new(i32::MIN),
+        }
+    }
+
+    fn table(&self) -> CDevice {
+        CDevice {
+            window_base: self.window_base,
+            window_size: self.window_size,
+            user: std::ptr::from_ref(self).cast_mut().cast::<c_void>(),
+            b_transport: Some(device_b_transport),
+            receive: Some(device_receive),
+            transport_reset: Some(device_reset),
+        }
+    }
+
+    fn calls(&self) -> Vec<DeviceCall> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    fn transmitted(&self) -> Vec<u8> {
+        self.transmitted.lock().unwrap().clone()
+    }
+
+    fn receives(&self) -> Vec<u8> {
+        self.receives.lock().unwrap().clone()
+    }
+
+    fn transactions(&self) -> usize {
+        self.transactions.load(Ordering::SeqCst)
+    }
+
+    fn resets(&self) -> usize {
+        self.resets.load(Ordering::SeqCst)
+    }
+
+    fn set_event(&self, tag: i32) {
+        self.event.store(tag, Ordering::SeqCst);
+    }
+}
+
+unsafe extern "C" fn device_b_transport(user: *mut c_void, payload: *mut CPayload) {
+    // SAFETY: the ABI guarantees `user` is the live `TestDevice` and `payload`
+    // is one live Rust-owned payload struct for this call.
+    let (device, payload) = unsafe { (&*(user.cast::<TestDevice>()), &mut *payload) };
+    device.transactions.fetch_add(1, Ordering::SeqCst);
+    device.calls.lock().unwrap().push(DeviceCall {
+        address: payload.address,
+        access_kind: payload.access_kind,
+        length: payload.length,
+        device_event: payload.device_event,
+        delay_fs: payload.delay_fs,
+        host_elapsed_fs: payload.host_elapsed_fs,
+        may_suspend: payload.may_suspend,
+        local_offset_fs: payload.local_offset_fs,
+    });
+    let handle = device.handle.load(Ordering::SeqCst);
+    if device.probe_entries.swap(false, Ordering::SeqCst) && !handle.is_null() {
+        // device D8: a device callback obeys the RAM target's rules, so every
+        // entry that reaches the callback check is re-entry while the one
+        // exemption stays accepted.
+        let mut grant = CGrant::default();
+        // SAFETY: the handle is live and the call is made from this thread.
+        let status = unsafe { ruscv_machine_run_grant(handle, 0, u64::MAX / 2, 1, &mut grant) };
+        device.run_grant_status.store(status, Ordering::SeqCst);
+        let table = device.table();
+        // SAFETY: the handle and the copied table are live on this thread.
+        let status = unsafe { ruscv_machine_attach_device(handle, device_window::UART, &table) };
+        device.attach_status.store(status, Ordering::SeqCst);
+        // SAFETY: the handle is live on this thread.
+        let status = unsafe { ruscv_machine_invalidate_direct_mem(handle, 0, u64::MAX) };
+        device.invalidate_status.store(status, Ordering::SeqCst);
+    }
+    let len = payload.length;
+    // SAFETY: the ABI guarantees a Rust-owned buffer of exactly `length` bytes
+    // that this callback exclusively borrows for its duration.
+    let data = unsafe { std::slice::from_raw_parts_mut(payload.data, len) };
+    let offset = payload.address.wrapping_sub(device.window_base);
+    match payload.command {
+        super::target::command::READ => {
+            // `LSR` reports the transmit-empty bit so a polling guest makes
+            // progress; every other register reads as zero.
+            if offset == DEVICE_LSR {
+                if let Some(byte) = data.first_mut() {
+                    *byte = DEVICE_LSR_TRANSMIT_EMPTY;
+                }
+            }
+        }
+        _ => {
+            if offset == DEVICE_RBR_THR {
+                if let Some(byte) = data.first() {
+                    device.transmitted.lock().unwrap().push(*byte);
+                }
+            }
+        }
+    }
+    payload.status = device.status.load(Ordering::SeqCst);
+    payload.delay_fs = device.delay_fs.load(Ordering::SeqCst);
+    payload.host_elapsed_fs = device.host_elapsed_fs.load(Ordering::SeqCst);
+    if device.unknown.load(Ordering::SeqCst) {
+        payload.outcome_unknown = 1;
+    }
+    if device.hint.load(Ordering::SeqCst) && payload.status == super::target::status::OK {
+        payload.dmi_allowed = 1;
+    }
+    if payload.command == super::target::command::WRITE {
+        payload.device_event = device.event.load(Ordering::SeqCst);
+    }
+}
+
+unsafe extern "C" fn device_receive(user: *mut c_void, byte: u8) {
+    // SAFETY: as in `device_b_transport`; the callback takes no Rust reference
+    // beyond the live fixture and returns nothing.
+    let device = unsafe { &*(user.cast::<TestDevice>()) };
+    device.receives.lock().unwrap().push(byte);
+}
+
+unsafe extern "C" fn device_reset(user: *mut c_void) -> i32 {
+    // SAFETY: as in `device_b_transport`.
+    let device = unsafe { &*(user.cast::<TestDevice>()) };
+    let ack = device.reset_ack.load(Ordering::SeqCst);
+    if ack {
+        device.resets.fetch_add(1, Ordering::SeqCst);
+    }
+    i32::from(ack)
+}
+
+/// A guest that polls the UART's `LSR` and writes one byte to `THR`.
+///
+/// The first parcel is two compressed `c.nop`s, so the image only executes
+/// under an IALIGN=16 profile, as the other fixtures require.
+fn uart_guest(code: u32) -> Vec<u32> {
+    vec![
+        0x0001_0001,
+        elf::lui(5, 0x10000), // 0x1000_0000, the UART window
+        elf::lbu(7, 5, DEVICE_LSR as i32),
+        elf::addi(6, 0, i32::from(b'H')),
+        elf::sb(6, 5, DEVICE_RBR_THR as i32),
+        elf::lui(4, 0x80),
+        elf::addi(4, 4, 1),
+        elf::slli(4, 4, 12),
+        elf::standard_exit(code),
+        elf::sd(5, 4, 0),
+        0x0000_006f,
+    ]
+}
+
+/// One handle with a C device table attached to the UART window.
+struct DeviceHarness {
+    handle: *mut RuscvMachine,
+    device: Box<TestDevice>,
+    _ram: Box<TestTarget>,
+    _elf: tempfile::NamedTempFile,
+}
+
+impl Drop for DeviceHarness {
+    fn drop(&mut self) {
+        // SAFETY: the handle is live until this drop and was created here.
+        unsafe { ruscv_machine_destroy(self.handle) };
+    }
+}
+
+impl DeviceHarness {
+    fn new(code: &[u32]) -> Self {
+        let mut ram = Box::new(TestTarget::new(elf::BASE, 0x1_0000));
+        let table = ram.table(0);
+        let mut handle = std::ptr::null_mut();
+        // SAFETY: the table and its user pointer stay alive in this harness.
+        let status = unsafe {
+            ruscv_machine_create(&table, IsaProfile::Rv64imafdc as i32, TICK_FS, &mut handle)
+        };
+        assert_eq!(status, Status::Ok as i32, "create");
+        let device = Box::new(TestDevice::new());
+        device.handle.store(handle, Ordering::SeqCst);
+        let device_table = device.table();
+        // SAFETY: the handle and the table are live and this is the creating
+        // thread.
+        let status =
+            unsafe { ruscv_machine_attach_device(handle, device_window::UART, &device_table) };
+        assert_eq!(status, Status::Ok as i32, "attach_device");
+        let harness = Self {
+            handle,
+            device,
+            _ram: ram,
+            _elf: elf_file(code),
+        };
+        let path = c_text(harness._elf.path());
+        // SAFETY: the handle is live and the path is NUL-terminated.
+        let status = unsafe { ruscv_machine_load_elf(handle, path.as_ptr()) };
+        assert_eq!(status, Status::Ok as i32, "load_elf");
+        harness
+    }
+
+    fn run_to_result(&self, budget: u64, grants: usize) -> CResult {
+        handle_run_to_result(self.handle, budget, grants)
+    }
+
+    fn facts(&self) -> CBoundary {
+        handle_facts(self.handle)
+    }
+
+    fn diagnostic(&self) -> String {
+        handle_diagnostic(self.handle)
+    }
+}
+
+/// One TLM-route handle over a plain C RAM table, and the fixture behind it.
+fn tlm_handle() -> (*mut RuscvMachine, Box<TestTarget>) {
+    let mut ram = Box::new(TestTarget::new(elf::BASE, 0x1_0000));
+    let table = ram.table(0);
+    let mut handle = std::ptr::null_mut();
+    // SAFETY: the table and its user pointer outlive the returned handle.
+    let status = unsafe {
+        ruscv_machine_create(&table, IsaProfile::Rv64imafdc as i32, TICK_FS, &mut handle)
+    };
+    assert_eq!(status, Status::Ok as i32, "create");
+    (handle, ram)
+}
+
+#[test]
+fn an_attached_c_device_target_serves_the_uart_window() {
+    // device D8: the attach succeeds before the first load and the attached
+    // target's own count is non-zero for a guest that touches the window.
+    let device = DeviceHarness::new(&uart_guest(2));
+    let result = device.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        device.diagnostic()
+    );
+    assert_eq!(result.exit_code, 2);
+    assert!(
+        device.device.transactions() > 0,
+        "the attached C device target served no transaction"
+    );
+    assert_eq!(
+        device.device.transmitted(),
+        vec![b'H'],
+        "the copied table did not serve the guest's THR write"
+    );
+    assert!(
+        device.device.resets() > 0,
+        "the attached target was never reset at a Platform build"
+    );
+    let calls = device.device.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.access_kind == super::target::access_kind::DATA_READ)
+            .count(),
+        1,
+        "the LSR poll did not reach the device target exactly once: {calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.access_kind == super::target::access_kind::DATA_WRITE)
+            .count(),
+        1,
+        "the THR write did not reach the device target exactly once: {calls:?}"
+    );
+
+    // The same guest on the in-tree window: the run result is its parity
+    // result, and only the target that served it differs.
+    let in_tree = Harness::new(IsaProfile::Rv64imafdc as i32, &uart_guest(2), 0);
+    let parity = in_tree.run_to_result(1_000, 16);
+    assert_eq!(
+        (result.state, result.exit_code),
+        (parity.state, parity.exit_code),
+        "the host device route is not its parity result"
+    );
+}
+
+#[test]
+fn every_documented_attach_refusal_returns_its_code() {
+    use Status::{Config, InvalidArgument};
+
+    // A NULL handle, a NULL table and an unknown window are argument refusals,
+    // so they precede every configuration refusal (device D8).
+    let (handle, _ram) = tlm_handle();
+    let mut device = Box::new(TestDevice::new());
+    let table = device.table();
+    // SAFETY: every pointer here is either null or live on this thread.
+    unsafe {
+        assert_eq!(
+            ruscv_machine_attach_device(std::ptr::null_mut(), device_window::UART, &table),
+            InvalidArgument as i32,
+            "a NULL handle is an argument refusal"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::UART, std::ptr::null()),
+            InvalidArgument as i32,
+            "a NULL table is an argument refusal"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::UART + 1, &table),
+            InvalidArgument as i32,
+            "an unknown window is an argument refusal"
+        );
+        let incomplete = CDevice {
+            b_transport: None,
+            ..device.table()
+        };
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::UART, &incomplete),
+            InvalidArgument as i32,
+            "a table without its callbacks is an argument refusal"
+        );
+    }
+
+    // A window the table does not name is a configuration refusal.
+    device.window_base = DEVICE_WINDOW_BASE + 4;
+    // SAFETY: the handle and the table are live on this thread.
+    assert_eq!(
+        unsafe { ruscv_machine_attach_device(handle, device_window::UART, &device.table()) },
+        Config as i32,
+        "a mismatched window base is a configuration refusal"
+    );
+    device.window_base = DEVICE_WINDOW_BASE;
+    device.window_size = DEVICE_WINDOW_SIZE + 1;
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { ruscv_machine_attach_device(handle, device_window::UART, &device.table()) },
+        Config as i32,
+        "a mismatched window size is a configuration refusal"
+    );
+    device.window_size = DEVICE_WINDOW_SIZE;
+
+    // The first attach succeeds; the second is refused.
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { ruscv_machine_attach_device(handle, device_window::UART, &device.table()) },
+        Status::Ok as i32,
+        "the first attach is accepted"
+    );
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { ruscv_machine_attach_device(handle, device_window::UART, &device.table()) },
+        Config as i32,
+        "a second attach for the same window is a configuration refusal"
+    );
+    // SAFETY: the handle is destroyed exactly once, at the end of the test.
+    unsafe { ruscv_machine_destroy(handle) };
+
+    // A late attach is refused: the table must be attached before the first
+    // load.
+    let (handle, _ram) = tlm_handle();
+    let elf = elf_file(&exit_guest(2));
+    let path = c_text(elf.path());
+    // SAFETY: the handle and the path are live on this thread.
+    unsafe {
+        assert_eq!(
+            ruscv_machine_load_elf(handle, path.as_ptr()),
+            Status::Ok as i32,
+            "load_elf"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::UART, &device.table()),
+            Config as i32,
+            "an attach after the first load is a configuration refusal"
+        );
+    }
+    // SAFETY: the handle is destroyed exactly once.
+    unsafe { ruscv_machine_destroy(handle) };
+
+    // A handle created with a NULL ruscv_target has no TLM route, so it cannot
+    // serve a device window.
+    let mut native = std::ptr::null_mut();
+    // SAFETY: `native` is writable and the route needs no table.
+    let status = unsafe {
+        ruscv_machine_create(
+            std::ptr::null(),
+            IsaProfile::Rv64imafdc as i32,
+            TICK_FS,
+            &mut native,
+        )
+    };
+    assert_eq!(status, Status::Ok as i32, "create a native handle");
+    // SAFETY: the handle and the table are live on this thread.
+    assert_eq!(
+        unsafe { ruscv_machine_attach_device(native, device_window::UART, &device.table()) },
+        Config as i32,
+        "a handle without a TLM route is a configuration refusal"
+    );
+    // SAFETY: the handle is destroyed exactly once.
+    unsafe { ruscv_machine_destroy(native) };
+}
+
+#[test]
+fn a_device_payload_carries_zero_annotations_and_no_event_request() {
+    // device D8: the host device receives `device_event` zero, zero delay, zero
+    // host elapsed time and `may_suspend` zero, with the window's own width.
+    let device = DeviceHarness::new(&uart_guest(2));
+    let result = device.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        device.diagnostic()
+    );
+    let calls = device.device.calls();
+    assert!(!calls.is_empty(), "the device target served no transaction");
+    for call in &calls {
+        assert_eq!(
+            call.device_event,
+            device_event::NONE,
+            "a device request carried a response tag: {call:?}"
+        );
+        assert_eq!(
+            call.delay_fs, 0,
+            "a device request carried a delay: {call:?}"
+        );
+        assert_eq!(
+            call.host_elapsed_fs, 0,
+            "a device request carried host elapsed time: {call:?}"
+        );
+        assert_eq!(
+            call.may_suspend, 0,
+            "a device request carried the suspension flag: {call:?}"
+        );
+        assert_eq!(
+            call.local_offset_fs, 0,
+            "a device request carried a local offset: {call:?}"
+        );
+        assert_eq!(call.length, 1, "the window is byte-only: {call:?}");
+        assert!(
+            call.address >= DEVICE_WINDOW_BASE
+                && call.address < DEVICE_WINDOW_BASE + DEVICE_WINDOW_SIZE,
+            "a request outside the window reached the target: {call:?}"
+        );
+    }
+    // A device transaction never charges the transport totals (device D4).
+    assert_eq!(device.facts().transport_delay_fs, 0);
+}
+
+#[test]
+fn a_uart_transmit_tag_is_accepted_while_an_htif_write_tag_fails_the_run() {
+    // device D8: the tag is copied from the C response, so a matching tag is
+    // the access's one event and a tag from the other window is a protocol
+    // failure the run reports.
+    let accepted = DeviceHarness::new(&uart_guest(2));
+    accepted.device.set_event(device_event::UART_TRANSMIT);
+    let result = accepted.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        accepted.diagnostic()
+    );
+    assert_eq!(result.exit_code, 2);
+
+    let refused = DeviceHarness::new(&uart_guest(2));
+    refused.device.set_event(device_event::HTIF_WRITE);
+    let result = refused.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "an HTIF event on the UART window is not a failure: {}",
+        refused.diagnostic()
+    );
+    assert_ne!(result.exit_code, 2);
+    let diagnostic = refused.diagnostic();
+    assert!(
+        diagnostic.contains("htif-write") && diagnostic.contains("UART window"),
+        "the failure does not name the copied tag: {diagnostic}"
+    );
+
+    // An out-of-contract tag is not a value the ABI can carry, so it is a
+    // protocol failure too rather than a silently dropped event.
+    let unknown = DeviceHarness::new(&uart_guest(2));
+    unknown.device.set_event(device_event::HTIF_WRITE + 1);
+    let result = unknown.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "an unrecognized tag was accepted: {}",
+        unknown.diagnostic()
+    );
+}
+
+#[test]
+fn a_host_device_delay_elapsed_time_or_hint_is_a_protocol_failure() {
+    // device D2/D4: a device transaction annotates nothing, so each of the three
+    // response fields a host can set is a protocol failure of that access.
+    let delay = DeviceHarness::new(&uart_guest(2));
+    delay.device.delay_fs.store(TICK_FS, Ordering::SeqCst);
+    let result = delay.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "an annotated device delay was accepted: {}",
+        delay.diagnostic()
+    );
+    assert!(
+        delay.diagnostic().contains("delay"),
+        "the failure does not name the delay: {}",
+        delay.diagnostic()
+    );
+
+    let elapsed = DeviceHarness::new(&uart_guest(2));
+    elapsed
+        .device
+        .host_elapsed_fs
+        .store(TICK_FS, Ordering::SeqCst);
+    let result = elapsed.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "host time inside a device callback was accepted: {}",
+        elapsed.diagnostic()
+    );
+    assert!(
+        elapsed.diagnostic().contains("host elapsed"),
+        "the failure does not name the host elapsed time: {}",
+        elapsed.diagnostic()
+    );
+
+    let hinted = DeviceHarness::new(&uart_guest(2));
+    hinted.device.hint.store(true, Ordering::SeqCst);
+    let result = hinted.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "a device direct-memory hint was accepted: {}",
+        hinted.diagnostic()
+    );
+    assert!(
+        hinted.diagnostic().contains("direct-memory hint"),
+        "the failure does not name the hint: {}",
+        hinted.diagnostic()
+    );
+    // device D5: a device window never offers direct memory, so no grant is
+    // cached and nothing is charged.
+    assert_eq!(hinted.facts().transport_delay_fs, 0);
+}
+
+#[test]
+fn the_device_callback_cannot_reenter_the_abi() {
+    // device D8: a device callback obeys the RAM target's rules, so every entry
+    // that reaches the callback check is re-entry while direct-memory
+    // invalidation stays accepted.
+    let device = DeviceHarness::new(&uart_guest(2));
+    device.device.probe_entries.store(true, Ordering::SeqCst);
+    let result = device.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        device.diagnostic()
+    );
+    assert_eq!(
+        device.device.run_grant_status.load(Ordering::SeqCst),
+        Status::Reentrant as i32,
+        "a device callback re-entered run_grant"
+    );
+    assert_eq!(
+        device.device.attach_status.load(Ordering::SeqCst),
+        Status::Reentrant as i32,
+        "a device callback re-entered attach_device"
+    );
+    assert_eq!(
+        device.device.invalidate_status.load(Ordering::SeqCst),
+        Status::Ok as i32,
+        "the invalidation entry is not accepted inside a device callback"
+    );
+}
+
+#[test]
+fn a_c_ram_table_that_reports_a_device_event_is_a_protocol_failure() {
+    // device D2: only a device window publishes an event.  The copied field is
+    // therefore live for a RAM table too, and the RAM adapter refuses it instead
+    // of the ABI dropping it silently.
+    let ram = Harness::new(IsaProfile::Rv64imafdc as i32, &exit_guest(2), 0);
+    ram.target
+        .event
+        .store(device_event::UART_TRANSMIT, Ordering::SeqCst);
+    let result = ram.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "a RAM target's device event was accepted: {}",
+        ram.diagnostic()
+    );
+    assert!(
+        ram.diagnostic().contains("only a device window"),
+        "the failure does not name the RAM rule: {}",
+        ram.diagnostic()
+    );
+}
+
+#[test]
+fn the_device_wrapper_delivers_a_pushed_byte_to_receive() {
+    // device D8: `receive` returns nothing and reaches the copied callback with
+    // the byte.  No entry in this ABI version pushes a byte, so the wrapper's
+    // own mapping is what proves the copied pointer and callback are used.
+    let device = Box::new(TestDevice::new());
+    let wrapper = super::target::CDeviceTarget::new(device.table()).unwrap();
+    wrapper.receive(b'Z');
+    assert_eq!(device.receives(), vec![b'Z']);
 }

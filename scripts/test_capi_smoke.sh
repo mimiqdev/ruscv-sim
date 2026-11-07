@@ -12,6 +12,12 @@
 # invalidation rejection, the invalidation re-entry exception, and reset
 # restoring grants after a poisoned transport.
 #
+# The device additions (device U3, D8) are covered from plain C too: the
+# `ruscv_device` layout pins, the `ruscv_payload.device_event` field's offset and
+# size, every attach refusal code, and a run whose C device target serves the
+# UART window with one transmit event, plus the wrong-window tag that must fail
+# the run.
+#
 # A missing C compiler is a failure, never a skip: CI installs gcc on the
 # runner, so an absent compiler means the check did not run.
 
