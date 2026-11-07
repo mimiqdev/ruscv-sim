@@ -1,0 +1,38 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index fbd6906..82dedd8 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -309,17 +309,7 @@ impl TlmRamAdapter {
+         // a guest-visible fault and a generic error.
+         let terminal = status != BlockingResponseStatus::Incomplete;
+ 
+-        // Step 1: a target panic or the outcome-unknown flag is an unknown
+-        // completion, before every rule below and before the overshoot rule,
+-        // whatever `e`, `d` or `may_suspend` it carries.  It is charged its
+-        // `e`, and no later step reclassifies it.
+-        if let Some(reason) = unknown {
+-            let failure =
+-                self.charge_failure(state, path, elapsed, PhysicalBackendError::unknown(reason));
+-            self.poison(state, failure_context(&failure).to_owned());
+-            return Err(failure);
+-        }
+-
++        // MUTATION: the unknown-completion step moved after the new rules.
+         // Step 2: a changed request payload is today's protocol failure,
+         // charged its `e`.
+         if transaction.address() != path.address
+@@ -374,6 +364,14 @@ impl TlmRamAdapter {
+             return Err(self.charge_failure(state, path, elapsed, failure));
+         }
+ 
++        // MUTATION: the unknown-completion step moved here.
++        if let Some(reason) = unknown {
++            let failure =
++                self.charge_failure(state, path, elapsed, PhysicalBackendError::unknown(reason));
++            self.poison(state, failure_context(&failure).to_owned());
++            return Err(failure);
++        }
++
+         // Step 6: today's classification.  A terminal response is charged its
+         // `d`, including a fault status, with today's malformed-delay and
+         // overshoot checks.  An incomplete response is always charged its `e`,

@@ -2513,5 +2513,211 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "nb-u1-flag-open-turn",
+    "source": "src/blocking/adapter.rs",
+    "patch": "nb-u1-flag-open-turn.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::debug_work_carries_no_may_suspend_flag",
+        "failure": [
+          "a debug access carried may_suspend",
+          "initiator: Hart",
+          "may_suspend: true"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-flag-target",
+    "source": "src/blocking/adapter.rs",
+    "patch": "nb-u1-flag-target.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_non_suspending_target_never_carries_the_flag",
+        "failure": [
+          "a guest request to a non-suspending target carried the flag",
+          "may_suspend: true"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-default-false",
+    "source": "src/blocking/target.rs",
+    "patch": "nb-u1-default-false.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_non_suspending_target_never_carries_the_flag",
+        "failure": [
+          "the non-suspending fixture stopped inheriting the default"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-elapsed-unsuspended",
+    "source": "src/blocking/adapter.rs",
+    "patch": "nb-u1-elapsed-unsuspended.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::host_elapsed_without_the_flag_is_a_protocol_failure",
+        "failure": [
+          "the turn did not fail: InstructionRetired"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-elapsed-above-delay",
+    "source": "src/blocking/adapter.rs",
+    "patch": "nb-u1-elapsed-above-delay.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::host_elapsed_above_the_response_delay_is_a_protocol_failure",
+        "failure": [
+          "the turn did not fail: InstructionRetired"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-terminal-charges-delay",
+    "source": "src/blocking/adapter.rs",
+    "patch": "nb-u1-terminal-charges-delay.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_terminal_response_charges_its_delay_once",
+        "failure": [
+          "a terminal response did not charge its rounded delay exactly once",
+          "left:\\s+7",
+          "right:\\s+10"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-incomplete-charges-elapsed",
+    "source": "src/blocking/adapter.rs",
+    "patch": "nb-u1-incomplete-charges-elapsed.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::an_incomplete_or_unknown_response_charges_its_elapsed_time",
+        "failure": [
+          "on a load did not charge its rounded host elapsed time",
+          "left:\\s+6",
+          "right:\\s+8"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-unknown-charges-elapsed",
+    "source": "src/blocking/adapter.rs",
+    "patch": "nb-u1-unknown-charges-elapsed.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::an_incomplete_or_unknown_response_charges_its_elapsed_time",
+        "failure": [
+          "Unknown on a load did not charge its rounded host elapsed time",
+          "left:\\s+6",
+          "right:\\s+8"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-unknown-precedence",
+    "source": "src/blocking/adapter.rs",
+    "patch": "nb-u1-unknown-precedence.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::tests::an_unknown_completion_outranks_the_new_rules",
+        "failure": [
+          "an unknown completion with elapsed time was reclassified",
+          "on a request that may not suspend"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-record-before-rules",
+    "source": "src/blocking/adapter.rs",
+    "patch": "nb-u1-record-before-rules.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::tests::a_recorded_write_survives_the_new_rules",
+        "failure": [
+          "an `Ok` store that failed the rule was not recorded",
+          "left:\\s+Some.0.",
+          "right:\\s+Some.1."
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-quantum-refused",
+    "source": "src/machine/platform.rs",
+    "patch": "nb-u1-quantum-refused.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_suspending_target_with_a_quantum_is_refused",
+        "failure": [
+          "a suspending target with a quantum was admitted"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u1-elapsed-total",
+    "source": "src/blocking/adapter.rs",
+    "patch": "nb-u1-elapsed-total.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::host_elapsed_femtoseconds_excludes_debug_work",
+        "failure": [
+          "debug work entered the generation's host elapsed total",
+          "left:\\s+10500000",
+          "right:\\s+9000000"
+        ]
+      }
+    ]
   }
 ]

@@ -1,13 +1,15 @@
 diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
-index 2e50497..3a07f47 100644
+index fbd6906..a012919 100644
 --- i/src/blocking/adapter.rs
 +++ w/src/blocking/adapter.rs
-@@ -926,7 +926,7 @@ impl TlmRamAdapter {
-             && match outcome {
-                 Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
-                     crate::physical::ConditionalStatus::Success,
--                )) => crate::physical::store_conditional_success_rejection(request).is_none(),
-+                )) => true,
-                 Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
-                     crate::physical::ConditionalStatus::Failure,
-                 )) => true,
+@@ -1139,9 +1139,7 @@ impl TlmRamAdapter {
+                     && match outcome {
+                         Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
+                             crate::physical::ConditionalStatus::Success,
+-                        )) => {
+-                            crate::physical::store_conditional_success_rejection(request).is_none()
+-                        }
++                        )) => true,
+                         Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
+                             crate::physical::ConditionalStatus::Failure,
+                         )) => true,

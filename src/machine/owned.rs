@@ -225,6 +225,7 @@ impl OwnedMachine {
             lifecycle: status.lifecycle,
             uncertain: status.uncertain,
             transport_delay_femtoseconds: self.domain().platform.transport_delay_femtoseconds(),
+            host_elapsed_femtoseconds: self.domain().platform.transport_host_elapsed_femtoseconds(),
             // quantum D10: a control boundary starts no turn, so its
             // threshold result is false.
             quantum: self.quantum_facts(false)?,

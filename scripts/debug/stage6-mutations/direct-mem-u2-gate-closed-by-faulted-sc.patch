@@ -1,12 +1,12 @@
 diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
-index 2e50497..0bd10ec 100644
+index fbd6906..e1e62b5 100644
 --- i/src/blocking/adapter.rs
 +++ w/src/blocking/adapter.rs
-@@ -937,7 +937,6 @@ impl TlmRamAdapter {
-                 descriptor.kind,
-                 crate::physical::AtomicAccessKind::StoreConditional
-             )
--            && conclusive
-         {
-             state.writes_suspended = false;
-         }
+@@ -1152,7 +1152,6 @@ impl TlmRamAdapter {
+                         descriptor.kind,
+                         crate::physical::AtomicAccessKind::StoreConditional
+                     )
+-                    && conclusive
+                 {
+                     state.writes_suspended = false;
+                 }

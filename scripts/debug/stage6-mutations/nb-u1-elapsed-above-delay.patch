@@ -1,0 +1,13 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index fbd6906..b72449f 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -362,7 +362,7 @@ impl TlmRamAdapter {
+ 
+         // Step 5: the elapsed-above-delay rule.  A terminal response's `d`
+         // counts from issue, so it must cover the host time the callback took.
+-        if terminal && elapsed > delay {
++        if false {
+             let failure = PhysicalBackendError::protocol(format!(
+                 "blocking target reported {} fs of host elapsed time above its {} fs response \
+                  delay for {} at {:#018x}",

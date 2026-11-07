@@ -158,6 +158,16 @@ impl RamSlot {
         }
     }
 
+    /// Exact total host elapsed time of the transactions this slot's adapter
+    /// counted (nb D4).  Zero on native, for a target that lets no host time
+    /// pass, and for every transaction outside the guest-turn window.
+    pub(crate) fn host_elapsed(&self) -> Femtoseconds {
+        match &self.inner.kind {
+            RamKind::Native(_) => Femtoseconds::ZERO,
+            RamKind::Tlm(adapter) => adapter.host_elapsed(),
+        }
+    }
+
     /// Opens one guest turn's delay accounting.
     pub(crate) fn begin_transport_turn(&self) {
         if let RamKind::Tlm(adapter) = &self.inner.kind {

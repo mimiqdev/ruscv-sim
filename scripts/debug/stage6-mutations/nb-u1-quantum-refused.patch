@@ -1,0 +1,18 @@
+diff --git i/src/machine/platform.rs w/src/machine/platform.rs
+index 779639e..3c7b7fc 100644
+--- i/src/machine/platform.rs
++++ w/src/machine/platform.rs
+@@ -93,12 +93,7 @@ impl Platform {
+         // nb D2: host time passing inside a grant would stop the kernel's clock
+         // from being the quantum anchor `E` for the whole grant (archived
+         // quantum D12), so a suspending target and a quantum cannot combine.
+-        if config.quantum != 0
+-            && config
+-                .transport
+-                .target()
+-                .is_some_and(|target| target.suspends_host_time())
+-        {
++        if false {
+             return Err(MachineError::UnsupportedTransport);
+         }
+         let ram = match &config.transport {

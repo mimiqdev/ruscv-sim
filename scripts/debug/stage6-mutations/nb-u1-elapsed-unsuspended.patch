@@ -1,0 +1,13 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index fbd6906..709a8fd 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -349,7 +349,7 @@ impl TlmRamAdapter {
+         // Step 4: the unmarked-elapsed rule.  Only a charged transaction to a
+         // suspending target may report host time, so an `e` here would be time
+         // the adapter could not attribute to an open guest turn.
+-        if !transaction.may_suspend() && !elapsed.is_zero() {
++        if false {
+             let failure = PhysicalBackendError::protocol(format!(
+                 "blocking target reported {} fs of host elapsed time on a request that may not \
+                  suspend for {} at {:#018x}",
