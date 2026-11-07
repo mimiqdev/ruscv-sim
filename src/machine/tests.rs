@@ -2540,11 +2540,14 @@ fn tlm_device_events_and_time_match_the_native_route_at_zero_quantum() {
 /// device D4/D7: at a selected quantum the device path adds no time to the
 /// quantum contract's own facts.
 ///
-/// At `Q` = 2 both routes reach the threshold, so every turn's committed time,
-/// local time, counters and charge must match exactly.  At `Q` = 1024 the
-/// threshold stays far away, so only the device access's F1 mark can sync its
-/// turn, and the flush it performs commits exactly the offset the turn had
-/// already accrued.
+/// At `Q` = 2 the presented local time, the guest counters and the zero
+/// transport and host-elapsed charge match turn by turn.  Committed time is
+/// not compared: the device access's F1 mark can sync its turn earlier than
+/// the threshold would, so the flush may move committed time earlier by
+/// exactly the offset the turn had already accrued.  At `Q` = 1024 the
+/// threshold stays far away, so only that mark can sync the turn, and the
+/// flush's committed time is pinned to the accrued offset plus the turn's own
+/// advance.
 #[test]
 fn a_selected_quantum_device_access_adds_no_time_to_the_turn_facts() {
     // (committed time, local time, delay fs, host elapsed fs, syncs, minstret,
@@ -2593,8 +2596,8 @@ fn a_selected_quantum_device_access_adds_no_time_to_the_turn_facts() {
     ];
 
     // Q = 2: the device mark may sync its turn earlier than the threshold
-    // would, so committed time can move earlier; it must not move further, and
-    // the presented local time and the guest counters must stay identical.
+    // would, so committed time can move earlier; the presented local time, the
+    // guest counters and the zero charge must stay identical.
     let device = route(2, &device_code);
     let ram = route(2, &ram_code);
     for (index, (device, ram)) in device.iter().zip(ram.iter()).enumerate() {

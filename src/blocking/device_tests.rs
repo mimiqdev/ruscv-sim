@@ -9,9 +9,16 @@
 use super::adapter::TlmRamAdapter;
 use super::device::{BlockingDeviceEvent, DeviceWindow, TlmDeviceAdapter};
 use super::in_tree::{InTreeHtif, InTreeUart};
-use super::{BlockingInitiator, BlockingTarget, Femtoseconds, TickPeriod};
+use super::{
+    BlockingDebug, BlockingInitiator, BlockingResponseStatus, BlockingTarget, BlockingTransaction,
+    Femtoseconds, TickPeriod,
+};
+use crate::hart_amods::{self, AmoOperation};
 use crate::peripherals::uart16550::{reg_offset, Uart16550, FIFO_DEPTH};
-use crate::physical::{PhysicalAccessKind, PhysicalBackendError, PhysicalRequest, PhysicalWidth};
+use crate::physical::{
+    AmoWidth, AtomicOrdering, AtomicRequest, PhysicalAccessKind, PhysicalBackendError,
+    PhysicalRequest, PhysicalWidth,
+};
 use std::sync::{Arc, Mutex};
 
 const UART_BASE: u64 = 0x1000_0000;
@@ -195,6 +202,72 @@ fn a_ram_target_that_reports_a_device_event_is_a_protocol_failure() {
         adapter.consumed_delay(),
         Femtoseconds::ZERO,
         "the rejected access charged delay"
+    );
+}
+
+/// A RAM target that completes atomics normally and then reports a device
+/// event, so the atomic path's rejection is proven on its own.
+struct EventReportingRam {
+    inner: super::ZeroDelayRam,
+}
+
+impl BlockingTarget for EventReportingRam {
+    fn declared_max_delay(&self) -> Femtoseconds {
+        Femtoseconds::ZERO
+    }
+
+    fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
+        self.inner.b_transport(transaction);
+        if transaction.status() == BlockingResponseStatus::Ok {
+            transaction.report_device_event(BlockingDeviceEvent::UartTransmit(b'x'));
+        }
+    }
+
+    fn transport_dbg(&self, transaction: &mut BlockingDebug<'_>) -> usize {
+        self.inner.transport_dbg(transaction)
+    }
+
+    fn transport_reset(&self) -> bool {
+        self.inner.transport_reset()
+    }
+}
+
+/// device D2: the RAM adapter's atomic path rejects a device event too, and
+/// the rejection is the device-event rule, not the atomic-completion shape.
+#[test]
+fn an_atomic_ram_completion_that_reports_a_device_event_is_a_protocol_failure() {
+    let target = Arc::new(EventReportingRam {
+        inner: super::ZeroDelayRam::new(),
+    });
+    let adapter = TlmRamAdapter::with_tick_period(
+        target as Arc<dyn BlockingTarget>,
+        TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .expect("the zero-delay target's declared maximum is representable");
+    let operand = 1u64.to_le_bytes();
+    let request = AtomicRequest::rmw(
+        RAM_BASE,
+        AmoWidth::Doubleword.physical_width(),
+        AtomicOrdering { aq: true, rl: true },
+        &operand,
+        hart_amods::transform(AmoOperation::Add, AmoWidth::Doubleword),
+    )
+    .unwrap();
+    let error = adapter
+        .transact_atomic(&request, 0)
+        .expect_err("an atomic RAM completion's device event was accepted");
+    assert!(
+        matches!(error, PhysicalBackendError::Protocol { .. }),
+        "an atomic RAM target's device event was not a protocol failure: {error:?}"
+    );
+    let PhysicalBackendError::Protocol { context } = &error else {
+        unreachable!("checked above");
+    };
+    assert!(
+        context.contains("only a device window publishes one"),
+        "the failure does not name the device-event rule: {context}"
     );
 }
 
