@@ -1,0 +1,21 @@
+diff --git a/src/executor.rs b/src/executor.rs
+index 7aa6608..c25bca2 100644
+--- a/src/executor.rs
++++ b/src/executor.rs
+@@ -1419,14 +1419,10 @@ impl MemoryInterface for SystemBus {
+             let offset = addr - self.uart_base;
+             // device D4: the typed byte write publishes through the UART sink,
+             // exactly as the raw and device paths do.
+-            let transmitted = self
+-                .uart
++            self.uart
+                 .lock()
+                 .map_err(|_| MemoryError::Backend("UART lock poisoned".into()))?
+-                .write_reg_reporting(offset, value);
+-            if let Some(byte) = transmitted {
+-                self.publish_uart(byte);
+-            }
++                .write_reg(offset, value);
+             return Ok(());
+         }
+         Err(MemoryError::InvalidAddress(addr))

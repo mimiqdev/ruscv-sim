@@ -1,7 +1,7 @@
 //! Existing Platform configurations and placement, without run-stop policy.
 use super::inbound::InboundPort;
 use super::{MachineConfig, MachineError, PlatformKind};
-use crate::blocking::Transport;
+use crate::blocking::{DevicePath, DeviceTargets, InTreeHtif, InTreeUart, Transport};
 use crate::core::{SharedDataAccess, SharedPhysicalAccess};
 use crate::elf::LoadImage;
 use crate::executor::{
@@ -170,11 +170,37 @@ impl Platform {
             }
             PlatformKind::Native => {
                 let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
-                let queue = events.clone();
-                let output = config.uart_output.clone();
-                uart.lock()
-                    .map_err(|_| MachineError::Poisoned)?
-                    .set_output_callback(move |byte| {
+                // device D2: unit U2 reads the selection from
+                // `MachineConfig.devices`; unit U1 defines the shape and
+                // selects the in-tree target for each window, so a run without
+                // a host target is today's run on either route.
+                let targets = DeviceTargets::none();
+                let devices = match &config.transport {
+                    Transport::Native => None,
+                    Transport::Tlm(_) => Some(DevicePath::new(
+                        targets
+                            .uart()
+                            .cloned()
+                            .unwrap_or_else(|| Arc::new(InTreeUart::new(uart.clone()))),
+                        Arc::new(InTreeHtif::new()),
+                    )),
+                };
+                let bus = Arc::new(Mutex::new(SystemBus::with_ram_slot(
+                    ram.clone(),
+                    uart.clone(),
+                    image.base_addr(),
+                    image.memory_size(),
+                    devices,
+                )));
+                {
+                    let mut bus = bus.lock().map_err(|_| MachineError::Poisoned)?;
+                    // device D4: one publication sink per window, installed
+                    // once here.  A transmitted byte reaches the event queue and
+                    // the host output callback through the UART sink and not
+                    // through the UART's own output callback.
+                    let queue = events.clone();
+                    let output = config.uart_output.clone();
+                    bus.set_uart_sink(move |byte| {
                         queue
                             .lock()
                             .expect("Platform event lock")
@@ -183,17 +209,9 @@ impl Platform {
                             callback(byte);
                         }
                     });
-                let bus = Arc::new(Mutex::new(SystemBus::with_ram_slot(
-                    ram.clone(),
-                    uart.clone(),
-                    image.base_addr(),
-                    image.memory_size(),
-                )));
-                let queue = events.clone();
-                let callback = config.htif_write.clone();
-                bus.lock()
-                    .map_err(|_| MachineError::Poisoned)?
-                    .set_htif_write_callback(move |value| {
+                    let queue = events.clone();
+                    let callback = config.htif_write.clone();
+                    bus.set_htif_write_callback(move |value| {
                         queue
                             .lock()
                             .expect("Platform event lock")
@@ -202,6 +220,7 @@ impl Platform {
                             callback(value);
                         }
                     });
+                }
                 let port = || {
                     Arc::new(Mutex::new(ValidatedPhysicalAccess::new(
                         SystemBus::physical_backend(bus.clone()),

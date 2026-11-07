@@ -1,5 +1,5 @@
 diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
-index fbd6906..2d3292e 100644
+index e6def3d..804ca05 100644
 --- i/src/blocking/adapter.rs
 +++ w/src/blocking/adapter.rs
 @@ -322,10 +322,7 @@ impl TlmRamAdapter {
@@ -29,8 +29,8 @@ index fbd6906..2d3292e 100644
 +        Ok(())
      }
  
-     /// Charges one rule failure's host elapsed time and returns the reported
-@@ -779,9 +771,17 @@ impl TlmRamAdapter {
+     /// device D2: only a device window publishes a device event, so a RAM
+@@ -799,9 +791,17 @@ impl TlmRamAdapter {
                  descriptor.category,
                  descriptor.paddr
              ))),

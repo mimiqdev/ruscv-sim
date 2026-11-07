@@ -2440,6 +2440,247 @@ fn flat_with_tlm_is_a_configuration_error() {
     ));
 }
 
+// ---- TLM-Modeled Devices U1: device path and in-tree targets ----
+
+/// A guest that polls `LSR`, writes two UART bytes and one HTIF dword, and
+/// stores once to RAM, so both routes must publish the same events in the same
+/// turns.
+fn device_guest() -> Vec<u32> {
+    vec![
+        elf::lui(5, 0x10000), // 0x1000_0000, the UART window
+        elf::lbu(7, 5, 5),    // LSR
+        elf::addi(6, 0, i32::from(b'H')),
+        elf::sb(6, 5, 0), // THR
+        elf::addi(6, 0, i32::from(b'i')),
+        elf::sb(6, 5, 0),
+        elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::addi(9, 0, 0x41),
+        elf::sd(9, 8, 0),
+        elf::auipc(1, 0), // guest RAM, `BASE` from this program counter
+        elf::sd(9, 1, 0x200),
+    ]
+}
+
+fn code_image(code: &[u32]) -> Arc<LoadImage> {
+    Arc::new(LoadImage::parse(&elf::elf_with_code(code, 0, true, false, 0x4000)).unwrap())
+}
+
+/// One route's per-turn `(mtime, events, uart_output so far, htif values so
+/// far)`.
+type DeviceRecord = (u64, Vec<PlatformEvent>, Vec<u8>, Vec<u64>);
+
+fn device_route(tlm: bool, code: &[u32]) -> Vec<DeviceRecord> {
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    if tlm {
+        config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    }
+    let transmitted = Arc::new(Mutex::new(Vec::new()));
+    let sink = transmitted.clone();
+    config.uart_output = Some(Arc::new(move |byte| sink.lock().unwrap().push(byte)));
+    let values = Arc::new(Mutex::new(Vec::new()));
+    let target = values.clone();
+    config.htif_write = Some(Arc::new(move |value| target.lock().unwrap().push(value)));
+    let mut owned = OwnedMachine::new(config, code_image(code)).unwrap();
+    let mut records = Vec::new();
+    for _ in 0..code.len() {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the device guest failed: {:?}",
+            turn.hart().outcome
+        );
+        records.push((
+            owned.platform_mtime().unwrap(),
+            turn.events().to_vec(),
+            transmitted.lock().unwrap().clone(),
+            values.lock().unwrap().clone(),
+        ));
+    }
+    records
+}
+
+/// device D7: at `Q` = 0 a TLM run's `mtime`, `PlatformEvent` and
+/// `config.uart_output` sequences are the native run's, turn by turn, and its
+/// `config.htif_write` values are too.  `hello`'s suite pass covers the TLM
+/// `--dmi` and quantum passes end to end.
+#[test]
+fn tlm_device_events_and_time_match_the_native_route_at_zero_quantum() {
+    let code = device_guest();
+    let native = device_route(false, &code);
+    let tlm = device_route(true, &code);
+    assert_eq!(
+        native, tlm,
+        "the TLM device route diverged from the native route in mtime, events or host callbacks"
+    );
+    let events: Vec<PlatformEvent> = native
+        .iter()
+        .flat_map(|record| record.1.iter().cloned())
+        .collect();
+    assert_eq!(
+        events,
+        [
+            PlatformEvent::UartTransmit(b'H'),
+            PlatformEvent::UartTransmit(b'i'),
+            PlatformEvent::HtifWrite(0x41),
+        ],
+        "the guest's device events are not the expected sequence"
+    );
+    assert_eq!(
+        native.last().unwrap().2,
+        b"Hi".to_vec(),
+        "the UART output callback did not receive exactly the transmitted bytes"
+    );
+    assert_eq!(
+        native.last().unwrap().3,
+        [0x41],
+        "the HTIF callback did not receive exactly the written value"
+    );
+}
+
+/// device D4/D7: at a selected quantum the device path adds no time to the
+/// quantum contract's own facts.
+///
+/// At `Q` = 2 the presented local time, the guest counters and the zero
+/// transport and host-elapsed charge match turn by turn.  Committed time is
+/// not compared: the device access's F1 mark can sync its turn earlier than
+/// the threshold would, so the flush may move committed time earlier by
+/// exactly the offset the turn had already accrued.  At `Q` = 1024 the
+/// threshold stays far away, so only that mark can sync the turn, and the
+/// flush's committed time is pinned to the accrued offset plus the turn's own
+/// advance.
+#[test]
+fn a_selected_quantum_device_access_adds_no_time_to_the_turn_facts() {
+    // (committed time, local time, delay fs, host elapsed fs, syncs, minstret,
+    // mcycle)
+    type Record = (u64, u64, u64, u64, u64, u64, u64);
+
+    fn route(quantum: u64, code: &[u32]) -> Vec<Record> {
+        let mut config = MachineConfig::new(PlatformKind::Native);
+        config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+        config.quantum = quantum;
+        let mut owned = OwnedMachine::new(config, code_image(code)).unwrap();
+        let mut records = Vec::new();
+        for _ in 0..code.len() {
+            let turn = owned.step_request(false, false, false).unwrap();
+            let facts = turn.boundary();
+            let quantum = facts
+                .quantum
+                .expect("a selected quantum reports its boundary facts");
+            let (minstret, mcycle) = guest_counters_now(&owned);
+            records.push((
+                owned.platform_mtime().unwrap(),
+                owned.platform_local_time().unwrap(),
+                facts.transport_delay_femtoseconds,
+                facts.host_elapsed_femtoseconds,
+                quantum.syncs,
+                minstret,
+                mcycle,
+            ));
+        }
+        records
+    }
+
+    // The device guest stores to the UART window; the parity guest stores to
+    // the same RAM word through an `auipc`-computed guest address.
+    let device_code = [
+        elf::lui(5, 0x10000),
+        elf::addi(6, 0, 0x48),
+        elf::sb(6, 5, 0),
+        elf::nop(),
+    ];
+    let ram_code = [
+        elf::auipc(5, 0),
+        elf::addi(6, 0, 0x48),
+        elf::sb(6, 5, 0x200),
+        elf::nop(),
+    ];
+
+    // Q = 2: the device mark may sync its turn earlier than the threshold
+    // would, so committed time can move earlier; the presented local time, the
+    // guest counters and the zero charge must stay identical.
+    let device = route(2, &device_code);
+    let ram = route(2, &ram_code);
+    for (index, (device, ram)) in device.iter().zip(ram.iter()).enumerate() {
+        assert_eq!(
+            device.1, ram.1,
+            "Q = 2 turn {index}: the device path changed the presented local time"
+        );
+        assert_eq!(
+            (device.2, device.3),
+            (0, 0),
+            "Q = 2 turn {index}: a device transaction charged transport or host elapsed time"
+        );
+        assert_eq!(
+            (device.5, device.6),
+            (ram.5, ram.6),
+            "Q = 2 turn {index}: a device transaction reached minstret or mcycle"
+        );
+    }
+    assert_eq!(
+        device.last().unwrap().1,
+        ram.last().unwrap().1,
+        "the device and RAM runs ended at different presented times"
+    );
+
+    // Q = 1024: the threshold is out of reach, so only the device access's F1
+    // mark can sync its turn, and the flush it performs commits exactly the
+    // time the turn had already accrued plus its own advance.
+    let device = route(1024, &device_code);
+    let ram = route(1024, &ram_code);
+    for (index, (device, ram)) in device.iter().zip(ram.iter()).enumerate() {
+        assert_eq!(
+            device.1, ram.1,
+            "Q = 1024 turn {index}: the device path changed the presented local time"
+        );
+        assert_eq!(
+            (device.2, device.3),
+            (0, 0),
+            "Q = 1024 turn {index}: a device transaction charged transport or host elapsed time"
+        );
+        assert_eq!(
+            (device.5, device.6),
+            (ram.5, ram.6),
+            "Q = 1024 turn {index}: a device transaction reached minstret or mcycle"
+        );
+    }
+    assert_eq!(
+        device[2].4, 1,
+        "the device access did not mark its turn for the boundary sync"
+    );
+    assert_eq!(
+        ram[2].4, 0,
+        "a RAM access synced without reaching the threshold or a device mark"
+    );
+    assert_eq!(
+        device[2].0,
+        device[1].0 + device[1].1 + 1,
+        "the F1 flush committed more than the time already accrued plus the turn's own advance"
+    );
+    assert_eq!(
+        ram[2].0, 0,
+        "a RAM turn committed time before the quantum threshold"
+    );
+}
+
+#[test]
+fn a_device_access_without_a_quantum_still_advances_one_turn() {
+    // device D4: the turn advance is the same on both routes; the device path
+    // adds neither delay nor a second tick.
+    let code = [
+        elf::lui(5, 0x10000),
+        elf::addi(6, 0, 0x5a),
+        elf::sb(6, 5, 0),
+    ];
+    let native = device_route(false, &code);
+    let tlm = device_route(true, &code);
+    assert_eq!(native, tlm);
+    assert_eq!(
+        native.last().unwrap().0,
+        code.len() as u64,
+        "the device turn did not advance mtime once per completed turn"
+    );
+}
+
 #[test]
 fn program_buffer_and_sba_ram_access_use_the_tlm_route() {
     let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));

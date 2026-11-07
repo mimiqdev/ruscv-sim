@@ -1,0 +1,13 @@
+diff --git a/src/peripherals/uart16550.rs b/src/peripherals/uart16550.rs
+index d31b895..247bf8c 100644
+--- a/src/peripherals/uart16550.rs
++++ b/src/peripherals/uart16550.rs
+@@ -574,7 +574,7 @@ impl Uart16550 {
+     /// branch and the in-tree device target both publish it.  A write that
+     /// lands in the divisor latch returns `None`.
+     pub(crate) fn write_reg_reporting(&mut self, offset: u64, value: u8) -> Option<u8> {
+-        let transmitted = (offset == reg_offset::RBR_THR && !self.dlab()).then_some(value);
++        let transmitted = (offset == reg_offset::RBR_THR).then_some(value);
+         self.write_reg(offset, value);
+         transmitted
+     }
