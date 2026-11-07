@@ -78,7 +78,7 @@ contract's units land, this page describes only the RAM mapping.
 | AT timeout and retirement (nb D9) | `max_delay_fs + 1` fs after `BEGIN_REQ`, then `mark_unknown_completion` |
 | Late phase (nb D9) | A phase taking effect after the timeout: ignored and counted |
 | Device window (device D3) | One fixed register range: UART `0x1000_0000`/`0x100` or HTIF `0x4000_8000`/8 |
-| Device target (device D2) | A `BlockingDeviceTarget` behind `ruscv_machine_attach_device` |
+| Device target (device D2) | An in-tree `BlockingDeviceTarget`, or a host target attached through `ruscv_machine_attach_device` |
 | Device transaction (device D2) | One `b_transport` call with zero delay and zero host elapsed time |
 | Device event (device D4) | At most one `PlatformEvent` reported by an accepted access: `UartTransmit` or `HtifWrite` |
 
