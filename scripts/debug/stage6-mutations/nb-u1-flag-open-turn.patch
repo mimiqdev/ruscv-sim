@@ -1,0 +1,15 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index fbd6906..f81ea13 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -280,7 +280,9 @@ impl TlmRamAdapter {
+     /// (abstract command, program buffer) and system bus access run after
+     /// `take_turn_delay` has closed it and never carry the flag.
+     fn may_suspend(&self, state: &AdapterState, initiator: BlockingInitiator) -> bool {
+-        self.suspends && matches!(initiator, BlockingInitiator::Hart) && state.active
++        // MUTATION: the guest-turn window no longer decides the flag.
++        let _ = state;
++        self.suspends && matches!(initiator, BlockingInitiator::Hart)
+     }
+ 
+     /// Classifies one target response under the six steps of nb D4 and takes

@@ -1,0 +1,20 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index fbd6906..a9e6f66 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -314,8 +314,13 @@ impl TlmRamAdapter {
+         // whatever `e`, `d` or `may_suspend` it carries.  It is charged its
+         // `e`, and no later step reclassifies it.
+         if let Some(reason) = unknown {
+-            let failure =
+-                self.charge_failure(state, path, elapsed, PhysicalBackendError::unknown(reason));
++            // MUTATION: an unknown completion charges no host elapsed time.
++            let failure = self.charge_failure(
++                state,
++                path,
++                Femtoseconds::ZERO,
++                PhysicalBackendError::unknown(reason),
++            );
+             self.poison(state, failure_context(&failure).to_owned());
+             return Err(failure);
+         }

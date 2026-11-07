@@ -1,0 +1,14 @@
+diff --git i/src/blocking/target.rs w/src/blocking/target.rs
+index 76ec128..781235c 100644
+--- i/src/blocking/target.rs
++++ w/src/blocking/target.rs
+@@ -35,7 +35,8 @@ pub trait BlockingTarget: Send + Sync {
+     /// kernel's clock from being the quantum anchor for the whole grant, so the
+     /// build refuses that combination (nb D2).
+     fn suspends_host_time(&self) -> bool {
+-        false
++        // MUTATION: the default declares suspension.
++        true
+     }
+ 
+     /// The declared per-transaction maximum delay (dev-plan D7).

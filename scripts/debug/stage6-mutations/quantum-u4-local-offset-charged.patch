@@ -1,20 +1,17 @@
 diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
-index 0f770ec..519881f 100644
+index fbd6906..99c090f 100644
 --- i/src/blocking/adapter.rs
 +++ w/src/blocking/adapter.rs
-@@ -248,10 +248,14 @@ impl TlmRamAdapter {
-         transaction: &BlockingTransaction<'_>,
-         access: DelayAccess,
-     ) -> Result<(), PhysicalBackendError> {
-+        let delay = transaction
-+            .response_delay()
-+            .checked_add(transaction.local_offset())
-+            .expect("the local offset and response delay fit in femtoseconds");
-         self.account_delay(
-             state,
-             transaction.address(),
--            transaction.response_delay(),
-+            delay,
-             transaction.status() != BlockingResponseStatus::Incomplete,
-             access,
-         )
+@@ -380,7 +380,11 @@ impl TlmRamAdapter {
+         // because its annotation is still untrusted but host time that has
+         // passed is a fact; its uncounted `d` still keeps today's checks.
+         if terminal {
+-            return self.account_delay(state, path.address, delay, true, path.access, elapsed);
++            // MUTATION: the local offset is charged with the response delay.
++            let charged = delay
++                .checked_add(transaction.local_offset())
++                .expect("the local offset and response delay fit in femtoseconds");
++            return self.account_delay(state, path.address, charged, true, path.access, elapsed);
+         }
+         let charged = self.account_delay(state, path.address, elapsed, true, path.access, elapsed);
+         if let Err(error) = self.account_delay(

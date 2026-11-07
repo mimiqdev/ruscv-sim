@@ -1,5 +1,5 @@
 diff --git i/src/machine/platform.rs w/src/machine/platform.rs
-index c64eb2d..ae5c9b6 100644
+index 779639e..f89da12 100644
 --- i/src/machine/platform.rs
 +++ w/src/machine/platform.rs
 @@ -87,7 +87,7 @@ impl Platform {
@@ -10,4 +10,4 @@ index c64eb2d..ae5c9b6 100644
 +        if false {
              return Err(MachineError::UnsupportedTransport);
          }
-         let ram = match &config.transport {
+         // nb D2: host time passing inside a grant would stop the kernel's clock

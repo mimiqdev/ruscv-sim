@@ -1,6 +1,8 @@
---- a/src/blocking/adapter.rs
-+++ b/src/blocking/adapter.rs
-@@ -208,12 +208,15 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index fbd6906..9cd6559 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -773,12 +773,15 @@ impl TlmRamAdapter {
                      descriptor.paddr
                  ),
              )),
@@ -19,6 +21,6 @@
 +                    descriptor.paddr
 +                ),
 +            )),
-             BlockingResponseStatus::Incomplete => Err(PhysicalBackendError::protocol(format!(
-                 "target left {} for {:?} at {:#018x}",
-                 BlockingResponseStatus::Incomplete.name(),
+             // nb D4 step 6: the response helper already reported an incomplete
+             // or unknown response, so only a terminal status reaches here.
+             _ => unreachable!("the response helper classifies every failure"),

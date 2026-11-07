@@ -1,0 +1,14 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index fbd6906..ef9d9b8 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -380,7 +380,8 @@ impl TlmRamAdapter {
+         // because its annotation is still untrusted but host time that has
+         // passed is a fact; its uncounted `d` still keeps today's checks.
+         if terminal {
+-            return self.account_delay(state, path.address, delay, true, path.access, elapsed);
++            // MUTATION: a terminal response charges its host elapsed time.
++            return self.account_delay(state, path.address, elapsed, true, path.access, elapsed);
+         }
+         let charged = self.account_delay(state, path.address, elapsed, true, path.access, elapsed);
+         if let Err(error) = self.account_delay(

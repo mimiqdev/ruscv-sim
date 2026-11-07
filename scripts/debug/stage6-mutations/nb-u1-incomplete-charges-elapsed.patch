@@ -1,0 +1,21 @@
+diff --git i/src/blocking/adapter.rs w/src/blocking/adapter.rs
+index fbd6906..503492f 100644
+--- i/src/blocking/adapter.rs
++++ w/src/blocking/adapter.rs
+@@ -382,7 +382,15 @@ impl TlmRamAdapter {
+         if terminal {
+             return self.account_delay(state, path.address, delay, true, path.access, elapsed);
+         }
+-        let charged = self.account_delay(state, path.address, elapsed, true, path.access, elapsed);
++        // MUTATION: an incomplete response charges nothing.
++        let charged = self.account_delay(
++            state,
++            path.address,
++            Femtoseconds::ZERO,
++            true,
++            path.access,
++            elapsed,
++        );
+         if let Err(error) = self.account_delay(
+             state,
+             path.address,
