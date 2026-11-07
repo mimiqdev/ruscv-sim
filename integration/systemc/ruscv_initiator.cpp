@@ -139,8 +139,11 @@ public:
 
 private:
     MemoryManager memory_manager_;
-    tlm::tlm_generic_payload payload_;
+    // The extension must outlive the payload: the payload destructor frees its
+    // remaining extensions, which would otherwise call through a destroyed
+    // object. Members are destroyed in reverse declaration order.
     PayloadExtension extension_;
+    tlm::tlm_generic_payload payload_;
     std::vector<uint8_t> data_;
 };
 
@@ -391,6 +394,10 @@ void RuscvInitiator::serve_at_b_transport(ruscv_payload& payload) {
                 }
                 completed = true;
             }
+            break;
+        default:
+            // No other forward return value is a completion this path lists.
+            protocol_error_ = true;
             break;
     }
     if (!protocol_error_ && !completed) {

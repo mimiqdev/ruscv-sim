@@ -160,10 +160,10 @@ tlm::tlm_sync_enum RamTarget::nb_transport_fw(tlm::tlm_generic_payload& transact
         const sc_core::sc_time latency = sc_core::sc_time::from_value(nb_latency_fs_);
         switch (nb_path_) {
             case AtPath::Accepted:
-                // nb D8: END_REQ is one delta later at the same host time, and
-                // BEGIN_RESP follows lambda after BEGIN_REQ.
+                // nb D8: END_REQ is one delta later at the same host time. Its
+                // handler schedules BEGIN_RESP, so lambda = 0 still gets a
+                // separate delta for the response.
                 phase_queue_.notify(transaction, tlm::END_REQ, sc_core::SC_ZERO_TIME);
-                phase_queue_.notify(transaction, tlm::BEGIN_RESP, latency);
                 delay = sc_core::SC_ZERO_TIME;
                 return tlm::TLM_ACCEPTED;
             case AtPath::Updated:
@@ -180,13 +180,10 @@ tlm::tlm_sync_enum RamTarget::nb_transport_fw(tlm::tlm_generic_payload& transact
                 delay = latency;
                 return tlm::TLM_UPDATED;
             case AtPath::Annotated:
-                // nb D8: END_REQ is one delta later, and BEGIN_RESP is sent at
-                // once with its lambda annotation. The phase queue keeps the
-                // zero-time END_REQ and BEGIN_RESP notifications one delta
-                // apart, so neither phase reaches the initiator in the delta
-                // that sent the request.
+                // nb D8: END_REQ is one delta later; its handler then schedules
+                // BEGIN_RESP in the next delta with lambda as its annotation.
+                // The initiator must hold the later phase.
                 phase_queue_.notify(transaction, tlm::END_REQ, sc_core::SC_ZERO_TIME);
-                phase_queue_.notify(transaction, tlm::BEGIN_RESP, sc_core::SC_ZERO_TIME);
                 delay = sc_core::SC_ZERO_TIME;
                 return tlm::TLM_ACCEPTED;
             case AtPath::Completed:
@@ -232,6 +229,15 @@ void RamTarget::handle_phase(tlm::tlm_generic_payload& transaction,
         if (sync != tlm::TLM_ACCEPTED) {
             mark_protocol_error(transaction);
             open_transaction_ = nullptr;
+            return;
+        }
+        // nb D8: the response is always a separate phase, so a zero-time
+        // BEGIN_RESP lands in the next delta even when lambda is zero.
+        if (nb_path_ == AtPath::Accepted) {
+            phase_queue_.notify(transaction, tlm::BEGIN_RESP,
+                                sc_core::sc_time::from_value(nb_latency_fs_));
+        } else if (nb_path_ == AtPath::Annotated) {
+            phase_queue_.notify(transaction, tlm::BEGIN_RESP, sc_core::SC_ZERO_TIME);
         }
         return;
     }

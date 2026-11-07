@@ -186,7 +186,8 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
   transaction's local time. On return the callback subtracts that offset and
   reports only `delay - offset` as `delay_fs`, so the offset is never charged as
   a delay and is not an added latency (quantum D11/D13). The declared
-  per-transaction maximum is zero because this model adds no delay.
+  per-transaction maximum is zero for the blocking model, which adds no delay,
+  and `lambda` under `--nb` (nb D8).
 - A returned `delay` below the offset cannot be represented as an added delay,
   and the target may already have committed the write, so the callback reports
   that transaction through the existing `mark_unknown_completion` path with
@@ -466,9 +467,11 @@ direct path cannot observe a fault `b_transport` would not produce
 **Latency.** Both granted latencies are zero. The host's time resolution is
 1 fs, so a non-zero grant latency would still cross the ABI as exact
 femtoseconds and be charged through the Machine's one accounting path
-(direct-memory D6); this target simply annotates zero delay in `b_transport`
-and grants the same zero, so a run is time-equivalent with `--dmi` and without
-it.
+(direct-memory D6); this target annotates zero delay in `b_transport` and grants
+the same zero, so a blocking run is time-equivalent with `--dmi` and without it.
+Under `--nb` with a positive `lambda`, direct copies bypass AT transactions and
+therefore their latency charge; the D10 sum checks therefore use non-direct
+runs, and the direct pass only compares the AT transaction count.
 
 **Invalidation.** The initiator registers its backward
 `invalidate_direct_mem_ptr` on its initiator socket
