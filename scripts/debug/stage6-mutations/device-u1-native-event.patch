@@ -1,0 +1,23 @@
+diff --git a/src/machine/platform.rs b/src/machine/platform.rs
+index ad0b5d8..697e3bb 100644
+--- a/src/machine/platform.rs
++++ b/src/machine/platform.rs
+@@ -198,17 +198,7 @@ impl Platform {
+                     // once here.  A transmitted byte reaches the event queue and
+                     // the host output callback through the UART sink and not
+                     // through the UART's own output callback.
+-                    let queue = events.clone();
+-                    let output = config.uart_output.clone();
+-                    bus.set_uart_sink(move |byte| {
+-                        queue
+-                            .lock()
+-                            .expect("Platform event lock")
+-                            .push(PlatformEvent::UartTransmit(byte));
+-                        if let Some(callback) = &output {
+-                            callback(byte);
+-                        }
+-                    });
++                    bus.set_uart_sink(|_byte| {});
+                     let queue = events.clone();
+                     let callback = config.htif_write.clone();
+                     bus.set_htif_write_callback(move |value| {

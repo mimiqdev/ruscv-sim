@@ -1,0 +1,13 @@
+diff --git a/src/blocking/adapter.rs b/src/blocking/adapter.rs
+index e6def3d..6ea25cf 100644
+--- a/src/blocking/adapter.rs
++++ b/src/blocking/adapter.rs
+@@ -414,7 +414,7 @@ impl TlmRamAdapter {
+         path: ResponsePath,
+     ) -> Result<(), PhysicalBackendError> {
+         let events = transaction.device_events();
+-        if events.is_empty() {
++        if events.len() <= 1 {
+             return Ok(());
+         }
+         Err(PhysicalBackendError::protocol(format!(

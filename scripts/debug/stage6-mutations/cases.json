@@ -2769,5 +2769,117 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "device-u1-transmit-dlab",
+    "source": "src/peripherals/uart16550.rs",
+    "patch": "device-u1-transmit-dlab.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "executor::device_tests::a_dlab_write_publishes_nothing_on_both_routes",
+        "failure": [
+          "a divisor-latch write published a transmit event"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u1-fifo-full",
+    "source": "src/peripherals/uart16550.rs",
+    "patch": "device-u1-fifo-full.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "executor::device_tests::a_full_transmit_fifo_still_publishes_the_seventeenth_byte",
+        "failure": [
+          "a THR write with a full transmit FIFO published no byte"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u1-native-event",
+    "source": "src/machine/platform.rs",
+    "patch": "device-u1-native-event.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::tlm_device_events_and_time_match_the_native_route_at_zero_quantum",
+        "failure": [
+          "the guest's device events are not the expected sequence"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u1-typed-event",
+    "source": "src/executor.rs",
+    "patch": "device-u1-typed-event.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "executor::device_tests::the_typed_byte_write_publishes_one_byte_on_both_routes",
+        "failure": [
+          "the typed byte write did not publish exactly one byte"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u1-htif-callback",
+    "source": "src/machine/platform.rs",
+    "patch": "device-u1-htif-callback.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::tlm_device_events_and_time_match_the_native_route_at_zero_quantum",
+        "failure": [
+          "the HTIF callback did not receive exactly the written value"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u1-htif-zero-read",
+    "source": "src/blocking/in_tree.rs",
+    "patch": "device-u1-htif-zero-read.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "executor::device_tests::the_htif_dword_read_answers_zero_and_its_write_publishes_once",
+        "failure": [
+          "the HTIF dword read did not answer zero"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u1-ram-event",
+    "source": "src/blocking/adapter.rs",
+    "patch": "device-u1-ram-event.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::device_tests::a_ram_target_that_reports_a_device_event_is_a_protocol_failure",
+        "failure": [
+          "a RAM target's device event was accepted"
+        ]
+      }
+    ]
   }
 ]

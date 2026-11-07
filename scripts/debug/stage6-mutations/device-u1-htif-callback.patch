@@ -1,0 +1,15 @@
+diff --git a/src/machine/platform.rs b/src/machine/platform.rs
+index ad0b5d8..b61f40e 100644
+--- a/src/machine/platform.rs
++++ b/src/machine/platform.rs
+@@ -216,9 +216,7 @@ impl Platform {
+                             .lock()
+                             .expect("Platform event lock")
+                             .push(PlatformEvent::HtifWrite(value));
+-                        if let Some(callback) = &callback {
+-                            callback(value);
+-                        }
++                        let _ = &callback;
+                     });
+                 }
+                 let port = || {
