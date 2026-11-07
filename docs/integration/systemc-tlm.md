@@ -2,7 +2,9 @@
 
 **Status:** Implemented for the selected blocking-transport mapping, direct
 memory, the quantum selection, the non-blocking AT path, its retirement rules
-and the fault-option controls (U3/U4).
+and the fault-option controls (U3/U4). The Current contract selects blocking
+device targets for the UART and HTIF windows; its units are implementation
+requirements, not implemented behavior.
 
 **Authority:** Normative for the selected blocking-transport mapping, FFI
 ownership and threads, error mapping, the time unit, re-entrancy and stop
@@ -16,14 +18,17 @@ this page's `direct-memory D<n>` citations name that contract). Quantum D14 make
 this page normative for the local offset, the grant return, the sync and the
 bound rules on this host, and this page's `quantum D<n>` citations name the
 [archived quantum contract](../archive/milestones/quantum-temporal-decoupling.md).
-The Current contract's D7–D10 make this page normative for suspension, the
-non-blocking base-protocol mapping, the commit rule, retirement and the AT
-target mode; this page's `nb D<n>` citations name that contract. Bounded by
+The [archived non-blocking contract](../archive/milestones/non-blocking-tlm-transport.md)'s D7–D10 make this page normative for
+suspension, the non-blocking base-protocol mapping, the commit rule, retirement
+and the AT target mode; this page's `nb D<n>` citations name that contract. The
+Current contract's D5–D9 make this page normative for the device-target
+mapping, the event rule, host views, reset and the attach entry once its units
+complete; this page's `device D<n>` citations name that contract. Bounded by
 ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
 
-**Last reviewed:** 2026-11-08
+**Last reviewed:** 2026-11-07
 
 The repository implements one SystemC/TLM transport integration: a C ABI facade
 ([`src/capi`](../../src/capi), [`include/ruscv_sim.h`](../../include/ruscv_sim.h))
@@ -37,13 +42,18 @@ its FFI rules, normative where they are not already covered by the
 header's direct-memory obligations. It also records the SystemC halves of the
 quantum contract: the local offset as the `b_transport` delay argument, the
 grant return as the only quantum keeper, the sync and commit rule, and the two
-fault-option controls of its §4. For the Current contract it records the AT
-path that serves a suspending `may_suspend` transaction through
+fault-option controls of its §4. For the archived non-blocking contract it
+records the AT path that serves a suspending `may_suspend` transaction through
 `nb_transport_fw`/`nb_transport_bw`, its one-outstanding-transaction rule, its
 `d = e` reporting, the RAM target's five return paths and the grant commit rule
 (nb D7/D8/D10). For the same contract it records the timeout, the retirement of
 a timed-out transaction, the late phases it ignores, the drain and the withheld
-reset acknowledgement (nb D9). TLM-modeled devices stay out of scope.
+reset acknowledgement (nb D9). For the same contract it records the
+non-blocking fault options. TLM-modeled devices are selected by the Current
+contract: one device window becomes one blocking `b_transport` transaction
+answered by an in-tree target or by a host target attached through the C ABI,
+with at most one platform event per accepted access (device D2–D5). Until that
+contract's units land, this page describes only the RAM mapping.
 
 ## Selected mapping
 
@@ -67,6 +77,10 @@ reset acknowledgement (nb D9). TLM-modeled devices stay out of scope.
 | Grant commit (nb D5) | `wait(consumed_fs - host_elapsed_fs)` |
 | AT timeout and retirement (nb D9) | `max_delay_fs + 1` fs after `BEGIN_REQ`, then `mark_unknown_completion` |
 | Late phase (nb D9) | A phase taking effect after the timeout: ignored and counted |
+| Device window (device D3) | One fixed register range: UART `0x1000_0000`/`0x100` or HTIF `0x4000_8000`/8 |
+| Device target (device D2) | An in-tree `BlockingDeviceTarget`, or a host target attached through `ruscv_machine_attach_device` |
+| Device transaction (device D2) | One `b_transport` call with zero delay and zero host elapsed time |
+| Device event (device D4) | At most one `PlatformEvent` reported by an accepted access: `UartTransmit` or `HtifWrite` |
 
 `tlm_generic_payload` and `sc_time` stay outside the Rust side and outside ISA
 instruction functions. The only Rust/C++ boundary is the C ABI.
@@ -519,8 +533,10 @@ neither a guest loop nor a host defect can hang CI.
 
 ## Open items
 
-- TLM-modeled devices and SystemC-modeled interrupt lines, which need their
-  own contract.
+- SystemC-modeled interrupt lines, which need their own contract.
+- Device timing: a device target that annotates delay or host time, which needs
+  the turn completion bound and the grant horizon extended with it.
+- Host HTIF service through the same window-indexed device table.
 - More than one outstanding non-blocking transaction or pipelining.
 
 ## Direct-memory grant, permission, latency, invalidation, lifetime and FFI

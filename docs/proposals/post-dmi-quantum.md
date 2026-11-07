@@ -4,6 +4,6 @@
 
 **Authority:** Informational navigation. This is not a second current contract or an implementation claim.
 
-The approved scope is preserved in the [archived quantum contract](../archive/milestones/quantum-temporal-decoupling.md), completed 2026-11-06 at PR #214; the [Non-blocking TLM Transport contract](../dev-plan.md) succeeds it. The [archived direct-memory contract](../archive/milestones/tlm-direct-memory-interface.md) preserves the preceding scope.
+The approved scope is preserved in the [archived quantum contract](../archive/milestones/quantum-temporal-decoupling.md), completed 2026-11-06 at PR #214; the [non-blocking contract](../archive/milestones/non-blocking-tlm-transport.md) succeeded it, completed 2026-11-07 at PR #225. The [TLM-Modeled Devices contract](../dev-plan.md) is now current. The [archived direct-memory contract](../archive/milestones/tlm-direct-memory-interface.md) preserves the preceding scope.
 
 The selection rationale and drafting discussion remain in Git and PR history. Execution and review outcomes remain in CI/PR; this entry retains no result record.
