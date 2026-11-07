@@ -1,0 +1,18 @@
+--- a/src/machine/platform.rs
++++ b/src/machine/platform.rs
+@@ -84,15 +84,6 @@
+         if config.platform == PlatformKind::Flat && !config.transport.is_native() {
+             return Err(MachineError::UnsupportedTransport);
+         }
+-        // device D2: a device target is a TLM-route selection on the native
+-        // Platform.  A flat Platform has no device window, and the native route
+-        // answers each window itself, so either combination is the existing
+-        // unsupported-transport error.
+-        if config.devices.uart().is_some()
+-            && (config.platform != PlatformKind::Native || config.transport.is_native())
+-        {
+-            return Err(MachineError::UnsupportedTransport);
+-        }
+         // Direct memory is a property of the blocking route, so a native
+         // selection that enables it has no transport to grant it
+         // (direct-memory D2).

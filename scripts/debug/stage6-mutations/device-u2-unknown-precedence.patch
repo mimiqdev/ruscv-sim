@@ -1,0 +1,20 @@
+--- a/src/blocking/device.rs
++++ b/src/blocking/device.rs
+@@ -248,12 +248,15 @@
+             )));
+         }
+ 
++        let event = transaction.device_events().first().copied();
+         if let Err(error) = self.validate_response(&transaction, descriptor, command, width) {
+-            return failed(error);
++            return DeviceOutcome {
++                response: Err(error),
++                event,
++            };
+         }
+ 
+         let status = transaction.status();
+-        let event = transaction.device_events().first().copied();
+         let response = match status {
+             BlockingResponseStatus::Ok => {
+                 if command == BlockingCommand::Write {

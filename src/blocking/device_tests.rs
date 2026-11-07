@@ -9,6 +9,7 @@
 use super::adapter::TlmRamAdapter;
 use super::device::{BlockingDeviceEvent, DeviceWindow, TlmDeviceAdapter};
 use super::in_tree::{InTreeHtif, InTreeUart};
+use super::test_support::{HostUart, HostUartFault};
 use super::{
     BlockingDebug, BlockingInitiator, BlockingResponseStatus, BlockingTarget, BlockingTransaction,
     Femtoseconds, TickPeriod,
@@ -17,7 +18,7 @@ use crate::hart_amods::{self, AmoOperation};
 use crate::peripherals::uart16550::{reg_offset, Uart16550, FIFO_DEPTH};
 use crate::physical::{
     AmoWidth, AtomicOrdering, AtomicRequest, PhysicalAccessKind, PhysicalBackendError,
-    PhysicalRequest, PhysicalWidth,
+    PhysicalBackendResult, PhysicalRequest, PhysicalTargetRejectionReason, PhysicalWidth,
 };
 use std::sync::{Arc, Mutex};
 
@@ -286,5 +287,188 @@ fn a_device_read_answers_the_window_register_bytes() {
         status & 0x40,
         0x40,
         "the transmitter-empty bit was not set at reset"
+    );
+}
+
+// ---- TLM-Modeled Devices U2: deliberately misbehaving host targets ----
+//
+// The in-tree targets cannot be made to misbehave, so every response rule that
+// only a foreign target can break is proven here against a host UART fixture
+// the crate does not own (device D2, D4, D5).
+
+/// The device adapter over the host UART fixture.
+fn host_uart_adapter(target: &Arc<HostUart>) -> TlmDeviceAdapter {
+    TlmDeviceAdapter::new(DeviceWindow::Uart, target.clone())
+}
+
+/// One byte write to the host UART fixture's transmit holding register.
+fn thr_write<'a>(payload: &'a [u8; 1]) -> PhysicalRequest<'a> {
+    PhysicalRequest::data_write(UART_BASE, PhysicalWidth::Byte, payload).unwrap()
+}
+
+/// True when the adapter classified the access as a protocol failure.
+fn is_protocol(response: &PhysicalBackendResult) -> bool {
+    matches!(response, Err(PhysicalBackendError::Protocol { .. }))
+}
+
+#[test]
+fn a_device_target_that_reports_a_second_event_is_a_protocol_failure() {
+    let target = HostUart::new(UART_BASE);
+    target.set_fault(HostUartFault::SecondEvent);
+    let payload = *b"H";
+    let outcome =
+        host_uart_adapter(&target).transact(&thr_write(&payload), BlockingInitiator::Hart);
+    assert!(
+        is_protocol(&outcome.response),
+        "a second device event was accepted: {:?}",
+        outcome.response
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a rejected access still carried an event to publication"
+    );
+}
+
+#[test]
+fn a_device_target_that_reports_another_windows_event_is_a_protocol_failure() {
+    let target = HostUart::new(UART_BASE);
+    target.set_fault(HostUartFault::WrongWindowEvent);
+    let payload = *b"H";
+    let outcome =
+        host_uart_adapter(&target).transact(&thr_write(&payload), BlockingInitiator::Hart);
+    assert!(
+        is_protocol(&outcome.response),
+        "another window's device event was accepted: {:?}",
+        outcome.response
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a rejected access still carried an event to publication"
+    );
+}
+
+#[test]
+fn a_device_target_that_changes_the_payload_is_a_protocol_failure() {
+    let target = HostUart::new(UART_BASE);
+    target.set_fault(HostUartFault::ChangedPayload);
+    let payload = *b"H";
+    let outcome =
+        host_uart_adapter(&target).transact(&thr_write(&payload), BlockingInitiator::Hart);
+    assert!(
+        is_protocol(&outcome.response),
+        "a changed request payload was accepted: {:?}",
+        outcome.response
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a rejected access still carried an event to publication"
+    );
+}
+
+#[test]
+fn a_device_target_that_reports_host_elapsed_time_is_a_protocol_failure() {
+    // device D4: host time may not pass inside a device callback.
+    let target = HostUart::new(UART_BASE);
+    target.set_fault(HostUartFault::Elapsed(1_000_000));
+    let payload = *b"H";
+    let outcome =
+        host_uart_adapter(&target).transact(&thr_write(&payload), BlockingInitiator::Hart);
+    assert!(
+        is_protocol(&outcome.response),
+        "host elapsed time on a device transaction was accepted: {:?}",
+        outcome.response
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a rejected access still carried an event to publication"
+    );
+}
+
+#[test]
+fn a_device_target_that_sets_the_direct_memory_hint_is_a_protocol_failure() {
+    // device D5: a device window never offers direct memory, and the device
+    // path never issues a query, so the hint can only be a protocol failure.
+    let target = HostUart::new(UART_BASE);
+    target.set_fault(HostUartFault::DmiHint);
+    let payload = *b"H";
+    let outcome =
+        host_uart_adapter(&target).transact(&thr_write(&payload), BlockingInitiator::Hart);
+    assert!(
+        is_protocol(&outcome.response),
+        "the direct-memory hint on a device transaction was accepted: {:?}",
+        outcome.response
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a rejected access still carried an event to publication"
+    );
+}
+
+#[test]
+fn a_device_event_beside_a_fault_is_a_protocol_failure() {
+    // device D4: only an accepted access publishes an event, so a transmit
+    // beside a target fault is the access's protocol failure.
+    let target = HostUart::new(UART_BASE);
+    target.set_fault(HostUartFault::StatusWithEvent(
+        BlockingResponseStatus::AddressError,
+    ));
+    let payload = *b"H";
+    let outcome =
+        host_uart_adapter(&target).transact(&thr_write(&payload), BlockingInitiator::Hart);
+    assert!(
+        is_protocol(&outcome.response),
+        "an event beside a target fault was accepted: {:?}",
+        outcome.response
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a faulted access still carried an event to publication"
+    );
+}
+
+#[test]
+fn a_device_fault_without_an_event_is_a_target_fault() {
+    // device D4: the fault keeps the normalized target classification and
+    // publishes nothing, because no event was reported at all.
+    let target = HostUart::new(UART_BASE);
+    target.set_fault(HostUartFault::Status(BlockingResponseStatus::AddressError));
+    let payload = *b"H";
+    let outcome =
+        host_uart_adapter(&target).transact(&thr_write(&payload), BlockingInitiator::Hart);
+    assert!(
+        matches!(
+            &outcome.response,
+            Err(PhysicalBackendError::Target {
+                reason: PhysicalTargetRejectionReason::TargetError,
+                ..
+            })
+        ),
+        "a device target fault lost its guest-visible classification: {:?}",
+        outcome.response
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a faulted access carried an event to publication"
+    );
+}
+
+#[test]
+fn an_unknown_completion_takes_precedence_over_a_device_event() {
+    // device D4: the outcome-unknown classification runs first, so a response
+    // that would otherwise be an accepted transmit is an unknown completion
+    // with no event.
+    let target = HostUart::new(UART_BASE);
+    target.set_fault(HostUartFault::Unknown);
+    let payload = *b"H";
+    let outcome =
+        host_uart_adapter(&target).transact(&thr_write(&payload), BlockingInitiator::Hart);
+    assert!(
+        matches!(&outcome.response, Err(PhysicalBackendError::Unknown { .. })),
+        "an outcome-unknown device response was not an unknown completion: {:?}",
+        outcome.response
+    );
+    assert!(
+        outcome.event.is_none(),
+        "an unknown completion published a device event"
     );
 }

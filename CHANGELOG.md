@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM-Modeled Devices U2: Rust 主机设备 target（issue #228）**
+  - `DeviceTargets` 新增主机选择 `with_uart(target)`（device D2），`MachineConfig` 新增公开字段
+    `devices`，`MachineConfig::new` 选择 `DeviceTargets::none()`。`BlockingDeviceEvent`、
+    `BlockingDeviceTarget` 与 `DeviceTargets` 同时从 crate 根重导出
+  - 选择要求 `Transport::Tlm` 与 `PlatformKind::Native`：native 路由与 flat Platform 都返回既有的
+    `MachineError::UnsupportedTransport`，其信息文本新增设备这一情形（device D2）
+  - `Platform::build` 在放置镜像之前调用所选 target 的 `transport_reset` 一次（device D6），且排在 RAM
+    slot 的重置之前，使一次被拒绝的重置不扰动当前关联。每次重装（`fresh_reset`、`reload_for_ndmreset`、
+    `ruscv_machine_reset`）都走同一条路径；返回零表示拒绝，构建经既有 placement 通道失败
+  - 主机 UART 窗口没有 Rust 寄存器状态（device D5）：`uart_inspection` 返回 `None`，`receive_uart` 调用
+    target 的 `receive`，`MemoryInterface` 的 typed 读与 typed 写都返回 `MemoryError::InvalidAddress`；
+    树内窗口保持今天的答案
+  - `DebugInbound`（SBA）访问设备窗口仍是同一笔设备事务，携带 debug provenance，不记 delay 与 host
+    elapsed（device D5）
+  - 十个 `device-u2-*` mutation 控制：UART 路由选择、故障时的事件发布、unknown 优先级、零 delay、零 host
+    elapsed、`dmi_allowed`、SBA initiator、native 与 flat 拒绝、每次安装的 transport reset，以及主机窗口的
+    `uart_inspection`；三个 `MachineConfig::new` 默认值控制随新字段重生成
+
 - **TLM-Modeled Devices U1: 设备路径与树内 UART/HTIF target（issue #227）**
   - `blocking` 新增设备 target 词汇（device D2）：`BlockingDeviceTarget`（`b_transport`、
     `receive`、`transport_reset`，全部 `&self` 且同步、不等待）、`BlockingDeviceEvent`
@@ -747,6 +765,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - push 前自动 clippy
 
 ### Changed
+
+- **TLM-Modeled Devices U2：`MachineConfig` 新增公开字段**
+  - `MachineConfig.devices` 是公开字段（device D2），因此外部代码的 struct literal 构造不再编译；改用
+    `MachineConfig::new` 之后给字段赋值。既有字段名与含义不变，`BlockingTarget`、
+    `ruscv_machine_create` 与 `BlockingTransaction` 的请求字段同样不变
 
 - **Quantum U4：C ABI 需要重新编译**
   - `ruscv_target`、`ruscv_payload` 与 `ruscv_boundary` 只追加字段，既有字段的偏移与大小不变，但结构体

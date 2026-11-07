@@ -29,10 +29,11 @@ pub mod tlm;
 
 pub use blocking::{
     BlockingAtomicExtension, BlockingAtomicOperation, BlockingAtomicOutcome, BlockingCommand,
-    BlockingDebug, BlockingDirectMemAccess, BlockingDirectMemGrant, BlockingDirectMemInvalidator,
-    BlockingDirectMemQuery, BlockingDirectMemRegistry, BlockingDirectMemResponse,
-    BlockingExtension, BlockingInitiator, BlockingResponseStatus, BlockingTarget,
-    BlockingTransaction, Femtoseconds, Transport, ZeroDelayRam,
+    BlockingDebug, BlockingDeviceEvent, BlockingDeviceTarget, BlockingDirectMemAccess,
+    BlockingDirectMemGrant, BlockingDirectMemInvalidator, BlockingDirectMemQuery,
+    BlockingDirectMemRegistry, BlockingDirectMemResponse, BlockingExtension, BlockingInitiator,
+    BlockingResponseStatus, BlockingTarget, BlockingTransaction, DeviceTargets, Femtoseconds,
+    Transport, ZeroDelayRam,
 };
 pub use core::{
     CoreState, CoreStepOutcome, DebugMemFault, HartStepOutcome, InstructionRetired,

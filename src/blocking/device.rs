@@ -124,9 +124,14 @@ pub trait BlockingDeviceTarget: Send + Sync {
 /// [`Self::none`] default, means the in-tree target answers each window, so a
 /// run without a host device target is today's run on either route.  Only the
 /// UART window accepts a host target in this contract; the HTIF window is an
-/// in-tree target and host HTIF service stays deferred.  Unit U2 adds the
-/// `MachineConfig` field and the host UART selection; unit U1 defines the shape
-/// and selects the in-tree targets.
+/// in-tree target and host HTIF service stays deferred, so a later window
+/// extends this shape rather than replacing it.
+///
+/// [`crate::machine::MachineConfig::devices`] carries the selection, which
+/// requires a [`super::Transport::Tlm`] route on
+/// [`crate::machine::PlatformKind::Native`];
+/// [`crate::machine::MachineError::UnsupportedTransport`] reports any other
+/// combination.
 #[derive(Clone, Default)]
 pub struct DeviceTargets {
     uart: Option<Arc<dyn BlockingDeviceTarget>>,
@@ -136,6 +141,20 @@ impl DeviceTargets {
     /// No host target: every window is answered by its in-tree target.
     pub const fn none() -> Self {
         Self { uart: None }
+    }
+
+    /// Selects a host target for the UART window (device D2).
+    ///
+    /// The target owns the window's register state in place of the in-tree
+    /// `Uart16550`, is reset at each Platform build (device D6), and answers
+    /// the same pre-target policy the native branch applies: byte-only width,
+    /// no fetches and the `0x100` window.  A host-served window has no Rust
+    /// state to view, so `uart_inspection` returns `None`, `receive_uart`
+    /// reaches [`BlockingDeviceTarget::receive`], and a typed
+    /// `MemoryInterface` access to the window is
+    /// [`crate::memory::MemoryError::InvalidAddress`] (device D5).
+    pub fn with_uart(target: Arc<dyn BlockingDeviceTarget>) -> Self {
+        Self { uart: Some(target) }
     }
 
     /// The selected host UART target, when the selection names one.
@@ -399,21 +418,47 @@ impl TlmDeviceAdapter {
 pub(crate) struct DevicePath {
     uart: TlmDeviceAdapter,
     htif: TlmDeviceAdapter,
+    /// device D5: a host target serves the UART window, so the Platform keeps
+    /// no register state of its own to view or mutate.
+    host_uart: bool,
 }
 
 impl DevicePath {
-    /// Builds the path from each window's selected target.
-    ///
-    /// The Platform owns the selection: the in-tree target for a window the
-    /// selection leaves alone, or the selected host target (device D2).
+    /// Builds the path from each window's in-tree target.
     pub(crate) fn new(
         uart: Arc<dyn BlockingDeviceTarget>,
         htif: Arc<dyn BlockingDeviceTarget>,
     ) -> Self {
+        Self::build(uart, htif, false)
+    }
+
+    /// Builds the path with a host-supplied UART target (device D2).
+    pub(crate) fn with_host_uart(
+        uart: Arc<dyn BlockingDeviceTarget>,
+        htif: Arc<dyn BlockingDeviceTarget>,
+    ) -> Self {
+        Self::build(uart, htif, true)
+    }
+
+    fn build(
+        uart: Arc<dyn BlockingDeviceTarget>,
+        htif: Arc<dyn BlockingDeviceTarget>,
+        host_uart: bool,
+    ) -> Self {
         Self {
             uart: TlmDeviceAdapter::new(DeviceWindow::Uart, uart),
             htif: TlmDeviceAdapter::new(DeviceWindow::Htif, htif),
+            host_uart,
         }
+    }
+
+    /// device D5: true when a host target serves the UART window.
+    ///
+    /// The window then has no Rust register state, so a typed
+    /// [`crate::memory::MemoryInterface`] access refuses instead of reading or
+    /// mutating a stale object.
+    pub(crate) fn uart_window_is_host_served(&self) -> bool {
+        self.host_uart
     }
 
     /// The UART window's adapter.
@@ -424,6 +469,22 @@ impl DevicePath {
     /// The HTIF window's adapter.
     pub(crate) fn htif(&self) -> &TlmDeviceAdapter {
         &self.htif
+    }
+}
+
+/// Acknowledges one selected target's transport reset (device D6).
+///
+/// The call is a host boundary like [`TlmDeviceAdapter::transact`], so a
+/// panicking target is contained here rather than unwinding through the
+/// Machine's locks.  It is reported as a refused reset: a target that cannot
+/// return cannot vouch that it quiesced.
+pub(crate) fn acknowledge_transport_reset(
+    target: &dyn BlockingDeviceTarget,
+) -> Result<(), &'static str> {
+    match catch_unwind(AssertUnwindSafe(|| target.transport_reset())) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("did not acknowledge its transport reset"),
+        Err(_) => Err("panicked during its transport reset"),
     }
 }
 

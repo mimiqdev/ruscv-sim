@@ -1,11 +1,12 @@
 //! Controlled native backend/host-admission seams, not public recovery APIs.
 use super::*;
 use crate::blocking::test_support::{
-    DelayingRam, DirectMemReply, DirectMemTarget, ScriptTarget, SuspendingTarget,
+    DelayingRam, DirectMemReply, DirectMemTarget, HostUart, HostUartFault, ScriptTarget,
+    SuspendingTarget,
 };
 use crate::blocking::{
-    BlockingCommand, BlockingDirectMemAccess, BlockingInitiator, BlockingTarget, Transport,
-    ZeroDelayRam,
+    BlockingCommand, BlockingDeviceTarget, BlockingDirectMemAccess, BlockingInitiator,
+    BlockingResponseStatus, BlockingTarget, DeviceTargets, Transport, ZeroDelayRam,
 };
 use crate::csr::machine;
 use crate::memory::MemoryError;
@@ -2678,6 +2679,647 @@ fn a_device_access_without_a_quantum_still_advances_one_turn() {
         native.last().unwrap().0,
         code.len() as u64,
         "the device turn did not advance mtime once per completed turn"
+    );
+}
+
+// ---- TLM-Modeled Devices U2: the host device target ----
+
+/// The UART window's base address.
+const HOST_UART_BASE: u64 = crate::executor::SYSTEM_BUS_UART_BASE;
+/// The UART window's line-status register offset.
+const HOST_UART_LSR: u64 = crate::peripherals::uart16550::reg_offset::LSR;
+/// The UART window's receive/transmit holding register offset.
+const HOST_UART_RBR_THR: u64 = crate::peripherals::uart16550::reg_offset::RBR_THR;
+
+/// A guest that polls `LSR` and writes one UART byte, so the selected target
+/// must serve exactly two register accesses (device D5).
+fn host_uart_guest() -> Vec<u32> {
+    vec![
+        elf::lui(5, 0x10000), // 0x1000_0000, the UART window
+        elf::lbu(7, 5, 5),    // LSR
+        elf::addi(6, 0, i32::from(b'H')),
+        elf::sb(6, 5, 0), // THR
+    ]
+}
+
+/// One TLM-route Machine with a host UART target selected, and the sink that
+/// records `config.uart_output` bytes (device D2).
+fn host_uart_machine(
+    target: &Arc<HostUart>,
+    quantum: u64,
+    code: &[u32],
+) -> (OwnedMachine, Arc<Mutex<Vec<u8>>>) {
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.devices = DeviceTargets::with_uart(target.clone());
+    config.quantum = quantum;
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let sink = output.clone();
+    config.uart_output = Some(Arc::new(move |byte| sink.lock().unwrap().push(byte)));
+    (OwnedMachine::new(config, code_image(code)).unwrap(), output)
+}
+
+/// One turn's `(mtime, events, `config.uart_output` bytes so far)`.
+type HostTurnRecord = (u64, Vec<PlatformEvent>, Vec<u8>);
+
+/// Runs up to `turns` turns, recording each completed turn and stopping at the
+/// first simulator failure.
+fn run_host_uart(
+    owned: &mut OwnedMachine,
+    output: &Arc<Mutex<Vec<u8>>>,
+    turns: usize,
+) -> (Vec<HostTurnRecord>, Option<crate::core::SimulatorFailure>) {
+    let mut records = Vec::new();
+    let mut failure = None;
+    for _ in 0..turns {
+        let Ok(turn) = owned.step_request(false, false, false) else {
+            break;
+        };
+        records.push((
+            owned.platform_mtime().unwrap(),
+            turn.events().to_vec(),
+            output.lock().unwrap().clone(),
+        ));
+        if let StepOutcome::SimulatorFailure(reason) = &turn.hart().outcome {
+            failure = Some(reason.clone());
+            break;
+        }
+    }
+    (records, failure)
+}
+
+/// device D2/D5: the selection's host target serves the UART window on the TLM
+/// route, so its own transaction count is non-zero for a guest that reads `LSR`
+/// and writes `THR`, and the window's answers match the in-tree route's.
+#[test]
+fn a_host_uart_target_serves_the_uart_window_on_the_tlm_route() {
+    let target = HostUart::new(HOST_UART_BASE);
+    let code = host_uart_guest();
+    let (mut owned, output) = host_uart_machine(&target, 0, &code);
+    let (records, failure) = run_host_uart(&mut owned, &output, code.len());
+    assert!(failure.is_none(), "the host UART guest failed: {failure:?}");
+    assert_eq!(
+        target.transactions(),
+        2,
+        "the host UART target did not serve the guest's LSR read and THR write"
+    );
+    assert_eq!(
+        target
+            .log()
+            .iter()
+            .map(|call| (call.command, call.address))
+            .collect::<Vec<_>>(),
+        [
+            (BlockingCommand::Read, HOST_UART_BASE + HOST_UART_LSR),
+            (BlockingCommand::Write, HOST_UART_BASE + HOST_UART_RBR_THR),
+        ],
+        "the host UART target did not see the window's accesses in request order"
+    );
+    let events: Vec<PlatformEvent> = records.iter().flat_map(|record| record.1.clone()).collect();
+    assert_eq!(
+        events,
+        [PlatformEvent::UartTransmit(b'H')],
+        "the host UART route did not publish the guest's one transmitted byte"
+    );
+    assert_eq!(
+        *output.lock().unwrap(),
+        b"H".to_vec(),
+        "the host UART route did not deliver the byte to config.uart_output"
+    );
+
+    // device D7: the host target answers the same guest the in-tree target does.
+    let parity: Vec<HostTurnRecord> = device_route(true, &code)
+        .into_iter()
+        .map(|record| (record.0, record.1, record.2))
+        .collect();
+    assert_eq!(
+        records, parity,
+        "the host UART route diverged from the in-tree route in mtime, events or output"
+    );
+}
+
+/// device D4: an accepted THR write publishes exactly one `UartTransmit` and one
+/// `config.uart_output` byte exactly as the in-tree route does, while a target
+/// fault publishes none, even when the target reports the transmit beside it.
+#[test]
+fn a_host_uart_thr_write_publishes_one_byte_and_a_target_fault_publishes_none() {
+    // The accepted path first: the guest polls `LSR` and writes `THR`.
+    let target = HostUart::new(HOST_UART_BASE);
+    let code = host_uart_guest();
+    let (mut owned, output) = host_uart_machine(&target, 0, &code);
+    let (records, failure) = run_host_uart(&mut owned, &output, code.len());
+    let events: Vec<PlatformEvent> = records.iter().flat_map(|record| record.1.clone()).collect();
+    assert!(failure.is_none(), "the accepted path failed: {failure:?}");
+    assert_eq!(
+        events,
+        [PlatformEvent::UartTransmit(b'H')],
+        "the accepted THR write did not publish exactly one UartTransmit"
+    );
+    assert_eq!(
+        *output.lock().unwrap(),
+        b"H".to_vec(),
+        "the accepted THR write did not call config.uart_output exactly once"
+    );
+
+    // Only the write reaches the window, so the fault is the write's.
+    let write_only = [
+        elf::lui(5, 0x10000),
+        elf::addi(6, 0, i32::from(b'H')),
+        elf::sb(6, 5, 0),
+    ];
+    // A transmit reported beside a target fault is a protocol failure, so the
+    // event cannot reach the sink.
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_fault(HostUartFault::StatusWithEvent(
+        BlockingResponseStatus::AddressError,
+    ));
+    let (mut owned, output) = host_uart_machine(&target, 0, &write_only);
+    let (_, failure) = run_host_uart(&mut owned, &output, write_only.len());
+    assert!(
+        output.lock().unwrap().is_empty(),
+        "a faulted THR write still called config.uart_output"
+    );
+    let failure = failure.expect("a transmit beside a target fault did not fail the access");
+    assert!(
+        failure
+            .message
+            .contains("only an accepted access publishes an event"),
+        "the faulted write was not refused as a protocol failure: {}",
+        failure.message
+    );
+    assert_eq!(
+        target.transmitted(),
+        b"H".to_vec(),
+        "the target did not accept the byte it faulted"
+    );
+
+    // A target fault with no event keeps the guest-visible taxonomy: the store
+    // traps and nothing is published.
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_fault(HostUartFault::Status(BlockingResponseStatus::AddressError));
+    let (mut owned, output) = host_uart_machine(&target, 0, &write_only);
+    let mut trapped = false;
+    for _ in 0..write_only.len() {
+        let Ok(turn) = owned.step_request(false, false, false) else {
+            break;
+        };
+        if matches!(turn.hart().outcome, StepOutcome::TrapEntered(_)) {
+            trapped = true;
+            break;
+        }
+    }
+    assert!(
+        trapped,
+        "a device target fault did not reach the guest as a trap"
+    );
+    assert!(
+        output.lock().unwrap().is_empty(),
+        "a trapped THR write still called config.uart_output"
+    );
+}
+
+/// device D4: the outcome-unknown classification runs first, so a host target
+/// that reports `Ok` with a valid `UartTransmit` and the unknown flag is an
+/// unknown completion that publishes no event and calls no
+/// `config.uart_output`.
+#[test]
+fn a_host_uart_unknown_completion_publishes_no_event() {
+    // Only the write reaches the window, so the unknown completion is the
+    // transmit's.
+    let code = [
+        elf::lui(5, 0x10000),
+        elf::addi(6, 0, i32::from(b'H')),
+        elf::sb(6, 5, 0),
+    ];
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_fault(HostUartFault::Unknown);
+    let (mut owned, output) = host_uart_machine(&target, 0, &code);
+    let (_, failure) = run_host_uart(&mut owned, &output, code.len());
+    let failure = failure.expect("an unknown device completion did not fail the access");
+    assert!(
+        failure.message.contains("could not establish the outcome"),
+        "the access was not classified as an unknown completion: {}",
+        failure.message
+    );
+    assert!(
+        output.lock().unwrap().is_empty(),
+        "an unknown completion still called config.uart_output"
+    );
+    assert_eq!(
+        target.transmitted(),
+        b"H".to_vec(),
+        "the target never applied the byte whose outcome it could not vouch for"
+    );
+    assert!(
+        matches!(
+            owned.test_control().inspect(),
+            Err(MachineError::UnknownCompletion)
+        ),
+        "an unknown device completion did not poison the Machine"
+    );
+}
+
+/// A guest whose only device access is one THR write in its fourth turn, so the
+/// pending turn's F1 flush commits exactly the three ticks the earlier turns
+/// accrued.
+fn host_uart_quantum_parity_guest() -> Vec<u32> {
+    vec![
+        elf::nop(),
+        elf::lui(5, 0x10000), // 0x1000_0000, the UART window
+        elf::addi(6, 0, i32::from(b'H')),
+        elf::sb(6, 5, 0), // THR
+    ]
+}
+
+/// The in-tree TLM route's committed time after `code` runs at `Q` = 1024.
+///
+/// Q = 1024 keeps the threshold out of reach, so the first three turns accrue
+/// three local ticks without committing any and the pending guest turn's device
+/// access flushes exactly those three.  A refused access that charges nothing
+/// ends at `parity - 1`: the failed turn's own advance is the one step a started
+/// failed turn never gets, while any charge it added would end above it.
+fn host_uart_quantum_parity(code: &[u32]) -> u64 {
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.quantum = 1024;
+    let mut owned = OwnedMachine::new(config, code_image(code)).unwrap();
+    let mut mtime = 0;
+    for _ in 0..code.len() {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the in-tree parity guest failed"
+        );
+        mtime = owned.platform_mtime().unwrap();
+    }
+    mtime
+}
+
+/// device D2/D4: any delay annotation is a protocol failure of the access, and
+/// the access adds no Platform time beyond the F1 flush the same device access
+/// performs today.
+#[test]
+fn a_host_uart_that_annotates_a_delay_is_a_protocol_failure_without_charge() {
+    let code = host_uart_quantum_parity_guest();
+    let parity = host_uart_quantum_parity(&code);
+    assert_eq!(parity, 4, "the in-tree parity run did not reach four ticks");
+
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_fault(HostUartFault::Delay(1_000_000)); // one tick
+    let (mut owned, output) = host_uart_machine(&target, 1024, &code);
+    let (_, failure) = run_host_uart(&mut owned, &output, code.len());
+    let failure = failure.expect("a device delay annotation did not fail the access");
+    assert!(
+        failure.message.contains("fs of delay"),
+        "the access was not refused for its delay annotation: {}",
+        failure.message
+    );
+    assert!(
+        output.lock().unwrap().is_empty(),
+        "a refused access still called config.uart_output"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        parity - 1,
+        "the delay annotation charged Platform time beyond the F1 flush"
+    );
+}
+
+/// device D2/D4: every other response rule a host target can break is a
+/// protocol failure of that access, and the refused access adds no Platform
+/// time beyond the F1 flush it performs today.
+#[test]
+fn a_host_uart_bad_response_is_a_protocol_failure_without_charge() {
+    let code = host_uart_quantum_parity_guest();
+    let parity = host_uart_quantum_parity(&code);
+    assert_eq!(parity, 4, "the in-tree parity run did not reach four ticks");
+    for (fault, reason) in [
+        (HostUartFault::SecondEvent, "at most one event"),
+        (
+            HostUartFault::WrongWindowEvent,
+            "an event that is not its window's",
+        ),
+        (HostUartFault::ChangedPayload, "changed the request payload"),
+        (HostUartFault::Elapsed(1_000_000), "host time may not pass"),
+        (HostUartFault::DmiHint, "never offers direct memory"),
+    ] {
+        let target = HostUart::new(HOST_UART_BASE);
+        target.set_fault(fault);
+        let (mut owned, output) = host_uart_machine(&target, 1024, &code);
+        let (_, failure) = run_host_uart(&mut owned, &output, code.len());
+        assert!(
+            output.lock().unwrap().is_empty(),
+            "{fault:?}: a refused access still called config.uart_output"
+        );
+        let failure = failure.unwrap_or_else(|| panic!("{fault:?}: the bad response was accepted"));
+        assert!(
+            failure.message.contains(reason),
+            "{fault:?}: the access was not refused by its own response rule: {}",
+            failure.message
+        );
+        assert_eq!(
+            owned.platform_mtime().unwrap(),
+            parity - 1,
+            "{fault:?}: the refused access charged Platform time beyond the F1 flush"
+        );
+    }
+}
+
+/// device D2: a device target is a TLM-route selection on the native Platform,
+/// so the native route and a flat Platform are the existing unsupported
+/// transport, and a refused selection never reaches the target.
+#[test]
+fn a_device_selection_requires_the_tlm_route_on_the_native_platform() {
+    let code = [elf::nop()];
+    for (kind, tlm) in [
+        (PlatformKind::Native, false),
+        (PlatformKind::Flat, true),
+        (PlatformKind::Flat, false),
+    ] {
+        let target = HostUart::new(HOST_UART_BASE);
+        let mut config = MachineConfig::new(kind);
+        if tlm {
+            config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+        }
+        config.devices = DeviceTargets::with_uart(target.clone());
+        let owner = Machine::new(config);
+        let error = match owner.install(code_image(&code)) {
+            Ok(_) => panic!("{kind:?} with tlm {tlm}: a device target was admitted"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, MachineError::UnsupportedTransport),
+            "{kind:?} with tlm {tlm}: the refusal was not the unsupported transport: {error:?}"
+        );
+        assert!(
+            error.to_string().contains("device target requires"),
+            "{kind:?} with tlm {tlm}: the refusal does not name the device case: {error}"
+        );
+        assert_eq!(
+            (target.transactions(), target.resets()),
+            (0, 0),
+            "{kind:?} with tlm {tlm}: a refused selection reached the target"
+        );
+    }
+}
+
+/// device D6: the selected target is reset once at build and once per reinstall,
+/// an acknowledged reset quiesces it, and a refused reset fails the build
+/// through the placement channel while the previous association survives.
+#[test]
+fn a_host_uart_resets_once_per_install_and_a_refusal_keeps_the_association() {
+    let target = HostUart::new(HOST_UART_BASE);
+    let code = host_uart_guest();
+    let (mut owned, _) = host_uart_machine(&target, 0, &code);
+    assert_eq!(
+        target.resets(),
+        1,
+        "the build did not reset the host UART target exactly once"
+    );
+
+    target.receive(b'Q');
+    assert_eq!(
+        target.received(),
+        b"Q".to_vec(),
+        "the target did not receive the byte the host pushed"
+    );
+    owned.fresh_reset().unwrap();
+    assert_eq!(
+        target.resets(),
+        2,
+        "a reinstall did not take the device reset path"
+    );
+    assert!(
+        target.received().is_empty(),
+        "an acknowledged reset did not quiesce the target's state"
+    );
+
+    target.set_reset_ack(false);
+    let error = owned
+        .fresh_reset()
+        .expect_err("a refused device reset did not fail the build");
+    assert!(
+        matches!(error, MachineError::Placement(_)),
+        "a refused device reset did not use the placement channel: {error:?}"
+    );
+    assert_eq!(
+        target.resets(),
+        3,
+        "the refused build did not call the target's transport reset"
+    );
+
+    let before = target.transactions();
+    for _ in 0..code.len() {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the surviving association failed: {:?}",
+            turn.hart().outcome
+        );
+    }
+    assert!(
+        target.transactions() > before,
+        "the refused reinstall did not leave the host target association intact"
+    );
+}
+
+/// device D5: a `DebugInbound` read of the UART window is the same device
+/// transaction with debug provenance, and it is not charged.
+#[test]
+fn an_sba_read_of_the_uart_window_reaches_the_host_target_as_debug_inbound() {
+    let target = HostUart::new(HOST_UART_BASE);
+    // A distinctive answer proves the byte the system bus reports is the
+    // target's, not a stale in-tree register.
+    target.set_lsr(0x61);
+    let (mut owned, _) = host_uart_machine(&target, 0, &host_uart_guest());
+    halted_by_dmi(&mut owned);
+    assert_eq!(
+        target.transactions(),
+        0,
+        "the debug halt reached the UART window"
+    );
+    let frozen = guest_counters(&owned);
+    let mtime = owned.platform_mtime().unwrap();
+
+    // One byte system bus read: `sbreadonaddr` triggers the access on the
+    // `sbaddress0` write, so the following `sbdata0` read reports its value.
+    owned.dmi_write(DM_SBCS, SBREADONADDR).unwrap();
+    owned.dmi_write(DM_SBADDRESS1, 0).unwrap();
+    owned
+        .dmi_write(DM_SBADDRESS0, (HOST_UART_BASE + HOST_UART_LSR) as u32)
+        .unwrap();
+    let value = owned.dmi_read(DM_SBDATA0).unwrap();
+
+    assert_eq!(sberror_of(&mut owned), 0, "the SBA read reported an error");
+    assert_eq!(
+        value, 0x61,
+        "the host target's LSR answer did not reach the system bus"
+    );
+    let log = target.log();
+    assert_eq!(
+        log.len(),
+        1,
+        "the SBA read was not exactly one device transaction"
+    );
+    assert_eq!(
+        log[0].initiator,
+        BlockingInitiator::DebugInbound,
+        "the device transaction did not carry DebugInbound provenance"
+    );
+    assert_eq!(
+        log[0].address,
+        HOST_UART_BASE + HOST_UART_LSR,
+        "the device transaction carried the wrong address"
+    );
+    assert_eq!(
+        (log[0].local_offset_fs, log[0].may_suspend),
+        (0, false),
+        "a DebugInbound device transaction carried timing metadata"
+    );
+
+    let facts = owned.debug_boundary(false).unwrap();
+    assert!(facts.failure.is_none(), "the debug boundary failed");
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        mtime,
+        "a DebugInbound device transaction advanced Platform time"
+    );
+    assert_eq!(
+        guest_counters(&owned),
+        frozen,
+        "the SBA device access charged the guest profile"
+    );
+    assert_eq!(
+        owned.transport_host_elapsed_femtoseconds(),
+        0,
+        "the SBA device access entered the generation's host elapsed total"
+    );
+}
+
+/// device D5: a host-served UART window has no inspection snapshot and injects
+/// received bytes through its target, while an in-tree window keeps the
+/// register-file view and its own receive direction.
+#[test]
+fn a_host_uart_window_has_no_inspection_and_receives_through_its_target() {
+    let target = HostUart::new(HOST_UART_BASE);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.devices = DeviceTargets::with_uart(target.clone());
+    let host = Machine::new(config);
+    host.install(code_image(&host_uart_guest())).unwrap();
+    host.resume().unwrap();
+    assert!(
+        host.inspect().unwrap().uart.is_none(),
+        "a host-served UART window reported an in-tree inspection"
+    );
+    host.receive_uart(b'Z').unwrap();
+    assert_eq!(
+        target.receives.load(Ordering::SeqCst),
+        1,
+        "receive_uart did not reach the host target's receive"
+    );
+    assert_eq!(
+        target.received(),
+        b"Z".to_vec(),
+        "the host target did not receive the injected byte"
+    );
+
+    // The in-tree window keeps its inspection and its own receive direction.
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    let in_tree = Machine::new(config);
+    in_tree.install(image(elf::nop())).unwrap();
+    in_tree.resume().unwrap();
+    let inspection = in_tree.inspect().unwrap();
+    assert!(
+        inspection.uart.is_some(),
+        "an in-tree UART window lost its inspection"
+    );
+    in_tree.receive_uart(b'Y').unwrap();
+    assert!(
+        in_tree.inspect().unwrap().uart.is_some(),
+        "the in-tree window lost its inspection after a receive"
+    );
+}
+
+/// device D2: a host device target composes with the quantum, direct memory and
+/// a suspending RAM target, and adds no refusal of its own.
+#[test]
+fn a_host_uart_target_composes_with_the_quantum_direct_memory_and_suspension() {
+    let code = host_uart_guest();
+    for (label, dmi, quantum, suspending) in [
+        ("direct memory", true, 0, false),
+        ("a quantum", false, 1024, false),
+        ("a suspending RAM target", false, 0, true),
+    ] {
+        let target = HostUart::new(HOST_UART_BASE);
+        let mut config = MachineConfig::new(PlatformKind::Native);
+        config.transport = match suspending {
+            true => Transport::tlm(suspending_target(0, 0, 0)),
+            false => Transport::tlm(Arc::new(ZeroDelayRam::new())),
+        };
+        config.devices = DeviceTargets::with_uart(target.clone());
+        config.dmi = dmi;
+        config.quantum = quantum;
+        let mut owned = OwnedMachine::new(config, code_image(&code)).unwrap_or_else(|error| {
+            panic!("{label}: a host device target added a refusal: {error:?}")
+        });
+        let (_, failure) = run_host_uart(&mut owned, &Arc::new(Mutex::new(Vec::new())), code.len());
+        assert!(failure.is_none(), "{label}: the guest failed: {failure:?}");
+        assert_eq!(
+            target.transactions(),
+            2,
+            "{label}: the host UART target did not serve the guest's two accesses"
+        );
+    }
+}
+
+/// device D6: a host target that panics during its transport reset fails the
+/// build through the placement channel, and the panic does not unwind through
+/// the admission lock the reinstall holds.
+#[test]
+fn a_panicking_device_reset_fails_the_build_without_poisoning_the_machine() {
+    let target = HostUart::new(HOST_UART_BASE);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.devices = DeviceTargets::with_uart(target.clone());
+    let owner = Machine::new(config);
+    owner.install(image(elf::nop())).unwrap();
+    owner.resume().unwrap();
+    owner.request_quiesce().unwrap();
+    owner.try_drain().unwrap();
+
+    // The reinstall path holds the admission gate across the build, so an
+    // unwind here would poison every later handle operation.
+    target.set_reset_panic(true);
+    let error = owner
+        .fresh_reset()
+        .expect_err("a panicking device reset was admitted");
+    assert!(
+        matches!(error, MachineError::Placement(_)),
+        "a panicking device reset did not use the placement channel: {error:?}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("panicked during its transport reset"),
+        "the refusal does not name the panic: {error}"
+    );
+    assert_eq!(
+        target.resets(),
+        2,
+        "the refused build did not call the target's transport reset"
+    );
+
+    // The unwind did not poison the gate the reinstall holds, and the previous
+    // association is still the one installed.
+    let status = owner
+        .status()
+        .expect("a panicking device reset poisoned the Machine");
+    assert_eq!(status.lifecycle, Lifecycle::DrainComplete);
+    assert!(
+        owner.inspect().unwrap().uart.is_none(),
+        "the previous association no longer carries the host UART window"
     );
 }
 
