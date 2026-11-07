@@ -645,9 +645,10 @@ impl Session {
     ///
     /// Every grant return goes through this one helper, before facts are
     /// reported, so `committed_end_fs` and `consumed_fs` are post-sync and the
-    /// caller's `wait(consumed)` stays exact.  The sync is the bus-lock update
-    /// alone: the Hart sees no further turn in this grant, so nothing needs
-    /// republishing.  A no-op sync is not counted (quantum D3).
+    /// caller's `wait(consumed_fs - host_elapsed_fs)` still ends its clock at
+    /// `committed_end_fs` (nb D5).  The sync is the bus-lock update alone: the
+    /// Hart sees no further turn in this grant, so nothing needs republishing.
+    /// A no-op sync is not counted (quantum D3).
     fn grant_end_fs(&self, machine: &OwnedMachine) -> Result<u64, ApiError> {
         machine
             .commit_local_time(true)

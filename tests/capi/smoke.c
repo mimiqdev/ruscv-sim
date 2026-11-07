@@ -1550,6 +1550,7 @@ static void suspension_case(const char *guest)
     ruscv_target table;
     ruscv_grant result;
     uint64_t calls;
+    uint64_t start;
     int status;
     int i;
     int ok;
@@ -1565,22 +1566,35 @@ static void suspension_case(const char *guest)
     check(status == RUSCV_OK && ruscv_machine_load_elf(handle, guest) == RUSCV_OK,
           "install the RAM-only guest on the suspending handle");
     target->call_count = 0;
-    status = grant(handle, 0, UINT64_MAX / 2, RUSCV_TURNS_UNBOUNDED, &result);
-    check_exit(handle, status, "the suspending handle runs to the guest exit");
+    /* Two bounded grants inside one generation: the second must report only its
+     * own host elapsed total, never the cumulative value (nb D5). */
+    status = grant(handle, 0, UINT64_MAX / 2, 4, &result);
+    check(status == RUSCV_OK && result.boundary_reached == 1,
+          "the first bounded grant ends on its turn budget");
     calls = (uint64_t)target->call_count;
-    check(calls > 0, "the suspending handle served no transaction");
+    check(calls > 0, "the first grant served no transaction");
     ok = 1;
     for (i = 0; i < target->call_count; i += 1) {
         ok = ok && target->calls[i].may_suspend == 1;
     }
     check(ok, "every guest access to a suspending target carries may_suspend 1");
     check(result.host_elapsed_fs == calls * ELAPSED_FS,
-          "the grant totals the host elapsed time of its own transactions");
+          "the first grant totals the host elapsed time of its own transactions");
     /* `e` is 1.5 ticks and its charge rounds up to 2, so beside the turn ticks a
      * grant leaves half a tick per access outside the host elapsed total. */
     check(result.consumed_fs - result.host_elapsed_fs ==
               result.facts.turns * TICK_FS + calls * (TICK_FS / 2),
           "consumed_fs - host_elapsed_fs is the turn ticks plus half a tick per access");
+    start = result.committed_end_fs;
+    status = grant(handle, start, UINT64_MAX / 2, 4, &result);
+    calls = (uint64_t)target->call_count - calls;
+    check(status == RUSCV_OK && calls > 0,
+          "the second bounded grant served no transaction");
+    check(result.host_elapsed_fs == calls * ELAPSED_FS,
+          "the second grant reports only its own host elapsed total");
+    status = grant(handle, result.committed_end_fs, UINT64_MAX / 2,
+                   RUSCV_TURNS_UNBOUNDED, &result);
+    check_exit(handle, status, "the suspending handle runs to the guest exit");
     check(ruscv_machine_reset(handle) == RUSCV_OK, "reset the suspending handle");
     target->call_count = 0;
     status = grant(handle, 0, UINT64_MAX / 2, RUSCV_TURNS_UNBOUNDED, &result);

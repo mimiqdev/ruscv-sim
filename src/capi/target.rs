@@ -6,9 +6,10 @@
 //! re-entry before it can observe or mutate any handle state.  The one
 //! exception is direct-memory invalidation, which a target may issue from
 //! inside a callback (direct-memory D12).  A `b_transport` callback whose
-//! payload has `may_suspend` set may suspend that thread and let host time pass
-//! before it returns; the callback state stays set meanwhile, so the re-entry
-//! rule holds across the suspension too (nb D6).
+//! payload has `may_suspend` set may suspend the calling process and let host
+//! time pass before it returns, provided it resumes on the creating thread; the
+//! callback state stays set meanwhile, so the re-entry rule holds across the
+//! suspension too (nb D6).
 //!
 //! The mapping is deliberately narrow and total.  A C target can only report a
 //! [`BlockingResponseStatus`], an atomic completion, an outcome-unknown flag, a
@@ -277,12 +278,12 @@ pub(crate) struct CBlockingTarget {
 
 // SAFETY: the C ABI accepts calls only on the creating thread, and the Machine
 // runs callbacks synchronously and never re-enters them.  A `may_suspend`
-// callback may suspend the creating thread and resume on it while its frame is
-// live, but the transport still never enters the callback twice: every ABI
-// entry another process makes on that thread meanwhile is refused as re-entry
-// except direct-memory invalidation, which never calls the target (nb D6).  The
-// host keeps the table, its `user` pointer and the pointed-to state alive until
-// destroy.
+// callback may suspend the calling process and resume on the creating thread
+// while its frame is live, but the transport still never enters the callback
+// twice: every ABI entry another process makes on that thread meanwhile is
+// refused as re-entry except direct-memory invalidation, which never calls the
+// target (nb D6).  The host keeps the table, its `user` pointer and the
+// pointed-to state alive until destroy.
 unsafe impl Send for CBlockingTarget {}
 // SAFETY: see the `Send` impl; the shared `Arc` is only ever driven from the
 // creating thread, and the one entry another process may make while a callback
@@ -382,10 +383,10 @@ impl BlockingTarget for CBlockingTarget {
         // SAFETY: the table was validated at create time, the payload and its
         // data buffer stay alive and exclusively borrowed for this call, and
         // the host keeps `user` valid until destroy.  A callback whose payload
-        // has `may_suspend` set may suspend this thread and let host time pass,
-        // provided it resumes and returns on it; while it is suspended the
-        // callback flag stays set, so no ABI entry reaches this callback again
-        // (nb D6).
+        // has `may_suspend` set may suspend the calling process and let host
+        // time pass, provided it resumes and returns on this thread; while it
+        // is suspended the callback flag stays set, so no ABI entry reaches this
+        // callback again (nb D6).
         unsafe { (self.b_transport)(self.table.user, &mut payload) };
 
         // A target has no way to change the Rust payload through the C struct,

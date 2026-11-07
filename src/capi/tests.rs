@@ -99,6 +99,8 @@ struct TestTarget {
     fail_dbg_writes: AtomicBool,
     /// Delay annotated on every blocking transaction, in femtoseconds.
     delay_fs: AtomicU64,
+    /// Change the request payload once, on the guest's first data read.
+    mutate_payload: AtomicBool,
     /// The table's `suspends_host_time` declaration (nb D6).
     suspends: AtomicBool,
     /// The host elapsed time `e` every blocking transaction reports (nb D4).
@@ -141,6 +143,7 @@ impl TestTarget {
             fail_dbg_reads: AtomicBool::new(false),
             fail_dbg_writes: AtomicBool::new(false),
             delay_fs: AtomicU64::new(0),
+            mutate_payload: AtomicBool::new(false),
             suspends: AtomicBool::new(false),
             host_elapsed_fs: AtomicU64::new(0),
             probe_entries: AtomicBool::new(false),
@@ -170,6 +173,10 @@ impl TestTarget {
 
     fn set_suspends(&self, suspends: bool) {
         self.suspends.store(suspends, Ordering::SeqCst);
+    }
+
+    fn mutate_payload(&self) {
+        self.mutate_payload.store(true, Ordering::SeqCst);
     }
 
     fn run_grant_status(&self) -> i32 {
@@ -318,6 +325,14 @@ unsafe extern "C" fn target_b_transport(user: *mut c_void, payload: *mut CPayloa
         // SAFETY: the handle is live on this thread.
         let status = unsafe { ruscv_machine_invalidate_direct_mem(handle, 0, u64::MAX) };
         target.invalidate_status.store(status, Ordering::SeqCst);
+    }
+    // nb D4 step 2 / D6: change the request payload once, after the bytes were
+    // served, so the ABI turns this response into `Incomplete` while it keeps
+    // copying the reported host elapsed time back.
+    if payload.access_kind == super::target::access_kind::DATA_READ
+        && target.mutate_payload.swap(false, Ordering::SeqCst)
+    {
+        payload.address = payload.address.wrapping_add(8);
     }
 }
 
@@ -1114,7 +1129,7 @@ fn each_grant_reports_only_its_own_host_elapsed_time() {
     // cumulative generation total, so the second grant reports its own `W`.
     let harness = Harness::suspending(
         IsaProfile::Rv64imafdc as i32,
-        &exit_guest(2),
+        &ram_only_exit_guest(12, 2),
         ELAPSED_HALF_TICK,
         ELAPSED_HALF_TICK,
         ELAPSED_HALF_TICK,
@@ -1137,6 +1152,63 @@ fn each_grant_reports_only_its_own_host_elapsed_time() {
         second.host_elapsed_fs,
         second_accesses * ELAPSED_HALF_TICK,
         "the second grant reported the cumulative host elapsed total"
+    );
+
+    // A grant that runs no turn reports zero, not the total so far.
+    let idle = harness
+        .grant(second.committed_end_fs, u64::MAX / 2, 0)
+        .expect("the zero-budget grant");
+    assert_eq!(idle.consumed_fs, 0, "the zero-budget grant consumed time");
+    assert_eq!(
+        idle.facts.turns, second.facts.turns,
+        "the zero-budget grant ran a turn"
+    );
+    assert_eq!(
+        idle.host_elapsed_fs, 0,
+        "a grant that ran no turn reported host elapsed time"
+    );
+}
+
+#[test]
+fn a_changed_payload_keeps_its_host_elapsed_charge() {
+    // nb D4 step 2 / D6: the ABI copies `e` back from the response it turns
+    // into `Incomplete` for a changed payload, and the adapter charges it.
+    let harness = Harness::suspending(
+        IsaProfile::Rv64imafdc as i32,
+        &direct_guest(2),
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+    );
+    harness.target.mutate_payload();
+    let failed = harness.grant(0, u64::MAX / 2, 1_000).expect("the grant");
+    assert_eq!(
+        failed.facts.failed, 1,
+        "a changed payload was not a protocol failure"
+    );
+    assert_eq!(
+        failed.facts.uncertain, 0,
+        "a changed payload became an unknown completion"
+    );
+    let diagnostic = harness.diagnostic();
+    // The ABI never changes the Rust payload, so it maps the C target's changed
+    // copy to `Incomplete`: the adapter reports that non-completion, not the
+    // `Ok` the target claimed.
+    assert!(
+        diagnostic.contains("left TLM_INCOMPLETE_RESPONSE"),
+        "the changed payload is not the reported classification: {diagnostic}"
+    );
+    let accesses = harness.target.transactions() as u64;
+    assert!(accesses > 0, "the failed grant ran no transaction");
+    assert_eq!(
+        failed.host_elapsed_fs,
+        accesses * ELAPSED_HALF_TICK,
+        "the changed payload's host elapsed time was not totalled"
+    );
+    assert_eq!(
+        failed.consumed_fs - failed.host_elapsed_fs,
+        failed.facts.turns * TICK_FS + accesses * (TICK_FS / 2),
+        "the changed payload's host elapsed time was not charged"
     );
 }
 
