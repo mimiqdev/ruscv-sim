@@ -1,0 +1,16 @@
+diff --git i/src/capi/host.rs w/src/capi/host.rs
+index 9a0af82..443dd9a 100644
+--- i/src/capi/host.rs
++++ w/src/capi/host.rs
+@@ -667,7 +667,10 @@ impl Session {
+     /// and a host that waits `consumed_fs - host_elapsed_fs` ends its clock at
+     /// `committed_end_fs`.
+     fn grant_host_elapsed(&self, machine: &OwnedMachine, host_elapsed_start: u64) -> u64 {
+-        machine.transport_host_elapsed_femtoseconds() - host_elapsed_start
++        // MUTATION: report the cumulative generation total instead of this
++        // grant's increase.
++        let _ = host_elapsed_start;
++        machine.transport_host_elapsed_femtoseconds()
+     }
+ 
+     /// quantum D12: report the sync count read after the grant-return sync.

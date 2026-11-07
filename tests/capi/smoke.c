@@ -19,6 +19,13 @@
  * non-zero local offset, reset restoring the selection, and the configuration
  * refusal.
  *
+ * The suspension additions (nb U2, D5/D6) are covered from plain C too: the
+ * copied `suspends_host_time` declaration, `may_suspend` on every guest access,
+ * the grant's own `host_elapsed_fs` and the `consumed_fs - host_elapsed_fs`
+ * remainder, the declaration surviving a reset, the `ruscv_grant` layout pin
+ * and the create-time refusal of a suspending table with a quantum.  The C
+ * target reports a scripted host elapsed time; it never really suspends.
+ *
  * The guest is a hand-built ELF fixture (the same shape as
  * `tests/common/public_elf.rs`) so the smoke needs only a host C compiler.
  */
@@ -33,6 +40,9 @@
 #include <string.h>
 
 #define TICK_FS 1000000u
+/* One and a half Platform ticks: the host elapsed time the suspension case
+ * scripts and annotates, so its charge rounds up to two whole ticks (nb D5). */
+#define ELAPSED_FS 1500000u
 #define BASE 0x80000000ull
 #define SEGMENT_OFFSET 0x1000u
 #define TOHOST_OFFSET 0x1000u
@@ -289,11 +299,12 @@ static int build_device_read_guest(const char *path, uint32_t code)
 
 /* ------------------------------------------------------------ test target */
 
-/* One blocking transaction as the ABI published it (quantum D11). */
+/* One blocking transaction as the ABI published it (quantum D11, nb D3). */
 typedef struct recorded_call {
     uint64_t address;
     int access_kind;
     uint64_t local_offset_fs;
+    int may_suspend;
 } recorded_call;
 
 #define MAX_CALLS 512
@@ -328,6 +339,10 @@ typedef struct test_target {
     int call_count;
     /* Delay annotated on every blocking transaction, in femtoseconds. */
     uint64_t delay_fs;
+    /* The table's host-time suspension declaration (nb D6). */
+    int suspends_host_time;
+    /* The host elapsed time every blocking transaction reports (nb D4). */
+    uint64_t host_elapsed_fs;
 } test_target;
 
 /* The target's storage is atomic, so every access goes through these. */
@@ -361,6 +376,7 @@ static void target_b_transport(void *user, ruscv_payload *payload)
         target->calls[target->call_count].address = payload->address;
         target->calls[target->call_count].access_kind = payload->access_kind;
         target->calls[target->call_count].local_offset_fs = payload->local_offset_fs;
+        target->calls[target->call_count].may_suspend = payload->may_suspend;
         target->call_count += 1;
     }
     if (target->attempt_reentry && target->reentry_status == 0) {
@@ -379,6 +395,8 @@ static void target_b_transport(void *user, ruscv_payload *payload)
     }
     payload->status = target->status;
     payload->delay_fs = target->delay_fs;
+    /* nb D4: a scripted `e` instead of a real suspension. */
+    payload->host_elapsed_fs = target->host_elapsed_fs;
     if (target->unknown ||
         (target->unknown_on_data_read && payload->access_kind == RUSCV_ACCESS_DATA_READ)) {
         payload->outcome_unknown = 1;
@@ -450,6 +468,8 @@ static ruscv_target target_table(test_target *target, uint64_t max_delay_fs)
     table.b_transport = target_b_transport;
     table.transport_dbg = target_transport_dbg;
     table.transport_reset = target_transport_reset;
+    /* nb D6: the declaration is a copied table field. */
+    table.suspends_host_time = target->suspends_host_time;
     return table;
 }
 
@@ -1235,19 +1255,31 @@ static void header_case(void)
     check(offsetof(ruscv_target, transport_reset) == 32 &&
               offsetof(ruscv_target, get_direct_mem_ptr) == 40 &&
               offsetof(ruscv_target, quantum_ticks) == 48 &&
-              sizeof(ruscv_target) == 56,
-          "quantum_ticks is the final ruscv_target field");
+              offsetof(ruscv_target, suspends_host_time) == 56 &&
+              sizeof(ruscv_target) == 64,
+          "suspends_host_time is the final ruscv_target field");
     check(offsetof(ruscv_payload, atomic) == 56 &&
               offsetof(ruscv_payload, dmi_allowed) == 240 &&
               offsetof(ruscv_payload, local_offset_fs) == 248 &&
-              sizeof(ruscv_payload) == 256,
-          "local_offset_fs is the final ruscv_payload field");
+              offsetof(ruscv_payload, may_suspend) == 256 &&
+              offsetof(ruscv_payload, host_elapsed_fs) == 264 &&
+              sizeof(ruscv_payload) == 272,
+          "host_elapsed_fs is the final ruscv_payload field");
     check(offsetof(ruscv_boundary, quantum_ticks) == 64 &&
               offsetof(ruscv_boundary, interrupt_latency_bound_ticks) == 72 &&
               offsetof(ruscv_boundary, quantum_syncs) == 80 &&
               offsetof(ruscv_boundary, quantum_reached) == 88 &&
               sizeof(ruscv_boundary) == 96,
           "the quantum fields are the final ruscv_boundary fields");
+    /* nb D6: the grant's own host elapsed total follows its facts. */
+    check(offsetof(ruscv_grant, consumed_fs) == 0 &&
+              offsetof(ruscv_grant, committed_start_fs) == 8 &&
+              offsetof(ruscv_grant, committed_end_fs) == 16 &&
+              offsetof(ruscv_grant, boundary_reached) == 24 &&
+              offsetof(ruscv_grant, facts) == 32 &&
+              offsetof(ruscv_grant, host_elapsed_fs) == 128 &&
+              sizeof(ruscv_grant) == 136,
+          "host_elapsed_fs is the final ruscv_grant field");
     free(target);
 }
 
@@ -1508,6 +1540,102 @@ static void quantum_unknown_completion_case(const char *guest)
     free(target);
 }
 
+/* nb D5/D6: the copied `suspends_host_time` declaration, the `may_suspend`
+ * request field, the per-grant host elapsed total, reset persistence and the
+ * create-time refusal, from plain C. */
+static void suspension_case(const char *guest)
+{
+    test_target *target = calloc(1, sizeof(test_target));
+    ruscv_machine *handle = NULL;
+    ruscv_target table;
+    ruscv_grant result;
+    uint64_t calls;
+    uint64_t start;
+    int status;
+    int i;
+    int ok;
+
+    init_target(target, NULL, 0);
+    target->suspends_host_time = 1;
+    target->host_elapsed_fs = ELAPSED_FS;
+    target->delay_fs = ELAPSED_FS;
+    table = target_table(target, ELAPSED_FS);
+    handle = create_machine(&table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    check(status == RUSCV_OK && handle != NULL,
+          "create a suspending handle");
+    check(status == RUSCV_OK && ruscv_machine_load_elf(handle, guest) == RUSCV_OK,
+          "install the RAM-only guest on the suspending handle");
+    target->call_count = 0;
+    /* Two bounded grants inside one generation: the second must report only its
+     * own host elapsed total, never the cumulative value (nb D5). */
+    status = grant(handle, 0, UINT64_MAX / 2, 4, &result);
+    check(status == RUSCV_OK && result.boundary_reached == 1,
+          "the first bounded grant ends on its turn budget");
+    calls = (uint64_t)target->call_count;
+    check(calls > 0, "the first grant served no transaction");
+    ok = 1;
+    for (i = 0; i < target->call_count; i += 1) {
+        ok = ok && target->calls[i].may_suspend == 1;
+    }
+    check(ok, "every guest access to a suspending target carries may_suspend 1");
+    check(result.host_elapsed_fs == calls * ELAPSED_FS,
+          "the first grant totals the host elapsed time of its own transactions");
+    /* `e` is 1.5 ticks and its charge rounds up to 2, so beside the turn ticks a
+     * grant leaves half a tick per access outside the host elapsed total. */
+    check(result.consumed_fs - result.host_elapsed_fs ==
+              result.facts.turns * TICK_FS + calls * (TICK_FS / 2),
+          "consumed_fs - host_elapsed_fs is the turn ticks plus half a tick per access");
+    start = result.committed_end_fs;
+    status = grant(handle, start, UINT64_MAX / 2, 4, &result);
+    calls = (uint64_t)target->call_count - calls;
+    check(status == RUSCV_OK && calls > 0,
+          "the second bounded grant served no transaction");
+    check(result.host_elapsed_fs == calls * ELAPSED_FS,
+          "the second grant reports only its own host elapsed total");
+    status = grant(handle, result.committed_end_fs, UINT64_MAX / 2,
+                   RUSCV_TURNS_UNBOUNDED, &result);
+    check_exit(handle, status, "the suspending handle runs to the guest exit");
+    check(ruscv_machine_reset(handle) == RUSCV_OK, "reset the suspending handle");
+    target->call_count = 0;
+    status = grant(handle, 0, UINT64_MAX / 2, RUSCV_TURNS_UNBOUNDED, &result);
+    check_exit(handle, status, "the reset generation runs to the guest exit");
+    ok = target->call_count > 0;
+    for (i = 0; i < target->call_count; i += 1) {
+        ok = ok && target->calls[i].may_suspend == 1;
+    }
+    check(ok, "reset keeps the copied suspension declaration");
+    ruscv_machine_destroy(handle);
+
+    /* Without the declaration no access carries the flag. */
+    init_target(target, NULL, 0);
+    table = target_table(target, 0);
+    handle = create_machine(&table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    check(status == RUSCV_OK && handle != NULL,
+          "create a non-suspending handle");
+    check(status == RUSCV_OK && ruscv_machine_load_elf(handle, guest) == RUSCV_OK,
+          "install the RAM-only guest on the non-suspending handle");
+    target->call_count = 0;
+    status = grant(handle, 0, UINT64_MAX / 2, RUSCV_TURNS_UNBOUNDED, &result);
+    check_exit(handle, status, "the non-suspending handle runs to the guest exit");
+    ok = target->call_count > 0;
+    for (i = 0; i < target->call_count; i += 1) {
+        ok = ok && target->calls[i].may_suspend == 0;
+    }
+    check(ok, "no access to a non-suspending target carries may_suspend");
+    check(result.host_elapsed_fs == 0,
+          "a grant with no host time reports a zero host elapsed total");
+    ruscv_machine_destroy(handle);
+
+    /* nb D6: a suspending table with a non-zero quantum is refused. */
+    init_target(target, NULL, 0);
+    target->suspends_host_time = 1;
+    table = quantum_target_table(target, 4);
+    check(create_machine(&table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status) == NULL &&
+              status == RUSCV_ERROR_CONFIG,
+          "a suspending table with a quantum is a configuration failure");
+    free(target);
+}
+
 /* quantum D2/D12: a refused quantum is RUSCV_ERROR_CONFIG, and a NULL target
  * with no quantum stays native. */
 static void quantum_config_case(const char *guest)
@@ -1575,6 +1703,7 @@ int main(int argc, char **argv)
     quantum_forced_sync_case(device_guest);
     quantum_unknown_completion_case(direct_guest);
     quantum_config_case(ram_guest);
+    suspension_case(ram_guest);
     lifecycle_and_profile_case(guest);
     grants_and_commit_log_case(guest, log_path);
     reentry_case(guest);

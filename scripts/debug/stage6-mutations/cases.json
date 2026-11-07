@@ -2719,5 +2719,55 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "nb-u2-grant-elapsed",
+    "source": "src/capi/host.rs",
+    "patch": "nb-u2-grant-elapsed.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::each_grant_reports_only_its_own_host_elapsed_time",
+        "failure": [
+          "the second grant reported the cumulative host elapsed total"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u2-payload-flag",
+    "source": "src/capi/target.rs",
+    "patch": "nb-u2-payload-flag.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::a_guest_access_carries_may_suspend_only_to_a_suspending_table",
+        "failure": [
+          "a guest access to a suspending target carried may_suspend",
+          "left:\\s+0",
+          "right:\\s+1"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "nb-u2-create-quantum",
+    "source": "src/capi/host.rs",
+    "patch": "nb-u2-create-quantum.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::a_suspending_table_with_a_quantum_is_refused_at_create",
+        "failure": [
+          "a suspending table with quantum_ticks 4 was admitted"
+        ]
+      }
+    ]
   }
 ]

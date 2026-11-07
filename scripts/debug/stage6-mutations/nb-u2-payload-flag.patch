@@ -1,0 +1,16 @@
+diff --git i/src/capi/target.rs w/src/capi/target.rs
+index 7f545a1..d28b43a 100644
+--- i/src/capi/target.rs
++++ w/src/capi/target.rs
+@@ -372,9 +372,8 @@ impl BlockingTarget for CBlockingTarget {
+             atomic: atomic_request(transaction),
+             dmi_allowed: 0,
+             local_offset_fs: transaction.local_offset().as_u64(),
+-            // nb D3/D6: the request's flag is the adapter's decision, so a C
+-            // target can only read it.
+-            may_suspend: i32::from(transaction.may_suspend()),
++            // MUTATION: the payload no longer carries the adapter's flag.
++            may_suspend: 0,
+             // nb D4/D6: `e` starts at zero on every request.
+             host_elapsed_fs: 0,
+         };

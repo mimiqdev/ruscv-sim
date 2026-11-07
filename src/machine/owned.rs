@@ -95,6 +95,16 @@ impl OwnedMachine {
     pub(crate) fn image(&self) -> &LoadImage {
         &self.domain().image
     }
+    /// nb D4/D5: exact total host elapsed time the RAM slot's counted
+    /// transactions of this generation reported.
+    ///
+    /// A C host reads it before and after a grant to report that grant's `W`.
+    /// It is zero on the native route, for a target that lets no host time
+    /// pass, and for debug work, whose time is validated but neither charged
+    /// nor totalled.
+    pub(crate) fn transport_host_elapsed_femtoseconds(&self) -> u64 {
+        self.domain().platform.transport_host_elapsed_femtoseconds()
+    }
     pub(crate) fn set_verbose(&mut self, verbose: bool) {
         self.domain_mut().core.set_verbose(verbose);
     }

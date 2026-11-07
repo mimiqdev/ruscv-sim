@@ -131,6 +131,12 @@ pub(crate) struct GrantFacts {
     pub(crate) failed: bool,
     /// Total consumed blocking-transport delay so far, in femtoseconds.
     pub(crate) transport_delay_fs: u64,
+    /// nb D5: this grant's host elapsed total `W`, in exact femtoseconds.
+    ///
+    /// It is the increase of the generation's host elapsed time from the
+    /// grant's start to its return, never the cumulative value, and it is set
+    /// for every grant: one that ran no turn reports zero.
+    pub(crate) host_elapsed_fs: u64,
     /// Machine lifecycle acknowledgment at the grant boundary.
     pub(crate) lifecycle: Lifecycle,
     /// Completed Hart turns since the current image was installed.
@@ -164,6 +170,7 @@ impl Default for GrantFacts {
             uncertain: false,
             failed: false,
             transport_delay_fs: 0,
+            host_elapsed_fs: 0,
             lifecycle: Lifecycle::Running,
             turns: 0,
             quantum_ticks: 0,
@@ -348,6 +355,10 @@ impl Session {
     ) -> Result<(), ApiError> {
         let period = self.period.femtoseconds().as_u64();
         let start_ticks = machine.platform_mtime().map_err(MachineRefusal::status)?;
+        // nb D5: `W` is the increase from here to the grant's return, so a
+        // grant reports its own host elapsed time and never the cumulative
+        // generation total.
+        let host_elapsed_start = machine.transport_host_elapsed_femtoseconds();
         let committed_start_fs = start_ticks
             .checked_mul(period)
             .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the committed time overflows"))?;
@@ -506,6 +517,7 @@ impl Session {
                     machine,
                     facts,
                     start_fs,
+                    host_elapsed_start,
                     max_end_fs,
                     control.cycles(),
                     last_slot && completed,
@@ -523,6 +535,7 @@ impl Session {
                         machine,
                         facts,
                         start_fs,
+                        host_elapsed_start,
                         max_end_fs,
                         control.cycles(),
                         false,
@@ -552,6 +565,7 @@ impl Session {
                         machine,
                         facts,
                         start_fs,
+                        host_elapsed_start,
                         max_end_fs,
                         control.cycles(),
                         false,
@@ -571,6 +585,7 @@ impl Session {
                     facts.turns = self.facts.turns + control.cycles();
                     facts.committed_end_fs = self.grant_end_fs(machine)?;
                     facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
+                    facts.host_elapsed_fs = self.grant_host_elapsed(machine, host_elapsed_start);
                     let caller_end = caller_now(facts.consumed_fs)?;
                     // A terminal exit does not discard coincident bound facts.
                     facts.budget_exhausted = !control.may_execute();
@@ -604,6 +619,7 @@ impl Session {
                         machine,
                         facts,
                         start_fs,
+                        host_elapsed_start,
                         max_end_fs,
                         control.cycles(),
                         last_slot,
@@ -616,6 +632,7 @@ impl Session {
 
         facts.committed_end_fs = self.grant_end_fs(machine)?;
         facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
+        facts.host_elapsed_fs = self.grant_host_elapsed(machine, host_elapsed_start);
         facts.turns = self.facts.turns + control.cycles();
         let caller_end = caller_now(facts.consumed_fs)?;
         finalize_horizon(&mut facts, caller_end, max_end_fs, deadline_stop_seen);
@@ -628,9 +645,10 @@ impl Session {
     ///
     /// Every grant return goes through this one helper, before facts are
     /// reported, so `committed_end_fs` and `consumed_fs` are post-sync and the
-    /// caller's `wait(consumed)` stays exact.  The sync is the bus-lock update
-    /// alone: the Hart sees no further turn in this grant, so nothing needs
-    /// republishing.  A no-op sync is not counted (quantum D3).
+    /// caller's `wait(consumed_fs - host_elapsed_fs)` still ends its clock at
+    /// `committed_end_fs` (nb D5).  The sync is the bus-lock update alone: the
+    /// Hart sees no further turn in this grant, so nothing needs republishing.
+    /// A no-op sync is not counted (quantum D3).
     fn grant_end_fs(&self, machine: &OwnedMachine) -> Result<u64, ApiError> {
         machine
             .commit_local_time(true)
@@ -639,6 +657,18 @@ impl Session {
         let now = machine.platform_mtime().map_err(MachineRefusal::status)?;
         now.checked_mul(period)
             .ok_or_else(|| ApiError::new(Status::TimeAuthority, "the committed time overflows"))
+    }
+
+    /// nb D5: this grant's host elapsed total `W`.
+    ///
+    /// It is the increase of the generation's host elapsed total from the
+    /// grant's start to its return, never the cumulative value, and every
+    /// returned grant reports it.  Each counted transaction lands in a turn of
+    /// the same grant and its charge is at least its `e`, so `W <= consumed_fs`
+    /// and a host that waits `consumed_fs - host_elapsed_fs` ends its clock at
+    /// `committed_end_fs`.
+    fn grant_host_elapsed(&self, machine: &OwnedMachine, host_elapsed_start: u64) -> u64 {
+        machine.transport_host_elapsed_femtoseconds() - host_elapsed_start
     }
 
     /// quantum D12: report the sync count read after the grant-return sync.
@@ -798,6 +828,7 @@ impl Session {
         machine: &mut OwnedMachine,
         mut facts: GrantFacts,
         start_fs: u64,
+        host_elapsed_start: u64,
         max_end_fs: u64,
         completed_turns: u64,
         budget_exhausted: bool,
@@ -806,6 +837,7 @@ impl Session {
     ) -> Result<(), ApiError> {
         facts.committed_end_fs = self.grant_end_fs(machine)?;
         facts.consumed_fs = facts.committed_end_fs - facts.committed_start_fs;
+        facts.host_elapsed_fs = self.grant_host_elapsed(machine, host_elapsed_start);
         facts.turns = self.facts.turns + completed_turns;
         facts.failed = true;
         facts.uncertain |= unknown;
@@ -918,11 +950,12 @@ pub(crate) fn tick_period(femtoseconds: u64) -> Result<TickPeriod, ApiError> {
 /// Validates a selected quantum before a Machine is built (quantum D2).
 ///
 /// The Machine itself is built later, at load, so `ruscv_machine_create` runs
-/// the same two rules here: a quantum needs the TLM route, and
-/// `(Q + t + 1) x tick_period` must be representable as `u64` femtoseconds,
-/// where `t` is the target's conservative turn completion bound.  `Q` = 0
-/// accepts everything accepted today.  A NULL table selects the native route,
-/// which has no local offset to bound, so it cannot select a quantum.
+/// the same rules here: a quantum needs the TLM route, a suspending target
+/// cannot select one (nb D6), and `(Q + t + 1) x tick_period` must be
+/// representable as `u64` femtoseconds, where `t` is the target's conservative
+/// turn completion bound.  `Q` = 0 accepts everything accepted today.  A NULL
+/// table selects the native route, which has no local offset to bound, so it
+/// cannot select a quantum.
 pub(crate) fn validate_quantum(
     quantum: u64,
     target: Option<&CBlockingTarget>,
@@ -938,6 +971,19 @@ pub(crate) fn validate_quantum(
              no local offset to bound",
         ));
     };
+    // nb D6: host time passing inside a grant would stop the kernel's clock
+    // from being the quantum anchor `E` for the whole grant, which the Machine
+    // refuses too; create refuses it before an image is installed.
+    if target.suspends_host_time() {
+        return Err(ApiError::new(
+            Status::Config,
+            format!(
+                "a suspending target cannot select the quantum of {quantum} ticks: host time \
+                 passing inside a grant would stop the kernel's clock from being the quantum \
+                 anchor for the whole grant"
+            ),
+        ));
+    }
     let turn_bound = TurnCompletionBound::new(target.declared_max_delay(), period)
         .map_err(|error| {
             ApiError::new(

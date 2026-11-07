@@ -1,0 +1,26 @@
+diff --git i/src/capi/host.rs w/src/capi/host.rs
+index 9a0af82..3388c75 100644
+--- i/src/capi/host.rs
++++ w/src/capi/host.rs
+@@ -970,19 +970,8 @@ pub(crate) fn validate_quantum(
+              no local offset to bound",
+         ));
+     };
+-    // nb D6: host time passing inside a grant would stop the kernel's clock
+-    // from being the quantum anchor `E` for the whole grant, which the Machine
+-    // refuses too; create refuses it before an image is installed.
+-    if target.suspends_host_time() {
+-        return Err(ApiError::new(
+-            Status::Config,
+-            format!(
+-                "a suspending target cannot select the quantum of {quantum} ticks: host time \
+-                 passing inside a grant would stop the kernel's clock from being the quantum \
+-                 anchor for the whole grant"
+-            ),
+-        ));
+-    }
++    // MUTATION: a suspending table may select a quantum at create; only the
++    // Machine's own admission still refuses it, after an image is installed.
+     let turn_bound = TurnCompletionBound::new(target.declared_max_delay(), period)
+         .map_err(|error| {
+             ApiError::new(

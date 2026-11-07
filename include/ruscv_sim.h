@@ -22,13 +22,28 @@
  *   - Every handle is owned by the thread that created it.  A call from any
  *     other thread fails with RUSCV_ERROR_NOT_CREATOR_THREAD and changes no
  *     state.
- *   - Target callbacks run synchronously inside a ruscv-sim call on that
- *     thread.  Any call back into this ABI from a callback fails with
- *     RUSCV_ERROR_REENTRANT, whichever handle it names.  One call is exempt:
+ *   - Target callbacks run inside a ruscv-sim call on that thread.  Any call
+ *     back into this ABI from a callback fails with RUSCV_ERROR_REENTRANT,
+ *     whichever handle it names.  One call is exempt:
  *     ruscv_machine_invalidate_direct_mem touches only the handle's
  *     direct-memory registry, so a target may call it from inside its own
  *     callback, and it is also accepted on a handle poisoned by a caught panic.
  *     Every other entry point still rejects a callback and a poisoned handle.
+ *   - A b_transport callback whose payload has `may_suspend` set may suspend
+ *     the calling process and let host time pass, provided it resumes and
+ *     returns on the creating thread (nb D6).  The callback state stays set
+ *     while it is suspended, so the re-entry rule above holds across it: every
+ *     entry another process on that thread makes that reaches the callback
+ *     check returns RUSCV_ERROR_REENTRANT, including ruscv_machine_destroy on a
+ *     live handle, while ruscv_machine_invalidate_direct_mem stays accepted.
+ *     An entry that fails its argument checks first, or
+ *     ruscv_machine_destroy(NULL), keeps its existing result, and a call from
+ *     another OS thread is still RUSCV_ERROR_NOT_CREATOR_THREAD.  A host must
+ *     not stop or tear down its kernel, kill or reset the suspended process, or
+ *     destroy the handle while a callback is suspended; a refused destroy
+ *     leaks the handle rather than freeing it under a live frame.  Every other
+ *     callback (transport_dbg, transport_reset, get_direct_mem_ptr, and
+ *     b_transport with `may_suspend` clear) must not wait or advance host time.
  *   - A Rust panic is caught at the boundary: the handle is poisoned and the
  *     call returns RUSCV_ERROR_PANIC.  Every later call returns
  *     RUSCV_ERROR_POISONED, except ruscv_machine_invalidate_direct_mem and
@@ -40,12 +55,14 @@
  *
  *   No published struct carries a size or version field, so fields are only
  *   ever appended: every existing field keeps its offset and its size.  The
- *   final fields are ruscv_target.quantum_ticks, ruscv_payload.local_offset_fs
- *   and ruscv_boundary.quantum_reached, which follow the direct-memory
- *   additions (ruscv_target.get_direct_mem_ptr, ruscv_payload.dmi_allowed).  A
- *   host compiled against a previous header therefore keeps working
- *   source-level but must be recompiled against this header before it links
- *   this library; the ABI is not binary-compatible with the previous header.
+ *   final fields are ruscv_target.suspends_host_time,
+ *   ruscv_payload.host_elapsed_fs, ruscv_boundary.quantum_reached and
+ *   ruscv_grant.host_elapsed_fs, which follow the direct-memory and quantum
+ *   additions (ruscv_target.get_direct_mem_ptr and ruscv_target.quantum_ticks,
+ *   ruscv_payload.dmi_allowed and ruscv_payload.local_offset_fs).  A host
+ *   compiled against a previous header therefore keeps working source-level
+ *   but must be recompiled against this header before it links this library;
+ *   the ABI is not binary-compatible with the previous header.
  */
 
 #ifndef RUSCV_SIM_H
@@ -204,8 +221,19 @@ typedef struct ruscv_atomic {
  * the grant's start is the kernel's clock.  It is timing metadata only: no
  * status, address, length or permission may depend on it, it is never charged
  * back as a delay and it is not an added latency.  It is zero with no quantum
- * selected, for every DebugInbound request and for debug transport.  The field
- * is the final field of the struct.
+ * selected, for every DebugInbound request and for debug transport.
+ *
+ * Suspension (nb D3/D4): `may_suspend` is request metadata, nonzero when this
+ * is a charged Hart transaction to a target that declared
+ * `suspends_host_time`.  Only such a callback may let host time pass, and it
+ * reports the time that passed in `host_elapsed_fs`, in exact femtoseconds,
+ * starting at zero.  Both are timing metadata: no status, address, length or
+ * permission may depend on them, and every other callback must leave
+ * `host_elapsed_fs` at zero.  A non-zero `host_elapsed_fs` on a request whose
+ * `may_suspend` is clear is a protocol failure of that access, as is a
+ * terminal response whose host elapsed time exceeds `delay_fs`.  `delay_fs`
+ * counts from the transaction's issue, so it includes the host elapsed time.
+ * `host_elapsed_fs` is the final field of the struct.
  */
 typedef struct ruscv_payload {
     uint64_t address;
@@ -220,6 +248,12 @@ typedef struct ruscv_payload {
     ruscv_atomic atomic;
     int32_t dmi_allowed;
     uint64_t local_offset_fs;
+    /* Request: nonzero for a charged Hart transaction to a suspending target
+     * (nb D3). */
+    int32_t may_suspend;
+    /* Response: the host time that passed inside the callback, in exact
+     * femtoseconds, starting at zero (nb D4). */
+    uint64_t host_elapsed_fs;
 } ruscv_payload;
 
 /*
@@ -330,16 +364,25 @@ typedef struct ruscv_debug {
  * the callback answers RUSCV_DMI_GRANTED, RUSCV_DMI_DENIED or
  * RUSCV_DMI_FAILED.
  *
- * `quantum_ticks` is the selected quantum in Platform ticks and is the final
- * field.  Zero is off, which runs exactly as the previous header's ABI did.
- * One syncs at every turn boundary and is precise.  A value of 2 or more is the
- * explicit reduced-accuracy request: a time-derived timer crossing may be
- * recognized up to `quantum_ticks - 1` ticks plus the target's declared turn
- * completion bound late, while committed time never drifts.  The table is
- * copied at create, so the selection persists across ruscv_machine_reset, and
- * a NULL table cannot select one because the native route has no local offset
- * to bound.  A value ruscv_machine_create cannot represent is
- * RUSCV_ERROR_CONFIG.
+ * `quantum_ticks` is the selected quantum in Platform ticks.  Zero is off,
+ * which runs exactly as the previous header's ABI did.  One syncs at every
+ * turn boundary and is precise.  A value of 2 or more is the explicit
+ * reduced-accuracy request: a time-derived timer crossing may be recognized up
+ * to `quantum_ticks - 1` ticks plus the target's declared turn completion bound
+ * late, while committed time never drifts.  The table is copied at create, so
+ * the selection persists across ruscv_machine_reset, and a NULL table cannot
+ * select one because the native route has no local offset to bound.  A value
+ * ruscv_machine_create cannot represent is RUSCV_ERROR_CONFIG.
+ *
+ * `suspends_host_time` is nonzero when the target lets host time pass inside a
+ * `b_transport` callback whose payload has `may_suspend` set (nb D6).  Like
+ * every other table field it is copied at create, so the declaration persists
+ * across ruscv_machine_reset, and a NULL table selects the native route, which
+ * never suspends.  A suspending table with a non-zero `quantum_ticks` is
+ * RUSCV_ERROR_CONFIG from ruscv_machine_create: host time passing inside a
+ * grant would stop the kernel's clock from being the quantum anchor for the
+ * whole grant.  Suspension composes with direct memory.  It is the final field
+ * of the struct.
  */
 typedef struct ruscv_target {
     uint64_t max_delay_fs;
@@ -349,6 +392,9 @@ typedef struct ruscv_target {
     int32_t (*transport_reset)(void *user);
     int32_t (*get_direct_mem_ptr)(void *user, ruscv_direct_mem *direct_mem);
     uint64_t quantum_ticks;
+    /* Nonzero when the target lets host time pass inside a `may_suspend`
+     * transaction (nb D6). */
+    int32_t suspends_host_time;
 } ruscv_target;
 
 /* One grant's facts. */
@@ -395,6 +441,15 @@ typedef struct ruscv_boundary {
  * the value it has committed so far; an earlier start is
  * RUSCV_ERROR_TIME_AUTHORITY, exactly as an earlier start of the Machine's own
  * cursor is (ADR-0004 §4.4).
+ *
+ * `host_elapsed_fs` is the host time that passed inside this grant's
+ * transactions, in exact femtoseconds: the increase of the Machine's host
+ * elapsed total from the grant's start to its return, never the cumulative
+ * value.  It is set for every grant, zero for one that ran no turn.  Each
+ * counted transaction is charged at least its host elapsed time, so
+ * `host_elapsed_fs <= consumed_fs`; the caller waits
+ * `consumed_fs - host_elapsed_fs` and keeps its check that its clock then
+ * equals `committed_end_fs` (nb D5).  It is the final field of the struct.
  */
 typedef struct ruscv_grant {
     uint64_t consumed_fs;
@@ -402,6 +457,9 @@ typedef struct ruscv_grant {
     uint64_t committed_end_fs;
     int32_t boundary_reached;
     ruscv_boundary facts;
+    /* The host time that passed inside this grant's transactions, in exact
+     * femtoseconds (nb D5). */
+    uint64_t host_elapsed_fs;
 } ruscv_grant;
 
 /* The run classification. */
@@ -428,7 +486,8 @@ typedef struct ruscv_machine ruscv_machine;
  *
  * A table whose declared maximum, or whose quantum, cannot be represented
  * under `tick_period_fs` is RUSCV_ERROR_CONFIG.  A quantum needs the TLM route,
- * so a non-zero quantum with no table is also RUSCV_ERROR_CONFIG.
+ * so a non-zero quantum with no table is also RUSCV_ERROR_CONFIG, and so is a
+ * suspending table that selects one.
  */
 int32_t ruscv_machine_create(const ruscv_target *target, int32_t isa,
                              uint64_t tick_period_fs, ruscv_machine **out);

@@ -175,6 +175,14 @@ pub struct CGrant {
     pub boundary_reached: i32,
     /// The grant facts.
     pub facts: CBoundary,
+    /// nb D5: the host time that passed inside this grant's transactions, in
+    /// exact femtoseconds.
+    ///
+    /// It is the increase of the generation's host elapsed total from the
+    /// grant's start to its return, never the cumulative value, and it is set
+    /// for every grant, zero for one that ran no turn.  A host waits
+    /// `consumed_fs - host_elapsed_fs` and keeps its clock at `committed_end_fs`.
+    pub host_elapsed_fs: u64,
 }
 
 /// The run classification (`ruscv_result`).
@@ -628,6 +636,7 @@ pub unsafe extern "C" fn ruscv_machine_run_grant(
                 committed_end_fs: facts.committed_end_fs,
                 boundary_reached: i32::from(facts.boundary_reached()),
                 facts: boundary(facts),
+                host_elapsed_fs: facts.host_elapsed_fs,
             })
         }) {
             Ok(grant) => {
