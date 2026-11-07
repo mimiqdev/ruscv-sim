@@ -1,6 +1,6 @@
 # TLM Direct Memory Interface contract
 
-**Status:** Historical. Completed 2026-11-06 at PR #199; the [Quantum and Temporal Decoupling contract](../../dev-plan.md) succeeds it as the sole Current contract on the actual rotation merge.
+**Status:** Historical. Completed 2026-11-06 at PR #199; the [Quantum and Temporal Decoupling contract](quantum-temporal-decoupling.md) succeeded it, completed 2026-11-06 at PR #214.
 
 **Authority:** Preserved approved contract, not an active plan or an execution report. CI and PR history retain check and review outcomes.
 

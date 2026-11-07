@@ -235,13 +235,15 @@ grant 数须严格低于同一 guest 的 `--quantum 1`；两个故障选项在 `
 选定的 blocking 映射、FFI 所有权与线程、错误映射、时间单位、再入与停止行为、构建与版本 pin 的规范说明见
 [SystemC/TLM 边界](docs/integration/systemc-tlm.md)。
 
-quantum／同步策略由当前合同选定，U1–U5 已全部实现：`MachineConfig.quantum`（Platform tick，0 为
+quantum／同步策略已由归档的 quantum 合同实现：`MachineConfig.quantum`（Platform tick，0 为
 关闭）、本地偏移 `O` 与锚点 `E`、阈值同步、§3 的强制同步点、D9 的 tick 守恒与 D8 的延迟上界，以及
 `BoundaryFacts.quantum` 的降低精度报告；公共入口 `run --quantum <ticks>`、guest suite 的
 `--quantum 1` 与 `--quantum 1024` 两遍、实时 debug-attach 会话、C ABI 的 `quantum_ticks`／grant 侧字段／
 `local_offset_fs`，以及 SystemC smoke 的 `--quantum` 与两个故障选项均见上文。实现证据由
 `src/machine/tests.rs`、`src/capi/tests.rs`、`tests/quantum_cli.rs`、`tests/tlm_u4_guest_parity.rs`、
-`scripts/run_elf_tests.sh` 与 `scripts/test_systemc_smoke.sh` 提供；合同在轮换合并前仍是 Current。
+`scripts/run_elf_tests.sh` 与 `scripts/test_systemc_smoke.sh` 提供。该合同于 2026-11-06 在 PR #214 完成，
+已归档为 [quantum 合同](docs/archive/milestones/quantum-temporal-decoupling.md)。当前合同选定 non-blocking
+（base protocol）传输与可挂起回调，尚未实现。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 
