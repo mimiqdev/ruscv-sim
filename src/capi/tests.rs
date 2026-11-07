@@ -1176,6 +1176,42 @@ fn consumed_minus_host_elapsed_is_the_turn_ticks_plus_half_a_tick_per_access() {
 }
 
 #[test]
+fn a_failed_grant_still_reports_its_host_elapsed_time() {
+    // nb D5: `W` is set for every grant, including one a classified failure
+    // ends, and it never exceeds the amount that grant consumed.
+    let harness = Harness::suspending(
+        IsaProfile::Rv64imafdc as i32,
+        &direct_guest(2),
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+    );
+    harness
+        .target
+        .unknown_on_data_read
+        .store(true, Ordering::SeqCst);
+    let failed = harness
+        .grant(0, u64::MAX / 2, 1_000)
+        .expect("the failed grant");
+    assert_eq!(
+        failed.facts.failed, 1,
+        "the unknown completion did not fail the run"
+    );
+    assert_eq!(failed.facts.uncertain, 1);
+    let accesses = harness.target.transactions() as u64;
+    assert!(accesses > 0, "the failed grant ran no transaction");
+    assert_eq!(
+        failed.host_elapsed_fs,
+        accesses * ELAPSED_HALF_TICK,
+        "the failed grant did not report the host elapsed time it counted"
+    );
+    assert!(
+        failed.host_elapsed_fs <= failed.consumed_fs,
+        "the failed grant reported more host time than it consumed"
+    );
+}
+
+#[test]
 fn a_suspending_table_with_a_quantum_is_refused_at_create() {
     // nb D6: host time passing inside a grant would stop the kernel's clock
     // from being the quantum anchor for the whole grant.

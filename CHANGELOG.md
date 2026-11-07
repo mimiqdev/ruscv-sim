@@ -32,11 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 布局 pin 随之移动：`the_direct_memory_fields_are_final_in_their_structs`（`src/capi/tests.rs`）与
     `tests/capi/smoke.c` 的布局检查都改指新的末尾字段，并各自新增 `ruscv_grant` 的大小与末尾字段 pin。既有
     offset 不变，但尺寸改变，因此 ABI 与上一版头文件不二进制兼容：宿主必须针对新头文件重新编译后才能链接本库
-  - 新增 6 个 crate 内测试覆盖合同 §4 U2 的验收项：挂起表下 guest 访问（含一次 load）的 `may_suspend` 为 1，
+  - 新增 7 个 crate 内测试覆盖合同 §4 U2 的验收项：挂起表下 guest 访问（含一次 load）的 `may_suspend` 为 1，
     同一 guest 在表标志清零时为 0；两个 grant 各自只报告自己的 `host_elapsed_fs`（不是累计值）；`e` 为 1.5 tick
-    时 `consumed_fs - host_elapsed_fs` 等于 turn tick 数加上每次访问半 tick；挂起表配 quantum 4 在 create 被拒；
-    声明跨 reset 保留；回调内 `ruscv_machine_run_grant` 与 `ruscv_machine_destroy` 返回
-    `RUSCV_ERROR_REENTRANT` 而 `ruscv_machine_invalidate_direct_mem` 仍被接受，这正是被挂起回调留下的状态
+    时 `consumed_fs - host_elapsed_fs` 等于 turn tick 数加上每次访问半 tick；失败（unknown completion）的 grant
+    同样给出 `W` 且 `W <= consumed_fs`；挂起表配 quantum 4 在 create 被拒；声明跨 reset 保留；回调内
+    `ruscv_machine_run_grant` 与 `ruscv_machine_destroy` 返回 `RUSCV_ERROR_REENTRANT` 而
+    `ruscv_machine_invalidate_direct_mem` 仍被接受，这正是被挂起回调留下的状态
   - `tests/capi/smoke.c` 以纯 C 重复标志、每 grant 的 host elapsed、reset 保留、拒绝与布局检查：`suspends_host_time`
     为 1 的 C target 报告脚本化的 `e`（1.5 tick），不做真实挂起
   - U2 拥有的 3 条负控制（`nb-u2-grant-elapsed`、`nb-u2-payload-flag`、`nb-u2-create-quantum`）注册进
