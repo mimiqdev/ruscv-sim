@@ -926,10 +926,10 @@ fn only_a_hart_request_in_an_open_turn_carries_may_suspend() {
 /// every debug path is outside it.
 #[test]
 fn begin_transport_turn_has_one_guest_turn_call_site() {
-    // The whole dotted-call set of the crate's turn drivers: `Installed::turn`
-    // opens the window and `Platform` forwards it to the RAM slot and the bus.
-    // Every other turn driver must stay outside, so a debug path cannot open
-    // the window D3's flag relies on.
+    // The whole dotted-call set over the crate's holders of the live RAM slot:
+    // `Installed::turn` opens the window, `Platform` forwards it to the slot and
+    // the bus, and the host views and the debug paths must stay outside, because
+    // every holder shares the same adapter state.
     for (file, source, expected) in [
         ("machine/mod.rs", include_str!("../machine/mod.rs"), 1),
         (
@@ -938,6 +938,11 @@ fn begin_transport_turn_has_one_guest_turn_call_site() {
             2,
         ),
         ("machine/owned.rs", include_str!("../machine/owned.rs"), 0),
+        (
+            "machine/host_memory.rs",
+            include_str!("../machine/host_memory.rs"),
+            0,
+        ),
         ("executor.rs", include_str!("../executor.rs"), 0),
     ] {
         assert_eq!(
