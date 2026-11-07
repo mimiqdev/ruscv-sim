@@ -40,11 +40,28 @@
 
 #include <systemc>
 #include <tlm>
+#include <tlm_utils/peq_with_cb_and_phase.h>
 #include <tlm_utils/simple_target_socket.h>
 
 #include "ruscv_payload_extension.h"
 
 namespace ruscv_sim {
+
+/// The RAM target's non-blocking return path (nb D8).
+enum class AtPath {
+    /// `TLM_ACCEPTED`, then `END_REQ` in a later delta and `BEGIN_RESP` after
+    /// `lambda`.
+    Accepted,
+    /// `TLM_UPDATED` with `END_REQ`, then `BEGIN_RESP` after `lambda`.
+    Updated,
+    /// `TLM_UPDATED` with `BEGIN_RESP` and an annotated `lambda`.
+    Early,
+    /// `TLM_ACCEPTED`, then `END_REQ` in a later delta and `BEGIN_RESP` at once
+    /// with an annotated `lambda`.
+    Annotated,
+    /// `TLM_COMPLETED` with an annotated `lambda`.
+    Completed,
+};
 
 /// A zero-delay blocking RAM target with the ruscv-sim atomic extension.
 class RamTarget : public sc_core::sc_module {
@@ -63,7 +80,13 @@ public:
     /// (quantum §4): the target lowers the received delay below the offset it
     /// was given, which the initiator must report as an unknown completion. It
     /// exists to prove that assertion and is never a normal model.
-    explicit RamTarget(sc_core::sc_module_name name, bool fault_decrease_delay = false);
+    ///
+    /// `non_blocking` registers the AT `nb_transport_fw` path (nb D8), with
+    /// `nb_latency_fs` as `lambda` and `nb_path` as its return path. The
+    /// blocking, debug and direct-memory callbacks stay unchanged.
+    explicit RamTarget(sc_core::sc_module_name name, bool fault_decrease_delay = false,
+                       bool non_blocking = false, uint64_t nb_latency_fs = 0,
+                       AtPath nb_path = AtPath::Accepted);
 
     /// Serves one blocking transaction. This model declares zero delay, so it
     /// adds nothing to `delay` and leaves the argument unchanged (quantum D13).
@@ -90,6 +113,10 @@ public:
     uint64_t transport_dbg_count() const { return transport_dbg_count_; }
     /// Number of transport resets acknowledged since construction.
     uint64_t transport_reset_count() const { return transport_reset_count_; }
+    /// Number of non-blocking `BEGIN_REQ` phases received (nb D8).
+    uint64_t begin_req_count() const { return begin_req_count_; }
+    /// Number of accesses applied by the AT path (nb D8).
+    uint64_t applied_access_count() const { return applied_access_count_; }
 
 private:
     /// Bytes and per-byte committed-write versions for one 4 KiB chunk.
@@ -111,6 +138,16 @@ private:
 
     /// The smoke's `--fault-decrease-delay` control (quantum §4).
     const bool fault_decrease_delay_;
+    const bool non_blocking_;
+    const uint64_t nb_latency_fs_;
+    const AtPath nb_path_;
+    /// The target's own phase queue (nb D8): it carries the phase and gives
+    /// zero-time notifications their delta separation.
+    tlm_utils::peq_with_cb_and_phase<RamTarget> phase_queue_;
+    /// The one AT transaction from `BEGIN_REQ` to its final phase.
+    tlm::tlm_generic_payload* open_transaction_ = nullptr;
+    uint64_t begin_req_count_ = 0;
+    uint64_t applied_access_count_ = 0;
 
     std::map<uint64_t, Chunk> chunks_;
     /// Monotonic committed-write clock; zero marks a byte no write has covered.
@@ -119,8 +156,19 @@ private:
     uint64_t transport_dbg_count_ = 0;
     uint64_t transport_reset_count_ = 0;
 
+    /// Serves one non-blocking forward phase (nb D8).
+    tlm::tlm_sync_enum nb_transport_fw(tlm::tlm_generic_payload& transaction,
+                                       tlm::tlm_phase& phase, sc_core::sc_time& delay);
+
+    /// Sends one phase the target scheduled through `phase_queue_`.
+    void handle_phase(tlm::tlm_generic_payload& transaction, const tlm::tlm_phase& phase);
+
+    /// Applies one request exactly as `b_transport` does; returns true when
+    /// the access was applied.
+    bool apply_request(tlm::tlm_generic_payload& transaction, PayloadExtension* extension);
+
     /// Applies one atomic transaction, or sets a failure status.
-    void apply_atomic(tlm::tlm_generic_payload& transaction, PayloadExtension& extension);
+    bool apply_atomic(tlm::tlm_generic_payload& transaction, PayloadExtension& extension);
 
     /// Answers one direct-memory query: the whole chunk that contains the
     /// queried address, read-write, zero latency (direct-memory D13).

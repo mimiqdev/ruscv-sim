@@ -1,8 +1,8 @@
 # SystemC host integration
 
-This CMake project is the pinned SystemC host for the blocking-transport smoke
-(dev-plan D9). It builds one executable, `systemc_smoke`, which hosts one
-ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
+This CMake project is the pinned SystemC host for the transport smoke
+(dev-plan D9; nb D7/D8). It builds one executable, `systemc_smoke`, which hosts
+one ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
 
 - `ram_target.{h,cpp}`: a zero-delay blocking RAM target behind a
   `simple_target_socket`, with `b_transport`, `transport_dbg`, transport reset
@@ -13,21 +13,30 @@ ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
   registration before its transport reset discards chunks while keeping the
   version clock running (direct-memory D10/D13). `b_transport` leaves the
   `delay` argument unchanged, which carries the Hart's local offset: this model
-  adds no delay (quantum D13).
+  adds no delay (quantum D13). Under `--nb` it also registers its AT
+  `nb_transport_fw` mode: every path applies the access once at `BEGIN_REQ`,
+  schedules its phases through a `peq_with_cb_and_phase`, reports its
+  `BEGIN_REQ` and applied-access counts, and withholds a transport reset
+  acknowledgement while a transaction is open (nb D8).
 - `ruscv_initiator.{h,cpp}`: the C ABI `ruscv_target` callbacks mapped onto a
   `simple_initiator_socket` bound to that target. `--dmi` selects the
   `get_direct_mem_ptr` query; the registered `invalidate_direct_mem_ptr`
   forwards to `ruscv_machine_invalidate_direct_mem`, the one ABI entry a
   target may call inside a callback. The callbacks pass the payload's
   `local_offset_fs` in as the `b_transport` delay argument and report only what
-  the target returned above it (quantum D13).
+  the target returned above it (quantum D13). A `may_suspend` payload runs the
+  initiator-owned base protocol with one outstanding transaction instead: the
+  driver `SC_THREAD` sends `BEGIN_REQ`, records backward phases with their
+  effective host time, sends `END_RESP` after a forward `BEGIN_RESP`, and
+  reports `d = e` (nb D7).
 - `ruscv_payload_extension.h`: the TLM-2.0 payload extension carrying the access
   category, the initiator and the atomic request and response.
 - `main.cpp`: the `SC_THREAD` grant loop that starts each grant at
-  `sc_time_stamp()`, waits the returned consumed time, and stops the kernel after
-  a terminal `ruscv_machine_result` or a host-classified failure. It compares the
-  kernel clock with `committed_end_fs` after every grant, which with a quantum
-  selected also proves each grant return synced its local offset. The
+  `sc_time_stamp()`, waits `consumed_fs - host_elapsed_fs`, and stops the kernel
+  after a terminal `ruscv_machine_result` or a host-classified failure. It
+  compares the kernel clock with `committed_end_fs` after every grant, which with
+  a quantum selected also proves each grant return synced its local offset. It
+  records the startup thread check and writes `--grant-trace` lines. The
   `--stop-after-grants` control stops it deliberately, without a result, and
   `--fault-keep-offset` and `--fault-decrease-delay` are the quantum contract's
   two fault-option controls.
@@ -68,6 +77,9 @@ usage: systemc_smoke <elf> [--isa rv64ima|rv64imac|rv64imafd|rv64imafdc]
        [--horizon-fs <femtoseconds>] [--stop-after-grants <grants>]
        [--max-grants <grants>] [--max-turns <turns>]
        [--dmi] [--dmi-invalidate-every <grants>] [--quantum <ticks>]
+       [--nb] [--nb-latency <femtoseconds>]
+       [--nb-path accepted|updated|early|annotated|completed]
+       [--grant-trace <path>]
        [--fault-keep-offset] [--fault-decrease-delay]
 ```
 
@@ -89,6 +101,16 @@ copy through the RAM target's granted chunk pointers instead of `b_transport`.
 target to invalidate every grant after each Nth grant; the initiator's
 backward call forwards each one to `ruscv_machine_invalidate_direct_mem` and
 the forwarded count is reported at exit.
+
+`--nb` makes the target declare that it suspends host time and selects the AT
+base-protocol path for every `may_suspend` transaction (nb D7/D8).
+`--nb-latency <fs>` sets the target latency lambda and its declared
+per-transaction maximum (default 0, at most 10^15 fs), and `--nb-path` selects
+`accepted`, `updated`, `early`, `annotated` or `completed`. `--nb-latency` and
+`--nb-path` without `--nb` are usage errors, and `--nb` with a non-zero
+`--quantum` is refused by `ruscv_machine_create`. `--grant-trace <path>` writes
+one line per grant with `consumed_fs`, `committed_end_fs` and `host_elapsed_fs`
+for the smoke's per-grant comparisons (nb D10).
 
 `--quantum <ticks>` selects temporal decoupling in Platform ticks (zero is off)
 and travels in the C ABI target table (quantum D12/D13). The Machine may then
@@ -114,6 +136,9 @@ invalidation.
 
 ## Limits
 
-Linux x86-64 only. The RAM model annotates zero delay, so it does not model a
-timed memory; the quantum defers the Machine's committed time by a bounded local
-offset, but the target still adds no modeled delay of its own.
+Linux x86-64 only. The blocking RAM model annotates zero delay, so it does not
+model a timed memory; the quantum defers the Machine's committed time by a
+bounded local offset, but the target still adds no modeled delay of its own. The
+AT mode has one outstanding transaction and a fixed latency lambda; retirement,
+late-phase handling, the drain and the non-blocking fault options are U4's
+scope.

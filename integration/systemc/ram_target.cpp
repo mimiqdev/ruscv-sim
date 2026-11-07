@@ -83,24 +83,45 @@ uint64_t amo_result(int32_t operation, size_t width, uint64_t old_value, uint64_
     }
 }
 
+/// Marks one non-blocking transaction as a target protocol error.
+///
+/// The extension carries the outcome-unknown flag to the initiator, which
+/// reports it as an unknown completion instead of an ordinary status.
+void mark_protocol_error(tlm::tlm_generic_payload& transaction) {
+    if (PayloadExtension* extension = transaction.get_extension<PayloadExtension>()) {
+        extension->outcome_unknown = 1;
+    }
+    transaction.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+}
+
 }  // namespace
 
-RamTarget::RamTarget(sc_core::sc_module_name name, bool fault_decrease_delay)
+RamTarget::RamTarget(sc_core::sc_module_name name, bool fault_decrease_delay,
+                     bool non_blocking, uint64_t nb_latency_fs, AtPath nb_path)
     : sc_core::sc_module(name),
       socket("socket"),
-      fault_decrease_delay_(fault_decrease_delay) {
+      fault_decrease_delay_(fault_decrease_delay),
+      non_blocking_(non_blocking),
+      nb_latency_fs_(nb_latency_fs),
+      nb_path_(nb_path),
+      phase_queue_("phase_queue", this, &RamTarget::handle_phase) {
     socket.register_b_transport(this, &RamTarget::b_transport);
     socket.register_transport_dbg(this, &RamTarget::transport_dbg);
     // direct-memory D13: this target grants direct memory, so it registers the
     // forward query. A host that leaves the C ABI query NULL never reaches it.
     socket.register_get_direct_mem_ptr(this, &RamTarget::get_direct_mem_ptr);
+    if (non_blocking_) {
+        // nb D8: the AT path is present only under --nb. b_transport stays
+        // registered because it still serves direct-memory misses and debug.
+        socket.register_nb_transport_fw(this, &RamTarget::nb_transport_fw);
+    }
 }
 
 void RamTarget::b_transport(tlm::tlm_generic_payload& transaction, sc_core::sc_time& delay) {
     // quantum D13: the delay argument arrives as the Hart's local offset, which
     // this zero-delay RAM model adds nothing to. Leaving it unchanged is what
-    // its declared per-transaction maximum of zero requires: the initiator
-    // subtracts the offset and reports the zero added delay, so the run stays
+    // its declared per-transaction maximum requires: the initiator subtracts
+    // the offset and reports the zero added delay, so the run stays
     // time-equivalent to native with the quantum on and off.
     if (fault_decrease_delay_ && delay > sc_core::SC_ZERO_TIME) {
         // The smoke's --fault-decrease-delay control (quantum §4): a returned
@@ -110,37 +131,161 @@ void RamTarget::b_transport(tlm::tlm_generic_payload& transaction, sc_core::sc_t
         delay -= sc_core::sc_time(1, sc_core::SC_FS);
     }
     ++b_transport_count_;
+    apply_request(transaction, transaction.get_extension<PayloadExtension>());
+}
 
-    PayloadExtension* extension = transaction.get_extension<PayloadExtension>();
+tlm::tlm_sync_enum RamTarget::nb_transport_fw(tlm::tlm_generic_payload& transaction,
+                                             tlm::tlm_phase& phase,
+                                             sc_core::sc_time& delay) {
+    if (!non_blocking_) {
+        mark_protocol_error(transaction);
+        return tlm::TLM_COMPLETED;
+    }
+    if (phase == tlm::BEGIN_REQ) {
+        ++begin_req_count_;
+        if (open_transaction_ != nullptr) {
+            // One outstanding transaction is the contract's model (nb D1/D7).
+            mark_protocol_error(transaction);
+            return tlm::TLM_COMPLETED;
+        }
+        PayloadExtension* extension = transaction.get_extension<PayloadExtension>();
+        if (extension == nullptr) {
+            mark_protocol_error(transaction);
+            return tlm::TLM_COMPLETED;
+        }
+        open_transaction_ = &transaction;
+        if (apply_request(transaction, extension)) {
+            ++applied_access_count_;
+        }
+        const sc_core::sc_time latency = sc_core::sc_time::from_value(nb_latency_fs_);
+        switch (nb_path_) {
+            case AtPath::Accepted:
+                // nb D8: END_REQ is one delta later at the same host time. Its
+                // handler schedules BEGIN_RESP, so lambda = 0 still gets a
+                // separate delta for the response.
+                phase_queue_.notify(transaction, tlm::END_REQ, sc_core::SC_ZERO_TIME);
+                delay = sc_core::SC_ZERO_TIME;
+                return tlm::TLM_ACCEPTED;
+            case AtPath::Updated:
+                // nb D8: the forward return carries END_REQ, and BEGIN_RESP
+                // follows lambda later.
+                phase_queue_.notify(transaction, tlm::BEGIN_RESP, latency);
+                phase = tlm::END_REQ;
+                delay = sc_core::SC_ZERO_TIME;
+                return tlm::TLM_UPDATED;
+            case AtPath::Early:
+                // nb D8: the forward return carries BEGIN_RESP and its lambda
+                // annotation.
+                phase = tlm::BEGIN_RESP;
+                delay = latency;
+                return tlm::TLM_UPDATED;
+            case AtPath::Annotated:
+                // nb D8: END_REQ is one delta later; its handler then schedules
+                // BEGIN_RESP in the next delta with lambda as its annotation.
+                // The initiator must hold the later phase.
+                phase_queue_.notify(transaction, tlm::END_REQ, sc_core::SC_ZERO_TIME);
+                delay = sc_core::SC_ZERO_TIME;
+                return tlm::TLM_ACCEPTED;
+            case AtPath::Completed:
+                // nb D8: no later phase; the forward completion carries lambda.
+                open_transaction_ = nullptr;
+                delay = latency;
+                return tlm::TLM_COMPLETED;
+        }
+    }
+    if (phase == tlm::END_RESP) {
+        if (open_transaction_ != &transaction) {
+            mark_protocol_error(transaction);
+            return tlm::TLM_COMPLETED;
+        }
+        // nb D8: the early path's forward BEGIN_RESP ends when the initiator
+        // returns END_RESP.
+        open_transaction_ = nullptr;
+        delay = sc_core::SC_ZERO_TIME;
+        return tlm::TLM_COMPLETED;
+    }
+    // Any other forward phase is outside every path the contract lists.
+    mark_protocol_error(transaction);
+    if (open_transaction_ == &transaction) {
+        open_transaction_ = nullptr;
+    }
+    return tlm::TLM_COMPLETED;
+}
+
+void RamTarget::handle_phase(tlm::tlm_generic_payload& transaction,
+                              const tlm::tlm_phase& phase) {
+    if (open_transaction_ != &transaction) {
+        return;
+    }
+    sc_core::sc_time delay = sc_core::SC_ZERO_TIME;
+    if (nb_path_ == AtPath::Annotated && phase == tlm::BEGIN_RESP) {
+        // nb D8: the annotated path sends BEGIN_RESP at the same host time with
+        // lambda as its annotation, so the initiator must hold the later phase.
+        delay = sc_core::sc_time::from_value(nb_latency_fs_);
+    }
+    tlm::tlm_phase outgoing = phase;
+    const tlm::tlm_sync_enum sync = socket->nb_transport_bw(transaction, outgoing, delay);
+    if (phase == tlm::END_REQ) {
+        if (sync != tlm::TLM_ACCEPTED) {
+            mark_protocol_error(transaction);
+            open_transaction_ = nullptr;
+            return;
+        }
+        // nb D8: the response is always a separate phase, so a zero-time
+        // BEGIN_RESP lands in the next delta even when lambda is zero.
+        if (nb_path_ == AtPath::Accepted) {
+            phase_queue_.notify(transaction, tlm::BEGIN_RESP,
+                                sc_core::sc_time::from_value(nb_latency_fs_));
+        } else if (nb_path_ == AtPath::Annotated) {
+            phase_queue_.notify(transaction, tlm::BEGIN_RESP, sc_core::SC_ZERO_TIME);
+        }
+        return;
+    }
+    if (phase == tlm::BEGIN_RESP) {
+        if (sync == tlm::TLM_COMPLETED) {
+            // nb D8: a BEGIN_RESP answered with TLM_COMPLETED ends the
+            // transaction for the target.
+            open_transaction_ = nullptr;
+        } else if (sync != tlm::TLM_ACCEPTED) {
+            mark_protocol_error(transaction);
+            open_transaction_ = nullptr;
+        }
+        return;
+    }
+    mark_protocol_error(transaction);
+    open_transaction_ = nullptr;
+}
+
+bool RamTarget::apply_request(tlm::tlm_generic_payload& transaction,
+                              PayloadExtension* extension) {
     if (extension == nullptr) {
         // Without the extension the target cannot see the atomic request, so it
         // refuses rather than guessing (dev-plan D5).
         transaction.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
-        return;
+        return false;
     }
     if (transaction.get_byte_enable_ptr() != nullptr) {
         transaction.set_response_status(tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE);
-        return;
+        return false;
     }
     if (transaction.get_streaming_width() != transaction.get_data_length()) {
         // One access is one non-burst transaction: streaming width equals the
         // data length (dev-plan D3).
         transaction.set_response_status(tlm::TLM_BURST_ERROR_RESPONSE);
-        return;
+        return false;
     }
     if (transaction.get_data_ptr() == nullptr && transaction.get_data_length() != 0) {
         transaction.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
-        return;
+        return false;
     }
     const uint64_t address = transaction.get_address();
     const size_t length = transaction.get_data_length();
     if (address > UINT64_MAX - length) {
         transaction.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
-        return;
+        return false;
     }
     if (extension->atomic_present != 0) {
-        apply_atomic(transaction, *extension);
-        return;
+        return apply_atomic(transaction, *extension);
     }
     switch (transaction.get_command()) {
         case tlm::TLM_READ_COMMAND: {
@@ -156,13 +301,14 @@ void RamTarget::b_transport(tlm::tlm_generic_payload& transaction, sc_core::sc_t
             break;
         default:
             transaction.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
-            return;
+            return false;
     }
     // The hint is the only licence for ruscv-sim's one direct-memory query of
     // this access, so it goes on a completed non-atomic transaction only
     // (direct-memory D3/D13). It is ignored when the host offers no query.
     transaction.set_dmi_allowed(true);
     transaction.set_response_status(tlm::TLM_OK_RESPONSE);
+    return true;
 }
 
 bool RamTarget::get_direct_mem_ptr(tlm::tlm_generic_payload& transaction,
@@ -197,7 +343,7 @@ void RamTarget::invalidate_all_direct_mem() {
     socket->invalidate_direct_mem_ptr(0, static_cast<sc_dt::uint64>(-1));
 }
 
-void RamTarget::apply_atomic(tlm::tlm_generic_payload& transaction,
+bool RamTarget::apply_atomic(tlm::tlm_generic_payload& transaction,
                              PayloadExtension& extension) {
     const int32_t width = extension.atomic_width;
     const size_t length = transaction.get_data_length();
@@ -205,7 +351,7 @@ void RamTarget::apply_atomic(tlm::tlm_generic_payload& transaction,
     if ((width != 4 && width != 8) || length != static_cast<size_t>(width) || data == nullptr) {
         // A malformed atomic request is a host failure, never a guest one.
         transaction.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
-        return;
+        return false;
     }
     const uint64_t address = transaction.get_address();
     std::array<uint8_t, 8> old_bytes{};
@@ -218,7 +364,7 @@ void RamTarget::apply_atomic(tlm::tlm_generic_payload& transaction,
             if (extension.atomic_operation < RUSCV_AMO_ADD ||
                 extension.atomic_operation > RUSCV_AMO_MAXU) {
                 transaction.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
-                return;
+                return false;
             }
             const std::vector<uint8_t> old = read(address, length);
             std::memcpy(old_bytes.data(), old.data(), length);
@@ -270,7 +416,7 @@ void RamTarget::apply_atomic(tlm::tlm_generic_payload& transaction,
                     // failure, never an ordinary conditional failure and never a
                     // guest-visible fault.
                     transaction.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
-                    return;
+                    return false;
                 }
                 bool overwritten = false;
                 for (uint32_t index = 0; index < extension.reserved_length; ++index) {
@@ -293,9 +439,10 @@ void RamTarget::apply_atomic(tlm::tlm_generic_payload& transaction,
         }
         default:
             transaction.set_response_status(tlm::TLM_GENERIC_ERROR_RESPONSE);
-            return;
+            return false;
     }
     transaction.set_response_status(tlm::TLM_OK_RESPONSE);
+    return true;
 }
 
 unsigned int RamTarget::transport_dbg(tlm::tlm_generic_payload& transaction) {
@@ -330,6 +477,13 @@ unsigned int RamTarget::transport_dbg(tlm::tlm_generic_payload& transaction) {
 }
 
 bool RamTarget::transport_reset() {
+    // nb D8: while a transaction is open, from BEGIN_REQ until the target has
+    // sent or received its final phase, the acknowledgement is withheld before
+    // anything is invalidated or cleared. No fresh generation can then coexist
+    // with an open transaction.
+    if (open_transaction_ != nullptr) {
+        return false;
+    }
     ++transport_reset_count_;
     // Every grant is invalidated before any chunk is discarded, and this
     // module runs on the single SystemC kernel thread, so no grant is issued
