@@ -96,9 +96,10 @@ blocking RAM target with one `tlm_utils::simple_target_socket`:
   annotated `lambda`. A backward `BEGIN_RESP` answered with `TLM_COMPLETED` ends
   the transaction for the target, and a forward `END_RESP` is answered with
   `TLM_COMPLETED`. The target reports its `BEGIN_REQ` and applied-access counts
-  at exit, along with whether a transaction is still open and how many phases
-  it has scheduled but not delivered, which the host's drain waits on (nb D9).
-  It withholds the transport reset acknowledgement while a transaction is open.
+  at exit, along with whether a transaction is still open. It tracks the phases
+  it has scheduled but not delivered, which the host's drain waits on (nb D9),
+  and it withholds the transport reset acknowledgement while a transaction is
+  open.
 - Direct memory (direct-memory D13): a completed non-atomic transaction sets
   the generic payload's `dmi_allowed` hint, which is the only licence for the
   initiator's one query of that access. `get_direct_mem_ptr` grants the whole
@@ -344,9 +345,9 @@ The initiator owns the timeout of an AT transaction (nb D9):
   a non-OK status. The probe is skipped when the forward path already released
   the transaction.
 - At exit the host reports the late-phase count, the retirement count, the
-  forward `END_RESP` phases its drain sent and whether a transaction is still
-  open at the target. A run without a retirement reports zero for the first
-  three and no open transaction.
+  forward `END_RESP` phases its drain sent with the host time of the one it
+  sent, and whether a transaction is still open at the target. A run without a
+  retirement reports zero for the first three and no open transaction.
 
 The RAM target supports the same rule by construction: it applies the access
 once at `BEGIN_REQ`, so a late phase carries only timing, and it withholds its

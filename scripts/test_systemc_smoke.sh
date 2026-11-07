@@ -814,8 +814,10 @@ echo -e "  ${GREEN}[PASS]${NC} the delay below the offset failed the run as an u
 # `completed` path releases it on the forward path, so it skips the probe.
 #
 # Each assertion reads one obligation of D9: the failed boundary's `uncertain`
-# class, the diagnostic's own words, the late-phase count, the drain's retained
-# `END_RESP`, the withheld reset acknowledgement and the target's released state.
+# class, the diagnostic's own words, the exact timeout the retirement waited,
+# the single late phase it counted, the drain's retained `END_RESP` and that
+# phase's host time, the withheld reset acknowledgement and the target's
+# released state.
 #
 #   run_late_response PATH EXPECTED_RESET EXPECTED_END_RESP
 #     PATH                accepted | early | completed
@@ -853,28 +855,58 @@ run_late_response() {
     local late
     local retirements
     local end_resp
+    local end_resp_fs
+    local host
+    local delay
     local open
     local begin
     local applied
     late="$(smoke_at_field "${late_output}" late_phases)"
     retirements="$(smoke_at_field "${late_output}" retirements)"
     end_resp="$(smoke_at_field "${late_output}" drain_end_resp)"
+    end_resp_fs="$(smoke_at_field "${late_output}" drain_end_resp_fs)"
+    host="$(smoke_totals_field "${late_output}" host_elapsed_fs)"
+    delay="$(smoke_totals_field "${late_output}" transport_delay_fs)"
     open="$(smoke_at_field "${late_output}" open_transaction)"
     begin="$(ram_begin_req_count "${late_output}")"
     applied="$(ram_applied_access_count "${late_output}")"
     [ -n "${late}" ] || fail "the ${label} control reported no late-phase count"
     [ -n "${retirements}" ] || fail "the ${label} control reported no retirement count"
     [ -n "${end_resp}" ] || fail "the ${label} control reported no drain count"
-    [ "${late}" -ge 1 ] \
-        || fail "the ${label} control ignored ${late} late phase(s); a late response must be counted"
+    [ -n "${end_resp_fs}" ] || fail "the ${label} control reported no drain host time"
+    [ -n "${host}" ] || fail "the ${label} control reported no host elapsed total"
+    [ -n "${delay}" ] || fail "the ${label} control reported no transport delay total"
+    # nb D9: each of the three late forms is counted once, not once per
+    # detection site.  Each control injects exactly one late final phase.
+    [ "${late}" -eq 1 ] \
+        || fail "the ${label} control ignored ${late} late phase(s), not the one it injected"
     [ "${retirements}" -eq 1 ] \
         || fail "the ${label} control retired ${retirements} transaction(s), not one"
+    # nb D9: the transaction is not complete at the timeout, so it is retired at
+    # exactly `max_delay_fs + 1` fs, and the ABI charges and totals that time.
+    # The failed first fetch is the run's only counted transaction.
+    local expected_timeout=$((NB_LATENCY + 1))
+    [ "${host}" -eq "${expected_timeout}" ] \
+        || fail "the ${label} control waited ${host} fs, not the ${expected_timeout} fs timeout"
+    [ "${delay}" -eq "${expected_timeout}" ] \
+        || fail "the ${label} control charged ${delay} fs, not the ${expected_timeout} fs timeout"
     [ "${open}" = "0" ] \
         || fail "the ${label} control left a transaction open at the target after its drain"
     [ -n "${begin}" ] && [ "${begin}" = "${applied}" ] \
         || fail "the ${label} control applied ${applied} of its ${begin} BEGIN_REQ phase(s)"
     [ "${end_resp}" -eq "${expected_end_resp}" ] \
         || fail "the ${label} control sent ${end_resp} drain END_RESP phase(s), not ${expected_end_resp}"
+    # nb D9: the drain sends the retained transaction's `END_RESP` no earlier
+    # than its `BEGIN_RESP` phase's effective time, which the target annotated
+    # as `lambda` plus one Platform tick for this control. The host waits to
+    # that time, so it sends the phase exactly then; a drain that sends it early
+    # closes the target's transaction before its own phase takes effect.
+    local expected_end_resp_fs=0
+    if [ "${expected_end_resp}" -eq 1 ]; then
+        expected_end_resp_fs=$((NB_LATENCY + 1000000))
+    fi
+    [ "${end_resp_fs}" -eq "${expected_end_resp_fs}" ] \
+        || fail "the ${label} control sent END_RESP at ${end_resp_fs} fs, not ${expected_end_resp_fs} fs"
     if [ "${expected_reset}" = "required" ]; then
         local reset
         reset="$(smoke_reset_status "${late_output}")"

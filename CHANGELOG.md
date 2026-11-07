@@ -25,8 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 每次退休后的停止（终端结果或 host failure）都先调用 `ruscv_machine_reset` 并要求返回
     非 OK 状态（target 拒绝确认），再运行 kernel 直到 `RamTarget` 没有已调度阶段且
     initiator 没有 drain 状态，之后才 destroy 句柄并 `sc_stop`；forward 路径已释放事务时
-    跳过 reset 探测。退出时报告 late phase 数、退休数、drain 发送的 `END_RESP` 数与 target
-    是否仍有开启的事务
+    跳过 reset 探测。退出时报告 late phase 数、退休数、drain 发送的 `END_RESP` 数及其发送的 host
+    时间与 target 是否仍有开启的事务
   - `RamTarget` 新增 `TargetFaults`、已调度阶段计数（供 drain 等待）、开放事务查询，并把
     最终阶段延迟集中到 `final_phase_latency()`；四个新 fault 选项在命名位置破坏模型：
     `--fault-late-response` 把本次运行第一笔 AT 访问的最终阶段推迟到声明上限后一个 tick，

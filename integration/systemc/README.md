@@ -16,9 +16,10 @@ one ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
   adds no delay (quantum D13). Under `--nb` it also registers its AT
   `nb_transport_fw` mode: every path applies the access once at `BEGIN_REQ`,
   schedules its phases through a `peq_with_cb_and_phase`, reports its
-  `BEGIN_REQ` and applied-access counts, whether a transaction is still open
-  and how many phases it has scheduled but not delivered, and withholds a
-  transport reset acknowledgement while a transaction is open (nb D8/D9).
+  `BEGIN_REQ` and applied-access counts and whether a transaction is still open,
+  tracks the phases it has scheduled but not delivered so the host's drain can
+  wait on them, and withholds a transport reset acknowledgement while a
+  transaction is open (nb D8/D9).
 - `ruscv_initiator.{h,cpp}`: the C ABI `ruscv_target` callbacks mapped onto a
   `simple_initiator_socket` bound to that target. `--dmi` selects the
   `get_direct_mem_ptr` query; the registered `invalidate_direct_mem_ptr`
@@ -148,8 +149,9 @@ must not be combined with `--nb`: they wait one tick in `b_transport` and in
 that passes is a smoke failure.
 
 At exit the host reports the initiator's late-phase count, its retirement count,
-the forward `END_RESP` phases its drain sent and whether the target still holds a
-transaction. A normal `--nb` pass reports zero late phases (nb D9).
+the forward `END_RESP` phases its drain sent with the host time of the one it
+sent, and whether the target still holds a transaction. A normal `--nb` pass
+reports zero late phases (nb D9).
 
 The end-to-end comparison with the native run is
 [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh); the

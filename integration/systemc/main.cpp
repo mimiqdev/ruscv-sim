@@ -873,9 +873,11 @@ int sc_main(int argc, char** argv) {
         initiator.direct_mem_invalidation_count(), initiator.direct_mem_scheduled_count());
     std::printf(
         "systemc-smoke: AT late_phases=%" PRIu64 " retirements=%" PRIu64
-        " drain_end_resp=%" PRIu64 " open_transaction=%d\n",
+        " drain_end_resp=%" PRIu64 " drain_end_resp_fs=%" PRIu64
+        " open_transaction=%d\n",
         initiator.late_phase_count(), initiator.retirement_count(),
-        initiator.drain_end_resp_count(), ram.has_open_transaction() ? 1 : 0);
+        initiator.drain_end_resp_count(), initiator.drain_end_resp_fs(),
+        ram.has_open_transaction() ? 1 : 0);
     std::printf(
         "systemc-smoke: totals consumed_fs=%" PRIu64 " host_elapsed_fs=%" PRIu64
         " transport_delay_fs=%" PRIu64 "\n",

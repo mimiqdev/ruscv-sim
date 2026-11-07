@@ -196,6 +196,9 @@ public:
     /// Number of forward `END_RESP` phases the drain sent for a retained
     /// transaction (nb D9).
     uint64_t drain_end_resp_count() const { return drain_end_resp_count_; }
+    /// The host time the drain sent its forward `END_RESP`, or zero when it sent
+    /// none (nb D9).
+    uint64_t drain_end_resp_fs() const { return drain_end_resp_fs_; }
     /// True while a retired transaction is still retained, or while the target
     /// may still hold a reference to it (nb D9).
     bool drain_pending() const { return at_transaction_ != nullptr; }
@@ -295,6 +298,7 @@ private:
     uint64_t retirements_ = 0;
     uint64_t late_phases_ = 0;
     uint64_t drain_end_resp_count_ = 0;
+    uint64_t drain_end_resp_fs_ = 0;
     uint64_t direct_mem_invalidations_ = 0;
     uint64_t direct_mem_scheduled_ = 0;
     uint64_t direct_mem_errors_ = 0;

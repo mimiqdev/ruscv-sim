@@ -290,6 +290,7 @@ void RuscvInitiator::drain_step() {
             socket->nb_transport_fw(at_transaction_->payload(), end_resp, delay);
         drain_end_resp_pending_ = false;
         ++drain_end_resp_count_;
+        drain_end_resp_fs_ = now.value();
         if (sync == tlm::TLM_COMPLETED || sync == tlm::TLM_ACCEPTED) {
             // nb D8/D9: the forward `END_RESP` completes the retained
             // transaction for the target, which releases it.
