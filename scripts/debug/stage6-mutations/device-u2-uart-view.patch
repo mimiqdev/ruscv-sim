@@ -1,0 +1,16 @@
+--- a/src/machine/platform.rs
++++ b/src/machine/platform.rs
+@@ -261,12 +261,7 @@
+                         SystemBus::physical_backend(bus.clone()),
+                     )))
+                 };
+-                // device D5: a host-served window has no Rust state to view.
+-                let state = if host_uart.is_some() {
+-                    None
+-                } else {
+-                    Some(uart)
+-                };
++                let state = Some(uart);
+                 (bus.clone(), port(), port(), state, Some(bus))
+             }
+         };

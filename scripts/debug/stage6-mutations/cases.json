@@ -2881,5 +2881,165 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "device-u2-uart-route",
+    "source": "src/executor.rs",
+    "patch": "device-u2-uart-route.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_host_uart_target_serves_the_uart_window_on_the_tlm_route",
+        "failure": [
+          "did not serve the guest's LSR read and THR write"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u2-event-on-fault",
+    "source": "src/blocking/device.rs",
+    "patch": "device-u2-event-on-fault.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_host_uart_thr_write_publishes_one_byte_and_a_target_fault_publishes_none",
+        "failure": [
+          "a faulted THR write still called config.uart_output"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u2-unknown-precedence",
+    "source": "src/blocking/device.rs",
+    "patch": "device-u2-unknown-precedence.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_host_uart_unknown_completion_publishes_no_event",
+        "failure": [
+          "an unknown completion still called config.uart_output"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u2-zero-delay",
+    "source": "src/blocking/device.rs",
+    "patch": "device-u2-zero-delay.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_host_uart_that_annotates_a_delay_is_a_protocol_failure_without_charge",
+        "failure": [
+          "a device delay annotation did not fail the access"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u2-zero-elapsed",
+    "source": "src/blocking/device.rs",
+    "patch": "device-u2-zero-elapsed.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::device_tests::a_device_target_that_reports_host_elapsed_time_is_a_protocol_failure",
+        "failure": [
+          "host elapsed time on a device transaction was accepted"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u2-dmi-hint",
+    "source": "src/blocking/device.rs",
+    "patch": "device-u2-dmi-hint.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::device_tests::a_device_target_that_sets_the_direct_memory_hint_is_a_protocol_failure",
+        "failure": [
+          "the direct-memory hint on a device transaction was accepted"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u2-sba-initiator",
+    "source": "src/executor.rs",
+    "patch": "device-u2-sba-initiator.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::an_sba_read_of_the_uart_window_reaches_the_host_target_as_debug_inbound",
+        "failure": [
+          "did not carry DebugInbound provenance"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u2-native-refused",
+    "source": "src/machine/platform.rs",
+    "patch": "device-u2-native-refused.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_device_selection_requires_the_tlm_route_on_the_native_platform",
+        "failure": [
+          "a device target was admitted"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u2-reset",
+    "source": "src/machine/platform.rs",
+    "patch": "device-u2-reset.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_host_uart_resets_once_per_install_and_a_refusal_keeps_the_association",
+        "failure": [
+          "the build did not reset the host UART target exactly once"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u2-uart-view",
+    "source": "src/machine/platform.rs",
+    "patch": "device-u2-uart-view.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_host_uart_window_has_no_inspection_and_receives_through_its_target",
+        "failure": [
+          "a host-served UART window reported an in-tree inspection"
+        ]
+      }
+    ]
   }
 ]

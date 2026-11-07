@@ -1,0 +1,20 @@
+--- a/src/blocking/device.rs
++++ b/src/blocking/device.rs
+@@ -341,17 +341,6 @@
+                 width,
+             )));
+         }
+-        if !transaction.response_delay().is_zero() {
+-            return Err(PhysicalBackendError::protocol(format!(
+-                "device target annotated {} fs of delay for {} {:?} at {:#018x} on the {} window; \
+-                 a device transaction reports zero delay",
+-                transaction.response_delay().as_u64(),
+-                command_label(command),
+-                descriptor.category,
+-                descriptor.paddr,
+-                self.window.name(),
+-            )));
+-        }
+         if !transaction.host_elapsed().is_zero() {
+             return Err(PhysicalBackendError::protocol(format!(
+                 "device target reported {} fs of host elapsed time for {} {:?} at {:#018x} on the \

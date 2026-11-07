@@ -1,0 +1,21 @@
+--- a/src/blocking/device.rs
++++ b/src/blocking/device.rs
+@@ -386,18 +386,6 @@
+             )));
+         }
+         if let Some(event) = events.first() {
+-            if !transaction.status().is_completion() {
+-                return Err(PhysicalBackendError::protocol(format!(
+-                    "device target reported a {} event on a {} response for {} {:?} at {:#018x} \
+-                     on the {} window; only an accepted access publishes an event",
+-                    event.name(),
+-                    transaction.status().name(),
+-                    command_label(command),
+-                    descriptor.category,
+-                    descriptor.paddr,
+-                    self.window.name(),
+-                )));
+-            }
+             if event.window() != self.window {
+                 return Err(PhysicalBackendError::protocol(format!(
+                     "device target reported a {} event on the {} window for {} {:?} at {:#018x}; \

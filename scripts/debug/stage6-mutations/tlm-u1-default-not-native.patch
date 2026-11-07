@@ -1,8 +1,6 @@
-diff --git i/src/machine/mod.rs w/src/machine/mod.rs
-index 4a32994..1796fca 100644
---- i/src/machine/mod.rs
-+++ w/src/machine/mod.rs
-@@ -180,8 +180,8 @@ impl MachineConfig {
+--- a/src/machine/mod.rs
++++ b/src/machine/mod.rs
+@@ -201,7 +201,7 @@
              platform,
              // Machine composition default is `rv64imafdc` (contract D2).
              isa: IsaProfile::default(),
@@ -10,5 +8,4 @@ index 4a32994..1796fca 100644
 +            transport: Transport::tlm(Arc::new(crate::blocking::ZeroDelayRam::new())),
              dmi: false,
              quantum: 0,
-             tick_period: TickPeriod::DEFAULT,
-             verbose: false,
+             devices: DeviceTargets::none(),

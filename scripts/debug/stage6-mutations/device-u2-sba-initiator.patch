@@ -1,0 +1,11 @@
+--- a/src/executor.rs
++++ b/src/executor.rs
+@@ -1037,7 +1037,7 @@
+                     .as_ref()
+                     .expect("checked above")
+                     .uart()
+-                    .transact(request, initiator);
++                    .transact(request, BlockingInitiator::Hart);
+                 return self.finish_device(outcome);
+             }
+ 

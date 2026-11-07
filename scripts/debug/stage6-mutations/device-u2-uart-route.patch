@@ -1,0 +1,19 @@
+--- a/src/executor.rs
++++ b/src/executor.rs
+@@ -1031,16 +1031,6 @@
+                 ));
+             }
+ 
+-            if self.devices.is_some() {
+-                let outcome = self
+-                    .devices
+-                    .as_ref()
+-                    .expect("checked above")
+-                    .uart()
+-                    .transact(request, initiator);
+-                return self.finish_device(outcome);
+-            }
+-
+             let offset = descriptor.paddr - self.uart_base;
+             let mut uart = self
+                 .uart

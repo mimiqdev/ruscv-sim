@@ -1,0 +1,19 @@
+--- a/src/blocking/device.rs
++++ b/src/blocking/device.rs
+@@ -363,16 +363,6 @@
+                 self.window.name(),
+             )));
+         }
+-        if transaction.is_dmi_allowed() {
+-            return Err(PhysicalBackendError::protocol(format!(
+-                "device target set the direct-memory hint for {} {:?} at {:#018x} on the {} \
+-                 window; a device window never offers direct memory",
+-                command_label(command),
+-                descriptor.category,
+-                descriptor.paddr,
+-                self.window.name(),
+-            )));
+-        }
+         let events = transaction.device_events();
+         if events.len() > 1 {
+             return Err(PhysicalBackendError::protocol(format!(
