@@ -14,7 +14,7 @@ pub(crate) use owned::OwnedMachine;
 #[cfg(test)]
 pub(crate) use owned::SignalOperation;
 
-use crate::blocking::{TickPeriod, Transport};
+use crate::blocking::{DeviceTargets, TickPeriod, Transport};
 use crate::core::observation::{HartTransition, ObservationSink};
 use crate::core::{CoreState, RiscvCore, StepOutcome};
 use crate::elf::LoadImage;
@@ -171,6 +171,16 @@ pub struct MachineConfig {
     /// [`MachineError::Placement`] reports a bound that does not fit the
     /// declared tick period.
     pub quantum: u64,
+    /// The Platform's device-target selection (device D2).
+    ///
+    /// [`DeviceTargets::none`], the default, answers each device window with
+    /// its in-tree target, so a run without a host device target is exactly
+    /// today's run on either route.  A selection requires a [`Transport::Tlm`]
+    /// route on [`PlatformKind::Native`]; [`MachineError::UnsupportedTransport`]
+    /// reports the native route and a flat Platform, exactly as it reports the
+    /// other mismatched combinations.  The field is public, so adding it breaks
+    /// struct-literal construction by external code.
+    pub devices: DeviceTargets,
     /// The declared Platform tick period (dev-plan D7).
     ///
     /// One tick is one virtual-time unit and one `mtime` unit.  A blocking
@@ -194,6 +204,7 @@ impl MachineConfig {
             transport: Transport::Native,
             dmi: false,
             quantum: 0,
+            devices: DeviceTargets::none(),
             tick_period: TickPeriod::DEFAULT,
             verbose: false,
             tohost_override: None,
@@ -228,10 +239,11 @@ pub enum MachineError {
     #[error(
         "unsupported transport configuration: a TLM transport requires PlatformKind::Native (Flat \
          has no TLM route), direct memory requires a TLM transport (the native route has no direct \
-         memory), a quantum requires a TLM transport (the native route has no local offset), and a \
+         memory), a quantum requires a TLM transport (the native route has no local offset), a \
          target that suspends host time cannot be combined with a non-zero quantum (host time \
          passing inside a grant would stop the kernel's clock from being the quantum anchor for \
-         the whole grant)"
+         the whole grant), and a device target requires a TLM transport on the native Platform (a \
+         flat Platform has no device window and the native route has no device target)"
     )]
     UnsupportedTransport,
     #[error("this configuration has no UART")]

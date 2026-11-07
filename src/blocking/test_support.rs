@@ -7,10 +7,11 @@
 
 use super::{
     BlockingAtomicOperation, BlockingAtomicOutcome, BlockingCommand, BlockingDebug,
-    BlockingDeviceEvent, BlockingDirectMemAccess, BlockingInitiator, BlockingResponseStatus,
-    BlockingTarget, BlockingTransaction, Femtoseconds,
+    BlockingDeviceEvent, BlockingDeviceTarget, BlockingDirectMemAccess, BlockingInitiator,
+    BlockingResponseStatus, BlockingTarget, BlockingTransaction, Femtoseconds,
 };
 use crate::memory::SimpleMemory;
+use crate::peripherals::uart16550::{lsr_bits, reg_offset, UART_SIZE};
 use crate::physical::PhysicalAccessKind;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -915,6 +916,264 @@ impl fmt::Debug for SuspendingTarget {
             .debug_struct("SuspendingTarget")
             .field("transactions", &self.transactions.load(Ordering::SeqCst))
             .field("queries", &self.queries.load(Ordering::SeqCst))
+            .finish()
+    }
+}
+
+/// The deliberate misbehaviour a [`HostUart`] adds to an otherwise correct
+/// response (device D2/D4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum HostUartFault {
+    /// Answer the access correctly and report its window's event.
+    #[default]
+    None,
+    /// Report this status with the transmit event still attached, so an event
+    /// beside a non-`Ok` status is observable.
+    StatusWithEvent(BlockingResponseStatus),
+    /// Report this status with no event at all.
+    Status(BlockingResponseStatus),
+    /// Complete and report the window's event twice.
+    SecondEvent,
+    /// Complete and report the other window's event instead.
+    WrongWindowEvent,
+    /// Complete and change the payload's start address.
+    ChangedPayload,
+    /// Complete and annotate this response delay in exact femtoseconds.
+    Delay(u64),
+    /// Complete and report this host elapsed time in exact femtoseconds.
+    Elapsed(u64),
+    /// Complete and set the direct-memory hint.
+    DmiHint,
+    /// Report the window's event with the outcome-unknown flag, as a target
+    /// that cannot vouch that its effect committed does.
+    Unknown,
+}
+
+/// A host UART target for the device-target rows (device D2, D5, D6).
+///
+/// It models the little register state the in-crate guests use: `LSR` answers
+/// the transmit-empty bits, an `RBR`/`THR` write with `DLAB` clear accepts the
+/// byte and reports exactly one [`BlockingDeviceEvent::UartTransmit`], and an
+/// `RBR` read drains the bytes the host pushed with
+/// [`BlockingDeviceTarget::receive`].  Every response can be scripted to
+/// misbehave on purpose, and a reset clears the register file, so a fixture
+/// observes the adapter's protocol-failure rows and the Platform's reset call
+/// through a target that really is outside the crate's control.
+pub(crate) struct HostUart {
+    base: u64,
+    registers: Mutex<[u8; UART_SIZE]>,
+    /// The transmit bytes this target accepted.
+    transmitted: Mutex<Vec<u8>>,
+    /// The bytes the host pushed into the receive direction.
+    received: Mutex<Vec<u8>>,
+    /// Blocking transactions issued.
+    pub transactions: AtomicUsize,
+    /// Transport resets issued.
+    pub resets: AtomicUsize,
+    /// Bytes `receive` delivered.
+    pub receives: AtomicUsize,
+    /// The answer `transport_reset` gives.
+    reset_ack: AtomicBool,
+    /// `LSR`'s answer, so a guest can be made to proceed or to spin.
+    lsr: AtomicU64,
+    fault: Mutex<HostUartFault>,
+    log: Mutex<Vec<Call>>,
+}
+
+impl HostUart {
+    /// Creates a host UART target for the window at `base`.
+    ///
+    /// `LSR` starts at transmit-holding-register empty plus transmitter empty,
+    /// which is the answer a guest's poll loop needs to proceed.
+    pub(crate) fn new(base: u64) -> Arc<Self> {
+        Arc::new(Self {
+            base,
+            registers: Mutex::new([0; UART_SIZE]),
+            transmitted: Mutex::new(Vec::new()),
+            received: Mutex::new(Vec::new()),
+            transactions: AtomicUsize::new(0),
+            resets: AtomicUsize::new(0),
+            receives: AtomicUsize::new(0),
+            reset_ack: AtomicBool::new(true),
+            lsr: AtomicU64::new(u64::from(lsr_bits::THRE | lsr_bits::TEMT)),
+            fault: Mutex::new(HostUartFault::None),
+            log: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// Sets the misbehaviour the next responses add.
+    pub(crate) fn set_fault(&self, fault: HostUartFault) {
+        *self.fault.lock().unwrap() = fault;
+    }
+
+    /// Sets `LSR`'s answer.
+    pub(crate) fn set_lsr(&self, value: u8) {
+        self.lsr.store(u64::from(value), Ordering::SeqCst);
+    }
+
+    /// Sets whether a transport reset is acknowledged.
+    pub(crate) fn set_reset_ack(&self, ack: bool) {
+        self.reset_ack.store(ack, Ordering::SeqCst);
+    }
+
+    /// Blocking transactions issued.
+    pub(crate) fn transactions(&self) -> usize {
+        self.transactions.load(Ordering::SeqCst)
+    }
+
+    /// Transport resets issued.
+    pub(crate) fn resets(&self) -> usize {
+        self.resets.load(Ordering::SeqCst)
+    }
+
+    /// The transmit bytes this target accepted.
+    pub(crate) fn transmitted(&self) -> Vec<u8> {
+        self.transmitted.lock().unwrap().clone()
+    }
+
+    /// The bytes the host pushed into the receive direction.
+    pub(crate) fn received(&self) -> Vec<u8> {
+        self.received.lock().unwrap().clone()
+    }
+
+    /// The logged blocking transactions.
+    pub(crate) fn log(&self) -> Vec<Call> {
+        self.log.lock().unwrap().clone()
+    }
+
+    /// One register read at `offset` within the window.
+    fn read_reg(&self, offset: u64) -> u8 {
+        match usize::try_from(offset)
+            .ok()
+            .filter(|offset| *offset < UART_SIZE)
+        {
+            Some(offset) if offset == reg_offset::RBR_THR as usize => {
+                *self.received.lock().unwrap().first().unwrap_or(&0)
+            }
+            Some(offset) if offset == reg_offset::LSR as usize => {
+                self.lsr.load(Ordering::SeqCst) as u8
+            }
+            Some(offset) => self.registers.lock().unwrap()[offset],
+            // The window is wider than the device range; an answer outside it
+            // reads zero, as an unimplemented register does.
+            None => 0,
+        }
+    }
+
+    /// One register write at `offset` within the window, reporting a THR byte.
+    fn write_reg(&self, offset: u64, byte: u8) -> Option<u8> {
+        let offset = usize::try_from(offset)
+            .ok()
+            .filter(|offset| *offset < UART_SIZE)?;
+        let mut registers = self.registers.lock().unwrap();
+        let dlab = registers[reg_offset::LCR as usize] & 0x80 != 0;
+        if offset == reg_offset::RBR_THR as usize && !dlab {
+            self.transmitted.lock().unwrap().push(byte);
+            return Some(byte);
+        }
+        registers[offset] = byte;
+        None
+    }
+}
+
+impl BlockingDeviceTarget for HostUart {
+    fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
+        self.transactions.fetch_add(1, Ordering::SeqCst);
+        self.log.lock().unwrap().push(Call {
+            address: transaction.address(),
+            command: transaction.command(),
+            length: transaction.data_length(),
+            access_kind: transaction.extension().access_kind(),
+            initiator: transaction.extension().initiator(),
+            local_offset_fs: transaction.local_offset().as_u64(),
+            may_suspend: transaction.may_suspend(),
+            atomic: transaction.atomic_extension().is_some(),
+        });
+        let offset = transaction.address().wrapping_sub(self.base);
+        let event = match transaction.command() {
+            BlockingCommand::Read => {
+                let byte = self.read_reg(offset);
+                transaction.data_mut()[0] = byte;
+                None
+            }
+            BlockingCommand::Write => self
+                .write_reg(offset, transaction.data()[0])
+                .map(BlockingDeviceEvent::UartTransmit),
+        };
+        let fault = *self.fault.lock().unwrap();
+        let report = |transaction: &mut BlockingTransaction<'_>| {
+            if let Some(event) = event {
+                transaction.report_device_event(event);
+            }
+        };
+        match fault {
+            HostUartFault::None => report(transaction),
+            HostUartFault::StatusWithEvent(status) => {
+                report(transaction);
+                transaction.set_status(status);
+                return;
+            }
+            HostUartFault::Status(status) => {
+                transaction.set_status(status);
+                return;
+            }
+            HostUartFault::SecondEvent => {
+                report(transaction);
+                report(transaction);
+            }
+            HostUartFault::WrongWindowEvent => {
+                transaction.report_device_event(BlockingDeviceEvent::HtifWrite(0x5a));
+            }
+            HostUartFault::ChangedPayload => {
+                report(transaction);
+                transaction.set_address(transaction.address().wrapping_add(1));
+            }
+            HostUartFault::Delay(femtoseconds) => {
+                report(transaction);
+                transaction.set_response_delay(Femtoseconds::new(femtoseconds));
+            }
+            HostUartFault::Elapsed(femtoseconds) => {
+                report(transaction);
+                transaction.set_host_elapsed(Femtoseconds::new(femtoseconds));
+            }
+            HostUartFault::DmiHint => {
+                report(transaction);
+                transaction.set_dmi_allowed(true);
+            }
+            HostUartFault::Unknown => {
+                report(transaction);
+                transaction.extension_mut().mark_outcome_unknown();
+                return;
+            }
+        }
+        transaction.set_status(BlockingResponseStatus::Ok);
+    }
+
+    fn receive(&self, byte: u8) {
+        self.receives.fetch_add(1, Ordering::SeqCst);
+        self.received.lock().unwrap().push(byte);
+    }
+
+    fn transport_reset(&self) -> bool {
+        self.resets.fetch_add(1, Ordering::SeqCst);
+        if !self.reset_ack.load(Ordering::SeqCst) {
+            return false;
+        }
+        // An acknowledged reset quiesces the target: no register and no
+        // received byte of the previous generation survives.
+        *self.registers.lock().unwrap() = [0; UART_SIZE];
+        self.received.lock().unwrap().clear();
+        true
+    }
+}
+
+impl fmt::Debug for HostUart {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HostUart")
+            .field("transactions", &self.transactions())
+            .field("resets", &self.resets())
+            .field("transmitted", &self.transmitted())
             .finish()
     }
 }

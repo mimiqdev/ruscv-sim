@@ -671,6 +671,18 @@ impl SystemBus {
         contains_range(self.htif_base, self.htif_size, addr, width)
     }
 
+    /// device D5: whether the typed `MemoryInterface` view must refuse the UART
+    /// window because a host target serves it.
+    ///
+    /// A host-served window has no Rust register file, so the typed read and
+    /// write return [`MemoryError::InvalidAddress`] instead of reading or
+    /// mutating a stale object.  An in-tree window keeps today's answers.
+    fn uart_typed_access_refused(&self) -> bool {
+        self.devices
+            .as_ref()
+            .is_some_and(DevicePath::uart_window_is_host_served)
+    }
+
     /// quantum F1: whether a request is routed to a device window. An unmapped
     /// address is not a device and does not flush.
     fn in_device(&self, addr: u64, width: usize) -> bool {
@@ -1338,6 +1350,10 @@ impl MemoryInterface for SystemBus {
             return self.ram.read_byte(addr - self.ram_base);
         }
         if self.is_uart(addr) {
+            // device D5: a host-served window has no register state to read.
+            if self.uart_typed_access_refused() {
+                return Err(MemoryError::InvalidAddress(addr));
+            }
             let offset = addr - self.uart_base;
             return Ok(self
                 .uart
@@ -1416,6 +1432,10 @@ impl MemoryInterface for SystemBus {
             return self.ram.write_byte(addr - self.ram_base, value);
         }
         if self.is_uart(addr) {
+            // device D5: a host-served window has no register state to mutate.
+            if self.uart_typed_access_refused() {
+                return Err(MemoryError::InvalidAddress(addr));
+            }
             let offset = addr - self.uart_base;
             // device D4: the typed byte write publishes through the UART sink,
             // exactly as the raw and device paths do.

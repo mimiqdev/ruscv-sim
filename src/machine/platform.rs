@@ -1,7 +1,7 @@
 //! Existing Platform configurations and placement, without run-stop policy.
 use super::inbound::InboundPort;
 use super::{MachineConfig, MachineError, PlatformKind};
-use crate::blocking::{DevicePath, DeviceTargets, InTreeHtif, InTreeUart, Transport};
+use crate::blocking::{BlockingDeviceTarget, DevicePath, InTreeHtif, InTreeUart, Transport};
 use crate::core::{SharedDataAccess, SharedPhysicalAccess};
 use crate::elf::LoadImage;
 use crate::executor::{
@@ -39,7 +39,13 @@ pub(super) struct Platform {
     pub placement: ImagePlacement,
     pub selected_tohost: u64,
     pub ram_tohost_offset: Option<u64>,
+    /// The in-tree UART register file, or `None` when a host target serves the
+    /// window or the Platform is flat (device D5).
     uart: Option<Arc<Mutex<Uart16550>>>,
+    /// device D5/D6: the host target serving the UART window, if any.  A
+    /// host-served window has no Rust register state to inspect, and
+    /// `receive_uart` injects through the target instead.
+    host_uart: Option<Arc<dyn BlockingDeviceTarget>>,
     events: Arc<Mutex<Vec<PlatformEvent>>>,
     /// Native CLINT. Flat has no device window.
     bus: Option<Arc<Mutex<SystemBus>>>,
@@ -76,6 +82,15 @@ impl Platform {
         // A TLM route needs the native Platform's device map; the flat
         // configuration has no device transport and no TLM route.
         if config.platform == PlatformKind::Flat && !config.transport.is_native() {
+            return Err(MachineError::UnsupportedTransport);
+        }
+        // device D2: a device target is a TLM-route selection on the native
+        // Platform.  A flat Platform has no device window, and the native route
+        // answers each window itself, so either combination is the existing
+        // unsupported-transport error.
+        if config.devices.uart().is_some()
+            && (config.platform != PlatformKind::Native || config.transport.is_native())
+        {
             return Err(MachineError::UnsupportedTransport);
         }
         // Direct memory is a property of the blocking route, so a native
@@ -123,6 +138,21 @@ impl Platform {
                 ))
             })?,
         };
+        // device D6: the selected host target is reset once per build and
+        // before the image is placed, so no device state crosses a generation.
+        // It runs beside the RAM slot's reset and ahead of it: a refusal must
+        // not disturb the running association, and the RAM slot's reset is the
+        // step that already discards the previous window's contents.  Every
+        // install builds a fresh Platform, including `fresh_reset`,
+        // `reload_for_ndmreset` and `ruscv_machine_reset`.  A refused reset
+        // fails the build like a refused RAM reset.
+        if let Some(target) = config.devices.uart() {
+            if !target.transport_reset() {
+                return Err(MachineError::Placement(
+                    "the UART device target refused its transport reset".into(),
+                ));
+            }
+        }
         // After every transport reset and before installation, zero-fill the
         // whole RAM window so no prior run's contents survive (dev-plan D6).
         ram.begin_window()?;
@@ -148,6 +178,11 @@ impl Platform {
         }
         Self::place(&ram, image)?;
         let events = Arc::new(Mutex::new(Vec::new()));
+        // device D2/D5: the selection comes from `MachineConfig.devices`.
+        // Without one, each window keeps its in-tree target; a selected UART
+        // target is host-served and leaves the Platform no register state to
+        // view.
+        let host_uart = config.devices.uart().cloned();
         let (typed, fetch, data, uart, bus): (
             SharedMemory,
             SharedPhysicalAccess,
@@ -169,21 +204,21 @@ impl Platform {
                 (memory, fetch, data, None, None)
             }
             PlatformKind::Native => {
+                // The bus always holds one UART register file.  A host-served
+                // window leaves it unreachable: the typed view refuses
+                // (device D5) and the device path answers the window.
                 let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
-                // device D2: unit U2 reads the selection from
-                // `MachineConfig.devices`; unit U1 defines the shape and
-                // selects the in-tree target for each window, so a run without
-                // a host target is today's run on either route.
-                let targets = DeviceTargets::none();
                 let devices = match &config.transport {
                     Transport::Native => None,
-                    Transport::Tlm(_) => Some(DevicePath::new(
-                        targets
-                            .uart()
-                            .cloned()
-                            .unwrap_or_else(|| Arc::new(InTreeUart::new(uart.clone()))),
-                        Arc::new(InTreeHtif::new()),
-                    )),
+                    Transport::Tlm(_) => Some(match &host_uart {
+                        Some(target) => {
+                            DevicePath::with_host_uart(target.clone(), Arc::new(InTreeHtif::new()))
+                        }
+                        None => DevicePath::new(
+                            Arc::new(InTreeUart::new(uart.clone())),
+                            Arc::new(InTreeHtif::new()),
+                        ),
+                    }),
                 };
                 let bus = Arc::new(Mutex::new(SystemBus::with_ram_slot(
                     ram.clone(),
@@ -226,7 +261,13 @@ impl Platform {
                         SystemBus::physical_backend(bus.clone()),
                     )))
                 };
-                (bus.clone(), port(), port(), Some(uart), Some(bus))
+                // device D5: a host-served window has no Rust state to view.
+                let state = if host_uart.is_some() {
+                    None
+                } else {
+                    Some(uart)
+                };
+                (bus.clone(), port(), port(), state, Some(bus))
             }
         };
         // The inbound master is the DM, not the Hart. It shares the routing,
@@ -263,6 +304,7 @@ impl Platform {
             selected_tohost,
             ram_tohost_offset,
             uart,
+            host_uart,
             events,
             bus,
             flat_mtime: 0,
@@ -581,6 +623,11 @@ impl Platform {
             .map_err(|_| crate::memory::MemoryError::Backend("poisoned Platform".into()))?
             .read_dword(self.selected_tohost)
     }
+    /// The in-tree UART register file's coherent inspection.
+    ///
+    /// `None` when the Platform has no UART window, and `None` when a host
+    /// target serves the window: it owns the register state and this version
+    /// has no inspection snapshot for it (device D5).
     pub fn uart_inspection(&self) -> Result<Option<UartInspection>, MachineError> {
         self.uart
             .as_ref()
@@ -591,7 +638,16 @@ impl Platform {
             })
             .transpose()
     }
+    /// Injects one byte into the UART window's receive direction (device D5).
+    ///
+    /// A host-served window receives through the target's `receive`; an in-tree
+    /// window keeps its register file.  A Platform without a UART window has
+    /// nothing to receive through, which is [`MachineError::NoUart`].
     pub fn receive_uart(&self, byte: u8) -> Result<(), MachineError> {
+        if let Some(target) = &self.host_uart {
+            target.receive(byte);
+            return Ok(());
+        }
         self.uart
             .as_ref()
             .ok_or(MachineError::NoUart)?

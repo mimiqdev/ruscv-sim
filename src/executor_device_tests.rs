@@ -10,10 +10,11 @@
 //! `src/blocking/device_tests.rs`.
 
 use super::{SystemBus, SYSTEM_BUS_HTIF_BASE, SYSTEM_BUS_UART_BASE};
+use crate::blocking::test_support::HostUart;
 use crate::blocking::{DevicePath, InTreeHtif, InTreeUart};
 use crate::hart_amods::{self, AmoOperation};
-use crate::memory::{MemoryInterface, SimpleMemory};
-use crate::peripherals::uart16550::{reg_offset, Uart16550, FIFO_DEPTH};
+use crate::memory::{MemoryError, MemoryInterface, SimpleMemory};
+use crate::peripherals::uart16550::{lsr_bits, reg_offset, Uart16550, FIFO_DEPTH};
 use crate::physical::{
     AmoWidth, AtomicAccessError, AtomicOrdering, AtomicRequest, AtomicResponse,
     NativeSystemBusBackend, PhysicalBackend, PhysicalBackendResult, PhysicalRequest, PhysicalWidth,
@@ -378,4 +379,88 @@ fn a_rejected_access_leaves_the_uart_register_file_untouched_on_both_routes() {
         );
         assert!(harness.transmitted().is_empty());
     }
+}
+
+/// device D5: a host-served UART window has no Rust register state, so the
+/// typed `MemoryInterface` view refuses a read and a write instead of reading
+/// or mutating a stale object, while the raw device path still reaches the
+/// selected target.
+#[test]
+fn a_host_served_uart_window_refuses_the_typed_view() {
+    let target = HostUart::new(SYSTEM_BUS_UART_BASE);
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(RAM_SIZE)));
+    let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
+    let mut bus = SystemBus::with_ram_slot(
+        RamSlot::native(ram, RAM_BASE, RAM_SIZE),
+        uart,
+        RAM_BASE,
+        RAM_SIZE,
+        Some(super::DevicePath::with_host_uart(
+            target.clone(),
+            Arc::new(InTreeHtif::new()),
+        )),
+    );
+    let transmitted = Arc::new(Mutex::new(Vec::new()));
+    let sink = transmitted.clone();
+    bus.set_uart_sink(move |byte| sink.lock().unwrap().push(byte));
+
+    let lsr = SYSTEM_BUS_UART_BASE + reg_offset::LSR;
+    assert!(
+        matches!(bus.read_byte(lsr), Err(MemoryError::InvalidAddress(address)) if address == lsr),
+        "a typed read of a host-served UART window was not refused"
+    );
+    assert!(
+        matches!(
+            bus.write_byte(SYSTEM_BUS_UART_BASE, b'X'),
+            Err(MemoryError::InvalidAddress(address)) if address == SYSTEM_BUS_UART_BASE
+        ),
+        "a typed write of a host-served UART window was not refused"
+    );
+    assert_eq!(
+        target.transactions(),
+        0,
+        "the typed view reached the target instead of refusing"
+    );
+    assert!(
+        transmitted.lock().unwrap().is_empty(),
+        "a refused typed write published a byte"
+    );
+
+    // The window is still served: the raw device path is one transaction to
+    // the selected target, and its transmitted byte reaches the same sink.
+    let payload = *b"H";
+    let request =
+        PhysicalRequest::data_write(SYSTEM_BUS_UART_BASE, PhysicalWidth::Byte, &payload).unwrap();
+    assert!(
+        bus.transact(&request).is_ok(),
+        "the raw device path did not reach the host target"
+    );
+    assert_eq!(
+        target.transactions(),
+        1,
+        "the raw UART write did not reach the host target exactly once"
+    );
+    assert_eq!(
+        *transmitted.lock().unwrap(),
+        [b'H'],
+        "the host target's transmit byte did not reach the window sink"
+    );
+}
+
+/// device D5: the typed view refuses only a host-served window.  An in-tree TLM
+/// window keeps today's register-file read.
+#[test]
+fn an_in_tree_uart_window_keeps_the_typed_view() {
+    let harness = harness(Route::Tlm);
+    let lsr = harness
+        .bus
+        .lock()
+        .unwrap()
+        .read_byte(SYSTEM_BUS_UART_BASE + reg_offset::LSR)
+        .ok();
+    assert_eq!(
+        lsr,
+        Some(lsr_bits::THRE | lsr_bits::TEMT),
+        "an in-tree UART window lost its typed register read"
+    );
 }
