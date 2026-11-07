@@ -1480,6 +1480,8 @@ static void device_case(const char *guest)
           "the transmit event carries the written THR byte");
     check(device->request_fields_ok,
           "a device request carried a non-zero annotation or event");
+    check(device->receives == 0,
+          "no ABI entry pushed a byte into the attached window");
     free(device);
 
     device = attached_device_run(guest, RUSCV_DEVICE_EVENT_HTIF_WRITE, 0);
