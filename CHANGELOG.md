@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM-Modeled Devices U3: C ABI 设备表与 attach（issue #229）**
+  - 头文件新增 `ruscv_device` 表（device D8）：`window_base`、`window_size`、`user`、`b_transport`、
+    `receive`、`transport_reset`。三个回调都必须提供；表在 attach 时复制，`user` 必须活到
+    `ruscv_machine_destroy`。`transport_reset` 返回非零表示已静默并接受新访问，返回零按既有 placement
+    通道拒绝构建
+  - 新入口 `ruscv_machine_attach_device(machine, window, device)`，`window` 取 `RUSCV_DEVICE_UART`（0）。
+    必须在 create 之后、首次 `ruscv_machine_load_elf` 之前调用；NULL handle、NULL 表、未知窗口与缺回调的
+    表返回 `RUSCV_ERROR_INVALID_ARGUMENT`，`window_base`/`window_size` 不匹配、同一窗口二次 attach、
+    晚 attach 与 `ruscv_target` 为 NULL（无 TLM 路由）的 handle 返回 `RUSCV_ERROR_CONFIG`
+  - `ruscv_payload` 末尾新增 `int32_t device_event`：结构体从 272 字节增至 280 字节，既有字段的 offset
+    不变。设备事件的 tag 为 `RUSCV_DEVICE_EVENT_NONE`（0）、`RUSCV_DEVICE_EVENT_UART_TRANSMIT`（1）与
+    `RUSCV_DEVICE_EVENT_HTIF_WRITE`（2），事件的值取自该次访问自身的写数据，因此不需要第二个字段。
+    设备事务里的 `delay_fs`、`local_offset_fs`、`host_elapsed_fs`、`may_suspend` 与 `dmi_allowed`
+    必须为零；非零 delay、host elapsed 或 hint，改变 address/command/length，以及与窗口不匹配（或无法
+    识别）的 tag，都是该次访问的协议失败。RAM 表报设备事件同样被 RAM adapter 拒绝
+  - 因为是 append-only ABI，宿主必须按新头文件重新编译：`ruscv_payload` 变大，旧二进制不再兼容
+  - 三处 layout pin 同步更新：`src/capi/tests.rs` 的
+    `the_direct_memory_fields_are_final_in_their_structs`（含 `ruscv_device` 的 48 字节布局）、
+    `tests/capi/smoke.c` 的 size/final-field 检查，以及头文件的 Layout rule 与 final-field 文本
+  - `src/capi/tests.rs` 用 Rust `extern "C"` 设备表走真实入口：attach 成功后目标自身计数非零、
+    全部拒绝码、设备请求不带任何注记、`UART_TRANSMIT` 被接受而 `HTIF_WRITE` 在 UART 窗口上使运行
+    以协议失败结束、host delay/host elapsed/hint 各使运行失败、回调内的重入被拒而
+    `ruscv_machine_invalidate_direct_mem` 仍被接受；`tests/capi/smoke.c` 以纯 C 重复拒绝码、一次
+    transmit 事务与两处 layout pin。`--all-features` 仍不需要 C++ 工具链
+  - 两个 `device-u3-*` mutation 控制：`abi-attach` 钉住 handle 里的表存储，`abi-event` 钉住 ABI
+    响应的事件复制
+
 - **TLM-Modeled Devices U2: Rust 主机设备 target（issue #228）**
   - `DeviceTargets` 新增主机选择 `with_uart(target)`（device D2），`MachineConfig` 新增公开字段
     `devices`，`MachineConfig::new` 选择 `DeviceTargets::none()`。`BlockingDeviceEvent`、

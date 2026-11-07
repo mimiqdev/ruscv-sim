@@ -3041,5 +3041,37 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "device-u3-abi-attach",
+    "source": "src/capi/mod.rs",
+    "patch": "device-u3-abi-attach.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::an_attached_c_device_target_serves_the_uart_window",
+        "failure": [
+          "the attached C device target served no transaction"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "device-u3-abi-event",
+    "source": "src/capi/target.rs",
+    "patch": "device-u3-abi-event.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::a_uart_transmit_tag_is_accepted_while_an_htif_write_tag_fails_the_run",
+        "failure": [
+          "an HTIF event on the UART window is not a failure"
+        ]
+      }
+    ]
   }
 ]

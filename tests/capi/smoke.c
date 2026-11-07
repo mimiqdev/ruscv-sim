@@ -127,6 +127,19 @@ static uint32_t enc_lw(int rd, int rs1, int imm)
            (uint32_t)rd << 7 | 0x03u;
 }
 
+static uint32_t enc_lbu(int rd, int rs1, int imm)
+{
+    return ((uint32_t)imm & 0xfffu) << 20 | 4u << 12 | (uint32_t)rs1 << 15 |
+           (uint32_t)rd << 7 | 0x03u;
+}
+
+static uint32_t enc_sb(int rs2, int rs1, int imm)
+{
+    uint32_t uimm = (uint32_t)imm & 0xfffu;
+    return (uimm >> 5) << 25 | (uint32_t)rs2 << 20 | (uint32_t)rs1 << 15 |
+           (uimm & 0x1fu) << 7 | 0x23u;
+}
+
 /*
  * Writes one ELF64/RISC-V executable around `instructions`.
  *
@@ -243,6 +256,32 @@ static int build_direct_guest(const char *path, uint32_t code)
         enc_lw(6, 4, 0),                 /* data read outside the code grant */
         enc_addi(5, 0, (int)(code * 2 + 1)), /* x5 = HTIF exit payload */
         enc_sd(5, 4, 8),                 /* witness store, outside .tohost */
+        enc_sd(5, 4, 0),                 /* tohost = payload */
+        0x0000006fu,                     /* j . */
+    };
+
+    return write_guest(path, instructions, sizeof(instructions) / sizeof(instructions[0]));
+}
+
+/*
+ * A guest that polls the UART's `LSR` and writes one byte to `THR`, then reports
+ * HTIF exit `code` (device D8).
+ *
+ * The two register accesses are the transactions a C device table answers, and
+ * the write's byte is the transmit event's value.
+ */
+static int build_uart_guest(const char *path, uint32_t code)
+{
+    const uint32_t instructions[] = {
+        0x00010001u,                     /* c.nop; c.nop (profile-sensitive) */
+        enc_lui(5, 0x10000),             /* x5 = 0x10000000 (UART window) */
+        enc_lbu(7, 5, 5),                /* LSR */
+        enc_addi(6, 0, 'H'),             /* the THR byte */
+        enc_sb(6, 5, 0),                 /* THR */
+        enc_lui(4, 0x80),                /* x4 = 0x80000 */
+        enc_addi(4, 4, 1),               /* x4 = 0x80001 */
+        enc_slli(4, 4, 12),              /* x4 = 0x80001000 (.tohost) */
+        enc_addi(5, 0, (int)(code * 2 + 1)), /* x5 = HTIF exit payload */
         enc_sd(5, 4, 0),                 /* tohost = payload */
         0x0000006fu,                     /* j . */
     };
@@ -487,6 +526,97 @@ static ruscv_target direct_target_table(test_target *target, uint64_t max_delay_
 {
     ruscv_target table = target_table(target, max_delay_fs);
     table.get_direct_mem_ptr = target_get_direct_mem_ptr;
+    return table;
+}
+
+/* ---------------------------------------------------- test device target */
+
+/* The UART window a C device table names (device D8). */
+#define DEVICE_WINDOW_BASE 0x10000000ull
+#define DEVICE_WINDOW_SIZE 0x100u
+#define UART_RBR_THR 0x00u
+#define UART_LSR 0x05u
+#define UART_LSR_TRANSMIT_EMPTY 0x20u
+
+/*
+ * A device target over the UART window (device D8).
+ *
+ * It models only the two registers the smoke's guest touches: `LSR` answers the
+ * transmit-empty bit, and a `THR` write records its byte and reports the
+ * scripted event tag.  Every other field is a knob the case sets, so a test can
+ * make the target report a protocol violation the Rust side must classify.
+ */
+typedef struct test_device {
+    uint64_t window_base;
+    uint64_t window_size;
+    int32_t status;
+    /* The tag every completed write reports. */
+    int32_t event;
+    int transactions;
+    /* The bytes `THR` writes carried, and how many there were. */
+    uint8_t transmitted;
+    int transmitted_count;
+    int receives;
+    int resets;
+    /* Cleared when a request carries a non-zero annotation. */
+    int request_fields_ok;
+} test_device;
+
+static ruscv_device device_table(test_device *device);
+
+static void device_b_transport(void *user, ruscv_payload *payload)
+{
+    test_device *device = user;
+    size_t offset = (size_t)(payload->address - device->window_base);
+
+    device->transactions += 1;
+    if (payload->device_event != RUSCV_DEVICE_EVENT_NONE || payload->delay_fs != 0 ||
+        payload->host_elapsed_fs != 0 || payload->may_suspend != 0 ||
+        payload->local_offset_fs != 0 || payload->dmi_allowed != 0) {
+        device->request_fields_ok = 0;
+    }
+    if (payload->command == RUSCV_COMMAND_READ) {
+        if (offset == UART_LSR && payload->length >= 1) {
+            payload->data[0] = UART_LSR_TRANSMIT_EMPTY;
+        }
+        payload->status = device->status;
+        return;
+    }
+    if (offset == UART_RBR_THR && payload->length == 1) {
+        device->transmitted = payload->data[0];
+        device->transmitted_count += 1;
+    }
+    payload->status = device->status;
+    payload->device_event = device->event;
+}
+
+static void device_receive(void *user, uint8_t byte)
+{
+    test_device *device = user;
+
+    (void)byte;
+    device->receives += 1;
+}
+
+static int32_t device_reset(void *user)
+{
+    test_device *device = user;
+
+    device->resets += 1;
+    return 1;
+}
+
+static ruscv_device device_table(test_device *device)
+{
+    ruscv_device table;
+
+    memset(&table, 0, sizeof(table));
+    table.window_base = device->window_base;
+    table.window_size = device->window_size;
+    table.user = device;
+    table.b_transport = device_b_transport;
+    table.receive = device_receive;
+    table.transport_reset = device_reset;
     return table;
 }
 
@@ -1229,6 +1359,144 @@ static void direct_memory_unknown_completion_case(const char *direct_guest)
     free(target);
 }
 
+/*
+ * One run with a C device table attached to the UART window (device D8).
+ *
+ * Returns the fixture after the handle is destroyed, so the caller can inspect
+ * its counters, and frees it itself.
+ */
+static test_device *attached_device_run(const char *guest, int32_t event, int expect_exit)
+{
+    test_device *device = calloc(1, sizeof(test_device));
+    test_target *ram = calloc(1, sizeof(test_target));
+    ruscv_machine *handle;
+    ruscv_device table;
+    ruscv_grant facts;
+    ruscv_result run;
+    int status;
+
+    memset(device, 0, sizeof(*device));
+    device->window_base = DEVICE_WINDOW_BASE;
+    device->window_size = DEVICE_WINDOW_SIZE;
+    device->status = RUSCV_TLM_OK;
+    device->event = event;
+    device->request_fields_ok = 1;
+    init_target(ram, NULL, 0);
+    table = device_table(device);
+    {
+        ruscv_target ram_table = target_table(ram, 0);
+        handle = create_machine(&ram_table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    }
+    check(status == RUSCV_OK && handle != NULL,
+          "create a TLM handle for the attached device target");
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, &table) == RUSCV_OK,
+          "attach a C device table before load");
+    check(ruscv_machine_load_elf(handle, guest) == RUSCV_OK, "load the UART guest");
+    check(device->resets > 0, "the attached target was reset at the Platform build");
+    status = grant(handle, 0, UINT64_MAX / 2, RUSCV_TURNS_UNBOUNDED, &facts);
+    run = result_of(handle);
+    if (expect_exit) {
+        check_exit(handle, status, "the attached device target serves the UART window");
+    } else {
+        check(status == RUSCV_OK && run.state == RUSCV_RUN_FAILED,
+              "an event tag that is not the window's fails the run");
+    }
+    ruscv_machine_destroy(handle);
+    free(ram);
+    return device;
+}
+
+/*
+ * The C ABI device table and its attach entry (device U3, D8).
+ *
+ * Every documented attach refusal, one accepted run whose THR write reports a
+ * transmit event, and one run whose tag belongs to the other window and is
+ * therefore a protocol failure.
+ */
+static void device_case(const char *guest)
+{
+    test_target *ram = calloc(1, sizeof(test_target));
+    test_device *device = calloc(1, sizeof(test_device));
+    ruscv_machine *handle;
+    ruscv_target ram_table;
+    ruscv_device table;
+    int status;
+
+    init_target(ram, NULL, 0);
+    ram_table = target_table(ram, 0);
+    handle = create_machine(&ram_table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    check(status == RUSCV_OK, "create a handle for the attach refusals");
+    memset(device, 0, sizeof(*device));
+    device->window_base = DEVICE_WINDOW_BASE;
+    device->window_size = DEVICE_WINDOW_SIZE;
+    device->status = RUSCV_TLM_OK;
+    device->request_fields_ok = 1;
+    table = device_table(device);
+    /* device D8: a NULL handle, a NULL table and an unknown window are argument
+     * refusals; a window the table does not name, a second attach, a late
+     * attach and a handle with no TLM route are configuration refusals. */
+    check(ruscv_machine_attach_device(NULL, RUSCV_DEVICE_UART, &table) ==
+              RUSCV_ERROR_INVALID_ARGUMENT,
+          "a NULL handle is an attach argument refusal");
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, NULL) ==
+              RUSCV_ERROR_INVALID_ARGUMENT,
+          "a NULL table is an attach argument refusal");
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART + 1, &table) ==
+              RUSCV_ERROR_INVALID_ARGUMENT,
+          "an unknown window is an attach argument refusal");
+    table.window_base = DEVICE_WINDOW_BASE + 4;
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, &table) == RUSCV_ERROR_CONFIG,
+          "a mismatched window base is an attach configuration refusal");
+    table.window_base = DEVICE_WINDOW_BASE;
+    table.window_size = DEVICE_WINDOW_SIZE + 1;
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, &table) == RUSCV_ERROR_CONFIG,
+          "a mismatched window size is an attach configuration refusal");
+    table.window_size = DEVICE_WINDOW_SIZE;
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, &table) == RUSCV_OK,
+          "attach before load is accepted");
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, &table) == RUSCV_ERROR_CONFIG,
+          "a second attach is an attach configuration refusal");
+    ruscv_machine_destroy(handle);
+
+    /* A fresh handle with no device attached, loaded and then attached: the
+     * late-attach refusal stands on its own instead of reusing the second-attach
+     * answer above. */
+    handle = create_machine(&ram_table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    check(status == RUSCV_OK, "create a handle for the late attach");
+    check(ruscv_machine_load_elf(handle, guest) == RUSCV_OK, "load the UART guest");
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, &table) == RUSCV_ERROR_CONFIG,
+          "an attach after the first load is an attach configuration refusal");
+    ruscv_machine_destroy(handle);
+
+    /* A handle created with a NULL ruscv_target has no TLM route. */
+    handle = create_machine(NULL, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    check(status == RUSCV_OK && handle != NULL, "create a native handle for the attach");
+    if (handle != NULL) {
+        check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, &table) ==
+                  RUSCV_ERROR_CONFIG,
+              "a handle without a TLM route is an attach configuration refusal");
+        ruscv_machine_destroy(handle);
+    }
+    free(device);
+    free(ram);
+
+    device = attached_device_run(guest, RUSCV_DEVICE_EVENT_UART_TRANSMIT, 1);
+    check(device->transactions >= 2,
+          "the guest's LSR read and THR write reached the device target");
+    check(device->transmitted_count == 1 && device->transmitted == (uint8_t)'H',
+          "the transmit event carries the written THR byte");
+    check(device->request_fields_ok,
+          "a device request carried a non-zero annotation or event");
+    check(device->receives == 0,
+          "no ABI entry pushed a byte into the attached window");
+    free(device);
+
+    device = attached_device_run(guest, RUSCV_DEVICE_EVENT_HTIF_WRITE, 0);
+    check(device->transmitted_count == 1,
+          "the mismatched tag was copied from the device response");
+    free(device);
+}
+
 static void header_case(void)
 {
     ruscv_machine *handle = NULL;
@@ -1263,8 +1531,18 @@ static void header_case(void)
               offsetof(ruscv_payload, local_offset_fs) == 248 &&
               offsetof(ruscv_payload, may_suspend) == 256 &&
               offsetof(ruscv_payload, host_elapsed_fs) == 264 &&
-              sizeof(ruscv_payload) == 272,
-          "host_elapsed_fs is the final ruscv_payload field");
+              offsetof(ruscv_payload, device_event) == 272 &&
+              sizeof(ruscv_payload) == 280,
+          "device_event is the final ruscv_payload field");
+    /* device D8: the attach table's published layout. */
+    check(offsetof(ruscv_device, window_base) == 0 &&
+              offsetof(ruscv_device, window_size) == 8 &&
+              offsetof(ruscv_device, user) == 16 &&
+              offsetof(ruscv_device, b_transport) == 24 &&
+              offsetof(ruscv_device, receive) == 32 &&
+              offsetof(ruscv_device, transport_reset) == 40 &&
+              sizeof(ruscv_device) == 48,
+          "transport_reset is the final ruscv_device field");
     check(offsetof(ruscv_boundary, quantum_ticks) == 64 &&
               offsetof(ruscv_boundary, interrupt_latency_bound_ticks) == 72 &&
               offsetof(ruscv_boundary, quantum_syncs) == 80 &&
@@ -1674,6 +1952,7 @@ int main(int argc, char **argv)
     char direct_guest[4096];
     char ram_guest[4096];
     char device_guest[4096];
+    char uart_guest[4096];
     char log_path[4096];
     ruscv_machine *handle = NULL;
     int status;
@@ -1686,6 +1965,8 @@ int main(int argc, char **argv)
             (int)sizeof(ram_guest) ||
         snprintf(device_guest, sizeof(device_guest), "%s/capi-smoke-device-guest.elf",
                  work) >= (int)sizeof(device_guest) ||
+        snprintf(uart_guest, sizeof(uart_guest), "%s/capi-smoke-uart-guest.elf", work) >=
+            (int)sizeof(uart_guest) ||
         snprintf(log_path, sizeof(log_path), "%s/capi-smoke-commits.log", work) >=
             (int)sizeof(log_path)) {
         fprintf(stderr, "work path too long\n");
@@ -1693,7 +1974,8 @@ int main(int argc, char **argv)
     }
     if (build_guest(guest, 2) != 0 || build_direct_guest(direct_guest, 2) != 0 ||
         build_ram_only_guest(ram_guest, 12, 2) != 0 ||
-        build_device_read_guest(device_guest, 2) != 0) {
+        build_device_read_guest(device_guest, 2) != 0 ||
+        build_uart_guest(uart_guest, 2) != 0) {
         fprintf(stderr, "cannot write the guest fixture\n");
         return 2;
     }
@@ -1717,6 +1999,7 @@ int main(int argc, char **argv)
     direct_memory_invalidate_in_callback_case(direct_guest);
     direct_memory_reentry_case(direct_guest);
     direct_memory_unknown_completion_case(direct_guest);
+    device_case(uart_guest);
 
     /* The wrong-thread rejection needs a live handle of its own. */
     handle = create_machine(NULL, RUSCV_ISA_RV64IMA, TICK_FS, &status);

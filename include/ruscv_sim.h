@@ -44,6 +44,11 @@
  *     leaks the handle rather than freeing it under a live frame.  Every other
  *     callback (transport_dbg, transport_reset, get_direct_mem_ptr, and
  *     b_transport with `may_suspend` clear) must not wait or advance host time.
+ *   - A device-table callback (ruscv_device) obeys the RAM target's rules: it
+ *     runs on the creating thread only, is never re-entered, never waits, never
+ *     lets host time pass and never crosses the boundary as an exception.  A
+ *     device transaction carries `may_suspend` clear, so a suspending callback
+ *     there is refused like every other non-suspending one.
  *   - A Rust panic is caught at the boundary: the handle is poisoned and the
  *     call returns RUSCV_ERROR_PANIC.  Every later call returns
  *     RUSCV_ERROR_POISONED, except ruscv_machine_invalidate_direct_mem and
@@ -56,10 +61,11 @@
  *   No published struct carries a size or version field, so fields are only
  *   ever appended: every existing field keeps its offset and its size.  The
  *   final fields are ruscv_target.suspends_host_time,
- *   ruscv_payload.host_elapsed_fs, ruscv_boundary.quantum_reached and
- *   ruscv_grant.host_elapsed_fs, which follow the direct-memory and quantum
- *   additions (ruscv_target.get_direct_mem_ptr and ruscv_target.quantum_ticks,
- *   ruscv_payload.dmi_allowed and ruscv_payload.local_offset_fs).  A host
+ *   ruscv_payload.device_event, ruscv_boundary.quantum_reached and
+ *   ruscv_grant.host_elapsed_fs, which follow the direct-memory, quantum,
+ *   suspension and device additions (ruscv_target.get_direct_mem_ptr and
+ *   ruscv_target.quantum_ticks, ruscv_payload.dmi_allowed,
+ *   ruscv_payload.local_offset_fs and ruscv_payload.host_elapsed_fs).  A host
  *   compiled against a previous header therefore keeps working source-level
  *   but must be recompiled against this header before it links this library;
  *   the ABI is not binary-compatible with the previous header.
@@ -148,6 +154,15 @@ extern "C" {
 /* Capacity of one committed-write snapshot buffer, in bytes. */
 #define RUSCV_SNAPSHOT_MAX 64
 
+/* The device windows ruscv_machine_attach_device selects (device D8). */
+#define RUSCV_DEVICE_UART 0
+
+/* The at-most-one guest-visible effect an accepted device access reports
+ * (device D8).  The value travels with the event, never in a second field. */
+#define RUSCV_DEVICE_EVENT_NONE 0
+#define RUSCV_DEVICE_EVENT_UART_TRANSMIT 1
+#define RUSCV_DEVICE_EVENT_HTIF_WRITE 2
+
 /* Direct-memory access (the IEEE 1666 DMI access values). */
 #define RUSCV_DMI_ACCESS_NONE 0
 #define RUSCV_DMI_ACCESS_READ 1
@@ -233,7 +248,22 @@ typedef struct ruscv_atomic {
  * `may_suspend` is clear is a protocol failure of that access, as is a
  * terminal response whose host elapsed time exceeds `delay_fs`.  `delay_fs`
  * counts from the transaction's issue, so it includes the host elapsed time.
- * `host_elapsed_fs` is the final field of the struct.
+ *
+ * Device transaction (device D8): a request routed to a device window carries
+ * `may_suspend` clear and `local_offset_fs` zero, and answers with `delay_fs`,
+ * `host_elapsed_fs` and `dmi_allowed` zero.  `device_event` is the response's
+ * at-most-one guest-visible effect, one of RUSCV_DEVICE_EVENT_*: NONE means the
+ * access has none, UART_TRANSMIT means one byte left the UART's transmit
+ * holding register, and HTIF_WRITE means one value was written to the HTIF
+ * endpoint.  The event's value is read from the access's own data bytes, so no
+ * second field carries it.  A tag that is not its window's, a non-zero delay,
+ * host elapsed time or hint, and a changed address, command or length are each
+ * a protocol failure of that access; the ABI never guesses what an
+ * out-of-contract tag meant, so an unrecognized one makes the response an
+ * incomplete one too.  A device target reports no more than one event per
+ * access, and only on an accepted one.
+ *
+ * `device_event` is the final field of the struct.
  */
 typedef struct ruscv_payload {
     uint64_t address;
@@ -254,6 +284,9 @@ typedef struct ruscv_payload {
     /* Response: the host time that passed inside the callback, in exact
      * femtoseconds, starting at zero (nb D4). */
     uint64_t host_elapsed_fs;
+    /* Response: RUSCV_DEVICE_EVENT_* for a device transaction, zero otherwise
+     * (device D8). */
+    int32_t device_event;
 } ruscv_payload;
 
 /*
@@ -397,6 +430,49 @@ typedef struct ruscv_target {
     int32_t suspends_host_time;
 } ruscv_target;
 
+/*
+ * The caller-supplied device target (device D8).
+ *
+ * One table serves one device window.  `window_base` and `window_size` must
+ * equal the selected window's, which is the UART window `0x1000_0000` with
+ * `0x100` bytes for RUSCV_DEVICE_UART; a mismatch is
+ * RUSCV_ERROR_CONFIG from ruscv_machine_attach_device.  Like the RAM table,
+ * this one is copied at attach, so the callbacks and `user` are fixed for the
+ * handle's life, and `user` and everything it points at must stay valid until
+ * ruscv_machine_destroy.
+ *
+ * All three callbacks are required and run under the RAM target's rules:
+ * creating thread only, never re-entered, synchronously, without waiting and
+ * without letting host time pass.
+ *
+ * `b_transport` services one validated register access.  It must set exactly
+ * one status, leave `address`, `command` and `length` as it received them,
+ * leave `delay_fs`, `local_offset_fs`, `host_elapsed_fs`, `may_suspend` and
+ * `dmi_allowed` zero, and set `device_event` to RUSCV_DEVICE_EVENT_NONE or to
+ * the tag that matches its window.  The window's width, category and
+ * start-address policy run before this callback, so it never sees a request
+ * the Platform would reject, and an atomic envelope never reaches it.
+ *
+ * `receive` delivers one byte the host pushes into the window.  It returns
+ * nothing: a host that cannot accept the byte drops it.  This ABI version adds
+ * no entry that pushes a byte, so it reaches the callback only when an
+ * embedding caller uses the Machine's own UART receive path; the ABI never
+ * calls it re-entrantly and never from another thread.
+ *
+ * `transport_reset` returns nonzero when the target has quiesced and accepts
+ * new accesses and zero when it refuses.  A refusal fails the Platform build
+ * as a refused RAM transport reset does, so no device state crosses a
+ * generation.
+ */
+typedef struct ruscv_device {
+    uint64_t window_base;
+    uint64_t window_size;
+    void *user;
+    void (*b_transport)(void *user, ruscv_payload *payload);
+    void (*receive)(void *user, uint8_t byte);
+    int32_t (*transport_reset)(void *user);
+} ruscv_device;
+
 /* One grant's facts. */
 typedef struct ruscv_boundary {
     int32_t budget_exhausted;
@@ -491,6 +567,28 @@ typedef struct ruscv_machine ruscv_machine;
  */
 int32_t ruscv_machine_create(const ruscv_target *target, int32_t isa,
                              uint64_t tick_period_fs, ruscv_machine **out);
+
+/*
+ * Attaches one host device target to the selected window (device D8).
+ *
+ * `window` is RUSCV_DEVICE_UART.  The call must come after
+ * ruscv_machine_create and before the first ruscv_machine_load_elf: a device
+ * target is composition configuration, chosen once per handle and copied, so
+ * it survives ruscv_machine_reset and is reset at every Platform build.
+ *
+ * It is refused with RUSCV_ERROR_INVALID_ARGUMENT for a NULL handle, a NULL
+ * table or an unknown window, and with RUSCV_ERROR_CONFIG for a `window_base`
+ * or `window_size` that is not the selected window's, a second attach for the
+ * same window, an attach after the first load, or a handle created with a NULL
+ * `ruscv_target`, which has no TLM route to serve a device window.  An
+ * incomplete table, one whose callbacks are not all present, is
+ * RUSCV_ERROR_INVALID_ARGUMENT like an incomplete RAM table.
+ *
+ * A handle with no attached device target answers each window with its in-tree
+ * device, which is exactly the previous behavior.
+ */
+int32_t ruscv_machine_attach_device(ruscv_machine *machine, int32_t window,
+                                    const ruscv_device *device);
 
 /* Parses and installs one ELF image, replacing any previous one. */
 int32_t ruscv_machine_load_elf(ruscv_machine *machine, const char *path);

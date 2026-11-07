@@ -1,0 +1,15 @@
+diff --git a/src/capi/target.rs b/src/capi/target.rs
+--- a/src/capi/target.rs
++++ b/src/capi/target.rs
+@@ -608,9 +608,8 @@
+     } else {
+         BlockingResponseStatus::Incomplete
+     });
+-    if let Ok(Some(event)) = event {
+-        transaction.report_device_event(event);
+-    }
++    // MUTATION: the copied tag is dropped instead of reported, so a
++    // wrong-window tag is accepted as an event-less access.
+     if payload.outcome_unknown != 0 {
+         transaction.extension_mut().mark_outcome_unknown();
+     }

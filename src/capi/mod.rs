@@ -35,8 +35,14 @@
 //! * **Rust-owned payload buffers.** The target callbacks receive a pointer into
 //!   a Rust-owned buffer that is valid only for the duration of that one
 //!   callback (see [`target`]).
+//! * **Composition is fixed before load.** A device table attached with
+//!   [`ruscv_machine_attach_device`] is copied, chosen once per handle and
+//!   answered by the TLM route's device path.  Attaching later, twice for one
+//!   window, or on a handle created without a `ruscv_target` is a configuration
+//!   error, so no installed generation can have its windows rewired under it
+//!   (device D8).
 
-use crate::blocking::{BlockingDirectMemRegistry, Transport};
+use crate::blocking::{BlockingDirectMemRegistry, DeviceTargets, Transport};
 use crate::elf::LoadImage;
 use crate::machine::{IsaProfile, MachineConfig};
 use host::{GrantFacts, Session};
@@ -46,7 +52,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::ThreadId;
-use target::{CBlockingTarget, CTarget};
+use target::{CBlockingTarget, CDevice, CDeviceTarget, CTarget};
 
 mod host;
 pub mod target;
@@ -262,6 +268,15 @@ struct HandleState {
     poisoned: bool,
     config: MachineConfig,
     session: Option<Session>,
+    /// device D8: a `ruscv_machine_load_elf` call reached this handle.
+    ///
+    /// A device target is composition configuration, and attachment must
+    /// precede the first load.  The cutoff is the first load call, not the first
+    /// successful one: a load that fails to read or parse installs nothing, but
+    /// the composition still stops accepting a new window selection at that
+    /// point, so the boundary does not depend on whether a host's file happened
+    /// to be readable.
+    first_load_seen: bool,
     /// The most recent API-level diagnostic, when no session produced one.
     diagnostic: Option<String>,
 }
@@ -530,6 +545,7 @@ pub unsafe extern "C" fn ruscv_machine_create(
                 poisoned: false,
                 config,
                 session: None,
+                first_load_seen: false,
                 diagnostic: None,
             }),
         })
@@ -541,6 +557,122 @@ pub unsafe extern "C" fn ruscv_machine_create(
             Status::Ok as i32
         }
         Err(error) => error.code(),
+    }
+}
+
+/// One C device window and the Platform window it names (device D8).
+struct CDeviceWindow {
+    base: u64,
+    size: u64,
+}
+
+/// The Platform window one `ruscv_device_window` code names.
+///
+/// Only the UART window accepts a host target in this contract; host HTIF
+/// service stays deferred, so every other code is an unknown window.
+fn c_device_window(code: i32) -> Option<CDeviceWindow> {
+    match code {
+        target::device_window::UART => Some(CDeviceWindow {
+            base: crate::executor::SYSTEM_BUS_UART_BASE,
+            size: crate::executor::SYSTEM_BUS_UART_WINDOW as u64,
+        }),
+        _ => None,
+    }
+}
+
+/// Stores one copied device table as the handle's window selection.
+///
+/// Every argument refusal precedes every configuration refusal: the table's
+/// shape is an argument, so a NULL table, an unknown window and an incomplete
+/// table are [`Status::InvalidArgument`] even on a handle that would also be
+/// refused for its state.
+fn attach_device(
+    state: &mut HandleState,
+    window: CDeviceWindow,
+    device: CDevice,
+) -> Result<(), ApiError> {
+    let target = CDeviceTarget::new(device)
+        .map_err(|message| ApiError::new(Status::InvalidArgument, message))?;
+    // device D8: a device target is composition configuration, chosen after
+    // create and before the first load, so the windows cannot be rewired under a
+    // running generation.  The cutoff is the first load call, successful or not.
+    if state.first_load_seen {
+        return Err(ApiError::new(
+            Status::Config,
+            "a device target must be attached before the first ruscv_machine_load_elf call",
+        ));
+    }
+    if device.window_base != window.base || device.window_size != window.size {
+        return Err(ApiError::new(
+            Status::Config,
+            format!(
+                "the device table names the window at {:#018x} with {} bytes; the selected window \
+                 is {:#018x} with {} bytes",
+                device.window_base, device.window_size, window.base, window.size
+            ),
+        ));
+    }
+    // device D8: a handle created without a `ruscv_target` has no TLM route, and
+    // a device window is a TLM-route target.
+    if state.config.transport.is_native() {
+        return Err(ApiError::new(
+            Status::Config,
+            "a device target needs the TLM route, and this handle was created with a NULL \
+             ruscv_target",
+        ));
+    }
+    // Only the UART window takes a host target, which is the one window this
+    // version of the table can name.
+    if state.config.devices.uart().is_some() {
+        return Err(ApiError::new(
+            Status::Config,
+            "a device target is already attached to the UART window",
+        ));
+    }
+    state.config.devices = DeviceTargets::with_uart(target);
+    Ok(())
+}
+
+/// Attaches one host device target to the selected window (device D8).
+///
+/// `window` is `RUSCV_DEVICE_UART`.  The call must come after
+/// [`ruscv_machine_create`] and before the first [`ruscv_machine_load_elf`]: a
+/// device target is composition configuration, chosen once per handle and
+/// copied, so it survives [`ruscv_machine_reset`] and the target is reset at
+/// every Platform build.
+///
+/// It is refused with [`Status::InvalidArgument`] for a NULL handle, NULL table,
+/// unknown window or incomplete table, and with [`Status::Config`] for a
+/// `window_base` or `window_size` that is not the selected window's, a second
+/// attach for the same window, an attach after the first load, or a handle
+/// created with a NULL `ruscv_target`, which has no TLM route.
+///
+/// # Safety
+///
+/// `device` must be null or point at one readable [`CDevice`] whose callbacks
+/// are callable and whose `user` pointer stays valid until
+/// [`ruscv_machine_destroy`], and `machine` must be a handle from
+/// [`ruscv_machine_create`] used on the creating thread.
+#[no_mangle]
+pub unsafe extern "C" fn ruscv_machine_attach_device(
+    machine: *mut RuscvMachine,
+    window: i32,
+    device: *const CDevice,
+) -> i32 {
+    if device.is_null() {
+        return Status::InvalidArgument as i32;
+    }
+    let Some(window) = c_device_window(window) else {
+        return Status::InvalidArgument as i32;
+    };
+    // SAFETY: the caller guarantees one readable table.
+    let device = unsafe { *device };
+    // SAFETY: forwarded caller guarantees.
+    unsafe {
+        match with_handle(machine, |state| attach_device(state, window, device)) {
+            Ok(()) => Status::Ok as i32,
+            Err(error) => error.code(),
+        }
     }
 }
 
@@ -558,6 +690,7 @@ pub unsafe extern "C" fn ruscv_machine_load_elf(
     // SAFETY: forwarded caller guarantees.
     unsafe {
         match with_handle(machine, |state| {
+            state.first_load_seen = true;
             let path = c_path(path)?;
             let data = std::fs::read(path).map_err(|error| {
                 ApiError::new(
