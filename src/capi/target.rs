@@ -1,19 +1,23 @@
 //! The C callback table as one blocking RAM target (dev-plan D8).
 //!
 //! The table is copied once at create time; `user` must stay valid until
-//! destroy.  Every callback runs synchronously inside a ruscv-sim call on the
-//! creating thread, so a callback that calls back into the C ABI is rejected as
+//! destroy.  Every callback runs inside a ruscv-sim call on the creating
+//! thread, so a callback that calls back into the C ABI is rejected as
 //! re-entry before it can observe or mutate any handle state.  The one
 //! exception is direct-memory invalidation, which a target may issue from
-//! inside a callback (direct-memory D12).
+//! inside a callback (direct-memory D12).  A `b_transport` callback whose
+//! payload has `may_suspend` set may suspend that thread and let host time pass
+//! before it returns; the callback state stays set meanwhile, so the re-entry
+//! rule holds across the suspension too (nb D6).
 //!
 //! The mapping is deliberately narrow and total.  A C target can only report a
 //! [`BlockingResponseStatus`], an atomic completion, an outcome-unknown flag, a
-//! delay and a direct-memory answer; anything else it does to a struct reveals
-//! a contract violation (an unrecognized status, a consumed-but-invalid
-//! snapshot, a mutated address/command/length, an unrepresentable grant) and is
-//! mapped to a non-completion, so the blocking adapter keeps ownership of every
-//! D4 classification.  No C value can make ruscv-sim report a guest fault or a
+//! delay, the host time that passed inside its callback and a direct-memory
+//! answer; anything else it does to a struct reveals a contract violation (an
+//! unrecognized status, a consumed-but-invalid snapshot, a mutated
+//! address/command/length, an unrepresentable grant) and is mapped to a
+//! non-completion, so the blocking adapter keeps ownership of every D4
+//! classification.  No C value can make ruscv-sim report a guest fault or a
 //! completion that the target did not produce.
 
 use crate::blocking::{
@@ -213,6 +217,12 @@ pub struct CPayload {
     /// Request: the Hart's local time offset in exact femtoseconds
     /// (quantum D11), zero when no quantum is selected and for debug transport.
     pub(crate) local_offset_fs: u64,
+    /// Request: nonzero when this transaction is a charged Hart transaction to
+    /// a suspending target, so the callback may let host time pass (nb D3/D6).
+    pub(crate) may_suspend: i32,
+    /// Response: the host time that passed inside this callback, in exact
+    /// femtoseconds, starting at zero (nb D4).
+    pub(crate) host_elapsed_fs: u64,
 }
 
 /// One debug-transport request as the C target sees it (`ruscv_debug`).
@@ -248,6 +258,9 @@ pub struct CTarget {
         Option<unsafe extern "C" fn(*mut c_void, *mut CDirectMem) -> i32>,
     /// The selected quantum in Platform ticks; zero is off (quantum D12).
     pub(crate) quantum_ticks: u64,
+    /// Nonzero when this target lets host time pass inside a `may_suspend`
+    /// transaction (nb D6).  It cannot be combined with a quantum.
+    pub(crate) suspends_host_time: i32,
 }
 
 /// A validated C callback table used as one blocking RAM target.
@@ -263,12 +276,17 @@ pub(crate) struct CBlockingTarget {
 }
 
 // SAFETY: the C ABI accepts calls only on the creating thread, and the Machine
-// runs callbacks synchronously and never re-enters them.  The target therefore
-// never observes concurrent or interleaved use, and the host keeps the table,
-// its `user` pointer and the pointed-to state alive until destroy (dev-plan D8).
+// runs callbacks synchronously and never re-enters them.  A `may_suspend`
+// callback may suspend the creating thread and resume on it while its frame is
+// live, but the transport still never enters the callback twice: every ABI
+// entry another process makes on that thread meanwhile is refused as re-entry
+// except direct-memory invalidation, which never calls the target (nb D6).  The
+// host keeps the table, its `user` pointer and the pointed-to state alive until
+// destroy.
 unsafe impl Send for CBlockingTarget {}
 // SAFETY: see the `Send` impl; the shared `Arc` is only ever driven from the
-// creating thread inside one ruscv-sim call.
+// creating thread, and the one entry another process may make while a callback
+// is suspended touches only the registry's own lock.
 unsafe impl Sync for CBlockingTarget {}
 
 impl CBlockingTarget {
@@ -318,11 +336,20 @@ impl CBlockingTarget {
     pub(crate) fn quantum_ticks(&self) -> u64 {
         self.table.quantum_ticks
     }
+
+    /// True when this table declares that its target suspends host time (nb D6).
+    pub(crate) fn suspends_host_time(&self) -> bool {
+        self.table.suspends_host_time != 0
+    }
 }
 
 impl BlockingTarget for CBlockingTarget {
     fn declared_max_delay(&self) -> Femtoseconds {
         CBlockingTarget::declared_max_delay(self)
+    }
+
+    fn suspends_host_time(&self) -> bool {
+        CBlockingTarget::suspends_host_time(self)
     }
 
     fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
@@ -345,11 +372,20 @@ impl BlockingTarget for CBlockingTarget {
             atomic: atomic_request(transaction),
             dmi_allowed: 0,
             local_offset_fs: transaction.local_offset().as_u64(),
+            // nb D3/D6: the request's flag is the adapter's decision, so a C
+            // target can only read it.
+            may_suspend: i32::from(transaction.may_suspend()),
+            // nb D4/D6: `e` starts at zero on every request.
+            host_elapsed_fs: 0,
         };
         let _in_callback = super::CallbackScope::enter();
         // SAFETY: the table was validated at create time, the payload and its
         // data buffer stay alive and exclusively borrowed for this call, and
-        // the host keeps `user` valid until destroy.
+        // the host keeps `user` valid until destroy.  A callback whose payload
+        // has `may_suspend` set may suspend this thread and let host time pass,
+        // provided it resumes and returns on it; while it is suspended the
+        // callback flag stays set, so no ABI entry reaches this callback again
+        // (nb D6).
         unsafe { (self.b_transport)(self.table.user, &mut payload) };
 
         // A target has no way to change the Rust payload through the C struct,
@@ -373,6 +409,10 @@ impl BlockingTarget for CBlockingTarget {
             transaction.extension_mut().mark_outcome_unknown();
         }
         transaction.set_response_delay(Femtoseconds::new(payload.delay_fs));
+        // nb D4/D6: `e` is a response field of every callback return, so it is
+        // copied back even when a changed payload makes the response
+        // `Incomplete`: the adapter classifies that failure and charges `e`.
+        transaction.set_host_elapsed(Femtoseconds::new(payload.host_elapsed_fs));
         // The hint is a response field, so it survives even a changed payload:
         // the adapter only ever queries a completed, Hart-initiated,
         // non-atomic transaction, and it refuses a grant whose shape or range

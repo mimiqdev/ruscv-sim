@@ -30,6 +30,14 @@ use std::sync::{Arc, Mutex};
 /// One nanosecond, the documented default tick period.
 const TICK_FS: u64 = 1_000_000;
 
+/// One and a half Platform ticks, the host elapsed time every suspension
+/// fixture reports (nb D4/D5).
+///
+/// Its charge rounds up to two whole ticks, so a total that used `e` where the
+/// contract charges the rounded amount, or the reverse, is visible in a tick
+/// difference.
+const ELAPSED_HALF_TICK: u64 = TICK_FS + TICK_FS / 2;
+
 /// One `b_transport` the C target served, as the ABI published it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AbiCall {
@@ -37,6 +45,8 @@ struct AbiCall {
     access_kind: i32,
     /// The `ruscv_payload.local_offset_fs` request field (quantum D11).
     local_offset_fs: u64,
+    /// The `ruscv_payload.may_suspend` request field (nb D3/D6).
+    may_suspend: i32,
 }
 
 /// A RAM target whose callbacks are the C ABI's own calling convention.
@@ -89,6 +99,18 @@ struct TestTarget {
     fail_dbg_writes: AtomicBool,
     /// Delay annotated on every blocking transaction, in femtoseconds.
     delay_fs: AtomicU64,
+    /// The table's `suspends_host_time` declaration (nb D6).
+    suspends: AtomicBool,
+    /// The host elapsed time `e` every blocking transaction reports (nb D4).
+    host_elapsed_fs: AtomicU64,
+    /// Probe the entries a suspended callback leaves refused (nb D6).
+    probe_entries: AtomicBool,
+    /// Status `ruscv_machine_run_grant` returned from inside a callback, or
+    /// `i32::MIN` before the attempt.
+    run_grant_status: AtomicI32,
+    /// Status `ruscv_machine_destroy` returned from inside a callback, or
+    /// `i32::MIN` before the attempt.
+    destroy_status: AtomicI32,
     /// Every blocking transaction in order, with its published local offset.
     calls: Mutex<Vec<AbiCall>>,
 }
@@ -119,6 +141,11 @@ impl TestTarget {
             fail_dbg_reads: AtomicBool::new(false),
             fail_dbg_writes: AtomicBool::new(false),
             delay_fs: AtomicU64::new(0),
+            suspends: AtomicBool::new(false),
+            host_elapsed_fs: AtomicU64::new(0),
+            probe_entries: AtomicBool::new(false),
+            run_grant_status: AtomicI32::new(i32::MIN),
+            destroy_status: AtomicI32::new(i32::MIN),
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -135,6 +162,22 @@ impl TestTarget {
 
     fn set_delay(&self, delay_fs: u64) {
         self.delay_fs.store(delay_fs, Ordering::SeqCst);
+    }
+
+    fn set_host_elapsed(&self, elapsed_fs: u64) {
+        self.host_elapsed_fs.store(elapsed_fs, Ordering::SeqCst);
+    }
+
+    fn set_suspends(&self, suspends: bool) {
+        self.suspends.store(suspends, Ordering::SeqCst);
+    }
+
+    fn run_grant_status(&self) -> i32 {
+        self.run_grant_status.load(Ordering::SeqCst)
+    }
+
+    fn destroy_status(&self) -> i32 {
+        self.destroy_status.load(Ordering::SeqCst)
     }
 
     fn reentry_status(&self) -> i32 {
@@ -199,8 +242,25 @@ unsafe extern "C" fn target_b_transport(user: *mut c_void, payload: *mut CPayloa
         address: payload.address,
         access_kind: payload.access_kind,
         local_offset_fs: payload.local_offset_fs,
+        may_suspend: payload.may_suspend,
     });
     let handle = target.handle.load(Ordering::SeqCst);
+    if target.probe_entries.swap(false, Ordering::SeqCst) && !handle.is_null() {
+        // nb D6: this is the state a suspended `b_transport` callback leaves --
+        // its thread-local flag stays set -- so run_grant and destroy must be
+        // refused as re-entry while the one exempt entry stays accepted.
+        let mut grant = CGrant::default();
+        // SAFETY: the handle is live and the call is made from this thread.
+        let status = unsafe { ruscv_machine_run_grant(handle, 0, u64::MAX / 2, 1, &mut grant) };
+        target.run_grant_status.store(status, Ordering::SeqCst);
+        // SAFETY: a refused destroy returns without freeing the handle.
+        let status = unsafe { ruscv_machine_destroy(handle) };
+        target.destroy_status.store(status, Ordering::SeqCst);
+        // SAFETY: the handle is live on this thread.
+        let status = unsafe { ruscv_machine_invalidate_direct_mem(handle, 0, u64::MAX) };
+        target.invalidate_status.store(status, Ordering::SeqCst);
+        target.invalidations.fetch_add(1, Ordering::SeqCst);
+    }
     if !handle.is_null() && target.reentry_status.load(Ordering::SeqCst) == i32::MIN {
         let mut facts = CBoundary::default();
         // SAFETY: the handle is live and the call is made from this thread.
@@ -228,6 +288,9 @@ unsafe extern "C" fn target_b_transport(user: *mut c_void, payload: *mut CPayloa
     drop(ram);
     payload.status = target.status.load(Ordering::SeqCst);
     payload.delay_fs = target.delay_fs.load(Ordering::SeqCst);
+    // nb D4: the host time that passed inside this callback.  The fixture
+    // reports a scripted value instead of really suspending.
+    payload.host_elapsed_fs = target.host_elapsed_fs.load(Ordering::SeqCst);
     if target.unknown.load(Ordering::SeqCst)
         || (target.unknown_on_data_read.load(Ordering::SeqCst)
             && payload.access_kind == super::target::access_kind::DATA_READ)
@@ -333,6 +396,9 @@ impl TestTarget {
             transport_reset: Some(target_reset),
             get_direct_mem_ptr: None,
             quantum_ticks: quantum,
+            // nb D6: the declaration is part of the copied table, so it comes
+            // from the fixture's own setting.
+            suspends_host_time: i32::from(self.suspends.load(Ordering::SeqCst)),
         }
     }
 
@@ -424,11 +490,32 @@ impl Harness {
 
     /// One handle whose copied target table selects `quantum` (D12).
     fn quantum(isa: i32, code: &[u32], max_delay_fs: u64, quantum: u64) -> Self {
-        Self::build_quantum(isa, code, max_delay_fs, false, quantum, 0)
+        Self::build_full(isa, code, max_delay_fs, false, quantum, 0, false, 0)
+    }
+
+    /// One handle whose copied target table declares host-time suspension and
+    /// scripts the `e` every transaction reports (nb D4/D6).
+    fn suspending(
+        isa: i32,
+        code: &[u32],
+        max_delay_fs: u64,
+        host_elapsed_fs: u64,
+        delay_fs: u64,
+    ) -> Self {
+        Self::build_full(
+            isa,
+            code,
+            max_delay_fs,
+            false,
+            0,
+            delay_fs,
+            true,
+            host_elapsed_fs,
+        )
     }
 
     fn build(isa: i32, code: &[u32], max_delay_fs: u64, direct: bool) -> Self {
-        Self::build_quantum(isa, code, max_delay_fs, direct, 0, 0)
+        Self::build_full(isa, code, max_delay_fs, direct, 0, 0, false, 0)
     }
 
     fn build_quantum(
@@ -439,9 +526,27 @@ impl Harness {
         quantum: u64,
         delay_fs: u64,
     ) -> Self {
+        Self::build_full(isa, code, max_delay_fs, direct, quantum, delay_fs, false, 0)
+    }
+
+    // The fixture is one handle with every knob the ABI copies into its
+    // configuration at create time, so one constructor carries them all.
+    #[allow(clippy::too_many_arguments)]
+    fn build_full(
+        isa: i32,
+        code: &[u32],
+        max_delay_fs: u64,
+        direct: bool,
+        quantum: u64,
+        delay_fs: u64,
+        suspends: bool,
+        host_elapsed_fs: u64,
+    ) -> Self {
         let mut target = Box::new(TestTarget::new(elf::BASE, 0x1_0000));
         target.hint.store(true, Ordering::SeqCst);
         target.set_delay(delay_fs);
+        target.set_host_elapsed(host_elapsed_fs);
+        target.set_suspends(suspends);
         let table = if direct {
             target.direct_table(max_delay_fs)
         } else {
@@ -533,6 +638,11 @@ impl Harness {
     fn invalidate(&self, start: u64, end: u64) -> i32 {
         // SAFETY: the handle is live and this is the creating thread.
         unsafe { ruscv_machine_invalidate_direct_mem(self.handle, start, end) }
+    }
+
+    fn reset(&self) -> i32 {
+        // SAFETY: the handle is live and this is the creating thread.
+        unsafe { ruscv_machine_reset(self.handle) }
     }
 }
 
@@ -899,7 +1009,8 @@ fn the_direct_memory_fields_are_final_in_their_structs() {
     // must not move a pre-existing field; these offsets are the ones the
     // previous header published (direct-memory D12).  The name is the one the
     // direct-memory contract gave this pin; the quantum fields are appended
-    // after it (quantum D12), and the two sizes it publishes grow with them.
+    // after it (quantum D12), then the suspension fields (nb D6), and every
+    // size it publishes grows with them.
     use std::mem::{offset_of, size_of};
     assert_eq!(offset_of!(CTarget, max_delay_fs), 0);
     assert_eq!(offset_of!(CTarget, user), 8);
@@ -908,7 +1019,8 @@ fn the_direct_memory_fields_are_final_in_their_structs() {
     assert_eq!(offset_of!(CTarget, transport_reset), 32);
     assert_eq!(offset_of!(CTarget, get_direct_mem_ptr), 40);
     assert_eq!(offset_of!(CTarget, quantum_ticks), 48);
-    assert_eq!(size_of::<CTarget>(), 56);
+    assert_eq!(offset_of!(CTarget, suspends_host_time), 56);
+    assert_eq!(size_of::<CTarget>(), 64);
 
     assert_eq!(offset_of!(CPayload, atomic), 56);
     assert_eq!(
@@ -917,7 +1029,9 @@ fn the_direct_memory_fields_are_final_in_their_structs() {
     );
     assert_eq!(offset_of!(CPayload, dmi_allowed), 240);
     assert_eq!(offset_of!(CPayload, local_offset_fs), 248);
-    assert_eq!(size_of::<CPayload>(), 256);
+    assert_eq!(offset_of!(CPayload, may_suspend), 256);
+    assert_eq!(offset_of!(CPayload, host_elapsed_fs), 264);
+    assert_eq!(size_of::<CPayload>(), 272);
 
     // The three appended `ruscv_boundary` fields, so a host's reads of them
     // match the header's (quantum D12).
@@ -927,6 +1041,232 @@ fn the_direct_memory_fields_are_final_in_their_structs() {
     assert_eq!(offset_of!(CBoundary, quantum_syncs), 80);
     assert_eq!(offset_of!(CBoundary, quantum_reached), 88);
     assert_eq!(size_of::<CBoundary>(), 96);
+
+    // The grant's own host elapsed total, appended after its facts (nb D6).
+    assert_eq!(offset_of!(CGrant, consumed_fs), 0);
+    assert_eq!(offset_of!(CGrant, committed_start_fs), 8);
+    assert_eq!(offset_of!(CGrant, committed_end_fs), 16);
+    assert_eq!(offset_of!(CGrant, boundary_reached), 24);
+    assert_eq!(offset_of!(CGrant, facts), 32);
+    assert_eq!(offset_of!(CGrant, host_elapsed_fs), 128);
+    assert_eq!(size_of::<CGrant>(), 136);
+}
+
+#[test]
+fn a_guest_access_carries_may_suspend_only_to_a_suspending_table() {
+    // nb D3/D6: the adapter's mark reaches the C payload unchanged, so a guest
+    // load (and every fetch beside it) carries the flag exactly when the copied
+    // table declares suspension.
+    let suspending = Harness::suspending(
+        IsaProfile::Rv64imafdc as i32,
+        &direct_guest(2),
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+    );
+    let result = suspending.run_to_result(1_000, 8);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        suspending.diagnostic()
+    );
+    let calls = suspending.target.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.access_kind == super::target::access_kind::DATA_READ),
+        "the guest issued no data read: {calls:?}"
+    );
+    for call in &calls {
+        assert_eq!(
+            call.may_suspend, 1,
+            "a guest access to a suspending target carried may_suspend {call:?}"
+        );
+    }
+
+    let plain = Harness::new(IsaProfile::Rv64imafdc as i32, &direct_guest(2), 0);
+    let result = plain.run_to_result(1_000, 8);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        plain.diagnostic()
+    );
+    let calls = plain.target.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.access_kind == super::target::access_kind::DATA_READ),
+        "the guest issued no data read: {calls:?}"
+    );
+    for call in &calls {
+        assert_eq!(
+            call.may_suspend, 0,
+            "a guest access to a non-suspending target carried may_suspend {call:?}"
+        );
+    }
+}
+
+#[test]
+fn each_grant_reports_only_its_own_host_elapsed_time() {
+    // nb D5/D6: `host_elapsed_fs` is the increase over the grant, never the
+    // cumulative generation total, so the second grant reports its own `W`.
+    let harness = Harness::suspending(
+        IsaProfile::Rv64imafdc as i32,
+        &exit_guest(2),
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+    );
+    let first = harness.grant(0, u64::MAX / 2, 4).expect("the first grant");
+    let first_accesses = harness.target.transactions() as u64;
+    assert!(first_accesses > 0, "the first grant ran no transaction");
+    assert_eq!(
+        first.host_elapsed_fs,
+        first_accesses * ELAPSED_HALF_TICK,
+        "the first grant did not report its own host elapsed total"
+    );
+
+    let second = harness
+        .grant(first.committed_end_fs, u64::MAX / 2, 4)
+        .expect("the second grant");
+    let second_accesses = harness.target.transactions() as u64 - first_accesses;
+    assert!(second_accesses > 0, "the second grant ran no transaction");
+    assert_eq!(
+        second.host_elapsed_fs,
+        second_accesses * ELAPSED_HALF_TICK,
+        "the second grant reported the cumulative host elapsed total"
+    );
+}
+
+#[test]
+fn consumed_minus_host_elapsed_is_the_turn_ticks_plus_half_a_tick_per_access() {
+    // nb D5: `e` is 1.5 ticks and its charge rounds up to 2, so beside the turn
+    // ticks a grant leaves exactly half a tick per access outside W.
+    let harness = Harness::suspending(
+        IsaProfile::Rv64imafdc as i32,
+        &exit_guest(2),
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+    );
+    let grant = harness.grant(0, u64::MAX / 2, 8).expect("the grant");
+    let turns = grant.facts.turns;
+    let accesses = harness.target.transactions() as u64;
+    assert!(
+        turns > 0 && accesses > 0,
+        "the grant ran {turns} turns and {accesses} transactions"
+    );
+    assert_eq!(
+        grant.host_elapsed_fs,
+        accesses * ELAPSED_HALF_TICK,
+        "the grant did not total the host elapsed time of its transactions"
+    );
+    assert_eq!(
+        grant.consumed_fs - grant.host_elapsed_fs,
+        turns * TICK_FS + accesses * (TICK_FS / 2),
+        "consumed_fs - host_elapsed_fs is not the turn ticks plus half a tick per access"
+    );
+    assert_eq!(
+        grant.committed_start_fs + grant.consumed_fs,
+        grant.committed_end_fs,
+        "the grant's consumed amount does not end at its committed end"
+    );
+}
+
+#[test]
+fn a_suspending_table_with_a_quantum_is_refused_at_create() {
+    // nb D6: host time passing inside a grant would stop the kernel's clock
+    // from being the quantum anchor for the whole grant.
+    let mut target = Box::new(TestTarget::new(elf::BASE, 0x1_0000));
+    target.set_suspends(true);
+    let table = target.quantum_table(0, 4);
+    let mut handle = std::ptr::null_mut();
+    // SAFETY: the table and its user pointer stay alive for this test.
+    let status = unsafe {
+        ruscv_machine_create(&table, IsaProfile::Rv64imafdc as i32, TICK_FS, &mut handle)
+    };
+    assert_eq!(
+        status,
+        Status::Config as i32,
+        "a suspending table with quantum_ticks 4 was admitted"
+    );
+    assert!(handle.is_null(), "a refused create published a handle");
+}
+
+#[test]
+fn the_suspension_declaration_persists_across_reset() {
+    // nb D6: the table is copied at create, so the declaration survives a
+    // reset's fresh generation.
+    let harness = Harness::suspending(
+        IsaProfile::Rv64imafdc as i32,
+        &direct_guest(2),
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+    );
+    let result = harness.run_to_result(1_000, 8);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        harness.diagnostic()
+    );
+    assert_eq!(harness.reset(), Status::Ok as i32, "reset");
+    harness.target.clear_calls();
+    let result = harness.run_to_result(1_000, 8);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        harness.diagnostic()
+    );
+    let calls = harness.target.calls();
+    assert!(!calls.is_empty(), "the reset generation ran no transaction");
+    for call in &calls {
+        assert_eq!(
+            call.may_suspend, 1,
+            "the reset generation lost the suspension declaration: {call:?}"
+        );
+    }
+}
+
+#[test]
+fn a_suspended_callback_leaves_run_grant_and_destroy_refused() {
+    // nb D6: a `may_suspend` callback may suspend its thread while the
+    // thread-local callback flag stays set, so the entries that would disturb
+    // the frame are refused as re-entry and the exempt one stays accepted.
+    let harness = Harness::suspending(
+        IsaProfile::Rv64imafdc as i32,
+        &exit_guest(2),
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+        ELAPSED_HALF_TICK,
+    );
+    harness.target.probe_entries.store(true, Ordering::SeqCst);
+    let result = harness.run_to_result(1_000, 8);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        harness.diagnostic()
+    );
+    assert_eq!(
+        harness.target.run_grant_status(),
+        Status::Reentrant as i32,
+        "a callback started a grant on the handle it was serving"
+    );
+    assert_eq!(
+        harness.target.destroy_status(),
+        Status::Reentrant as i32,
+        "a callback destroyed the handle it was serving"
+    );
+    assert_eq!(
+        harness.target.invalidate_status.load(Ordering::SeqCst),
+        Status::Ok as i32,
+        "the invalidation entry is not accepted inside a callback"
+    );
 }
 
 #[test]
@@ -1350,6 +1690,7 @@ fn an_oversized_atomic_snapshot_is_not_a_completion() {
         transport_reset: Some(snapshot_reset),
         get_direct_mem_ptr: None,
         quantum_ticks: 0,
+        suspends_host_time: 0,
     };
     let _ = SnapshotTarget;
     let adapter = super::target::CBlockingTarget::new(table).unwrap();
@@ -1962,6 +2303,7 @@ fn the_atomic_extension_maps_both_directions() {
         transport_reset: Some(atomic_reset),
         get_direct_mem_ptr: None,
         quantum_ticks: 0,
+        suspends_host_time: 0,
     };
     let adapter = super::target::CBlockingTarget::new(table).unwrap();
 
@@ -2122,6 +2464,7 @@ fn create_rejects_unusable_configurations() {
             transport_reset: Some(target_reset),
             get_direct_mem_ptr: None,
             quantum_ticks: 0,
+            suspends_host_time: 0,
         };
         assert_eq!(
             ruscv_machine_create(&incomplete, 0, TICK_FS, &mut out),

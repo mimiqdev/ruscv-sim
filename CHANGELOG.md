@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Non-blocking U2: C ABI 挂起、payload 与 grant 字段（issue #217）**
+  - `ruscv_target` 末尾新增 `int32_t suspends_host_time`（nb D6），结构由 56 字节增至 64 字节：非零表示该 target
+    允许在 `may_suspend` 事务里让 host 时间流逝。表在 create 时复制，因此该声明跨 `ruscv_machine_reset` 保留，
+    NULL 表选择永不挂起的原生路由。挂起表与非零 `quantum_ticks` 的组合在 `ruscv_machine_create` 即以
+    `RUSCV_ERROR_CONFIG` 拒绝（`host::validate_quantum`），因为 grant 内部流逝的 host 时间会使 kernel 时钟不再是
+    整个 grant 的量子锚点
+  - `ruscv_payload` 末尾新增请求字段 `int32_t may_suspend` 与响应字段 `uint64_t host_elapsed_fs`（nb D3/D4），
+    结构由 256 字节增至 272 字节。`src/capi/target.rs` 把适配器的 `may_suspend` 复制进每个 payload，并把回调
+    报告的 `host_elapsed_fs` 复制回来——包括因载荷被改动而变成 `Incomplete` 的那条路径，它的 `e` 仍按 D4 计费。
+    两者都是时序元数据：地址、宽度、字节、类别与状态从不依赖它们
+  - `ruscv_grant` 在 `facts` 之后新增 `uint64_t host_elapsed_fs`（nb D5），结构由 128 字节增至 136 字节：本 grant
+    的 `W`，即该代累积 host 时间从 grant 起点到返回的增量而非累计值；每个 grant 都给出该字段，未运行 turn 的
+    grant 为 0。宿主等待 `consumed_fs - host_elapsed_fs` 后其时钟仍停在 `committed_end_fs`。`OwnedMachine` 新增只读
+    `transport_host_elapsed_femtoseconds`，在 grant 起止两处读取该代总量
+  - 头文件把线程规则收窄（nb D6）：payload 带 `may_suspend` 的 `b_transport` 回调可以挂起调用进程并让 host 时间
+    流逝，只要它在创建线程上恢复并返回。挂起期间线程局部回调标志保持置位，因此同一线程上其他进程进入 ABI 且
+    到达回调检查的每个调用仍以 `RUSCV_ERROR_REENTRANT` 拒绝（`ruscv_machine_destroy` 对活句柄亦然），唯一的
+    例外仍是 `ruscv_machine_invalidate_direct_mem`；先失败参数检查的调用与 `ruscv_machine_destroy(NULL)` 保持
+    既有结果，其他 OS 线程的调用仍是 `RUSCV_ERROR_NOT_CREATOR_THREAD`。`src/capi/target.rs` 的 `SAFETY` 注释
+    同步收窄，头文件的 Layout 规则与各结构 "final field" 文本改指新的末尾字段
+  - 布局 pin 随之移动：`the_direct_memory_fields_are_final_in_their_structs`（`src/capi/tests.rs`）与
+    `tests/capi/smoke.c` 的布局检查都改指新的末尾字段，并各自新增 `ruscv_grant` 的大小与末尾字段 pin。既有
+    offset 不变，但尺寸改变，因此 ABI 与上一版头文件不二进制兼容：宿主必须针对新头文件重新编译后才能链接本库
+  - 新增 6 个 crate 内测试覆盖合同 §4 U2 的验收项：挂起表下 guest 访问（含一次 load）的 `may_suspend` 为 1，
+    同一 guest 在表标志清零时为 0；两个 grant 各自只报告自己的 `host_elapsed_fs`（不是累计值）；`e` 为 1.5 tick
+    时 `consumed_fs - host_elapsed_fs` 等于 turn tick 数加上每次访问半 tick；挂起表配 quantum 4 在 create 被拒；
+    声明跨 reset 保留；回调内 `ruscv_machine_run_grant` 与 `ruscv_machine_destroy` 返回
+    `RUSCV_ERROR_REENTRANT` 而 `ruscv_machine_invalidate_direct_mem` 仍被接受，这正是被挂起回调留下的状态
+  - `tests/capi/smoke.c` 以纯 C 重复标志、每 grant 的 host elapsed、reset 保留、拒绝与布局检查：`suspends_host_time`
+    为 1 的 C target 报告脚本化的 `e`（1.5 tick），不做真实挂起
+  - U2 拥有的 3 条负控制（`nb-u2-grant-elapsed`、`nb-u2-payload-flag`、`nb-u2-create-quantum`）注册进
+    `scripts/debug/stage6-mutations`，每条由已提交测试在变异下失败、还原后通过
+
 - **Non-blocking U1: Rust 侧挂起（issue #216）**
   - `BlockingTarget` 新增 `suspends_host_time() -> bool`（nb D2），默认 `false`，因此既有实现者照常编译且行为不变；
     `ZeroDelayRam` 保持默认，`TlmRamAdapter` 在构造时读取一次。挂起 target 与非零 `MachineConfig.quantum` 的组合
