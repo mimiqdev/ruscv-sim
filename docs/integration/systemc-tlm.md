@@ -14,7 +14,8 @@ reset and the FFI rules (direct-memory D3–D10, D12 and D13 of the
 this page's `direct-memory D<n>` citations name that contract). Quantum D14 makes
 this page normative for the local offset, the grant return, the sync and the
 bound rules on this host, and this page's `quantum D<n>` citations name the
-Current contract. Bounded by
+[archived quantum contract](../archive/milestones/quantum-temporal-decoupling.md).
+Bounded by
 ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
@@ -33,8 +34,9 @@ its FFI rules, normative where they are not already covered by the
 header's direct-memory obligations. It also records the SystemC halves of the
 quantum contract: the local offset as the `b_transport` delay argument, the
 grant return as the only quantum keeper, the sync and commit rule, and the two
-fault-option controls of its §4. Non-blocking transport and TLM-modeled
-devices stay out of scope, as the Current contract's §5 records.
+fault-option controls of its §4. The Current contract selects non-blocking
+transport through suspending callbacks; until its units land, this page
+describes only the blocking mapping, and TLM-modeled devices stay out of scope.
 
 ## Selected mapping
 
@@ -345,7 +347,12 @@ neither a guest loop nor a host defect can hang CI.
 
 ## Open items
 
-- Non-blocking transport, which needs its own timing contract.
+- Non-blocking transport: selected by the Current contract, not yet
+  implemented. Its D11 makes this page normative for suspension, the
+  base-protocol mapping, the commit rule, retirement and the AT target mode
+  once its units complete.
+- TLM-modeled devices and SystemC-modeled interrupt lines, which need their
+  own contract.
 
 ## Direct-memory grant, permission, latency, invalidation, lifetime and FFI
 

@@ -10,7 +10,7 @@ This index is the entry point for project decisions and technical documentation.
 
 ## Sources of truth
 
-1. [Milestone plan](dev-plan.md) — the sole Current contract. The approved Quantum and Temporal Decoupling target replaces TLM Direct Memory Interface on this rotation merge; activation is not an implementation claim.
+1. [Milestone plan](dev-plan.md) — the sole Current contract. The approved Non-blocking TLM Transport target replaces Quantum and Temporal Decoupling on this rotation merge; activation is not an implementation claim.
 2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
 3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests, the [A8 assessment](verification/a8-closeout-assessment.md) for the atomic route, and the [A9 acceptance assessment](verification/a9-closeout-assessment.md) for Hart facts/Machine integration, separating historical checkpoint and final PR/merge-head evidence.
 4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
@@ -33,8 +33,10 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Quantum and Temporal Decoupling contract](dev-plan.md) — D1–D14 approved 2026-11-06 under the owner's delegated planning authority, sole Current on this rotation merge. Adds an optional local time offset for one Hart on the TLM route, with forced syncs and a declared interrupt-latency bound, in Rust, the CLI, the C ABI and the SystemC smoke.
-- [Approved quantum proposal entry](proposals/post-dmi-quantum.md) — informational pointer to the sole normative contract.
+- [Non-blocking TLM Transport contract](dev-plan.md) — D1–D11 approved 2026-11-07 under the owner's delegated planning authority, sole Current on this rotation merge. Lets the SystemC host serve guest-RAM transactions through the IEEE 1666 non-blocking base protocol, with host time passing inside a transaction charged once to Platform time, in Rust, the C ABI and the SystemC smoke.
+- [Approved non-blocking transport proposal entry](proposals/post-quantum-nb-transport.md) — informational pointer to the sole normative contract.
+- [Archived quantum contract](archive/milestones/quantum-temporal-decoupling.md) — entire contract, completed 2026-11-06 at PR #214.
+- [Historical quantum proposal entry](proposals/post-dmi-quantum.md) — informational pointer to the archived contract.
 - [Archived direct-memory contract](archive/milestones/tlm-direct-memory-interface.md) — entire contract, completed 2026-11-06 at PR #199.
 - [Historical direct-memory proposal entry](proposals/post-tlm-dmi.md) — informational pointer to the archived contract.
 - [Archived blocking-transport contract](archive/milestones/blocking-tlm-systemc-transport.md) — completed 2026-11-05 at PR #186.

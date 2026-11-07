@@ -2,7 +2,7 @@
 
 This directory preserves approved milestone contracts and explicitly superseded plans, including their scope and limitations. Clearly labeled preparation records do not claim completion.
 
-Archived files are not active plans. Consult the [sole current contract](../../dev-plan.md). The approved Quantum and Temporal Decoupling target succeeds TLM Direct Memory Interface on the actual rotation merge. The [entire direct-memory contract](tlm-direct-memory-interface.md), the [entire blocking-transport contract](blocking-tlm-systemc-transport.md), the [entire RV64GC default-profile contract](rv64gc-default-profile.md), the [entire F/D contract](selectable-fd-floating-point-profiles.md), the [entire Zca contract](selectable-zca-compressed-profile.md), the [entire System Bus Access Debug contract](system-bus-access-debug.md), the [entire Program-buffer Debug Execution contract](program-buffer-debug-execution.md) and the [entire Stage 6 contract](stage6-riscv-debug-mode.md) are preserved here for historical scope; activation and completion do not claim implementation of the successor. CI and PR history retain execution and review outcomes.
+Archived files are not active plans. Consult the [sole current contract](../../dev-plan.md). The approved Non-blocking TLM Transport target succeeds Quantum and Temporal Decoupling on the actual rotation merge. The [entire quantum contract](quantum-temporal-decoupling.md), the [entire direct-memory contract](tlm-direct-memory-interface.md), the [entire blocking-transport contract](blocking-tlm-systemc-transport.md), the [entire RV64GC default-profile contract](rv64gc-default-profile.md), the [entire F/D contract](selectable-fd-floating-point-profiles.md), the [entire Zca contract](selectable-zca-compressed-profile.md), the [entire System Bus Access Debug contract](system-bus-access-debug.md), the [entire Program-buffer Debug Execution contract](program-buffer-debug-execution.md) and the [entire Stage 6 contract](stage6-riscv-debug-mode.md) are preserved here for historical scope; activation and completion do not claim implementation of the successor. CI and PR history retain execution and review outcomes.
 
 ## Rolling process
 
@@ -16,6 +16,9 @@ Archived files are not active plans. Consult the [sole current contract](../../d
    technical planning context, not a second current contract.
 
 ## Records
+
+- [Quantum and Temporal Decoupling: Entire approved contract](quantum-temporal-decoupling.md)
+  - Preserves D1–D14 approved under delegated planning authority, with the scope, known limitations and source identifiers. Implementation is PR #208 through PR #214, completed 2026-11-06 at merge head `7cf7513`; no execution results are copied here.
 
 - [TLM Direct Memory Interface: Entire approved contract](tlm-direct-memory-interface.md)
   - Preserves D1–D14 approved under delegated planning authority, with the scope, known limitations and source identifiers. Implementation is PR #194 through PR #199, completed 2026-11-06; no execution results are copied here.
