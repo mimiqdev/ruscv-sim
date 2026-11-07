@@ -161,7 +161,7 @@ Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在
 完整客户退出码仍显示在 `Exit Code` 行。`scripts/run_elf_tests.sh` 仅在进程状态为 0
 且输出中唯一的状态行为 `Status:     SUCCESS` 时判定通过。
 
-## C ABI（blocking TLM U5）
+## C ABI（blocking TLM U5 / non-blocking U2）
 
 `capi` cargo feature 提供 blocking-transport 宿主的窄 C ABI 与手写头文件
 `include/ruscv_sim.h`。它不改变 crate type，也不给默认或 `--all-features` 构建引入
@@ -178,18 +178,20 @@ cc -std=c11 -Iinclude host.c target/debug/libruscv_sim.a -lpthread -ldl -lm
 `ruscv_machine_run_grant`（权威起点、最大结束时间、turn 预算）→
 `ruscv_machine_boundary`／`ruscv_machine_result` → `ruscv_machine_reset` →
 `ruscv_machine_invalidate_direct_mem`（可选）→ `ruscv_machine_destroy`。grant 返回本次消费的建模时间（完成的 turn、idle 跳进与 transport
-延迟），内核只按该量提交全局时间；早于 Machine 已提交时间的起点是 adapter 失败，reset 重启纪元。
+延迟）与本 grant 内已在回调中流逝的 host 时间；内核等待 `consumed_fs - host_elapsed_fs` 后提交全局时间，
+没有 host 时间流逝时就是 `consumed_fs`（nb D5）。早于 Machine 已提交时间的起点是 adapter 失败，reset 重启纪元。
 截止时间前先形成该 turn 的保守完成上界，放不下的 turn 不启动，并以 `deadline_blocked`、
 剩余 slack 与被拒绝的上界报告（ADR-0004 §7.2）。
 
 回调表包含 `b_transport`、`transport_dbg`、transport reset 与声明的单事务最大延迟。句柄只接受创建线程
-的调用，回调只在 ruscv-sim 调用内同步执行，从回调再入 C ABI 以 `RUSCV_ERROR_REENTRANT` 拒绝；
+的调用，回调在 ruscv-sim 调用内执行并在该调用返回前返回，从回调再入 C ABI 以
+`RUSCV_ERROR_REENTRANT` 拒绝；`may_suspend` 置位的 `b_transport` 可在其中挂起调用进程，见下文。
 payload 缓冲区由 Rust 拥有且只在一次回调内有效。Rust panic 在边界被捕获并毒化句柄
 （`RUSCV_ERROR_PANIC`，之后为 `RUSCV_ERROR_POISONED`），错误一律是整数状态码；TLM 状态、
 回调返回值或 host stop 都不会变成 ruscv-sim 的终态结果。未知完成毒化 transport，只有 target
 确认 transport reset 后的 `ruscv_machine_reset` 才能重新安装镜像并继续。
-回调表末尾的可空 `get_direct_mem_ptr` 选择 TLM Direct Memory Interface，`NULL` 表示不提供且行为与 `dmi`
-关闭一致；`ruscv_payload` 末尾的 `dmi_allowed` 是唯一的 grant 触发 hint。头文件完整陈述 target 的 D10
+回调表中可空的 `get_direct_mem_ptr` 选择 TLM Direct Memory Interface，`NULL` 表示不提供且行为与 `dmi`
+关闭一致；`ruscv_payload` 的 `dmi_allowed` 是唯一的 grant 触发 hint。头文件完整陈述 target 的 D10
 义务（指针寿命、别名、逐字节原子访问与 invalidate-before-free 顺序），malformed grant 是被查询访问的
 protocol failure。`ruscv_machine_invalidate_direct_mem` 是唯一允许在回调内与被毒化句柄上调用的入口
 （仍限创建线程），只访问 target wrapper 的 `BlockingDirectMemRegistry`；其它入口仍拒绝回调再入。
@@ -197,7 +199,21 @@ protocol failure。`ruscv_machine_invalidate_direct_mem` 是唯一允许在回�
 grant 时间字段与过早起点拒绝、跨线程与再入拒绝、panic 毒化、不通过的 TLM 状态、未知完成后的 reset，
 以及 grant、NULL 回调、denial、grant 之间与回调内的 invalidation 和 reset 后的 grant 恢复。
 
-## SystemC 宿主（blocking TLM U6）
+non-blocking 合同在同一 ABI 上追加挂起支持（nb D5/D6）：`ruscv_target` 末尾新增
+`int32_t suspends_host_time`（非零表示该 target 允许在 `may_suspend` 事务里让 host 时间流逝，声明在
+create 时复制并跨 reset 保留），`ruscv_payload` 末尾新增请求字段 `int32_t may_suspend` 与响应字段
+`uint64_t host_elapsed_fs`，`ruscv_grant` 在 `facts` 之后新增 `uint64_t host_elapsed_fs`（本 grant 的
+`W`，不是累计值）。挂起表与非零 `quantum_ticks` 的组合由 `ruscv_machine_create` 以
+`RUSCV_ERROR_CONFIG` 拒绝。`may_suspend` 置位的 `b_transport` 可以挂起调用进程并让 host 时间流逝，
+只要它在创建线程上恢复并返回；挂起期间线程局部回调标志保持置位，因此同一线程上其他进程进入 ABI 仍以
+`RUSCV_ERROR_REENTRANT` 拒绝（`ruscv_machine_destroy` 对活句柄亦然），唯一例外仍是
+`ruscv_machine_invalidate_direct_mem`；其他 OS 线程的调用仍是 `RUSCV_ERROR_NOT_CREATOR_THREAD`。
+宿主等待 `consumed_fs - host_elapsed_fs` 后其时钟仍等于 `committed_end_fs`，`host_elapsed_fs >
+consumed_fs` 时不再提交时间而是 host failure（unless already failed）。字段追加改变了结构大小而不移动
+既有 offset，因此 ABI 与上一版头文件不二进制兼容，宿主必须针对新头文件重新编译。布局 pin 与上述规则见
+`include/ruscv_sim.h`、`src/capi/tests.rs` 与 `tests/capi/smoke.c`。
+
+## SystemC 宿主（blocking TLM U6 / non-blocking U3–U5）
 
 `integration/systemc/` 是 pinned SystemC 宿主：Accellera SystemC 3.0.2（commit
 `70b0fc8e4a74acc677b0fc73cea08f940c2115d5`，[归档的 blocking-transport 合同](docs/archive/milestones/blocking-tlm-systemc-transport.md) D9 的选择）以 C++17 构建为静态库，
@@ -218,6 +234,20 @@ initiator 只上报 `delay - offset`；一次被计数的 turn 边界 sync 会�
 `wait()` 之后内核时钟仍等于 `committed_end_fs`。合同 §4 的两个故障选项 `--fault-keep-offset` 与
 `--fault-decrease-delay` 要求 `--quantum`，各自必须以具名诊断失败。
 
+non-blocking（base protocol）AT 路径由 `--nb` 选择：target 声明自己挂起，`may_suspend` 事务经
+`nb_transport_fw`/`nb_transport_bw` 以单笔未完成事务运行；`--nb-latency <fs>` 设定 λ 与声明的单事务
+上限（默认 0，最大 10^15 fs），`--nb-path accepted|updated|early|annotated|completed` 选择 target 的
+返回路径，缺少 `--nb` 的 `--nb-latency`/`--nb-path` 是用法错误，`--nb` 与非零 `--quantum` 的组合由
+`ruscv_machine_create` 拒绝。initiator 报告 `d = e`，target 在 `BEGIN_REQ` 调用内应用访问一次，之后
+阶段只携带时序；事务从 `BEGIN_REQ` 到 target 发出或收到最终阶段期间，`transport_reset` 拒绝确认。每笔
+AT 事务以声明上限 + 1 fs 为超时，超时未完成即经 `mark_unknown_completion` 退休，之后生效的每个阶段都是
+late phase，按三种形式各计一次并忽略；每次退休后的停止都先 drain（需要时先探测被拒绝的 reset 确认）再
+destroy 句柄并 `sc_stop`。`--grant-trace <path>` 每个 grant 写一行 `consumed_fs`、`committed_end_fs` 与
+`host_elapsed_fs`，smoke 用它比较 per-grant 等式。五个故障选项
+`--fault-late-response`、`--fault-uncounted-elapsed`、`--fault-short-delay`、`--fault-wait-blocking` 与
+`--fault-wait-debug` 各自以具名诊断失败。实现见 `integration/systemc` 与
+`docs/integration/systemc-tlm.md` 的规范说明。
+
 `scripts/test_systemc_smoke.sh` 在 CI 作业 `SystemC transport smoke` 内运行：`atomic_tohost_exit`
 （`rv64imafdc`）与 `fd_fma`（`rv64imafd`）经该内核与 blocking RAM target 运行后的退出码和
 `--log-commits` 必须与 native 公共 CLI 完全一致；早停变体（`--stop-after-grants 1`）必须在终止结果前
@@ -229,6 +259,9 @@ initiator 只上报 `delay - offset`；一次被计数的 turn 边界 sync 会�
 invalidate-all 会额外转发一次）。两个 guest 另各跑 `--quantum 1` 与 `--quantum 1024`（带与不带 `--dmi`）：
 退出码与 commit log 仍须与 native 逐字节一致，内核时钟比较次数须等于 grant 数，且 `--quantum 1024` 的
 grant 数须严格低于同一 guest 的 `--quantum 1`；两个故障选项在 `--quantum 1024` 下各须以各自诊断失败。
+non-blocking 遍覆盖五条返回路径在 λ = 0 与 1500000 fs 下的 parity、`--grant-trace` 逐 grant 等式与
+D10 三项求和、`--dmi` AT 计数严格低于非直接遍，并要求 `--nb --quantum` 与非阻塞用法错误被拒绝、正常
+`--nb` 遍的 late phase 数为零；五个 non-blocking 故障选项各以自己的断言失败。
 缺少工具链、缺少 SystemC 或任一比较失败都是失败，不是跳过。
 `cargo build`／`cargo test --all-features` 不需要 C++ 工具链或 SystemC。Linux x86-64 only。
 
@@ -242,8 +275,16 @@ quantum／同步策略已由归档的 quantum 合同实现：`MachineConfig.quan
 `local_offset_fs`，以及 SystemC smoke 的 `--quantum` 与两个故障选项均见上文。实现证据由
 `src/machine/tests.rs`、`src/capi/tests.rs`、`tests/quantum_cli.rs`、`tests/tlm_u4_guest_parity.rs`、
 `scripts/run_elf_tests.sh` 与 `scripts/test_systemc_smoke.sh` 提供。该合同于 2026-11-06 在 PR #214 完成，
-已归档为 [quantum 合同](docs/archive/milestones/quantum-temporal-decoupling.md)。当前合同选定 non-blocking
-（base protocol）传输与可挂起回调，尚未实现。
+已归档为 [quantum 合同](docs/archive/milestones/quantum-temporal-decoupling.md)。
+
+non-blocking（base protocol）传输与可挂起回调由当前合同实现：Rust 侧的 `BlockingTarget::suspends_host_time`、
+`BlockingTransaction` 的 `may_suspend`/`host_elapsed` 与 `BoundaryFacts::host_elapsed_femtoseconds`，C ABI 的
+挂起声明、payload 的请求/响应字段与 grant 的 host elapsed 增量，SystemC 的 `--nb` AT 路径、超时退休、
+late phase 与 drain，以及五个故障选项，均见上文各节。实现证据由 `src/blocking/tests.rs`、
+`src/machine/tests.rs`、`src/capi/tests.rs`、`tests/capi/smoke.c`、`scripts/test_systemc_smoke.sh` 与
+`scripts/debug/stage6-mutations`（15 个 `nb-u1-*`/`nb-u2-*` 控制）提供。规范映射、时间规则与开放项见
+[SystemC/TLM 边界](docs/integration/systemc-tlm.md)；开放项只余 TLM 建模设备、SystemC 建模中断线与多笔
+未完成事务。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 

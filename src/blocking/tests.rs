@@ -864,6 +864,102 @@ fn a_recorded_write_survives_the_new_rules() {
     );
 }
 
+/// nb D4 step 6: the charged amount holds on the atomic path as on the plain
+/// path. A terminal `Ok` AMO with `e < d` charges its rounded delay once, a
+/// guest-visible fault on an AMO charges the same delay, and an `Ok` AMO with
+/// `e > d` is the elapsed-above-delay failure that charges `e`.
+#[test]
+fn an_atomic_response_charges_its_elapsed_time() {
+    let operand = 1u32.to_le_bytes();
+
+    fn amo(operand: &[u8]) -> AtomicRequest<'_> {
+        AtomicRequest::rmw(
+            BASE,
+            PhysicalWidth::Word,
+            AtomicOrdering {
+                aq: false,
+                rl: false,
+            },
+            operand,
+            crate::hart_amods::transform(
+                crate::hart_amods::AmoOperation::Add,
+                crate::physical::AmoWidth::Word,
+            ),
+        )
+        .unwrap()
+    }
+
+    // A terminal `Ok` with `e < d` charges the rounded delay exactly once.
+    let target = super::test_support::SuspendingTarget::new();
+    target.set_declared_max_delay(10_000_000);
+    target.set_elapsed(1_500_000);
+    target.set_delay(2_500_000);
+    let slot = suspending_slot(&target);
+    let mut port = crate::physical::ValidatedAtomicAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    port.access_atomic(amo(&operand)).unwrap();
+    assert_eq!(
+        slot.consumed_delay(),
+        Femtoseconds::new(2_500_000),
+        "an `Ok` AMO charged its host elapsed time instead of its delay"
+    );
+    assert_eq!(
+        slot.host_elapsed(),
+        Femtoseconds::new(1_500_000),
+        "an `Ok` AMO did not total its host elapsed time"
+    );
+
+    // A guest-visible fault with `e < d` charges the same delay.
+    let target = super::test_support::SuspendingTarget::new();
+    target.set_declared_max_delay(10_000_000);
+    target.set_elapsed(1_500_000);
+    target.set_delay(2_500_000);
+    target.set_data_outcome(super::test_support::ScriptedOutcome::Status(
+        BlockingResponseStatus::AddressError,
+    ));
+    let slot = suspending_slot(&target);
+    let mut port = crate::physical::ValidatedAtomicAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    assert!(
+        matches!(
+            port.access_atomic(amo(&operand)),
+            Err(AtomicAccessError::TargetRejected(_))
+        ),
+        "a faulted AMO was not a guest-visible target fault"
+    );
+    assert_eq!(
+        slot.consumed_delay(),
+        Femtoseconds::new(2_500_000),
+        "a guest-visible AMO fault did not charge its rounded delay"
+    );
+
+    // An `Ok` AMO with `e > d` is the elapsed-above-delay failure, charged `e`.
+    let target = super::test_support::SuspendingTarget::new();
+    target.set_declared_max_delay(10_000_000);
+    target.set_elapsed(2_500_000);
+    target.set_delay(1_500_000);
+    let slot = suspending_slot(&target);
+    let mut port = crate::physical::ValidatedAtomicAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    let error = port.access_atomic(amo(&operand)).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("above its 1500000 fs response delay"),
+        "the AMO was not the elapsed-above-delay rule: {error}"
+    );
+    assert_eq!(
+        slot.consumed_delay(),
+        Femtoseconds::new(2_500_000),
+        "the elapsed-above-delay AMO failure did not charge its `e`"
+    );
+    assert_eq!(
+        slot.host_elapsed(),
+        Femtoseconds::new(2_500_000),
+        "the elapsed-above-delay AMO failure did not total its `e`"
+    );
+}
+
 /// nb D4 step 6: an incomplete response whose delay is above the declared
 /// maximum is still today's host failure, and it is still charged its `e`.
 #[test]

@@ -114,7 +114,10 @@ backward call forwards each one to `ruscv_machine_invalidate_direct_mem` and
 the forwarded count is reported at exit.
 
 `--nb` makes the target declare that it suspends host time and selects the AT
-base-protocol path for every `may_suspend` transaction (nb D7/D8).
+base-protocol path for every `may_suspend` transaction (nb D7/D8). The
+declaration travels in `ruscv_target.suspends_host_time`, the payload's
+`may_suspend` and `host_elapsed_fs` carry the flag and the measured host time,
+and each grant's own `host_elapsed_fs` is its accumulated `W` (nb D5/D6).
 `--nb-latency <fs>` sets the target latency lambda and its declared
 per-transaction maximum (default 0, at most 10^15 fs), and `--nb-path` selects
 `accepted`, `updated`, `early`, `annotated` or `completed`. `--nb-latency` and

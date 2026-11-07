@@ -360,8 +360,9 @@ void RuscvInitiator::serve_b_transport(ruscv_payload& payload) {
     prepare(transaction, payload.address, payload.command, payload.data, payload.length);
     transaction.set_extension(&extension);
     // quantum D13: the IEEE 1666 delay argument carries the Hart's local offset
-    // on entry. This model's declared maximum is zero, so the target adds
-    // nothing and the callback reports only what it returned above the offset.
+    // on entry. The target adds nothing on this blocking path, so the callback
+    // reports only what it returned above the offset; the declared maximum is
+    // zero off `--nb` and `lambda` on a suspending table (nb D8).
     const uint64_t offset_fs = payload.local_offset_fs;
     sc_core::sc_time delay = sc_core::sc_time::from_value(offset_fs);
     socket->b_transport(transaction, delay);
@@ -381,7 +382,9 @@ void RuscvInitiator::serve_b_transport(ruscv_payload& payload) {
     if (faults_.keep_offset) {
         // The smoke's --fault-keep-offset control (quantum §4): the full delay
         // argument is reported as an added delay, so the offset this target was
-        // given exceeds the declared maximum of zero.
+        // given exceeds the declared maximum of zero. This control requires
+        // --quantum, and a suspending table with a quantum is refused, so --nb
+        // is never selected with it.
         payload.delay_fs = delay.value();
     } else if (delay.value() < offset_fs) {
         // quantum D13: a returned delay below the offset cannot be represented
