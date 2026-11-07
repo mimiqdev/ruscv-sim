@@ -90,6 +90,17 @@ impl Platform {
         if config.quantum != 0 && config.transport.is_native() {
             return Err(MachineError::UnsupportedTransport);
         }
+        // nb D2: host time passing inside a grant would stop the kernel's clock
+        // from being the quantum anchor `E` for the whole grant (archived
+        // quantum D12), so a suspending target and a quantum cannot combine.
+        if config.quantum != 0
+            && config
+                .transport
+                .target()
+                .is_some_and(|target| target.suspends_host_time())
+        {
+            return Err(MachineError::UnsupportedTransport);
+        }
         let ram = match &config.transport {
             Transport::Native => RamSlot::native(
                 Arc::new(Mutex::new(SimpleMemory::new(image.memory_size()))),
@@ -265,6 +276,13 @@ impl Platform {
     /// debug work whose delay is validated but not charged.
     pub(super) fn transport_delay_femtoseconds(&self) -> u64 {
         self.ram.consumed_delay().as_u64()
+    }
+
+    /// Exact total host elapsed time the RAM slot's counted transactions
+    /// reported (nb D4).  Covers the guest turns of this generation only, so
+    /// debug work's validated but uncharged time stays out of it.
+    pub(super) fn transport_host_elapsed_femtoseconds(&self) -> u64 {
+        self.ram.host_elapsed().as_u64()
     }
 
     /// Opens one guest turn's transport-delay accounting and clears the F1

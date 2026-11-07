@@ -228,7 +228,10 @@ pub enum MachineError {
     #[error(
         "unsupported transport configuration: a TLM transport requires PlatformKind::Native (Flat \
          has no TLM route), direct memory requires a TLM transport (the native route has no direct \
-         memory), and a quantum requires a TLM transport (the native route has no local offset)"
+         memory), a quantum requires a TLM transport (the native route has no local offset), and a \
+         target that suspends host time cannot be combined with a non-zero quantum (host time \
+         passing inside a grant would stop the kernel's clock from being the quantum anchor for \
+         the whole grant)"
     )]
     UnsupportedTransport,
     #[error("this configuration has no UART")]
@@ -269,6 +272,15 @@ pub struct BoundaryFacts {
     /// zero-delay target, and excludes SBA/Debug Mode delay, which is
     /// validated but not charged.
     pub transport_delay_femtoseconds: u64,
+    /// Total host elapsed time the counted transactions reported, in exact
+    /// femtoseconds (nb D4).
+    ///
+    /// This is the `e` of every transaction whose charge the adapter counted --
+    /// the guest turns of this generation -- whichever charged amount each one
+    /// contributed.  It is zero on the native route, for a target that lets no
+    /// host time pass, and for debug work, whose time is validated but neither
+    /// charged nor totalled here.
+    pub host_elapsed_femtoseconds: u64,
     /// The boundary's quantum facts (quantum D10); `None` when the quantum
     /// is off, whose stdout stays byte-identical.
     pub quantum: Option<QuantumFacts>,
@@ -285,6 +297,7 @@ impl Default for BoundaryFacts {
             no_progress: false,
             deadline_stop: false,
             transport_delay_femtoseconds: 0,
+            host_elapsed_femtoseconds: 0,
             quantum: None,
         }
     }
@@ -811,6 +824,7 @@ impl Installed {
                 no_progress: idle_stop.0,
                 deadline_stop: idle_stop.1,
                 transport_delay_femtoseconds: self.platform.transport_delay_femtoseconds(),
+                host_elapsed_femtoseconds: self.platform.transport_host_elapsed_femtoseconds(),
                 quantum: self.quantum_facts(quantum_reached)?,
                 ..BoundaryFacts::default()
             },

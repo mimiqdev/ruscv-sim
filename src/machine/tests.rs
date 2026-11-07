@@ -1,7 +1,12 @@
 //! Controlled native backend/host-admission seams, not public recovery APIs.
 use super::*;
-use crate::blocking::test_support::{DelayingRam, DirectMemReply, DirectMemTarget, ScriptTarget};
-use crate::blocking::{BlockingDirectMemAccess, BlockingInitiator, Transport, ZeroDelayRam};
+use crate::blocking::test_support::{
+    DelayingRam, DirectMemReply, DirectMemTarget, ScriptTarget, SuspendingTarget,
+};
+use crate::blocking::{
+    BlockingCommand, BlockingDirectMemAccess, BlockingInitiator, BlockingTarget, Transport,
+    ZeroDelayRam,
+};
 use crate::csr::machine;
 use crate::memory::MemoryError;
 use crate::physical::{
@@ -3184,6 +3189,611 @@ fn atomic_delay_advances_mtime_like_a_data_access() {
         guest_counters_now(&owned),
         (minstret_before + 1, mcycle_before + 1),
         "the atomic delay leaked into mcycle or minstret"
+    );
+}
+
+// ---- Non-blocking U1: suspension and host elapsed time ----
+
+/// nb D4 charge fixtures: `e` and `d` round to different tick counts, so a test
+/// can tell which amount was charged.
+const ELAPSED_FS: u64 = 1_500_000;
+const ELAPSED_TICKS: u64 = 2;
+const DELAY_FS: u64 = 2_500_000;
+const DELAY_TICKS: u64 = 3;
+const SUSPEND_DECLARED_MAX: u64 = 10_000_000;
+
+/// A suspending target whose responses report `elapsed` and `delay`.
+fn suspending_target(declared_max: u64, elapsed: u64, delay: u64) -> Arc<SuspendingTarget> {
+    let target = SuspendingTarget::new();
+    target.set_declared_max_delay(declared_max);
+    target.set_elapsed(elapsed);
+    target.set_delay(delay);
+    target
+}
+
+fn suspending_config(target: &Arc<SuspendingTarget>, direct_mem: bool) -> MachineConfig {
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    config.dmi = direct_mem;
+    config
+}
+
+/// The failure a turn reported, for a turn that was expected to fail.
+fn turn_failure(turn: &MachineTurn) -> &crate::core::SimulatorFailure {
+    match &turn.hart().outcome {
+        StepOutcome::SimulatorFailure(failure) => failure,
+        other => panic!("the turn did not fail: {other:?}"),
+    }
+}
+
+/// nb D4 step 6: a terminal response charges its delay exactly once, and a
+/// guest-visible fault with `e < d` charges the same delay.
+#[test]
+fn a_terminal_response_charges_its_delay_once() {
+    let target = suspending_target(SUSPEND_DECLARED_MAX, ELAPSED_FS, DELAY_FS);
+    let mut owned =
+        OwnedMachine::new(suspending_config(&target, false), image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    let counters = guest_counters_now(&owned);
+    let turn = owned.step(false).unwrap();
+    assert!(matches!(
+        turn.hart().outcome,
+        StepOutcome::InstructionRetired(_)
+    ));
+    let transactions = target.transactions.load(Ordering::SeqCst) as u64;
+    assert_eq!(
+        transactions, 3,
+        "two fetch parcels and one store transaction"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        1 + transactions * DELAY_TICKS,
+        "a terminal response did not charge its rounded delay exactly once"
+    );
+    assert_eq!(
+        turn.boundary().transport_delay_femtoseconds,
+        transactions * DELAY_FS
+    );
+    assert_eq!(
+        turn.boundary().host_elapsed_femtoseconds,
+        transactions * ELAPSED_FS,
+        "the boundary total must be the sum of the reported host elapsed times"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        (counters.0 + 1, counters.1 + 1),
+        "host elapsed time leaked into mcycle or minstret"
+    );
+    assert_eq!(
+        target.bytes_at(elf::BASE + 0x200, 8),
+        0x1234_5678u64.to_le_bytes(),
+        "the suspending target did not apply the store"
+    );
+
+    // A guest-visible fault with `e < d` charges the same delay.
+    let target = suspending_target(SUSPEND_DECLARED_MAX, ELAPSED_FS, DELAY_FS);
+    target.set_data_outcome(crate::blocking::test_support::ScriptedOutcome::Status(
+        crate::blocking::BlockingResponseStatus::AddressError,
+    ));
+    let mut owned =
+        OwnedMachine::new(suspending_config(&target, false), image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    let turn = owned.step(false).unwrap();
+    assert!(
+        matches!(turn.hart().outcome, StepOutcome::TrapEntered(_)),
+        "the store's target fault did not trap: {:?}",
+        turn.hart().outcome
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        1 + 3 * DELAY_TICKS,
+        "a guest-visible fault did not charge its rounded delay"
+    );
+    assert_eq!(turn.boundary().transport_delay_femtoseconds, 3 * DELAY_FS);
+}
+
+/// nb D4 step 5: `e > d` on a terminal response is a protocol failure that
+/// charges `e`.
+#[test]
+fn host_elapsed_above_the_response_delay_is_a_protocol_failure() {
+    let target = suspending_target(SUSPEND_DECLARED_MAX, DELAY_FS, ELAPSED_FS);
+    let mut owned =
+        OwnedMachine::new(suspending_config(&target, false), image(elf::nop())).unwrap();
+    let turn = owned.step(false).unwrap();
+    let failure = turn_failure(&turn);
+    assert!(
+        failure
+            .message
+            .contains("host elapsed time above its 1500000 fs response delay"),
+        "the failure lost the elapsed-above-delay rule: {failure:?}"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        DELAY_TICKS,
+        "the failed turn did not charge the rounded host elapsed time"
+    );
+    assert_eq!(
+        turn.boundary().transport_delay_femtoseconds,
+        DELAY_FS,
+        "the charged amount must be the host elapsed time, not the delay"
+    );
+    assert_eq!(
+        turn.boundary().host_elapsed_femtoseconds,
+        DELAY_FS,
+        "a counted transaction's host elapsed time must still be totalled"
+    );
+}
+
+/// nb D4 step 4: a non-zero `e` on a request that may not suspend is the
+/// unmarked-elapsed rule, even above the declared maximum.
+#[test]
+fn host_elapsed_without_the_flag_is_a_protocol_failure() {
+    // A guest load to a non-suspending target with 0 < e <= d inside a
+    // non-zero declared maximum.
+    let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    target.set_declared_max_delay(SUSPEND_DECLARED_MAX);
+    target.set_elapsed(ELAPSED_FS);
+    target.set_delay(DELAY_FS);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::ld(5, 1, 0))).unwrap();
+    owned.state_mut().regs[1] = elf::BASE + 0x200;
+    let turn = owned.step(false).unwrap();
+    let failure = turn_failure(&turn);
+    assert!(
+        failure
+            .message
+            .contains("host elapsed time on a request that may not suspend"),
+        "the failure lost the unmarked-elapsed rule: {failure:?}"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        ELAPSED_TICKS,
+        "the rule violation did not charge its rounded host elapsed time"
+    );
+    assert_eq!(
+        turn.boundary().transport_delay_femtoseconds,
+        ELAPSED_FS,
+        "the reported charge must be the host elapsed time"
+    );
+
+    // The same response with `e` above the declared maximum stays the
+    // unmarked-elapsed rule; the overshoot its charge raises is appended.
+    let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    target.set_declared_max_delay(0);
+    target.set_elapsed(DELAY_FS);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::nop())).unwrap();
+    let turn = owned.step(false).unwrap();
+    let failure = turn_failure(&turn);
+    assert!(
+        failure
+            .message
+            .contains("host elapsed time on a request that may not suspend"),
+        "an overshooting unmarked elapsed time lost its rule: {failure:?}"
+    );
+    assert!(
+        failure.message.contains("also failed") && failure.message.contains("overshoot"),
+        "the charge's overshoot was not appended: {failure:?}"
+    );
+}
+
+/// nb D4 step 6: an incomplete response charges its `e`, on a load and on an
+/// AMO, and an unknown completion charges its `e` too.
+#[test]
+fn an_incomplete_or_unknown_response_charges_its_elapsed_time() {
+    let fetch_transactions = 2u64;
+    for (kind, outcome) in [
+        (
+            "load",
+            crate::blocking::test_support::ScriptedOutcome::Status(
+                crate::blocking::BlockingResponseStatus::Incomplete,
+            ),
+        ),
+        (
+            "load",
+            crate::blocking::test_support::ScriptedOutcome::Unknown,
+        ),
+    ] {
+        let _ = kind;
+        let target = suspending_target(SUSPEND_DECLARED_MAX, ELAPSED_FS, DELAY_FS);
+        target.set_data_outcome(outcome);
+        let mut owned =
+            OwnedMachine::new(suspending_config(&target, false), image(elf::ld(5, 1, 0))).unwrap();
+        owned.state_mut().regs[1] = elf::BASE + 0x200;
+        let turn = owned.step(false).unwrap();
+        assert!(
+            matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "{outcome:?} on a load did not fail the turn: {:?}",
+            turn.hart().outcome
+        );
+        let transactions = target.transactions.load(Ordering::SeqCst) as u64;
+        assert_eq!(transactions, fetch_transactions + 1);
+        assert_eq!(
+            owned.platform_mtime().unwrap(),
+            fetch_transactions * DELAY_TICKS + ELAPSED_TICKS,
+            "{outcome:?} on a load did not charge its rounded host elapsed time"
+        );
+        assert_eq!(
+            turn.boundary().transport_delay_femtoseconds,
+            fetch_transactions * DELAY_FS + ELAPSED_FS,
+            "{outcome:?} on a load charged the wrong amount"
+        );
+    }
+
+    for outcome in [
+        crate::blocking::test_support::ScriptedOutcome::Status(
+            crate::blocking::BlockingResponseStatus::Incomplete,
+        ),
+        crate::blocking::test_support::ScriptedOutcome::Unknown,
+    ] {
+        let target = suspending_target(SUSPEND_DECLARED_MAX, ELAPSED_FS, DELAY_FS);
+        target.set_data_outcome(outcome);
+        let mut owned =
+            OwnedMachine::new(suspending_config(&target, false), image(amoadd_d(7, 2, 1))).unwrap();
+        {
+            let state = owned.state_mut();
+            state.regs[1] = elf::BASE + 0x200;
+            state.regs[2] = 5;
+        }
+        let turn = owned.step(false).unwrap();
+        assert!(
+            matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "{outcome:?} on an AMO did not fail the turn: {:?}",
+            turn.hart().outcome
+        );
+        let transactions = target.transactions.load(Ordering::SeqCst) as u64;
+        assert_eq!(transactions, fetch_transactions + 1);
+        assert_eq!(
+            owned.platform_mtime().unwrap(),
+            fetch_transactions * DELAY_TICKS + ELAPSED_TICKS,
+            "{outcome:?} on an AMO did not charge its rounded host elapsed time"
+        );
+    }
+}
+
+/// nb D3: every charged transaction of a guest turn carries the flag.
+#[test]
+fn a_guest_turn_marks_every_charged_transaction_may_suspend() {
+    let code = [
+        elf::ld(5, 1, 0),
+        elf::sd(2, 1, 0),
+        amoadd_d(7, 2, 1),
+        lr_d(3, 1),
+        sc_d(4, 2, 1),
+    ];
+    let target = suspending_target(SUSPEND_DECLARED_MAX, ELAPSED_FS, DELAY_FS);
+    let mut owned = OwnedMachine::new(
+        suspending_config(&target, false),
+        direct_mem_image_of(&code, 0x4000),
+    )
+    .unwrap();
+    {
+        let state = owned.state_mut();
+        state.regs[1] = elf::BASE + 0x200;
+        state.regs[2] = 0x11;
+    }
+    // Five instructions, so five turns. The store-conditional may fail its
+    // reservation check; every one of them is still a charged transaction.
+    for _ in 0..5 {
+        let turn = owned.step(false).unwrap();
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the fixture turn failed: {:?}",
+            turn.hart().outcome
+        );
+    }
+    let log = target.log();
+    assert!(
+        log.len() > 5,
+        "the guest's transactions never reached the suspending target"
+    );
+    assert!(
+        log.iter().all(|call| call.may_suspend),
+        "a charged guest transaction lost its may_suspend flag: {:?}",
+        log.iter()
+            .filter(|call| !call.may_suspend)
+            .collect::<Vec<_>>()
+    );
+    let kinds: Vec<_> = log
+        .iter()
+        .map(|call| (call.access_kind, call.atomic))
+        .collect();
+    assert!(
+        kinds.contains(&(PhysicalAccessKind::Fetch, false)),
+        "no fetch transaction was logged"
+    );
+    assert!(
+        kinds.contains(&(PhysicalAccessKind::DataRead, false))
+            || kinds.contains(&(PhysicalAccessKind::DataWrite, false)),
+        "no plain data transaction was logged"
+    );
+    assert!(
+        kinds.iter().any(|&(_, atomic)| atomic),
+        "no atomic envelope was logged"
+    );
+}
+
+/// nb D3 and the §3 table: Debug Mode Hart-port work and system bus access run
+/// at a Hart boundary outside the guest-turn window, so they carry no flag.
+#[test]
+fn debug_work_carries_no_may_suspend_flag() {
+    // No scripted host time: debug work may not report any, and this test is
+    // about the flag alone.
+    let target = suspending_target(SUSPEND_DECLARED_MAX, 0, 0);
+    let mut owned =
+        OwnedMachine::new(suspending_config(&target, false), image(elf::nop())).unwrap();
+    halted_by_dmi(&mut owned);
+    let after_halt = target.log().len();
+
+    // A program-buffer load and an abstract-command memory write reach RAM
+    // through the Hart port at a debug boundary.
+    write_gpr(&mut owned, 5, elf::BASE + 0x200);
+    postexec_buffer(&mut owned, [lw_word(6, 5, 0), elf::nop()]);
+    let grants = run_grants(&mut owned);
+    assert!(grants.failure.is_none(), "{:?}", grants.failure);
+    abstract_write(&mut owned, elf::BASE + 0x200, 0x1234_5678);
+    // A system bus read is the Debug Module's own inbound port.
+    let _ = sba_read_word(&mut owned, sba_address(PlatformKind::Native, 0x200));
+
+    let log: Vec<_> = target.log().into_iter().skip(after_halt).collect();
+    assert!(
+        log.len() >= 3,
+        "the debug work never reached the suspending target: {log:?}"
+    );
+    assert!(
+        log.iter()
+            .any(|call| call.initiator == BlockingInitiator::Hart),
+        "no Hart-port debug access was logged: {log:?}"
+    );
+    assert!(
+        log.iter()
+            .any(|call| call.initiator == BlockingInitiator::DebugInbound),
+        "no system bus access was logged: {log:?}"
+    );
+    assert!(
+        log.iter().all(|call| !call.may_suspend),
+        "a debug access carried may_suspend: {:?}",
+        log.iter()
+            .filter(|call| call.may_suspend)
+            .collect::<Vec<_>>()
+    );
+}
+
+/// nb D3: a guest request to a non-suspending target never carries the flag,
+/// because the target inherits the default declaration.
+#[test]
+fn a_non_suspending_target_never_carries_the_flag() {
+    let target = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    assert!(
+        !target.suspends_host_time(),
+        "the non-suspending fixture stopped inheriting the default"
+    );
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(target.clone());
+    let mut owned = OwnedMachine::new(config, image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    retire(&mut owned);
+    let log = target.log();
+    assert_eq!(log.len(), 3, "two fetch parcels and one store transaction");
+    assert!(
+        log.iter().all(|call| !call.may_suspend),
+        "a guest request to a non-suspending target carried the flag: {log:?}"
+    );
+    assert!(!ZeroDelayRam::new().suspends_host_time());
+}
+
+/// nb D3: a page-table walk read and the A/D envelope get it too.
+#[test]
+fn sv39_walk_reads_and_ad_envelopes_mark_may_suspend() {
+    let target = suspending_target(SUSPEND_DECLARED_MAX, ELAPSED_FS, DELAY_FS);
+    let code = [elf::ld(5, 1, 0)];
+    let mut owned =
+        OwnedMachine::new(suspending_config(&target, false), sv39_image(&code)).unwrap();
+    install_sv39_leaf(&owned, PTE_V | PTE_RW);
+    {
+        enable_mprv_sv39(&mut owned);
+        owned.state_mut().regs[1] = SV39_VA;
+    }
+    let after_setup = target.log().len();
+    retire(&mut owned);
+
+    let log: Vec<_> = target.log().into_iter().skip(after_setup).collect();
+    assert!(
+        log.iter().all(|call| call.may_suspend),
+        "a walk transaction lost its flag: {:?}",
+        log.iter()
+            .filter(|call| !call.may_suspend)
+            .collect::<Vec<_>>()
+    );
+    // Every PTE read of the walk is an ordinary translated data read.
+    let walks: Vec<_> = log
+        .iter()
+        .filter(|call| {
+            !call.atomic
+                && call.access_kind == PhysicalAccessKind::DataRead
+                && (elf::BASE + SV39_ROOT..elf::BASE + SV39_DATA).contains(&call.address)
+        })
+        .collect();
+    assert_eq!(
+        walks.len(),
+        3,
+        "the walk did not read all three levels as transactions: {log:?}"
+    );
+    assert!(
+        walks
+            .iter()
+            .any(|call| call.address == elf::BASE + SV39_ROOT),
+        "the walk's root read was not logged: {log:?}"
+    );
+    let leaf = elf::BASE + SV39_LEAF_OFFSET;
+    let envelope: Vec<_> = log.iter().filter(|call| call.address == leaf).collect();
+    assert_eq!(
+        envelope.iter().filter(|call| call.atomic).count(),
+        2,
+        "the A/D envelope was not one load-reserved and one store-conditional: {envelope:?}"
+    );
+    assert_eq!(
+        envelope
+            .iter()
+            .filter(|call| call.atomic && call.command == BlockingCommand::Read)
+            .count(),
+        1,
+        "the A/D envelope has no load-reserved: {envelope:?}"
+    );
+    assert_eq!(
+        envelope
+            .iter()
+            .filter(|call| call.atomic && call.command == BlockingCommand::Write)
+            .count(),
+        1,
+        "the A/D envelope has no store-conditional: {envelope:?}"
+    );
+}
+
+/// nb D3: a direct copy has no transaction, so it carries no flag either.
+#[test]
+fn a_direct_copy_under_dmi_carries_no_transaction_flag() {
+    let code = [elf::sd(2, 1, 0), elf::ld(5, 1, 0)];
+    let target = suspending_target(SUSPEND_DECLARED_MAX, 0, 0);
+    let mut owned = OwnedMachine::new(
+        suspending_config(&target, true),
+        direct_mem_image_of(&code, 0x8000),
+    )
+    .unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+
+    // The first turn's completed fetch carries the `dmi_allowed` hint, so the
+    // adapter queries and caches a grant over the window.
+    retire(&mut owned);
+    assert!(
+        target.queries.load(Ordering::SeqCst) > 0,
+        "the suspending target granted no direct memory"
+    );
+    let transactions = target.transactions.load(Ordering::SeqCst);
+    retire(&mut owned);
+    assert_eq!(
+        target.transactions.load(Ordering::SeqCst),
+        transactions,
+        "a direct copy issued a blocking transaction"
+    );
+    assert_eq!(
+        owned.state().regs[5],
+        0x1234_5678,
+        "the direct copy did not deliver the bytes"
+    );
+}
+
+/// nb D2: a suspending target with a quantum is the existing unsupported
+/// transport, and the message names the case.
+#[test]
+fn a_suspending_target_with_a_quantum_is_refused() {
+    let target = suspending_target(SUSPEND_DECLARED_MAX, 0, 0);
+    let mut config = suspending_config(&target, false);
+    config.quantum = 1;
+    let error = match OwnedMachine::new(config, image(elf::nop())) {
+        Ok(_) => panic!("a suspending target with a quantum was admitted"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(error, MachineError::UnsupportedTransport),
+        "a suspending target with a quantum was not refused: {error:?}"
+    );
+    assert!(
+        error.to_string().contains("suspends host time"),
+        "the refusal does not name the suspension case: {error}"
+    );
+}
+
+/// nb D4: the generation's host elapsed total excludes debug work, whose time is
+/// validated but neither charged nor totalled.
+#[test]
+fn host_elapsed_femtoseconds_excludes_debug_work() {
+    let target = suspending_target(SUSPEND_DECLARED_MAX, ELAPSED_FS, DELAY_FS);
+    let mut owned =
+        OwnedMachine::new(suspending_config(&target, false), image(elf::sd(2, 1, 0))).unwrap();
+    prepare_store(&mut owned, 0x1234_5678);
+    {
+        let turn = owned.step(false).unwrap();
+        assert!(matches!(
+            turn.hart().outcome,
+            StepOutcome::InstructionRetired(_)
+        ));
+        assert_eq!(turn.boundary().host_elapsed_femtoseconds, 3 * ELAPSED_FS);
+    }
+    let counted = target.transactions.load(Ordering::SeqCst) as u64;
+    assert_eq!(counted, 3, "two fetch parcels and one store transaction");
+
+    halted_by_dmi(&mut owned);
+    // The system bus read reports `e`, which the unmarked-elapsed rule rejects:
+    // the access is still the proof that debug time exists and must not count.
+    let _ = sba_read_word(&mut owned, sba_address(PlatformKind::Native, 0x200));
+    let failure = owned
+        .test_control()
+        .status()
+        .unwrap()
+        .last_failure
+        .expect("the SBA access's host elapsed time was not rejected");
+    assert!(
+        failure
+            .message
+            .contains("host elapsed time on a request that may not suspend"),
+        "the SBA access lost its rule: {failure:?}"
+    );
+    // `DebugBoundary` carries no `BoundaryFacts`, so the total is read from the
+    // next boundary that does: `OwnedMachine::control_boundary`.
+    let facts = owned.control_boundary(false).unwrap();
+    assert_eq!(
+        facts.host_elapsed_femtoseconds,
+        counted * ELAPSED_FS,
+        "debug work entered the generation's host elapsed total"
+    );
+    assert_eq!(
+        facts.transport_delay_femtoseconds,
+        counted * DELAY_FS,
+        "the tested fixture must keep debug delay out of the boundary fact"
+    );
+}
+
+/// nb D4: with `e` zero on every response, a suspending target is turn by turn
+/// the non-suspending run.
+#[test]
+fn a_zero_elapsed_suspending_run_matches_the_non_suspending_run() {
+    let code = [elf::sd(2, 1, 0), elf::ld(5, 1, 0), elf::nop()];
+    let series = |transport: Transport| {
+        let mut config = MachineConfig::new(PlatformKind::Native);
+        config.transport = transport;
+        let mut owned = OwnedMachine::new(config, direct_mem_image_of(&code, 0x4000)).unwrap();
+        prepare_store(&mut owned, 0x1234_5678);
+        let mut facts = Vec::new();
+        for _ in 0..code.len() {
+            let turn = owned.step(false).unwrap();
+            assert!(
+                matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)),
+                "a parity turn did not retire: {:?}",
+                turn.hart().outcome
+            );
+            facts.push((
+                owned.platform_mtime().unwrap(),
+                guest_counters_now(&owned),
+                turn.boundary().transport_delay_femtoseconds,
+                turn.boundary().host_elapsed_femtoseconds,
+            ));
+        }
+        facts
+    };
+    let plain = Arc::new(ScriptTarget::new(elf::BASE, 0x1_0000));
+    let suspending = suspending_target(SUSPEND_DECLARED_MAX, 0, 0);
+    let without = series(Transport::tlm(plain));
+    let with = series(Transport::tlm(suspending));
+    assert_eq!(
+        with, without,
+        "a zero-elapsed suspending run diverged from the non-suspending run"
+    );
+    assert!(
+        with.iter().all(|facts| facts.3 == 0),
+        "a zero-elapsed run reported host time"
     );
 }
 

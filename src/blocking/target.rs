@@ -17,15 +17,33 @@ use super::{
 ///
 /// All methods take `&self`: a [`crate::machine::MachineConfig`] holds the
 /// target as a shared `Arc`, and a target's own synchronization must not be
-/// observable through this interface.  Calls are synchronous and are never
-/// re-entered by ruscv-sim.
+/// observable through this interface.  Calls are synchronous, return before
+/// the call that made them returns, and are never re-entered by ruscv-sim.  A
+/// target that declares [`Self::suspends_host_time`] may let host time pass
+/// inside `b_transport` for a request whose `may_suspend` is true, provided the
+/// callback resumes and returns on the thread that made the call (nb D2/D6);
+/// every other callback still must not wait or advance host time.
 pub trait BlockingTarget: Send + Sync {
+    /// Whether this target lets host time pass inside `b_transport` (nb D2).
+    ///
+    /// The default is `false`, which keeps every existing implementor exactly
+    /// as it is.  A `true` target may suspend the calling host thread inside a
+    /// [`BlockingTransaction`] whose `may_suspend` is true and report that time
+    /// through [`BlockingTransaction::set_host_elapsed`].  The adapter reads
+    /// this once, at construction.  A suspending target cannot be combined with
+    /// a non-zero quantum: host time passing inside a grant would stop the
+    /// kernel's clock from being the quantum anchor for the whole grant, so the
+    /// build refuses that combination (nb D2).
+    fn suspends_host_time(&self) -> bool {
+        false
+    }
+
     /// The declared per-transaction maximum delay (dev-plan D7).
     ///
     /// Unit U3 uses it to form each turn's conservative completion bound and
     /// to reject an overshooting response.  It is an upper bound on the delay
-    /// a target annotates for one transaction; the in-tree and SystemC RAM
-    /// targets declare zero.
+    /// a target annotates for one transaction; the in-tree [`super::ZeroDelayRam`]
+    /// declares zero, and a suspending target declares its host-time latency.
     fn declared_max_delay(&self) -> Femtoseconds;
 
     /// Services one complete blocking transaction.
@@ -47,6 +65,11 @@ pub trait BlockingTarget: Send + Sync {
     /// [`super::BlockingResponseStatus::CommandError`], which the adapter maps
     /// to the native load or store/AMO access fault; it must not emulate the
     /// operation with ordinary reads and writes.
+    ///
+    /// A target that declares [`Self::suspends_host_time`] reports the host
+    /// time it let pass through [`BlockingTransaction::set_host_elapsed`].  A
+    /// target that does not never sets it: a non-zero value on a request that
+    /// may not suspend is a protocol failure of the access (nb D4).
     fn b_transport(&self, transaction: &mut BlockingTransaction<'_>);
 
     /// Services one debug-transport request and returns the number of bytes

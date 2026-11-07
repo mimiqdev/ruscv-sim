@@ -189,6 +189,8 @@ fn one_access_issues_exactly_one_transaction() {
                 access_kind: PhysicalAccessKind::DataWrite,
                 initiator: BlockingInitiator::Hart,
                 local_offset_fs: 0,
+                may_suspend: false,
+                atomic: false,
             },
             Call {
                 address: BASE + 8,
@@ -197,6 +199,8 @@ fn one_access_issues_exactly_one_transaction() {
                 access_kind: PhysicalAccessKind::DataRead,
                 initiator: BlockingInitiator::Hart,
                 local_offset_fs: 0,
+                may_suspend: false,
+                atomic: false,
             },
             Call {
                 address: BASE + 16,
@@ -205,6 +209,8 @@ fn one_access_issues_exactly_one_transaction() {
                 access_kind: PhysicalAccessKind::Fetch,
                 initiator: BlockingInitiator::Hart,
                 local_offset_fs: 0,
+                may_suspend: false,
+                atomic: false,
             },
         ],
         "one physical access must become exactly one blocking transaction"
@@ -717,4 +723,186 @@ fn the_declared_maximum_is_a_construction_snapshot() {
         "a response above the cached maximum was accepted: {error:?}"
     );
     assert!(error.to_string().contains("overshoot 1000000"), "{error}");
+}
+
+// ---- Non-blocking U1: suspension, host elapsed time and the D4 rules ----
+
+fn suspending_slot(target: &Arc<super::test_support::SuspendingTarget>) -> RamSlot {
+    RamSlot::tlm(
+        target.clone(),
+        BASE,
+        SIZE,
+        TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .unwrap()
+}
+
+/// nb D4 step 1: an unknown completion outranks the new rules and the
+/// overshoot rule, whichever `e` it carries.
+#[test]
+fn an_unknown_completion_outranks_the_new_rules() {
+    // The flag is clear and the target reports 0.5 ticks of host time within a
+    // 0.9-tick delay: the unmarked-elapsed rule must not reclassify it.
+    let target = Arc::new(ScriptTarget::new(BASE, SIZE));
+    target.set_declared_max_delay(1_000_000);
+    target.set_elapsed(500_000);
+    target.set_delay(900_000);
+    target.set_unknown(true);
+    let slot = tlm_slot(&target, SIZE);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    let error = port.access(request).unwrap_err();
+    assert!(
+        matches!(error, PhysicalAccessError::UnknownCompletion(_)),
+        "an unknown completion with elapsed time was reclassified: {error:?}"
+    );
+    assert!(
+        slot.poison_reason().is_some(),
+        "the unknown completion did not poison the transport"
+    );
+    assert_eq!(
+        slot.take_transport_turn_delay().ticks,
+        1,
+        "the unknown completion did not charge its rounded e"
+    );
+
+    // The same response with `e` above the declared maximum: still an unknown
+    // completion, with the overshoot the charge raised appended.
+    let target = Arc::new(ScriptTarget::new(BASE, SIZE));
+    target.set_elapsed(2_000_000);
+    target.set_unknown(true);
+    let slot = tlm_slot(&target, SIZE);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    let error = port.access(request).unwrap_err();
+    assert!(
+        matches!(error, PhysicalAccessError::UnknownCompletion(_)),
+        "an overshooting unknown completion was reclassified: {error:?}"
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("could not establish the outcome"),
+        "the unknown completion lost its classification: {message}"
+    );
+    assert!(
+        message.contains("also failed") && message.contains("overshoot"),
+        "the charge's overshoot was not appended: {message}"
+    );
+}
+
+/// nb D4 step 3: an `Ok` write that then fails the elapsed-above-delay rule is
+/// still recorded, on the plain path and on the atomic path.
+#[test]
+fn a_recorded_write_survives_the_new_rules() {
+    // 2.5 ticks of host time against a 1.5-tick delay: a protocol failure that
+    // must not drop the committed-write record (ADR-0002 §6).
+    let target = super::test_support::SuspendingTarget::new();
+    target.set_declared_max_delay(10_000_000);
+    target.set_elapsed(2_500_000);
+    target.set_delay(1_500_000);
+    let slot = suspending_slot(&target);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    let write = PhysicalRequest::data_write(BASE, PhysicalWidth::Word, &[1, 2, 3, 4]).unwrap();
+    let error = port.access(write).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("above its 1500000 fs response delay"),
+        "the store was not the elapsed-above-delay rule: {error}"
+    );
+    assert_eq!(
+        slot.committed_write_version(),
+        Some(1),
+        "an `Ok` store that failed the rule was not recorded"
+    );
+
+    // The same rule on the atomic path, through the same shared helper.
+    let target = super::test_support::SuspendingTarget::new();
+    target.set_declared_max_delay(10_000_000);
+    target.set_elapsed(2_500_000);
+    target.set_delay(1_500_000);
+    let slot = suspending_slot(&target);
+    let mut port = crate::physical::ValidatedAtomicAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    let operand = 1u32.to_le_bytes();
+    let request = AtomicRequest::rmw(
+        BASE,
+        PhysicalWidth::Word,
+        AtomicOrdering {
+            aq: false,
+            rl: false,
+        },
+        &operand,
+        crate::hart_amods::transform(
+            crate::hart_amods::AmoOperation::Add,
+            crate::physical::AmoWidth::Word,
+        ),
+    )
+    .unwrap();
+    let error = port.access_atomic(request).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("above its 1500000 fs response delay"),
+        "the AMO was not the elapsed-above-delay rule: {error}"
+    );
+    assert_eq!(
+        slot.committed_write_version(),
+        Some(1),
+        "an `Ok` AMO that failed the rule was not recorded"
+    );
+}
+
+/// nb D4 step 6: an incomplete response whose delay is above the declared
+/// maximum is still today's host failure, and it is still charged its `e`.
+#[test]
+fn an_incomplete_response_charges_its_elapsed_time_despite_an_overshoot() {
+    let target = super::test_support::SuspendingTarget::new();
+    target.set_declared_max_delay(1_000_000);
+    target.set_elapsed(1_500_000);
+    target.set_delay(3_000_000);
+    target.set_data_outcome(super::test_support::ScriptedOutcome::Status(
+        BlockingResponseStatus::Incomplete,
+    ));
+    let slot = suspending_slot(&target);
+    let mut port = ValidatedPhysicalAccess::new(slot.clone());
+    slot.begin_transport_turn();
+    let request = PhysicalRequest::data_read(BASE, PhysicalWidth::Word).unwrap();
+    let error = port.access(request).unwrap_err();
+    assert!(
+        matches!(error, PhysicalAccessError::BackendFailure(_)),
+        "an incomplete overshoot was not today's host failure: {error:?}"
+    );
+    assert!(
+        error.to_string().contains("overshoot 2000000"),
+        "the incomplete response lost today's overshoot detail: {error}"
+    );
+    assert_eq!(
+        slot.consumed_delay(),
+        Femtoseconds::new(1_500_000),
+        "an incomplete response was not charged its e"
+    );
+    assert_eq!(slot.host_elapsed(), Femtoseconds::new(1_500_000));
+}
+
+/// nb D3: the guest-turn window the flag depends on has exactly one opener, so
+/// every debug path is outside it.
+#[test]
+fn begin_transport_turn_has_one_guest_turn_call_site() {
+    let machine = include_str!("../machine/mod.rs");
+    let owned = include_str!("../machine/owned.rs");
+    assert_eq!(
+        machine.matches(".begin_transport_turn()").count(),
+        1,
+        "the guest-turn window gained a second opener, which D3's flag relies on"
+    );
+    assert!(
+        !owned.contains("begin_transport_turn"),
+        "a debug boundary now opens the guest-turn window"
+    );
 }

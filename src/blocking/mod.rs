@@ -137,7 +137,11 @@ pub enum BlockingInitiator {
     /// Hart fetch, data or atomic access (including page-table and A/D
     /// accesses issued by the Hart/MMU).
     Hart,
-    /// Debug Module inbound system bus or program-buffer access.
+    /// Debug Module inbound system bus access.
+    ///
+    /// Program-buffer execution and abstract-command memory access are not
+    /// this initiator: both reach RAM through the Hart's own port and report
+    /// [`BlockingInitiator::Hart`] at a debug boundary.
     DebugInbound,
 }
 
@@ -416,6 +420,8 @@ pub struct BlockingTransaction<'a> {
     response_delay: Femtoseconds,
     dmi_allowed: bool,
     local_offset: Femtoseconds,
+    may_suspend: bool,
+    host_elapsed: Femtoseconds,
 }
 
 impl<'a> BlockingTransaction<'a> {
@@ -438,6 +444,8 @@ impl<'a> BlockingTransaction<'a> {
             response_delay: Femtoseconds::ZERO,
             dmi_allowed: false,
             local_offset: Femtoseconds::ZERO,
+            may_suspend: false,
+            host_elapsed: Femtoseconds::ZERO,
         }
     }
 
@@ -537,6 +545,52 @@ impl<'a> BlockingTransaction<'a> {
         self.response_delay = delay;
     }
 
+    /// True when this request is a charged transaction to a suspending target
+    /// (nb D3).
+    ///
+    /// Read-only timing metadata: address, width, bytes, category and status
+    /// never depend on it.  The adapter sets it once at issue time, from the
+    /// target's [`BlockingTarget::suspends_host_time`], the initiator and the
+    /// open guest-turn window, so it is false for every request that is not a
+    /// charged Hart transaction -- Debug Mode Hart-port work, system bus
+    /// access, debug transport, transport reset and a direct-memory query --
+    /// and for every request to a non-suspending target.
+    ///
+    /// A true value is the only licence to let host time pass inside
+    /// [`BlockingTarget::b_transport`] and to report it through
+    /// [`Self::set_host_elapsed`].
+    pub const fn may_suspend(&self) -> bool {
+        self.may_suspend
+    }
+
+    /// Sets the request's [`Self::may_suspend`] flag.
+    ///
+    /// Only the adapter sets it, once, before the target sees the transaction;
+    /// a target that copies a payload cannot change it here.
+    pub(crate) fn set_may_suspend(&mut self, may_suspend: bool) {
+        self.may_suspend = may_suspend;
+    }
+
+    /// The host time that passed inside this transaction's callback (nb D4).
+    ///
+    /// Exact femtoseconds between the callback's entry and its return.  The
+    /// adapter charges it under the same rounding, declared-maximum and turn
+    /// rules as the response delay, and only for a charged guest-turn
+    /// transaction.  It never enters `mcycle` or `minstret`.
+    pub const fn host_elapsed(&self) -> Femtoseconds {
+        self.host_elapsed
+    }
+
+    /// Reports the host time that passed inside this transaction's callback.
+    ///
+    /// A target sets this before it returns, for a request whose
+    /// [`Self::may_suspend`] is true; a non-zero value on any other request is
+    /// a protocol failure of the access (nb D4).  A target that lets no host
+    /// time pass leaves it zero, which is every existing target.
+    pub fn set_host_elapsed(&mut self, elapsed: Femtoseconds) {
+        self.host_elapsed = elapsed;
+    }
+
     /// The `dmi_allowed` response hint (direct-memory D3).
     ///
     /// A target that can serve this address through a host pointer sets it on a
@@ -589,6 +643,8 @@ impl fmt::Debug for BlockingTransaction<'_> {
             .field("response_delay", &self.response_delay)
             .field("dmi_allowed", &self.dmi_allowed)
             .field("local_offset", &self.local_offset)
+            .field("may_suspend", &self.may_suspend)
+            .field("host_elapsed", &self.host_elapsed)
             .finish()
     }
 }

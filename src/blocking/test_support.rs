@@ -39,6 +39,10 @@ pub(crate) struct Call {
     pub initiator: BlockingInitiator,
     /// The request's D11 local-time offset in exact femtoseconds.
     pub local_offset_fs: u64,
+    /// The request's nb D3 `may_suspend` flag.
+    pub may_suspend: bool,
+    /// True when the request carried the atomic extension.
+    pub atomic: bool,
 }
 
 /// A scriptable blocking target over one `SimpleMemory` backing store.
@@ -55,6 +59,8 @@ pub(crate) struct ScriptTarget {
     /// Declared per-transaction maximum delay (dev-plan D7).
     declared_max: AtomicU64,
     delay: AtomicU64,
+    /// The scripted host elapsed time `e` of each response (nb D4).
+    elapsed: AtomicU64,
     unknown: AtomicBool,
     panic: AtomicBool,
     mutation: Mutex<Mutation>,
@@ -76,6 +82,7 @@ impl ScriptTarget {
             status: Mutex::new(BlockingResponseStatus::Ok),
             declared_max: AtomicU64::new(0),
             delay: AtomicU64::new(0),
+            elapsed: AtomicU64::new(0),
             unknown: AtomicBool::new(false),
             panic: AtomicBool::new(false),
             mutation: Mutex::new(Mutation::None),
@@ -94,6 +101,13 @@ impl ScriptTarget {
     /// Sets the annotated response delay.
     pub(crate) fn set_delay(&self, delay: u64) {
         self.delay.store(delay, Ordering::SeqCst);
+    }
+
+    /// Sets the host elapsed time each response reports (nb D4).  A
+    /// non-suspending target that reports a non-zero value is a protocol
+    /// failure of the access.
+    pub(crate) fn set_elapsed(&self, elapsed: u64) {
+        self.elapsed.store(elapsed, Ordering::SeqCst);
     }
 
     /// Sets the declared per-transaction maximum delay.
@@ -176,6 +190,8 @@ impl BlockingTarget for ScriptTarget {
             access_kind: transaction.extension().access_kind(),
             initiator: transaction.extension().initiator(),
             local_offset_fs: transaction.local_offset().as_u64(),
+            may_suspend: transaction.may_suspend(),
+            atomic: transaction.atomic_extension().is_some(),
         });
         if self.panic.load(Ordering::SeqCst) {
             panic!("scripted blocking target panic");
@@ -198,13 +214,17 @@ impl BlockingTarget for ScriptTarget {
                 transaction.set_data_length(length + 1);
             }
         }
-        if self.unknown.load(Ordering::SeqCst) {
-            transaction.extension_mut().mark_outcome_unknown();
-            return;
-        }
         let delay = self.delay.load(Ordering::SeqCst);
         if delay != 0 {
             transaction.set_response_delay(Femtoseconds::new(delay));
+        }
+        let elapsed = self.elapsed.load(Ordering::SeqCst);
+        if elapsed != 0 {
+            transaction.set_host_elapsed(Femtoseconds::new(elapsed));
+        }
+        if self.unknown.load(Ordering::SeqCst) {
+            transaction.extension_mut().mark_outcome_unknown();
+            return;
         }
         let status = *self.status.lock().unwrap();
         if status != BlockingResponseStatus::Ok {
@@ -538,6 +558,8 @@ impl BlockingTarget for DirectMemTarget {
             access_kind: transaction.extension().access_kind(),
             initiator: transaction.extension().initiator(),
             local_offset_fs: transaction.local_offset().as_u64(),
+            may_suspend: transaction.may_suspend(),
+            atomic: transaction.atomic_extension().is_some(),
         });
         if transaction.atomic_extension().is_some() {
             self.atomics.fetch_add(1, Ordering::SeqCst);
@@ -719,6 +741,166 @@ impl fmt::Debug for DirectMemTarget {
             .field("transactions", &self.transactions())
             .field("queries", &self.queries())
             .field("registrations", &self.registrations())
+            .finish()
+    }
+}
+
+/// The scripted outcome of a [`SuspendingTarget`]'s data access (nb D4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScriptedOutcome {
+    /// Complete `Ok`, with the bytes or the atomic operation applied.
+    Ok,
+    /// Report this status instead of completing, with the bytes still applied.
+    Status(BlockingResponseStatus),
+    /// Report the outcome-unknown flag, which poisons the transport.
+    Unknown,
+}
+
+/// A suspending test target with scripted host elapsed time (nb D2–D4).
+///
+/// It declares [`BlockingTarget::suspends_host_time`], delegates the bytes, the
+/// atomic table and the direct-memory grants to [`super::ZeroDelayRam`], and
+/// scripts each response's host elapsed time `e` and delay `d` together with the
+/// outcome of its data accesses.  Fetches keep completing `Ok`, so a fixture
+/// reaches the data access whose rule it is proving.
+///
+/// It logs every request so a test can prove which transactions the adapter
+/// marked `may_suspend`, and counts its direct-memory queries so a test can
+/// prove a direct copy issued no transaction at all.
+pub(crate) struct SuspendingTarget {
+    inner: super::ZeroDelayRam,
+    declared_max: AtomicU64,
+    elapsed: AtomicU64,
+    delay: AtomicU64,
+    data_outcome: Mutex<ScriptedOutcome>,
+    /// Blocking transactions issued.
+    pub transactions: AtomicUsize,
+    /// Direct-memory queries issued.
+    pub queries: AtomicUsize,
+    /// Debug-transport requests issued.
+    pub debug_requests: AtomicUsize,
+    log: Mutex<Vec<Call>>,
+}
+
+impl SuspendingTarget {
+    /// Creates a suspending target.
+    ///
+    /// The declared maximum starts at zero, exactly as the in-tree target
+    /// declares; a fixture that scripts a non-zero `e` or `d` must raise it.
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: super::ZeroDelayRam::new(),
+            declared_max: AtomicU64::new(0),
+            elapsed: AtomicU64::new(0),
+            delay: AtomicU64::new(0),
+            data_outcome: Mutex::new(ScriptedOutcome::Ok),
+            transactions: AtomicUsize::new(0),
+            queries: AtomicUsize::new(0),
+            debug_requests: AtomicUsize::new(0),
+            log: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// Sets the declared per-transaction maximum delay.
+    pub(crate) fn set_declared_max_delay(&self, delay: u64) {
+        self.declared_max.store(delay, Ordering::SeqCst);
+    }
+
+    /// Sets the host elapsed time `e` every response reports.
+    pub(crate) fn set_elapsed(&self, elapsed: u64) {
+        self.elapsed.store(elapsed, Ordering::SeqCst);
+    }
+
+    /// Sets the response delay `d` every response reports.
+    pub(crate) fn set_delay(&self, delay: u64) {
+        self.delay.store(delay, Ordering::SeqCst);
+    }
+
+    /// Sets the scripted outcome of every non-fetch request.
+    pub(crate) fn set_data_outcome(&self, outcome: ScriptedOutcome) {
+        *self.data_outcome.lock().unwrap() = outcome;
+    }
+
+    /// The logged blocking transactions.
+    pub(crate) fn log(&self) -> Vec<Call> {
+        self.log.lock().unwrap().clone()
+    }
+
+    /// Direct inspection read of the backing store.
+    pub(crate) fn bytes_at(&self, address: u64, len: usize) -> Vec<u8> {
+        self.inner.bytes_at(address, len)
+    }
+}
+
+impl BlockingTarget for SuspendingTarget {
+    fn suspends_host_time(&self) -> bool {
+        true
+    }
+
+    fn declared_max_delay(&self) -> Femtoseconds {
+        Femtoseconds::new(self.declared_max.load(Ordering::SeqCst))
+    }
+
+    fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
+        self.transactions.fetch_add(1, Ordering::SeqCst);
+        let access_kind = transaction.extension().access_kind();
+        self.log.lock().unwrap().push(Call {
+            address: transaction.address(),
+            command: transaction.command(),
+            length: transaction.data_length(),
+            access_kind,
+            initiator: transaction.extension().initiator(),
+            local_offset_fs: transaction.local_offset().as_u64(),
+            may_suspend: transaction.may_suspend(),
+            atomic: transaction.atomic_extension().is_some(),
+        });
+        // The bytes and the atomic operation land first, so a scripted failure
+        // observes the same storage a completing target leaves.
+        self.inner.b_transport(transaction);
+        // The response metadata is set after the inner target, which reports
+        // neither host elapsed time nor a delay of its own.
+        transaction.set_host_elapsed(Femtoseconds::new(self.elapsed.load(Ordering::SeqCst)));
+        transaction.set_response_delay(Femtoseconds::new(self.delay.load(Ordering::SeqCst)));
+        let outcome = if access_kind == PhysicalAccessKind::Fetch {
+            ScriptedOutcome::Ok
+        } else {
+            *self.data_outcome.lock().unwrap()
+        };
+        match outcome {
+            ScriptedOutcome::Ok => transaction.set_status(BlockingResponseStatus::Ok),
+            ScriptedOutcome::Status(status) => transaction.set_status(status),
+            ScriptedOutcome::Unknown => transaction.extension_mut().mark_outcome_unknown(),
+        }
+    }
+
+    fn transport_dbg(&self, transaction: &mut BlockingDebug<'_>) -> usize {
+        self.debug_requests.fetch_add(1, Ordering::SeqCst);
+        self.inner.transport_dbg(transaction)
+    }
+
+    fn transport_reset(&self) -> bool {
+        self.inner.transport_reset()
+    }
+
+    fn get_direct_mem_ptr(
+        &self,
+        query: super::BlockingDirectMemQuery,
+    ) -> super::BlockingDirectMemResponse {
+        self.queries.fetch_add(1, Ordering::SeqCst);
+        self.inner.get_direct_mem_ptr(query)
+    }
+
+    fn register_direct_mem_invalidator(&self, invalidator: super::BlockingDirectMemInvalidator) {
+        self.inner.register_direct_mem_invalidator(invalidator);
+    }
+}
+
+impl fmt::Debug for SuspendingTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SuspendingTarget")
+            .field("transactions", &self.transactions.load(Ordering::SeqCst))
+            .field("queries", &self.queries.load(Ordering::SeqCst))
             .finish()
     }
 }

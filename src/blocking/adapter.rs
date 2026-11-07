@@ -42,6 +42,10 @@ pub(crate) struct TlmRamAdapter {
     declared_max: Femtoseconds,
     /// The target's declared maximum delay reserved by one guest turn.
     bound: TurnCompletionBound,
+    /// nb D2: whether this target lets host time pass, read once at
+    /// construction.  Only such a target may report host elapsed time, and only
+    /// for a charged transaction whose terms this adapter then checks.
+    suspends: bool,
     /// quantum D11: whether a quantum is selected at all.  It is a build-time
     /// property of the Platform, not a per-turn value, because a transaction's
     /// offset is zero whenever the quantum is off -- including a turn that has
@@ -70,6 +74,10 @@ struct AdapterState {
     writes_suspended: bool,
     /// Exact running total of charged guest-turn delay in femtoseconds.
     delay: Femtoseconds,
+    /// nb D4: exact running total of the host elapsed time `e` reported by the
+    /// transactions this adapter counted.  A transaction outside the guest-turn
+    /// window adds nothing, so debug work never enters it.
+    host_elapsed: Femtoseconds,
     /// True between [`TlmRamAdapter::begin_turn`] and its take/discard.
     /// Only an active guest turn charges Platform time; debug work is dropped.
     active: bool,
@@ -102,6 +110,22 @@ impl DelayAccess {
     }
 }
 
+/// The request identity and diagnostic label of one target response, as the
+/// nb D4 response helper needs them.
+#[derive(Clone, Copy)]
+struct ResponsePath {
+    /// The access this response answers, for the delay and rule diagnostics.
+    access: DelayAccess,
+    /// `"request"` on the plain path, `"atomic request"` for an envelope.
+    subject: &'static str,
+    /// The start address the payload must still report (nb D4 step 2).
+    address: u64,
+    /// The command the payload must still report.
+    command: BlockingCommand,
+    /// The transfer length the payload must still report.
+    length: usize,
+}
+
 impl TlmRamAdapter {
     /// Wraps one shared blocking target under the Machine's declared tick
     /// period (dev-plan D7).
@@ -122,6 +146,7 @@ impl TlmRamAdapter {
     ) -> Result<Self, DelayConversionError> {
         let declared_max = target.declared_max_delay();
         let bound = TurnCompletionBound::new(declared_max, period)?;
+        let suspends = target.suspends_host_time();
         let direct = if direct_mem {
             let regions = DirectMemRegions::new();
             target.register_direct_mem_invalidator(regions.invalidator());
@@ -134,6 +159,7 @@ impl TlmRamAdapter {
             period,
             declared_max,
             bound,
+            suspends,
             quantum,
             direct,
             state: Mutex::new(AdapterState::default()),
@@ -202,6 +228,15 @@ impl TlmRamAdapter {
         }
     }
 
+    /// Exact total host elapsed time of the transactions this adapter counted
+    /// (nb D4).  It is zero for a target that lets no host time pass.
+    pub(crate) fn host_elapsed(&self) -> Femtoseconds {
+        match self.state.lock() {
+            Ok(state) => state.host_elapsed,
+            Err(_) => Femtoseconds::ZERO,
+        }
+    }
+
     /// Why the transport refuses further transactions, if it does.
     #[cfg(test)]
     pub(crate) fn poison_reason(&self) -> Option<String> {
@@ -236,34 +271,168 @@ impl TlmRamAdapter {
         Femtoseconds::new(ticks.saturating_mul(self.period.femtoseconds().as_u64()))
     }
 
-    /// Validates and accounts one completed response's annotated delay
-    /// (ADR-0004 §5.2/§5.3, dev-plan D7).
+    /// nb D3: whether one request is a charged transaction to a suspending
+    /// target.
     ///
-    /// The caller records a committed write before this step.  An incomplete
-    /// payload is not a completion and its annotation is not trusted as
-    /// elapsed.
-    fn account_response_delay(
+    /// The three facts the flag is set from are the target's declaration, a
+    /// Hart initiator and the open guest-turn window.  `begin_turn` opens that
+    /// window and only `Installed::turn` calls it, so Debug Mode Hart-port work
+    /// (abstract command, program buffer) and system bus access run after
+    /// `take_turn_delay` has closed it and never carry the flag.
+    fn may_suspend(&self, state: &AdapterState, initiator: BlockingInitiator) -> bool {
+        self.suspends && matches!(initiator, BlockingInitiator::Hart) && state.active
+    }
+
+    /// Classifies one target response under the six steps of nb D4 and takes
+    /// its charge.
+    ///
+    /// This is the one site for steps 1, 2 and 4–6, shared by the plain and the
+    /// atomic response path so neither can drift.  `record` is the path's step
+    /// 3: the committed-write record and the direct-memory D7
+    /// store-conditional gate, applied as before, after steps 1 and 2 and
+    /// before the rules below, so a written `Ok` response that then fails a
+    /// rule stays recorded (ADR-0002 §6).  `Ok(())` means the response passed
+    /// every rule and step 6 charged it; the caller then classifies the
+    /// terminal status exactly as before.
+    fn classify_response(
         &self,
         state: &mut AdapterState,
         transaction: &BlockingTransaction<'_>,
-        access: DelayAccess,
+        path: ResponsePath,
+        unknown: Option<String>,
+        record: impl FnOnce(&mut AdapterState, BlockingResponseStatus),
     ) -> Result<(), PhysicalBackendError> {
-        self.account_delay(
+        let status = transaction.status();
+        let elapsed = transaction.host_elapsed();
+        let delay = transaction.response_delay();
+        // nb D4: a terminal response is any non-`Incomplete` status, including
+        // a guest-visible fault and a generic error.
+        let terminal = status != BlockingResponseStatus::Incomplete;
+
+        // Step 1: a target panic or the outcome-unknown flag is an unknown
+        // completion, before every rule below and before the overshoot rule,
+        // whatever `e`, `d` or `may_suspend` it carries.  It is charged its
+        // `e`, and no later step reclassifies it.
+        if let Some(reason) = unknown {
+            let failure =
+                self.charge_failure(state, path, elapsed, PhysicalBackendError::unknown(reason));
+            self.poison(state, failure_context(&failure).to_owned());
+            return Err(failure);
+        }
+
+        // Step 2: a changed request payload is today's protocol failure,
+        // charged its `e`.
+        if transaction.address() != path.address
+            || transaction.command() != path.command
+            || transaction.data_length() != path.length
+        {
+            let failure = PhysicalBackendError::protocol(format!(
+                "blocking target changed the {} payload for {} at {:#018x}: address {:#018x}, \
+                 command {}, length {} (expected address {:#018x}, command {}, length {})",
+                path.subject,
+                path.access.label(),
+                path.address,
+                transaction.address(),
+                command_label(transaction.command()),
+                transaction.data_length(),
+                path.address,
+                command_label(path.command),
+                path.length,
+            ));
+            return Err(self.charge_failure(state, path, elapsed, failure));
+        }
+
+        // Step 3: this path's committed-write record and store-conditional
+        // gate, before the rules below.
+        record(state, status);
+
+        // Step 4: the unmarked-elapsed rule.  Only a charged transaction to a
+        // suspending target may report host time, so an `e` here would be time
+        // the adapter could not attribute to an open guest turn.
+        if !transaction.may_suspend() && !elapsed.is_zero() {
+            let failure = PhysicalBackendError::protocol(format!(
+                "blocking target reported {} fs of host elapsed time on a request that may not \
+                 suspend for {} at {:#018x}",
+                elapsed.as_u64(),
+                path.access.label(),
+                path.address,
+            ));
+            return Err(self.charge_failure(state, path, elapsed, failure));
+        }
+
+        // Step 5: the elapsed-above-delay rule.  A terminal response's `d`
+        // counts from issue, so it must cover the host time the callback took.
+        if terminal && elapsed > delay {
+            let failure = PhysicalBackendError::protocol(format!(
+                "blocking target reported {} fs of host elapsed time above its {} fs response \
+                 delay for {} at {:#018x}",
+                elapsed.as_u64(),
+                delay.as_u64(),
+                path.access.label(),
+                path.address,
+            ));
+            return Err(self.charge_failure(state, path, elapsed, failure));
+        }
+
+        // Step 6: today's classification.  A terminal response is charged its
+        // `d`, including a fault status, with today's malformed-delay and
+        // overshoot checks.  An incomplete response is always charged its `e`,
+        // because its annotation is still untrusted but host time that has
+        // passed is a fact; its uncounted `d` still keeps today's checks.
+        if terminal {
+            return self.account_delay(state, path.address, delay, true, path.access, elapsed);
+        }
+        let charged = self.account_delay(state, path.address, elapsed, true, path.access, elapsed);
+        if let Err(error) = self.account_delay(
             state,
-            transaction.address(),
-            transaction.response_delay(),
-            transaction.status() != BlockingResponseStatus::Incomplete,
-            access,
-        )
+            path.address,
+            delay,
+            false,
+            path.access,
+            Femtoseconds::ZERO,
+        ) {
+            return Err(append_diagnostic(error, charged.err().as_ref()));
+        }
+        let failure = PhysicalBackendError::protocol(format!(
+            "target left {} for {} at {:#018x}",
+            BlockingResponseStatus::Incomplete.name(),
+            path.access.label(),
+            path.address,
+        ));
+        Err(append_diagnostic(failure, charged.err().as_ref()))
+    }
+
+    /// Charges one rule failure's host elapsed time and returns the reported
+    /// failure.
+    ///
+    /// The rule's own failure stays the classification.  An overshoot, turn
+    /// bound or accounting error the charge raises is appended to its
+    /// diagnostic, never reported in its place (nb D4).
+    fn charge_failure(
+        &self,
+        state: &mut AdapterState,
+        path: ResponsePath,
+        elapsed: Femtoseconds,
+        failure: PhysicalBackendError,
+    ) -> PhysicalBackendError {
+        match self.account_delay(state, path.address, elapsed, true, path.access, elapsed) {
+            Ok(()) => failure,
+            Err(error) => append_diagnostic(failure, Some(&error)),
+        }
     }
 
     /// Converts and accounts one access's transport delay.
     ///
-    /// This is the one accounting path for both completions: a `b_transport`
-    /// response that annotates a delay and a direct access that charges its
+    /// This is the one accounting path for every charge: a `b_transport`
+    /// response that annotates a delay, an incomplete or unknown response whose
+    /// charge is its host elapsed time, and a direct access that charges its
     /// grant's latency, so the conversion, the debug-not-charged rule, the
     /// boundary total, the overshoot rule and the turn bound are identical
-    /// (direct-memory D6).
+    /// (direct-memory D6, nb D4).
+    ///
+    /// `host_elapsed` is that transaction's `e`, which the host-elapsed total
+    /// follows: a charge this call counts adds it, whichever amount was
+    /// charged, and one it does not count adds nothing.
     ///
     /// The delay is accumulated before a limit is enforced, so an over-limit
     /// response still consumes its known time on the failed turn.
@@ -274,6 +443,7 @@ impl TlmRamAdapter {
         delay: Femtoseconds,
         counted: bool,
         access: DelayAccess,
+        host_elapsed: Femtoseconds,
     ) -> Result<(), PhysicalBackendError> {
         let ticks = delay.to_platform_ticks(self.period).map_err(|error| {
             PhysicalBackendError::host(format!(
@@ -313,9 +483,23 @@ impl TlmRamAdapter {
                     state.delay.as_u64()
                 ))
             })?;
+            // nb D4: `e` enters the generation's host-elapsed total only
+            // here, so a transaction this charge counts adds its host time and
+            // a debug access outside the window adds nothing.
+            let host_elapsed_total =
+                state
+                    .host_elapsed
+                    .checked_add(host_elapsed)
+                    .ok_or_else(|| {
+                        PhysicalBackendError::host(format!(
+                            "total blocking-transport host elapsed time overflowed after {} fs",
+                            state.host_elapsed.as_u64()
+                        ))
+                    })?;
             state.pending.ticks = pending_ticks;
             state.pending.femtoseconds = pending_femtoseconds;
             state.delay = total;
+            state.host_elapsed = host_elapsed_total;
         }
         if delay > self.declared_max {
             let overshoot = Femtoseconds::new(delay.as_u64() - self.declared_max.as_u64());
@@ -430,6 +614,7 @@ impl TlmRamAdapter {
                     latency,
                     true,
                     DelayAccess::Physical(descriptor.category),
+                    Femtoseconds::ZERO,
                 )
                 .map(|()| {
                     PhysicalResponse::new(
@@ -448,6 +633,7 @@ impl TlmRamAdapter {
                     latency,
                     true,
                     DelayAccess::Physical(descriptor.category),
+                    Femtoseconds::ZERO,
                 )
                 .map(|()| {
                     PhysicalResponse::new(
@@ -493,62 +679,54 @@ impl TlmRamAdapter {
         let mut transaction =
             BlockingTransaction::new(descriptor.paddr, command, &mut bytes[..width], extension);
         transaction.set_local_offset(self.local_offset(&state, local_base_ticks, initiator));
+        transaction.set_may_suspend(self.may_suspend(&state, initiator));
 
         let panic = catch_unwind(AssertUnwindSafe(|| {
             self.target.b_transport(&mut transaction);
         }));
-        if panic.is_err() {
-            let reason = format!(
+        // nb D4 step 1: a panic and an outcome-unknown flag are the same
+        // unknown completion, classified by the response helper before every
+        // rule and before the overshoot check.  A target that panics reports
+        // no host elapsed time of its own, so its `e` is whatever it set.
+        let unknown = if panic.is_err() {
+            Some(format!(
                 "blocking target panicked while servicing {} {:?} at {:#018x}",
                 command_label(command),
                 descriptor.category,
                 descriptor.paddr
-            );
-            self.poison(&mut state, reason.clone());
-            return Err(PhysicalBackendError::unknown(reason));
-        }
-
-        if transaction.extension().is_outcome_unknown() {
-            let reason = format!(
+            ))
+        } else if transaction.extension().is_outcome_unknown() {
+            Some(format!(
                 "blocking target could not establish the outcome of {} {:?} at {:#018x}",
                 command_label(command),
                 descriptor.category,
                 descriptor.paddr
-            );
-            self.poison(&mut state, reason.clone());
-            return Err(PhysicalBackendError::unknown(reason));
-        }
-
-        if transaction.address() != descriptor.paddr
-            || transaction.command() != command
-            || transaction.data_length() != width
-        {
-            return Err(PhysicalBackendError::protocol(format!(
-                "blocking target changed the request payload for {:?} at {:#018x}: \
-                 address {:#018x}, command {}, length {} (expected address {:#018x}, \
-                 command {}, length {width})",
-                descriptor.category,
-                descriptor.paddr,
-                transaction.address(),
-                command_label(transaction.command()),
-                transaction.data_length(),
-                descriptor.paddr,
-                command_label(command),
-            )));
-        }
+            ))
+        } else {
+            None
+        };
 
         let status = transaction.status();
-        // An `Ok` write committed its effects before any delay accounting or
-        // overshoot classification can fail; record it first so
-        // committed-write visibility stays truthful even when the access ends
-        // in a simulator failure (ADR-0002 §6).
-        if status == BlockingResponseStatus::Ok && command == BlockingCommand::Write {
-            state.committed_writes = state.committed_writes.saturating_add(1);
-        }
-        self.account_response_delay(
+        self.classify_response(
             &mut state,
             &transaction,
-            DelayAccess::Physical(descriptor.category),
+            ResponsePath {
+                access: DelayAccess::Physical(descriptor.category),
+                subject: "request",
+                address: descriptor.paddr,
+                command,
+                length: width,
+            },
+            unknown,
+            |state, status| {
+                // An `Ok` write committed its effects before any delay
+                // accounting or overshoot classification can fail; record it
+                // first so committed-write visibility stays truthful even when
+                // the access ends in a simulator failure (ADR-0002 §6).
+                if status == BlockingResponseStatus::Ok && command == BlockingCommand::Write {
+                    state.committed_writes = state.committed_writes.saturating_add(1);
+                }
+            },
         )?;
 
         // A target may offer direct memory only on a completed non-atomic
@@ -601,13 +779,9 @@ impl TlmRamAdapter {
                 descriptor.category,
                 descriptor.paddr
             ))),
-            BlockingResponseStatus::Incomplete => Err(PhysicalBackendError::protocol(format!(
-                "target left {} for {:?} at {:#018x}",
-                BlockingResponseStatus::Incomplete.name(),
-                descriptor.category,
-                descriptor.paddr
-            ))),
-            _ => unreachable!("every blocking status is handled"),
+            // nb D4 step 6: the response helper already reported an incomplete
+            // or unknown response, so only a terminal status reaches here.
+            _ => unreachable!("the response helper classifies every failure"),
         }
     }
 
@@ -893,105 +1067,96 @@ impl TlmRamAdapter {
             local_base_ticks,
             BlockingInitiator::Hart,
         ));
+        transaction.set_may_suspend(self.may_suspend(&state, BlockingInitiator::Hart));
 
         let panic = catch_unwind(AssertUnwindSafe(|| {
             self.target.b_transport(&mut transaction);
         }));
-        if panic.is_err() {
-            let reason = format!(
+        // nb D4 step 1: a panic and an outcome-unknown flag are the same
+        // unknown completion, classified by the response helper before every
+        // rule and before the overshoot check.
+        let unknown = if panic.is_err() {
+            Some(format!(
                 "blocking target panicked while servicing atomic {:?} at {:#018x}",
                 descriptor.kind, descriptor.paddr
-            );
-            self.poison(&mut state, reason.clone());
-            return Err(PhysicalBackendError::unknown(reason));
-        }
-
-        if transaction.extension().is_outcome_unknown() {
-            let reason = format!(
+            ))
+        } else if transaction.extension().is_outcome_unknown() {
+            Some(format!(
                 "blocking target could not establish the outcome of atomic {:?} at {:#018x}",
                 descriptor.kind, descriptor.paddr
-            );
-            self.poison(&mut state, reason.clone());
-            return Err(PhysicalBackendError::unknown(reason));
-        }
-
-        if transaction.address() != descriptor.paddr
-            || transaction.command() != command
-            || transaction.data_length() != width.bytes()
-        {
-            return Err(PhysicalBackendError::protocol(format!(
-                "blocking target changed the atomic request payload for {:?} at {:#018x}: \
-                 address {:#018x}, command {}, length {} (expected address {:#018x}, \
-                 command {}, length {})",
-                descriptor.kind,
-                descriptor.paddr,
-                transaction.address(),
-                command_label(transaction.command()),
-                transaction.data_length(),
-                descriptor.paddr,
-                command_label(command),
-                width.bytes(),
-            )));
-        }
+            ))
+        } else {
+            None
+        };
 
         let status = transaction.status();
         let outcome = transaction
             .atomic_extension()
             .and_then(|extension| extension.outcome());
-        // A successful RMW or SC committed its effects before delay
-        // accounting can fail, so record it first (ADR-0002 §6).
-        if status == BlockingResponseStatus::Ok {
-            match (descriptor.kind, outcome) {
-                (
-                    crate::physical::AtomicAccessKind::Rmw,
-                    Some(crate::blocking::BlockingAtomicOutcome::Rmw),
-                )
-                | (
-                    crate::physical::AtomicAccessKind::StoreConditional,
-                    Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
-                        crate::physical::ConditionalStatus::Success,
-                    )),
-                ) => {
-                    state.committed_writes = state.committed_writes.saturating_add(1);
-                }
-                _ => {}
-            }
-        }
-        // direct-memory D7: only a conclusively completed guest
-        // store-conditional closes the gate, successful or failed.  A faulted
-        // or unresolved one leaves it open, because the Hart keeps the
-        // reservation that authored it, and a translation A/D leg never closes
-        // it at all.
-        //
-        // A reported success is decisive only if the validated boundary will
-        // accept it.  The boundary rejects a success that the Hart's reservation
-        // context does not cover (physical.rs's
-        // `store_conditional_success_rejection`), and that rejection is a
-        // protocol failure of the envelope, so the Hart keeps its reservation
-        // and the gate stays open.
-        let conclusive = status == BlockingResponseStatus::Ok
-            && match outcome {
-                Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
-                    crate::physical::ConditionalStatus::Success,
-                )) => crate::physical::store_conditional_success_rejection(request).is_none(),
-                Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
-                    crate::physical::ConditionalStatus::Failure,
-                )) => true,
-                _ => false,
-            };
-        if !page_table_update
-            && matches!(
-                descriptor.kind,
-                crate::physical::AtomicAccessKind::StoreConditional
-            )
-            && conclusive
-        {
-            state.writes_suspended = false;
-        }
-        self.account_response_delay(
+        self.classify_response(
             &mut state,
             &transaction,
-            DelayAccess::Atomic(descriptor.kind),
+            ResponsePath {
+                access: DelayAccess::Atomic(descriptor.kind),
+                subject: "atomic request",
+                address: descriptor.paddr,
+                command,
+                length: width.bytes(),
+            },
+            unknown,
+            // Step 3: a successful RMW or SC committed its effects before
+            // delay accounting can fail, so it is recorded first (ADR-0002
+            // §6), and only a conclusively completed guest store-conditional
+            // closes the D7 write-suspension gate.  A faulted or unresolved
+            // one leaves it open, because the Hart keeps the reservation that
+            // authored it, and a translation A/D leg never closes it at all.
+            //
+            // A reported success is decisive only if the validated boundary
+            // will accept it.  The boundary rejects a success that the Hart's
+            // reservation context does not cover (physical.rs's
+            // `store_conditional_success_rejection`), and that rejection is a
+            // protocol failure of the envelope, so the Hart keeps its
+            // reservation and the gate stays open.
+            |state, status| {
+                if status == BlockingResponseStatus::Ok {
+                    match (descriptor.kind, outcome) {
+                        (
+                            crate::physical::AtomicAccessKind::Rmw,
+                            Some(crate::blocking::BlockingAtomicOutcome::Rmw),
+                        )
+                        | (
+                            crate::physical::AtomicAccessKind::StoreConditional,
+                            Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
+                                crate::physical::ConditionalStatus::Success,
+                            )),
+                        ) => {
+                            state.committed_writes = state.committed_writes.saturating_add(1);
+                        }
+                        _ => {}
+                    }
+                }
+                let conclusive = status == BlockingResponseStatus::Ok
+                    && match outcome {
+                        Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
+                            crate::physical::ConditionalStatus::Success,
+                        )) => {
+                            crate::physical::store_conditional_success_rejection(request).is_none()
+                        }
+                        Some(crate::blocking::BlockingAtomicOutcome::StoreConditional(
+                            crate::physical::ConditionalStatus::Failure,
+                        )) => true,
+                        _ => false,
+                    };
+                if !page_table_update
+                    && matches!(
+                        descriptor.kind,
+                        crate::physical::AtomicAccessKind::StoreConditional
+                    )
+                    && conclusive
+                {
+                    state.writes_suspended = false;
+                }
+            },
         )?;
 
         match status {
@@ -1040,13 +1205,9 @@ impl TlmRamAdapter {
                 descriptor.kind,
                 descriptor.paddr
             ))),
-            BlockingResponseStatus::Incomplete => Err(PhysicalBackendError::protocol(format!(
-                "target left {} for atomic {:?} at {:#018x}",
-                BlockingResponseStatus::Incomplete.name(),
-                descriptor.kind,
-                descriptor.paddr
-            ))),
-            _ => unreachable!("every blocking status is handled"),
+            // nb D4 step 6: the response helper already reported an incomplete
+            // or unknown response, so only a terminal status reaches here.
+            _ => unreachable!("the response helper classifies every failure"),
         }
     }
 
@@ -1148,5 +1309,54 @@ const fn command_label(command: BlockingCommand) -> &'static str {
     match command {
         BlockingCommand::Read => "read",
         BlockingCommand::Write => "write",
+    }
+}
+
+/// Appends a charge's own error to a rule failure's diagnostic (nb D4).
+///
+/// The rule that classified the response stays the reported classification;
+/// an overshoot, turn bound or accounting error the charge raised is appended,
+/// never reported in its place.
+fn append_diagnostic(
+    failure: PhysicalBackendError,
+    error: Option<&PhysicalBackendError>,
+) -> PhysicalBackendError {
+    let Some(error) = error else {
+        return failure;
+    };
+    let context = |context: String| {
+        format!(
+            "{context}; charging the host elapsed time also failed: {}",
+            failure_context(error)
+        )
+    };
+    match failure {
+        PhysicalBackendError::Target {
+            reason,
+            context: detail,
+        } => PhysicalBackendError::Target {
+            reason,
+            context: context(detail),
+        },
+        PhysicalBackendError::Host { context: detail } => PhysicalBackendError::Host {
+            context: context(detail),
+        },
+        PhysicalBackendError::Protocol { context: detail } => PhysicalBackendError::Protocol {
+            context: context(detail),
+        },
+        PhysicalBackendError::Unknown { context: detail } => PhysicalBackendError::Unknown {
+            context: context(detail),
+        },
+    }
+}
+
+/// One backend failure's diagnostic text, for appending and for the poison
+/// record.
+fn failure_context(error: &PhysicalBackendError) -> &str {
+    match error {
+        PhysicalBackendError::Target { context, .. }
+        | PhysicalBackendError::Host { context }
+        | PhysicalBackendError::Protocol { context }
+        | PhysicalBackendError::Unknown { context } => context,
     }
 }

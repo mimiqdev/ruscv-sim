@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Non-blocking U1: Rust 侧挂起（issue #216）**
+  - `BlockingTarget` 新增 `suspends_host_time() -> bool`（nb D2），默认 `false`，因此既有实现者照常编译且行为不变；
+    `ZeroDelayRam` 保持默认，`TlmRamAdapter` 在构造时读取一次。挂起 target 与非零 `MachineConfig.quantum` 的组合
+    是既有的 `MachineError::UnsupportedTransport`，该变体的消息加宽为命名本情形：grant 内部流逝的 host 时间会使
+    kernel 时钟不再是整个 grant 的量子锚点 `E`。挂起 target 可与 `dmi` 组合；`MachineConfig` 与 CLI 都不新增
+    字段或选项
+  - `BlockingTransaction` 新增只读请求访问器 `may_suspend() -> bool`（nb D3；适配器在发起时按 target 声明、
+    `BlockingInitiator::Hart` 与开启的 guest-turn 窗口三项设定，其余代码无法设置），以及
+    `host_elapsed() -> Femtoseconds` 与 `set_host_elapsed(Femtoseconds)`（nb D4；回调内流逝的精确飞秒，起始为零）。
+    两者都是时序元数据：地址、宽度、字节、类别与状态从不依赖它们，`ZeroDelayRam` 忽略前者。`DebugInbound` 的文档
+    注释改为只命名系统总线访问，因为 program buffer 与 abstract command 走 Hart 端口
+  - `src/blocking/adapter.rs` 的响应分类合并为一个 helper，plain 与 atomic 两条响应路径共用，按 nb D4 的六步执行：
+    未知完成（panic 或 outcome-unknown 标志）先行并毒化传输，随后变更载荷，随后该路径的 committed-write 记录与
+    D7 store-conditional gate，随后 unmarked-elapsed 规则与 elapsed-above-delay 规则，最后沿用今天的状态分类。
+    终端响应（含 guest 可见 fault 与 `GenericError`）计费 `d`，`Incomplete` 与未知完成计费 `e`；规则诊断是报告的
+    分类，计费引发的 overshoot 或记账错误只追加在其后。`account_delay` 仍是唯一记账路径，并只在 guest-turn 窗口内
+    把计费事务的 `e` 加入 `host_elapsed_femtoseconds`
+  - `BoundaryFacts` 新增 `host_elapsed_femtoseconds: u64`（按代累计，与 `transport_delay_femtoseconds` 同源）；
+    其手写 `Default` 与两处构造（`src/machine/mod.rs` 中 `..BoundaryFacts::default()` 结尾的 turn 字面量，以及
+    `src/machine/owned.rs` 的 `control_boundary`）都显式给出该字段。该公开字段破坏外部穷举结构体字面量。其余公开
+    签名不变
+  - 新增 16 个 crate 内测试覆盖合同 §4 U1 的验收项：guest fetch、load、store、AMO、LR、SC 与 Sv39 walk 读、
+    A/D envelope 携带 `may_suspend` true；同一 target 上的 SBA 读、abstract-command 内存访问与 program-buffer
+    读携带 false，非挂起 target 的每个 guest 请求也携带 false；`e` 与 `d` 取不同 tick 数时的每条 D4 规则、
+    计费金额、`platform_mtime`、`transport_delay_femtoseconds` 与 `host_elapsed_femtoseconds`；`mcycle` 与
+    `minstret` 不变；SBA 报告的 `e` 不进入总量（在 `control_boundary` 读取，因为 `DebugBoundary` 不携带
+    `BoundaryFacts`）；`dmi` 下的直接拷贝不产生事务也没有标志；带 `quantum` 的挂起 target 被拒；`e` 全为零时
+    与不挂起的同一镜像逐 turn 相同；以及 `begin_transport_turn` 只有一个 guest-turn 调用点
+  - U1 拥有的 12 条负控制（`nb-u1-*`）注册进 `scripts/debug/stage6-mutations`，每条由已提交测试在变异下失败、
+    还原后通过
+
 - **Quantum U1: 本地时间与阈值（issue #201）**
   - `MachineConfig` 新增 `pub(crate)` 字段 `quantum`（Platform tick；`MachineConfig::new` 选择 0），该新增字段
     使外部代码无法再以穷举结构体字面量构造 `MachineConfig`。U2 完成前该字段保持 crate 私有，因此没有公开
