@@ -472,6 +472,22 @@ impl DevicePath {
     }
 }
 
+/// Acknowledges one selected target's transport reset (device D6).
+///
+/// The call is a host boundary like [`TlmDeviceAdapter::transact`], so a
+/// panicking target is contained here rather than unwinding through the
+/// Machine's locks.  It is reported as a refused reset: a target that cannot
+/// return cannot vouch that it quiesced.
+pub(crate) fn acknowledge_transport_reset(
+    target: &dyn BlockingDeviceTarget,
+) -> Result<(), &'static str> {
+    match catch_unwind(AssertUnwindSafe(|| target.transport_reset())) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("did not acknowledge its transport reset"),
+        Err(_) => Err("panicked during its transport reset"),
+    }
+}
+
 /// One access's failed outcome: no event is ever published beside a failure.
 fn failed(error: PhysicalBackendError) -> DeviceOutcome {
     DeviceOutcome {

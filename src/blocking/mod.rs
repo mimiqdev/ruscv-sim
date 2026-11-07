@@ -65,8 +65,8 @@ mod tests;
 mod zero_delay;
 
 pub use atomic::{BlockingAtomicExtension, BlockingAtomicOperation, BlockingAtomicOutcome};
+pub(crate) use device::{acknowledge_transport_reset, DeviceOutcome, DevicePath};
 pub use device::{BlockingDeviceEvent, BlockingDeviceTarget, DeviceTargets};
-pub(crate) use device::{DeviceOutcome, DevicePath};
 pub use direct_mem::{
     BlockingDirectMemAccess, BlockingDirectMemGrant, BlockingDirectMemInvalidator,
     BlockingDirectMemQuery, BlockingDirectMemRegistry, BlockingDirectMemResponse,

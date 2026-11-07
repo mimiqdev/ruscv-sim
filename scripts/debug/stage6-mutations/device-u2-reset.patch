@@ -1,6 +1,6 @@
 --- a/src/machine/platform.rs
 +++ b/src/machine/platform.rs
-@@ -138,21 +138,6 @@
+@@ -141,19 +141,6 @@
                  ))
              })?,
          };
@@ -13,11 +13,9 @@
 -        // `reload_for_ndmreset` and `ruscv_machine_reset`.  A refused reset
 -        // fails the build like a refused RAM reset.
 -        if let Some(target) = config.devices.uart() {
--            if !target.transport_reset() {
--                return Err(MachineError::Placement(
--                    "the UART device target refused its transport reset".into(),
--                ));
--            }
+-            acknowledge_transport_reset(target.as_ref()).map_err(|reason| {
+-                MachineError::Placement(format!("the UART device target {reason}"))
+-            })?;
 -        }
          // After every transport reset and before installation, zero-fill the
          // whole RAM window so no prior run's contents survive (dev-plan D6).

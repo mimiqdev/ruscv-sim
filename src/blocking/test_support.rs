@@ -974,6 +974,8 @@ pub(crate) struct HostUart {
     pub receives: AtomicUsize,
     /// The answer `transport_reset` gives.
     reset_ack: AtomicBool,
+    /// True while `transport_reset` panics instead of answering.
+    reset_panic: AtomicBool,
     /// `LSR`'s answer, so a guest can be made to proceed or to spin.
     lsr: AtomicU64,
     fault: Mutex<HostUartFault>,
@@ -995,6 +997,7 @@ impl HostUart {
             resets: AtomicUsize::new(0),
             receives: AtomicUsize::new(0),
             reset_ack: AtomicBool::new(true),
+            reset_panic: AtomicBool::new(false),
             lsr: AtomicU64::new(u64::from(lsr_bits::THRE | lsr_bits::TEMT)),
             fault: Mutex::new(HostUartFault::None),
             log: Mutex::new(Vec::new()),
@@ -1014,6 +1017,11 @@ impl HostUart {
     /// Sets whether a transport reset is acknowledged.
     pub(crate) fn set_reset_ack(&self, ack: bool) {
         self.reset_ack.store(ack, Ordering::SeqCst);
+    }
+
+    /// Makes the next transport resets panic instead of answering.
+    pub(crate) fn set_reset_panic(&self, panic: bool) {
+        self.reset_panic.store(panic, Ordering::SeqCst);
     }
 
     /// Blocking transactions issued.
@@ -1141,7 +1149,10 @@ impl BlockingDeviceTarget for HostUart {
                 transaction.set_dmi_allowed(true);
             }
             HostUartFault::Unknown => {
+                // The contract's case is `Ok` with a valid event and the
+                // unknown flag: the flag alone must make it unknown.
                 report(transaction);
+                transaction.set_status(BlockingResponseStatus::Ok);
                 transaction.extension_mut().mark_outcome_unknown();
                 return;
             }
@@ -1156,6 +1167,9 @@ impl BlockingDeviceTarget for HostUart {
 
     fn transport_reset(&self) -> bool {
         self.resets.fetch_add(1, Ordering::SeqCst);
+        if self.reset_panic.load(Ordering::SeqCst) {
+            panic!("scripted host UART transport-reset panic");
+        }
         if !self.reset_ack.load(Ordering::SeqCst) {
             return false;
         }

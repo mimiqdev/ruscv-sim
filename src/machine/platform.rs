@@ -1,7 +1,10 @@
 //! Existing Platform configurations and placement, without run-stop policy.
 use super::inbound::InboundPort;
 use super::{MachineConfig, MachineError, PlatformKind};
-use crate::blocking::{BlockingDeviceTarget, DevicePath, InTreeHtif, InTreeUart, Transport};
+use crate::blocking::{
+    acknowledge_transport_reset, BlockingDeviceTarget, DevicePath, InTreeHtif, InTreeUart,
+    Transport,
+};
 use crate::core::{SharedDataAccess, SharedPhysicalAccess};
 use crate::elf::LoadImage;
 use crate::executor::{
@@ -147,11 +150,9 @@ impl Platform {
         // `reload_for_ndmreset` and `ruscv_machine_reset`.  A refused reset
         // fails the build like a refused RAM reset.
         if let Some(target) = config.devices.uart() {
-            if !target.transport_reset() {
-                return Err(MachineError::Placement(
-                    "the UART device target refused its transport reset".into(),
-                ));
-            }
+            acknowledge_transport_reset(target.as_ref()).map_err(|reason| {
+                MachineError::Placement(format!("the UART device target {reason}"))
+            })?;
         }
         // After every transport reset and before installation, zero-fill the
         // whole RAM window so no prior run's contents survive (dev-plan D6).

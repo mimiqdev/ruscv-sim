@@ -2919,36 +2919,49 @@ fn a_host_uart_unknown_completion_publishes_no_event() {
     );
 }
 
+/// A guest whose only device access is one THR write in its fourth turn, so the
+/// pending turn's F1 flush commits exactly the three ticks the earlier turns
+/// accrued.
+fn host_uart_quantum_parity_guest() -> Vec<u32> {
+    vec![
+        elf::nop(),
+        elf::lui(5, 0x10000), // 0x1000_0000, the UART window
+        elf::addi(6, 0, i32::from(b'H')),
+        elf::sb(6, 5, 0), // THR
+    ]
+}
+
+/// The in-tree TLM route's committed time after `code` runs at `Q` = 1024.
+///
+/// Q = 1024 keeps the threshold out of reach, so the first three turns accrue
+/// three local ticks without committing any and the pending guest turn's device
+/// access flushes exactly those three.  A refused access that charges anything
+/// ends below `parity - 1`; the failed turn's own advance is the one step a
+/// started failed turn never gets.
+fn host_uart_quantum_parity(code: &[u32]) -> u64 {
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.quantum = 1024;
+    let mut owned = OwnedMachine::new(config, code_image(code)).unwrap();
+    let mut mtime = 0;
+    for _ in 0..code.len() {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the in-tree parity guest failed"
+        );
+        mtime = owned.platform_mtime().unwrap();
+    }
+    mtime
+}
+
 /// device D2/D4: any delay annotation is a protocol failure of the access, and
 /// the access adds no Platform time beyond the F1 flush the same device access
 /// performs today.
 #[test]
 fn a_host_uart_that_annotates_a_delay_is_a_protocol_failure_without_charge() {
-    // Q = 1024 keeps the threshold out of reach, so the first three turns
-    // accrue three local ticks without committing any and the pending guest
-    // turn's device access flushes exactly those three.
-    let code = [
-        elf::nop(),
-        elf::lui(5, 0x10000),
-        elf::addi(6, 0, i32::from(b'H')),
-        elf::sb(6, 5, 0),
-    ];
-    let parity = {
-        let mut config = MachineConfig::new(PlatformKind::Native);
-        config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
-        config.quantum = 1024;
-        let mut owned = OwnedMachine::new(config, code_image(&code)).unwrap();
-        let mut mtime = 0;
-        for _ in 0..code.len() {
-            let turn = owned.step_request(false, false, false).unwrap();
-            assert!(
-                !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
-                "the in-tree parity guest failed"
-            );
-            mtime = owned.platform_mtime().unwrap();
-        }
-        mtime
-    };
+    let code = host_uart_quantum_parity_guest();
+    let parity = host_uart_quantum_parity(&code);
     assert_eq!(parity, 4, "the in-tree parity run did not reach four ticks");
 
     let target = HostUart::new(HOST_UART_BASE);
@@ -2970,6 +2983,46 @@ fn a_host_uart_that_annotates_a_delay_is_a_protocol_failure_without_charge() {
         parity - 1,
         "the delay annotation charged Platform time beyond the F1 flush"
     );
+}
+
+/// device D2/D4: every other response rule a host target can break is a
+/// protocol failure of that access, and the refused access adds no Platform
+/// time beyond the F1 flush it performs today.
+#[test]
+fn a_host_uart_bad_response_is_a_protocol_failure_without_charge() {
+    let code = host_uart_quantum_parity_guest();
+    let parity = host_uart_quantum_parity(&code);
+    assert_eq!(parity, 4, "the in-tree parity run did not reach four ticks");
+    for (fault, reason) in [
+        (HostUartFault::SecondEvent, "at most one event"),
+        (
+            HostUartFault::WrongWindowEvent,
+            "an event that is not its window's",
+        ),
+        (HostUartFault::ChangedPayload, "changed the request payload"),
+        (HostUartFault::Elapsed(1_000_000), "host time may not pass"),
+        (HostUartFault::DmiHint, "never offers direct memory"),
+    ] {
+        let target = HostUart::new(HOST_UART_BASE);
+        target.set_fault(fault);
+        let (mut owned, output) = host_uart_machine(&target, 1024, &code);
+        let (_, failure) = run_host_uart(&mut owned, &output, code.len());
+        assert!(
+            output.lock().unwrap().is_empty(),
+            "{fault:?}: a refused access still called config.uart_output"
+        );
+        let failure = failure.unwrap_or_else(|| panic!("{fault:?}: the bad response was accepted"));
+        assert!(
+            failure.message.contains(reason),
+            "{fault:?}: the access was not refused by its own response rule: {}",
+            failure.message
+        );
+        assert_eq!(
+            owned.platform_mtime().unwrap(),
+            parity - 1,
+            "{fault:?}: the refused access charged Platform time beyond the F1 flush"
+        );
+    }
 }
 
 /// device D2: a device target is a TLM-route selection on the native Platform,
@@ -3219,6 +3272,55 @@ fn a_host_uart_target_composes_with_the_quantum_direct_memory_and_suspension() {
             "{label}: the host UART target did not serve the guest's two accesses"
         );
     }
+}
+
+/// device D6: a host target that panics during its transport reset fails the
+/// build through the placement channel, and the panic does not unwind through
+/// the admission lock the reinstall holds.
+#[test]
+fn a_panicking_device_reset_fails_the_build_without_poisoning_the_machine() {
+    let target = HostUart::new(HOST_UART_BASE);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.devices = DeviceTargets::with_uart(target.clone());
+    let owner = Machine::new(config);
+    owner.install(image(elf::nop())).unwrap();
+    owner.resume().unwrap();
+    owner.request_quiesce().unwrap();
+    owner.try_drain().unwrap();
+
+    // The reinstall path holds the admission gate across the build, so an
+    // unwind here would poison every later handle operation.
+    target.set_reset_panic(true);
+    let error = owner
+        .fresh_reset()
+        .expect_err("a panicking device reset was admitted");
+    assert!(
+        matches!(error, MachineError::Placement(_)),
+        "a panicking device reset did not use the placement channel: {error:?}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("panicked during its transport reset"),
+        "the refusal does not name the panic: {error}"
+    );
+    assert_eq!(
+        target.resets(),
+        2,
+        "the refused build did not call the target's transport reset"
+    );
+
+    // The unwind did not poison the gate the reinstall holds, and the previous
+    // association is still the one installed.
+    let status = owner
+        .status()
+        .expect("a panicking device reset poisoned the Machine");
+    assert_eq!(status.lifecycle, Lifecycle::DrainComplete);
+    assert!(
+        owner.inspect().unwrap().uart.is_none(),
+        "the previous association no longer carries the host UART window"
+    );
 }
 
 #[test]
