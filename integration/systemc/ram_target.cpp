@@ -96,11 +96,11 @@ void mark_protocol_error(tlm::tlm_generic_payload& transaction) {
 
 }  // namespace
 
-RamTarget::RamTarget(sc_core::sc_module_name name, bool fault_decrease_delay,
-                     bool non_blocking, uint64_t nb_latency_fs, AtPath nb_path)
+RamTarget::RamTarget(sc_core::sc_module_name name, TargetFaults faults, bool non_blocking,
+                     uint64_t nb_latency_fs, AtPath nb_path)
     : sc_core::sc_module(name),
       socket("socket"),
-      fault_decrease_delay_(fault_decrease_delay),
+      faults_(faults),
       non_blocking_(non_blocking),
       nb_latency_fs_(nb_latency_fs),
       nb_path_(nb_path),
@@ -118,12 +118,19 @@ RamTarget::RamTarget(sc_core::sc_module_name name, bool fault_decrease_delay,
 }
 
 void RamTarget::b_transport(tlm::tlm_generic_payload& transaction, sc_core::sc_time& delay) {
+    if (faults_.wait_blocking) {
+        // The smoke's --fault-wait-blocking control (nb §4): a blocking
+        // callback that lets host time pass.  The request's `may_suspend` is
+        // clear, so the initiator's measured elapsed time trips the ABI's
+        // unmarked-elapsed rule.
+        sc_core::wait(sc_core::sc_time(1, sc_core::SC_NS));
+    }
     // quantum D13: the delay argument arrives as the Hart's local offset, which
     // this zero-delay RAM model adds nothing to. Leaving it unchanged is what
     // its declared per-transaction maximum requires: the initiator subtracts
     // the offset and reports the zero added delay, so the run stays
     // time-equivalent to native with the quantum on and off.
-    if (fault_decrease_delay_ && delay > sc_core::SC_ZERO_TIME) {
+    if (faults_.decrease_delay && delay > sc_core::SC_ZERO_TIME) {
         // The smoke's --fault-decrease-delay control (quantum §4): a returned
         // delay below the offset cannot be represented as an added delay, and
         // this target may already have committed the write, so the initiator
@@ -132,6 +139,37 @@ void RamTarget::b_transport(tlm::tlm_generic_payload& transaction, sc_core::sc_t
     }
     ++b_transport_count_;
     apply_request(transaction, transaction.get_extension<PayloadExtension>());
+}
+
+sc_core::sc_time RamTarget::final_phase_latency() {
+    // nb D9: the declared maximum is the target's declared latency lambda.
+    sc_core::sc_time latency = sc_core::sc_time::from_value(nb_latency_fs_);
+    if (faults_.late_response && begin_req_count_ == 1) {
+        // The smoke's --fault-late-response control (nb §4): delay the run's
+        // first AT access's final phase to one tick after the declared
+        // maximum, past the initiator's timeout.
+        latency += sc_core::sc_time(1, sc_core::SC_NS);
+    }
+    return latency;
+}
+
+void RamTarget::schedule_phase(tlm::tlm_generic_payload& transaction,
+                               const tlm::tlm_phase& phase, const sc_core::sc_time& delay) {
+    scheduled_phases_.push_back(sc_core::sc_time_stamp() + delay);
+    phase_queue_.notify(transaction, phase, delay);
+}
+
+sc_core::sc_time RamTarget::next_scheduled_phase() const {
+    if (scheduled_phases_.empty()) {
+        return sc_core::SC_ZERO_TIME;
+    }
+    sc_core::sc_time earliest = scheduled_phases_.front();
+    for (const sc_core::sc_time& scheduled : scheduled_phases_) {
+        if (scheduled < earliest) {
+            earliest = scheduled;
+        }
+    }
+    return earliest;
 }
 
 tlm::tlm_sync_enum RamTarget::nb_transport_fw(tlm::tlm_generic_payload& transaction,
@@ -157,19 +195,18 @@ tlm::tlm_sync_enum RamTarget::nb_transport_fw(tlm::tlm_generic_payload& transact
         if (apply_request(transaction, extension)) {
             ++applied_access_count_;
         }
-        const sc_core::sc_time latency = sc_core::sc_time::from_value(nb_latency_fs_);
         switch (nb_path_) {
             case AtPath::Accepted:
                 // nb D8: END_REQ is one delta later at the same host time. Its
                 // handler schedules BEGIN_RESP, so lambda = 0 still gets a
                 // separate delta for the response.
-                phase_queue_.notify(transaction, tlm::END_REQ, sc_core::SC_ZERO_TIME);
+                schedule_phase(transaction, tlm::END_REQ, sc_core::SC_ZERO_TIME);
                 delay = sc_core::SC_ZERO_TIME;
                 return tlm::TLM_ACCEPTED;
             case AtPath::Updated:
                 // nb D8: the forward return carries END_REQ, and BEGIN_RESP
                 // follows lambda later.
-                phase_queue_.notify(transaction, tlm::BEGIN_RESP, latency);
+                schedule_phase(transaction, tlm::BEGIN_RESP, final_phase_latency());
                 phase = tlm::END_REQ;
                 delay = sc_core::SC_ZERO_TIME;
                 return tlm::TLM_UPDATED;
@@ -177,19 +214,19 @@ tlm::tlm_sync_enum RamTarget::nb_transport_fw(tlm::tlm_generic_payload& transact
                 // nb D8: the forward return carries BEGIN_RESP and its lambda
                 // annotation.
                 phase = tlm::BEGIN_RESP;
-                delay = latency;
+                delay = final_phase_latency();
                 return tlm::TLM_UPDATED;
             case AtPath::Annotated:
                 // nb D8: END_REQ is one delta later; its handler then schedules
                 // BEGIN_RESP in the next delta with lambda as its annotation.
                 // The initiator must hold the later phase.
-                phase_queue_.notify(transaction, tlm::END_REQ, sc_core::SC_ZERO_TIME);
+                schedule_phase(transaction, tlm::END_REQ, sc_core::SC_ZERO_TIME);
                 delay = sc_core::SC_ZERO_TIME;
                 return tlm::TLM_ACCEPTED;
             case AtPath::Completed:
                 // nb D8: no later phase; the forward completion carries lambda.
                 open_transaction_ = nullptr;
-                delay = latency;
+                delay = final_phase_latency();
                 return tlm::TLM_COMPLETED;
         }
     }
@@ -214,6 +251,17 @@ tlm::tlm_sync_enum RamTarget::nb_transport_fw(tlm::tlm_generic_payload& transact
 
 void RamTarget::handle_phase(tlm::tlm_generic_payload& transaction,
                               const tlm::tlm_phase& phase) {
+    // nb D9: this phase has been delivered, so the drain no longer waits for it.
+    if (!scheduled_phases_.empty()) {
+        auto earliest = scheduled_phases_.begin();
+        for (auto candidate = scheduled_phases_.begin(); candidate != scheduled_phases_.end();
+             ++candidate) {
+            if (*candidate < *earliest) {
+                earliest = candidate;
+            }
+        }
+        scheduled_phases_.erase(earliest);
+    }
     if (open_transaction_ != &transaction) {
         return;
     }
@@ -221,7 +269,7 @@ void RamTarget::handle_phase(tlm::tlm_generic_payload& transaction,
     if (nb_path_ == AtPath::Annotated && phase == tlm::BEGIN_RESP) {
         // nb D8: the annotated path sends BEGIN_RESP at the same host time with
         // lambda as its annotation, so the initiator must hold the later phase.
-        delay = sc_core::sc_time::from_value(nb_latency_fs_);
+        delay = final_phase_latency();
     }
     tlm::tlm_phase outgoing = phase;
     const tlm::tlm_sync_enum sync = socket->nb_transport_bw(transaction, outgoing, delay);
@@ -234,10 +282,9 @@ void RamTarget::handle_phase(tlm::tlm_generic_payload& transaction,
         // nb D8: the response is always a separate phase, so a zero-time
         // BEGIN_RESP lands in the next delta even when lambda is zero.
         if (nb_path_ == AtPath::Accepted) {
-            phase_queue_.notify(transaction, tlm::BEGIN_RESP,
-                                sc_core::sc_time::from_value(nb_latency_fs_));
+            schedule_phase(transaction, tlm::BEGIN_RESP, final_phase_latency());
         } else if (nb_path_ == AtPath::Annotated) {
-            phase_queue_.notify(transaction, tlm::BEGIN_RESP, sc_core::SC_ZERO_TIME);
+            schedule_phase(transaction, tlm::BEGIN_RESP, sc_core::SC_ZERO_TIME);
         }
         return;
     }
@@ -447,6 +494,12 @@ bool RamTarget::apply_atomic(tlm::tlm_generic_payload& transaction,
 
 unsigned int RamTarget::transport_dbg(tlm::tlm_generic_payload& transaction) {
     ++transport_dbg_count_;
+    if (faults_.wait_debug) {
+        // The smoke's --fault-wait-debug control (nb §4): a debug transport that
+        // lets host time pass.  Debug work keeps its zero charge, so the
+        // initiator must report the transfer as failed.
+        sc_core::wait(sc_core::sc_time(1, sc_core::SC_NS));
+    }
     const uint64_t address = transaction.get_address();
     const size_t length = transaction.get_data_length();
     if (transaction.get_data_ptr() == nullptr && length != 0) {

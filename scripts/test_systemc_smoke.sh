@@ -36,7 +36,15 @@
 #      below the non-direct pass;
 #  12. require the `--nb --quantum` refusal and the non-blocking usage errors;
 #  13. run the two quantum fault-option controls under `--quantum 1024`, each of
-#      which must fail the run with its own named diagnostic.
+#      which must fail the run with its own named diagnostic;
+#  14. run the five non-blocking fault-option controls in their stated mode
+#      (nb §4): the late response on the accepted, early and completed paths,
+#      with the withheld reset acknowledgement, the drain's retained
+#      `END_RESP` and a counted late phase; the uncounted elapsed time as a
+#      kernel-clock mismatch; and the short delay, the blocking wait and the
+#      debug wait with their own named diagnostics. A normal `--nb` pass must
+#      report no late phase, and each option is a usage error in the wrong
+#      mode.
 #
 # Linux x86-64 only. Prerequisites are the pinned SystemC installation, CMake,
 # a C++17 compiler and the RISC-V cross toolchain. A missing prerequisite is a
@@ -161,6 +169,19 @@ smoke_totals_field() {
         | awk -v key="$2" '/^systemc-smoke: totals / { for (i = 1; i <= NF; i++) { split($i, pair, "="); if (pair[1] == key) { print pair[2]; exit } } }'
 }
 
+# One field of the host's AT retirement line, or an empty string (nb D9).
+smoke_at_field() {
+    printf '%s\n' "$1" \
+        | awk -v key="$2" '/^systemc-smoke: AT / { for (i = 1; i <= NF; i++) { split($i, pair, "="); if (pair[1] == key) { print pair[2]; exit } } }'
+}
+
+# The status the host's reset probe received while an AT transaction was still
+# open, or an empty string when the host skipped the probe (nb D9).
+smoke_reset_status() {
+    printf '%s\n' "$1" \
+        | sed -n 's/^systemc-smoke: reset with an open AT transaction returned status \(-*[0-9][0-9]*\)$/\1/p' | head -1
+}
+
 # Sums one field of a --grant-trace file.
 trace_sum() {
     awk -v key="$2" '{ for (i = 1; i <= NF; i++) { split($i, pair, "="); if (pair[1] == key) sum += pair[2] } } END { printf "%.0f\n", sum }' "$1"
@@ -246,6 +267,12 @@ require_nb_pass() {
     [ -n "${LAST_CONSUMED}" ] || fail "${guest}: the ${label} run reported no consumed total"
     [ -n "${LAST_HOST}" ] || fail "${guest}: the ${label} run reported no host elapsed total"
     [ -n "${LAST_DELAY}" ] || fail "${guest}: the ${label} run reported no transport delay total"
+    # nb D9: a normal pass completes every transaction in time, so it ignores no
+    # late phase.
+    LAST_LATE="$(smoke_at_field "${output}" late_phases)"
+    [ -n "${LAST_LATE}" ] || fail "${guest}: the ${label} run reported no late-phase count"
+    [ "${LAST_LATE}" -eq 0 ] \
+        || fail "${guest}: the ${label} run ignored ${LAST_LATE} late phase(s); a passing pass reports zero"
 }
 
 echo -e "${BLUE}== checking the SystemC smoke prerequisites${NC}"
@@ -314,6 +341,11 @@ INVALIDATE_EVERY=2
 # the larger one, where a grant spans several turns.
 QUANTUMS=(1 1024)
 FAULT_QUANTUM=1024
+
+# The AT latency every non-blocking pass uses (nb D10): 1.5 Platform ticks, so
+# every AT access exercises the round-up and the grant-end wait.
+NB_LATENCY=1500000
+NB_PATHS=(accepted updated early annotated completed)
 
 # Each guest's native exit code, for the later pass comparisons.
 declare -A NATIVE_EXITS=()
@@ -518,8 +550,6 @@ for entry in "${GUESTS[@]}"; do
     # elapsed total is zero. At lambda > 0 the three D10 sums must hold from the
     # host's exit totals, and every grant trace line must keep host elapsed
     # below the consumed amount.
-    NB_LATENCY=1500000
-    NB_PATHS=(accepted updated early annotated completed)
     for latency in 0 "${NB_LATENCY}"; do
         for path in "${NB_PATHS[@]}"; do
             label="--nb --nb-path ${path} --nb-latency ${latency}"
@@ -770,6 +800,211 @@ if ! printf '%s\n' "${decrease_output}" | grep -q '^systemc-smoke: failed run fa
 fi
 echo -e "  ${GREEN}[PASS]${NC} the delay below the offset failed the run as an unknown completion (status ${decrease_status})"
 
+# The five non-blocking fault-option controls (nb §4). They are options of this
+# binary for the same reason as the quantum ones: the mutation runner builds
+# only Rust, and D11 keeps `--all-features` free of a C++ toolchain. Each runs in
+# its stated mode with its own assertion, and a run that passes with one set is a
+# smoke failure.
+#
+# `--fault-late-response` delays the run's first AT access's final phase to one
+# tick past the declared maximum. That access is the guest's first fetch, so the
+# initiator retires it at its timeout as an unknown completion, ignores and
+# counts the late phase, and drains before destroy. The reset probe in front of
+# the drain must be refused while the target still holds the transaction; the
+# `completed` path releases it on the forward path, so it skips the probe.
+#
+# Each assertion reads one obligation of D9: the failed boundary's `uncertain`
+# class, the diagnostic's own words, the late-phase count, the drain's retained
+# `END_RESP`, the withheld reset acknowledgement and the target's released state.
+#
+#   run_late_response PATH EXPECTED_RESET EXPECTED_END_RESP
+#     PATH                accepted | early | completed
+#     EXPECTED_RESET      required (the target withholds it) | skipped
+#     EXPECTED_END_RESP   forward END_RESP phases the drain must send
+run_late_response() {
+    local path="$1"
+    local expected_reset="$2"
+    local expected_end_resp="$3"
+    local label="--nb --nb-latency ${NB_LATENCY} --nb-path ${path} --fault-late-response"
+    # `capture` owns locals named `output` and `status`, so the result
+    # variables must use other names.
+    local late_output
+    local late_status
+    capture late_output late_status timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${fault_elf}" \
+        --isa "${fault_profile}" --max-turns "${MAX_CYCLES}" \
+        --nb --nb-latency "${NB_LATENCY}" --nb-path "${path}" --fault-late-response
+    [ "${late_status}" -ne 124 ] || fail "the ${label} control timed out"
+    if [ "${late_status}" -eq 0 ]; then
+        printf '%s\n' "${late_output}"
+        fail "the ${label} control passed; a late response must retire the transaction"
+    fi
+    if ! printf '%s\n' "${late_output}" | grep -q '^systemc-smoke: result state=failed '; then
+        printf '%s\n' "${late_output}"
+        fail "the ${label} control did not report a failed run"
+    fi
+    if ! printf '%s\n' "${late_output}" | grep -q '^systemc-smoke: failed run facts uncertain=1$'; then
+        printf '%s\n' "${late_output}"
+        fail "the ${label} control was not retired as an unknown completion"
+    fi
+    if ! printf '%s\n' "${late_output}" | grep -q 'could not establish the outcome of '; then
+        printf '%s\n' "${late_output}"
+        fail "the ${label} control's diagnostic did not say the target could not establish the outcome"
+    fi
+    local late
+    local retirements
+    local end_resp
+    local open
+    local begin
+    local applied
+    late="$(smoke_at_field "${late_output}" late_phases)"
+    retirements="$(smoke_at_field "${late_output}" retirements)"
+    end_resp="$(smoke_at_field "${late_output}" drain_end_resp)"
+    open="$(smoke_at_field "${late_output}" open_transaction)"
+    begin="$(ram_begin_req_count "${late_output}")"
+    applied="$(ram_applied_access_count "${late_output}")"
+    [ -n "${late}" ] || fail "the ${label} control reported no late-phase count"
+    [ -n "${retirements}" ] || fail "the ${label} control reported no retirement count"
+    [ -n "${end_resp}" ] || fail "the ${label} control reported no drain count"
+    [ "${late}" -ge 1 ] \
+        || fail "the ${label} control ignored ${late} late phase(s); a late response must be counted"
+    [ "${retirements}" -eq 1 ] \
+        || fail "the ${label} control retired ${retirements} transaction(s), not one"
+    [ "${open}" = "0" ] \
+        || fail "the ${label} control left a transaction open at the target after its drain"
+    [ -n "${begin}" ] && [ "${begin}" = "${applied}" ] \
+        || fail "the ${label} control applied ${applied} of its ${begin} BEGIN_REQ phase(s)"
+    [ "${end_resp}" -eq "${expected_end_resp}" ] \
+        || fail "the ${label} control sent ${end_resp} drain END_RESP phase(s), not ${expected_end_resp}"
+    if [ "${expected_reset}" = "required" ]; then
+        local reset
+        reset="$(smoke_reset_status "${late_output}")"
+        [ -n "${reset}" ] \
+            || { printf '%s\n' "${late_output}"; fail "the ${label} control never probed the transport reset"; }
+        [ "${reset}" -ne 0 ] \
+            || fail "the ${label} control's transport reset was acknowledged while a transaction was open"
+        echo -e "  ${GREEN}[PASS]${NC} ${label}: late phase counted, drain released (status ${late_status}, reset ${reset})"
+    else
+        if printf '%s\n' "${late_output}" | grep -q '^systemc-smoke: reset with an open AT transaction '; then
+            printf '%s\n' "${late_output}"
+            fail "the ${label} control probed the reset although the target holds no transaction"
+        fi
+        if ! printf '%s\n' "${late_output}" \
+            | grep -q '^systemc-smoke: reset probe skipped: the target holds no open AT transaction$'; then
+            printf '%s\n' "${late_output}"
+            fail "the ${label} control did not report the skipped reset probe"
+        fi
+        echo -e "  ${GREEN}[PASS]${NC} ${label}: late completion counted, storage released at once (status ${late_status})"
+    fi
+}
+
+echo -e "${YELLOW}== --fault-late-response on accepted (must not pass)${NC}"
+run_late_response accepted required 0
+echo -e "${YELLOW}== --fault-late-response on early (must not pass)${NC}"
+run_late_response early required 1
+echo -e "${YELLOW}== --fault-late-response on completed (must not pass)${NC}"
+run_late_response completed skipped 0
+
+# --fault-uncounted-elapsed: the initiator reports `e` = 0 while it reports `d`
+# as the host time that passed, so the grant returns no host elapsed time and the
+# kernel clock ends beyond the Machine cursor. The host must fail the run with
+# that mismatch, not with a run result.
+echo -e "${YELLOW}== --fault-uncounted-elapsed (must not pass)${NC}"
+capture uncounted_output uncounted_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${fault_elf}" --isa "${fault_profile}" \
+    --max-turns "${MAX_CYCLES}" --nb --nb-latency "${NB_LATENCY}" \
+    --nb-path accepted --fault-uncounted-elapsed
+[ "${uncounted_status}" -ne 124 ] || fail "the --fault-uncounted-elapsed control timed out"
+if [ "${uncounted_status}" -eq 0 ]; then
+    printf '%s\n' "${uncounted_output}"
+    fail "the --fault-uncounted-elapsed control passed; unreported host time must part the clocks"
+fi
+if printf '%s\n' "${uncounted_output}" | grep -q '^systemc-smoke: result state='; then
+    printf '%s\n' "${uncounted_output}"
+    fail "the --fault-uncounted-elapsed control reported a run result instead of a host failure"
+fi
+if ! printf '%s\n' "${uncounted_output}" | grep -q 'does not match the Machine cursor'; then
+    printf '%s\n' "${uncounted_output}"
+    fail "the --fault-uncounted-elapsed control's diagnostic did not name the kernel clock mismatch"
+fi
+echo -e "  ${GREEN}[PASS]${NC} the unaccounted host time failed the run (status ${uncounted_status})"
+
+# --fault-short-delay: the initiator reports `d` one femtosecond below `e`, so a
+# terminal response fails D4's elapsed-above-delay rule. The failed boundary
+# keeps a known outcome, so its `uncertain` flag must be 0.
+echo -e "${YELLOW}== --fault-short-delay (must not pass)${NC}"
+capture short_output short_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${fault_elf}" --isa "${fault_profile}" \
+    --max-turns "${MAX_CYCLES}" --nb --nb-latency "${NB_LATENCY}" \
+    --nb-path accepted --fault-short-delay
+[ "${short_status}" -ne 124 ] || fail "the --fault-short-delay control timed out"
+if [ "${short_status}" -eq 0 ]; then
+    printf '%s\n' "${short_output}"
+    fail "the --fault-short-delay control passed; a delay below the host elapsed time must fail"
+fi
+if ! printf '%s\n' "${short_output}" | grep -q '^systemc-smoke: result state=failed '; then
+    printf '%s\n' "${short_output}"
+    fail "the --fault-short-delay control did not report a failed run"
+fi
+if ! printf '%s\n' "${short_output}" | grep -q '^systemc-smoke: failed run facts uncertain=0$'; then
+    printf '%s\n' "${short_output}"
+    fail "the --fault-short-delay control was not classified as a host failure"
+fi
+if ! printf '%s\n' "${short_output}" \
+    | grep -q 'host elapsed time above its [0-9][0-9]* fs response delay'; then
+    printf '%s\n' "${short_output}"
+    fail "the --fault-short-delay control's diagnostic did not name the elapsed time above the delay"
+fi
+echo -e "  ${GREEN}[PASS]${NC} the short delay failed the run as a host failure (status ${short_status})"
+
+# --fault-wait-blocking: the target waits one tick in `b_transport`, whose
+# request carries no `may_suspend`, so the initiator's measured host time trips
+# D4's unmarked-elapsed rule.
+echo -e "${YELLOW}== --fault-wait-blocking (must not pass)${NC}"
+capture blocking_wait_output blocking_wait_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${fault_elf}" --isa "${fault_profile}" \
+    --max-turns "${MAX_CYCLES}" --fault-wait-blocking
+[ "${blocking_wait_status}" -ne 124 ] || fail "the --fault-wait-blocking control timed out"
+if [ "${blocking_wait_status}" -eq 0 ]; then
+    printf '%s\n' "${blocking_wait_output}"
+    fail "the --fault-wait-blocking control passed; a blocking wait must fail"
+fi
+if ! printf '%s\n' "${blocking_wait_output}" | grep -q '^systemc-smoke: result state=failed '; then
+    printf '%s\n' "${blocking_wait_output}"
+    fail "the --fault-wait-blocking control did not report a failed run"
+fi
+if ! printf '%s\n' "${blocking_wait_output}" | grep -q '^systemc-smoke: failed run facts uncertain=0$'; then
+    printf '%s\n' "${blocking_wait_output}"
+    fail "the --fault-wait-blocking control was not classified as a host failure"
+fi
+if ! printf '%s\n' "${blocking_wait_output}" \
+    | grep -q 'host elapsed time on a request that may not suspend'; then
+    printf '%s\n' "${blocking_wait_output}"
+    fail "the --fault-wait-blocking control's diagnostic did not name the request that may not suspend"
+fi
+echo -e "  ${GREEN}[PASS]${NC} the blocking wait failed the run as a host failure (status ${blocking_wait_status})"
+
+# --fault-wait-debug: the target waits one tick in `transport_dbg`, so image
+# installation must fail and the host must report the failed ELF load.
+echo -e "${YELLOW}== --fault-wait-debug (must not pass)${NC}"
+capture debug_wait_output debug_wait_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${fault_elf}" --isa "${fault_profile}" \
+    --max-turns "${MAX_CYCLES}" --fault-wait-debug
+[ "${debug_wait_status}" -ne 124 ] || fail "the --fault-wait-debug control timed out"
+if [ "${debug_wait_status}" -eq 0 ]; then
+    printf '%s\n' "${debug_wait_output}"
+    fail "the --fault-wait-debug control passed; a debug wait must fail image installation"
+fi
+if ! printf '%s\n' "${debug_wait_output}" \
+    | grep -q '^systemc-smoke: ruscv_machine_load_elf failed with status '; then
+    printf '%s\n' "${debug_wait_output}"
+    fail "the --fault-wait-debug control did not report a failed ruscv_machine_load_elf"
+fi
+if printf '%s\n' "${debug_wait_output}" | grep -q '^systemc-smoke: result state='; then
+    printf '%s\n' "${debug_wait_output}"
+    fail "the --fault-wait-debug control reported a run result after the failed installation"
+fi
+echo -e "  ${GREEN}[PASS]${NC} the debug wait failed image installation (status ${debug_wait_status})"
+
 # nb D7: --nb with a non-zero quantum is refused by ruscv_machine_create. The
 # host reports the create status as a host failure, not as a run result.
 echo -e "${YELLOW}== --nb --quantum ${FAULT_QUANTUM} (must be refused by create)${NC}"
@@ -822,6 +1057,19 @@ check_usage_error "--fault-keep-offset without --quantum" "require --quantum" \
     --fault-keep-offset
 check_usage_error "--fault-decrease-delay without --quantum" "require --quantum" \
     --fault-decrease-delay
+# nb §4: each non-blocking fault option is a usage error in the wrong mode.
+check_usage_error "--fault-late-response without --nb" "require --nb" \
+    --fault-late-response
+check_usage_error "--fault-uncounted-elapsed without --nb" "require --nb" \
+    --fault-uncounted-elapsed
+check_usage_error "--fault-short-delay without --nb" "require --nb" \
+    --fault-short-delay
+check_usage_error "--fault-wait-blocking with --nb" "must not be combined with --nb" \
+    --fault-wait-blocking --nb
+check_usage_error "--fault-wait-debug with --nb" "must not be combined with --nb" \
+    --fault-wait-debug --nb
+check_usage_error "two fault options" "taken one at a time" \
+    --fault-wait-blocking --fault-wait-debug
 
 printf '\n============================================\n'
 printf '  SystemC smoke summary\n'
@@ -837,6 +1085,7 @@ printf '  Quantum passes:       --quantum %s and %s, with and without --dmi\n' \
 printf '  AT passes:            five paths at lambda 0 and %s fs, with --dmi parity\n' \
     "${NB_LATENCY}"
 printf '  Refusals:             --nb --quantum and the non-blocking usage errors\n'
-printf '  Fault controls:       the exceeded maximum and the unknown completion refused\n'
+printf '  Fault controls:       the exceeded maximum, the unknown completion, the\n'
+printf '                        five non-blocking options and the debug wait\n'
 printf '  Early sc_stop:        refused, as required\n\n'
 echo -e "${GREEN}[PASS]${NC} the pinned SystemC host matched native for every smoke guest"

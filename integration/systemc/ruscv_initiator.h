@@ -40,6 +40,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <memory>
 #include <vector>
 
 #include <ruscv_sim.h>
@@ -50,6 +52,77 @@
 #include "ram_target.h"
 
 namespace ruscv_sim {
+
+/// The smoke's fault-option controls that belong to the initiator (nb §4).
+///
+/// Each one breaks the initiator in one named place so the smoke can require
+/// its own failure. They are taken one at a time and are never a normal bridge.
+struct InitiatorFaults {
+    /// `--fault-keep-offset` (quantum §4): report the full `b_transport` delay
+    /// argument, offset included, as an added delay.
+    bool keep_offset = false;
+    /// `--fault-uncounted-elapsed`: report `e` = 0 while reporting `d` as the
+    /// host time that passed.
+    bool uncounted_elapsed = false;
+    /// `--fault-short-delay`: report `d` one femtosecond below `e`.
+    bool short_delay = false;
+};
+
+/// One initiator-owned AT transaction, with its own payload, extension, data
+/// and memory manager (nb D7).
+///
+/// The target never sees the ABI's buffer: request bytes are copied in before
+/// `BEGIN_REQ` and response bytes are copied out at completion. A retired
+/// transaction keeps this object alive until the target has completed it or
+/// released every reference it acquired (nb D9).
+class AtTransaction {
+public:
+    class MemoryManager : public tlm::tlm_mm_interface {
+    public:
+        void free(tlm::tlm_generic_payload* transaction) override { transaction->reset(); }
+    };
+
+    AtTransaction(uint64_t address, int32_t command, uint8_t* data, size_t length)
+        : data_(length) {
+        payload_.set_mm(&memory_manager_);
+        payload_.acquire();
+        payload_.set_extension(&extension_);
+        if (length != 0 && data != nullptr) {
+            std::memcpy(data_.data(), data, length);
+        }
+        payload_.set_command(command == RUSCV_COMMAND_READ ? tlm::TLM_READ_COMMAND
+                                                           : tlm::TLM_WRITE_COMMAND);
+        payload_.set_address(address);
+        payload_.set_data_ptr(length == 0 ? nullptr : data_.data());
+        payload_.set_data_length(length);
+        payload_.set_streaming_width(length);
+        payload_.set_byte_enable_ptr(nullptr);
+        payload_.set_byte_enable_length(0);
+        payload_.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+    }
+
+    ~AtTransaction() {
+        if (payload_.get_ref_count() != 0) {
+            payload_.release();
+        }
+    }
+
+    AtTransaction(const AtTransaction&) = delete;
+    AtTransaction& operator=(const AtTransaction&) = delete;
+
+    tlm::tlm_generic_payload& payload() { return payload_; }
+    PayloadExtension& extension() { return extension_; }
+    const std::vector<uint8_t>& data() const { return data_; }
+
+private:
+    MemoryManager memory_manager_;
+    // The extension must outlive the payload: the payload destructor frees its
+    // remaining extensions, which would otherwise call through a destroyed
+    // object. Members are destroyed in reverse declaration order.
+    PayloadExtension extension_;
+    tlm::tlm_generic_payload payload_;
+    std::vector<uint8_t> data_;
+};
 
 /// Bridges the ruscv-sim target callbacks onto one TLM initiator socket,
 /// including the non-blocking AT path for a suspending transaction (nb D7).
@@ -62,16 +135,11 @@ public:
     /// and the target-originated invalidation path. `direct_mem` selects
     /// direct memory for the table (`--dmi`), and `quantum_ticks` selects the
     /// quantum in Platform ticks (`--quantum`), zero for off (quantum D13).
-    /// `non_blocking` selects the target table's suspension flag and the AT
-    /// path (`--nb`), and `nb_latency_fs` is its declared maximum `lambda`.
-    ///
-    /// `fault_keep_offset` is the smoke's `--fault-keep-offset` control
-    /// (quantum §4): the callbacks report the full delay argument, offset
-    /// included, as an added delay, which exceeds this target's declared
-    /// maximum. It exists to prove that assertion and is never a normal
-    /// bridge.
+    /// `faults` carries the smoke's fault-option controls and is empty in every
+    /// normal run. `non_blocking` selects the target table's suspension flag and
+    /// the AT path (`--nb`), and `nb_latency_fs` is its declared maximum `lambda`.
     RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram, bool direct_mem,
-                   uint64_t quantum_ticks, bool fault_keep_offset, bool non_blocking,
+                   uint64_t quantum_ticks, InitiatorFaults faults, bool non_blocking,
                    uint64_t nb_latency_fs);
 
     /// The C ABI target table naming this object as `user`.
@@ -92,6 +160,11 @@ public:
 
     /// Serves one blocking transaction from the C ABI (one `b_transport` call).
     void serve_b_transport(ruscv_payload& payload);
+
+    /// Reports the host time measured around one blocking callback: `e` in
+    /// `host_elapsed_fs`, and the delay the smoke's `--fault-short-delay`
+    /// control lowers (nb §4).
+    void report_host_time(ruscv_payload& payload, uint64_t elapsed_fs) const;
 
     /// Serves one debug transport request; returns the bytes transferred.
     size_t serve_transport_dbg(ruscv_debug& debug);
@@ -116,6 +189,31 @@ public:
     /// Number of backward invalidation calls the ABI refused.
     uint64_t direct_mem_error_count() const { return direct_mem_errors_; }
 
+    /// Number of AT transactions retired after the timeout (nb D9).
+    uint64_t retirement_count() const { return retirements_; }
+    /// Number of late phases ignored and counted since construction (nb D9).
+    uint64_t late_phase_count() const { return late_phases_; }
+    /// Number of forward `END_RESP` phases the drain sent for a retained
+    /// transaction (nb D9).
+    uint64_t drain_end_resp_count() const { return drain_end_resp_count_; }
+    /// True while a retired transaction is still retained, or while the target
+    /// may still hold a reference to it (nb D9).
+    bool drain_pending() const { return at_transaction_ != nullptr; }
+    /// True when the target still holds the retired transaction, so a transport
+    /// reset must withhold its acknowledgement (nb D8/D9).
+    bool target_holds_transaction() const {
+        return at_transaction_ != nullptr && at_target_holds_;
+    }
+
+    /// Runs one drain step at the current host time: sends a due forward
+    /// `END_RESP`, then releases the retained storage once the target has let
+    /// go of it (nb D9).
+    void drain_step();
+
+    /// Sets `due` to the host time the drain's next `END_RESP` is due, and
+    /// returns true when one is owed.
+    bool drain_end_resp_due(sc_core::sc_time& due) const;
+
 private:
     /// One phase the target sent on the backward path, or one the forward path
     /// returned as `TLM_UPDATED`, with the host time it takes effect (nb D7).
@@ -127,18 +225,35 @@ private:
         bool forward = false;
     };
 
+    /// The one AT transaction's lifecycle (nb D7/D9).
+    enum class AtState {
+        /// No transaction is in flight.
+        Idle,
+        /// The callback is waiting for the transaction's final phase.
+        Active,
+        /// The callback retired the transaction after the timeout. Backward
+        /// phases are then late: ignored for the Machine and counted once.
+        Retired,
+    };
+
     /// Serves one suspending transaction through the non-blocking base
     /// protocol (nb D7).
     void serve_at_b_transport(ruscv_payload& payload);
 
     /// Records one phase with its effective host time and wakes the waiting
-    /// process. Called from the target's process for a backward phase.
-    void record_phase(const tlm::tlm_phase& phase, const sc_core::sc_time& delay,
+    /// process. Returns false when the phase takes effect after the timeout, so
+    /// it is a late phase the caller counts and ignores (nb D9). Called from the
+    /// target's process for a backward phase.
+    bool record_phase(const tlm::tlm_phase& phase, const sc_core::sc_time& delay,
                       bool forward);
 
-    /// Waits for the recorded phases, sends `END_RESP` after a forward
-    /// `BEGIN_RESP`, and reports whether the transaction completed.
-    bool wait_for_at_completion(tlm::tlm_generic_payload& transaction);
+    /// Waits for the recorded phases until the transaction completes or the
+    /// timeout retires it (nb D9).
+    bool wait_for_at_completion();
+
+    /// Retires the active transaction as an unknown completion and keeps its
+    /// storage while the target still holds it (nb D9).
+    void retire(ruscv_payload& payload);
 
     /// The base-protocol backward callback. It runs in the target's process and
     /// never waits (nb D7).
@@ -156,14 +271,30 @@ private:
     RamTarget& ram_;
     const bool direct_mem_;
     const uint64_t quantum_ticks_;
-    const bool fault_keep_offset_;
+    const InitiatorFaults faults_;
     const bool non_blocking_;
     const uint64_t nb_latency_fs_;
     ruscv_machine* machine_ = nullptr;
     std::vector<PendingPhase> pending_phases_;
     sc_core::sc_event phase_event_;
-    bool at_active_ = false;
+    AtState at_state_ = AtState::Idle;
+    /// The AT transaction in flight, or the retired one the target may still
+    /// hold a reference to (nb D9).
+    std::unique_ptr<AtTransaction> at_transaction_;
+    /// `BEGIN_REQ` plus the declared maximum plus one femtosecond: the timeout
+    /// after which an incomplete transaction is retired (nb D9).
+    uint64_t at_deadline_fs_ = 0;
+    /// True while the target still holds the transaction and may send a phase
+    /// for it or receive the final one.
+    bool at_target_holds_ = false;
+    /// True while the drain still owes the retained transaction's forward
+    /// `END_RESP` (the `early` path), and that phase's effective host time.
+    bool drain_end_resp_pending_ = false;
+    sc_core::sc_time drain_end_resp_due_ = sc_core::SC_ZERO_TIME;
     bool protocol_error_ = false;
+    uint64_t retirements_ = 0;
+    uint64_t late_phases_ = 0;
+    uint64_t drain_end_resp_count_ = 0;
     uint64_t direct_mem_invalidations_ = 0;
     uint64_t direct_mem_scheduled_ = 0;
     uint64_t direct_mem_errors_ = 0;

@@ -1,8 +1,8 @@
 # SystemC/TLM Boundary
 
 **Status:** Implemented for the selected blocking-transport mapping, direct
-memory, the quantum selection and the non-blocking AT path (U3); retirement,
-draining and the non-blocking fault options remain U4's scope.
+memory, the quantum selection, the non-blocking AT path, its retirement rules
+and the fault-option controls (U3/U4).
 
 **Authority:** Normative for the selected blocking-transport mapping, FFI
 ownership and threads, error mapping, the time unit, re-entrancy and stop
@@ -23,7 +23,7 @@ ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
 
-**Last reviewed:** 2026-11-07
+**Last reviewed:** 2026-11-08
 
 The repository implements one blocking-transport integration: a C ABI facade
 ([`src/capi`](../../src/capi), [`include/ruscv_sim.h`](../../include/ruscv_sim.h))
@@ -41,8 +41,9 @@ fault-option controls of its §4. For the Current contract it records the AT
 path that serves a suspending `may_suspend` transaction through
 `nb_transport_fw`/`nb_transport_bw`, its one-outstanding-transaction rule, its
 `d = e` reporting, the RAM target's five return paths and the grant commit rule
-(nb D7/D8/D10). Retirement, late phases, the drain and the non-blocking fault
-options belong to U4. TLM-modeled devices stay out of scope.
+(nb D7/D8/D10). For the same contract it records the timeout, the retirement of
+a timed-out transaction, the late phases it ignores, the drain and the withheld
+reset acknowledgement (nb D9). TLM-modeled devices stay out of scope.
 
 ## Selected mapping
 
@@ -64,6 +65,8 @@ options belong to U4. TLM-modeled devices stay out of scope.
 | AT latency `lambda` (nb D8) | The target's `--nb-latency`, its declared `max_delay_fs` and its phase annotations |
 | Host elapsed `e` (nb D4/D7) | Host time measured around the callback; `d = e` on the AT path |
 | Grant commit (nb D5) | `wait(consumed_fs - host_elapsed_fs)` |
+| AT timeout and retirement (nb D9) | `max_delay_fs + 1` fs after `BEGIN_REQ`, then `mark_unknown_completion` |
+| Late phase (nb D9) | A phase taking effect after the timeout: ignored and counted |
 
 `tlm_generic_payload` and `sc_time` stay outside the Rust side and outside ISA
 instruction functions. The only Rust/C++ boundary is the C ABI.
@@ -93,7 +96,9 @@ blocking RAM target with one `tlm_utils::simple_target_socket`:
   annotated `lambda`. A backward `BEGIN_RESP` answered with `TLM_COMPLETED` ends
   the transaction for the target, and a forward `END_RESP` is answered with
   `TLM_COMPLETED`. The target reports its `BEGIN_REQ` and applied-access counts
-  at exit.
+  at exit, along with whether a transaction is still open and how many phases
+  it has scheduled but not delivered, which the host's drain waits on (nb D9).
+  It withholds the transport reset acknowledgement while a transaction is open.
 - Direct memory (direct-memory D13): a completed non-atomic transaction sets
   the generic payload's `dmi_allowed` hint, which is the only licence for the
   initiator's one query of that access. `get_direct_mem_ptr` grants the whole
@@ -220,7 +225,9 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
   protocol error reported as an unknown completion. A `BEGIN_RESP` before
   `END_REQ` also ends the request. The transaction completes at the host time
   its `BEGIN_RESP` or forward `TLM_COMPLETED` takes effect, and the callback
-  reports `d = e` for the host time from `BEGIN_REQ` to completion.
+  reports `d = e` for the host time from `BEGIN_REQ` to completion. The
+  transaction is bounded by the declared maximum as described under
+  [Retirement, late phases and the drain](#retirement-late-phases-and-the-drain).
 - The AT transaction is initiator-owned: it has its own generic payload, a
   memory manager, its own data storage and its own payload extension. Request
   bytes are copied in before `BEGIN_REQ` and response bytes are copied out at
@@ -301,6 +308,51 @@ transport delay, so a run stays time-equivalent to native; every AT transaction
 reports `d = e = lambda`, whose charge is rounded once through the existing
 delay path (ADR-0004 §4.4, §5.3; nb D4/D5/D10).
 
+### Retirement, late phases and the drain
+
+The initiator owns the timeout of an AT transaction (nb D9):
+
+- Every wait of the callback's process is bounded by `max_delay_fs + 1` fs after
+  `BEGIN_REQ`, where `max_delay_fs` is the target's declared maximum — the
+  `lambda` of `--nb-latency`. A completion at exactly the declared maximum is
+  therefore in time, including a delta-notified one at `lambda` = 0.
+- A phase whose annotated delay would take effect after the timeout is *late*.
+  There are three forms, and each is counted once and ignored for the Machine: a
+  backward call made after the timeout, a phase recorded before it whose
+  effective time falls after it, and a forward `TLM_UPDATED` or `TLM_COMPLETED`
+  whose annotation reaches past it. A backward `END_REQ` is still answered with
+  `TLM_ACCEPTED` and a backward `BEGIN_RESP` with `TLM_COMPLETED`, which ends the
+  target's transaction, so a late phase cannot change target state.
+- A transaction that is not complete at the timeout is retired: the callback
+  reports it through `mark_unknown_completion` with the outcome-unknown flag
+  set, and the ABI charges the time waited as `e` under D4 step 1. The overshoot
+  rule does not reclassify it and the unknown completion poisons the transport,
+  so no later step can turn it into a plain status.
+- The retired transaction's storage stays allocated until the target has
+  completed the transaction or released every reference it acquired. A target
+  that completed it on the forward path (`TLM_COMPLETED`) never held it, so its
+  storage is released at once. On the `early` path the initiator keeps the
+  transaction as drain state and sends its forward `END_RESP` in the drain, no
+  earlier than the `BEGIN_RESP` phase's effective time. Late response bytes
+  never reach the ABI.
+- At every stop after a retirement, whether a terminal result or a host failure,
+  the host first runs the kernel until the RAM target has no scheduled phase and
+  the initiator holds no drain state, so every late phase is delivered and
+  ignored. Only then does it destroy the handle and stop the kernel. Before the
+  drain it probes `ruscv_machine_reset` while the target still holds the
+  transaction: the reset must not be acknowledged, so the recovery path returns
+  a non-OK status. The probe is skipped when the forward path already released
+  the transaction.
+- At exit the host reports the late-phase count, the retirement count, the
+  forward `END_RESP` phases its drain sent and whether a transaction is still
+  open at the target. A run without a retirement reports zero for the first
+  three and no open transaction.
+
+The RAM target supports the same rule by construction: it applies the access
+once at `BEGIN_REQ`, so a late phase carries only timing, and it withholds its
+`transport_reset` acknowledgement while a transaction is open, so no fresh
+generation can coexist with a retired one.
+
 ### Quantum and temporal decoupling
 
 With `--quantum` the Machine may run ahead of committed Platform time by a local
@@ -341,11 +393,16 @@ offset `O`, bounded by the selected quantum (quantum D3–D5). This host's rules
 
 ### Fault-option controls
 
-`--fault-keep-offset` and `--fault-decrease-delay` are the two fault-option
-controls of the contract's §4, in the style of `--stop-after-grants`. Both
-require `--quantum` and they cannot be combined. They exist because the mutation runner builds only Rust, so
-a C++ fault cannot be a control row there (quantum D14). Neither is a normal
-host, and a run that passes with either one set is a smoke failure:
+`--fault-keep-offset`, `--fault-decrease-delay` and the five non-blocking
+options below are the fault-option controls of the contract's §4, in the style
+of `--stop-after-grants`. The quantum pair requires `--quantum`, the
+non-blocking trio (`--fault-late-response`, `--fault-uncounted-elapsed`,
+`--fault-short-delay`) requires `--nb`, and the blocking pair
+(`--fault-wait-blocking`, `--fault-wait-debug`) is a usage error with `--nb`.
+Exactly one fault option may be selected in a run. They exist because the
+mutation runner builds only Rust, so a C++ fault cannot be a control row there
+(quantum D14, nb D11). None is a normal host, and a run that passes with one set
+is a smoke failure:
 
 - `--fault-keep-offset` reports the full `delay` argument as an added delay. The
   run must report `result state=failed`, the failed boundary's `uncertain` flag
@@ -356,6 +413,28 @@ host, and a run that passes with either one set is a smoke failure:
   `uncertain` flag must be 1, and its diagnostic must name the outcome the
   target could not establish, which is the C ABI's unknown-completion
   classification.
+- `--fault-late-response` makes `RamTarget` delay the run's first AT access's
+  final phase to one Platform tick past the declared maximum. That access is
+  the guest's first fetch. The run must report `result state=failed` with the
+  boundary's `uncertain` flag at 1 and the unestablished-outcome diagnostic, and
+  it must ignore and count at least one late phase. On `accepted` and `early`
+  the reset probe must be refused while the target still holds the transaction,
+  and the drain must leave no transaction open; on `early` the drain sends the
+  retained transaction's `END_RESP`. On `completed` the target released the
+  transaction on the forward path, so the host skips the probe and the storage
+  is released at once.
+- `--fault-uncounted-elapsed` reports `e` = 0 while reporting `d` as the host
+  time that passed. The host must stop with a host failure whose diagnostic
+  names the kernel clock that does not match the Machine cursor.
+- `--fault-short-delay` reports `d` one femtosecond below `e`. The run must
+  report `result state=failed` with `uncertain` 0 and a diagnostic naming host
+  elapsed time above the response delay.
+- `--fault-wait-blocking` makes `RamTarget::b_transport` wait one tick. The run
+  must report `result state=failed` with `uncertain` 0 and a diagnostic naming
+  host elapsed time on a request that may not suspend.
+- `--fault-wait-debug` makes `RamTarget::transport_dbg` wait one tick. Image
+  installation must fail, and the host must report a failure of
+  `ruscv_machine_load_elf`.
 
 ## Reentrancy and stop behavior
 
@@ -372,7 +451,8 @@ host, and a run that passes with either one set is a smoke failure:
   exhausted grant or turn bound, or a refused direct-memory invalidation. That
   is a host decision and never a ruscv-sim result. The third is the deliberate
   `--stop-after-grants` control, which stops the kernel before any result to
-  prove that a host stop is not one; it must never pass.
+  prove that a host stop is not one; it must never pass. Every stop runs the
+  drain first when a transaction was retired (nb D9).
 - `--dmi` selects direct memory for the target table and
   `--dmi-invalidate-every <grants>` (which requires it) asks the RAM target to
   invalidate every grant after each Nth Machine grant: the target issues the
@@ -422,7 +502,8 @@ D10 sums from the host's exit totals at `lambda` = 1500000. It repeats the
 `--dmi` `lambda` = 1500000 `accepted` pass to serve fewer AT transactions than
 the non-direct pass. It also requires the `--nb --quantum` refusal and the
 non-blocking usage errors. It runs the two fault-option controls under
-`--quantum 1024` and requires each to fail with its own assertion. It passes the same turn bound
+`--quantum 1024` and the five non-blocking ones in their stated mode, and
+requires each to fail with its own assertion. It passes the same turn bound
 as the CLI's `--max-cycles` and wraps every run in a wall-clock `timeout`, so
 neither a guest loop nor a host defect can hang CI.
 

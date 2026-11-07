@@ -16,8 +16,9 @@ one ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
   adds no delay (quantum D13). Under `--nb` it also registers its AT
   `nb_transport_fw` mode: every path applies the access once at `BEGIN_REQ`,
   schedules its phases through a `peq_with_cb_and_phase`, reports its
-  `BEGIN_REQ` and applied-access counts, and withholds a transport reset
-  acknowledgement while a transaction is open (nb D8).
+  `BEGIN_REQ` and applied-access counts, whether a transaction is still open
+  and how many phases it has scheduled but not delivered, and withholds a
+  transport reset acknowledgement while a transaction is open (nb D8/D9).
 - `ruscv_initiator.{h,cpp}`: the C ABI `ruscv_target` callbacks mapped onto a
   `simple_initiator_socket` bound to that target. `--dmi` selects the
   `get_direct_mem_ptr` query; the registered `invalidate_direct_mem_ptr`
@@ -28,7 +29,11 @@ one ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
   initiator-owned base protocol with one outstanding transaction instead: the
   driver `SC_THREAD` sends `BEGIN_REQ`, records backward phases with their
   effective host time, sends `END_RESP` after a forward `BEGIN_RESP`, and
-  reports `d = e` (nb D7).
+  reports `d = e` (nb D7). Every wait of that process is bounded by
+  `max_delay_fs + 1` fs: a transaction that is not complete at the timeout is
+  retired as an unknown completion, its storage is retained until the target
+  lets go of it, and any phase that then takes effect is ignored and counted
+  (nb D9).
 - `ruscv_payload_extension.h`: the TLM-2.0 payload extension carrying the access
   category, the initiator and the atomic request and response.
 - `main.cpp`: the `SC_THREAD` grant loop that starts each grant at
@@ -36,10 +41,13 @@ one ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
   after a terminal `ruscv_machine_result` or a host-classified failure. It
   compares the kernel clock with `committed_end_fs` after every grant, which with
   a quantum selected also proves each grant return synced its local offset. It
-  records the startup thread check and writes `--grant-trace` lines. The
-  `--stop-after-grants` control stops it deliberately, without a result, and
+  records the startup thread check and writes `--grant-trace` lines. Every stop
+  drains before it destroys the handle when a transaction was retired, and
+  probes the transport reset first while the target still holds it (nb D9).
+  The `--stop-after-grants` control stops it deliberately, without a result;
   `--fault-keep-offset` and `--fault-decrease-delay` are the quantum contract's
-  two fault-option controls.
+  two fault-option controls, and the five non-blocking options are the same
+  kind of control for the AT path (nb §4).
 
 See [`docs/integration/systemc-tlm.md`](../../docs/integration/systemc-tlm.md)
 for the mapping, ownership and time rules.
@@ -81,6 +89,8 @@ usage: systemc_smoke <elf> [--isa rv64ima|rv64imac|rv64imafd|rv64imafdc]
        [--nb-path accepted|updated|early|annotated|completed]
        [--grant-trace <path>]
        [--fault-keep-offset] [--fault-decrease-delay]
+       [--fault-late-response] [--fault-uncounted-elapsed]
+       [--fault-short-delay] [--fault-wait-blocking] [--fault-wait-debug]
 ```
 
 The exit status is the guest exit code for a terminal exited run and 1 for a
@@ -127,6 +137,20 @@ as an added delay, above this target's declared maximum of zero; the second
 lowers the target's delay below the offset it received. A control that passes is
 a smoke failure.
 
+The five non-blocking fault options are the AT path's controls (nb §4), also
+taken one at a time. `--fault-late-response`, `--fault-uncounted-elapsed` and
+`--fault-short-delay` require `--nb`; they delay the first AT access's final
+phase to one tick past the declared maximum, hide the reported host elapsed time
+while keeping the delay, and report the delay one femtosecond below it.
+`--fault-wait-blocking` and `--fault-wait-debug` are blocking-mode controls that
+must not be combined with `--nb`: they wait one tick in `b_transport` and in
+`transport_dbg`. Each must fail the run with its own diagnostic, and a control
+that passes is a smoke failure.
+
+At exit the host reports the initiator's late-phase count, its retirement count,
+the forward `END_RESP` phases its drain sent and whether the target still holds a
+transaction. A normal `--nb` pass reports zero late phases (nb D9).
+
 The end-to-end comparison with the native run is
 [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh); the
 `SystemC transport smoke` CI job runs it inside the development image. The
@@ -139,6 +163,6 @@ invalidation.
 Linux x86-64 only. The blocking RAM model annotates zero delay, so it does not
 model a timed memory; the quantum defers the Machine's committed time by a
 bounded local offset, but the target still adds no modeled delay of its own. The
-AT mode has one outstanding transaction and a fixed latency lambda; retirement,
-late-phase handling, the drain and the non-blocking fault options are U4's
-scope.
+AT mode has one outstanding transaction and a fixed latency lambda; a retired
+transaction is drained at every stop, and one fault option at a time exercises
+the retirement, late-phase, drain and fault paths.
