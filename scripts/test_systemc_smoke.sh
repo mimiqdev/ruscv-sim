@@ -26,7 +26,16 @@
 #      `--dmi`: the native exit code and a byte-identical commit log, a kernel
 #      clock equal to `committed_end_fs` after every grant, and strictly fewer
 #      grants at `--quantum 1024` than the same guest's `--quantum 1` pass;
-#  10. run the two quantum fault-option controls under `--quantum 1024`, each of
+#  10. run both guests under `--nb` on every return path at lambda = 0 and
+#      lambda = 1500000 fs: the native exit code and commit log, a non-zero
+#      BEGIN_REQ count equal to the applied-access count, one clock check per
+#      grant, parity grant traces at lambda = 0 and the three D10 sums at
+#      lambda > 0;
+#  11. run the `--nb --dmi` passes at lambda = 0 on accepted and completed and
+#      at lambda = 1500000 on accepted, where the AT count must be strictly
+#      below the non-direct pass;
+#  12. require the `--nb --quantum` refusal and the non-blocking usage errors;
+#  13. run the two quantum fault-option controls under `--quantum 1024`, each of
 #      which must fail the run with its own named diagnostic.
 #
 # Linux x86-64 only. Prerequisites are the pinned SystemC installation, CMake,
@@ -134,6 +143,111 @@ smoke_clock_checks() {
         | sed -n 's/^systemc-smoke: kernel clock matched committed_end_fs after \([0-9][0-9]*\) grant(s)$/\1/p' | head -1
 }
 
+# The AT BEGIN_REQ count the RAM target received, or an empty string (nb D8).
+ram_begin_req_count() {
+    printf '%s\n' "$1" \
+        | sed -n 's/^systemc-smoke: ram .* begin_req=\([0-9][0-9]*\) .*$/\1/p' | head -1
+}
+
+# The AT applied-access count the RAM target reported, or an empty string.
+ram_applied_access_count() {
+    printf '%s\n' "$1" \
+        | sed -n 's/^systemc-smoke: ram .* applied_accesses=\([0-9][0-9]*\) .*$/\1/p' | head -1
+}
+
+# One field of the host's exit totals line, or an empty string (nb D10).
+smoke_totals_field() {
+    printf '%s\n' "$1" \
+        | awk -v key="$2" '/^systemc-smoke: totals / { for (i = 1; i <= NF; i++) { split($i, pair, "="); if (pair[1] == key) { print pair[2]; exit } } }'
+}
+
+# Sums one field of a --grant-trace file.
+trace_sum() {
+    awk -v key="$2" '{ for (i = 1; i <= NF; i++) { split($i, pair, "="); if (pair[1] == key) sum += pair[2] } } END { printf "%.0f\n", sum }' "$1"
+}
+
+# Checks one grant trace: every line, host elapsed <= consumed, and each
+# committed end equals the previous end plus the consumed amount (nb D10).
+trace_check() {
+    awk '
+        function field(name, i, pair) {
+            for (i = 1; i <= NF; i++) {
+                split($i, pair, "=")
+                if (pair[1] == name) return pair[2]
+            }
+            return ""
+        }
+        $1 == "grant" {
+            consumed = field("consumed_fs")
+            ended = field("committed_end_fs")
+            host = field("host_elapsed_fs")
+            if (consumed == "" || ended == "" || host == "") exit 1
+            if (host + 0 > consumed + 0) exit 2
+            if (ended + 0 != previous + consumed + 0) exit 3
+            previous = ended + 0
+            lines++
+        }
+        END { if (lines == 0) exit 4 }
+    ' "$1"
+}
+
+# Sets the LAST_* variables from one successful --nb pass and checks the
+# common U3 observables: native exit code, byte-identical commit log, a
+# non-zero BEGIN_REQ count equal to the applied count, and one clock check per
+# grant.
+require_nb_pass() {
+    local guest="$1"
+    local label="$2"
+    local output="$3"
+    local status="$4"
+    local expected_exit="$5"
+    local log="$6"
+    local native_log="$7"
+
+    [ "${status}" -ne 124 ] || fail "${guest}: the ${label} run timed out after ${RUN_TIMEOUT}s"
+    if [ "${status}" -ne 0 ]; then
+        printf '%s\n' "${output}"
+        fail "${guest}: the ${label} run exited with status ${status}"
+    fi
+    if ! printf '%s\n' "${output}" | grep -q '^systemc-smoke: non-blocking --nb-path '; then
+        printf '%s\n' "${output}"
+        fail "${guest}: the ${label} run did not report its non-blocking selection"
+    fi
+    if ! printf '%s\n' "${output}" | grep -q '^systemc-smoke: result state=exited '; then
+        printf '%s\n' "${output}"
+        fail "${guest}: the ${label} run did not report a terminal ruscv-sim result"
+    fi
+    LAST_EXIT="$(smoke_exit_code "${output}")"
+    [ -n "${LAST_EXIT}" ] || fail "${guest}: the ${label} run reported no exit code"
+    [ "${LAST_EXIT}" = "${expected_exit}" ] \
+        || fail "${guest}: the ${label} exit code ${LAST_EXIT} differs from native ${expected_exit}"
+    [ -s "${log}" ] || fail "${guest}: the ${label} commit log is empty"
+    if ! cmp -s "${native_log}" "${log}"; then
+        diff -u "${native_log}" "${log}" | head -20 || true
+        fail "${guest}: the ${label} commit log differs from native"
+    fi
+    LAST_GRANTS="$(smoke_grant_count "${output}")"
+    LAST_CHECKS="$(smoke_clock_checks "${output}")"
+    LAST_BEGIN="$(ram_begin_req_count "${output}")"
+    LAST_APPLIED="$(ram_applied_access_count "${output}")"
+    [ -n "${LAST_GRANTS}" ] || fail "${guest}: the ${label} run reported no grant count"
+    [ -n "${LAST_CHECKS}" ] || fail "${guest}: the ${label} run reported no clock-check count"
+    [ -n "${LAST_BEGIN}" ] || fail "${guest}: the ${label} run reported no BEGIN_REQ count"
+    [ -n "${LAST_APPLIED}" ] || fail "${guest}: the ${label} run reported no applied-access count"
+    [ "${LAST_BEGIN}" -gt 0 ] \
+        || fail "${guest}: the ${label} run reported no BEGIN_REQ phase"
+    [ "${LAST_BEGIN}" -eq "${LAST_APPLIED}" ] \
+        || fail "${guest}: the ${label} run received ${LAST_BEGIN} BEGIN_REQ phase(s) but applied ${LAST_APPLIED} access(es)"
+    [ "${LAST_CHECKS}" -eq "${LAST_GRANTS}" ] \
+        || fail "${guest}: the ${label} run checked the kernel clock after ${LAST_CHECKS} of its ${LAST_GRANTS} grant(s)"
+    LAST_CONSUMED="$(smoke_totals_field "${output}" consumed_fs)"
+    LAST_HOST="$(smoke_totals_field "${output}" host_elapsed_fs)"
+    LAST_DELAY="$(smoke_totals_field "${output}" transport_delay_fs)"
+    [ -n "${LAST_CONSUMED}" ] || fail "${guest}: the ${label} run reported no consumed total"
+    [ -n "${LAST_HOST}" ] || fail "${guest}: the ${label} run reported no host elapsed total"
+    [ -n "${LAST_DELAY}" ] || fail "${guest}: the ${label} run reported no transport delay total"
+}
+
 echo -e "${BLUE}== checking the SystemC smoke prerequisites${NC}"
 for tool in "${CMAKECMD}" "${CXXCMD}" "${RISCV_PREFIX:-riscv64-unknown-elf-}as" \
     "${RISCV_PREFIX:-riscv64-unknown-elf-}ld"; do
@@ -203,6 +317,11 @@ FAULT_QUANTUM=1024
 
 # Each guest's native exit code, for the later pass comparisons.
 declare -A NATIVE_EXITS=()
+# The parity traces and values the non-blocking passes compare against (nb D10).
+declare -A PARITY_TRACES=()
+declare -A DIRECT_TRACES=()
+declare -A PARITY_CONSUMED=()
+declare -A NB_NON_DIRECT_BEGIN=()
 
 compared=0
 for entry in "${GUESTS[@]}"; do
@@ -231,9 +350,11 @@ for entry in "${GUESTS[@]}"; do
     NATIVE_EXITS[${guest}]="${native_exit}"
 
     smoke_log="${OUTDIR}/logs/${guest}.systemc.log"
+    smoke_trace="${OUTDIR}/logs/${guest}.systemc.trace"
     capture smoke_output smoke_status \
         timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${elf}" --isa "${profile}" \
-        --max-turns "${MAX_CYCLES}" --log-commits "${smoke_log}"
+        --max-turns "${MAX_CYCLES}" --log-commits "${smoke_log}" \
+        --grant-trace "${smoke_trace}"
     [ "${smoke_status}" -ne 124 ] \
         || fail "${guest}: the SystemC run timed out after ${RUN_TIMEOUT}s"
     smoke_exit="$(smoke_exit_code "${smoke_output}")"
@@ -265,6 +386,10 @@ for entry in "${GUESTS[@]}"; do
         diff -u "${native_log}" "${smoke_log}" | head -20 || true
         fail "${guest}: the SystemC commit log differs from native"
     fi
+    trace_check "${smoke_trace}" \
+        || fail "${guest}: the parity grant trace is not well formed"
+    PARITY_TRACES[${guest}]="${smoke_trace}"
+    PARITY_CONSUMED[${guest}]="$(trace_sum "${smoke_trace}" consumed_fs)"
     compared=$((compared + 1))
     echo -e "  ${GREEN}[PASS]${NC} exit code and commit log match native"
 
@@ -275,9 +400,11 @@ for entry in "${GUESTS[@]}"; do
     # `b_transport` count must stay strictly below the non-direct pass: a run
     # that never uses a granted pointer fails here.
     direct_log="${OUTDIR}/logs/${guest}.systemc.dmi.log"
+    direct_trace="${OUTDIR}/logs/${guest}.systemc.dmi.trace"
     capture direct_output direct_status \
         timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${elf}" --isa "${profile}" \
-        --max-turns "${MAX_CYCLES}" --log-commits "${direct_log}" --dmi
+        --max-turns "${MAX_CYCLES}" --log-commits "${direct_log}" --dmi \
+        --grant-trace "${direct_trace}"
     [ "${direct_status}" -ne 124 ] \
         || fail "${guest}: the direct-memory run timed out after ${RUN_TIMEOUT}s"
     direct_exit="$(smoke_exit_code "${direct_output}")"
@@ -306,6 +433,9 @@ for entry in "${GUESTS[@]}"; do
         printf '%s\n' "${direct_output}"
         fail "${guest}: direct memory served ${direct_transactions} b_transport call(s), not strictly below the non-direct pass's ${transactions}; no granted pointer was ever used"
     fi
+    trace_check "${direct_trace}" \
+        || fail "${guest}: the direct-memory parity grant trace is not well formed"
+    DIRECT_TRACES[${guest}]="${direct_trace}"
     echo -e "  ${GREEN}[PASS]${NC} --dmi matches native with b_transport ${direct_transactions} < ${transactions}"
 
     # The quantum passes (quantum D13/U5). Both guests run at `--quantum 1` and
@@ -380,6 +510,103 @@ for entry in "${GUESTS[@]}"; do
         fi
         echo -e "  ${GREEN}[PASS]${NC} --quantum 1024${direct_label} took ${grants_by_quantum[1]} grant(s) < --quantum 1's ${grants_by_quantum[0]} with the same commit log"
     done
+
+    # The non-blocking AT passes (nb D7/D8/D10). Both guests run every return
+    # path at lambda = 0 and lambda = 1500000 fs. At lambda = 0 the grant trace
+    # must equal the parity trace byte for byte, so the same consumed and
+    # committed-end amounts and grant count hold at every grant and the host
+    # elapsed total is zero. At lambda > 0 the three D10 sums must hold from the
+    # host's exit totals, and every grant trace line must keep host elapsed
+    # below the consumed amount.
+    NB_LATENCY=1500000
+    NB_PATHS=(accepted updated early annotated completed)
+    for latency in 0 "${NB_LATENCY}"; do
+        for path in "${NB_PATHS[@]}"; do
+            label="--nb --nb-path ${path} --nb-latency ${latency}"
+            nb_log="${OUTDIR}/logs/${guest}.systemc.nb.${path}.${latency}.log"
+            nb_trace="${OUTDIR}/logs/${guest}.systemc.nb.${path}.${latency}.trace"
+            capture nb_output nb_status \
+                timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${elf}" --isa "${profile}" \
+                --max-turns "${MAX_CYCLES}" --log-commits "${nb_log}" \
+                --nb --nb-latency "${latency}" --nb-path "${path}" \
+                --grant-trace "${nb_trace}"
+            require_nb_pass "${guest}" "${label}" "${nb_output}" "${nb_status}" \
+                "${native_exit}" "${nb_log}" "${native_log}"
+            trace_check "${nb_trace}" \
+                || fail "${guest}: the ${label} grant trace is not well formed"
+            if [ "${path}" = "accepted" ] && [ "${latency}" -eq 0 ]; then
+                NB_NON_DIRECT_BEGIN[${guest}]="${LAST_BEGIN}"
+            fi
+            if [ "${latency}" -eq 0 ]; then
+                [ "${LAST_HOST}" -eq 0 ] \
+                    || fail "${guest}: the ${label} run reported host elapsed ${LAST_HOST} fs, not zero"
+                [ "${LAST_DELAY}" -eq 0 ] \
+                    || fail "${guest}: the ${label} run reported transport delay ${LAST_DELAY} fs, not zero"
+                if ! cmp -s "${PARITY_TRACES[${guest}]}" "${nb_trace}"; then
+                    diff -u "${PARITY_TRACES[${guest}]}" "${nb_trace}" | head -20 || true
+                    fail "${guest}: the ${label} grant trace differs from the parity run"
+                fi
+                echo -e "  ${GREEN}[PASS]${NC} ${label}: ${LAST_BEGIN} BEGIN_REQ phase(s), trace equals parity"
+            else
+                expected_host=$((LAST_BEGIN * latency))
+                expected_delay=$((LAST_BEGIN * latency))
+                expected_consumed=$((PARITY_CONSUMED[${guest}] + LAST_BEGIN * 2 * 1000000))
+                [ "${LAST_HOST}" -eq "${expected_host}" ] \
+                    || fail "${guest}: the ${label} host elapsed sum ${LAST_HOST} is not ${expected_host}"
+                [ "${LAST_DELAY}" -eq "${expected_delay}" ] \
+                    || fail "${guest}: the ${label} transport delay ${LAST_DELAY} is not ${expected_delay}"
+                [ "${LAST_CONSUMED}" -eq "${expected_consumed}" ] \
+                    || fail "${guest}: the ${label} consumed sum ${LAST_CONSUMED} is not parity plus 2 ticks per access (${expected_consumed})"
+                [ "$(trace_sum "${nb_trace}" host_elapsed_fs)" -eq "${LAST_HOST}" ] \
+                    || fail "${guest}: the ${label} trace host elapsed sum disagrees with the exit total"
+                [ "$(trace_sum "${nb_trace}" consumed_fs)" -eq "${LAST_CONSUMED}" ] \
+                    || fail "${guest}: the ${label} trace consumed sum disagrees with the exit total"
+                echo -e "  ${GREEN}[PASS]${NC} ${label}: ${LAST_BEGIN} BEGIN_REQ phase(s), host ${LAST_HOST} fs, delay ${LAST_DELAY} fs, consumed ${LAST_CONSUMED} fs"
+            fi
+        done
+    done
+
+    # nb D7/D10: the direct-memory AT passes at lambda = 0 must equal the --dmi
+    # parity trace. The lambda > 0 accepted pass must serve strictly fewer AT
+    # transactions than the same guest's non-direct --nb pass, because granted
+    # pointers bypass the target callback.
+    for path in accepted completed; do
+        label="--nb --dmi --nb-path ${path} --nb-latency 0"
+        nb_log="${OUTDIR}/logs/${guest}.systemc.nb.dmi.${path}.log"
+        nb_trace="${OUTDIR}/logs/${guest}.systemc.nb.dmi.${path}.trace"
+        capture nb_output nb_status \
+            timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${elf}" --isa "${profile}" \
+            --max-turns "${MAX_CYCLES}" --log-commits "${nb_log}" --dmi \
+            --nb --nb-path "${path}" --grant-trace "${nb_trace}"
+        require_nb_pass "${guest}" "${label}" "${nb_output}" "${nb_status}" \
+            "${native_exit}" "${nb_log}" "${native_log}"
+        trace_check "${nb_trace}" \
+            || fail "${guest}: the ${label} grant trace is not well formed"
+        if ! cmp -s "${DIRECT_TRACES[${guest}]}" "${nb_trace}"; then
+            diff -u "${DIRECT_TRACES[${guest}]}" "${nb_trace}" | head -20 || true
+            fail "${guest}: the ${label} grant trace differs from the --dmi parity run"
+        fi
+        echo -e "  ${GREEN}[PASS]${NC} ${label}: ${LAST_BEGIN} BEGIN_REQ phase(s), trace equals the --dmi parity run"
+    done
+
+    label="--nb --dmi --nb-path accepted --nb-latency ${NB_LATENCY}"
+    nb_log="${OUTDIR}/logs/${guest}.systemc.nb.dmi.accepted.${NB_LATENCY}.log"
+    nb_trace="${OUTDIR}/logs/${guest}.systemc.nb.dmi.accepted.${NB_LATENCY}.trace"
+    capture nb_output nb_status \
+        timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${elf}" --isa "${profile}" \
+        --max-turns "${MAX_CYCLES}" --log-commits "${nb_log}" --dmi \
+        --nb --nb-path accepted --nb-latency "${NB_LATENCY}" \
+        --grant-trace "${nb_trace}"
+    require_nb_pass "${guest}" "${label}" "${nb_output}" "${nb_status}" \
+        "${native_exit}" "${nb_log}" "${native_log}"
+    trace_check "${nb_trace}" \
+        || fail "${guest}: the ${label} grant trace is not well formed"
+    [ "${LAST_BEGIN}" -lt "${NB_NON_DIRECT_BEGIN[${guest}]}" ] \
+        || fail "${guest}: the ${label} served ${LAST_BEGIN} BEGIN_REQ phase(s), not strictly below the non-direct ${NB_NON_DIRECT_BEGIN[${guest}]}"
+    expected_delay=$((LAST_BEGIN * NB_LATENCY))
+    [ "${LAST_DELAY}" -eq "${expected_delay}" ] \
+        || fail "${guest}: the ${label} transport delay ${LAST_DELAY} is not ${expected_delay}"
+    echo -e "  ${GREEN}[PASS]${NC} ${label}: ${LAST_BEGIN} BEGIN_REQ phase(s) < non-direct ${NB_NON_DIRECT_BEGIN[${guest}]}"
 done
 
 # The scheduled-invalidation pass (direct-memory D8/U5): every grant is
@@ -543,6 +770,59 @@ if ! printf '%s\n' "${decrease_output}" | grep -q '^systemc-smoke: failed run fa
 fi
 echo -e "  ${GREEN}[PASS]${NC} the delay below the offset failed the run as an unknown completion (status ${decrease_status})"
 
+# nb D7: --nb with a non-zero quantum is refused by ruscv_machine_create. The
+# host reports the create status as a host failure, not as a run result.
+echo -e "${YELLOW}== --nb --quantum ${FAULT_QUANTUM} (must be refused by create)${NC}"
+capture nb_quantum_output nb_quantum_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${fault_elf}" --isa "${fault_profile}" \
+    --nb --quantum "${FAULT_QUANTUM}"
+[ "${nb_quantum_status}" -ne 124 ] || fail "the --nb --quantum control timed out"
+if [ "${nb_quantum_status}" -eq 0 ]; then
+    printf '%s\n' "${nb_quantum_output}"
+    fail "the --nb --quantum control passed; a suspending table with a quantum must be refused"
+fi
+if ! printf '%s\n' "${nb_quantum_output}" \
+    | grep -q '^systemc-smoke: ruscv_machine_create failed with status 8$'; then
+    printf '%s\n' "${nb_quantum_output}"
+    fail "the --nb --quantum control was not refused by ruscv_machine_create as RUSCV_ERROR_CONFIG"
+fi
+if printf '%s\n' "${nb_quantum_output}" | grep -q '^systemc-smoke: result state='; then
+    printf '%s\n' "${nb_quantum_output}"
+    fail "the --nb --quantum control reported a run result after the create refusal"
+fi
+echo -e "  ${GREEN}[PASS]${NC} --nb --quantum ${FAULT_QUANTUM} was refused at create"
+
+# nb D7/D8: the non-blocking selections are usage errors in the wrong mode,
+# and the fault options keep their existing --quantum requirement.
+echo -e "${YELLOW}== non-blocking usage errors (must not pass)${NC}"
+check_usage_error() {
+    local label="$1"
+    local expected="$2"
+    shift 2
+    local usage_output
+    local usage_status
+    capture usage_output usage_status timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${fault_elf}" \
+        --isa "${fault_profile}" "$@"
+    [ "${usage_status}" -ne 124 ] || fail "${label} timed out"
+    [ "${usage_status}" -eq 2 ] || {
+        printf '%s\n' "${usage_output}"
+        fail "${label} exited ${usage_status}, not the usage status 2"
+    }
+    if ! printf '%s\n' "${usage_output}" | grep -q "${expected}"; then
+        printf '%s\n' "${usage_output}"
+        fail "${label} did not report: ${expected}"
+    fi
+    echo -e "  ${GREEN}[PASS]${NC} ${label}"
+}
+check_usage_error "--nb-latency without --nb" "require --nb" --nb-latency 0
+check_usage_error "--nb-path without --nb" "require --nb" --nb-path accepted
+check_usage_error "--nb-latency above 10^15 fs" "must be at most 1000000000000000 fs" \
+    --nb --nb-latency 1000000000000001
+check_usage_error "--fault-keep-offset without --quantum" "require --quantum" \
+    --fault-keep-offset
+check_usage_error "--fault-decrease-delay without --quantum" "require --quantum" \
+    --fault-decrease-delay
+
 printf '\n============================================\n'
 printf '  SystemC smoke summary\n'
 printf '============================================\n'
@@ -554,6 +834,9 @@ printf '  Invalidation:         --dmi-invalidate-every %s, unchanged commit log\
     "${INVALIDATE_EVERY}"
 printf '  Quantum passes:       --quantum %s and %s, with and without --dmi\n' \
     "${QUANTUMS[0]}" "${QUANTUMS[1]}"
+printf '  AT passes:            five paths at lambda 0 and %s fs, with --dmi parity\n' \
+    "${NB_LATENCY}"
+printf '  Refusals:             --nb --quantum and the non-blocking usage errors\n'
 printf '  Fault controls:       the exceeded maximum and the unknown completion refused\n'
 printf '  Early sc_stop:        refused, as required\n\n'
 echo -e "${GREEN}[PASS]${NC} the pinned SystemC host matched native for every smoke guest"

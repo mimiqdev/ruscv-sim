@@ -5,9 +5,10 @@
 // * each grant starts at the current `sc_time_stamp()`, which is the kernel's
 //   committed time and therefore the Machine's cursor;
 // * the grant is bounded by a started-slot budget and an inclusive horizon;
-// * after it the thread `wait()`s exactly the consumed amount the grant
-//   returned, so the kernel commits global time only from that amount
-//   (ADR-0004 §4.4);
+// * after it the thread `wait()`s the consumed amount minus the host time that
+//   passed inside the grant's transactions, so the kernel commits global time
+//   only from that amount and still ends at `committed_end_fs` (ADR-0004 §4.4,
+//   nb D5);
 // * `sc_stop()` follows a terminal `ruscv_machine_result`, or a host
 //   classification (an ABI error, a kernel clock that disagrees with the Machine
 //   cursor, a live grant that consumed no modeled time, or an exhausted grant or
@@ -23,10 +24,12 @@
 // kernel's `wait(grant.consumed_fs)` keeps `sc_time_stamp()` equal to it. The
 // check below therefore holds after every grant, and a mismatch fails the run.
 //
-// `--fault-keep-offset` and `--fault-decrease-delay` are the contract's two
-// SystemC fault-option controls (quantum §4): each breaks the offset arithmetic
-// in one place so the smoke can require its own named failure. Neither is a
-// normal host.
+// `--nb` selects the non-blocking AT path (nb D7/D8), with `--nb-latency` and
+// `--nb-path`; `--grant-trace` writes one line per grant for the smoke's D10
+// comparisons. `--fault-keep-offset` and `--fault-decrease-delay` are the
+// contract's two quantum fault-option controls (quantum §4): each breaks the
+// offset arithmetic in one place so the smoke can require its own named
+// failure. Neither is a normal host.
 //
 // The C ABI handle is created and destroyed on this thread, which is the
 // SystemC kernel thread, so the ABI's creator-thread affinity holds for every
@@ -37,7 +40,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include <ruscv_sim.h>
@@ -61,6 +66,9 @@ constexpr uint64_t kMaxGrants = 10000;
 /// (for example after a route corrupts its exit signal) must fail the host's
 /// budget instead of spinning the kernel.
 constexpr uint64_t kMaxTurns = 100000;
+/// nb D8: the largest accepted AT latency, so no timeout or fault offset can
+/// overflow a femtosecond value.
+constexpr uint64_t kMaxNbLatencyFs = 1000000000000000ULL;
 
 /// One smoke run's configuration.
 struct Options {
@@ -81,6 +89,14 @@ struct Options {
     uint64_t direct_mem_invalidate_every = 0;
     /// The quantum selection in Platform ticks; zero is off (quantum D2/D13).
     uint64_t quantum = 0;
+    /// nb D7/D8: the AT selection and its target latency and return path.
+    bool non_blocking = false;
+    uint64_t nb_latency_fs = 0;
+    bool nb_latency_set = false;
+    ruscv_sim::AtPath nb_path = ruscv_sim::AtPath::Accepted;
+    bool nb_path_set = false;
+    /// nb D10: one line per grant for the smoke's per-grant comparisons.
+    std::string grant_trace;
     /// The two fault-option controls (quantum §4). Each requires a quantum: with
     /// no local offset neither could produce its failure.
     bool fault_keep_offset = false;
@@ -94,6 +110,9 @@ void print_usage(const char* program) {
         "       [--horizon-fs <femtoseconds>] [--stop-after-grants <grants>]\n"
         "       [--max-grants <grants>] [--max-turns <turns>]\n"
         "       [--dmi] [--dmi-invalidate-every <grants>] [--quantum <ticks>]\n"
+        "       [--nb] [--nb-latency <femtoseconds>]\n"
+        "       [--nb-path accepted|updated|early|annotated|completed]\n"
+        "       [--grant-trace <path>]\n"
         "       [--fault-keep-offset] [--fault-decrease-delay]\n"
         "\n"
         "Runs one ruscv-sim Machine under this SystemC kernel. The RAM target is\n"
@@ -112,10 +131,15 @@ void print_usage(const char* program) {
         "--quantum <ticks> selects temporal decoupling in Platform ticks (zero is\n"
         "off), so the Machine may run ahead of the kernel clock by a bounded local\n"
         "offset; the kernel still commits only what a grant returns, so the clock\n"
-        "equals committed_end_fs after every grant. --fault-keep-offset and\n"
-        "--fault-decrease-delay are the two fault-option controls of the quantum\n"
-        "contract: each requires --quantum, they are taken one at a time, and each\n"
-        "must fail the run with its own diagnostic.\n",
+        "equals committed_end_fs after every grant. --nb makes the target suspend\n"
+        "host time and serves a may_suspend access through the non-blocking base\n"
+        "protocol (nb D7/D8); --nb-latency <fs> sets its latency lambda and the\n"
+        "declared maximum, and --nb-path selects its return path. --grant-trace\n"
+        "<path> writes consumed_fs, committed_end_fs and host_elapsed_fs for every\n"
+        "grant (nb D10). --fault-keep-offset and --fault-decrease-delay are the\n"
+        "two fault-option controls of the quantum contract: each requires\n"
+        "--quantum, they are taken one at a time, and each must fail the run with\n"
+        "its own diagnostic.\n",
         program);
 }
 
@@ -149,6 +173,24 @@ bool parse_isa(const char* text, int32_t& out) {
         out = RUSCV_ISA_RV64IMAFD;
     } else if (std::strcmp(text, "rv64imafdc") == 0) {
         out = RUSCV_ISA_RV64IMAFDC;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/// Resolves one non-blocking return-path name (nb D8).
+bool parse_nb_path(const char* text, ruscv_sim::AtPath& out) {
+    if (std::strcmp(text, "accepted") == 0) {
+        out = ruscv_sim::AtPath::Accepted;
+    } else if (std::strcmp(text, "updated") == 0) {
+        out = ruscv_sim::AtPath::Updated;
+    } else if (std::strcmp(text, "early") == 0) {
+        out = ruscv_sim::AtPath::Early;
+    } else if (std::strcmp(text, "annotated") == 0) {
+        out = ruscv_sim::AtPath::Annotated;
+    } else if (std::strcmp(text, "completed") == 0) {
+        out = ruscv_sim::AtPath::Completed;
     } else {
         return false;
     }
@@ -233,6 +275,31 @@ bool parse_options(int argc, char** argv, Options& options) {
                 std::fprintf(stderr, "systemc-smoke: --quantum needs a tick count\n");
                 return false;
             }
+        } else if (std::strcmp(argument, "--nb") == 0) {
+            options.non_blocking = true;
+        } else if (std::strcmp(argument, "--nb-latency") == 0) {
+            const char* text = value("--nb-latency");
+            if (text == nullptr || !parse_u64(text, options.nb_latency_fs)) {
+                std::fprintf(stderr, "systemc-smoke: --nb-latency needs a femtosecond count\n");
+                return false;
+            }
+            options.nb_latency_set = true;
+        } else if (std::strcmp(argument, "--nb-path") == 0) {
+            const char* text = value("--nb-path");
+            if (text == nullptr || !parse_nb_path(text, options.nb_path)) {
+                std::fprintf(stderr,
+                             "systemc-smoke: --nb-path must be accepted, updated, early, "
+                             "annotated or completed\n");
+                return false;
+            }
+            options.nb_path_set = true;
+        } else if (std::strcmp(argument, "--grant-trace") == 0) {
+            const char* text = value("--grant-trace");
+            if (text == nullptr || *text == '\0') {
+                std::fprintf(stderr, "systemc-smoke: --grant-trace needs a path\n");
+                return false;
+            }
+            options.grant_trace = text;
         } else if (std::strcmp(argument, "--fault-keep-offset") == 0) {
             options.fault_keep_offset = true;
         } else if (std::strcmp(argument, "--fault-decrease-delay") == 0) {
@@ -250,6 +317,18 @@ bool parse_options(int argc, char** argv, Options& options) {
     }
     if (!have_elf) {
         std::fprintf(stderr, "systemc-smoke: an ELF path is required\n");
+        return false;
+    }
+    if (!options.non_blocking && (options.nb_latency_set || options.nb_path_set)) {
+        // nb D7: latency and path only select a return path for --nb.
+        std::fprintf(stderr, "systemc-smoke: --nb-latency and --nb-path require --nb\n");
+        return false;
+    }
+    if (options.nb_latency_fs > kMaxNbLatencyFs) {
+        // nb D8: the declared maximum must stay representable.
+        std::fprintf(stderr,
+                     "systemc-smoke: --nb-latency must be at most %" PRIu64 " fs\n",
+                     kMaxNbLatencyFs);
         return false;
     }
     if (options.direct_mem_invalidate_every != 0 && !options.direct_mem) {
@@ -287,6 +366,18 @@ const char* isa_name(int32_t isa) {
     }
 }
 
+/// The name of one non-blocking return path.
+const char* nb_path_name(ruscv_sim::AtPath path) {
+    switch (path) {
+        case ruscv_sim::AtPath::Accepted: return "accepted";
+        case ruscv_sim::AtPath::Updated: return "updated";
+        case ruscv_sim::AtPath::Early: return "early";
+        case ruscv_sim::AtPath::Annotated: return "annotated";
+        case ruscv_sim::AtPath::Completed: return "completed";
+    }
+    return "unknown";
+}
+
 /// The name of one run classification.
 const char* state_name(int32_t state) {
     switch (state) {
@@ -302,8 +393,11 @@ const char* state_name(int32_t state) {
 class MachineDriver : public sc_core::sc_module {
 public:
     MachineDriver(sc_core::sc_module_name name, Options options,
-                  ruscv_sim::RuscvInitiator& initiator)
-        : sc_core::sc_module(name), options_(std::move(options)), initiator_(initiator) {
+                  ruscv_sim::RuscvInitiator& initiator, std::thread::id creator_thread)
+        : sc_core::sc_module(name),
+          options_(std::move(options)),
+          initiator_(initiator),
+          creator_thread_(creator_thread) {
         SC_THREAD(run);
     }
 
@@ -315,6 +409,9 @@ public:
     bool failed() const { return failed_; }
     /// Number of grants whose kernel clock equalled `committed_end_fs`.
     uint64_t clock_checks() const { return clock_checks_; }
+    uint64_t consumed_total_fs() const { return consumed_fs_; }
+    uint64_t host_elapsed_total_fs() const { return host_elapsed_fs_; }
+    uint64_t transport_delay_fs() const { return transport_delay_fs_; }
     const ruscv_result& result() const { return result_; }
 
 private:
@@ -350,6 +447,27 @@ private:
     }
 
     void run() {
+        if (std::this_thread::get_id() != creator_thread_) {
+            // nb D7: the pinned build's coroutine package runs every SC_THREAD on
+            // the kernel's OS thread. A pthread-process build would resume a
+            // suspended callback on another thread, which the ABI forbids.
+            stop_with_message(
+                "the SystemC kernel runs SC_THREAD on another OS thread; a pthread-process "
+                "build is unsupported",
+                nullptr);
+            return;
+        }
+        if (!options_.grant_trace.empty()) {
+            grant_trace_.open(options_.grant_trace, std::ios::out | std::ios::trunc);
+            if (!grant_trace_) {
+                char message[512] = {};
+                std::snprintf(message, sizeof(message),
+                              "cannot open the --grant-trace file %s",
+                              options_.grant_trace.c_str());
+                stop_with_message(message, nullptr);
+                return;
+            }
+        }
         ruscv_machine* machine = nullptr;
         const ruscv_target table = initiator_.target_table();
         int32_t status = ruscv_machine_create(&table, options_.isa, kTickPeriodFs, &machine);
@@ -418,6 +536,13 @@ private:
             }
             ++grants_;
             consumed_fs_ += grant.consumed_fs;
+            host_elapsed_fs_ += grant.host_elapsed_fs;
+            transport_delay_fs_ = grant.facts.transport_delay_fs;
+            if (grant_trace_) {
+                grant_trace_ << "grant " << grants_ << " consumed_fs=" << grant.consumed_fs
+                             << " committed_end_fs=" << grant.committed_end_fs
+                             << " host_elapsed_fs=" << grant.host_elapsed_fs << '\n';
+            }
             // The scheduled invalidation is target-originated: the target
             // issues the backward call and the initiator forwards it to
             // ruscv_machine_invalidate_direct_mem, the one ABI entry a target
@@ -435,24 +560,31 @@ private:
                     return;
                 }
             }
-            if (grant.consumed_fs != 0) {
-                // Commit global time only from the amount the grant returned.
-                sc_core::wait(sc_core::sc_time::from_value(grant.consumed_fs));
+            const bool elapsed_exceeds_consumed = grant.host_elapsed_fs > grant.consumed_fs;
+            const uint64_t remainder_fs =
+                elapsed_exceeds_consumed ? 0 : grant.consumed_fs - grant.host_elapsed_fs;
+            if (!elapsed_exceeds_consumed) {
+                if (remainder_fs != 0) {
+                    // nb D5: the host time inside the grant's transactions has
+                    // already passed, so only the remainder is waited.
+                    sc_core::wait(sc_core::sc_time::from_value(remainder_fs));
+                }
+                if (sc_core::sc_time_stamp().value() != grant.committed_end_fs) {
+                    char message[256] = {};
+                    std::snprintf(message, sizeof(message),
+                                  "the kernel clock %" PRIu64
+                                  " fs does not match the Machine cursor %" PRIu64 " fs",
+                                  static_cast<uint64_t>(sc_core::sc_time_stamp().value()),
+                                  grant.committed_end_fs);
+                    stop_with_message(message, machine);
+                    return;
+                }
+                // quantum D12/D13: a grant return is a sync, so after the
+                // remainder wait the kernel clock is the Machine's committed
+                // time. Counting the comparisons lets the smoke assert that
+                // every grant was checked.
+                ++clock_checks_;
             }
-            if (sc_core::sc_time_stamp().value() != grant.committed_end_fs) {
-                char message[256] = {};
-                std::snprintf(message, sizeof(message),
-                              "the kernel clock %" PRIu64
-                              " fs does not match the Machine cursor %" PRIu64 " fs",
-                              static_cast<uint64_t>(sc_core::sc_time_stamp().value()),
-                              grant.committed_end_fs);
-                stop_with_message(message, machine);
-                return;
-            }
-            // quantum D12/D13: a grant return is a sync, so after `wait(consumed)`
-            // the kernel clock is the Machine's committed time. Counting the
-            // comparisons lets the smoke assert that every grant was checked.
-            ++clock_checks_;
             ruscv_result result{};
             status = ruscv_machine_result(machine, &result);
             if (status != RUSCV_OK) {
@@ -461,6 +593,18 @@ private:
             }
             turns_seen_ = result.turns;
             if (result.state != RUSCV_RUN_RUNNING) {
+                if (elapsed_exceeds_consumed && result.state != RUSCV_RUN_FAILED) {
+                    // nb D5: only an already-failed run keeps its result; any
+                    // other result with host time above the consumed amount is
+                    // a host failure.
+                    char message[256] = {};
+                    std::snprintf(message, sizeof(message),
+                                  "the grant's host elapsed time %" PRIu64
+                                  " fs exceeds its consumed amount %" PRIu64 " fs",
+                                  grant.host_elapsed_fs, grant.consumed_fs);
+                    stop_with_message(message, machine);
+                    return;
+                }
                 terminal_ = true;
                 result_ = result;
                 std::printf(
@@ -490,6 +634,17 @@ private:
                 sc_core::sc_stop();
                 return;
             }
+            if (elapsed_exceeds_consumed) {
+                // nb D5: a run whose host elapsed exceeds the consumed amount
+                // commits nothing more; a failed run keeps its own result.
+                char message[256] = {};
+                std::snprintf(message, sizeof(message),
+                              "the grant's host elapsed time %" PRIu64
+                              " fs exceeds its consumed amount %" PRIu64 " fs",
+                              grant.host_elapsed_fs, grant.consumed_fs);
+                stop_with_message(message, machine);
+                return;
+            }
             if (grant.consumed_fs == 0) {
                 // A boundary that neither advanced modeled time nor ended the
                 // run cannot make progress: the wait would never be reached.
@@ -506,12 +661,16 @@ private:
 
     Options options_;
     ruscv_sim::RuscvInitiator& initiator_;
+    std::thread::id creator_thread_;
+    std::ofstream grant_trace_;
     bool terminal_ = false;
     bool stopped_early_ = false;
     bool failed_ = false;
     ruscv_result result_{};
     uint64_t grants_ = 0;
     uint64_t consumed_fs_ = 0;
+    uint64_t host_elapsed_fs_ = 0;
+    uint64_t transport_delay_fs_ = 0;
     /// Grants whose kernel clock matched `committed_end_fs` (quantum D12).
     uint64_t clock_checks_ = 0;
     /// Completed turns observed after the last grant.
@@ -547,20 +706,32 @@ int sc_main(int argc, char** argv) {
         std::printf("systemc-smoke: running %s under --isa %s --quantum %" PRIu64 "\n",
                     options.elf.c_str(), isa_name(options.isa), options.quantum);
     }
+    if (options.non_blocking) {
+        std::printf("systemc-smoke: non-blocking --nb-path %s --nb-latency %" PRIu64 " fs\n",
+                    nb_path_name(options.nb_path), options.nb_latency_fs);
+    }
     std::fflush(stdout);
 
-    ruscv_sim::RamTarget ram("ram", options.fault_decrease_delay);
+    ruscv_sim::RamTarget ram("ram", options.fault_decrease_delay, options.non_blocking,
+                             options.nb_latency_fs, options.nb_path);
     ruscv_sim::RuscvInitiator initiator("initiator", ram, options.direct_mem, options.quantum,
-                                       options.fault_keep_offset);
-    MachineDriver driver("driver", options, initiator);
+                                       options.fault_keep_offset, options.non_blocking,
+                                       options.nb_latency_fs);
+    MachineDriver driver("driver", options, initiator, std::this_thread::get_id());
     sc_core::sc_start();
 
     std::printf(
         "systemc-smoke: ram b_transport=%" PRIu64 " transport_dbg=%" PRIu64
-        " transport_reset=%" PRIu64 " direct_mem_invalidations=%" PRIu64
-        " direct_mem_scheduled=%" PRIu64 "\n",
+        " transport_reset=%" PRIu64 " begin_req=%" PRIu64 " applied_accesses=%" PRIu64
+        " direct_mem_invalidations=%" PRIu64 " direct_mem_scheduled=%" PRIu64 "\n",
         ram.b_transport_count(), ram.transport_dbg_count(), ram.transport_reset_count(),
+        ram.begin_req_count(), ram.applied_access_count(),
         initiator.direct_mem_invalidation_count(), initiator.direct_mem_scheduled_count());
+    std::printf(
+        "systemc-smoke: totals consumed_fs=%" PRIu64 " host_elapsed_fs=%" PRIu64
+        " transport_delay_fs=%" PRIu64 "\n",
+        driver.consumed_total_fs(), driver.host_elapsed_total_fs(),
+        driver.transport_delay_fs());
     std::printf("systemc-smoke: kernel clock matched committed_end_fs after %" PRIu64
                 " grant(s)\n",
                 driver.clock_checks());

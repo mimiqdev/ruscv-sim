@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Non-blocking U3: SystemC 基础协议与 AT target 模式（issue #218）**
+  - `integration/systemc` 新增 `--nb`、`--nb-latency`（默认 0，最大 10^15 fs）、
+    `--nb-path accepted|updated|early|annotated|completed`（默认 `accepted`）与
+    `--grant-trace <path>`；`--nb-latency` 或 `--nb-path` 缺少 `--nb` 是用法错误，
+    `--grant-trace` 每个 grant 写一行 `consumed_fs`、`committed_end_fs` 与
+    `host_elapsed_fs`（nb D7/D8/D10）。`--nb` 把 target 声明为挂起并把 λ 写入声明上限；
+    与非零 `--quantum` 的组合仍由 `ruscv_machine_create` 拒绝
+  - `RuscvInitiator` 对 `may_suspend` 载荷运行单笔未完成事务的 TLM-2.0 基础协议：
+    驱动 `SC_THREAD` 发送 `BEGIN_REQ`，把 backward 阶段按 `sc_time_stamp() +` 注记记录为
+    生效时间并用 `sc_event` 唤醒，只在生效时间到达后处理并重新武装；`END_REQ` 回
+    `TLM_ACCEPTED`，`BEGIN_RESP` 回 `TLM_COMPLETED`，forward `TLM_UPDATED`/`BEGIN_RESP`
+    生效后发送零延迟 `END_RESP`，其他阶段或返回值为未知完成。事务载荷由 initiator
+    自持（memory manager、独立数据与扩展存储），请求字节在 `BEGIN_REQ` 前拷入、响应
+    字节在完成时拷出；完成时报告 `d = e`。每个 `b_transport` 都测量并报告 `e`，未知
+    完成保留该值；`transport_dbg`、`transport_reset` 与 `get_direct_mem_ptr` 也测量
+    host 时间，任一回调让时间流逝即分别成为失败传输、未确认 reset 或 `RUSCV_DMI_FAILED`
+  - `MachineDriver::run` 在 create 前比较自身线程 id 与 `sc_main` 记录的 id，pthread-process
+    构建被当作 host failure 拒绝；grant 循环改为等待 `consumed_fs - host_elapsed_fs`，
+    余数为零才跳过等待，并在 `host_elapsed_fs > consumed_fs` 时不再提交时间而是 host
+    failure（unless already failed），每个 grant 后仍检查 kernel 时钟等于
+    `committed_end_fs`（nb D5/D7）
+  - `RamTarget` 的 AT 模式只在 `--nb` 下注册 `nb_transport_fw`，每条路径都在
+    `BEGIN_REQ` 调用内按 `b_transport` 的同一存储、原子表、版本时钟与 hint 应用访问一次，
+    之后阶段只携带时序；阶段经 `peq_with_cb_and_phase` 调度，零时通知之间保留一个 delta，
+    `accepted`/`updated`/`early`/`annotated`/`completed` 分别实现 D8 的返回与注记；
+    `BEGIN_RESP` 以 `TLM_COMPLETED` 应答即结束 target 事务，forward `END_RESP` 回
+    `TLM_COMPLETED`。事务从 `BEGIN_REQ` 到 target 发出或收到最终阶段期间，
+    `transport_reset` 在失效或清空任何内容之前拒绝确认；退出时报告 `BEGIN_REQ` 与
+    已应用访问计数
+  - `scripts/test_systemc_smoke.sh` 让两个 guest 在五条路径上分别以 λ = 0 与 λ = 1500000 fs
+    运行，要求 native 退出码、逐字节相同 commit log、非零且等于已应用计数的 `BEGIN_REQ`、
+    每个 grant 一次时钟检查；λ = 0 的 grant trace 必须与 parity 逐字节相同，λ > 0 从
+    host 退出总量检查 D10 的三项求和。另加 `--nb --dmi` 在 `accepted`/`completed` 的
+    λ = 0 parity 与 `accepted` λ = 1500000 的 AT 计数严格低于非 direct pass、
+    `--nb --quantum` 拒绝以及非阻塞用法错误；既有 blocking、DMI、quantum、早期停止与
+    quantum fault 控制保持不变。U3 不拥有 mutation-runner 控制
+
 - **Non-blocking U2: C ABI 挂起、payload 与 grant 字段（issue #217）**
   - `ruscv_target` 末尾新增 `int32_t suspends_host_time`（nb D6），结构由 56 字节增至 64 字节：非零表示该 target
     允许在 `may_suspend` 事务里让 host 时间流逝。表在 create 时复制，因此该声明跨 `ruscv_machine_reset` 保留，

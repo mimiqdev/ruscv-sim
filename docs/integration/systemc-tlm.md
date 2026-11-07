@@ -1,7 +1,8 @@
 # SystemC/TLM Boundary
 
-**Status:** Implemented for the selected blocking-transport mapping, including
-direct memory and the quantum selection
+**Status:** Implemented for the selected blocking-transport mapping, direct
+memory, the quantum selection and the non-blocking AT path (U3); retirement,
+draining and the non-blocking fault options remain U4's scope.
 
 **Authority:** Normative for the selected blocking-transport mapping, FFI
 ownership and threads, error mapping, the time unit, re-entrancy and stop
@@ -15,7 +16,9 @@ this page's `direct-memory D<n>` citations name that contract). Quantum D14 make
 this page normative for the local offset, the grant return, the sync and the
 bound rules on this host, and this page's `quantum D<n>` citations name the
 [archived quantum contract](../archive/milestones/quantum-temporal-decoupling.md).
-Bounded by
+The Current contract's D7, D8 and D10 make this page normative for the
+non-blocking base-protocol mapping, the commit rule and the AT target mode;
+this page's `nb D<n>` citations name that contract. Bounded by
 ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
@@ -34,9 +37,12 @@ its FFI rules, normative where they are not already covered by the
 header's direct-memory obligations. It also records the SystemC halves of the
 quantum contract: the local offset as the `b_transport` delay argument, the
 grant return as the only quantum keeper, the sync and commit rule, and the two
-fault-option controls of its §4. The Current contract selects non-blocking
-transport through suspending callbacks; until its units land, this page
-describes only the blocking mapping, and TLM-modeled devices stay out of scope.
+fault-option controls of its §4. For the Current contract it records the AT
+path that serves a suspending `may_suspend` transaction through
+`nb_transport_fw`/`nb_transport_bw`, its one-outstanding-transaction rule, its
+`d = e` reporting, the RAM target's five return paths and the grant commit rule
+(nb D7/D8/D10). Retirement, late phases, the drain and the non-blocking fault
+options belong to U4. TLM-modeled devices stay out of scope.
 
 ## Selected mapping
 
@@ -54,6 +60,10 @@ describes only the blocking mapping, and TLM-modeled devices stay out of scope.
 | Quantum selection (quantum D12) | `ruscv_target.quantum_ticks` |
 | Counted sync ending a grant (quantum D12) | The grant returns, then `wait(consumed)` |
 | Direct RAM fast path | `get_direct_mem_ptr`/`invalidate_direct_mem_ptr` via the C ABI (direct-memory D12) |
+| Suspending `may_suspend` transaction (nb D7) | The TLM-2.0 base protocol on the same socket |
+| AT latency `lambda` (nb D8) | The target's `--nb-latency`, its declared `max_delay_fs` and its phase annotations |
+| Host elapsed `e` (nb D4/D7) | Host time measured around the callback; `d = e` on the AT path |
+| Grant commit (nb D5) | `wait(consumed_fs - host_elapsed_fs)` |
 
 `tlm_generic_payload` and `sc_time` stay outside the Rust side and outside ISA
 instruction functions. The only Rust/C++ boundary is the C ABI.
@@ -68,6 +78,22 @@ blocking RAM target with one `tlm_utils::simple_target_socket`:
   the Hart's local offset in exact femtoseconds, so a model that adds nothing
   keeps the run's committed time identical with the quantum on and off. A write
   is applied as one indivisible semantic write before it returns.
+- AT mode (nb D8): under `--nb` the target also registers `nb_transport_fw`.
+  Every return path applies the access exactly once inside the `BEGIN_REQ`
+  call, through the same storage, atomic table, version clock and hint as
+  `b_transport`; later phases carry only timing. The phases are scheduled
+  through `peq_with_cb_and_phase`, whose zero-time notifications keep a
+  one-delta gap between `END_REQ` and `BEGIN_RESP`, so no phase arrives in the
+  delta that sent the request. `accepted` returns `TLM_ACCEPTED` and sends
+  `END_REQ` in a later delta and `BEGIN_RESP` after `lambda`; `updated` returns
+  `TLM_UPDATED` with `END_REQ` and sends `BEGIN_RESP` after `lambda`; `early`
+  returns `TLM_UPDATED` with `BEGIN_RESP` and an annotated `lambda`; `annotated`
+  returns `TLM_ACCEPTED` and sends `END_REQ` in a later delta and `BEGIN_RESP` at
+  once with an annotated `lambda`; `completed` returns `TLM_COMPLETED` with an
+  annotated `lambda`. A backward `BEGIN_RESP` answered with `TLM_COMPLETED` ends
+  the transaction for the target, and a forward `END_RESP` is answered with
+  `TLM_COMPLETED`. The target reports its `BEGIN_REQ` and applied-access counts
+  at exit.
 - Direct memory (direct-memory D13): a completed non-atomic transaction sets
   the generic payload's `dmi_allowed` hint, which is the only licence for the
   initiator's one query of that access. `get_direct_mem_ptr` grants the whole
@@ -83,14 +109,17 @@ blocking RAM target with one `tlm_utils::simple_target_socket`:
 - `transport_dbg` serves image installation and the host views with no delay, no
   side effects beyond the bytes and no transaction accounting. It returns the
   bytes transferred; a short transfer is a failed debug transport.
-- The transport reset invalidates every direct-memory registration on the
-  bound initiator before it discards any chunk — atomically with respect to
-  new grants, because the module runs on the single kernel thread — then
-  discards every byte and every committed-write version record, so the
-  Platform's zero-fill after it starts from an empty target. The version
-  clock keeps running across the reset, so no committed-write version repeats
-  (direct-memory D10/D13). It returns the acknowledgement the Platform
-  requires (D6).
+- The transport reset withholds its acknowledgement before it invalidates or
+  clears anything while an AT transaction is open at the target, from its
+  `BEGIN_REQ` until the target has sent or received its final phase, so no fresh
+  generation coexists with an open transaction (nb D8). Otherwise it
+  invalidates every direct-memory registration on the bound initiator before it
+  discards any chunk — atomically with respect to new grants, because the
+  module runs on the single kernel thread — then discards every byte and every
+  committed-write version record, so the Platform's zero-fill after it starts
+  from an empty target. The version clock keeps running across the reset, so no
+  committed-write version repeats (direct-memory D10/D13). It returns the
+  acknowledgement the Platform requires (D6).
 - Storage is sparse in 4 KiB chunks. Each chunk keeps the bytes and one
   committed-write version per byte. A load-reserved returns that snapshot as
   one little-endian 64-bit version per reserved byte; a store-conditional
@@ -173,6 +202,35 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
 - A debug request requires a complete transfer and an unchanged address, command
   and length; a short transfer or any changed request field is a failed debug
   transfer.
+- AT path (nb D7): a payload with `may_suspend` set is served through
+  `nb_transport_fw` instead of `b_transport`, from the callback's own process,
+  the driver `SC_THREAD`. One transaction is outstanding. The process sends
+  `BEGIN_REQ` with zero delay and is the only process that waits. `TLM_ACCEPTED`
+  leaves the next phase to `nb_transport_bw`; `TLM_UPDATED` with `END_REQ` or
+  `BEGIN_RESP`, and `TLM_COMPLETED`, take effect after their annotated delay.
+  `nb_transport_bw` runs in the target's process, records the phase with its
+  effective host time (`sc_time_stamp() + annotation`) and notifies the waiting
+  process's event; the process acts only on phases whose effective time has
+  arrived and re-arms for a later one, so no phase takes effect early. It
+  returns `TLM_ACCEPTED` for `END_REQ` and `TLM_COMPLETED` for `BEGIN_RESP`,
+  which ends the transaction without a forward `END_RESP`. After a forward
+  `TLM_UPDATED`/`BEGIN_RESP` takes effect, the process sends `END_RESP` with
+  zero delay; a return other than `TLM_COMPLETED` or `TLM_ACCEPTED` is a target
+  protocol error reported as an unknown completion. A `BEGIN_RESP` before
+  `END_REQ` also ends the request. The transaction completes at the host time
+  its `BEGIN_RESP` or forward `TLM_COMPLETED` takes effect, and the callback
+  reports `d = e` for the host time from `BEGIN_REQ` to completion.
+- The AT transaction is initiator-owned: it has its own generic payload, a
+  memory manager, its own data storage and its own payload extension. Request
+  bytes are copied in before `BEGIN_REQ` and response bytes are copied out at
+  completion, so the target never sees the ABI's buffer. The status, bytes,
+  atomic response half and `dmi_allowed` hint come from the transaction.
+- On every `b_transport` the initiator measures `e` around the callback and
+  reports it, and an exception's `mark_unknown_completion` keeps that measured
+  value instead of only zeroing the delay. It also measures host time around
+  `transport_dbg`, `transport_reset` and `get_direct_mem_ptr`; one that lets host
+  time pass becomes a failed debug transfer, an unacknowledged reset or
+  `RUSCV_DMI_FAILED`.
 
 Error mapping across the boundary:
 
@@ -197,11 +255,20 @@ or host stop becomes a ruscv-sim terminal result.
   thread fails with `RUSCV_ERROR_NOT_CREATOR_THREAD` and changes no state. The
   SystemC host creates and drives the handle on the SystemC kernel thread, so the
   rule holds even though SystemC runs the thread as a coroutine.
-- Target callbacks run synchronously inside a ruscv-sim call on that thread. A
+- Target callbacks run on the SystemC kernel thread inside a ruscv-sim call. A
   callback that calls back into any ABI handle fails with
   `RUSCV_ERROR_REENTRANT`, except `ruscv_machine_invalidate_direct_mem`, which
-  the direct-memory backward path uses (direct-memory D12). A callback must
-  not wait or advance SystemC time; this initiator does neither.
+  the direct-memory backward path uses (direct-memory D12). A `b_transport`
+  callback whose payload has `may_suspend` set may suspend the calling process
+  and let host time pass, provided it resumes and returns on the creator thread
+  (nb D6/D7). Every other callback must not wait or advance SystemC time; this
+  initiator checks that rule for debug transport, transport reset and the
+  direct-memory query, and the blocking callback still reports its measured
+  elapsed time so the ABI's unmarked-elapsed rule can reject a wait.
+- `MachineDriver::run` compares its own thread id with the one `sc_main`
+  recorded before it creates the handle. A mismatch means a pthread-process
+  build, which is unsupported; the host refuses it as a host failure. The pinned
+  coroutine build passes the check (nb D7).
 - The callback table and its `user` pointer must stay valid until destroy. The
   initiator and the RAM target are members of `sc_main`, so they outlive the
   handle.
@@ -222,11 +289,16 @@ one nanosecond, the default of `MachineConfig.tick_period`; `ruscv_machine_creat
 carries the C ABI's declaration of the same period.
 
 Each grant starts at the current `sc_time_stamp()`. The kernel owns global time
-and commits only the amount a grant returns: the host `wait()`s exactly the
-returned consumed amount and never advances SystemC time on its own. After the
-wait it checks that the kernel clock equals the grant's committed end, and a
-mismatch ends the run as a host failure. This target adds no transport delay, so
-a run stays time-equivalent to native (ADR-0004 §4.4, §5.3).
+and commits only the amount a grant returns. With no host time inside the grant
+the host waits exactly `consumed_fs`; with suspending transactions it waits
+`consumed_fs - host_elapsed_fs`, because that host time already passed in the
+callback. Either way it checks after the wait that the kernel clock equals
+`committed_end_fs`, and a mismatch ends the run as a host failure. A grant whose
+host elapsed exceeds its consumed amount commits nothing more and is a host
+failure unless the run has already failed (nb D5). This blocking target adds no
+transport delay, so a run stays time-equivalent to native; every AT transaction
+reports `d = e = lambda`, whose charge is rounded once through the existing
+delay path (ADR-0004 §4.4, §5.3; nb D4/D5/D10).
 
 ### Quantum and temporal decoupling
 
@@ -340,19 +412,24 @@ It then runs both guests at `--quantum 1` and `--quantum 1024`, with and without
 `--dmi`, and requires the native exit code and commit log in every pass, a
 number of kernel-clock checks equal to the number of grants, and a grant count
 at `--quantum 1024` strictly below the same guest's `--quantum 1` count. It runs
-the two fault-option controls under `--quantum 1024` and requires each to fail
-with its own assertion. It passes the same turn bound
+both guests under `--nb` on every return path at `lambda` = 0 and
+`lambda` = 1500000 fs, requires a non-zero `BEGIN_REQ` count equal to the
+applied-access count and the same exit code and commit log, compares the
+`lambda` = 0 `--grant-trace` files with the parity traces, and checks the three
+D10 sums from the host's exit totals at `lambda` = 1500000. It repeats the
+`--dmi` `lambda` = 0 passes on `accepted` and `completed`, and requires the
+`--dmi` `lambda` = 1500000 `accepted` pass to serve fewer AT transactions than
+the non-direct pass. It also requires the `--nb --quantum` refusal and the
+non-blocking usage errors. It runs the two fault-option controls under
+`--quantum 1024` and requires each to fail with its own assertion. It passes the same turn bound
 as the CLI's `--max-cycles` and wraps every run in a wall-clock `timeout`, so
 neither a guest loop nor a host defect can hang CI.
 
 ## Open items
 
-- Non-blocking transport: selected by the Current contract, not yet
-  implemented. Its D11 makes this page normative for suspension, the
-  base-protocol mapping, the commit rule, retirement and the AT target mode
-  once its units complete.
 - TLM-modeled devices and SystemC-modeled interrupt lines, which need their
   own contract.
+- More than one outstanding non-blocking transaction or pipelining.
 
 ## Direct-memory grant, permission, latency, invalidation, lifetime and FFI
 
@@ -451,7 +528,9 @@ contract adds none.)
   target, the initiator bridge and the grant loop.
 - [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh): native
   comparison, the `--dmi` and `--dmi-invalidate-every` passes, the `--quantum`
-  passes, the two fault-option controls and the early-`sc_stop` control.
+  passes, the five `--nb` return paths at both latencies, the `--dmi` AT
+  passes, the `--nb --quantum` refusal, the non-blocking usage errors, the two
+  fault-option controls and the early-`sc_stop` control.
 - [`scripts/test_capi_smoke.sh`](../../scripts/test_capi_smoke.sh): the plain-C
   compile-and-link smoke of the same ABI, including its direct-memory cases.
 - [`tests/tlm_u4_guest_parity.rs`](../../tests/tlm_u4_guest_parity.rs): guest

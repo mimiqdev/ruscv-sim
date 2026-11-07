@@ -29,15 +29,18 @@
 // to `ruscv_machine_invalidate_direct_mem`, the one ABI entry a target may
 // call inside a callback (direct-memory D12/D13).
 //
-// The callbacks run synchronously on the SystemC kernel thread inside one
-// ruscv-sim call, so they must not advance time, wait, or call back into the C
-// ABI beyond that one entry.
+// The callbacks run on the SystemC kernel thread inside one ruscv-sim call. A
+// `b_transport` callback whose payload carries `may_suspend` may serve its
+// access through the non-blocking base protocol and let host time pass (nb
+// D7); every other callback must not wait, advance time or call back into the C
+// ABI beyond the direct-memory invalidation entry.
 
 #ifndef RUSCV_SIM_SYSTEMC_RUSCV_INITIATOR_H
 #define RUSCV_SIM_SYSTEMC_RUSCV_INITIATOR_H
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include <ruscv_sim.h>
 #include <systemc>
@@ -48,7 +51,8 @@
 
 namespace ruscv_sim {
 
-/// Bridges the ruscv-sim blocking target callbacks onto one TLM initiator socket.
+/// Bridges the ruscv-sim target callbacks onto one TLM initiator socket,
+/// including the non-blocking AT path for a suspending transaction (nb D7).
 class RuscvInitiator : public sc_core::sc_module {
 public:
     /// The initiator port the target callbacks drive.
@@ -58,21 +62,24 @@ public:
     /// and the target-originated invalidation path. `direct_mem` selects
     /// direct memory for the table (`--dmi`), and `quantum_ticks` selects the
     /// quantum in Platform ticks (`--quantum`), zero for off (quantum D13).
+    /// `non_blocking` selects the target table's suspension flag and the AT
+    /// path (`--nb`), and `nb_latency_fs` is its declared maximum `lambda`.
     ///
     /// `fault_keep_offset` is the smoke's `--fault-keep-offset` control
     /// (quantum §4): the callbacks report the full delay argument, offset
     /// included, as an added delay, which exceeds this target's declared
-    /// maximum of zero. It exists to prove that assertion and is never a
-    /// normal bridge.
+    /// maximum. It exists to prove that assertion and is never a normal
+    /// bridge.
     RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram, bool direct_mem,
-                   uint64_t quantum_ticks, bool fault_keep_offset);
+                   uint64_t quantum_ticks, bool fault_keep_offset, bool non_blocking,
+                   uint64_t nb_latency_fs);
 
     /// The C ABI target table naming this object as `user`.
     ///
-    /// The table declares zero per-transaction maximum delay, which is this RAM
-    /// model's declared bound (dev-plan D7), and it carries the selected quantum
-    /// (`--quantum`, zero for off) in `quantum_ticks` (quantum D12/D13). With
-    /// `direct_mem` off the table's
+    /// The table declares `lambda` as its per-transaction maximum under
+    /// `--nb`, and declares that the target suspends host time (nb D6/D8). It
+    /// carries the selected quantum (`--quantum`, zero for off) in
+    /// `quantum_ticks` (quantum D12/D13). With `direct_mem` off the table's
     /// `get_direct_mem_ptr` stays NULL, so ruscv-sim issues no query and
     /// ignores every hint exactly as direct memory off. The returned table is
     /// valid while this object lives.
@@ -110,9 +117,32 @@ public:
     uint64_t direct_mem_error_count() const { return direct_mem_errors_; }
 
 private:
-    /// The non-blocking backward path is unused: this composition issues only
-    /// blocking transactions, so the callback can never affect a result.
-    tlm::tlm_sync_enum nb_transport_bw(tlm::tlm_generic_payload& transaction,
+    /// One phase the target sent on the backward path, or one the forward path
+    /// returned as `TLM_UPDATED`, with the host time it takes effect (nb D7).
+    struct PendingPhase {
+        tlm::tlm_phase phase;
+        sc_core::sc_time effective;
+        /// True for a forward `TLM_UPDATED` phase, whose `BEGIN_RESP` needs a
+        /// forward `END_RESP`; false for a backward phase.
+        bool forward = false;
+    };
+
+    /// Serves one suspending transaction through the non-blocking base
+    /// protocol (nb D7).
+    void serve_at_b_transport(ruscv_payload& payload);
+
+    /// Records one phase with its effective host time and wakes the waiting
+    /// process. Called from the target's process for a backward phase.
+    void record_phase(const tlm::tlm_phase& phase, const sc_core::sc_time& delay,
+                      bool forward);
+
+    /// Waits for the recorded phases, sends `END_RESP` after a forward
+    /// `BEGIN_RESP`, and reports whether the transaction completed.
+    bool wait_for_at_completion(tlm::tlm_generic_payload& transaction);
+
+    /// The base-protocol backward callback. It runs in the target's process and
+    /// never waits (nb D7).
+    tlm::tlm_sync_enum nb_transport_bw(tlm::tlm_generic_payload&,
                                        tlm::tlm_phase& phase, sc_core::sc_time& delay);
 
     /// The target's backward invalidation forwards to
@@ -127,7 +157,13 @@ private:
     const bool direct_mem_;
     const uint64_t quantum_ticks_;
     const bool fault_keep_offset_;
+    const bool non_blocking_;
+    const uint64_t nb_latency_fs_;
     ruscv_machine* machine_ = nullptr;
+    std::vector<PendingPhase> pending_phases_;
+    sc_core::sc_event phase_event_;
+    bool at_active_ = false;
+    bool protocol_error_ = false;
     uint64_t direct_mem_invalidations_ = 0;
     uint64_t direct_mem_scheduled_ = 0;
     uint64_t direct_mem_errors_ = 0;
