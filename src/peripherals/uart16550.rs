@@ -563,6 +563,21 @@ impl Uart16550 {
             _ => {}
         }
     }
+
+    /// Applies one register write and reports a transmitted byte (device D4).
+    ///
+    /// The write has exactly the effect of [`Self::write_reg`].  When it
+    /// reaches the transmit holding register with DLAB clear, the written byte
+    /// is returned so the Platform's one UART publication site can report it as
+    /// a `PlatformEvent::UartTransmit`.  The transmit FIFO's own capacity does
+    /// not change that: the byte left the guest either way, and the native
+    /// branch and the in-tree device target both publish it.  A write that
+    /// lands in the divisor latch returns `None`.
+    pub(crate) fn write_reg_reporting(&mut self, offset: u64, value: u8) -> Option<u8> {
+        let transmitted = (offset == reg_offset::RBR_THR && !self.dlab()).then_some(value);
+        self.write_reg(offset, value);
+        transmitted
+    }
 }
 
 impl TlmTarget for Uart16550 {

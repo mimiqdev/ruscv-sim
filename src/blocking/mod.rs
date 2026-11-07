@@ -47,10 +47,15 @@ mod atomic;
 #[cfg(test)]
 #[path = "atomic_tests.rs"]
 mod atomic_tests;
+mod device;
+#[cfg(test)]
+#[path = "device_tests.rs"]
+mod device_tests;
 mod direct_mem;
 #[cfg(test)]
 #[path = "direct_mem_tests.rs"]
 mod direct_mem_tests;
+pub(crate) mod in_tree;
 mod target;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -60,10 +65,13 @@ mod tests;
 mod zero_delay;
 
 pub use atomic::{BlockingAtomicExtension, BlockingAtomicOperation, BlockingAtomicOutcome};
+pub use device::{BlockingDeviceEvent, BlockingDeviceTarget, DeviceTargets};
+pub(crate) use device::{DeviceOutcome, DevicePath};
 pub use direct_mem::{
     BlockingDirectMemAccess, BlockingDirectMemGrant, BlockingDirectMemInvalidator,
     BlockingDirectMemQuery, BlockingDirectMemRegistry, BlockingDirectMemResponse,
 };
+pub(crate) use in_tree::{InTreeHtif, InTreeUart};
 pub use target::BlockingTarget;
 pub use zero_delay::ZeroDelayRam;
 
@@ -422,6 +430,10 @@ pub struct BlockingTransaction<'a> {
     local_offset: Femtoseconds,
     may_suspend: bool,
     host_elapsed: Femtoseconds,
+    /// device D2: the at-most-one guest-visible effect this access reports.
+    /// A RAM target never reports one; a device target reports its window's
+    /// event on an `Ok` status.
+    device_events: Vec<BlockingDeviceEvent>,
 }
 
 impl<'a> BlockingTransaction<'a> {
@@ -446,6 +458,7 @@ impl<'a> BlockingTransaction<'a> {
             local_offset: Femtoseconds::ZERO,
             may_suspend: false,
             host_elapsed: Femtoseconds::ZERO,
+            device_events: Vec::new(),
         }
     }
 
@@ -629,6 +642,26 @@ impl<'a> BlockingTransaction<'a> {
     pub fn set_data_length(&mut self, length: usize) {
         self.data_length = length;
     }
+
+    /// The device events this access reports (device D2).
+    ///
+    /// Empty for a RAM target and for a device access with no guest-visible
+    /// effect.  An accepted access reports at most one event, and it belongs
+    /// to the target's own window; the device adapter rejects any other shape
+    /// as a protocol failure.
+    pub fn device_events(&self) -> &[BlockingDeviceEvent] {
+        &self.device_events
+    }
+
+    /// Reports one guest-visible device event (device D2/D4).
+    ///
+    /// Only a device window publishes an event.  A RAM target that calls this
+    /// is a protocol failure of that access, as is a device target that
+    /// reports more than one event, reports one on a status other than `Ok`,
+    /// or reports another window's event.
+    pub fn report_device_event(&mut self, event: BlockingDeviceEvent) {
+        self.device_events.push(event);
+    }
 }
 
 impl fmt::Debug for BlockingTransaction<'_> {
@@ -645,6 +678,7 @@ impl fmt::Debug for BlockingTransaction<'_> {
             .field("local_offset", &self.local_offset)
             .field("may_suspend", &self.may_suspend)
             .field("host_elapsed", &self.host_elapsed)
+            .field("device_events", &self.device_events)
             .finish()
     }
 }

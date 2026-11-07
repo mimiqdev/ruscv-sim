@@ -7,8 +7,8 @@
 
 use super::{
     BlockingAtomicOperation, BlockingAtomicOutcome, BlockingCommand, BlockingDebug,
-    BlockingDirectMemAccess, BlockingInitiator, BlockingResponseStatus, BlockingTarget,
-    BlockingTransaction, Femtoseconds,
+    BlockingDeviceEvent, BlockingDirectMemAccess, BlockingInitiator, BlockingResponseStatus,
+    BlockingTarget, BlockingTransaction, Femtoseconds,
 };
 use crate::memory::SimpleMemory;
 use crate::physical::PhysicalAccessKind;
@@ -67,6 +67,7 @@ pub(crate) struct ScriptTarget {
     debug_short: AtomicBool,
     reset_ack: AtomicBool,
     held_write: Mutex<Option<(u64, Vec<u8>)>>,
+    device_event: Mutex<Option<BlockingDeviceEvent>>,
     log: Mutex<Vec<Call>>,
 }
 
@@ -89,6 +90,7 @@ impl ScriptTarget {
             debug_short: AtomicBool::new(false),
             reset_ack: AtomicBool::new(true),
             held_write: Mutex::new(None),
+            device_event: Mutex::new(None),
             log: Mutex::new(Vec::new()),
         }
     }
@@ -143,6 +145,15 @@ impl ScriptTarget {
     /// Holds one write that is applied during the next transport reset.
     pub(crate) fn hold_write(&self, address: u64, bytes: Vec<u8>) {
         *self.held_write.lock().unwrap() = Some((address, bytes));
+    }
+
+    /// Reports one device event on every `Ok` access (device D2).
+    ///
+    /// Only a device window may report one, so this makes a RAM target
+    /// misbehave on purpose: the adapter must classify the access as a
+    /// protocol failure.
+    pub(crate) fn set_device_event(&self, event: BlockingDeviceEvent) {
+        *self.device_event.lock().unwrap() = Some(event);
     }
 
     /// The logged blocking transactions.
@@ -239,6 +250,9 @@ impl BlockingTarget for ScriptTarget {
             BlockingCommand::Write => {
                 self.write(transaction.address(), transaction.data());
             }
+        }
+        if let Some(event) = *self.device_event.lock().unwrap() {
+            transaction.report_device_event(event);
         }
         transaction.set_status(BlockingResponseStatus::Ok);
     }

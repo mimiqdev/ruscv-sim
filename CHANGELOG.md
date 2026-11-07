@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM-Modeled Devices U1: 设备路径与树内 UART/HTIF target（issue #227）**
+  - `blocking` 新增设备 target 词汇（device D2）：`BlockingDeviceTarget`（`b_transport`、
+    `receive`、`transport_reset`，全部 `&self` 且同步、不等待）、`BlockingDeviceEvent`
+    （`UartTransmit(u8)`、`HtifWrite(u64)`，各自属于一个窗口）与 `DeviceTargets`
+    （`none()` 表示两个窗口都由树内 target 应答；本单元不新增 `MachineConfig` 字段，主机 UART
+    选择属于 U2）
+  - `BlockingTransaction` 增加唯一的事件槽：`device_events()` 与 `report_device_event()`。一次被接受的
+    访问至多报一个属于本窗口的事件；改变 payload、注记 delay 或 host elapsed、设置 `dmi_allowed`、
+    报第二个事件、在非 `Ok` 状态报事件或报别的窗口的事件，都是该次访问的协议失败。RAM target 报设备
+    事件同样失败（device D2/D4）
+  - TLM 路由此新走设备 target：UART 窗口仍先由 Platform 应用 `0x100` 窗口、byte-only 与拒取指策略，
+    HTIF 端点仍要求精确起点、整八字节且拒取指；随后各是一笔阻塞事务（device D1/D3）。原子路径不变：
+    UART 仍按宽度拒绝，HTIF 的 RMW envelope 仍在 Platform 内且从不成为设备事务
+  - 树内 target（device D3）：`InTreeUart` 复用既有 `Uart16550` 与新增的 crate 内
+    `write_reg_reporting`（写出 THR 且 DLAB 清零时返回该字节，FIFO 满也照报）；`InTreeHtif` 的
+    dword 读回零、dword 写报一个 `HtifWrite`
+  - 每个窗口一个发布 sink，由 `Platform::build` 安装一次（device D4）：UART sink 推
+    `PlatformEvent::UartTransmit` 再调 `config.uart_output`，HTIF sink 推 `PlatformEvent::HtifWrite`
+    再调 `config.htif_write`。`Platform::build` 不再安装 UART 自身的输出回调；原始写、typed byte 写、
+    树内 target 的响应都经同一 sink，且仍在 store 退休前发布
+  - 行为不变：无主机 target 时两路由的设备答案、事件与回调序列相同，`mtime` 与 `PlatformEvent`
+    序列逐 turn 相同（`Q` = 0），选中 quantum 时设备访问不加时间且仍按 F1 标记该 turn；
+    `hello` 在 native、TLM、`--dmi` 与两个 quantum pass 上仍打印 `Hello!`。本单元不改 CLI、C ABI、
+    SystemC 宿主或开发镜像
+
 - **Non-blocking U5: 文档收尾与验收闭环**
   - 根 README 的 C ABI 段补上挂起支持（nb D5/D6）：`ruscv_target.suspends_host_time`、
     `ruscv_payload` 的 `may_suspend`/`host_elapsed_fs`、`ruscv_grant.host_elapsed_fs`、挂起表与

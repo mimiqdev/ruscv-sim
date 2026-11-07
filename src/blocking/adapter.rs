@@ -402,6 +402,30 @@ impl TlmRamAdapter {
         Err(append_diagnostic(failure, charged.err().as_ref()))
     }
 
+    /// device D2: only a device window publishes a device event, so a RAM
+    /// target that reports one is a protocol failure of that access.
+    ///
+    /// The response helper has already charged the access's delay and host
+    /// elapsed time and recorded a committed write, so this rule adds no
+    /// charge of its own (ADR-0002 §6 stays truthful for a written `Ok`).
+    fn reject_device_events(
+        &self,
+        transaction: &BlockingTransaction<'_>,
+        path: ResponsePath,
+    ) -> Result<(), PhysicalBackendError> {
+        let events = transaction.device_events();
+        if events.is_empty() {
+            return Ok(());
+        }
+        Err(PhysicalBackendError::protocol(format!(
+            "RAM target reported {} device event(s) for {} at {:#018x}; only a device window \
+             publishes one",
+            events.len(),
+            path.access.label(),
+            path.address,
+        )))
+    }
+
     /// Charges one rule failure's host elapsed time and returns the reported
     /// failure.
     ///
@@ -707,27 +731,23 @@ impl TlmRamAdapter {
         };
 
         let status = transaction.status();
-        self.classify_response(
-            &mut state,
-            &transaction,
-            ResponsePath {
-                access: DelayAccess::Physical(descriptor.category),
-                subject: "request",
-                address: descriptor.paddr,
-                command,
-                length: width,
-            },
-            unknown,
-            |state, status| {
-                // An `Ok` write committed its effects before any delay
-                // accounting or overshoot classification can fail; record it
-                // first so committed-write visibility stays truthful even when
-                // the access ends in a simulator failure (ADR-0002 §6).
-                if status == BlockingResponseStatus::Ok && command == BlockingCommand::Write {
-                    state.committed_writes = state.committed_writes.saturating_add(1);
-                }
-            },
-        )?;
+        let path = ResponsePath {
+            access: DelayAccess::Physical(descriptor.category),
+            subject: "request",
+            address: descriptor.paddr,
+            command,
+            length: width,
+        };
+        self.classify_response(&mut state, &transaction, path, unknown, |state, status| {
+            // An `Ok` write committed its effects before any delay
+            // accounting or overshoot classification can fail; record it
+            // first so committed-write visibility stays truthful even when
+            // the access ends in a simulator failure (ADR-0002 §6).
+            if status == BlockingResponseStatus::Ok && command == BlockingCommand::Write {
+                state.committed_writes = state.committed_writes.saturating_add(1);
+            }
+        })?;
+        self.reject_device_events(&transaction, path)?;
 
         // A target may offer direct memory only on a completed non-atomic
         // transaction, and the adapter queries it once, for the access
@@ -1093,16 +1113,17 @@ impl TlmRamAdapter {
         let outcome = transaction
             .atomic_extension()
             .and_then(|extension| extension.outcome());
+        let path = ResponsePath {
+            access: DelayAccess::Atomic(descriptor.kind),
+            subject: "atomic request",
+            address: descriptor.paddr,
+            command,
+            length: width.bytes(),
+        };
         self.classify_response(
             &mut state,
             &transaction,
-            ResponsePath {
-                access: DelayAccess::Atomic(descriptor.kind),
-                subject: "atomic request",
-                address: descriptor.paddr,
-                command,
-                length: width.bytes(),
-            },
+            path,
             unknown,
             // Step 3: a successful RMW or SC committed its effects before
             // delay accounting can fail, so it is recorded first (ADR-0002
@@ -1158,6 +1179,7 @@ impl TlmRamAdapter {
                 }
             },
         )?;
+        self.reject_device_events(&transaction, path)?;
 
         match status {
             BlockingResponseStatus::Ok => match (descriptor.kind, outcome) {

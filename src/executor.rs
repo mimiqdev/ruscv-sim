@@ -4,7 +4,7 @@
 //! Provides `load_and_run` function for loading and executing ELF files
 //! with tohost exit signal support.
 
-use crate::blocking::BlockingInitiator;
+use crate::blocking::{BlockingDeviceEvent, BlockingInitiator, DeviceOutcome, DevicePath};
 use crate::core::{
     commits::CommitLogger, CoreState, RiscvCore, SimulatorFailure, StepOutcome,
     TrapContinuationPolicy,
@@ -184,7 +184,9 @@ pub enum ExecutorError {
 /// Fixed native UART base address.
 pub const SYSTEM_BUS_UART_BASE: u64 = 0x1000_0000;
 /// Native SystemBus UART window.  This intentionally remains wider than the
-/// UART TLM target's eight-byte range.
+/// UART target's eight-byte register range: the Platform keeps the historical
+/// `0x100` window, and the in-tree device target answers the same eight
+/// register offsets the native branch always has.
 pub const SYSTEM_BUS_UART_WINDOW: usize = 0x100;
 /// Fixed native HTIF/tohost endpoint base address.
 pub const SYSTEM_BUS_HTIF_BASE: u64 = 0x4000_8000;
@@ -256,6 +258,16 @@ pub struct SystemBus {
     htif_size: usize,
     /// Callback for HTIF write events (exit signal detection)
     htif_write_callback: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    /// device D4: the UART window's one publication sink, installed once by
+    /// [`crate::machine::Platform::build`].  A transmitted byte reaches the
+    /// window's `PlatformEvent` queue and the host output callback only
+    /// through this site, on the native route and through a device target
+    /// alike.
+    uart_sink: Option<Arc<dyn Fn(u8) + Send + Sync>>,
+    /// device D1/D3: the selected device targets, present only on the TLM
+    /// route.  `None` keeps the native UART and HTIF branches exactly as they
+    /// were.
+    devices: Option<DevicePath>,
     clint: Clint,
     clint_base: u64,
     clint_size: usize,
@@ -310,15 +322,20 @@ impl SystemBus {
             uart,
             ram_base,
             ram_size,
+            None,
         )
     }
 
     /// Adds the selectable guest-RAM slot without changing [`Self::new`].
+    ///
+    /// `devices` is the TLM route's selected device path; the native route
+    /// passes `None` and keeps the UART and HTIF branches (device D1/D3).
     pub(crate) fn with_ram_slot(
         ram: RamSlot,
         uart: Arc<Mutex<Uart16550>>,
         ram_base: u64,
         ram_size: usize,
+        devices: Option<DevicePath>,
     ) -> Self {
         Self {
             ram,
@@ -330,6 +347,8 @@ impl SystemBus {
             htif_base: HTIF_BASE,
             htif_size: HTIF_SIZE,
             htif_write_callback: None,
+            uart_sink: None,
+            devices,
             htif_committed_writes: 0,
             // quantum D3/F9: a fresh Platform starts with no local offset, no
             // counted syncs and `E` = `C` = 0, so no prior generation can
@@ -568,6 +587,56 @@ impl SystemBus {
         F: Fn(u64) + Send + Sync + 'static,
     {
         self.htif_write_callback = Some(Arc::new(callback));
+    }
+
+    /// Installs the UART window's one publication sink (device D4).
+    ///
+    /// Every path that transmits a byte calls it: the native branch's raw
+    /// write, the in-tree device target's reported event and the typed byte
+    /// write.  [`crate::machine::Platform::build`] installs it once, so a
+    /// transmitted byte reaches the window's `PlatformEvent` queue and the
+    /// host output callback at one site and before the store retires.
+    pub(crate) fn set_uart_sink<F>(&mut self, sink: F)
+    where
+        F: Fn(u8) + Send + Sync + 'static,
+    {
+        self.uart_sink = Some(Arc::new(sink));
+    }
+
+    /// Publishes one transmitted UART byte through the window's sink.
+    fn publish_uart(&self, byte: u8) {
+        if let Some(sink) = &self.uart_sink {
+            sink(byte);
+        }
+    }
+
+    /// Publishes one HTIF write value through the window's sink and bumps the
+    /// endpoint's committed-write bookkeeping.
+    ///
+    /// The typed dword write, the raw native write, the write side of one AMO
+    /// envelope and an accepted device transaction all reach the endpoint's
+    /// single sink and version through this method.
+    fn publish_htif_write(&mut self, value: u64) {
+        if let Some(callback) = &self.htif_write_callback {
+            callback(value);
+        }
+        self.htif_committed_writes += 1;
+    }
+
+    /// Publishes one device access's at-most-one event through its window's
+    /// sink (device D4).
+    ///
+    /// The device adapter has already rejected an event beside a non-`Ok`
+    /// status, a second event and another window's event, so a failure never
+    /// reaches this site and an accepted access publishes exactly one.
+    fn finish_device(&mut self, outcome: DeviceOutcome) -> PhysicalBackendResult {
+        let DeviceOutcome { response, event } = outcome;
+        match event {
+            Some(BlockingDeviceEvent::UartTransmit(byte)) => self.publish_uart(byte),
+            Some(BlockingDeviceEvent::HtifWrite(value)) => self.publish_htif_write(value),
+            None => {}
+        }
+        response
     }
 
     /// Returns the HTIF endpoint's committed-write version.
@@ -927,7 +996,10 @@ impl SystemBus {
         }
 
         // The native UART keeps the historical 0x100-byte SystemBus window,
-        // but the raw target is byte-only and cannot be fetched as code.
+        // but the raw target is byte-only and cannot be fetched as code.  On
+        // the TLM route these answers are still the Platform's pre-target
+        // policy, and the selected device target answers the access itself
+        // (device D1/D3).
         if contains_range(
             self.uart_base,
             self.uart_size,
@@ -945,6 +1017,16 @@ impl SystemBus {
                     PhysicalTargetRejectionReason::UnsupportedWidth,
                     "UART native accesses are byte-only",
                 ));
+            }
+
+            if self.devices.is_some() {
+                let outcome = self
+                    .devices
+                    .as_ref()
+                    .expect("checked above")
+                    .uart()
+                    .transact(request, initiator);
+                return self.finish_device(outcome);
             }
 
             let offset = descriptor.paddr - self.uart_base;
@@ -968,7 +1050,14 @@ impl SystemBus {
                             "validated native UART write was missing its payload",
                         )
                     })?;
-                    uart.write_reg(offset, payload[0]);
+                    // device D4: the register helper reports the transmitted
+                    // byte, and the window's sink publishes it once.  The
+                    // UART lock is not held across the host callback.
+                    let transmitted = uart.write_reg_reporting(offset, payload[0]);
+                    drop(uart);
+                    if let Some(byte) = transmitted {
+                        self.publish_uart(byte);
+                    }
                     Ok(PhysicalResponse::new(
                         descriptor,
                         PhysicalResponseCompletion::WriteAcknowledgement,
@@ -1008,6 +1097,20 @@ impl SystemBus {
                 ));
             }
 
+            // device D1/D3: on the TLM route the endpoint's plain dword read
+            // and write are one blocking transaction to the selected target.
+            // The atomic envelope below stays Platform-side and never reaches
+            // it.
+            if self.devices.is_some() {
+                let outcome = self
+                    .devices
+                    .as_ref()
+                    .expect("checked above")
+                    .htif()
+                    .transact(request, initiator);
+                return self.finish_device(outcome);
+            }
+
             return match descriptor.category {
                 PhysicalAccessKind::DataRead => Ok(PhysicalResponse::new(
                     descriptor,
@@ -1027,10 +1130,7 @@ impl SystemBus {
                             ));
                         }
                     };
-                    if let Some(callback) = &self.htif_write_callback {
-                        callback(value);
-                    }
-                    self.htif_committed_writes += 1;
+                    self.publish_htif_write(value);
                     Ok(PhysicalResponse::new(
                         descriptor,
                         PhysicalResponseCompletion::WriteAcknowledgement,
@@ -1179,10 +1279,7 @@ impl SystemBus {
                     // the endpoint bookkeeping.
                     let old = [0u8; 8];
                     let new = transform.apply(&old, operand);
-                    if let Some(callback) = &self.htif_write_callback {
-                        callback(u64::from_le_bytes(new));
-                    }
-                    self.htif_committed_writes += 1;
+                    self.publish_htif_write(u64::from_le_bytes(new));
                     Ok(AtomicResponse::rmw_for(request, &old))
                 }
             };
@@ -1286,11 +1383,9 @@ impl MemoryInterface for SystemBus {
             return Err(MemoryError::InvalidAddress(addr));
         }
         if self.is_htif(addr) {
-            // HTIF tohost write - trigger callback if registered
-            if let Some(ref callback) = self.htif_write_callback {
-                callback(value);
-            }
-            self.htif_committed_writes += 1;
+            // HTIF tohost write: one accepted write reaches the endpoint's
+            // single sink and bumps its committed-write bookkeeping.
+            self.publish_htif_write(value);
             return Ok(());
         }
         Err(MemoryError::InvalidAddress(addr))
@@ -1322,10 +1417,16 @@ impl MemoryInterface for SystemBus {
         }
         if self.is_uart(addr) {
             let offset = addr - self.uart_base;
-            self.uart
+            // device D4: the typed byte write publishes through the UART sink,
+            // exactly as the raw and device paths do.
+            let transmitted = self
+                .uart
                 .lock()
                 .map_err(|_| MemoryError::Backend("UART lock poisoned".into()))?
-                .write_reg(offset, value);
+                .write_reg_reporting(offset, value);
+            if let Some(byte) = transmitted {
+                self.publish_uart(byte);
+            }
             return Ok(());
         }
         Err(MemoryError::InvalidAddress(addr))
@@ -3434,6 +3535,10 @@ mod facade_tests;
 #[cfg(test)]
 #[path = "executor_u3_tests.rs"]
 mod u3_tests;
+
+#[cfg(test)]
+#[path = "executor_device_tests.rs"]
+mod device_tests;
 
 #[cfg(test)]
 #[allow(dead_code)]
