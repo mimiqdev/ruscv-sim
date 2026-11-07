@@ -56,10 +56,10 @@ reset acknowledgement (nb D9). TLM-modeled devices stay out of scope.
 | Debug transport of image installation and host views | `transport_dbg` |
 | Transport reset | The target's own reset operation |
 | Guest-RAM target | `simple_target_socket` on `RamTarget` |
-| Machine grant | Bounded grant over the C ABI, then `wait(consumed)` |
+| Machine grant | Bounded grant over the C ABI, then `wait(consumed_fs - host_elapsed_fs)` |
 | Hart local offset (quantum D11) | The `b_transport` `delay` argument |
 | Quantum selection (quantum D12) | `ruscv_target.quantum_ticks` |
-| Counted sync ending a grant (quantum D12) | The grant returns, then `wait(consumed)` |
+| Counted sync ending a grant (quantum D12) | The grant returns, then `wait(consumed)`; a quantum never combines with a suspending target |
 | Direct RAM fast path | `get_direct_mem_ptr`/`invalidate_direct_mem_ptr` via the C ABI (direct-memory D12) |
 | Suspending `may_suspend` transaction (nb D7) | The TLM-2.0 base protocol on the same socket |
 | AT latency `lambda` (nb D8) | The target's `--nb-latency`, its declared `max_delay_fs` and its phase annotations |

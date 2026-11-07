@@ -21,11 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     点名 `--grant-trace` 比较
   - `docs/integration/systemc-tlm.md` 的规范来源改指 nb D7–D10（挂起、base protocol、commit 规则、
     退休与 AT target 模式），并写清 ABI 侧的挂起字段、grant 的 `host_elapsed_fs` 与 `--nb-latency` /
-    `--nb-path` 的用法错误；开放项仍只余 TLM 建模设备、SystemC 建模中断线与多笔未完成事务
-  - 本单元不改仿真行为、不新增测试、不改 A10 oracle 与认证推迟：§4 的 15 条 mutation 控制均已注册，
-    五个 SystemC fault 选项在 smoke 中各自断言，CI 的 `Quality and tests`、`Debug mutation controls`、
-    `SystemC transport smoke` 与 `Debug attach` 作业继续覆盖完整质量门、guest suite、C ABI、SystemC、
-    工具脚本与 mutation runner
+    `--nb-path` 的用法错误；映射表的 grant 行改为 `wait(consumed_fs - host_elapsed_fs)`；开放项仍只余
+    TLM 建模设备、SystemC 建模中断线与多笔未完成事务
+  - 补上 U1 在 atomic 路径上的计费断言：`an_atomic_response_charges_its_elapsed_time` 让 `e < d` 的
+    终态 `Ok` AMO 与 guest 可见 fault 各计一次取整 delay，`e > d` 的终态 AMO 作为 elapsed-above-delay
+    失败计 `e`；此前只有 plain 路径与 atomic 的 Incomplete/unknown 有该断言
+  - 本单元不改仿真行为、不改 A10 oracle 与认证推迟：§4 的 15 条 mutation 控制均已注册（新增测试不属于
+    已有控制的目标），五个 SystemC fault 选项在 smoke 中各自断言，CI 的 `Quality and tests`、
+    `Debug mutation controls`、`SystemC transport smoke` 与 `Debug attach` 作业继续覆盖完整质量门、
+    guest suite、C ABI、SystemC、工具脚本与 mutation runner
 
 - **Non-blocking U4: 晚响应、退休与 fault 控制（issue #219）**
   - `RuscvInitiator` 用声明上限界定每笔 AT 事务（nb D9）：回调进程的每次等待都以
