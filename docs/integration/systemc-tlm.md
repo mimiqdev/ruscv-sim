@@ -20,7 +20,7 @@ ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
 
-**Last reviewed:** 2026-11-06
+**Last reviewed:** 2026-11-07
 
 The repository implements one blocking-transport integration: a C ABI facade
 ([`src/capi`](../../src/capi), [`include/ruscv_sim.h`](../../include/ruscv_sim.h))
