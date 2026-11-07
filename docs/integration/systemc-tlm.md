@@ -16,16 +16,16 @@ this page's `direct-memory D<n>` citations name that contract). Quantum D14 make
 this page normative for the local offset, the grant return, the sync and the
 bound rules on this host, and this page's `quantum D<n>` citations name the
 [archived quantum contract](../archive/milestones/quantum-temporal-decoupling.md).
-The Current contract's D7, D8 and D10 make this page normative for the
-non-blocking base-protocol mapping, the commit rule and the AT target mode;
-this page's `nb D<n>` citations name that contract. Bounded by
+The Current contract's D7–D10 make this page normative for suspension, the
+non-blocking base-protocol mapping, the commit rule, retirement and the AT
+target mode; this page's `nb D<n>` citations name that contract. Bounded by
 ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
 
 **Last reviewed:** 2026-11-08
 
-The repository implements one blocking-transport integration: a C ABI facade
+The repository implements one SystemC/TLM transport integration: a C ABI facade
 ([`src/capi`](../../src/capi), [`include/ruscv_sim.h`](../../include/ruscv_sim.h))
 and a pinned SystemC host ([`integration/systemc`](../../integration/systemc)).
 This page is the normative reference for that mapping, its ownership and thread
@@ -206,6 +206,15 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
   offset included, as an added delay. That exceeds the declared maximum, which
   is the `--fault-keep-offset` control's failure and never a normal bridge
   (quantum §4).
+- Suspension (nb D6/D7): `--nb` sets `ruscv_target.suspends_host_time`, which
+  the ABI copies at create and keeps across reset. The adapter's flag arrives
+  in `ruscv_payload.may_suspend`, and the callback's measured host time returns
+  in `ruscv_payload.host_elapsed_fs` for every response, including the
+  `Incomplete` response the ABI builds for a changed payload. Each grant
+  reports its own `W` in `ruscv_grant.host_elapsed_fs`, after `facts`, and the
+  host waits `consumed_fs - host_elapsed_fs`. A suspending table with a
+  non-zero `quantum_ticks` is refused at create, and `--nb-latency` above 10^15
+  fs, or `--nb-latency`/`--nb-path` without `--nb`, is a usage error.
 - A debug request requires a complete transfer and an unchanged address, command
   and length; a short transfer or any changed request field is a failed debug
   transfer.

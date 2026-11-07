@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Non-blocking U5: 文档收尾与验收闭环**
+  - 根 README 的 C ABI 段补上挂起支持（nb D5/D6）：`ruscv_target.suspends_host_time`、
+    `ruscv_payload` 的 `may_suspend`/`host_elapsed_fs`、`ruscv_grant.host_elapsed_fs`、挂起表与
+    quantum 的 create 拒绝、挂起回调的线程与再入规则，以及“字段追加改变尺寸但不移动既有 offset”的
+    重编译要求；SystemC 宿主段补上 `--nb`、`--nb-latency`、`--nb-path`、`--grant-trace`、AT 路径的
+    超时/退休/late phase/drain、五个 fault 选项与各自的用法错误，并替换“尚未实现”的旧句
+  - `docs/verification/README.md` 更新合同状态与实现证据（`src/blocking/tests.rs`、
+    `src/machine/tests.rs`、`src/capi/tests.rs`、`tests/capi/smoke.c`、`scripts/test_systemc_smoke.sh`、
+    `scripts/debug/stage6-mutations` 的 15 个 `nb-u1-*`/`nb-u2-*` 控制），并在 SystemC smoke 段
+    点名 `--grant-trace` 比较
+  - `docs/integration/systemc-tlm.md` 的规范来源改指 nb D7–D10（挂起、base protocol、commit 规则、
+    退休与 AT target 模式），并写清 ABI 侧的挂起字段、grant 的 `host_elapsed_fs` 与 `--nb-latency` /
+    `--nb-path` 的用法错误；开放项仍只余 TLM 建模设备、SystemC 建模中断线与多笔未完成事务
+  - 本单元不改仿真行为、不新增测试、不改 A10 oracle 与认证推迟：§4 的 15 条 mutation 控制均已注册，
+    五个 SystemC fault 选项在 smoke 中各自断言，CI 的 `Quality and tests`、`Debug mutation controls`、
+    `SystemC transport smoke` 与 `Debug attach` 作业继续覆盖完整质量门、guest suite、C ABI、SystemC、
+    工具脚本与 mutation runner
+
 - **Non-blocking U4: 晚响应、退休与 fault 控制（issue #219）**
   - `RuscvInitiator` 用声明上限界定每笔 AT 事务（nb D9）：回调进程的每次等待都以
     `BEGIN_REQ` + `max_delay_fs + 1` fs 为界，因此在声明上限处恰好完成（包括 λ = 0 的
