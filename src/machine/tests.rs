@@ -2935,9 +2935,9 @@ fn host_uart_quantum_parity_guest() -> Vec<u32> {
 ///
 /// Q = 1024 keeps the threshold out of reach, so the first three turns accrue
 /// three local ticks without committing any and the pending guest turn's device
-/// access flushes exactly those three.  A refused access that charges anything
-/// ends below `parity - 1`; the failed turn's own advance is the one step a
-/// started failed turn never gets.
+/// access flushes exactly those three.  A refused access that charges nothing
+/// ends at `parity - 1`: the failed turn's own advance is the one step a started
+/// failed turn never gets, while any charge it added would end above it.
 fn host_uart_quantum_parity(code: &[u32]) -> u64 {
     let mut config = MachineConfig::new(PlatformKind::Native);
     config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
