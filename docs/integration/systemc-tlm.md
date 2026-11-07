@@ -18,7 +18,7 @@ this page's `direct-memory D<n>` citations name that contract). Quantum D14 make
 this page normative for the local offset, the grant return, the sync and the
 bound rules on this host, and this page's `quantum D<n>` citations name the
 [archived quantum contract](../archive/milestones/quantum-temporal-decoupling.md).
-The archived non-blocking contract's D7–D10 make this page normative for
+The [archived non-blocking contract](../archive/milestones/non-blocking-tlm-transport.md)'s D7–D10 make this page normative for
 suspension, the non-blocking base-protocol mapping, the commit rule, retirement
 and the AT target mode; this page's `nb D<n>` citations name that contract. The
 Current contract's D5–D9 make this page normative for the device-target
