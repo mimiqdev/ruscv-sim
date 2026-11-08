@@ -1,6 +1,6 @@
 # Host HTIF service proposal
 
-**Status:** Current approved proposal entry. On 2026-11-08, after the TLM-Modeled Devices contract completed, the owner selected host HTIF service, the first retained direction of the devices contract §5 ("host HTIF service through the same window-indexed table"), and the maintaining agent selected the D1–D9 scope under the owner's delegation of full planning authority.
+**Status:** Current approved proposal entry. On 2026-11-08, after the TLM-Modeled Devices contract completed, the owner selected host HTIF service, the first retained direction of the devices contract §5 ("host HTIF service through the same window-indexed table"), and the maintaining agent selected the D1–D10 scope under the owner's delegation of full planning authority.
 
 **Authority:** Informational navigation. This is not a second current contract or an implementation claim.
 
