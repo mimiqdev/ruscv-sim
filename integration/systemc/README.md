@@ -247,4 +247,10 @@ one guest's register set, not a timed serial line: it transmits on the accepted
 THR write and accepts injected bytes only through the ABI's `receive` callback.
 The host HTIF target answers one endpoint window: its read answer is fixed at
 zero, it renders the standard console device's putchar command and nothing else,
-and it exposes no fromhost register or host-to-guest input.
+and it exposes no fromhost register or host-to-guest input. The C ABI exposes
+no per-value sink for a non-exit HTIF write: `config.htif_write` has no C entry,
+so the smoke proves the exit word's publication through the run stop (same turn
+and exit code as the in-tree pass) and the console words' publication through
+the target's accepted reports and the byte-identical commit log. A sink-level
+console assertion would need a new ABI entry, which the append-only rule keeps
+out of this unit.
