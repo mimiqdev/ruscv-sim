@@ -193,6 +193,13 @@ uart_field() {
         | awk -v key="$2" '/^systemc-smoke: uart / { for (i = 1; i <= NF; i++) { split($i, pair, "="); if (pair[1] == key) { print pair[2]; exit } } }'
 }
 
+# The byte sequence the host UART target echoed to this host's console, in its
+# escaped form, or an empty string (device D9). This is the target's own console
+# channel, so it observes a transmitted byte without reading its counters.
+uart_console_sequence() {
+    printf '%s\n' "$1" | sed -n 's/^uart-console: \(.*\)$/\1/p' | tr -d '\n'
+}
+
 # The status the host's reset probe received while an AT transaction was still
 # open, or an empty string when the host skipped the probe (nb D9).
 smoke_reset_status() {
@@ -1166,6 +1173,7 @@ require_uart_pass() {
     LAST_WRITES="$(uart_field "${pass_output}" writes)"
     LAST_TRANSMITTED="$(uart_field "${pass_output}" transmitted)"
     LAST_BYTES="$(uart_field "${pass_output}" bytes)"
+    LAST_CONSOLE="$(uart_console_sequence "${pass_output}")"
     for fact in "grants:${LAST_GRANTS}" "consumed:${LAST_CONSUMED}" \
         "b_transport:${LAST_TX}" "reads:${LAST_READS}" "writes:${LAST_WRITES}" \
         "transmitted:${LAST_TRANSMITTED}" "bytes:${LAST_BYTES}"; do
@@ -1200,6 +1208,8 @@ for variant in "baseline:" "dmi:--dmi" "nb:--nb" "quantum:--quantum ${FAULT_QUAN
     in_tree_consumed="${LAST_CONSUMED}"
     [ "${LAST_TRANSMITTED}" -eq 0 ] \
         || fail "${UART_GUEST}: the in-tree (${name}) pass transmitted ${LAST_TRANSMITTED} host byte(s); the Rust device reports none here"
+    [ -z "${LAST_CONSOLE}" ] \
+        || fail "${UART_GUEST}: the in-tree (${name}) pass echoed console byte(s) ${LAST_CONSOLE}; the in-tree selection serves no host UART"
     require_uart_pass "${UART_GUEST} --uart-target host (${name})" host \
         "${OUTDIR}/logs/${UART_GUEST}.uart-host.${name}.log" \
         ${variant_options[@]+"${variant_options[@]}"}
@@ -1209,10 +1219,8 @@ for variant in "baseline:" "dmi:--dmi" "nb:--nb" "quantum:--quantum ${FAULT_QUAN
         || fail "${UART_GUEST}: the host (${name}) pass transmitted ${LAST_TRANSMITTED} byte(s), not the guest's seven"
     [ "${LAST_BYTES}" = '"Hello!\n"' ] \
         || fail "${UART_GUEST}: the host (${name}) pass transmitted ${LAST_BYTES}, not exactly Hello!\\n"
-    if ! printf '%s\n' "${LAST_OUTPUT}" | grep -qx 'Hello!'; then
-        printf '%s\n' "${LAST_OUTPUT}"
-        fail "${UART_GUEST}: the host (${name}) pass did not print Hello! to this host's console"
-    fi
+    [ "${LAST_CONSOLE}" = 'Hello!\n' ] \
+        || fail "${UART_GUEST}: the host (${name}) pass echoed console byte(s) ${LAST_CONSOLE}, not exactly Hello!\\n"
     [ "${LAST_GRANTS}" = "${in_tree_grants}" ] \
         || fail "${UART_GUEST}: the host (${name}) pass took ${LAST_GRANTS} grant(s), not the in-tree pass's ${in_tree_grants}"
     [ "${LAST_CONSUMED}" = "${in_tree_consumed}" ] \
@@ -1227,6 +1235,8 @@ require_uart_pass "${UART_GUEST} --uart-target host (repeat)" host \
     "${OUTDIR}/logs/${UART_GUEST}.uart-host.repeat.log"
 [ "${LAST_BYTES}" = '"Hello!\n"' ] \
     || fail "${UART_GUEST}: the repeated host pass transmitted ${LAST_BYTES}, not exactly Hello!\\n"
+[ "${LAST_CONSOLE}" = 'Hello!\n' ] \
+    || fail "${UART_GUEST}: the repeated host pass echoed console byte(s) ${LAST_CONSOLE}, not exactly Hello!\\n"
 if ! cmp -s "${OUTDIR}/logs/${UART_GUEST}.uart-host.baseline.log" \
     "${OUTDIR}/logs/${UART_GUEST}.uart-host.repeat.log"; then
     fail "${UART_GUEST}: the repeated host pass's commit log differs from the first"
@@ -1295,9 +1305,9 @@ no_lsr_transmitted="$(uart_field "${no_lsr_output}" transmitted)"
     || fail "the --fault-uart-no-lsr control transmitted a byte; the guest never left its wait"
 echo -e "  ${GREEN}[PASS]${NC} the missing transmit-empty bit exhausted the turn limit (status ${no_lsr_status})"
 
-# device §4: --fault-uart-wait reports one Platform tick of host elapsed time on
-# a device transaction, which device D4 forbids: host time may not pass inside a
-# device callback.
+# device §4: --fault-uart-wait waits one Platform tick inside `b_transport` and
+# reports the interval as host elapsed time, which device D4 forbids: host time
+# may not pass inside a device callback.
 echo -e "${YELLOW}== --fault-uart-wait (must not pass)${NC}"
 capture uart_wait_output uart_wait_status \
     timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${UART_ELF}" --isa "${UART_PROFILE}" \
@@ -1348,10 +1358,9 @@ uart_event_transmitted="$(uart_field "${uart_event_output}" transmitted)"
     || fail "the --fault-uart-event-on-fault control reported no transmitted count"
 [ "${uart_event_transmitted}" -eq 0 ] \
     || fail "the --fault-uart-event-on-fault control transmitted a byte"
-if printf '%s\n' "${uart_event_output}" | grep -qx 'Hello!'; then
-    printf '%s\n' "${uart_event_output}"
-    fail "the --fault-uart-event-on-fault control let a byte reach the host's console"
-fi
+uart_event_console="$(uart_console_sequence "${uart_event_output}")"
+[ -z "${uart_event_console}" ] \
+    || fail "the --fault-uart-event-on-fault control let console byte(s) ${uart_event_console} reach the host's console"
 echo -e "  ${GREEN}[PASS]${NC} the fault-status event failed the access and transmitted nothing (status ${uart_event_status})"
 
 # nb D7/D8: the non-blocking selections are usage errors in the wrong mode,

@@ -9,18 +9,20 @@
 //
 // An accepted THR write with DLAB clear reports one
 // RUSCV_DEVICE_EVENT_UART_TRANSMIT, the ABI's at-most-one guest-visible effect,
-// and echoes the byte to this host's console. The event's value travels in the
-// access's own data bytes, so no second field carries it. Every other accepted
-// access reports RUSCV_DEVICE_EVENT_NONE.
+// and echoes the byte to this host's console as one `uart-console:` line. The
+// event's value travels in the access's own data bytes, so no second field
+// carries it, and the console channel lets the smoke observe a transmitted byte
+// without reading the target's counters. Every other accepted access reports
+// RUSCV_DEVICE_EVENT_NONE.
 //
 // The three fault-option controls of device §4 break this model in one named
 // place each, so the smoke can require its own failure and never a normal run:
 //
 // * `--fault-uart-no-lsr` answers LSR without the transmit-holding-empty bit, so
 //   a guest that waits for it exhausts its turn bound instead of passing;
-// * `--fault-uart-wait` reports one Platform tick of host elapsed time on a
-//   device transaction, which device D4 forbids: host time may not pass inside
-//   a device callback;
+// * `--fault-uart-wait` waits one Platform tick inside `b_transport` and reports
+//   the interval as host elapsed time, which device D4 forbids: host time may
+//   not pass inside a device callback;
 // * `--fault-uart-event-on-fault` reports a transmit event with
 //   RUSCV_TLM_ADDRESS_ERROR, which device D4 forbids: only an accepted access
 //   publishes an event.
@@ -42,8 +44,8 @@ struct UartFaults {
     /// `--fault-uart-no-lsr`: answer LSR with the transmit-holding-empty bit
     /// clear.
     bool no_lsr = false;
-    /// `--fault-uart-wait`: report one Platform tick of host elapsed time on a
-    /// device transaction.
+    /// `--fault-uart-wait`: wait one Platform tick inside `b_transport` and
+    /// report it as host elapsed time.
     bool wait = false;
     /// `--fault-uart-event-on-fault`: report a transmit event with
     /// `RUSCV_TLM_ADDRESS_ERROR`.

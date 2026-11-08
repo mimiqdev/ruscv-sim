@@ -8,6 +8,9 @@
 #include "uart_target.h"
 
 #include <cstdio>
+#include <string>
+
+#include <systemc>
 
 namespace ruscv_sim {
 namespace {
@@ -63,6 +66,23 @@ constexpr uint8_t kLcrDlab = 0x80;
 // The in-tree MCR OUT2 bit (`mcr_bits`).
 constexpr uint8_t kMcrOut2 = 0x08;
 
+/// Escapes one transmitted byte for the target's console channel.
+std::string escape_byte(unsigned char byte) {
+    switch (byte) {
+        case '\\': return "\\\\";
+        case '\n': return "\\n";
+        case '\r': return "\\r";
+        case '\t': return "\\t";
+        default: break;
+    }
+    if (byte >= 0x20 && byte < 0x7f) {
+        return std::string(1, static_cast<char>(byte));
+    }
+    char escape[8] = {};
+    std::snprintf(escape, sizeof(escape), "\\x%02x", byte);
+    return escape;
+}
+
 }  // namespace
 
 UartTarget::UartTarget(UartFaults faults) : faults_(faults) { reset_state(); }
@@ -99,11 +119,14 @@ int32_t UartTarget::on_transport_reset(void* user) {
 void UartTarget::serve(ruscv_payload& payload) {
     ++b_transports_;
     if (faults_.wait) {
-        // device §4: --fault-uart-wait reports one Platform tick of host elapsed
-        // time on a device transaction. device D4 makes host elapsed time a
-        // protocol failure of the access, so the run must fail with that
-        // diagnostic instead of passing.
-        payload.host_elapsed_fs = kTickPeriodFs;
+        // device §4: --fault-uart-wait waits one Platform tick inside the
+        // callback and reports the interval as host elapsed time. device D4
+        // forbids host time inside a device callback, so the access is a
+        // protocol failure of that access.
+        const sc_core::sc_time before = sc_core::sc_time_stamp();
+        sc_core::wait(sc_core::sc_time(kTickPeriodFs, sc_core::SC_FS));
+        payload.host_elapsed_fs =
+            static_cast<uint64_t>((sc_core::sc_time_stamp() - before).value());
     }
     if (payload.data == nullptr || payload.length != 1) {
         // The Platform's byte-only width policy runs before this callback, so a
@@ -133,9 +156,11 @@ void UartTarget::serve(ruscv_payload& payload) {
         write_reg(offset, byte);
         if (transmit) {
             // device D7: one accepted THR write transmits exactly one byte, and
-            // the event's value is that byte.
+            // the event's value is that byte. The console channel is this
+            // target's own observation, so the smoke can prove a byte reached
+            // this host's console without reading the counters.
             transmitted_.push_back(static_cast<char>(byte));
-            std::fputc(byte, stdout);
+            std::printf("uart-console: %s\n", escape_byte(byte).c_str());
             std::fflush(stdout);
             payload.device_event = RUSCV_DEVICE_EVENT_UART_TRANSMIT;
         }

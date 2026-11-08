@@ -22,7 +22,10 @@
 // grant, and every grant return syncs before it reports its facts, so
 // `committed_end_fs` is the Machine's committed time at each return and the
 // kernel's `wait(grant.consumed_fs)` keeps `sc_time_stamp()` equal to it. The
-// check below therefore holds after every grant, and a mismatch fails the run.
+// check below therefore holds after every grant, and a mismatch fails the run
+// unless the Machine has already classified it as failed: an already-failed run
+// keeps its own classification and diagnostic, which is what device §4's
+// `--fault-uart-wait` relies on when host time passes inside a device callback.
 //
 // `--nb` selects the non-blocking AT path (nb D7/D8), with `--nb-latency` and
 // `--nb-path`; `--grant-trace` writes one line per grant for the smoke's D10
@@ -807,13 +810,32 @@ private:
             const bool elapsed_exceeds_consumed = grant.host_elapsed_fs > grant.consumed_fs;
             const uint64_t remainder_fs =
                 elapsed_exceeds_consumed ? 0 : grant.consumed_fs - grant.host_elapsed_fs;
+            if (!elapsed_exceeds_consumed && remainder_fs != 0) {
+                // nb D5: the host time inside the grant's transactions has
+                // already passed, so only the remainder is waited.
+                sc_core::wait(sc_core::sc_time::from_value(remainder_fs));
+            }
+            // The result is read before the clock is judged, because device §4's
+            // --fault-uart-wait lets host time pass inside an access the Machine
+            // then classifies as a failed turn. An already-failed run keeps its
+            // own classification and diagnostic, exactly as it does for host
+            // time above the consumed amount; the disagreement is reported but
+            // does not replace it.
+            ruscv_result result{};
+            status = ruscv_machine_result(machine, &result);
+            if (status != RUSCV_OK) {
+                stop_with_failure("ruscv_machine_result", status, machine);
+                return;
+            }
+            turns_seen_ = result.turns;
             if (!elapsed_exceeds_consumed) {
-                if (remainder_fs != 0) {
-                    // nb D5: the host time inside the grant's transactions has
-                    // already passed, so only the remainder is waited.
-                    sc_core::wait(sc_core::sc_time::from_value(remainder_fs));
-                }
-                if (sc_core::sc_time_stamp().value() != grant.committed_end_fs) {
+                if (sc_core::sc_time_stamp().value() == grant.committed_end_fs) {
+                    // quantum D12/D13: a grant return is a sync, so after the
+                    // remainder wait the kernel clock is the Machine's committed
+                    // time. Counting the comparisons lets the smoke assert that
+                    // every grant was checked.
+                    ++clock_checks_;
+                } else if (result.state != RUSCV_RUN_FAILED) {
                     char message[256] = {};
                     std::snprintf(message, sizeof(message),
                                   "the kernel clock %" PRIu64
@@ -822,20 +844,15 @@ private:
                                   grant.committed_end_fs);
                     stop_with_message(message, machine);
                     return;
+                } else {
+                    std::fprintf(stderr,
+                                 "systemc-smoke: the failed run's kernel clock %" PRIu64
+                                 " fs differs from the Machine cursor %" PRIu64 " fs\n",
+                                 static_cast<uint64_t>(sc_core::sc_time_stamp().value()),
+                                 grant.committed_end_fs);
+                    std::fflush(stderr);
                 }
-                // quantum D12/D13: a grant return is a sync, so after the
-                // remainder wait the kernel clock is the Machine's committed
-                // time. Counting the comparisons lets the smoke assert that
-                // every grant was checked.
-                ++clock_checks_;
             }
-            ruscv_result result{};
-            status = ruscv_machine_result(machine, &result);
-            if (status != RUSCV_OK) {
-                stop_with_failure("ruscv_machine_result", status, machine);
-                return;
-            }
-            turns_seen_ = result.turns;
             if (result.state != RUSCV_RUN_RUNNING) {
                 if (elapsed_exceeds_consumed && result.state != RUSCV_RUN_FAILED) {
                     // nb D5: only an already-failed run keeps its result; any
