@@ -464,3 +464,249 @@ fn an_in_tree_uart_window_keeps_the_typed_view() {
         "an in-tree UART window lost its typed register read"
     );
 }
+
+// ---- Host HTIF Service U1: typed view and run stop (htif D3–D5) ----
+
+use super::observation_fixture as elf;
+use crate::blocking::test_support::{HostHtif, HostHtifFault};
+use crate::blocking::{DeviceTargets, Transport, ZeroDelayRam};
+use crate::machine::{MachineConfig, PlatformKind};
+
+/// A `Write` sink that keeps a run's commit log in memory.
+#[derive(Clone)]
+struct CapturedLog(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for CapturedLog {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// One TLM-route configuration with the given device selection.
+fn tlm_config(devices: DeviceTargets) -> MachineConfig {
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.devices = devices;
+    config
+}
+
+/// One run of `code` under `config`, with its commit log captured in memory.
+fn run_with_log(
+    config: MachineConfig,
+    code: &[u32],
+    bound: u64,
+) -> (super::ExecutionResult, String) {
+    let bytes = elf::elf_with_code(code, 0, true, false, 0x4000);
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let logger = super::CommitLogger::for_test(Box::new(CapturedLog(log.clone())));
+    let hooks = super::NativeHooks {
+        config: Some(config),
+        ..super::NativeHooks::default()
+    };
+    let result =
+        super::run_native_inner(&bytes, Some(bound), None, None, false, Some(logger), hooks)
+            .expect("the run completed");
+    let text = String::from_utf8(log.lock().unwrap().clone()).expect("the commit log is UTF-8");
+    (result, text)
+}
+
+/// A guest that writes `value` to the endpoint and then self-loops, so a run
+/// with no exit fact reaches its turn bound.
+fn endpoint_exit_guest(value: u32) -> Vec<u32> {
+    vec![
+        elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::addi(9, 0, value as i32),
+        elf::sd(9, 8, 0),
+        elf::beq(0, 0, 0), // self-loop
+    ]
+}
+
+/// htif D3: on the HTIF window the typed view is unchanged, so a typed dword
+/// read still answers zero even when the host target's own read state is not,
+/// and a typed dword write still publishes through the sink without reaching
+/// the target.  The raw device path still reaches it.
+#[test]
+fn a_host_htif_window_keeps_the_typed_read_and_publishes_its_typed_write() {
+    let target = HostHtif::new(SYSTEM_BUS_HTIF_BASE);
+    target.set_read_value(0x77);
+    let ram = Arc::new(Mutex::new(SimpleMemory::new(RAM_SIZE)));
+    let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
+    let mut bus = SystemBus::with_ram_slot(
+        RamSlot::native(ram, RAM_BASE, RAM_SIZE),
+        uart.clone(),
+        RAM_BASE,
+        RAM_SIZE,
+        Some(DevicePath::new(
+            Arc::new(InTreeUart::new(uart)),
+            target.clone(),
+        )),
+    );
+    let values = Arc::new(Mutex::new(Vec::new()));
+    let sink = values.clone();
+    bus.set_htif_write_callback(move |value| sink.lock().unwrap().push(value));
+
+    assert_eq!(
+        bus.read_dword(SYSTEM_BUS_HTIF_BASE)
+            .expect("the typed tohost read was refused"),
+        0,
+        "the typed tohost read answered the host target's state instead of zero"
+    );
+    assert_eq!(
+        target.transactions(),
+        0,
+        "the typed tohost read reached the host target"
+    );
+    bus.write_dword(SYSTEM_BUS_HTIF_BASE, 0xaa)
+        .expect("the typed tohost write was refused");
+    assert_eq!(
+        *values.lock().unwrap(),
+        [0xaa],
+        "the typed tohost write did not publish exactly one value"
+    );
+    assert_eq!(
+        bus.htif_committed_write_version(),
+        1,
+        "the typed tohost write did not bump the endpoint's version once"
+    );
+    assert_eq!(
+        target.transactions(),
+        0,
+        "the typed tohost write reached the host target"
+    );
+
+    // The raw device path is still the guest's: one read of the target's own
+    // state and one write with its own event.
+    let read = PhysicalRequest::data_read(SYSTEM_BUS_HTIF_BASE, PhysicalWidth::Doubleword).unwrap();
+    let response = bus
+        .transact(&read)
+        .expect("the raw tohost read was rejected");
+    assert_eq!(
+        response.read_bytes(),
+        Some(&0x77u64.to_le_bytes()[..]),
+        "the raw tohost read did not answer the host target's state"
+    );
+    let payload = 0xbbu64.to_le_bytes();
+    let write =
+        PhysicalRequest::data_write(SYSTEM_BUS_HTIF_BASE, PhysicalWidth::Doubleword, &payload)
+            .unwrap();
+    assert!(
+        bus.transact(&write).is_ok(),
+        "the raw tohost write was rejected"
+    );
+    assert_eq!(
+        target.transactions(),
+        2,
+        "the raw device path did not reach the host target exactly twice"
+    );
+    assert_eq!(
+        *values.lock().unwrap(),
+        [0xaa, 0xbb],
+        "the raw tohost write did not publish its own value after the typed one"
+    );
+}
+
+/// htif D5: a host-served tohost write that carries an exit word stops the run
+/// where the in-tree endpoint stops it, with the same exit code, the same
+/// retired instructions, the same final PC and a byte-identical commit log.
+#[test]
+fn a_host_htif_exit_stops_the_run_like_the_in_tree_endpoint() {
+    let code = endpoint_exit_guest(1); // (0 << 1) | 1, the exit word for code 0
+    let bound = 64;
+    let (in_tree, in_tree_log) = run_with_log(tlm_config(DeviceTargets::none()), &code, bound);
+
+    let target = HostHtif::new(SYSTEM_BUS_HTIF_BASE);
+    let (host, host_log) = run_with_log(
+        tlm_config(DeviceTargets::with_htif(target.clone())),
+        &code,
+        bound,
+    );
+
+    assert_eq!(
+        in_tree.exit_code, 0,
+        "the in-tree endpoint did not stop the run as an exit: {in_tree:?}"
+    );
+    assert_eq!(
+        (host.exit_code, host.cycles, host.final_pc),
+        (in_tree.exit_code, in_tree.cycles, in_tree.final_pc),
+        "the host-served exit stopped at a different code, turn or PC"
+    );
+    assert_eq!(
+        host.cycles, 3,
+        "the host-served exit did not stop at the retired store's turn"
+    );
+    assert_eq!(
+        host_log, in_tree_log,
+        "the host-served exit's commit log is not byte-identical to the in-tree one"
+    );
+    assert!(!host.timed_out && host.error.is_none(), "{host:?}");
+    assert_eq!(
+        target.transactions(),
+        1,
+        "the host HTIF target did not serve exactly the one tohost write"
+    );
+    assert_eq!(
+        target.reported(),
+        [1],
+        "the host target did not report the guest's exit word"
+    );
+}
+
+/// htif D5: the host cannot suppress the exit by accepting the write without
+/// its event.  The run then has no exit fact and reaches the turn bound a guest
+/// with no exit reaches.
+#[test]
+fn a_host_htif_that_omits_the_event_reaches_the_turn_bound() {
+    let bound = 32;
+    let exit_code = endpoint_exit_guest(1);
+
+    // The in-tree endpoint stops the run at the store.
+    let (in_tree, _) = run_with_log(tlm_config(DeviceTargets::none()), &exit_code, bound);
+    assert_eq!((in_tree.exit_code, in_tree.cycles), (0, 3));
+    assert!(!in_tree.timed_out);
+
+    let target = HostHtif::new(SYSTEM_BUS_HTIF_BASE);
+    target.set_fault(HostHtifFault::DropEvent);
+    let (dropped, _) = run_with_log(
+        tlm_config(DeviceTargets::with_htif(target.clone())),
+        &exit_code,
+        bound,
+    );
+    assert!(
+        dropped.timed_out,
+        "a host that omitted the event stopped the run as an exit: {dropped:?}"
+    );
+    assert_eq!(
+        dropped.cycles, bound,
+        "the run without an exit fact did not reach its turn bound"
+    );
+    assert!(
+        dropped
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains(&format!("Timeout after {bound} cycles"))),
+        "the run without an exit fact did not fail with the turn-limit diagnostic: {dropped:?}"
+    );
+    assert_eq!(
+        target.transactions(),
+        1,
+        "the host HTIF target did not accept the write whose event it omitted"
+    );
+
+    // The bound is the one a guest with no exit reaches: the same guest with a
+    // value that carries no exit command.
+    let (no_exit, _) = run_with_log(
+        tlm_config(DeviceTargets::none()),
+        &endpoint_exit_guest(2),
+        bound,
+    );
+    assert!(no_exit.timed_out && no_exit.error.is_some(), "{no_exit:?}");
+    assert_eq!(
+        dropped.cycles, no_exit.cycles,
+        "the omitted-event run ended at a different turn than a guest with no exit"
+    );
+}

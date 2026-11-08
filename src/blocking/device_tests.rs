@@ -9,10 +9,10 @@
 use super::adapter::TlmRamAdapter;
 use super::device::{BlockingDeviceEvent, DeviceWindow, TlmDeviceAdapter};
 use super::in_tree::{InTreeHtif, InTreeUart};
-use super::test_support::{HostUart, HostUartFault};
+use super::test_support::{HostHtif, HostHtifFault, HostUart, HostUartFault};
 use super::{
     BlockingDebug, BlockingInitiator, BlockingResponseStatus, BlockingTarget, BlockingTransaction,
-    Femtoseconds, TickPeriod,
+    DeviceTargets, Femtoseconds, TickPeriod,
 };
 use crate::hart_amods::{self, AmoOperation};
 use crate::peripherals::uart16550::{reg_offset, Uart16550, FIFO_DEPTH};
@@ -470,5 +470,253 @@ fn an_unknown_completion_takes_precedence_over_a_device_event() {
     assert!(
         outcome.event.is_none(),
         "an unknown completion published a device event"
+    );
+}
+
+// ---- Host HTIF Service U1: the host HTIF target (htif D2–D4, D10) ----
+//
+// The HTIF endpoint's own selection, its read and write answers, and the two
+// response rules this contract adds.  The Machine-level rows live in
+// `src/machine/tests.rs`, the typed-view rows in `src/executor_device_tests.rs`
+// and the run stop in `src/executor_device_tests.rs`.
+
+/// The device adapter over the host HTIF fixture.
+fn host_htif_adapter(target: &Arc<HostHtif>) -> TlmDeviceAdapter {
+    TlmDeviceAdapter::new(DeviceWindow::Htif, target.clone())
+}
+
+/// One tohost read of the endpoint.
+fn dword_read() -> PhysicalRequest<'static> {
+    PhysicalRequest::data_read(HTIF_BASE, PhysicalWidth::Doubleword).unwrap()
+}
+
+/// device D2: the selection names each window independently, and `none` names
+/// no window at all.
+#[test]
+fn the_device_selection_names_each_window_independently() {
+    let selection = DeviceTargets::none();
+    assert!(selection.uart().is_none() && selection.htif().is_none());
+
+    let uart = HostUart::new(UART_BASE);
+    let selection = DeviceTargets::with_uart(uart.clone());
+    assert!(selection.uart().is_some() && selection.htif().is_none());
+
+    let htif = HostHtif::new(HTIF_BASE);
+    let selection = DeviceTargets::with_htif(htif.clone());
+    assert!(selection.uart().is_none() && selection.htif().is_some());
+
+    // htif D2: one selection may name a host target for each window.
+    let selection = DeviceTargets::with_uart_and_htif(uart.clone(), htif.clone());
+    assert!(selection.uart().is_some() && selection.htif().is_some());
+    let debug = format!("{selection:?}");
+    assert!(
+        debug.contains("uart: true") && debug.contains("htif: true"),
+        "the selection's Debug form does not name both windows: {debug}"
+    );
+}
+
+/// device D3/D4, htif D3: the host target answers the same two requests the
+/// in-tree endpoint answers: its own read state and exactly one event carrying
+/// the request's eight data bytes.
+#[test]
+fn a_host_htif_target_reads_its_state_and_reports_the_writes_value() {
+    let target = HostHtif::new(HTIF_BASE);
+    target.set_read_value(0x1122_3344_5566_7788);
+    let adapter = host_htif_adapter(&target);
+
+    let outcome = adapter.transact(&dword_read(), BlockingInitiator::Hart);
+    let response = outcome
+        .response
+        .unwrap_or_else(|error| panic!("the host HTIF rejected its dword read: {error:?}"));
+    assert_eq!(
+        response.read_bytes(),
+        Some(&0x1122_3344_5566_7788u64.to_le_bytes()[..]),
+        "the host HTIF target's read state did not reach the response"
+    );
+    assert!(
+        outcome.event.is_none(),
+        "the host HTIF target's read published an event"
+    );
+
+    let value = 0x0102_0304_0506_0708u64;
+    let payload = value.to_le_bytes();
+    let request =
+        PhysicalRequest::data_write(HTIF_BASE, PhysicalWidth::Doubleword, &payload).unwrap();
+    let outcome = adapter.transact(&request, BlockingInitiator::Hart);
+    assert!(
+        outcome.response.is_ok(),
+        "the host HTIF rejected its dword write: {:?}",
+        outcome.response
+    );
+    assert_eq!(
+        outcome.event,
+        Some(BlockingDeviceEvent::HtifWrite(value)),
+        "one accepted host HTIF write must report the request's value exactly once"
+    );
+    assert_eq!(
+        target.reported(),
+        [value],
+        "the host target did not report the guest's eight bytes"
+    );
+    assert_eq!(
+        target.transactions(),
+        2,
+        "the host HTIF target did not serve exactly the read and the write"
+    );
+}
+
+/// htif D10 rule 1: a read yields neither a UART transmit byte nor an HTIF
+/// write, so an event the target reports on a read is that access's protocol
+/// failure on both windows.
+#[test]
+fn a_device_event_on_a_read_is_a_protocol_failure_on_both_windows() {
+    // The UART window: one register read with a transmit event beside it.
+    let uart = HostUart::new(UART_BASE);
+    uart.set_lsr(0x61);
+    uart.set_fault(HostUartFault::EventOnRead);
+    let request =
+        PhysicalRequest::data_read(UART_BASE + reg_offset::LSR, PhysicalWidth::Byte).unwrap();
+    let outcome = host_uart_adapter(&uart).transact(&request, BlockingInitiator::Hart);
+    assert!(
+        is_protocol(&outcome.response),
+        "a UART transmit event on a read was accepted: {:?}",
+        outcome.response
+    );
+    let PhysicalBackendError::Protocol { context } = outcome.response.unwrap_err() else {
+        unreachable!("checked above");
+    };
+    assert!(
+        context.contains("a read yields no device event"),
+        "the UART read event was not refused by the read rule: {context}"
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a rejected UART read still carried an event to publication"
+    );
+
+    // The HTIF window: one dword read with its window's write event beside it.
+    let htif = HostHtif::new(HTIF_BASE);
+    htif.set_read_value(0x5a);
+    htif.set_fault(HostHtifFault::EventOnRead);
+    let outcome = host_htif_adapter(&htif).transact(&dword_read(), BlockingInitiator::Hart);
+    assert!(
+        is_protocol(&outcome.response),
+        "an HTIF write event on a read was accepted: {:?}",
+        outcome.response
+    );
+    let PhysicalBackendError::Protocol { context } = outcome.response.unwrap_err() else {
+        unreachable!("checked above");
+    };
+    assert!(
+        context.contains("a read yields no device event"),
+        "the HTIF read event was not refused by the read rule: {context}"
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a rejected HTIF read still carried an event to publication"
+    );
+    assert_eq!(
+        htif.reported(),
+        [0x5a],
+        "the fixture did not report the read event the rule refused"
+    );
+}
+
+/// htif D10 rule 2: the one window whose event carries a value reports it only
+/// when it is the request's own eight data bytes.
+#[test]
+fn a_host_htif_value_other_than_the_request_is_a_protocol_failure() {
+    let target = HostHtif::new(HTIF_BASE);
+    target.set_fault(HostHtifFault::WrongValue(0xdead_beef));
+    let value = 0x0102_0304_0506_0708u64;
+    let payload = value.to_le_bytes();
+    let request =
+        PhysicalRequest::data_write(HTIF_BASE, PhysicalWidth::Doubleword, &payload).unwrap();
+    let outcome = host_htif_adapter(&target).transact(&request, BlockingInitiator::Hart);
+    assert!(
+        is_protocol(&outcome.response),
+        "a reported HTIF value other than the request's was accepted: {:?}",
+        outcome.response
+    );
+    let PhysicalBackendError::Protocol { context } = outcome.response.unwrap_err() else {
+        unreachable!("checked above");
+    };
+    assert!(
+        context.contains("must equal the request's eight data bytes"),
+        "the write was not refused by the value rule: {context}"
+    );
+    assert!(
+        context.contains("0x0102030405060708"),
+        "the value rule's diagnostic does not name the request's bytes: {context}"
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a rejected HTIF write still carried its value to publication"
+    );
+    assert_eq!(
+        target.reported(),
+        [0xdead_beef],
+        "the fixture did not report the wrong value the rule refused"
+    );
+}
+
+/// htif D10 rule 2: a target that rewrites its buffer through `data_mut` cannot
+/// make that value the request's, because the rule compares with the request
+/// captured before the target ran.
+#[test]
+fn a_host_htif_that_rewrites_its_buffer_is_refused_the_request_value() {
+    let target = HostHtif::new(HTIF_BASE);
+    target.set_fault(HostHtifFault::RewriteBuffer(0x0711));
+    let value = 0x0011_2233_4455_6677u64;
+    let payload = value.to_le_bytes();
+    let request =
+        PhysicalRequest::data_write(HTIF_BASE, PhysicalWidth::Doubleword, &payload).unwrap();
+    let outcome = host_htif_adapter(&target).transact(&request, BlockingInitiator::Hart);
+    assert!(
+        is_protocol(&outcome.response),
+        "a rewritten buffer became the reported value: {:?}",
+        outcome.response
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a rejected HTIF write still carried its value to publication"
+    );
+}
+
+/// htif D10: both rules leave the in-tree targets unchanged, and the UART
+/// transmit byte is the byte the register write accepted rather than the
+/// request's data.
+#[test]
+fn the_value_rule_leaves_the_in_tree_endpoint_and_the_uart_byte_alone() {
+    // The in-tree endpoint reports the request's eight bytes, so it passes.
+    let adapter = htif_target();
+    let value = 0xff00_ff00_ff00_ff00u64;
+    let payload = value.to_le_bytes();
+    let request =
+        PhysicalRequest::data_write(HTIF_BASE, PhysicalWidth::Doubleword, &payload).unwrap();
+    let outcome = adapter.transact(&request, BlockingInitiator::Hart);
+    assert!(
+        outcome.response.is_ok(),
+        "the value rule refused the in-tree endpoint: {:?}",
+        outcome.response
+    );
+    assert_eq!(outcome.event, Some(BlockingDeviceEvent::HtifWrite(value)));
+
+    // A UART target that reports a byte other than the written one stays
+    // accepted: the transmit byte is the register write's, not the request's.
+    let uart = HostUart::new(UART_BASE);
+    uart.set_fault(HostUartFault::WrongTransmitByte(b'Z'));
+    let payload = *b"A";
+    let request = PhysicalRequest::data_write(UART_BASE, PhysicalWidth::Byte, &payload).unwrap();
+    let outcome = host_uart_adapter(&uart).transact(&request, BlockingInitiator::Hart);
+    assert!(
+        outcome.response.is_ok(),
+        "the value rule compared the UART transmit byte with the request: {:?}",
+        outcome.response
+    );
+    assert_eq!(
+        outcome.event,
+        Some(BlockingDeviceEvent::UartTransmit(b'Z')),
+        "the UART transmit byte was replaced instead of published"
     );
 }
