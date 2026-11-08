@@ -1,14 +1,14 @@
 diff --git a/src/capi/mod.rs b/src/capi/mod.rs
 --- a/src/capi/mod.rs
 +++ b/src/capi/mod.rs
-@@ -619,7 +619,9 @@
-             "a device target is already attached to the UART window",
-         ));
-     }
--    state.config.devices = DeviceTargets::with_uart(target);
+@@ -642,7 +642,9 @@
+     // UART and the HTIF window at once.
+     let uart = state.config.devices.uart().cloned();
+     let htif = state.config.devices.htif().cloned();
+-    state.config.devices = match window.kind {
 +    // MUTATION: the copied table is not stored on the handle, so no device
 +    // window ever reaches it.
-+    let _ = target;
-     Ok(())
- }
- 
++    let _ = match window.kind {
+         CDeviceKind::Uart => {
+             if uart.is_some() {
+                 return Err(ApiError::new(

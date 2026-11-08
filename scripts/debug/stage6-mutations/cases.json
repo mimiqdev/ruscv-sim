@@ -3137,5 +3137,21 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "htif-u2-window",
+    "source": "src/capi/mod.rs",
+    "patch": "htif-u2-window.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::an_attached_c_device_target_serves_the_htif_window",
+        "failure": [
+          "attach_device for window 1"
+        ]
+      }
+    ]
   }
 ]

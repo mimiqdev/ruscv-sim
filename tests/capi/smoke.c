@@ -127,6 +127,12 @@ static uint32_t enc_lw(int rd, int rs1, int imm)
            (uint32_t)rd << 7 | 0x03u;
 }
 
+static uint32_t enc_ld(int rd, int rs1, int imm)
+{
+    return ((uint32_t)imm & 0xfffu) << 20 | (uint32_t)rs1 << 15 | 3u << 12 |
+           (uint32_t)rd << 7 | 0x03u;
+}
+
 static uint32_t enc_lbu(int rd, int rs1, int imm)
 {
     return ((uint32_t)imm & 0xfffu) << 20 | 4u << 12 | (uint32_t)rs1 << 15 |
@@ -283,6 +289,28 @@ static int build_uart_guest(const char *path, uint32_t code)
         enc_slli(4, 4, 12),              /* x4 = 0x80001000 (.tohost) */
         enc_addi(5, 0, (int)(code * 2 + 1)), /* x5 = HTIF exit payload */
         enc_sd(5, 4, 0),                 /* tohost = payload */
+        0x0000006fu,                     /* j . */
+    };
+
+    return write_guest(path, instructions, sizeof(instructions) / sizeof(instructions[0]));
+}
+
+/*
+ * A guest that reads the HTIF endpoint and writes one dword, whose value is the
+ * standard exit payload for `code` (htif D3/D5).
+ *
+ * The read is one complete eight-byte dword at the window base and answers
+ * zero; the write carries the exit word, so the endpoint's own event stops the
+ * run and the value the target leaves alone is the one the exit decode reads.
+ */
+static int build_htif_guest(const char *path, uint32_t code)
+{
+    const uint32_t instructions[] = {
+        0x00010001u,                     /* c.nop; c.nop (profile-sensitive) */
+        enc_lui(8, 0x40008),             /* x8 = 0x40008000 (HTIF endpoint) */
+        enc_ld(7, 8, 0),                 /* the endpoint read */
+        enc_addi(9, 0, (int)(code * 2 + 1)), /* x9 = HTIF exit payload */
+        enc_sd(9, 8, 0),                 /* tohost = payload */
         0x0000006fu,                     /* j . */
     };
 
@@ -538,13 +566,19 @@ static ruscv_target direct_target_table(test_target *target, uint64_t max_delay_
 #define UART_LSR 0x05u
 #define UART_LSR_TRANSMIT_EMPTY 0x20u
 
+/* The HTIF tohost endpoint a C device table names (htif D7). */
+#define HTIF_WINDOW_BASE 0x40008000ull
+#define HTIF_WINDOW_SIZE 8u
+
 /*
- * A device target over the UART window (device D8).
+ * A device target over one device window (device D8, htif D7).
  *
- * It models only the two registers the smoke's guest touches: `LSR` answers the
- * transmit-empty bit, and a `THR` write records its byte and reports the
- * scripted event tag.  Every other field is a knob the case sets, so a test can
- * make the target report a protocol violation the Rust side must classify.
+ * Over the UART window it models only the two registers the smoke's guest
+ * touches: `LSR` answers the transmit-empty bit, and a `THR` write records its
+ * byte and reports the scripted event tag.  Over the HTIF window it answers a
+ * dword read with zero and records the eight bytes of an accepted write.
+ * Every other field is a knob the case sets, so a test can make the target
+ * report a protocol violation the Rust side must classify.
  */
 typedef struct test_device {
     uint64_t window_base;
@@ -556,6 +590,9 @@ typedef struct test_device {
     /* The bytes `THR` writes carried, and how many there were. */
     uint8_t transmitted;
     int transmitted_count;
+    /* The eight bytes the last accepted HTIF write carried, and its count. */
+    uint64_t written_value;
+    int written_count;
     int receives;
     int resets;
     /* Cleared when a request carries a non-zero annotation. */
@@ -568,6 +605,7 @@ static void device_b_transport(void *user, ruscv_payload *payload)
 {
     test_device *device = user;
     size_t offset = (size_t)(payload->address - device->window_base);
+    int htif = device->window_base == HTIF_WINDOW_BASE;
 
     device->transactions += 1;
     if (payload->device_event != RUSCV_DEVICE_EVENT_NONE || payload->delay_fs != 0 ||
@@ -576,10 +614,32 @@ static void device_b_transport(void *user, ruscv_payload *payload)
         device->request_fields_ok = 0;
     }
     if (payload->command == RUSCV_COMMAND_READ) {
-        if (offset == UART_LSR && payload->length >= 1) {
+        if (htif) {
+            /* htif D3: the read answer is the target's own register state; the
+             * smoke fixes it at zero so the parity checks have a fixed point. */
+            size_t i;
+            for (i = 0; i < payload->length; i += 1) {
+                payload->data[i] = 0;
+            }
+        } else if (offset == UART_LSR && payload->length >= 1) {
             payload->data[0] = UART_LSR_TRANSMIT_EMPTY;
         }
         payload->status = device->status;
+        return;
+    }
+    if (htif) {
+        /* htif D4: the request's eight bytes are the value an accepted write
+         * reports, and leaving them alone is how the host reports the guest's
+         * own value. */
+        uint64_t value = 0;
+        size_t i;
+        for (i = 0; i < payload->length && i < sizeof(value); i += 1) {
+            value |= (uint64_t)payload->data[i] << (8u * i);
+        }
+        device->written_value = value;
+        device->written_count += 1;
+        payload->status = device->status;
+        payload->device_event = device->event;
         return;
     }
     if (offset == UART_RBR_THR && payload->length == 1) {
@@ -1360,12 +1420,15 @@ static void direct_memory_unknown_completion_case(const char *direct_guest)
 }
 
 /*
- * One run with a C device table attached to the UART window (device D8).
+ * One run with a C device table attached to one device window (device D8,
+ * htif D7).
  *
  * Returns the fixture after the handle is destroyed, so the caller can inspect
  * its counters, and frees it itself.
  */
-static test_device *attached_device_run(const char *guest, int32_t event, int expect_exit)
+static test_device *attached_device_run(const char *guest, int32_t window,
+                                        uint64_t base, uint64_t size, int32_t event,
+                                        int expect_exit)
 {
     test_device *device = calloc(1, sizeof(test_device));
     test_target *ram = calloc(1, sizeof(test_target));
@@ -1376,8 +1439,8 @@ static test_device *attached_device_run(const char *guest, int32_t event, int ex
     int status;
 
     memset(device, 0, sizeof(*device));
-    device->window_base = DEVICE_WINDOW_BASE;
-    device->window_size = DEVICE_WINDOW_SIZE;
+    device->window_base = base;
+    device->window_size = size;
     device->status = RUSCV_TLM_OK;
     device->event = event;
     device->request_fields_ok = 1;
@@ -1389,14 +1452,14 @@ static test_device *attached_device_run(const char *guest, int32_t event, int ex
     }
     check(status == RUSCV_OK && handle != NULL,
           "create a TLM handle for the attached device target");
-    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, &table) == RUSCV_OK,
+    check(ruscv_machine_attach_device(handle, window, &table) == RUSCV_OK,
           "attach a C device table before load");
-    check(ruscv_machine_load_elf(handle, guest) == RUSCV_OK, "load the UART guest");
+    check(ruscv_machine_load_elf(handle, guest) == RUSCV_OK, "load the device guest");
     check(device->resets > 0, "the attached target was reset at the Platform build");
     status = grant(handle, 0, UINT64_MAX / 2, RUSCV_TURNS_UNBOUNDED, &facts);
     run = result_of(handle);
     if (expect_exit) {
-        check_exit(handle, status, "the attached device target serves the UART window");
+        check_exit(handle, status, "the attached device target serves its window");
     } else {
         check(status == RUSCV_OK && run.state == RUSCV_RUN_FAILED,
               "an event tag that is not the window's fails the run");
@@ -1441,7 +1504,7 @@ static void device_case(const char *guest)
     check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART, NULL) ==
               RUSCV_ERROR_INVALID_ARGUMENT,
           "a NULL table is an attach argument refusal");
-    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_UART + 1, &table) ==
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF + 1, &table) ==
               RUSCV_ERROR_INVALID_ARGUMENT,
           "an unknown window is an attach argument refusal");
     table.window_base = DEVICE_WINDOW_BASE + 4;
@@ -1480,7 +1543,8 @@ static void device_case(const char *guest)
     free(device);
     free(ram);
 
-    device = attached_device_run(guest, RUSCV_DEVICE_EVENT_UART_TRANSMIT, 1);
+    device = attached_device_run(guest, RUSCV_DEVICE_UART, DEVICE_WINDOW_BASE,
+                                 DEVICE_WINDOW_SIZE, RUSCV_DEVICE_EVENT_UART_TRANSMIT, 1);
     check(device->transactions >= 2,
           "the guest's LSR read and THR write reached the device target");
     check(device->transmitted_count == 1 && device->transmitted == (uint8_t)'H',
@@ -1491,9 +1555,125 @@ static void device_case(const char *guest)
           "no ABI entry pushed a byte into the attached window");
     free(device);
 
-    device = attached_device_run(guest, RUSCV_DEVICE_EVENT_HTIF_WRITE, 0);
+    device = attached_device_run(guest, RUSCV_DEVICE_UART, DEVICE_WINDOW_BASE,
+                                 DEVICE_WINDOW_SIZE, RUSCV_DEVICE_EVENT_HTIF_WRITE, 0);
     check(device->transmitted_count == 1,
           "the mismatched tag was copied from the device response");
+    free(device);
+}
+
+/*
+ * The C ABI's HTIF window (htif D7).
+ *
+ * Every documented attach refusal, one accepted run whose endpoint write
+ * reports the guest's own eight bytes and stops the run as its exit word, and
+ * one run whose tag belongs to the UART window and is therefore a protocol
+ * failure.
+ */
+static void htif_device_case(const char *guest)
+{
+    test_target *ram = calloc(1, sizeof(test_target));
+    test_device *device = calloc(1, sizeof(test_device));
+    ruscv_machine *handle;
+    ruscv_target ram_table;
+    ruscv_device table;
+    int status;
+
+    init_target(ram, NULL, 0);
+    ram_table = target_table(ram, 0);
+    handle = create_machine(&ram_table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    check(status == RUSCV_OK, "create a handle for the HTIF attach refusals");
+    memset(device, 0, sizeof(*device));
+    device->window_base = HTIF_WINDOW_BASE;
+    device->window_size = HTIF_WINDOW_SIZE;
+    device->status = RUSCV_TLM_OK;
+    device->request_fields_ok = 1;
+    table = device_table(device);
+    /* htif D7 inherits device D6's refusals per window. */
+    check(ruscv_machine_attach_device(NULL, RUSCV_DEVICE_HTIF, &table) ==
+              RUSCV_ERROR_INVALID_ARGUMENT,
+          "a NULL handle is an HTIF attach argument refusal");
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, NULL) ==
+              RUSCV_ERROR_INVALID_ARGUMENT,
+          "a NULL table is an HTIF attach argument refusal");
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF + 1, &table) ==
+              RUSCV_ERROR_INVALID_ARGUMENT,
+          "an unknown window is an HTIF attach argument refusal");
+    /* device D8: an incomplete table is an argument refusal, and all three
+     * callbacks stay required for this window even though `receive` is never
+     * called on it. */
+    {
+        ruscv_device incomplete = device_table(device);
+
+        incomplete.b_transport = NULL;
+        check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &incomplete) ==
+                  RUSCV_ERROR_INVALID_ARGUMENT,
+              "a table without b_transport is an HTIF attach argument refusal");
+        incomplete = device_table(device);
+        incomplete.receive = NULL;
+        check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &incomplete) ==
+                  RUSCV_ERROR_INVALID_ARGUMENT,
+              "a table without receive is an HTIF attach argument refusal");
+        incomplete = device_table(device);
+        incomplete.transport_reset = NULL;
+        check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &incomplete) ==
+                  RUSCV_ERROR_INVALID_ARGUMENT,
+              "a table without transport_reset is an HTIF attach argument refusal");
+    }
+    table.window_base = HTIF_WINDOW_BASE + 4;
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &table) ==
+              RUSCV_ERROR_CONFIG,
+          "a mismatched HTIF window base is an attach configuration refusal");
+    table.window_base = HTIF_WINDOW_BASE;
+    table.window_size = HTIF_WINDOW_SIZE + 1;
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &table) ==
+              RUSCV_ERROR_CONFIG,
+          "a mismatched HTIF window size is an attach configuration refusal");
+    table.window_size = HTIF_WINDOW_SIZE;
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &table) == RUSCV_OK,
+          "attach the HTIF table before load");
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &table) ==
+              RUSCV_ERROR_CONFIG,
+          "a second HTIF attach is an attach configuration refusal");
+    ruscv_machine_destroy(handle);
+
+    /* A fresh handle with no device attached, loaded and then attached. */
+    handle = create_machine(&ram_table, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    check(status == RUSCV_OK, "create a handle for the HTIF late attach");
+    check(ruscv_machine_load_elf(handle, guest) == RUSCV_OK, "load the HTIF guest");
+    check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &table) ==
+              RUSCV_ERROR_CONFIG,
+          "an HTIF attach after the first load is an attach configuration refusal");
+    ruscv_machine_destroy(handle);
+
+    /* A handle created with a NULL ruscv_target has no TLM route. */
+    handle = create_machine(NULL, RUSCV_ISA_RV64IMAFDC, TICK_FS, &status);
+    check(status == RUSCV_OK && handle != NULL, "create a native handle for the HTIF attach");
+    if (handle != NULL) {
+        check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &table) ==
+                  RUSCV_ERROR_CONFIG,
+              "a handle without a TLM route is an HTIF attach configuration refusal");
+        ruscv_machine_destroy(handle);
+    }
+    free(device);
+    free(ram);
+
+    device = attached_device_run(guest, RUSCV_DEVICE_HTIF, HTIF_WINDOW_BASE,
+                                 HTIF_WINDOW_SIZE, RUSCV_DEVICE_EVENT_HTIF_WRITE, 1);
+    check(device->transactions >= 2,
+          "the guest's endpoint read and write reached the HTIF target");
+    check(device->written_count == 1 && device->written_value == 5u,
+          "the HTIF event carries the guest's own eight bytes");
+    check(device->request_fields_ok,
+          "an HTIF request carried a non-zero annotation or event");
+    check(device->receives == 0,
+          "no ABI entry pushed a byte into the HTIF window");
+    free(device);
+
+    device = attached_device_run(guest, RUSCV_DEVICE_HTIF, HTIF_WINDOW_BASE,
+                                 HTIF_WINDOW_SIZE, RUSCV_DEVICE_EVENT_UART_TRANSMIT, 0);
+    check(device->written_count == 1,
+          "the UART tag on the HTIF window was copied from the response");
     free(device);
 }
 
@@ -1534,6 +1714,9 @@ static void header_case(void)
               offsetof(ruscv_payload, device_event) == 272 &&
               sizeof(ruscv_payload) == 280,
           "device_event is the final ruscv_payload field");
+    /* htif D7: the appended window code, with no existing value moved. */
+    check(RUSCV_DEVICE_UART == 0 && RUSCV_DEVICE_HTIF == 1,
+          "the device window codes are the published values");
     /* device D8: the attach table's published layout. */
     check(offsetof(ruscv_device, window_base) == 0 &&
               offsetof(ruscv_device, window_size) == 8 &&
@@ -1953,6 +2136,7 @@ int main(int argc, char **argv)
     char ram_guest[4096];
     char device_guest[4096];
     char uart_guest[4096];
+    char htif_guest[4096];
     char log_path[4096];
     ruscv_machine *handle = NULL;
     int status;
@@ -1967,6 +2151,8 @@ int main(int argc, char **argv)
                  work) >= (int)sizeof(device_guest) ||
         snprintf(uart_guest, sizeof(uart_guest), "%s/capi-smoke-uart-guest.elf", work) >=
             (int)sizeof(uart_guest) ||
+        snprintf(htif_guest, sizeof(htif_guest), "%s/capi-smoke-htif-guest.elf", work) >=
+            (int)sizeof(htif_guest) ||
         snprintf(log_path, sizeof(log_path), "%s/capi-smoke-commits.log", work) >=
             (int)sizeof(log_path)) {
         fprintf(stderr, "work path too long\n");
@@ -1975,7 +2161,8 @@ int main(int argc, char **argv)
     if (build_guest(guest, 2) != 0 || build_direct_guest(direct_guest, 2) != 0 ||
         build_ram_only_guest(ram_guest, 12, 2) != 0 ||
         build_device_read_guest(device_guest, 2) != 0 ||
-        build_uart_guest(uart_guest, 2) != 0) {
+        build_uart_guest(uart_guest, 2) != 0 ||
+        build_htif_guest(htif_guest, 2) != 0) {
         fprintf(stderr, "cannot write the guest fixture\n");
         return 2;
     }
@@ -2000,6 +2187,7 @@ int main(int argc, char **argv)
     direct_memory_reentry_case(direct_guest);
     direct_memory_unknown_completion_case(direct_guest);
     device_case(uart_guest);
+    htif_device_case(htif_guest);
 
     /* The wrong-thread rejection needs a live handle of its own. */
     handle = create_machine(NULL, RUSCV_ISA_RV64IMA, TICK_FS, &status);

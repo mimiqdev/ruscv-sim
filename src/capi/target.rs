@@ -105,9 +105,10 @@ pub(crate) mod dmi_result {
     pub(crate) const FAILED: i32 = 2;
 }
 
-/// C device window (`ruscv_device_window`, device D8).
+/// C device window (`ruscv_device_window`, device D8, htif D7).
 pub(crate) mod device_window {
     pub(crate) const UART: i32 = 0;
+    pub(crate) const HTIF: i32 = 1;
 }
 
 /// C device event (`ruscv_device_event`, device D8).

@@ -560,27 +560,43 @@ pub unsafe extern "C" fn ruscv_machine_create(
     }
 }
 
-/// One C device window and the Platform window it names (device D8).
+/// One C device window and the Platform window it names (device D8, htif D7).
 struct CDeviceWindow {
+    kind: CDeviceKind,
     base: u64,
     size: u64,
 }
 
+/// The Platform window one `RUSCV_DEVICE_*` code names (htif D7).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CDeviceKind {
+    /// `RUSCV_DEVICE_UART`: `0x1000_0000` with `0x100` bytes.
+    Uart,
+    /// `RUSCV_DEVICE_HTIF`: `0x4000_8000` with 8 bytes.
+    Htif,
+}
+
 /// The Platform window one `ruscv_device_window` code names.
 ///
-/// Only the UART window accepts a host target in this contract; host HTIF
-/// service stays deferred, so every other code is an unknown window.
+/// The two windows of this contract are named; any other code is an unknown
+/// window, which the attach entry refuses as an argument.
 fn c_device_window(code: i32) -> Option<CDeviceWindow> {
     match code {
         target::device_window::UART => Some(CDeviceWindow {
+            kind: CDeviceKind::Uart,
             base: crate::executor::SYSTEM_BUS_UART_BASE,
             size: crate::executor::SYSTEM_BUS_UART_WINDOW as u64,
+        }),
+        target::device_window::HTIF => Some(CDeviceWindow {
+            kind: CDeviceKind::Htif,
+            base: crate::executor::SYSTEM_BUS_HTIF_BASE,
+            size: crate::executor::SYSTEM_BUS_HTIF_SIZE as u64,
         }),
         _ => None,
     }
 }
 
-/// Stores one copied device table as the handle's window selection.
+/// Stores one copied device table as the handle's selection for its window.
 ///
 /// Every argument refusal precedes every configuration refusal: the table's
 /// shape is an argument, so a NULL table, an unknown window and an incomplete
@@ -621,25 +637,47 @@ fn attach_device(
              ruscv_target",
         ));
     }
-    // Only the UART window takes a host target, which is the one window this
-    // version of the table can name.
-    if state.config.devices.uart().is_some() {
-        return Err(ApiError::new(
-            Status::Config,
-            "a device target is already attached to the UART window",
-        ));
-    }
-    state.config.devices = DeviceTargets::with_uart(target);
+    // htif D7: one table serves one window, and each window takes at most one.
+    // The other window's selection is carried over, so a handle can serve the
+    // UART and the HTIF window at once.
+    let uart = state.config.devices.uart().cloned();
+    let htif = state.config.devices.htif().cloned();
+    state.config.devices = match window.kind {
+        CDeviceKind::Uart => {
+            if uart.is_some() {
+                return Err(ApiError::new(
+                    Status::Config,
+                    "a device target is already attached to the UART window",
+                ));
+            }
+            match htif {
+                Some(htif) => DeviceTargets::with_uart_and_htif(target, htif),
+                None => DeviceTargets::with_uart(target),
+            }
+        }
+        CDeviceKind::Htif => {
+            if htif.is_some() {
+                return Err(ApiError::new(
+                    Status::Config,
+                    "a device target is already attached to the HTIF window",
+                ));
+            }
+            match uart {
+                Some(uart) => DeviceTargets::with_uart_and_htif(uart, target),
+                None => DeviceTargets::with_htif(target),
+            }
+        }
+    };
     Ok(())
 }
 
-/// Attaches one host device target to the selected window (device D8).
+/// Attaches one host device target to the selected window (device D8, htif D7).
 ///
-/// `window` is `RUSCV_DEVICE_UART`.  The call must come after
-/// [`ruscv_machine_create`] and before the first [`ruscv_machine_load_elf`]: a
-/// device target is composition configuration, chosen once per handle and
-/// copied, so it survives [`ruscv_machine_reset`] and the target is reset at
-/// every Platform build.
+/// `window` is `RUSCV_DEVICE_UART` or `RUSCV_DEVICE_HTIF`.  The call must come
+/// after [`ruscv_machine_create`] and before the first
+/// [`ruscv_machine_load_elf`]: a device target is composition configuration,
+/// chosen once per window and copied, so it survives [`ruscv_machine_reset`]
+/// and the target is reset at every Platform build.
 ///
 /// It is refused with [`Status::InvalidArgument`] for a NULL handle, NULL table,
 /// unknown window or incomplete table, and with [`Status::Config`] for a
