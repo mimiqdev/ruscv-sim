@@ -4794,6 +4794,18 @@ fn both_device_windows_take_their_own_table() {
             Status::Ok as i32,
             "the HTIF attach is accepted beside the UART one"
         );
+        // Each window still takes exactly one table.  These run before the
+        // first load, so the per-window refusal is what answers them.
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::UART, &uart_table),
+            Status::Config as i32,
+            "a second UART attach is refused"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::HTIF, &htif_table),
+            Status::Config as i32,
+            "a second HTIF attach is refused"
+        );
     }
 
     let elf = elf_file(&both_windows_guest(2));
@@ -4824,19 +4836,6 @@ fn both_device_windows_take_their_own_table() {
     );
     assert!(uart.transactions() >= 2 && htif.transactions() >= 2);
 
-    // Each window still takes exactly one table.
-    // SAFETY: the handle and both tables are live on this thread.
-    unsafe {
-        assert_eq!(
-            ruscv_machine_attach_device(handle, device_window::UART, &uart_table),
-            Status::Config as i32,
-            "a second UART attach is refused"
-        );
-        assert_eq!(
-            ruscv_machine_attach_device(handle, device_window::HTIF, &htif_table),
-            Status::Config as i32,
-            "a second HTIF attach is refused"
-        );
-        ruscv_machine_destroy(handle);
-    }
+    // SAFETY: the handle is live on this thread.
+    unsafe { ruscv_machine_destroy(handle) };
 }
