@@ -10,19 +10,22 @@
 //!
 //! A device transaction is not a RAM transaction: its `may_suspend` is always
 //! false, its local-time offset is zero, and its response must annotate zero
-//! delay, zero host elapsed time, no direct-memory hint and at most one
-//! [`BlockingDeviceEvent`].  The event belongs to the target's own window, is
-//! published only for an `Ok` status, and is a Platform event under ADR-0004
-//! §9.  A response that violates any of those rules, that changes the payload,
-//! or that arrives after a target panic is a protocol failure of that access;
-//! an outcome-unknown flag keeps its precedence and is an unknown completion.
+//! host elapsed time, no direct-memory hint and at most one
+//! [`BlockingDeviceEvent`].  A Hart access may annotate a modeled delay, which
+//! the Machine charges once to the turn through the guest-RAM slot's one
+//! ledger; a `DebugInbound` access must still report zero (delay D4/D6).  The
+//! event belongs to the target's own window, is published only for an `Ok`
+//! status, and is a Platform event under ADR-0004 §9.  A response that violates
+//! any of those rules, that changes the payload, or that arrives after a target
+//! panic is a protocol failure of that access; an outcome-unknown flag keeps
+//! its precedence and is an unknown completion.
 //!
 //! The atomic path never reaches a target: the HTIF read-modify-write envelope
 //! and every atomic rejection stay Platform-side (device D3).
 
 use super::{
     BlockingCommand, BlockingExtension, BlockingInitiator, BlockingResponseStatus,
-    BlockingTransaction,
+    BlockingTransaction, Femtoseconds,
 };
 use crate::physical::{
     PhysicalAccessKind, PhysicalBackendError, PhysicalBackendResult, PhysicalRequest,
@@ -89,10 +92,13 @@ impl BlockingDeviceEvent {
 /// target as a shared `Arc`, and a target's own synchronization must not be
 /// observable through this interface.  Calls are synchronous, return before
 /// the ABI entry that made them returns, are never re-entered by ruscv-sim and
-/// never wait: a device target may not let host time pass or annotate delay,
-/// so [`BlockingTransaction::set_response_delay`],
+/// never wait: a device target may not let host time pass, so
 /// [`BlockingTransaction::set_host_elapsed`] and
 /// [`BlockingTransaction::set_dmi_allowed`] are protocol failures when used.
+/// [`BlockingTransaction::set_response_delay`] is the one annotation a device
+/// target may make for a Hart access: the Machine converts and charges it once
+/// through the turn's existing delay ledger, and it is a protocol failure on a
+/// `DebugInbound` access, which reports zero (delay D4/D6).
 pub trait BlockingDeviceTarget: Send + Sync {
     /// Services one complete blocking device transaction.
     ///
@@ -228,6 +234,13 @@ pub(crate) struct DeviceOutcome {
     pub(crate) response: PhysicalBackendResult,
     /// The event to publish through this window's sink, only for `Ok`.
     pub(crate) event: Option<BlockingDeviceEvent>,
+    /// delay D4: the delay this response is charged, in exact femtoseconds.
+    ///
+    /// It is the validated response's own annotation on a terminal status, and
+    /// zero for an `Incomplete` response, a validation failure and an unknown
+    /// completion, so the Machine charges exactly the responses that vouch for
+    /// the access.
+    pub(crate) delay: Femtoseconds,
 }
 
 impl TlmDeviceAdapter {
@@ -242,8 +255,9 @@ impl TlmDeviceAdapter {
     /// start-address policy, so this call validates the physical request's own
     /// shape, makes exactly one `b_transport` call, validates the response and
     /// maps its status with the RAM route's categories.  No delay is converted
-    /// or charged and no direct-memory query is issued: a device transaction
-    /// enters no turn's accounting (device D4).
+    /// or charged here and no direct-memory query is issued: the outcome
+    /// carries the response's validated annotation, which the Machine charges
+    /// through the guest-RAM slot's one ledger (delay D4).
     pub(crate) fn transact(
         &self,
         request: &PhysicalRequest<'_>,
@@ -298,14 +312,27 @@ impl TlmDeviceAdapter {
             )));
         }
 
-        if let Err(error) =
-            self.validate_response(&transaction, descriptor, command, width, requested_value)
-        {
+        if let Err(error) = self.validate_response(
+            &transaction,
+            descriptor,
+            command,
+            width,
+            requested_value,
+            initiator,
+        ) {
             return failed(error);
         }
 
         let status = transaction.status();
         let event = transaction.device_events().first().copied();
+        // delay D4: only a terminal status that passed validation is charged
+        // its annotation.  An `Incomplete` response's annotation is untrusted,
+        // and no completion was ever vouched for.
+        let delay = if status == BlockingResponseStatus::Incomplete {
+            Femtoseconds::ZERO
+        } else {
+            transaction.response_delay()
+        };
         let response = match status {
             BlockingResponseStatus::Ok => {
                 if command == BlockingCommand::Write {
@@ -348,11 +375,15 @@ impl TlmDeviceAdapter {
             ))),
             _ => unreachable!("every remaining status is a guest-visible fault"),
         };
-        DeviceOutcome { response, event }
+        DeviceOutcome {
+            response,
+            event,
+            delay,
+        }
     }
 
-    /// Validates one device response against device D2/D4, htif D10 and the
-    /// 2026-11-07 and 2026-11-08 ADR-0002 amendments.
+    /// Validates one device response against device D2/D4, htif D10, the
+    /// 2026-11-07 and 2026-11-08 ADR-0002 amendments and delay D4/D6.
     ///
     /// Every rule runs before the status mapping; an event that passes them
     /// never changes the outcome the status selects.  `requested_value` is the
@@ -365,6 +396,7 @@ impl TlmDeviceAdapter {
         command: BlockingCommand,
         width: usize,
         requested_value: Option<u64>,
+        initiator: BlockingInitiator,
     ) -> Result<(), PhysicalBackendError> {
         if transaction.extension().is_outcome_unknown() {
             return Err(PhysicalBackendError::unknown(format!(
@@ -396,10 +428,10 @@ impl TlmDeviceAdapter {
                 width,
             )));
         }
-        if !transaction.response_delay().is_zero() {
+        if initiator != BlockingInitiator::Hart && !transaction.response_delay().is_zero() {
             return Err(PhysicalBackendError::protocol(format!(
                 "device target annotated {} fs of delay for {} {:?} at {:#018x} on the {} window; \
-                 a device transaction reports zero delay",
+                 a DebugInbound device transaction reports zero delay",
                 transaction.response_delay().as_u64(),
                 command_label(command),
                 descriptor.category,
@@ -591,11 +623,13 @@ pub(crate) fn acknowledge_transport_reset(
     }
 }
 
-/// One access's failed outcome: no event is ever published beside a failure.
+/// One access's failed outcome: no event is ever published beside a failure
+/// and no delay is charged.
 fn failed(error: PhysicalBackendError) -> DeviceOutcome {
     DeviceOutcome {
         response: Err(error),
         event: None,
+        delay: Femtoseconds::ZERO,
     }
 }
 

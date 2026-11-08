@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Device Delay Annotation U1: Rust 设备延迟计费（issue #248）**
+  - `DeviceOutcome` 携带响应的延迟而不是在适配器拒绝（delay D4）：`TlmDeviceAdapter::transact` 校验
+    通过后，终止状态（`Ok`、guest 可见故障、`GenericError`）把响应的 `response_delay` 放进 outcome，
+    `Incomplete`、校验失败与 unknown completion 携带零。`DebugInbound` 仍要求零延迟，所以同一处
+    `validate_response` 只把零延迟规则收窄到 inbound 访问，违规仍是该次访问的协议失败
+  - `SystemBus::finish_device` 先计费再发布事件（delay D4/D5）：新增的 `RamSlot::charge_device_delay`
+    走既有的 `TlmRamAdapter::account_delay`（换算、向上取整、已声明每事务上限的超限、turn bound、
+    pending 数额、generation 总计）并只加一个 `DelayAccess::Device` 标签，没有第二个账本。计费失败
+    （超限、不可表示、计数溢出）返回 host failure 且不发布该次访问的 event，因此 UART 字节与 HTIF
+    写值都不会到达 sink；计费在超限判定之前累加，失败的 turn 仍消耗已知延迟。只有 turn 窗口打开时
+    的 Hart 访问计费，Debug Mode Hart 端口访问被校验但不计费，`host_elapsed` 保持零
+  - 树内 UART 与 HTIF target 保持零延迟参照（delay D2），其模块注释写明它们不注解延迟；`device`、
+    `htif`、`nb` 等旧引用继续指向已归档合同，新代码引用 `delay D<n>`。模块与 trait 注释不再声明
+    “设备 target 不得注解延迟”，改为 Hart 访问可注解、`DebugInbound` 必须为零
+  - 单元级证据：`src/blocking/device_tests.rs` 钉住 Hart 响应可携带延迟与 `DebugInbound` 拒绝；
+    `src/executor_device_tests.rs` 钉住延迟经 RAM slot 的 turn 账本计费一次、超限不发布且保留已知
+    数额，以及宿主 UART／HTIF 延迟下退出码、turn、PC 与逐字节相同的 commit log；`src/machine/tests.rs`
+    把两个拒绝测试改写为计费测试（1 tick 精确进 `platform_mtime` 与
+    `BoundaryFacts.transport_delay_femtoseconds`，event、计分器与 parity 不变）、树内运行零延迟、
+    终止故障/`GenericError` 计费一次、`Incomplete` 与 unknown 不计费、超限失败、SBA 拒绝、
+    Debug Mode Hart 端口校验不计费，以及 quantum 1024 下经 F1 flush 后在 turn-end sync 提交；
+    `src/capi/tests.rs` 用 `Session` 证明 charge 计入 grant 的 `consumed_fs` 与
+    `transport_delay_fs`，且允许 bound 的 horizon 在设备延迟下走到 horizon 而不 `deadline_blocked`
+  - mutation 控制：退役 `device-u2-zero-delay`（其规则已被契约取代），新增 `delay-u1-charge`
+    （`finish_device` 的计费）、`delay-u1-in-tree`（树内 target 报告延迟）与 `delay-u1-debug-zero`
+    （`validate_response` 的 `DebugInbound` 零延迟规则），`cases.json` 共 183 个控制，全部通过
+    `patch --fuzz=0 --dry-run`
+  - 本单元不改 C ABI（U2, #249）、SystemC（U3, #250）与文档收尾（U4, #251），不改窗口、事件、
+    错误码、turn bound、grant 预留、quantum、direct memory 与非阻塞路径，也不改 `mcycle`/`minstret`
+
 - **Host HTIF Service U4: 文档与验收收尾（issue #242）**
   - 文档补全并校正到 U1–U3 的实际行为：`README.md`、`CHANGELOG.md`、
     `docs/integration/systemc-tlm.md`、`docs/verification/README.md` 与 `integration/systemc/README.md`

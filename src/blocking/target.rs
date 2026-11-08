@@ -44,6 +44,9 @@ pub trait BlockingTarget: Send + Sync {
     /// to reject an overshooting response.  It is an upper bound on the delay
     /// a target annotates for one transaction; the in-tree [`super::ZeroDelayRam`]
     /// declares zero, and a suspending target declares its host-time latency.
+    /// delay D3: it also bounds a Hart device response's annotation, because a
+    /// guest-RAM declaration is the route's only declared maximum and a device
+    /// transaction is one of the turn's counted transactions.
     fn declared_max_delay(&self) -> Femtoseconds;
 
     /// Services one complete blocking transaction.

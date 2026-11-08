@@ -624,14 +624,30 @@ impl SystemBus {
     }
 
     /// Publishes one device access's at-most-one event through its window's
-    /// sink (device D4, htif D4).
+    /// sink (device D4, htif D4) and charges its annotated delay.
     ///
     /// The device adapter has already rejected an event on a read, a second
     /// event, another window's event and, on the HTIF window, a value other than
     /// the request's eight data bytes (htif D10), so a failure never reaches
     /// this site and an accepted access publishes exactly one.
-    fn finish_device(&mut self, outcome: DeviceOutcome) -> PhysicalBackendResult {
-        let DeviceOutcome { response, event } = outcome;
+    ///
+    /// delay D4/D5: the charge is taken first, through the guest-RAM slot's one
+    /// ledger, so a charge that fails returns the host failure and publishes
+    /// nothing.  Only a Hart access is counted: debug-inbound work is validated
+    /// and uncharged, exactly as the guest-RAM adapter's debug rule keeps it.
+    fn finish_device(
+        &mut self,
+        outcome: DeviceOutcome,
+        initiator: BlockingInitiator,
+        address: u64,
+    ) -> PhysicalBackendResult {
+        let DeviceOutcome {
+            response,
+            event,
+            delay,
+        } = outcome;
+        self.ram
+            .charge_device_delay(address, delay, initiator == BlockingInitiator::Hart)?;
         match event {
             Some(BlockingDeviceEvent::UartTransmit(byte)) => self.publish_uart(byte),
             Some(BlockingDeviceEvent::HtifWrite(value)) => self.publish_htif_write(value),
@@ -1039,7 +1055,7 @@ impl SystemBus {
                     .expect("checked above")
                     .uart()
                     .transact(request, initiator);
-                return self.finish_device(outcome);
+                return self.finish_device(outcome, initiator, descriptor.paddr);
             }
 
             let offset = descriptor.paddr - self.uart_base;
@@ -1122,7 +1138,7 @@ impl SystemBus {
                     .expect("checked above")
                     .htif()
                     .transact(request, initiator);
-                return self.finish_device(outcome);
+                return self.finish_device(outcome, initiator, descriptor.paddr);
             }
 
             return match descriptor.category {

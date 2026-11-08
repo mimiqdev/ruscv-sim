@@ -18,7 +18,10 @@ use super::{
     ruscv_machine_self_test_panic, ruscv_machine_set_commit_log, CBoundary, CGrant, CResult,
     RuscvMachine, Status,
 };
-use crate::blocking::{BlockingDeviceTarget, Femtoseconds, TickPeriod, TurnCompletionBound};
+use crate::blocking::test_support::{DelayingRam, HostUart};
+use crate::blocking::{
+    BlockingDeviceTarget, DeviceTargets, Femtoseconds, TickPeriod, Transport, TurnCompletionBound,
+};
 use crate::elf::LoadImage;
 use crate::executor::observation_fixture as elf;
 use crate::machine::{IsaProfile, MachineConfig};
@@ -4838,4 +4841,145 @@ fn both_device_windows_take_their_own_table() {
 
     // SAFETY: the handle is live on this thread.
     unsafe { ruscv_machine_destroy(handle) };
+}
+
+/// delay D4/D5: a device charge joins the turn's pending amount, so the grant
+/// reports it in its consumed time and its transport total without moving the
+/// guest's exit.
+#[test]
+fn a_device_delay_joins_the_grant_consumed_time() {
+    // One THR byte (turn 3) and then the exit word through the in-tree HTIF
+    // endpoint, so the charged turn is not the last one.
+    let code = vec![
+        elf::lui(5, 0x10000), // 0x1000_0000, the UART window
+        elf::addi(6, 0, i32::from(b'H')),
+        elf::sb(6, 5, 0),     // THR
+        elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::addi(9, 0, 1),   // (0 << 1) | 1, the exit word for code 0
+        elf::sd(9, 8, 0),
+    ];
+    let target = HostUart::new(0x1000_0000);
+    target.set_delay(TICK_FS);
+    let mut config = MachineConfig::new(crate::machine::PlatformKind::Native);
+    config.isa = IsaProfile::Rv64imafdc;
+    config.transport = Transport::tlm(DelayingRam::new(TICK_FS, 0));
+    config.devices = DeviceTargets::with_uart(target.clone());
+    let image =
+        Arc::new(LoadImage::parse(&elf::elf_with_code(&code, 0, true, false, 0x4000)).unwrap());
+    let mut session = Session::new(config, image).unwrap();
+    session
+        .run_grant(0, u64::MAX / 2, super::UNBOUNDED_TURNS)
+        .expect("the grant is a valid call");
+    let facts = session.facts();
+    assert_eq!(
+        session.state(),
+        RunState::Exited,
+        "the charged run did not reach the guest's exit: {:?}",
+        session.diagnostic()
+    );
+    assert_eq!(
+        session.exit_code(),
+        0,
+        "the charged run reported another exit"
+    );
+    assert_eq!(
+        facts.transport_delay_fs, TICK_FS,
+        "the grant's transport total did not include the device charge"
+    );
+    assert_eq!(
+        facts.consumed_fs,
+        7 * TICK_FS,
+        "the grant's consumed time is not six turns plus the one charged tick"
+    );
+    assert_eq!(
+        facts.committed_end_fs,
+        facts.committed_start_fs + facts.consumed_fs,
+        "the grant's committed end does not include the charge"
+    );
+    assert!(
+        !facts.failed && !facts.deadline_blocked && !facts.uncertain,
+        "the charged run reported a failure or a blocked bound: {facts:?}"
+    );
+    assert_eq!(
+        target.transmitted(),
+        b"H".to_vec(),
+        "the host target did not accept the charged byte"
+    );
+}
+
+/// delay D5: the turn completion bound keeps its value, so a grant whose horizon
+/// admits it starts the charged turn, and the idle jump lands exactly on the
+/// horizon with the charge committed and no `deadline_blocked`.
+#[test]
+fn a_device_delay_keeps_a_grant_inside_its_horizon() {
+    // The UART write is charged one tick, then the guest arms the timer at the
+    // grant's inclusive horizon and waits, so the idle jump lands exactly on it.
+    const COMPARE: u32 = 64;
+    let mut code = vec![
+        elf::lui(7, 0x10000), // 0x1000_0000, the UART window
+        elf::addi(8, 0, i32::from(b'H')),
+        elf::sb(8, 7, 0), // THR, the one charged access
+    ];
+    code.extend(waiting_guest(COMPARE));
+
+    let target = HostUart::new(0x1000_0000);
+    target.set_delay(TICK_FS);
+    let mut config = MachineConfig::new(crate::machine::PlatformKind::Native);
+    config.isa = IsaProfile::Rv64imafdc;
+    config.transport = Transport::tlm(DelayingRam::new(TICK_FS, 0));
+    config.devices = DeviceTargets::with_uart(target.clone());
+    config.quantum = 1024;
+    let image =
+        Arc::new(LoadImage::parse(&elf::elf_with_code(&code, 0, true, false, 0x4000)).unwrap());
+    let mut session = Session::new(config, image).unwrap();
+    // The device access moves committed time inside its turn, so that turn ends
+    // a quantum grant (quantum D12) and the host commits its consumed amount
+    // before the next grant starts.
+    let horizon_fs = u64::from(COMPARE) * TICK_FS;
+    let mut start_fs = 0;
+    let mut facts = session.facts();
+    for _ in 0..8 {
+        session
+            .run_grant(start_fs, horizon_fs, super::UNBOUNDED_TURNS)
+            .expect("a grant blocked by its bound is not an API error");
+        facts = session.facts();
+        assert!(
+            !facts.failed,
+            "the charged wait failed instead of reaching its horizon: {:?}",
+            session.diagnostic()
+        );
+        assert!(
+            !facts.deadline_blocked,
+            "a grant whose horizon admits the bound refused the charged turn: {facts:?}"
+        );
+        assert!(
+            facts.consumed_fs > 0,
+            "the grant made no progress towards its horizon: {facts:?}"
+        );
+        start_fs = facts.committed_end_fs;
+        if facts.deadline_reached {
+            break;
+        }
+    }
+    assert!(
+        facts.deadline_reached,
+        "the wait at the inclusive horizon did not report it: {facts:?}"
+    );
+    assert_eq!(
+        facts.transport_delay_fs, TICK_FS,
+        "the charge did not reach the grant's transport total"
+    );
+    assert_eq!(
+        facts.committed_end_fs, horizon_fs,
+        "the grant did not end at its horizon"
+    );
+    assert_eq!(
+        facts.residual_slack_fs, 0,
+        "a grant that ended at its horizon reported slack"
+    );
+    assert_eq!(
+        target.transmitted(),
+        b"H".to_vec(),
+        "the host target did not accept the charged byte before the wait"
+    );
 }
