@@ -10,7 +10,7 @@ This index is the entry point for project decisions and technical documentation.
 
 ## Sources of truth
 
-1. [Milestone plan](dev-plan.md) — the sole Current contract. The approved Host HTIF Service target replaces TLM-Modeled Devices on this rotation merge; activation is not an implementation claim.
+1. [Milestone plan](dev-plan.md) — the sole Current contract. The approved Device Delay Annotation target replaces Host HTIF Service on this rotation merge; activation is not an implementation claim.
 2. [Target architecture](architecture/README.md) — intended product boundaries and ISS → VP evolution.
 3. [A7-era implementation snapshot](architecture/current-state.md) — historical source-to-target inventory; use current source/tests, the [A8 assessment](verification/a8-closeout-assessment.md) for the atomic route, and the [A9 acceptance assessment](verification/a9-closeout-assessment.md) for Hart facts/Machine integration, separating historical checkpoint and final PR/merge-head evidence.
 4. [Architecture principles](architecture/principles.md) — normative ownership, language, address, and error boundaries.
@@ -33,8 +33,10 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Host HTIF Service contract](dev-plan.md) — D1–D10 approved 2026-11-08 under the owner's delegated planning authority, sole Current on this rotation merge. Plans to serve the HTIF endpoint through the same window-indexed device table as the UART, with the in-tree endpoint as the default target and a host-served endpoint through the C ABI, planned for Rust, the C ABI and the SystemC smoke. Activation is not an implementation claim.
-- [Approved host HTIF service proposal entry](proposals/post-devices-host-htif.md) — informational pointer to the sole normative contract.
+- [Device Delay Annotation contract](dev-plan.md) — D1–D10 approved 2026-11-08 under the owner's delegated planning authority, sole Current on this rotation merge. Plans to let a host-served UART or HTIF window annotate a modeled access delay, charged once through the guest-RAM turn ledger, with the in-tree targets staying zero-delay and host elapsed time staying refused, planned for Rust, the C ABI checks and the SystemC smoke. Activation is not an implementation claim.
+- [Approved device delay annotation proposal entry](proposals/post-htif-device-delay.md) — informational pointer to the sole normative contract.
+- [Archived Host HTIF Service contract](archive/milestones/host-htif-service.md) — entire contract, completed 2026-11-08 at PR #246.
+- [Historical host HTIF service proposal entry](proposals/post-devices-host-htif.md) — informational pointer to the archived contract.
 - [Archived TLM-Modeled Devices contract](archive/milestones/tlm-modeled-devices.md) — entire contract, completed 2026-11-08 at PR #236.
 - [Historical TLM-modeled devices proposal entry](proposals/post-nb-tlm-devices.md) — informational pointer to the archived contract.
 - [Archived non-blocking contract](archive/milestones/non-blocking-tlm-transport.md) — entire contract, completed 2026-11-07 at PR #225.
