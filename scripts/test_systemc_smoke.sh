@@ -1481,15 +1481,19 @@ check_usage_error "an HTIF fault option with an in-tree selection" \
 # guest's bytes without reading the counters. The profile is passed explicitly
 # so the comparison does not depend on the default.
 #
-# The C ABI exposes no per-value sink for a non-exit HTIF write: `config.htif_write`
-# has no C entry and only the exit decode has a host-visible effect.  The exit
-# word's publication is therefore proved by the run stop (same turn, same exit
-# code as the in-tree pass), and a *non*-publication by the run that never stops
-# as an exit.  The console words' publication is proved by the target's accepted
-# reports (htif D8 makes `values` and the console channel its exit summary)
-# together with the guest's own retire sequence, which the byte-identical
-# commit log fixes.  A sink-level console assertion would need a new ABI entry,
-# which htif D7 keeps append-only and U3 does not add.
+# The C ABI exposes no per-value sink for an HTIF write: `config.htif_write` has
+# no C entry and only the exit decode has a host-visible effect.  The smoke
+# therefore proves the exit word's publication through the run stop (the host
+# pass stops on the same turn, with the same exit code, as its in-tree parity
+# run, and the value sequence's last word is the exit word that code decodes),
+# a dropped exit event through the run that reaches its turn bound with no exit
+# fact, and a refused write through the protocol failure and its absence from
+# the target's accepted report sequence.  The console words are the values the
+# target reported for the guest's console commands, fixed by the byte-identical
+# commit log.  The publication rule for a refused write and for a non-exit write
+# is Rust-level (`src/blocking/device.rs`, proven in `src/machine/tests.rs`);
+# this host cannot observe it, and a sink-level console assertion would need a
+# new ABI entry, which htif D7 keeps append-only and U3 does not add.
 HTIF_GUEST=htif_u3_console
 HTIF_PROFILE=rv64imafdc
 HTIF_ELF="${ELF_DIR}/rv64i/${HTIF_GUEST}.elf"
@@ -1723,10 +1727,10 @@ done
 # htif §4: --fault-htif-drop-event answers the exit word's write with
 # RUSCV_TLM_OK and no event, while the three console writes keep their events.
 # No exit fact exists, so the guest's self-loop exhausts the turn bound.  The
-# run stop is the ABI's only observable sink effect, so the exhausted bound is
-# the proof that the exit value was not published; the three console values are
-# the target's accepted reports, which its own summary and the byte-identical
-# commit log fix.
+# run stop is the ABI's observable sink effect, so the exhausted bound proves
+# that no exit fact reached it; the three console values are the target's
+# accepted reports, which its own summary and the byte-identical commit log
+# fix.
 echo -e "${YELLOW}== --fault-htif-drop-event (must not pass)${NC}"
 capture drop_event_output drop_event_status \
     timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${HTIF_ELF}" --isa "${HTIF_PROFILE}" \
@@ -1797,11 +1801,11 @@ echo -e "  ${GREEN}[PASS]${NC} the device wait failed the run as a protocol fail
 
 # htif §4: --fault-htif-event-on-fault reports the exit write's event with a
 # fault status, which htif D4 forbids: only an accepted access publishes an
-# event.  The run must fail as a protocol failure of that access and must not
-# stop as an exit, so the exit word cannot be the run's terminal value; the
-# target's report sequence keeps only the three console words.  The C ABI
-# exposes no per-value sink for a refused write, so the classification is the
-# observable half of "no value may reach the sink" that the ABI carries.
+# event.  The run must fail as a protocol failure of that access, and the
+# refused write must be absent from the target's accepted report sequence.  The
+# ABI's failure classification runs before its exit decode, so this smoke does
+# not observe the refused write's sink; that publication rule is the Rust
+# validation rule (proven in `src/machine/tests.rs`) and is not claimed here.
 echo -e "${YELLOW}== --fault-htif-event-on-fault (must not pass)${NC}"
 capture htif_event_output htif_event_status \
     timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${HTIF_ELF}" --isa "${HTIF_PROFILE}" \
@@ -1831,7 +1835,7 @@ htif_event_sequence="$(htif_value_sequence "${htif_event_output}")"
 htif_event_console="$(htif_console_sequence "${htif_event_output}")"
 [ "${htif_event_console}" = "${HTIF_CONSOLE}" ] \
     || fail "the --fault-htif-event-on-fault control rendered console byte(s) ${htif_event_console}, not exactly Hi\\n"
-echo -e "  ${GREEN}[PASS]${NC} the fault-status event failed the access and published no exit value (status ${htif_event_status})"
+echo -e "  ${GREEN}[PASS]${NC} the fault-status event failed the access; the refused write is absent from the accepted sequence (status ${htif_event_status})"
 
 printf '\n============================================\n'
 printf '  SystemC smoke summary\n'
