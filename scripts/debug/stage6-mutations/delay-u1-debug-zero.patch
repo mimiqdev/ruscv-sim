@@ -1,6 +1,6 @@
 --- a/src/blocking/device.rs
 +++ b/src/blocking/device.rs
-@@ -424,17 +424,6 @@
+@@ -428,17 +428,6 @@
                  width,
              )));
          }
