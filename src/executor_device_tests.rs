@@ -883,7 +883,8 @@ fn a_host_htif_that_omits_the_event_reaches_the_turn_bound() {
 
 /// delay D5: a host UART access that annotates one tick keeps the run's facts:
 /// the same exit code, retired instructions, final PC and a byte-identical
-/// commit log as the in-tree window's run.
+/// commit log as the in-tree window's run.  A host target that annotates zero
+/// leaves every one of those facts unchanged too (delay D2).
 #[test]
 fn a_host_uart_device_delay_keeps_the_run_facts() {
     // One THR byte, then the exit word through the in-tree HTIF endpoint.
@@ -904,42 +905,43 @@ fn a_host_uart_device_delay_keeps_the_run_facts() {
         &code,
         bound,
     );
-
-    let target = HostUart::new(SYSTEM_BUS_UART_BASE);
-    target.set_delay(ONE_TICK_FS);
-    let (host, host_log) = run_with_log(
-        tlm_config_with_ram(
-            crate::blocking::test_support::DelayingRam::new(ONE_TICK_FS, 0),
-            DeviceTargets::with_uart(target.clone()),
-        ),
-        &code,
-        bound,
-    );
-
     assert_eq!(
         in_tree.exit_code, 0,
         "the in-tree run did not reach the guest's exit: {in_tree:?}"
     );
-    assert_eq!(
-        (host.exit_code, host.cycles, host.final_pc),
-        (in_tree.exit_code, in_tree.cycles, in_tree.final_pc),
-        "the charged device access moved the run's exit, turns or final PC"
-    );
-    assert_eq!(
-        host_log, in_tree_log,
-        "the charged device access changed the commit log"
-    );
-    assert!(!host.timed_out && host.error.is_none(), "{host:?}");
-    assert_eq!(
-        target.transactions(),
-        1,
-        "the host UART target did not serve exactly the one THR write"
-    );
-    assert_eq!(
-        target.transmitted(),
-        b"H".to_vec(),
-        "the target lost the byte"
-    );
+
+    for delay in [0, ONE_TICK_FS] {
+        let target = HostUart::new(SYSTEM_BUS_UART_BASE);
+        target.set_delay(delay);
+        let (host, host_log) = run_with_log(
+            tlm_config_with_ram(
+                crate::blocking::test_support::DelayingRam::new(ONE_TICK_FS, 0),
+                DeviceTargets::with_uart(target.clone()),
+            ),
+            &code,
+            bound,
+        );
+        assert_eq!(
+            (host.exit_code, host.cycles, host.final_pc),
+            (in_tree.exit_code, in_tree.cycles, in_tree.final_pc),
+            "a {delay} fs device annotation moved the run's exit, turns or final PC"
+        );
+        assert_eq!(
+            host_log, in_tree_log,
+            "a {delay} fs device annotation changed the commit log"
+        );
+        assert!(!host.timed_out && host.error.is_none(), "{host:?}");
+        assert_eq!(
+            target.transactions(),
+            1,
+            "the host UART target did not serve exactly the one THR write"
+        );
+        assert_eq!(
+            target.transmitted(),
+            b"H".to_vec(),
+            "the target lost the byte"
+        );
+    }
 }
 
 /// delay D4/D5: a host HTIF exit write that annotates one tick is charged in the

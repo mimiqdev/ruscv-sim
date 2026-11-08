@@ -3051,7 +3051,8 @@ fn a_host_uart_that_annotates_a_delay_charges_it_once() {
     // delay D2: a host target that annotates zero leaves every fact of its
     // parity run unchanged, including the transport total.
     let zero = HostUart::new(HOST_UART_BASE);
-    let (mut owned, _) = host_uart_machine_with_ram(device_delay_ram(), &zero, 1024, &code);
+    let (mut owned, zero_output) =
+        host_uart_machine_with_ram(device_delay_ram(), &zero, 1024, &code);
     let (records, failure) = run_device_delay(&mut owned, code.len());
     assert!(
         failure.is_none(),
@@ -3065,6 +3066,18 @@ fn a_host_uart_that_annotates_a_delay_charges_it_once() {
     assert!(
         records.iter().all(|record| record.1 == 0),
         "a host target that annotates zero charged Platform delay"
+    );
+    let zero_events: Vec<PlatformEvent> =
+        records.iter().flat_map(|record| record.2.clone()).collect();
+    assert_eq!(
+        zero_events,
+        [PlatformEvent::UartTransmit(b'H')],
+        "a host target that annotates zero changed the published events"
+    );
+    assert_eq!(
+        *zero_output.lock().unwrap(),
+        b"H".to_vec(),
+        "a host target that annotates zero changed config.uart_output"
     );
     assert_eq!(
         owned.transport_delay_femtoseconds(),
@@ -3362,6 +3375,95 @@ fn an_in_tree_device_run_charges_no_delay_and_keeps_its_parity_mtime() {
     );
 }
 
+/// delay D1/D4: both device windows may annotate in one run, and every Hart
+/// device access is charged once through the same ledger.  No project-authored
+/// guest reaches both windows, so this composition is the in-crate proof D8
+/// names for it; the event sequence and the parity counters stay the in-tree
+/// run's.
+#[test]
+fn a_run_with_both_host_windows_charges_each_device_access_once() {
+    let code = host_device_guest();
+    let (parity_times, parity_counters) = in_tree_run(device_delay_ram(), 0, &code);
+    let native = device_route(false, &code);
+
+    let uart = HostUart::new(HOST_UART_BASE);
+    uart.set_delay(ONE_TICK_FS);
+    let htif = HostHtif::new(HOST_HTIF_BASE);
+    htif.set_delay(ONE_TICK_FS);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(device_delay_ram());
+    config.devices = DeviceTargets::with_uart_and_htif(uart.clone(), htif.clone());
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let sink = output.clone();
+    config.uart_output = Some(Arc::new(move |byte| sink.lock().unwrap().push(byte)));
+    let values = Arc::new(Mutex::new(Vec::new()));
+    let target = values.clone();
+    config.htif_write = Some(Arc::new(move |value| target.lock().unwrap().push(value)));
+    let mut owned = OwnedMachine::new(config, code_image(&code)).unwrap();
+
+    let mut mtimes = Vec::new();
+    let mut transports = Vec::new();
+    let mut events = Vec::new();
+    for _ in 0..code.len() {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)),
+            "the both-window guest failed: {:?}",
+            turn.hart().outcome
+        );
+        mtimes.push(owned.platform_mtime().unwrap());
+        transports.push(turn.boundary().transport_delay_femtoseconds);
+        events.extend(turn.events().iter().cloned());
+    }
+    // Two accesses per window, each charged one tick in its own turn, so the
+    // committed time of every later turn carries the charges before it.
+    let mut expected = parity_times.clone();
+    let mut charges = 0;
+    for (index, time) in expected.iter_mut().enumerate() {
+        if matches!(index, 1 | 3 | 5 | 7) {
+            charges += 1;
+        }
+        *time = parity_times[index] + charges;
+    }
+    assert_eq!(
+        mtimes, expected,
+        "the two host windows did not charge their four accesses once each"
+    );
+    assert_eq!(
+        transports.last().copied(),
+        Some(4 * ONE_TICK_FS),
+        "the generation total is not the four charges"
+    );
+    assert_eq!(
+        events,
+        native
+            .iter()
+            .flat_map(|record| record.1.clone())
+            .collect::<Vec<_>>(),
+        "the two-window run changed the event sequence"
+    );
+    assert_eq!(
+        *output.lock().unwrap(),
+        b"H".to_vec(),
+        "the UART window lost its transmitted byte"
+    );
+    assert_eq!(
+        *values.lock().unwrap(),
+        [0x41],
+        "the HTIF window lost its write value"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        parity_counters,
+        "the two-window run changed the guest counters"
+    );
+    assert_eq!(
+        (uart.transactions(), htif.transactions()),
+        (2, 2),
+        "the host targets did not serve two accesses each"
+    );
+}
+
 /// delay D6: a `DebugInbound` device response must still report zero delay, so
 /// an SBA access that annotates one is a protocol failure of that access and
 /// charges nothing.
@@ -3510,7 +3612,12 @@ fn a_host_uart_bad_response_is_a_protocol_failure_without_charge() {
     ] {
         let target = HostUart::new(HOST_UART_BASE);
         target.set_fault(fault);
-        let (mut owned, output) = host_uart_machine(&target, 1024, &code);
+        // delay D4: the annotation is admissible on this RAM target, so a
+        // refusal that still charged it would show up in the mtime and the
+        // transport total.
+        target.set_delay(ONE_TICK_FS);
+        let (mut owned, output) =
+            host_uart_machine_with_ram(device_delay_ram(), &target, 1024, &code);
         let (_, failure) = run_host_uart(&mut owned, &output, code.len());
         assert!(
             output.lock().unwrap().is_empty(),
@@ -3526,6 +3633,11 @@ fn a_host_uart_bad_response_is_a_protocol_failure_without_charge() {
             owned.platform_mtime().unwrap(),
             parity - 1,
             "{fault:?}: the refused access charged Platform time beyond the F1 flush"
+        );
+        assert_eq!(
+            owned.transport_delay_femtoseconds(),
+            0,
+            "{fault:?}: a validation failure still charged its annotation"
         );
     }
 }
@@ -4306,7 +4418,12 @@ fn a_host_htif_bad_response_is_a_protocol_failure_without_charge() {
     ] {
         let target = HostHtif::new(HOST_HTIF_BASE);
         target.set_fault(fault);
-        let (mut owned, values, output) = host_htif_machine(&target, 1024, &code);
+        // delay D4: the annotation is admissible on this RAM target, so a
+        // refusal that still charged it would show up in the mtime and the
+        // transport total.
+        target.set_delay(ONE_TICK_FS);
+        let (mut owned, values, output) =
+            host_htif_machine_with_ram(device_delay_ram(), &target, 1024, &code);
         let (_, failure) = run_device_selection(&mut owned, &output, &values, code.len());
         assert!(
             values.lock().unwrap().is_empty(),
@@ -4322,6 +4439,11 @@ fn a_host_htif_bad_response_is_a_protocol_failure_without_charge() {
             owned.platform_mtime().unwrap(),
             parity - 1,
             "{fault:?}: the refused access charged Platform time beyond the F1 flush"
+        );
+        assert_eq!(
+            owned.transport_delay_femtoseconds(),
+            0,
+            "{fault:?}: a validation failure still charged its annotation"
         );
     }
 

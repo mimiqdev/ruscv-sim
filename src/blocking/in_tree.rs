@@ -4,11 +4,10 @@
 //! target wraps the existing [`Uart16550`] through the same register helpers
 //! the native branch uses, and the HTIF target answers the dword read with
 //! zero and the dword write with one `HtifWrite` event.  Both stay the
-//! zero-delay reference: neither annotates a response delay, so an in-tree run
-//! charges no Platform time on either route and keeps its parity facts
-//! (delay D2).  A fresh target is
-//! built for every Platform install, which is the whole reset rule for an
-//! in-tree window (device D6).
+//! zero-delay reference: neither annotates a response delay, so an in-tree
+//! device access contributes no transport delay on either route and keeps its
+//! parity facts (delay D2).  A fresh target is built for every Platform
+//! install, which is the whole reset rule for an in-tree window (device D6).
 
 use super::device::{BlockingDeviceEvent, BlockingDeviceTarget};
 use super::{BlockingCommand, BlockingResponseStatus, BlockingTransaction};
