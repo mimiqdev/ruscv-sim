@@ -1,0 +1,15 @@
+diff --git a/src/capi/mod.rs b/src/capi/mod.rs
+--- a/src/capi/mod.rs
++++ b/src/capi/mod.rs
+@@ -587,11 +587,6 @@
+             base: crate::executor::SYSTEM_BUS_UART_BASE,
+             size: crate::executor::SYSTEM_BUS_UART_WINDOW as u64,
+         }),
+-        target::device_window::HTIF => Some(CDeviceWindow {
+-            kind: CDeviceKind::Htif,
+-            base: crate::executor::SYSTEM_BUS_HTIF_BASE,
+-            size: crate::executor::SYSTEM_BUS_HTIF_SIZE as u64,
+-        }),
+         _ => None,
+     }
+ }

@@ -16,7 +16,10 @@
 # `ruscv_device` layout pins, the `ruscv_payload.device_event` field's offset and
 # size, every attach refusal code, and a run whose C device target serves the
 # UART window with one transmit event, plus the wrong-window tag that must fail
-# the run.
+# the run.  The Host HTIF Service's C ABI unit (htif U2, D7) adds
+# `RUSCV_DEVICE_HTIF`, its own attach refusals, and a run whose C HTIF target
+# answers one read and one write with the guest's eight-byte value, plus the
+# UART tag on that window that must fail the run.
 #
 # A missing C compiler is a failure, never a skip: CI installs gcc on the
 # runner, so an absent compiler means the check did not run.

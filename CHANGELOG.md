@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Host HTIF Service U2: C ABI HTIF 窗口（issue #240）**
+  - 头文件按 append-only 规则追加 `RUSCV_DEVICE_HTIF` 1（htif D7）：`RUSCV_DEVICE_UART` 0 与所有既有值
+    不动，也不新增事件 tag（`RUSCV_DEVICE_EVENT_HTIF_WRITE` 2 已存在）。`ruscv_device` 与
+    `ruscv_machine_attach_device` 的注释写出 HTIF 窗口的基址 `0x4000_8000`、大小 8 字节、该窗口的事件
+    （读不发布事件，接受的写上报一个 `HTIF_WRITE`，其值取自响应的八个写字节）以及“一个窗口一张表、
+    每个窗口只 attach 一次、两个窗口可同时选择”的规则。表、payload 与任何布局 pin 都不变，因此 ABI 与
+    设备头文件保持二进制兼容，宿主须按新头文件重编译后才能使用新窗口码
+  - `c_device_window` 增加 HTIF 分支，`attach_device` 按窗口保存复制后的表（htif D7）：先 attach UART
+    再 attach HTIF（或反序）得到 `DeviceTargets::with_uart_and_htif`，未选择的窗口继续由树内 target
+    应答。拒绝码沿用 D6：NULL handle、NULL 表、未知窗口与不完整表是
+    `RUSCV_ERROR_INVALID_ARGUMENT`；base／size 不匹配、同一窗口的第二次 attach、晚 attach 与没有
+    `ruscv_target`（无 TLM 路由）的句柄是 `RUSCV_ERROR_CONFIG`
+  - 端点请求是一次完整八字节 dword。读由 target 自己的寄存器状态回答且不发布事件；接受的写上报恰好
+    一个 `HTIF_WRITE`，C 宿主保持请求字节不变即上报 guest 自己的值，运行停止与退出解码仍是既有事件
+    路径（htif D4/D5）。`capi` 测试驱动真实入口证明：attach 在首次 load 之前返回 `RUSCV_OK` 且
+    target 自己的计数非零；每个拒绝码；payload 的 `device_event`、`delay_fs`、`host_elapsed_fs` 与
+    `may_suspend` 全零且宽度为 8；guest 的八个字节经运行退出码与 target 自己的记录可见；HTIF 窗口上的
+    `UART_TRANSMIT` tag 与非零注记都是该次访问的协议失败；回调再入被拒而
+    `ruscv_machine_invalidate_direct_mem` 仍被接受；同一句柄上的两个窗口各自服务各自的 guest 访问
+  - `tests/capi/smoke.c` 以纯 C 覆盖接受的 HTIF attach、一次读与一次写及其事件与值、每个拒绝码，以及
+    该窗口上的 UART tag 失败；`scripts/test_capi_smoke.sh` 的说明同步更新
+  - `htif-u2-window` mutation 控制钉住 `c_device_window` 的 `RUSCV_DEVICE_HTIF` 分支：去掉该分支后
+    attach 不再是 `RUSCV_OK`、target 也不再服务端点。按窗口存储改了 `src/capi/mod.rs` 的 attach 结尾，
+    `device-u3-abi-attach` 以同一语义重生成（复制的表不再存到句柄上），181 个控制全部通过
+    `patch --fuzz=0` 干跑
+  - 本单元不改 U1 的 Rust 语义、不改 SystemC 宿主与 smoke（U3, #241）、不改文档收尾（U4, #242）；
+    `--all-features` 仍不需要 C++ 工具链
+
 - **Host HTIF Service U1: Rust 宿主 HTIF target（issue #239）**
   - `DeviceTargets` 增加私有 HTIF 槽（htif D2）：`with_htif(target)` 只选宿主 HTIF，
     `with_uart_and_htif(uart, htif)` 同时选两个窗口，`htif()` 返回所选 target。`DeviceTargets::none()`

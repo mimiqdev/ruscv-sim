@@ -154,8 +154,11 @@ extern "C" {
 /* Capacity of one committed-write snapshot buffer, in bytes. */
 #define RUSCV_SNAPSHOT_MAX 64
 
-/* The device windows ruscv_machine_attach_device selects (device D8). */
+/* The device windows ruscv_machine_attach_device selects (device D8, htif D7).
+ * RUSCV_DEVICE_UART is the UART window `0x1000_0000` with `0x100` bytes;
+ * RUSCV_DEVICE_HTIF is the HTIF tohost endpoint `0x4000_8000` with 8 bytes. */
 #define RUSCV_DEVICE_UART 0
+#define RUSCV_DEVICE_HTIF 1
 
 /* The at-most-one guest-visible effect an accepted device access reports
  * (device D8).  The value travels with the event, never in a second field. */
@@ -431,14 +434,16 @@ typedef struct ruscv_target {
 } ruscv_target;
 
 /*
- * The caller-supplied device target (device D8).
+ * The caller-supplied device target (device D8, htif D7).
  *
  * One table serves one device window.  `window_base` and `window_size` must
- * equal the selected window's, which is the UART window `0x1000_0000` with
- * `0x100` bytes for RUSCV_DEVICE_UART; a mismatch is
- * RUSCV_ERROR_CONFIG from ruscv_machine_attach_device.  Like the RAM table,
- * this one is copied at attach, so the callbacks and `user` are fixed for the
- * handle's life, and `user` and everything it points at must stay valid until
+ * equal the selected window's: the UART window `0x1000_0000` with `0x100`
+ * bytes for RUSCV_DEVICE_UART, or the HTIF tohost endpoint `0x4000_8000` with
+ * 8 bytes for RUSCV_DEVICE_HTIF; a mismatch is RUSCV_ERROR_CONFIG from
+ * ruscv_machine_attach_device.  One attach per window is allowed, so a handle
+ * may carry one table for each window.  Like the RAM table, this one is copied
+ * at attach, so the callbacks and `user` are fixed for the handle's life, and
+ * `user` and everything it points at must stay valid until
  * ruscv_machine_destroy.
  *
  * All three callbacks are required and run under the RAM target's rules:
@@ -449,15 +454,27 @@ typedef struct ruscv_target {
  * one status, leave `address`, `command` and `length` as it received them,
  * leave `delay_fs`, `local_offset_fs`, `host_elapsed_fs`, `may_suspend` and
  * `dmi_allowed` zero, and set `device_event` to RUSCV_DEVICE_EVENT_NONE or to
- * the tag that matches its window.  The window's width, category and
- * start-address policy run before this callback, so it never sees a request
- * the Platform would reject, and an atomic envelope never reaches it.
+ * the tag that matches its window: RUSCV_DEVICE_EVENT_UART_TRANSMIT for the
+ * UART window and RUSCV_DEVICE_EVENT_HTIF_WRITE for the HTIF window.  The
+ * window's width, category and start-address policy run before this callback,
+ * so it never sees a request the Platform would reject, and an atomic envelope
+ * never reaches it.
+ *
+ * A UART request is one register byte.  An HTIF request is one complete
+ * eight-byte dword at the window base: a read answers the endpoint's register
+ * state with no event, and an accepted write reports exactly one
+ * RUSCV_DEVICE_EVENT_HTIF_WRITE whose value is the response's eight data
+ * bytes, which must equal the request's (htif D4/D10).  A host that leaves the
+ * request's data bytes alone therefore reports the guest's own value, and the
+ * published value is the only exit vocabulary the endpoint carries.
  *
  * `receive` delivers one byte the host pushes into the window.  It returns
  * nothing: a host that cannot accept the byte drops it.  This ABI version adds
  * no entry that pushes a byte, so it reaches the callback only when an
- * embedding caller uses the Machine's own UART receive path; the ABI never
- * calls it re-entrantly and never from another thread.
+ * embedding caller uses the Machine's own UART receive path; it is never
+ * called for RUSCV_DEVICE_HTIF, because the endpoint has no host-to-guest
+ * direction.  The ABI never calls it re-entrantly and never from another
+ * thread.
  *
  * `transport_reset` returns nonzero when the target has quiesced and accepts
  * new accesses and zero when it refuses.  A refusal fails the Platform build
@@ -569,12 +586,15 @@ int32_t ruscv_machine_create(const ruscv_target *target, int32_t isa,
                              uint64_t tick_period_fs, ruscv_machine **out);
 
 /*
- * Attaches one host device target to the selected window (device D8).
+ * Attaches one host device target to the selected window (device D8, htif D7).
  *
- * `window` is RUSCV_DEVICE_UART.  The call must come after
- * ruscv_machine_create and before the first ruscv_machine_load_elf: a device
- * target is composition configuration, chosen once per handle and copied, so
- * it survives ruscv_machine_reset and is reset at every Platform build.
+ * `window` is RUSCV_DEVICE_UART, the UART window `0x1000_0000` with `0x100`
+ * bytes, or RUSCV_DEVICE_HTIF, the HTIF tohost endpoint `0x4000_8000` with 8
+ * bytes.  Each window takes its own table and each may be attached once.  The
+ * call must come after ruscv_machine_create and before the first
+ * ruscv_machine_load_elf: a device target is composition configuration, chosen
+ * once per handle and copied, so it survives ruscv_machine_reset and is reset
+ * at every Platform build.
  *
  * It is refused with RUSCV_ERROR_INVALID_ARGUMENT for a NULL handle, a NULL
  * table or an unknown window, and with RUSCV_ERROR_CONFIG for a `window_base`
@@ -585,7 +605,8 @@ int32_t ruscv_machine_create(const ruscv_target *target, int32_t isa,
  * RUSCV_ERROR_INVALID_ARGUMENT like an incomplete RAM table.
  *
  * A handle with no attached device target answers each window with its in-tree
- * device, which is exactly the previous behavior.
+ * device, which is exactly the previous behavior; the two windows are selected
+ * independently.
  */
 int32_t ruscv_machine_attach_device(ruscv_machine *machine, int32_t window,
                                     const ruscv_device *device);

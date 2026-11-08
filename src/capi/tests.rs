@@ -3573,6 +3573,11 @@ const DEVICE_RBR_THR: u64 = crate::peripherals::uart16550::reg_offset::RBR_THR;
 /// The bit a polling guest needs in `LSR` so it stops waiting.
 const DEVICE_LSR_TRANSMIT_EMPTY: u8 = 0x20;
 
+/// The HTIF window the C device table names (htif D7).
+const HTIF_WINDOW_BASE: u64 = crate::executor::SYSTEM_BUS_HTIF_BASE;
+/// The HTIF window's published size, in bytes.
+const HTIF_WINDOW_SIZE: u64 = crate::executor::SYSTEM_BUS_HTIF_SIZE as u64;
+
 /// One device transaction as the C payload published it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DeviceCall {
@@ -3590,10 +3595,14 @@ struct DeviceCall {
 /// A device target whose callbacks are the C ABI's own calling convention.
 ///
 /// It models the two UART registers the fixture guest touches: `LSR` answers
-/// the transmit-empty bit and a `THR` write records its byte.  Every other
-/// answer is scripted per test, which is how a test makes the target report a
-/// protocol violation the Rust side must classify.
+/// the transmit-empty bit and a `THR` write records its byte.  With [`Self::htif`]
+/// it models the HTIF endpoint instead: a read answers zero and an accepted
+/// eight-byte write records the request's bytes and reports the scripted tag.
+/// Every other answer is scripted per test, which is how a test makes the
+/// target report a protocol violation the Rust side must classify.
 struct TestDevice {
+    /// Whether this table serves the HTIF window instead of the UART one.
+    htif: bool,
     /// The window this table declares.
     window_base: u64,
     window_size: u64,
@@ -3621,6 +3630,8 @@ struct TestDevice {
     reset_ack: AtomicBool,
     /// The bytes a `THR` write carried, in order.
     transmitted: Mutex<Vec<u8>>,
+    /// Every HTIF write's request bytes, in order.
+    writes: Mutex<Vec<Vec<u8>>>,
     /// The bytes `receive` delivered, in order.
     receives: Mutex<Vec<u8>>,
     /// Every blocking transaction in order.
@@ -3643,6 +3654,7 @@ struct TestDevice {
 impl TestDevice {
     fn new() -> Self {
         Self {
+            htif: false,
             window_base: DEVICE_WINDOW_BASE,
             window_size: DEVICE_WINDOW_SIZE,
             status: AtomicI32::new(super::target::status::OK),
@@ -3657,6 +3669,7 @@ impl TestDevice {
             resets: AtomicUsize::new(0),
             reset_ack: AtomicBool::new(true),
             transmitted: Mutex::new(Vec::new()),
+            writes: Mutex::new(Vec::new()),
             receives: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
             handle: AtomicPtr::new(std::ptr::null_mut()),
@@ -3664,6 +3677,20 @@ impl TestDevice {
             run_grant_status: AtomicI32::new(i32::MIN),
             attach_status: AtomicI32::new(i32::MIN),
             invalidate_status: AtomicI32::new(i32::MIN),
+        }
+    }
+
+    /// The HTIF endpoint's table: one eight-byte dword at the window base.
+    ///
+    /// A correct endpoint reports its one event on an accepted write, so the
+    /// default tag is `HTIF_WRITE`; a test that needs another tag sets it.
+    fn htif() -> Self {
+        Self {
+            htif: true,
+            window_base: HTIF_WINDOW_BASE,
+            window_size: HTIF_WINDOW_SIZE,
+            event: AtomicI32::new(device_event::HTIF_WRITE),
+            ..Self::new()
         }
     }
 
@@ -3684,6 +3711,11 @@ impl TestDevice {
 
     fn transmitted(&self) -> Vec<u8> {
         self.transmitted.lock().unwrap().clone()
+    }
+
+    /// Every HTIF write's request bytes, in order.
+    fn written(&self) -> Vec<Vec<u8>> {
+        self.writes.lock().unwrap().clone()
     }
 
     fn receives(&self) -> Vec<u8> {
@@ -3742,16 +3774,26 @@ unsafe extern "C" fn device_b_transport(user: *mut c_void, payload: *mut CPayloa
     let offset = payload.address.wrapping_sub(device.window_base);
     match payload.command {
         super::target::command::READ => {
-            // `LSR` reports the transmit-empty bit so a polling guest makes
-            // progress; every other register reads as zero.
-            if offset == DEVICE_LSR {
+            if device.htif {
+                // htif D3: the endpoint's read answer is the target's own
+                // register state; this fixture fixes it at zero so the
+                // parity runs have a fixed point.
+                data.fill(0);
+            } else if offset == DEVICE_LSR {
+                // `LSR` reports the transmit-empty bit so a polling guest makes
+                // progress; every other register reads as zero.
                 if let Some(byte) = data.first_mut() {
                     *byte = DEVICE_LSR_TRANSMIT_EMPTY;
                 }
             }
         }
         _ => {
-            if offset == DEVICE_RBR_THR {
+            if device.htif {
+                // htif D4: the request's eight bytes are the value an accepted
+                // write reports, and leaving them alone is how the host reports
+                // the guest's own value.
+                device.writes.lock().unwrap().push(data.to_vec());
+            } else if offset == DEVICE_RBR_THR {
                 if let Some(byte) = data.first() {
                     device.transmitted.lock().unwrap().push(*byte);
                 }
@@ -3817,7 +3859,24 @@ fn uart_guest(code: u32) -> Vec<u32> {
     ]
 }
 
-/// One handle with a C device table attached to the UART window.
+/// A guest that reads the HTIF endpoint and writes one dword, whose value is
+/// the standard exit payload for `code`, so the endpoint's own event stops the
+/// run (htif D4/D5).
+///
+/// The first parcel is two compressed `c.nop`s, so the image only executes
+/// under an IALIGN=16 profile, as the other fixtures require.
+fn htif_guest(code: u32) -> Vec<u32> {
+    vec![
+        0x0001_0001,
+        elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::ld(7, 8, 0),     // the endpoint's read answer
+        elf::standard_exit(code),
+        elf::sd(5, 8, 0), // the exit write
+        0x0000_006f,
+    ]
+}
+
+/// One handle with a C device table attached to one device window.
 struct DeviceHarness {
     handle: *mut RuscvMachine,
     device: Box<TestDevice>,
@@ -3833,7 +3892,17 @@ impl Drop for DeviceHarness {
 }
 
 impl DeviceHarness {
+    /// A handle whose attached table serves the UART window.
     fn new(code: &[u32]) -> Self {
+        Self::attach(device_window::UART, TestDevice::new(), code)
+    }
+
+    /// A handle whose attached table serves the HTIF window (htif D7).
+    fn with_htif(code: &[u32]) -> Self {
+        Self::attach(device_window::HTIF, TestDevice::htif(), code)
+    }
+
+    fn attach(window: i32, device: TestDevice, code: &[u32]) -> Self {
         let mut ram = Box::new(TestTarget::new(elf::BASE, 0x1_0000));
         let table = ram.table(0);
         let mut handle = std::ptr::null_mut();
@@ -3842,14 +3911,17 @@ impl DeviceHarness {
             ruscv_machine_create(&table, IsaProfile::Rv64imafdc as i32, TICK_FS, &mut handle)
         };
         assert_eq!(status, Status::Ok as i32, "create");
-        let device = Box::new(TestDevice::new());
+        let device = Box::new(device);
         device.handle.store(handle, Ordering::SeqCst);
         let device_table = device.table();
         // SAFETY: the handle and the table are live and this is the creating
         // thread.
-        let status =
-            unsafe { ruscv_machine_attach_device(handle, device_window::UART, &device_table) };
-        assert_eq!(status, Status::Ok as i32, "attach_device");
+        let status = unsafe { ruscv_machine_attach_device(handle, window, &device_table) };
+        assert_eq!(
+            status,
+            Status::Ok as i32,
+            "attach_device for window {window}"
+        );
         let harness = Self {
             handle,
             device,
@@ -3966,7 +4038,7 @@ fn every_documented_attach_refusal_returns_its_code() {
             "a NULL table is an argument refusal"
         );
         assert_eq!(
-            ruscv_machine_attach_device(handle, device_window::UART + 1, &table),
+            ruscv_machine_attach_device(handle, device_window::HTIF + 1, &table),
             InvalidArgument as i32,
             "an unknown window is an argument refusal"
         );
@@ -4257,13 +4329,9 @@ fn a_host_device_annotation_or_changed_request_is_a_protocol_failure() {
     );
 }
 
-#[test]
-fn the_device_callback_cannot_reenter_the_abi() {
-    // device D8: a device callback obeys the RAM target's rules, so every entry
-    // that reaches the callback check is re-entry while direct-memory
-    // invalidation stays accepted.
-    let device = DeviceHarness::new(&uart_guest(2));
-    device.device.probe_entries.store(true, Ordering::SeqCst);
+/// Asserts one run's device callbacks were refused every ABI entry but the
+/// direct-memory invalidation exception (device D8).
+fn assert_device_entries_refused(device: &DeviceHarness) {
     let result = device.run_to_result(1_000, 16);
     assert_eq!(
         result.state,
@@ -4286,6 +4354,21 @@ fn the_device_callback_cannot_reenter_the_abi() {
         Status::Ok as i32,
         "the invalidation entry is not accepted inside a device callback"
     );
+}
+
+#[test]
+fn the_device_callback_cannot_reenter_the_abi() {
+    // device D8: a device callback obeys the RAM target's rules, so every entry
+    // that reaches the callback check is re-entry while direct-memory
+    // invalidation stays accepted.
+    let uart = DeviceHarness::new(&uart_guest(2));
+    uart.device.probe_entries.store(true, Ordering::SeqCst);
+    assert_device_entries_refused(&uart);
+
+    // htif D7: the HTIF window's table runs under the same callback rules.
+    let htif = DeviceHarness::with_htif(&htif_guest(2));
+    htif.device.probe_entries.store(true, Ordering::SeqCst);
+    assert_device_entries_refused(&htif);
 }
 
 #[test]
@@ -4320,4 +4403,440 @@ fn the_device_wrapper_delivers_a_pushed_byte_to_receive() {
     let wrapper = super::target::CDeviceTarget::new(device.table()).unwrap();
     wrapper.receive(b'Z');
     assert_eq!(device.receives(), vec![b'Z']);
+}
+
+// ---- Host HTIF Service U2: the C ABI HTIF window (htif D7) ----
+
+#[test]
+fn an_attached_c_device_target_serves_the_htif_window() {
+    // htif D7: the attach succeeds before the first load and the attached
+    // target's own count is non-zero for a guest that reads and writes the
+    // endpoint.  The write carries the standard exit payload, so the run's exit
+    // code is the value the endpoint's event published.
+    let device = DeviceHarness::with_htif(&htif_guest(2));
+    let result = device.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        device.diagnostic()
+    );
+    assert_eq!(result.exit_code, 2);
+    assert!(
+        device.device.transactions() >= 2,
+        "the attached C HTIF target served no transaction"
+    );
+    let calls = device.device.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.access_kind == super::target::access_kind::DATA_READ)
+            .count(),
+        1,
+        "the endpoint read did not reach the device target exactly once: {calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.access_kind == super::target::access_kind::DATA_WRITE)
+            .count(),
+        1,
+        "the tohost write did not reach the device target exactly once: {calls:?}"
+    );
+    assert_eq!(
+        device.device.written(),
+        vec![5u64.to_le_bytes().to_vec()],
+        "the target did not receive the guest's eight bytes"
+    );
+    assert!(
+        device.device.resets() > 0,
+        "the attached target was never reset at a Platform build"
+    );
+
+    // The same guest on the in-tree endpoint: the run result is its parity
+    // result, and only the target that answered differs.
+    let in_tree = Harness::new(IsaProfile::Rv64imafdc as i32, &htif_guest(2), 0);
+    let parity = in_tree.run_to_result(1_000, 16);
+    assert_eq!(
+        (result.state, result.exit_code),
+        (parity.state, parity.exit_code),
+        "the host HTIF route is not its parity result"
+    );
+}
+
+#[test]
+fn every_documented_htif_attach_refusal_returns_its_code() {
+    use Status::{Config, InvalidArgument};
+
+    // htif D7 inherits device D6's refusals per window: a NULL handle, a NULL
+    // table and an unknown window are argument refusals, so they precede every
+    // configuration refusal.
+    let (handle, _ram) = tlm_handle();
+    let mut device = Box::new(TestDevice::htif());
+    let table = device.table();
+    // SAFETY: every pointer here is either null or live on this thread.
+    unsafe {
+        assert_eq!(
+            ruscv_machine_attach_device(std::ptr::null_mut(), device_window::HTIF, &table),
+            InvalidArgument as i32,
+            "a NULL handle is an argument refusal"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::HTIF, std::ptr::null()),
+            InvalidArgument as i32,
+            "a NULL table is an argument refusal"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::HTIF + 1, &table),
+            InvalidArgument as i32,
+            "an unknown window is an argument refusal"
+        );
+        let incomplete = CDevice {
+            transport_reset: None,
+            ..device.table()
+        };
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::HTIF, &incomplete),
+            InvalidArgument as i32,
+            "a table without its callbacks is an argument refusal"
+        );
+    }
+
+    // A window the table does not name is a configuration refusal.
+    device.window_base = HTIF_WINDOW_BASE + 4;
+    // SAFETY: the handle and the table are live on this thread.
+    assert_eq!(
+        unsafe { ruscv_machine_attach_device(handle, device_window::HTIF, &device.table()) },
+        Config as i32,
+        "a mismatched window base is a configuration refusal"
+    );
+    device.window_base = HTIF_WINDOW_BASE;
+    device.window_size = HTIF_WINDOW_SIZE + 1;
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { ruscv_machine_attach_device(handle, device_window::HTIF, &device.table()) },
+        Config as i32,
+        "a mismatched window size is a configuration refusal"
+    );
+    device.window_size = HTIF_WINDOW_SIZE;
+
+    // The first attach succeeds; the second for the same window is refused.
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { ruscv_machine_attach_device(handle, device_window::HTIF, &device.table()) },
+        Status::Ok as i32,
+        "the first HTIF attach is accepted"
+    );
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { ruscv_machine_attach_device(handle, device_window::HTIF, &device.table()) },
+        Config as i32,
+        "a second attach for the HTIF window is a configuration refusal"
+    );
+    // SAFETY: the handle is destroyed exactly once, at the end of the test.
+    unsafe { ruscv_machine_destroy(handle) };
+
+    // A late attach is refused: the table must be attached before the first
+    // load.
+    let (handle, _ram) = tlm_handle();
+    let elf = elf_file(&htif_guest(2));
+    let path = c_text(elf.path());
+    // SAFETY: the handle and the path are live on this thread.
+    unsafe {
+        assert_eq!(
+            ruscv_machine_load_elf(handle, path.as_ptr()),
+            Status::Ok as i32,
+            "load_elf"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::HTIF, &device.table()),
+            Config as i32,
+            "an attach after the first load is a configuration refusal"
+        );
+    }
+    // SAFETY: the handle is destroyed exactly once.
+    unsafe { ruscv_machine_destroy(handle) };
+
+    // The cutoff is the first load call, not the first successful load.
+    let (handle, _ram) = tlm_handle();
+    let missing = std::ffi::CString::new("/nonexistent/ruscv-u2-htif-attach.elf").unwrap();
+    // SAFETY: the handle and the path are live on this thread.
+    unsafe {
+        assert_eq!(
+            ruscv_machine_load_elf(handle, missing.as_ptr()),
+            Status::Io as i32,
+            "a missing image is an IO failure"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::HTIF, &device.table()),
+            Config as i32,
+            "an attach after a failed first load is a configuration refusal"
+        );
+    }
+    // SAFETY: the handle is destroyed exactly once.
+    unsafe { ruscv_machine_destroy(handle) };
+
+    // A handle created with a NULL ruscv_target has no TLM route, so it cannot
+    // serve the HTIF window either.
+    let mut native = std::ptr::null_mut();
+    // SAFETY: `native` is writable and the route needs no table.
+    let status = unsafe {
+        ruscv_machine_create(
+            std::ptr::null(),
+            IsaProfile::Rv64imafdc as i32,
+            TICK_FS,
+            &mut native,
+        )
+    };
+    assert_eq!(status, Status::Ok as i32, "create a native handle");
+    // SAFETY: the handle and the table are live on this thread.
+    assert_eq!(
+        unsafe { ruscv_machine_attach_device(native, device_window::HTIF, &device.table()) },
+        Config as i32,
+        "a handle without a TLM route is a configuration refusal"
+    );
+    // SAFETY: the handle is destroyed exactly once.
+    unsafe { ruscv_machine_destroy(native) };
+}
+
+#[test]
+fn a_htif_payload_carries_zero_annotations_and_no_event_request() {
+    // htif D3/D7: the host endpoint receives `device_event` zero, zero delay,
+    // zero host elapsed time and `may_suspend` zero, with the window's own
+    // eight-byte dword and no local offset.
+    let device = DeviceHarness::with_htif(&htif_guest(2));
+    let result = device.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        device.diagnostic()
+    );
+    let calls = device.device.calls();
+    assert!(!calls.is_empty(), "the HTIF target served no transaction");
+    for call in &calls {
+        assert_eq!(
+            call.device_event,
+            device_event::NONE,
+            "an HTIF request carried a response tag: {call:?}"
+        );
+        assert_eq!(
+            call.delay_fs, 0,
+            "an HTIF request carried a delay: {call:?}"
+        );
+        assert_eq!(
+            call.host_elapsed_fs, 0,
+            "an HTIF request carried host elapsed time: {call:?}"
+        );
+        assert_eq!(
+            call.may_suspend, 0,
+            "an HTIF request carried the suspension flag: {call:?}"
+        );
+        assert_eq!(
+            call.local_offset_fs, 0,
+            "an HTIF request carried a local offset: {call:?}"
+        );
+        assert_eq!(
+            call.length, HTIF_WINDOW_SIZE as usize,
+            "the endpoint is one eight-byte dword: {call:?}"
+        );
+        assert!(
+            call.address >= HTIF_WINDOW_BASE && call.address < HTIF_WINDOW_BASE + HTIF_WINDOW_SIZE,
+            "a request outside the window reached the target: {call:?}"
+        );
+    }
+    // A device transaction never charges the transport totals (htif D9).
+    assert_eq!(device.facts().transport_delay_fs, 0);
+}
+
+#[test]
+fn an_htif_write_tag_is_accepted_and_the_guest_value_reaches_the_exit_decode() {
+    // htif D4/D7: the tag is copied from the C response and the value comes
+    // from the response's eight write bytes, so a host that leaves them alone
+    // reports the guest's own value and the run's exit code decodes it.
+    let accepted = DeviceHarness::with_htif(&htif_guest(2));
+    let result = accepted.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        accepted.diagnostic()
+    );
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(
+        accepted.device.written(),
+        vec![5u64.to_le_bytes().to_vec()],
+        "the accepted write did not carry the guest's eight bytes"
+    );
+
+    // A tag from the other window is a protocol failure on this window.
+    let refused = DeviceHarness::with_htif(&htif_guest(2));
+    refused.device.set_event(device_event::UART_TRANSMIT);
+    let result = refused.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "a UART transmit event on the HTIF window is not a failure: {}",
+        refused.diagnostic()
+    );
+    assert_ne!(result.exit_code, 2);
+    let diagnostic = refused.diagnostic();
+    assert!(
+        diagnostic.contains("uart-transmit") && diagnostic.contains("HTIF window"),
+        "the failure does not name the copied tag: {diagnostic}"
+    );
+}
+
+#[test]
+fn a_host_htif_annotation_is_a_protocol_failure() {
+    // htif D9: an HTIF access is a device transaction, so it annotates nothing;
+    // each response field a host can set is a protocol failure of that access.
+    let delay = DeviceHarness::with_htif(&htif_guest(2));
+    delay.device.delay_fs.store(TICK_FS, Ordering::SeqCst);
+    let result = delay.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "an annotated HTIF delay was accepted: {}",
+        delay.diagnostic()
+    );
+    assert!(
+        delay.diagnostic().contains("delay"),
+        "the failure does not name the delay: {}",
+        delay.diagnostic()
+    );
+
+    let elapsed = DeviceHarness::with_htif(&htif_guest(2));
+    elapsed
+        .device
+        .host_elapsed_fs
+        .store(TICK_FS, Ordering::SeqCst);
+    let result = elapsed.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "host time inside an HTIF callback was accepted: {}",
+        elapsed.diagnostic()
+    );
+    assert!(
+        elapsed.diagnostic().contains("host elapsed"),
+        "the failure does not name the host elapsed time: {}",
+        elapsed.diagnostic()
+    );
+
+    let hinted = DeviceHarness::with_htif(&htif_guest(2));
+    hinted.device.hint.store(true, Ordering::SeqCst);
+    let result = hinted.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "an HTIF direct-memory hint was accepted: {}",
+        hinted.diagnostic()
+    );
+    assert!(
+        hinted.diagnostic().contains("direct-memory hint"),
+        "the failure does not name the hint: {}",
+        hinted.diagnostic()
+    );
+    // device D5: the endpoint is never offered direct memory, so nothing is
+    // charged.
+    assert_eq!(hinted.facts().transport_delay_fs, 0);
+}
+
+/// A guest that reads `LSR`, writes `THR` and writes the endpoint, so one run
+/// reaches both host device windows.
+fn both_windows_guest(code: u32) -> Vec<u32> {
+    vec![
+        0x0001_0001,
+        elf::lui(5, 0x10000), // 0x1000_0000, the UART window
+        elf::lbu(7, 5, DEVICE_LSR as i32),
+        elf::addi(6, 0, i32::from(b'H')),
+        elf::sb(6, 5, DEVICE_RBR_THR as i32),
+        elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::ld(7, 8, 0),     // the endpoint's read answer
+        elf::standard_exit(code),
+        elf::sd(5, 8, 0), // the exit write
+        0x0000_006f,
+    ]
+}
+
+#[test]
+fn both_device_windows_take_their_own_table() {
+    // htif D7: one table serves one window and each window is selected
+    // independently, so a handle carries a host UART target and a host HTIF
+    // target at once, and the second attach refusal is per window.
+    let mut ram = Box::new(TestTarget::new(elf::BASE, 0x1_0000));
+    let ram_table = ram.table(0);
+    let mut handle = std::ptr::null_mut();
+    // SAFETY: the table and its user pointer stay alive in this test.
+    let status = unsafe {
+        ruscv_machine_create(
+            &ram_table,
+            IsaProfile::Rv64imafdc as i32,
+            TICK_FS,
+            &mut handle,
+        )
+    };
+    assert_eq!(status, Status::Ok as i32, "create");
+    let uart = Box::new(TestDevice::new());
+    let htif = Box::new(TestDevice::htif());
+    let uart_table = uart.table();
+    let htif_table = htif.table();
+    // SAFETY: the handle and both tables are live on this thread.
+    unsafe {
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::UART, &uart_table),
+            Status::Ok as i32,
+            "the UART attach is accepted"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::HTIF, &htif_table),
+            Status::Ok as i32,
+            "the HTIF attach is accepted beside the UART one"
+        );
+    }
+
+    let elf = elf_file(&both_windows_guest(2));
+    let path = c_text(elf.path());
+    // SAFETY: the handle and the path are live on this thread.
+    assert_eq!(
+        unsafe { ruscv_machine_load_elf(handle, path.as_ptr()) },
+        Status::Ok as i32,
+        "load_elf"
+    );
+    let result = handle_run_to_result(handle, 1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Exited.code(),
+        "diagnostic: {}",
+        handle_diagnostic(handle)
+    );
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(
+        uart.transmitted(),
+        vec![b'H'],
+        "the copied UART table did not serve the guest's THR write"
+    );
+    assert_eq!(
+        htif.written(),
+        vec![5u64.to_le_bytes().to_vec()],
+        "the copied HTIF table did not serve the guest's tohost write"
+    );
+    assert!(uart.transactions() >= 2 && htif.transactions() >= 2);
+
+    // Each window still takes exactly one table.
+    // SAFETY: the handle and both tables are live on this thread.
+    unsafe {
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::UART, &uart_table),
+            Status::Config as i32,
+            "a second UART attach is refused"
+        );
+        assert_eq!(
+            ruscv_machine_attach_device(handle, device_window::HTIF, &htif_table),
+            Status::Config as i32,
+            "a second HTIF attach is refused"
+        );
+        ruscv_machine_destroy(handle);
+    }
 }
