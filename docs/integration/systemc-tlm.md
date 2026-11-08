@@ -423,9 +423,14 @@ retraction rule.
   the separate `--fault-device-delay-above-max` control. Both targets write
   only `ruscv_payload.delay_fs`: `host_elapsed_fs` stays zero, `may_suspend`
   stays clear, and neither target waits or advances host time. The declared
-  maximum bounds every transaction of the route, so declaring a value above
-  zero while annotating zero changes no fact of a run; the smoke's delay passes
-  prove it against the zero-delay host baseline.
+  maximum bounds every transaction of the route and also raises the turn's
+  conservative completion bound (`18 x maximum` ticks), which a grant's reserve
+  must still fit before it starts, so a maximum too large for a grant's horizon
+  blocks the grant and the host stops without a run result; at the smoke's
+  1500000 fs the reserve fits.
+  A zero annotation at that maximum reproduces the zero-delay host facts
+  exactly, which is the configuration the smoke proves, not every accepted
+  maximum.
 - Delay passes. `scripts/test_systemc_smoke.sh` runs `hello` (UART window) and
   `htif_u3_console` (HTIF endpoint) at the baseline, under `--quantum 1024` and
   under `--nb --nb-latency 1500000`, each beside its own

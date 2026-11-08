@@ -24,9 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     诊断失败、`uncertain=0`，被拒写不出现在 target 的已接受序列里；它要求宿主设备 target，并与其它
     故障选项一样只能单独使用
   - `scripts/test_systemc_smoke.sh` 新增 delay D8 段：`hello`（UART 窗口）与 `htif_u3_console`（HTIF
-    端点）在 baseline、`--quantum 1024` 与 `--nb --nb-latency 1500000` 下各跑零注解与
-    `--device-delay-fs 1500000 --max-delay-fs 1500000` 两趟。每趟要求 native 退出码、逐字节相同的
-    commit log、与零注解趟相同的退出 turn、输出序列与 console 通道、每 grant 一次的
+    端点）在 baseline 与 `--quantum 1024` 下用 `--max-delay-fs 1500000`、在
+    `--nb --nb-latency 1500000` 下各跑零注解与 `--device-delay-fs 1500000` 两趟（`--nb` 与
+    `--max-delay-fs` 同时使用是用法错误，所以非阻塞趟的上限来自 `--nb-latency`）。每趟要求 native
+    退出码、逐字节相同的 commit log、与零注解趟相同的退出 turn、输出序列与 console 通道、每 grant 一次的
     `sc_time_stamp() == committed_end_fs` 检查；阻塞趟的 `transport_delay_fs` 等于精确计费
     （观测设备事务数 × 1500000 fs），`--nb` 趟比零注解趟多出恰好这笔计费（RAM AT 事务自带延迟），
     `consumed_fs` 等于零注解趟加上由观测设备事务数计算的向上取整计费（1.5 tick 每次访问取整为
