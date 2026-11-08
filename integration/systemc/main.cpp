@@ -22,7 +22,10 @@
 // grant, and every grant return syncs before it reports its facts, so
 // `committed_end_fs` is the Machine's committed time at each return and the
 // kernel's `wait(grant.consumed_fs)` keeps `sc_time_stamp()` equal to it. The
-// check below therefore holds after every grant, and a mismatch fails the run.
+// check below therefore holds after every grant, and a mismatch fails the run
+// unless the Machine has already classified it as failed: an already-failed run
+// keeps its own classification and diagnostic, which is what device §4's
+// `--fault-uart-wait` relies on when host time passes inside a device callback.
 //
 // `--nb` selects the non-blocking AT path (nb D7/D8), with `--nb-latency` and
 // `--nb-path`; `--grant-trace` writes one line per grant for the smoke's D10
@@ -32,6 +35,14 @@
 // `--fault-wait-blocking` and `--fault-wait-debug` are the five non-blocking
 // ones (nb §4): each breaks the host or the target in one named place so the
 // smoke can require its own named failure. None is a normal host.
+//
+// `--uart-target` selects the UART window's target (device D9): the in-tree Rust
+// device by default, or the host `UartTarget` attached through the C ABI's
+// device table. The host target serves one device transaction per validated
+// register access and reports the transmit event of an accepted THR write;
+// `--fault-uart-no-lsr`, `--fault-uart-wait` and `--fault-uart-event-on-fault`
+// are the device contract's three fault-option controls (device §4), each of
+// which requires the host selection and fails the run in its own named place.
 //
 // At every stop after a retirement the driver first probes the transport reset
 // while the target still holds the transaction, then runs the kernel until the
@@ -60,6 +71,7 @@
 
 #include "ram_target.h"
 #include "ruscv_initiator.h"
+#include "uart_target.h"
 
 namespace {
 
@@ -103,6 +115,9 @@ struct Options {
     uint64_t direct_mem_invalidate_every = 0;
     /// The quantum selection in Platform ticks; zero is off (quantum D2/D13).
     uint64_t quantum = 0;
+    /// device D9: the UART window is served by the host's `UartTarget` rather
+    /// than by the in-tree Rust device.
+    bool uart_host = false;
     /// nb D7/D8: the AT selection and its target latency and return path.
     bool non_blocking = false;
     uint64_t nb_latency_fs = 0;
@@ -124,6 +139,12 @@ struct Options {
     bool fault_short_delay = false;
     bool fault_wait_blocking = false;
     bool fault_wait_debug = false;
+    /// The three device fault-option controls (device §4). Each requires
+    /// `--uart-target host`, because without a host UART target there is no
+    /// device callback to break.
+    bool fault_uart_no_lsr = false;
+    bool fault_uart_wait = false;
+    bool fault_uart_event_on_fault = false;
 };
 
 void print_usage(const char* program) {
@@ -133,12 +154,15 @@ void print_usage(const char* program) {
         "       [--horizon-fs <femtoseconds>] [--stop-after-grants <grants>]\n"
         "       [--max-grants <grants>] [--max-turns <turns>]\n"
         "       [--dmi] [--dmi-invalidate-every <grants>] [--quantum <ticks>]\n"
+        "       [--uart-target in-tree|host]\n"
         "       [--nb] [--nb-latency <femtoseconds>]\n"
         "       [--nb-path accepted|updated|early|annotated|completed]\n"
         "       [--grant-trace <path>]\n"
         "       [--fault-keep-offset] [--fault-decrease-delay]\n"
         "       [--fault-late-response] [--fault-uncounted-elapsed]\n"
         "       [--fault-short-delay] [--fault-wait-blocking] [--fault-wait-debug]\n"
+        "       [--fault-uart-no-lsr] [--fault-uart-wait]\n"
+        "       [--fault-uart-event-on-fault]\n"
         "\n"
         "Runs one ruscv-sim Machine under this SystemC kernel. The RAM target is\n"
         "the zero-delay blocking model the initiator socket is bound to. Exit\n"
@@ -168,7 +192,16 @@ void print_usage(const char* program) {
         "of control (nb §4): --fault-late-response, --fault-uncounted-elapsed and\n"
         "--fault-short-delay require --nb, while --fault-wait-blocking and\n"
         "--fault-wait-debug are blocking-mode controls and must not be combined\n"
-        "with it. Exactly one fault option may be selected in a run.\n",
+        "with it. Exactly one fault option may be selected in a run.\n"
+        "\n"
+        "--uart-target selects the UART window's target (device D9): the in-tree\n"
+        "Rust device by default, or a host UartTarget attached through the C ABI's\n"
+        "device table. The host target models the UART register set, answers one\n"
+        "device transaction per register access and reports a transmit event for\n"
+        "an accepted THR write. --fault-uart-no-lsr, --fault-uart-wait and\n"
+        "--fault-uart-event-on-fault are the device contract's fault options: each\n"
+        "requires --uart-target host and must fail the run with its own\n"
+        "diagnostic.\n",
         program);
 }
 
@@ -220,6 +253,18 @@ bool parse_nb_path(const char* text, ruscv_sim::AtPath& out) {
         out = ruscv_sim::AtPath::Annotated;
     } else if (std::strcmp(text, "completed") == 0) {
         out = ruscv_sim::AtPath::Completed;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/// Resolves one UART target name (device D9).
+bool parse_uart_target(const char* text, bool& host) {
+    if (std::strcmp(text, "in-tree") == 0) {
+        host = false;
+    } else if (std::strcmp(text, "host") == 0) {
+        host = true;
     } else {
         return false;
     }
@@ -304,6 +349,12 @@ bool parse_options(int argc, char** argv, Options& options) {
                 std::fprintf(stderr, "systemc-smoke: --quantum needs a tick count\n");
                 return false;
             }
+        } else if (std::strcmp(argument, "--uart-target") == 0) {
+            const char* text = value("--uart-target");
+            if (text == nullptr || !parse_uart_target(text, options.uart_host)) {
+                std::fprintf(stderr, "systemc-smoke: --uart-target must be in-tree or host\n");
+                return false;
+            }
         } else if (std::strcmp(argument, "--nb") == 0) {
             options.non_blocking = true;
         } else if (std::strcmp(argument, "--nb-latency") == 0) {
@@ -343,6 +394,12 @@ bool parse_options(int argc, char** argv, Options& options) {
             options.fault_wait_blocking = true;
         } else if (std::strcmp(argument, "--fault-wait-debug") == 0) {
             options.fault_wait_debug = true;
+        } else if (std::strcmp(argument, "--fault-uart-no-lsr") == 0) {
+            options.fault_uart_no_lsr = true;
+        } else if (std::strcmp(argument, "--fault-uart-wait") == 0) {
+            options.fault_uart_wait = true;
+        } else if (std::strcmp(argument, "--fault-uart-event-on-fault") == 0) {
+            options.fault_uart_event_on_fault = true;
         } else if (argument[0] == '-') {
             std::fprintf(stderr, "systemc-smoke: unknown option %s\n", argument);
             return false;
@@ -397,7 +454,10 @@ bool parse_options(int argc, char** argv, Options& options) {
                               static_cast<int>(options.fault_uncounted_elapsed) +
                               static_cast<int>(options.fault_short_delay) +
                               static_cast<int>(options.fault_wait_blocking) +
-                              static_cast<int>(options.fault_wait_debug);
+                              static_cast<int>(options.fault_wait_debug) +
+                              static_cast<int>(options.fault_uart_no_lsr) +
+                              static_cast<int>(options.fault_uart_wait) +
+                              static_cast<int>(options.fault_uart_event_on_fault);
     if (fault_options > 1) {
         // Every fault option changes one place and produces its own named
         // failure, so one run cannot exercise two of them.
@@ -420,6 +480,17 @@ bool parse_options(int argc, char** argv, Options& options) {
         std::fprintf(stderr,
                      "systemc-smoke: --fault-wait-blocking and --fault-wait-debug must not be "
                      "combined with --nb\n");
+        return false;
+    }
+    if ((options.fault_uart_no_lsr || options.fault_uart_wait ||
+         options.fault_uart_event_on_fault) &&
+        !options.uart_host) {
+        // device §4: each of these breaks the host UartTarget, so without
+        // --uart-target host it would check nothing: require the selection it
+        // exercises instead of silently passing.
+        std::fprintf(stderr,
+                     "systemc-smoke: --fault-uart-no-lsr, --fault-uart-wait and "
+                     "--fault-uart-event-on-fault require --uart-target host\n");
         return false;
     }
     return true;
@@ -458,17 +529,43 @@ const char* state_name(int32_t state) {
     }
 }
 
+/// Escapes one transmitted byte sequence for a single summary line, so the smoke
+/// can compare the host UART's output exactly (device D7).
+std::string escape_bytes(const std::string& bytes) {
+    std::string out;
+    for (const unsigned char byte : bytes) {
+        switch (byte) {
+            case '\\': out += "\\\\"; break;
+            case '"': out += "\\\""; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (byte >= 0x20 && byte < 0x7f) {
+                    out += static_cast<char>(byte);
+                } else {
+                    char escape[8] = {};
+                    std::snprintf(escape, sizeof(escape), "\\x%02x", byte);
+                    out += escape;
+                }
+                break;
+        }
+    }
+    return out;
+}
+
 /// Drives one Machine in bounded grants until it reports a terminal result or the
 /// host classifies a failure.
 class MachineDriver : public sc_core::sc_module {
 public:
     MachineDriver(sc_core::sc_module_name name, Options options,
                   ruscv_sim::RuscvInitiator& initiator, ruscv_sim::RamTarget& ram,
-                  std::thread::id creator_thread)
+                  ruscv_sim::UartTarget* uart, std::thread::id creator_thread)
         : sc_core::sc_module(name),
           options_(std::move(options)),
           initiator_(initiator),
           ram_(ram),
+          uart_(uart),
           creator_thread_(creator_thread) {
         SC_THREAD(run);
     }
@@ -615,6 +712,18 @@ private:
             return;
         }
         initiator_.bind_machine(machine);
+        if (uart_ != nullptr) {
+            // device D9: the host UART target is attached through the C ABI's
+            // device table, after create and before the first load, so the
+            // window selection is fixed for the handle's life. The table is
+            // copied at attach, so it may be a local here.
+            const ruscv_device device = uart_->table();
+            status = ruscv_machine_attach_device(machine, RUSCV_DEVICE_UART, &device);
+            if (status != RUSCV_OK) {
+                stop_with_failure("ruscv_machine_attach_device", status, machine);
+                return;
+            }
+        }
         status = ruscv_machine_load_elf(machine, options_.elf.c_str());
         if (status != RUSCV_OK) {
             stop_with_failure("ruscv_machine_load_elf", status, machine);
@@ -701,13 +810,32 @@ private:
             const bool elapsed_exceeds_consumed = grant.host_elapsed_fs > grant.consumed_fs;
             const uint64_t remainder_fs =
                 elapsed_exceeds_consumed ? 0 : grant.consumed_fs - grant.host_elapsed_fs;
+            if (!elapsed_exceeds_consumed && remainder_fs != 0) {
+                // nb D5: the host time inside the grant's transactions has
+                // already passed, so only the remainder is waited.
+                sc_core::wait(sc_core::sc_time::from_value(remainder_fs));
+            }
+            // The result is read before the clock is judged, because device §4's
+            // --fault-uart-wait lets host time pass inside an access the Machine
+            // then classifies as a failed turn. An already-failed run keeps its
+            // own classification and diagnostic, exactly as it does for host
+            // time above the consumed amount; the disagreement is reported but
+            // does not replace it.
+            ruscv_result result{};
+            status = ruscv_machine_result(machine, &result);
+            if (status != RUSCV_OK) {
+                stop_with_failure("ruscv_machine_result", status, machine);
+                return;
+            }
+            turns_seen_ = result.turns;
             if (!elapsed_exceeds_consumed) {
-                if (remainder_fs != 0) {
-                    // nb D5: the host time inside the grant's transactions has
-                    // already passed, so only the remainder is waited.
-                    sc_core::wait(sc_core::sc_time::from_value(remainder_fs));
-                }
-                if (sc_core::sc_time_stamp().value() != grant.committed_end_fs) {
+                if (sc_core::sc_time_stamp().value() == grant.committed_end_fs) {
+                    // quantum D12/D13: a grant return is a sync, so after the
+                    // remainder wait the kernel clock is the Machine's committed
+                    // time. Counting the comparisons lets the smoke assert that
+                    // every grant was checked.
+                    ++clock_checks_;
+                } else if (result.state != RUSCV_RUN_FAILED) {
                     char message[256] = {};
                     std::snprintf(message, sizeof(message),
                                   "the kernel clock %" PRIu64
@@ -716,20 +844,15 @@ private:
                                   grant.committed_end_fs);
                     stop_with_message(message, machine);
                     return;
+                } else {
+                    std::fprintf(stderr,
+                                 "systemc-smoke: the failed run's kernel clock %" PRIu64
+                                 " fs differs from the Machine cursor %" PRIu64 " fs\n",
+                                 static_cast<uint64_t>(sc_core::sc_time_stamp().value()),
+                                 grant.committed_end_fs);
+                    std::fflush(stderr);
                 }
-                // quantum D12/D13: a grant return is a sync, so after the
-                // remainder wait the kernel clock is the Machine's committed
-                // time. Counting the comparisons lets the smoke assert that
-                // every grant was checked.
-                ++clock_checks_;
             }
-            ruscv_result result{};
-            status = ruscv_machine_result(machine, &result);
-            if (status != RUSCV_OK) {
-                stop_with_failure("ruscv_machine_result", status, machine);
-                return;
-            }
-            turns_seen_ = result.turns;
             if (result.state != RUSCV_RUN_RUNNING) {
                 if (elapsed_exceeds_consumed && result.state != RUSCV_RUN_FAILED) {
                     // nb D5: only an already-failed run keeps its result; any
@@ -799,6 +922,9 @@ private:
     Options options_;
     ruscv_sim::RuscvInitiator& initiator_;
     ruscv_sim::RamTarget& ram_;
+    /// device D9: the host UART target, or nullptr when the in-tree Rust device
+    /// serves the window.
+    ruscv_sim::UartTarget* uart_;
     std::thread::id creator_thread_;
     std::ofstream grant_trace_;
     bool terminal_ = false;
@@ -848,6 +974,7 @@ int sc_main(int argc, char** argv) {
         std::printf("systemc-smoke: non-blocking --nb-path %s --nb-latency %" PRIu64 " fs\n",
                     nb_path_name(options.nb_path), options.nb_latency_fs);
     }
+    std::printf("systemc-smoke: uart target=%s\n", options.uart_host ? "host" : "in-tree");
     std::fflush(stdout);
 
     ruscv_sim::RamTarget ram("ram",
@@ -861,7 +988,15 @@ int sc_main(int argc, char** argv) {
         ruscv_sim::InitiatorFaults{options.fault_keep_offset, options.fault_uncounted_elapsed,
                                    options.fault_short_delay},
         options.non_blocking, options.nb_latency_fs);
-    MachineDriver driver("driver", options, initiator, ram, std::this_thread::get_id());
+    // device D9: the host UART target exists for the whole run, so its counts
+    // survive the handle's drain and destroy. The driver attaches it only when
+    // `--uart-target host` selected it; the in-tree selection keeps the Rust
+    // device and reports zero host device transactions.
+    ruscv_sim::UartTarget uart(ruscv_sim::UartFaults{options.fault_uart_no_lsr,
+                                                     options.fault_uart_wait,
+                                                     options.fault_uart_event_on_fault});
+    MachineDriver driver("driver", options, initiator, ram, options.uart_host ? &uart : nullptr,
+                         std::this_thread::get_id());
     sc_core::sc_start();
 
     std::printf(
@@ -871,6 +1006,11 @@ int sc_main(int argc, char** argv) {
         ram.b_transport_count(), ram.transport_dbg_count(), ram.transport_reset_count(),
         ram.begin_req_count(), ram.applied_access_count(),
         initiator.direct_mem_invalidation_count(), initiator.direct_mem_scheduled_count());
+    std::printf(
+        "systemc-smoke: uart target=%s b_transport=%" PRIu64 " reads=%" PRIu64
+        " writes=%" PRIu64 " transmitted=%" PRIu64 " bytes=\"%s\"\n",
+        options.uart_host ? "host" : "in-tree", uart.b_transport_count(), uart.read_count(),
+        uart.write_count(), uart.transmitted_count(), escape_bytes(uart.transmitted()).c_str());
     std::printf(
         "systemc-smoke: AT late_phases=%" PRIu64 " retirements=%" PRIu64
         " drain_end_resp=%" PRIu64 " drain_end_resp_fs=%" PRIu64
