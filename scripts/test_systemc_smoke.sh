@@ -68,6 +68,20 @@
 #      (`--fault-htif-drop-event`, `--fault-htif-wait`,
 #      `--fault-htif-event-on-fault`) must each fail the run with their own
 #      assertion.
+#  17. run the device-delay passes (delay D8): `hello` on the UART window and
+#      `htif_u3_console` on the HTIF endpoint at the baseline, `--quantum 1024`
+#      and `--nb --nb-latency 1500000`, each beside its own
+#      `--device-delay-fs 0` pass, requiring the native exit code and commit
+#      log, the same exit turn, output sequence and console channel as the
+#      zero-annotation pass, one kernel-clock check per grant, a blocking
+#      `transport_delay_fs` equal to the exact charge and a non-blocking one
+#      equal to the zero-annotation pass's plus that charge, and a
+#      `consumed_fs` equal to the zero-annotation pass's plus the per-access
+#      rounded charge, computed from the observed device transaction count;
+#      one `--fault-device-delay-above-max` pass per host window must fail with
+#      the overshoot diagnostic and no accepted write, and `--fault-uart-wait`
+#      and `--fault-htif-wait` must still fail with the host-elapsed diagnostic
+#      under a non-zero annotation; every new option has its usage-error check.
 #
 # Linux x86-64 only. Prerequisites are the pinned SystemC installation, CMake,
 # a C++17 compiler and the RISC-V cross toolchain. A missing prerequisite is a
@@ -238,6 +252,13 @@ htif_value_sequence() {
 # device, in its escaped form (htif D8).
 htif_console_sequence() {
     printf '%s\n' "$1" | sed -n 's/^htif-console: \(.*\)$/\1/p' | tr -d '\n'
+}
+
+# One field of the host's device-delay selection line, or an empty string
+# (delay D8).
+smoke_delay_field() {
+    printf '%s\n' "$1" \
+        | awk -v key="$2" '/^systemc-smoke: delay / { for (i = 1; i <= NF; i++) { split($i, pair, "="); if (pair[1] == key) { print pair[2]; exit } } }'
 }
 
 # The status the host's reset probe received while an AT transaction was still
@@ -1207,6 +1228,7 @@ require_uart_pass() {
         fail "${label}: the commit log differs from native"
     fi
     LAST_GRANTS="$(smoke_grant_count "${pass_output}")"
+    LAST_TURNS="$(smoke_turn_count "${pass_output}")"
     LAST_CONSUMED="$(smoke_totals_field "${pass_output}" consumed_fs)"
     LAST_TX="$(uart_field "${pass_output}" b_transport)"
     LAST_READS="$(uart_field "${pass_output}" reads)"
@@ -1214,7 +1236,8 @@ require_uart_pass() {
     LAST_TRANSMITTED="$(uart_field "${pass_output}" transmitted)"
     LAST_BYTES="$(uart_field "${pass_output}" bytes)"
     LAST_CONSOLE="$(uart_console_sequence "${pass_output}")"
-    for fact in "grants:${LAST_GRANTS}" "consumed:${LAST_CONSUMED}" \
+    for fact in "grants:${LAST_GRANTS}" "turns:${LAST_TURNS}" \
+        "consumed:${LAST_CONSUMED}" \
         "b_transport:${LAST_TX}" "reads:${LAST_READS}" "writes:${LAST_WRITES}" \
         "transmitted:${LAST_TRANSMITTED}" "bytes:${LAST_BYTES}"; do
         [ -n "${fact#*:}" ] || fail "${label}: the run reported no ${fact%%:*} fact"
@@ -1233,6 +1256,10 @@ require_uart_pass() {
 # the same window through the C ABI's device table and must transmit exactly
 # `Hello!\n`, with every architectural fact equal to the matching in-tree pass
 # (device D9).
+#
+# The zero-delay host baseline facts are kept for delay D8: a later
+# zero-annotation pass with a larger declared maximum must reproduce them.
+declare -A UART_BASELINE_HOST=()
 echo -e "${YELLOW}== ${UART_GUEST}: --uart-target in-tree and host (device D9)${NC}"
 for variant in "baseline:" "dmi:--dmi" "nb:--nb" "quantum:--quantum ${FAULT_QUANTUM}"; do
     name="${variant%%:*}"
@@ -1265,6 +1292,16 @@ for variant in "baseline:" "dmi:--dmi" "nb:--nb" "quantum:--quantum ${FAULT_QUAN
         || fail "${UART_GUEST}: the host (${name}) pass took ${LAST_GRANTS} grant(s), not the in-tree pass's ${in_tree_grants}"
     [ "${LAST_CONSUMED}" = "${in_tree_consumed}" ] \
         || fail "${UART_GUEST}: the host (${name}) pass consumed ${LAST_CONSUMED} fs, not the in-tree pass's ${in_tree_consumed} fs"
+    if [ "${name}" = "baseline" ]; then
+        # delay D8: the zero-delay host baseline facts a later zero-annotation
+        # pass with a larger declared maximum must reproduce exactly.
+        UART_BASELINE_HOST[grants]="${LAST_GRANTS}"
+        UART_BASELINE_HOST[consumed]="${LAST_CONSUMED}"
+        UART_BASELINE_HOST[turns]="${LAST_TURNS}"
+        UART_BASELINE_HOST[transactions]="${LAST_TX}"
+        UART_BASELINE_HOST[sequence]="${LAST_BYTES}"
+        UART_BASELINE_HOST[console]="${LAST_CONSOLE}"
+    fi
     echo -e "  ${GREEN}[PASS]${NC} ${name}: host device transactions ${LAST_TX} = ${LAST_READS} read(s) + ${LAST_WRITES} write(s), ${LAST_TRANSMITTED} byte(s)"
 done
 
@@ -1345,6 +1382,80 @@ no_lsr_transmitted="$(uart_field "${no_lsr_output}" transmitted)"
     || fail "the --fault-uart-no-lsr control transmitted a byte; the guest never left its wait"
 echo -e "  ${GREEN}[PASS]${NC} the missing transmit-empty bit exhausted the turn limit (status ${no_lsr_status})"
 
+# require_uart_wait_failure LABEL OUTPUT STATUS
+#   One --fault-uart-wait run must fail as the host-elapsed protocol failure of
+#   its first access, name the UART window and the device-callback rule, and
+#   transmit nothing (device §4). delay D8 runs the same control again under a
+#   non-zero annotation, so this assertion lives in one place.
+require_uart_wait_failure() {
+    local label="$1"
+    local wait_output="$2"
+    local wait_status="$3"
+    [ "${wait_status}" -ne 124 ] || fail "${label} timed out"
+    if [ "${wait_status}" -eq 0 ]; then
+        printf '%s\n' "${wait_output}"
+        fail "${label} passed; host time inside a device callback must fail"
+    fi
+    if ! printf '%s\n' "${wait_output}" | grep -q '^systemc-smoke: result state=failed '; then
+        printf '%s\n' "${wait_output}"
+        fail "${label} did not report a failed run"
+    fi
+    if ! printf '%s\n' "${wait_output}" \
+        | grep -q 'host elapsed time for .* on the UART window'; then
+        printf '%s\n' "${wait_output}"
+        fail "${label}'s diagnostic did not name host elapsed time on the UART window"
+    fi
+    if ! printf '%s\n' "${wait_output}" \
+        | grep -q 'host time may not pass inside a device callback'; then
+        printf '%s\n' "${wait_output}"
+        fail "${label}'s diagnostic did not name the device callback rule"
+    fi
+    local wait_transmitted
+    wait_transmitted="$(uart_field "${wait_output}" transmitted)"
+    [ -n "${wait_transmitted}" ] || fail "${label} reported no transmitted count"
+    [ "${wait_transmitted}" -eq 0 ] || fail "${label} transmitted a byte"
+    echo -e "  ${GREEN}[PASS]${NC} ${label} failed as a protocol failure (status ${wait_status})"
+}
+
+# require_htif_wait_failure LABEL OUTPUT STATUS
+#   One --fault-htif-wait run must fail as the host-elapsed protocol failure of
+#   its first access, name the HTIF window and the device-callback rule, accept
+#   no value and render no console byte (htif §4). delay D8 runs the same
+#   control again under a non-zero annotation.
+require_htif_wait_failure() {
+    local label="$1"
+    local wait_output="$2"
+    local wait_status="$3"
+    [ "${wait_status}" -ne 124 ] || fail "${label} timed out"
+    if [ "${wait_status}" -eq 0 ]; then
+        printf '%s\n' "${wait_output}"
+        fail "${label} passed; host time inside a device callback must fail"
+    fi
+    if ! printf '%s\n' "${wait_output}" | grep -q '^systemc-smoke: result state=failed '; then
+        printf '%s\n' "${wait_output}"
+        fail "${label} did not report a failed run"
+    fi
+    if ! printf '%s\n' "${wait_output}" \
+        | grep -q 'host elapsed time for .* on the HTIF window'; then
+        printf '%s\n' "${wait_output}"
+        fail "${label}'s diagnostic did not name host elapsed time on the HTIF window"
+    fi
+    if ! printf '%s\n' "${wait_output}" \
+        | grep -q 'host time may not pass inside a device callback'; then
+        printf '%s\n' "${wait_output}"
+        fail "${label}'s diagnostic did not name the device callback rule"
+    fi
+    local wait_values
+    wait_values="$(htif_field "${wait_output}" values)"
+    [ -n "${wait_values}" ] || fail "${label} reported no HTIF value count"
+    [ "${wait_values}" -eq 0 ] \
+        || fail "${label} reported ${wait_values} accepted value(s); no write runs after the failed first access"
+    local wait_console
+    wait_console="$(htif_console_sequence "${wait_output}")"
+    [ -z "${wait_console}" ] || fail "${label} rendered console byte(s) ${wait_console}"
+    echo -e "  ${GREEN}[PASS]${NC} ${label} failed as a protocol failure (status ${wait_status})"
+}
+
 # device §4: --fault-uart-wait waits one Platform tick inside `b_transport` and
 # reports the interval as host elapsed time, which device D4 forbids: host time
 # may not pass inside a device callback.
@@ -1352,26 +1463,7 @@ echo -e "${YELLOW}== --fault-uart-wait (must not pass)${NC}"
 capture uart_wait_output uart_wait_status \
     timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${UART_ELF}" --isa "${UART_PROFILE}" \
     --max-turns "${MAX_CYCLES}" --uart-target host --fault-uart-wait
-[ "${uart_wait_status}" -ne 124 ] || fail "the --fault-uart-wait control timed out"
-if [ "${uart_wait_status}" -eq 0 ]; then
-    printf '%s\n' "${uart_wait_output}"
-    fail "the --fault-uart-wait control passed; host time inside a device callback must fail"
-fi
-if ! printf '%s\n' "${uart_wait_output}" | grep -q '^systemc-smoke: result state=failed '; then
-    printf '%s\n' "${uart_wait_output}"
-    fail "the --fault-uart-wait control did not report a failed run"
-fi
-if ! printf '%s\n' "${uart_wait_output}" \
-    | grep -q 'host elapsed time for .* on the UART window'; then
-    printf '%s\n' "${uart_wait_output}"
-    fail "the --fault-uart-wait control's diagnostic did not name host elapsed time on a device transaction"
-fi
-if ! printf '%s\n' "${uart_wait_output}" \
-    | grep -q 'host time may not pass inside a device callback'; then
-    printf '%s\n' "${uart_wait_output}"
-    fail "the --fault-uart-wait control's diagnostic did not name the device callback rule"
-fi
-echo -e "  ${GREEN}[PASS]${NC} the device wait failed the run as a protocol failure (status ${uart_wait_status})"
+require_uart_wait_failure "--fault-uart-wait" "${uart_wait_output}" "${uart_wait_status}"
 
 # device §4: --fault-uart-event-on-fault reports a transmit with a fault status,
 # which device D4 forbids, so no byte may reach the host's console.
@@ -1470,6 +1562,39 @@ check_usage_error "--fault-htif-event-on-fault without --htif-target host" \
     "require --htif-target host" --fault-htif-event-on-fault
 check_usage_error "an HTIF fault option with an in-tree selection" \
     "require --htif-target host" --htif-target in-tree --fault-htif-wait
+# delay D8: the declared maximum, the host device annotation and the new fault
+# option are usage errors in the wrong mode.
+check_usage_error "--max-delay-fs with --nb" "must not be combined with --nb" \
+    --nb --max-delay-fs 1500000
+check_usage_error "--max-delay-fs above 10^15 fs" "must be at most 1000000000000000 fs" \
+    --max-delay-fs 1000000000000001
+check_usage_error "--max-delay-fs without a count" "needs a femtosecond count" \
+    --max-delay-fs x
+check_usage_error "--device-delay-fs without a count" "needs a femtosecond count" \
+    --uart-target host --device-delay-fs x
+check_usage_error "--device-delay-fs without a host device target" \
+    "requires --uart-target host or --htif-target host" --device-delay-fs 1500000
+check_usage_error "--device-delay-fs with an in-tree device target" \
+    "requires --uart-target host or --htif-target host" \
+    --uart-target in-tree --device-delay-fs 1500000
+check_usage_error "--device-delay-fs above the declared maximum" \
+    "must be at most the declared maximum of 0 fs" \
+    --uart-target host --device-delay-fs 1500000
+check_usage_error "--device-delay-fs above --max-delay-fs" \
+    "must be at most the declared maximum of 1000000 fs" \
+    --uart-target host --max-delay-fs 1000000 --device-delay-fs 1500000
+check_usage_error "--device-delay-fs above --nb-latency" \
+    "must be at most the declared maximum of 1000000 fs" \
+    --uart-target host --nb --nb-latency 1000000 --device-delay-fs 1500000
+check_usage_error "--fault-device-delay-above-max without a host device target" \
+    "requires --uart-target host or --htif-target host" \
+    --fault-device-delay-above-max
+check_usage_error "--fault-device-delay-above-max with an in-tree device target" \
+    "requires --uart-target host or --htif-target host" \
+    --uart-target in-tree --fault-device-delay-above-max
+check_usage_error "--fault-device-delay-above-max with another fault option" \
+    "taken one at a time" --uart-target host --max-delay-fs 1500000 \
+    --fault-device-delay-above-max --fault-uart-wait
 
 # ---- HTIF U3: the SystemC HTIF target (htif D8) ----
 #
@@ -1614,6 +1739,10 @@ echo "  native: exit status ${htif_native_status}, guest exit code ${HTIF_NATIVE
 # the guest's three console words and exit word, render exactly `Hi\n`, and keep
 # the matching in-tree pass's grant, consumed and turn facts, so both selections
 # stop on the same instruction (htif D8).
+#
+# The zero-delay host baseline facts are kept for delay D8: a later
+# zero-annotation pass with a larger declared maximum must reproduce them.
+declare -A HTIF_BASELINE_HOST=()
 echo -e "${YELLOW}== ${HTIF_GUEST}: --htif-target in-tree and host (htif D8)${NC}"
 for variant in "baseline:" "dmi:--dmi" "nb:--nb" "quantum:--quantum ${FAULT_QUANTUM}"; do
     name="${variant%%:*}"
@@ -1648,6 +1777,14 @@ for variant in "baseline:" "dmi:--dmi" "nb:--nb" "quantum:--quantum ${FAULT_QUAN
         HTIF_BASELINE_RECEIVED="${LAST_RECEIVED}"
         HTIF_BASELINE_SEQUENCE="${LAST_SEQUENCE}"
         HTIF_BASELINE_CONSOLE_LINES="${LAST_CONSOLE_LINES}"
+        # delay D8: the zero-delay host baseline facts a later zero-annotation
+        # pass with a larger declared maximum must reproduce exactly.
+        HTIF_BASELINE_HOST[grants]="${LAST_GRANTS}"
+        HTIF_BASELINE_HOST[consumed]="${LAST_CONSUMED}"
+        HTIF_BASELINE_HOST[turns]="${LAST_TURNS}"
+        HTIF_BASELINE_HOST[transactions]="${LAST_TX}"
+        HTIF_BASELINE_HOST[sequence]="${LAST_SEQUENCE}"
+        HTIF_BASELINE_HOST[console]="${LAST_CONSOLE_LINES}"
     fi
     echo -e "  ${GREEN}[PASS]${NC} ${name}: host HTIF transactions ${LAST_TX} = ${LAST_READS} read(s) + ${LAST_WRITES} write(s), values ${LAST_VALUES}, console ${LAST_CONSOLE}"
 done
@@ -1769,34 +1906,7 @@ echo -e "${YELLOW}== --fault-htif-wait (must not pass)${NC}"
 capture htif_wait_output htif_wait_status \
     timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${HTIF_ELF}" --isa "${HTIF_PROFILE}" \
     --max-turns "${MAX_CYCLES}" --htif-target host --fault-htif-wait
-[ "${htif_wait_status}" -ne 124 ] || fail "the --fault-htif-wait control timed out"
-if [ "${htif_wait_status}" -eq 0 ]; then
-    printf '%s\n' "${htif_wait_output}"
-    fail "the --fault-htif-wait control passed; host time inside a device callback must fail"
-fi
-if ! printf '%s\n' "${htif_wait_output}" | grep -q '^systemc-smoke: result state=failed '; then
-    printf '%s\n' "${htif_wait_output}"
-    fail "the --fault-htif-wait control did not report a failed run"
-fi
-if ! printf '%s\n' "${htif_wait_output}" \
-    | grep -q 'host elapsed time for .* on the HTIF window'; then
-    printf '%s\n' "${htif_wait_output}"
-    fail "the --fault-htif-wait control's diagnostic did not name host elapsed time on the HTIF window"
-fi
-if ! printf '%s\n' "${htif_wait_output}" \
-    | grep -q 'host time may not pass inside a device callback'; then
-    printf '%s\n' "${htif_wait_output}"
-    fail "the --fault-htif-wait control's diagnostic did not name the device callback rule"
-fi
-htif_wait_values="$(htif_field "${htif_wait_output}" values)"
-[ -n "${htif_wait_values}" ] \
-    || fail "the --fault-htif-wait control reported no HTIF value count"
-[ "${htif_wait_values}" -eq 0 ] \
-    || fail "the --fault-htif-wait control reported ${htif_wait_values} accepted value(s); no write runs after the failed first access"
-htif_wait_console="$(htif_console_sequence "${htif_wait_output}")"
-[ -z "${htif_wait_console}" ] \
-    || fail "the --fault-htif-wait control rendered console byte(s) ${htif_wait_console}"
-echo -e "  ${GREEN}[PASS]${NC} the device wait failed the run as a protocol failure (status ${htif_wait_status})"
+require_htif_wait_failure "--fault-htif-wait" "${htif_wait_output}" "${htif_wait_status}"
 
 # htif §4: --fault-htif-event-on-fault reports the exit write's event with a
 # fault status, which htif D4 forbids: only an accepted access publishes an
@@ -1836,6 +1946,295 @@ htif_event_console="$(htif_console_sequence "${htif_event_output}")"
     || fail "the --fault-htif-event-on-fault control rendered console byte(s) ${htif_event_console}, not exactly Hi\\n"
 echo -e "  ${GREEN}[PASS]${NC} the fault-status event failed the access; the refused write is absent from the accepted sequence (status ${htif_event_status})"
 
+# ---- device delay U3: --max-delay-fs and --device-delay-fs (delay D8) ----
+#
+# A host device target may annotate a modeled access delay, which the Machine
+# converts to Platform ticks, rounds up on each access and charges once to the
+# guest turn (delay D4/D8). No project-authored guest accesses both host
+# windows, so each pass runs one guest per window: `hello` charges only UART
+# registers and `htif_u3_console` only the HTIF endpoint. The both-targets
+# composition is U1's in-crate proof.
+#
+# Every assertion below is simulated time or a reported fact: the native exit
+# code, the commit log, the exit turn, the target's own output sequence and
+# console channel, `transport_delay_fs`, `consumed_fs`, the device transaction
+# count, and the existing `sc_time_stamp() == committed_end_fs` check, which the
+# host counts once per grant. The expected charge is derived from each pass's
+# own device transaction count, because `hello` polls the UART status register;
+# a 1.5-tick annotation rounds up to two ticks on every access.
+DELAY_TICK_FS=1000000
+DELAY_DEVICE_FS=1500000
+DELAY_TICKS_PER_ACCESS=$(( (DELAY_DEVICE_FS + DELAY_TICK_FS - 1) / DELAY_TICK_FS ))
+
+declare -A DELAY_ELF=([uart]="${UART_ELF}" [htif]="${HTIF_ELF}")
+declare -A DELAY_PROFILE=([uart]="${UART_PROFILE}" [htif]="${HTIF_PROFILE}")
+declare -A DELAY_NATIVE_LOG=([uart]="${UART_NATIVE_LOG}" [htif]="${HTIF_NATIVE_LOG}")
+declare -A DELAY_NATIVE_EXIT=([uart]="${UART_NATIVE_EXIT}" [htif]="${HTIF_NATIVE_EXIT}")
+# The zero-annotation pass's facts, for its matching charged pass to compare.
+declare -A DELAY_ZERO=()
+
+# delay_baseline_field WINDOW FIELD
+#   One fact of the existing zero-delay host baseline pass for that window.
+delay_baseline_field() {
+    local window="$1"
+    local key="$2"
+    case "${window}" in
+        uart) printf '%s' "${UART_BASELINE_HOST[${key}]}" ;;
+        htif) printf '%s' "${HTIF_BASELINE_HOST[${key}]}" ;;
+    esac
+}
+
+# require_delay_pass LABEL WINDOW MAX_FS DEVICE_FS LOG [OPTIONS...]
+#   Runs one passing device-delay pass and checks every non-timing fact delay D8
+#   owes it: the host target selection, the declared maximum and annotation the
+#   run reports, the native exit code, a byte-identical commit log, a terminal
+#   result, one kernel-clock check per grant and a non-zero device transaction
+#   count. Sets LAST_GRANTS, LAST_TURNS, LAST_CONSUMED, LAST_DELAY, LAST_TX,
+#   LAST_SEQUENCE and LAST_CONSOLE to the run's reported facts.
+require_delay_pass() {
+    local label="$1"
+    local window="$2"
+    local max_fs="$3"
+    local device_fs="$4"
+    local log="$5"
+    shift 5
+    local pass_output
+    local pass_status
+    capture pass_output pass_status \
+        timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${DELAY_ELF[${window}]}" \
+        --isa "${DELAY_PROFILE[${window}]}" --max-turns "${MAX_CYCLES}" \
+        --log-commits "${log}" "$@"
+    [ "${pass_status}" -ne 124 ] || fail "${label}: the run timed out after ${RUN_TIMEOUT}s"
+    if [ "${pass_status}" -ne 0 ]; then
+        printf '%s\n' "${pass_output}"
+        fail "${label}: the run exited with status ${pass_status}"
+    fi
+    if ! printf '%s\n' "${pass_output}" \
+        | grep -q "^systemc-smoke: ${window} target=host$"; then
+        printf '%s\n' "${pass_output}"
+        fail "${label}: the run did not report its host ${window} target selection"
+    fi
+    local reported_max
+    local reported_device
+    reported_max="$(smoke_delay_field "${pass_output}" max_delay_fs)"
+    reported_device="$(smoke_delay_field "${pass_output}" device_delay_fs)"
+    [ -n "${reported_max}" ] || fail "${label}: the run reported no declared maximum"
+    [ -n "${reported_device}" ] || fail "${label}: the run reported no device annotation"
+    [ "${reported_max}" = "${max_fs}" ] \
+        || fail "${label}: the run declared ${reported_max} fs, not ${max_fs} fs"
+    [ "${reported_device}" = "${device_fs}" ] \
+        || fail "${label}: the run annotated ${reported_device} fs, not ${device_fs} fs"
+    if ! printf '%s\n' "${pass_output}" | grep -q '^systemc-smoke: result state=exited '; then
+        printf '%s\n' "${pass_output}"
+        fail "${label}: the run did not report a terminal ruscv-sim result"
+    fi
+    LAST_EXIT="$(smoke_exit_code "${pass_output}")"
+    [ -n "${LAST_EXIT}" ] || fail "${label}: the run reported no exit code"
+    [ "${LAST_EXIT}" = "${DELAY_NATIVE_EXIT[${window}]}" ] \
+        || fail "${label}: exit code ${LAST_EXIT} differs from native ${DELAY_NATIVE_EXIT[${window}]}"
+    [ -s "${log}" ] || fail "${label}: the commit log is empty"
+    if ! cmp -s "${DELAY_NATIVE_LOG[${window}]}" "${log}"; then
+        diff -u "${DELAY_NATIVE_LOG[${window}]}" "${log}" | head -20 || true
+        fail "${label}: the commit log differs from native"
+    fi
+    LAST_GRANTS="$(smoke_grant_count "${pass_output}")"
+    LAST_TURNS="$(smoke_turn_count "${pass_output}")"
+    LAST_CONSUMED="$(smoke_totals_field "${pass_output}" consumed_fs)"
+    LAST_DELAY="$(smoke_totals_field "${pass_output}" transport_delay_fs)"
+    LAST_CLOCK="$(smoke_clock_checks "${pass_output}")"
+    local fact
+    for fact in "grants:${LAST_GRANTS}" "turns:${LAST_TURNS}" \
+        "consumed:${LAST_CONSUMED}" "transport:${LAST_DELAY}" "clock:${LAST_CLOCK}"; do
+        [ -n "${fact#*:}" ] || fail "${label}: the run reported no ${fact%%:*} fact"
+    done
+    [ "${LAST_CLOCK}" -eq "${LAST_GRANTS}" ] \
+        || fail "${label}: the kernel clock matched committed_end_fs after ${LAST_CLOCK} of its ${LAST_GRANTS} grant(s)"
+    case "${window}" in
+        uart)
+            LAST_TX="$(uart_field "${pass_output}" b_transport)"
+            LAST_SEQUENCE="$(uart_field "${pass_output}" bytes)"
+            LAST_CONSOLE="$(uart_console_sequence "${pass_output}")"
+            ;;
+        htif)
+            LAST_TX="$(htif_field "${pass_output}" b_transport)"
+            LAST_SEQUENCE="$(htif_value_sequence "${pass_output}")"
+            LAST_CONSOLE="$(htif_console_sequence "${pass_output}")"
+            ;;
+    esac
+    [ -n "${LAST_TX}" ] || fail "${label}: the run reported no host device transaction count"
+    [ "${LAST_TX}" -gt 0 ] || fail "${label}: the host device target served no transaction"
+    [ -n "${LAST_SEQUENCE}" ] || fail "${label}: the run reported no output sequence"
+    [ -n "${LAST_CONSOLE}" ] || fail "${label}: the run reported no console channel byte"
+    LAST_OUTPUT="${pass_output}"
+}
+
+for window in uart htif; do
+    echo -e "${YELLOW}== ${window} window: the device-delay passes (delay D8)${NC}"
+    for mode in baseline quantum nb; do
+        mode_options=("--${window}-target" host)
+        case "${mode}" in
+            baseline)
+                mode_options+=(--max-delay-fs "${DELAY_DEVICE_FS}")
+                ;;
+            quantum)
+                mode_options+=(--quantum "${FAULT_QUANTUM}" --max-delay-fs "${DELAY_DEVICE_FS}")
+                ;;
+            nb)
+                # delay D8: --nb keeps taking the declared maximum from
+                # --nb-latency, and --max-delay-fs is a usage error with it.
+                mode_options+=(--nb --nb-latency "${DELAY_DEVICE_FS}")
+                ;;
+        esac
+        label="${window} ${mode}"
+        require_delay_pass "${label}: zero annotation" "${window}" \
+            "${DELAY_DEVICE_FS}" 0 \
+            "${OUTDIR}/logs/device-delay.${window}.${mode}.zero.log" \
+            "${mode_options[@]}" --device-delay-fs 0
+        if [ "${mode}" != "nb" ]; then
+            # A zero annotation charges nothing, whatever the declared maximum.
+            [ "${LAST_DELAY}" -eq 0 ] \
+                || fail "${label}: a zero-annotation pass reported ${LAST_DELAY} fs of transport delay"
+        fi
+        if [ "${mode}" = "baseline" ]; then
+            # delay D8: --max-delay-fs alone must reproduce today's zero-delay
+            # host facts exactly, so the larger bound charges nothing by itself.
+            for key in grants consumed turns transactions sequence console; do
+                [ -n "$(delay_baseline_field "${window}" "${key}")" ] \
+                    || fail "${label}: no zero-delay host baseline ${key} was recorded"
+            done
+            [ "${LAST_GRANTS}" = "$(delay_baseline_field "${window}" grants)" ] \
+                || fail "${label}: the zero-annotation pass took ${LAST_GRANTS} grant(s), not the zero-delay host baseline's $(delay_baseline_field "${window}" grants)"
+            [ "${LAST_CONSUMED}" = "$(delay_baseline_field "${window}" consumed)" ] \
+                || fail "${label}: the zero-annotation pass consumed ${LAST_CONSUMED} fs, not the zero-delay host baseline's $(delay_baseline_field "${window}" consumed) fs"
+            [ "${LAST_TURNS}" = "$(delay_baseline_field "${window}" turns)" ] \
+                || fail "${label}: the zero-annotation pass stopped after ${LAST_TURNS} turn(s), not the zero-delay host baseline's $(delay_baseline_field "${window}" turns)"
+            [ "${LAST_TX}" = "$(delay_baseline_field "${window}" transactions)" ] \
+                || fail "${label}: the zero-annotation pass served ${LAST_TX} device transaction(s), not the zero-delay host baseline's $(delay_baseline_field "${window}" transactions)"
+            [ "${LAST_SEQUENCE}" = "$(delay_baseline_field "${window}" sequence)" ] \
+                || fail "${label}: the zero-annotation pass reported ${LAST_SEQUENCE}, not the zero-delay host baseline's $(delay_baseline_field "${window}" sequence)"
+            [ "${LAST_CONSOLE}" = "$(delay_baseline_field "${window}" console)" ] \
+                || fail "${label}: the zero-annotation pass reported console ${LAST_CONSOLE}, not the zero-delay host baseline's $(delay_baseline_field "${window}" console)"
+            echo -e "  ${GREEN}[PASS]${NC} ${label}: a larger declared maximum alone reproduced the zero-delay host facts"
+        fi
+        DELAY_ZERO[grants]="${LAST_GRANTS}"
+        DELAY_ZERO[consumed]="${LAST_CONSUMED}"
+        DELAY_ZERO[transport]="${LAST_DELAY}"
+        DELAY_ZERO[turns]="${LAST_TURNS}"
+        DELAY_ZERO[transactions]="${LAST_TX}"
+        DELAY_ZERO[sequence]="${LAST_SEQUENCE}"
+        DELAY_ZERO[console]="${LAST_CONSOLE}"
+
+        require_delay_pass "${label}: ${DELAY_DEVICE_FS} fs annotation" "${window}" \
+            "${DELAY_DEVICE_FS}" "${DELAY_DEVICE_FS}" \
+            "${OUTDIR}/logs/device-delay.${window}.${mode}.charged.log" \
+            "${mode_options[@]}" --device-delay-fs "${DELAY_DEVICE_FS}"
+        [ "${LAST_TX}" = "${DELAY_ZERO[transactions]}" ] \
+            || fail "${label}: the charged pass served ${LAST_TX} device transaction(s), not the zero-annotation pass's ${DELAY_ZERO[transactions]}"
+        [ "${LAST_TURNS}" = "${DELAY_ZERO[turns]}" ] \
+            || fail "${label}: the charged pass stopped after ${LAST_TURNS} turn(s), not the zero-annotation pass's ${DELAY_ZERO[turns]}"
+        [ "${LAST_SEQUENCE}" = "${DELAY_ZERO[sequence]}" ] \
+            || fail "${label}: the charged pass reported ${LAST_SEQUENCE}, not the zero-annotation pass's ${DELAY_ZERO[sequence]}"
+        [ "${LAST_CONSOLE}" = "${DELAY_ZERO[console]}" ] \
+            || fail "${label}: the charged pass reported console ${LAST_CONSOLE}, not the zero-annotation pass's ${DELAY_ZERO[console]}"
+        charge_fs=$(( LAST_TX * DELAY_DEVICE_FS ))
+        charge_consumed_fs=$(( LAST_TX * DELAY_TICKS_PER_ACCESS * DELAY_TICK_FS ))
+        if [ "${mode}" = "nb" ]; then
+            # nb D8: the RAM AT transactions contribute their own latency, so
+            # only the difference from the zero-annotation pass is the charge.
+            expected_delay=$(( DELAY_ZERO[transport] + charge_fs ))
+        else
+            expected_delay="${charge_fs}"
+        fi
+        [ "${LAST_DELAY}" = "${expected_delay}" ] \
+            || fail "${label}: the charged pass reported ${LAST_DELAY} fs of transport delay, not ${expected_delay} fs"
+        expected_consumed=$(( DELAY_ZERO[consumed] + charge_consumed_fs ))
+        [ "${LAST_CONSUMED}" = "${expected_consumed}" ] \
+            || fail "${label}: the charged pass consumed ${LAST_CONSUMED} fs, not the zero-annotation pass's ${DELAY_ZERO[consumed]} fs plus ${charge_consumed_fs} fs"
+        echo -e "  ${GREEN}[PASS]${NC} ${label}: ${LAST_TX} device transaction(s) charged ${charge_fs} fs of transport delay and ${charge_consumed_fs} fs of consumed time, with the same exit turn and output"
+    done
+done
+
+# delay D8: --fault-device-delay-above-max annotates one femtosecond above the
+# declared maximum on the first completed write, before the target applies or
+# records it. The run must fail with the overshoot diagnostic naming the
+# declared maximum, keep a known outcome, and leave the refused write absent
+# from the target's accepted sequence. One pass per host window.
+echo -e "${YELLOW}== --fault-device-delay-above-max (must not pass)${NC}"
+for window in uart htif; do
+    label="--fault-device-delay-above-max on the ${window} window"
+    capture above_max_output above_max_status \
+        timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${DELAY_ELF[${window}]}" \
+        --isa "${DELAY_PROFILE[${window}]}" --max-turns "${MAX_CYCLES}" \
+        "--${window}-target" host --max-delay-fs "${DELAY_DEVICE_FS}" \
+        --fault-device-delay-above-max
+    [ "${above_max_status}" -ne 124 ] || fail "${label} timed out"
+    if [ "${above_max_status}" -eq 0 ]; then
+        printf '%s\n' "${above_max_output}"
+        fail "${label} passed; an annotation above the declared maximum must fail the run"
+    fi
+    if ! printf '%s\n' "${above_max_output}" | grep -q '^systemc-smoke: result state=failed '; then
+        printf '%s\n' "${above_max_output}"
+        fail "${label} did not report a failed run"
+    fi
+    if ! printf '%s\n' "${above_max_output}" \
+        | grep -q "above its declared per-transaction maximum of ${DELAY_DEVICE_FS} fs"; then
+        printf '%s\n' "${above_max_output}"
+        fail "${label}'s diagnostic did not name the declared maximum"
+    fi
+    if ! printf '%s\n' "${above_max_output}" | grep -q 'for one device transaction'; then
+        printf '%s\n' "${above_max_output}"
+        fail "${label}'s diagnostic did not name the device transaction"
+    fi
+    if ! printf '%s\n' "${above_max_output}" \
+        | grep -q '^systemc-smoke: failed run facts uncertain=0$'; then
+        printf '%s\n' "${above_max_output}"
+        fail "${label} did not keep a known outcome (uncertain=0)"
+    fi
+    case "${window}" in
+        uart)
+            above_max_transmitted="$(uart_field "${above_max_output}" transmitted)"
+            [ -n "${above_max_transmitted}" ] \
+                || fail "${label} reported no transmitted count"
+            [ "${above_max_transmitted}" -eq 0 ] \
+                || fail "${label} transmitted ${above_max_transmitted} byte(s); the refused write must be absent from the accepted sequence"
+            above_max_console="$(uart_console_sequence "${above_max_output}")"
+            ;;
+        htif)
+            above_max_values="$(htif_field "${above_max_output}" values)"
+            [ -n "${above_max_values}" ] \
+                || fail "${label} reported no accepted value count"
+            [ "${above_max_values}" -eq 0 ] \
+                || fail "${label} reported ${above_max_values} accepted value(s); the refused write must be absent from the accepted sequence"
+            above_max_console="$(htif_console_sequence "${above_max_output}")"
+            ;;
+    esac
+    [ -z "${above_max_console}" ] \
+        || fail "${label} let console byte(s) ${above_max_console} reach the host's console"
+    echo -e "  ${GREEN}[PASS]${NC} ${window}: the overshoot failed the run and the refused write reached no accepted sequence"
+done
+
+# delay D8: the two device wait controls run again under a non-zero annotation,
+# together with a declared maximum that admits it (an annotation above the
+# maximum is itself a usage error). Each must still fail with the host-elapsed
+# diagnostic, which proves that accepting a delay did not accept host time.
+echo -e "${YELLOW}== --fault-uart-wait and --fault-htif-wait under --device-delay-fs (must not pass)${NC}"
+capture delay_uart_wait_output delay_uart_wait_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${UART_ELF}" --isa "${UART_PROFILE}" \
+    --max-turns "${MAX_CYCLES}" --uart-target host \
+    --max-delay-fs "${DELAY_DEVICE_FS}" --device-delay-fs "${DELAY_DEVICE_FS}" \
+    --fault-uart-wait
+require_uart_wait_failure \
+    "--fault-uart-wait under --device-delay-fs ${DELAY_DEVICE_FS}" \
+    "${delay_uart_wait_output}" "${delay_uart_wait_status}"
+capture delay_htif_wait_output delay_htif_wait_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${HTIF_ELF}" --isa "${HTIF_PROFILE}" \
+    --max-turns "${MAX_CYCLES}" --htif-target host \
+    --max-delay-fs "${DELAY_DEVICE_FS}" --device-delay-fs "${DELAY_DEVICE_FS}" \
+    --fault-htif-wait
+require_htif_wait_failure \
+    "--fault-htif-wait under --device-delay-fs ${DELAY_DEVICE_FS}" \
+    "${delay_htif_wait_output}" "${delay_htif_wait_status}"
+
 printf '\n============================================\n'
 printf '  SystemC smoke summary\n'
 printf '============================================\n'
@@ -1860,5 +2259,13 @@ printf '  HTIF target:          --htif-target in-tree|host, the guest value and\
 printf '                        console sequences and the matching in-tree facts\n'
 printf '  HTIF fault controls:  --fault-htif-drop-event, --fault-htif-wait and\n'
 printf '                        --fault-htif-event-on-fault, each refused\n'
+printf '  Device delay:         --max-delay-fs and --device-delay-fs %s fs per\n' \
+    "${DELAY_DEVICE_FS}"
+printf '                        window at the baseline, --quantum %s and --nb,\n' \
+    "${FAULT_QUANTUM}"
+printf '                        charged in simulated time only, with the exact\n'
+printf '                        transport and rounded consumed totals\n'
+printf '  Device delay faults:  --fault-device-delay-above-max per host window, and\n'
+printf '                        both device waits under a non-zero annotation\n'
 printf '  Early sc_stop:        refused, as required\n\n'
 echo -e "${GREEN}[PASS]${NC} the pinned SystemC host matched native for every smoke guest"
