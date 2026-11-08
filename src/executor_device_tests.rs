@@ -656,9 +656,9 @@ fn a_host_htif_exit_stops_the_run_like_the_in_tree_endpoint() {
     );
 }
 
-/// htif D5: the host cannot suppress the exit by accepting the write without
-/// its event.  The run then has no exit fact and reaches the turn bound a guest
-/// with no exit reaches.
+/// htif D5: a host that accepts the exit write without reporting its event
+/// suppresses the exit, because the Platform then has no exit fact.  The run
+/// reaches the turn bound a guest with no exit reaches.
 #[test]
 fn a_host_htif_that_omits_the_event_reaches_the_turn_bound() {
     let bound = 32;

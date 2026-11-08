@@ -1312,6 +1312,11 @@ impl HostHtif {
         *self.read_value.lock().unwrap() = value;
     }
 
+    /// The value a read answers.
+    pub(crate) fn read_value(&self) -> u64 {
+        *self.read_value.lock().unwrap()
+    }
+
     /// Sets whether a transport reset is acknowledged.
     pub(crate) fn set_reset_ack(&self, ack: bool) {
         self.reset_ack.store(ack, Ordering::SeqCst);

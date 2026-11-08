@@ -3376,10 +3376,11 @@ fn host_htif_write_only_guest(value: i32) -> Vec<u32> {
 fn host_device_guest() -> Vec<u32> {
     vec![
         elf::lui(5, 0x10000), // 0x1000_0000, the UART window
-        elf::lbu(7, 5, 5),    // LSR
-        elf::addi(6, 0, i32::from(b'H')),
-        elf::sb(6, 5, 0),     // THR
+        elf::lbu(6, 5, 5),    // LSR
+        elf::addi(7, 0, i32::from(b'H')),
+        elf::sb(7, 5, 0),     // THR
         elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::ld(7, 8, 0),     // the endpoint's read answer
         elf::addi(9, 0, 0x41),
         elf::sd(9, 8, 0),
     ]
@@ -3529,15 +3530,53 @@ fn the_host_targets_reset_uart_first_and_a_refusal_keeps_the_association() {
         (1, 1),
         "the build did not reset each host target exactly once"
     );
+
+    // Both targets accumulate state, so the reinstall's resets have something
+    // to quiesce.
+    uart.receive(b'Q');
+    htif.set_read_value(0x5a5a_5a5a);
+    for _ in 0..code.len() {
+        owned.step_request(false, false, false).unwrap();
+    }
+    assert_eq!(
+        owned.state().regs[7],
+        0x5a5a_5a5a,
+        "the host HTIF read state did not reach the guest"
+    );
+    assert_eq!(
+        htif.reported(),
+        [0x41],
+        "the guest's endpoint write did not reach the host HTIF target"
+    );
+    assert!(
+        !uart.received().is_empty(),
+        "the target did not receive the byte"
+    );
+
     owned.fresh_reset().unwrap();
     assert_eq!(
         (uart.resets(), htif.resets()),
         (2, 2),
         "a reinstall did not take both device reset paths"
     );
+    assert!(
+        uart.received().is_empty(),
+        "an acknowledged UART reset did not quiesce the target's state"
+    );
+    assert!(
+        htif.reported().is_empty(),
+        "an acknowledged HTIF reset did not quiesce the target's reported values"
+    );
+    assert_eq!(
+        htif.read_value(),
+        0,
+        "an acknowledged HTIF reset did not quiesce the endpoint's read state"
+    );
 
     // The HTIF target refuses after the UART target has already been reset: the
     // build fails and the previous association stays installed.
+    uart.receive(b'R');
+    htif.set_read_value(0x77);
     htif.set_reset_ack(false);
     let error = owned
         .fresh_reset()
@@ -3554,6 +3593,15 @@ fn the_host_targets_reset_uart_first_and_a_refusal_keeps_the_association() {
         (uart.resets(), htif.resets()),
         (3, 3),
         "the refused build did not reset the UART target first and then ask the HTIF target"
+    );
+    assert!(
+        uart.received().is_empty(),
+        "the refused build did not reset the UART target before the HTIF refusal"
+    );
+    assert_eq!(
+        htif.read_value(),
+        0x77,
+        "a refused HTIF reset still quiesced the target's state"
     );
 
     // The UART target refuses first, so the HTIF target is never asked.
@@ -3718,6 +3766,94 @@ fn a_host_htif_bad_response_is_a_protocol_failure_without_charge() {
     drop(output);
 }
 
+/// htif D3/D9 (device D7): at a selected quantum a host HTIF access adds no
+/// time to the facts its in-tree parity run reports.  The same endpoint guest
+/// runs under the in-tree and host selections at `Q` = 2 and `Q` = 1024 and
+/// reports the same committed and presented time, the same zero transport and
+/// host-elapsed charge, the same syncs, `mcycle` and `minstret` turn by turn.
+#[test]
+fn a_host_htif_access_adds_no_time_to_the_quantum_facts() {
+    // (committed time, local time, delay fs, host elapsed fs, syncs, minstret,
+    // mcycle)
+    type Record = (u64, u64, u64, u64, u64, u64, u64);
+
+    fn route(devices: DeviceTargets, quantum: u64, code: &[u32]) -> Vec<Record> {
+        let mut config = MachineConfig::new(PlatformKind::Native);
+        config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+        config.devices = devices;
+        config.quantum = quantum;
+        let mut owned = OwnedMachine::new(config, code_image(code)).unwrap();
+        let mut records = Vec::new();
+        for _ in 0..code.len() {
+            let turn = owned.step_request(false, false, false).unwrap();
+            let facts = turn.boundary();
+            let quantum = facts
+                .quantum
+                .expect("a selected quantum reports its boundary facts");
+            let (minstret, mcycle) = guest_counters_now(&owned);
+            records.push((
+                owned.platform_mtime().unwrap(),
+                owned.platform_local_time().unwrap(),
+                facts.transport_delay_femtoseconds,
+                facts.host_elapsed_femtoseconds,
+                quantum.syncs,
+                minstret,
+                mcycle,
+            ));
+        }
+        records
+    }
+
+    let code = host_htif_write_only_guest(0x40);
+    for quantum in [2, 1024] {
+        let target = HostHtif::new(HOST_HTIF_BASE);
+        let host = route(DeviceTargets::with_htif(target.clone()), quantum, &code);
+        let in_tree = route(DeviceTargets::none(), quantum, &code);
+        assert_eq!(
+            host, in_tree,
+            "Q = {quantum}: the host HTIF selection changed a turn's time, charge, syncs or counters"
+        );
+        for (index, record) in host.iter().enumerate() {
+            assert_eq!(
+                (record.2, record.3),
+                (0, 0),
+                "Q = {quantum} turn {index}: a host HTIF transaction charged transport or host \
+                 elapsed time"
+            );
+        }
+        // The endpoint write is the third turn's access.  At `Q` = 1024 the
+        // threshold is out of reach, so its F1 mark is the only sync either
+        // selection takes; at `Q` = 2 the threshold syncs on its own and only
+        // the equality above pins the mark.
+        if quantum == 1024 {
+            assert_eq!(
+                host.iter().map(|record| record.4).sum::<u64>(),
+                1,
+                "Q = 1024: the host HTIF run did not take exactly the endpoint's F1 sync"
+            );
+            assert_eq!(
+                host[2].4, 1,
+                "Q = 1024: the endpoint write's turn was not the one that synced"
+            );
+        }
+        assert_eq!(
+            target.transactions(),
+            1,
+            "Q = {quantum}: the host target did not serve exactly the endpoint write"
+        );
+        assert_eq!(
+            target.reported(),
+            [0x40],
+            "Q = {quantum}: the host target did not report the guest's value"
+        );
+        assert_eq!(
+            host.last().unwrap().0,
+            in_tree.last().unwrap().0,
+            "Q = {quantum}: the two selections ended at different committed times"
+        );
+    }
+}
+
 /// htif D2/D3: the selection keeps the in-tree UART window's view and receive
 /// direction, and the HTIF endpoint never receives a byte because it has no
 /// host-to-guest direction.
@@ -3774,8 +3910,8 @@ fn a_host_htif_target_composes_with_a_host_uart_the_quantum_direct_memory_and_su
         );
         assert_eq!(
             htif.transactions(),
-            1,
-            "{label}: the host HTIF target did not serve the guest's write"
+            2,
+            "{label}: the host HTIF target did not serve the guest's read and write"
         );
     }
 }
