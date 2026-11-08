@@ -138,19 +138,24 @@ public:
     /// `faults` carries the smoke's fault-option controls and is empty in every
     /// normal run. `non_blocking` selects the target table's suspension flag and
     /// the AT path (`--nb`), and `nb_latency_fs` is its declared maximum `lambda`.
+    /// `max_delay_fs` is the blocking table's declared per-transaction maximum
+    /// (`--max-delay-fs`, delay D8); under `--nb` the table declares `lambda`
+    /// instead and `--max-delay-fs` is a usage error.
     RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram, bool direct_mem,
                    uint64_t quantum_ticks, InitiatorFaults faults, bool non_blocking,
-                   uint64_t nb_latency_fs);
+                   uint64_t nb_latency_fs, uint64_t max_delay_fs);
 
     /// The C ABI target table naming this object as `user`.
     ///
     /// The table declares `lambda` as its per-transaction maximum under
-    /// `--nb`, and declares that the target suspends host time (nb D6/D8). It
-    /// carries the selected quantum (`--quantum`, zero for off) in
-    /// `quantum_ticks` (quantum D12/D13). With `direct_mem` off the table's
-    /// `get_direct_mem_ptr` stays NULL, so ruscv-sim issues no query and
-    /// ignores every hint exactly as direct memory off. The returned table is
-    /// valid while this object lives.
+    /// `--nb`, and `max_delay_fs` (`--max-delay-fs`) otherwise; either value
+    /// bounds every transaction of the route, a device response's delay
+    /// included (delay D8). Under `--nb` it also declares that the target
+    /// suspends host time (nb D6/D8). It carries the selected quantum
+    /// (`--quantum`, zero for off) in `quantum_ticks` (quantum D12/D13). With
+    /// `direct_mem` off the table's `get_direct_mem_ptr` stays NULL, so
+    /// ruscv-sim issues no query and ignores every hint exactly as direct
+    /// memory off. The returned table is valid while this object lives.
     ruscv_target target_table();
 
     /// Records the live C ABI handle, or nullptr once it is gone. Every call
@@ -277,6 +282,7 @@ private:
     const InitiatorFaults faults_;
     const bool non_blocking_;
     const uint64_t nb_latency_fs_;
+    const uint64_t max_delay_fs_;
     ruscv_machine* machine_ = nullptr;
     std::vector<PendingPhase> pending_phases_;
     sc_core::sc_event phase_event_;

@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Device Delay Annotation U3: SystemC 宿主与 smoke（issue #250）**
+  - `integration/systemc` 新增两个选项（delay D8）：`--max-delay-fs <fs>` 设置阻塞目标表的已声明
+    每事务上限（默认 0，与 `--nb-latency` 相同的 10^15 fs 上限）；它与 `--nb` 同时使用是用法错误，
+    因为 `--nb` 仍从 `--nb-latency` 取上限。`RuscvInitiator::target_table()` 在阻塞模式把这个值写进
+    `table.max_delay_fs`，而它同时约束设备响应的 `delay_fs`
+  - `--device-delay-fs <fs>` 让被选中的宿主设备 target 在每个已完成响应上注解这个建模延迟（默认 0）：
+    没有 `--uart-target host` 或 `--htif-target host` 时是用法错误，超过已声明上限时也是用法错误
+    （那是独立的超限控制）。`UartTarget` 与 `HtifTarget` 只在 `RUSCV_TLM_OK` 的已完成响应上写
+    `payload.delay_fs`，`host_elapsed_fs` 保持零、从不等待；`device_delay.h` 的 `DeviceDelay` 是
+    两个 target 与 `main.cpp` 共享的唯一配置
+  - 新增故障选项 `--fault-device-delay-above-max`：每个宿主窗口各跑一次，被选中的 target 在第一个完成
+    写上注解 `max_delay_fs + 1` fs，且在该写被应用或记录之前，所以运行必须以点名已声明上限的 overshoot
+    诊断失败、`uncertain=0`，被拒写不出现在 target 的已接受序列里；它要求宿主设备 target，并与其它
+    故障选项一样只能单独使用
+  - `scripts/test_systemc_smoke.sh` 新增 delay D8 段：`hello`（UART 窗口）与 `htif_u3_console`（HTIF
+    端点）在 baseline 与 `--quantum 1024` 下用 `--max-delay-fs 1500000`、在
+    `--nb --nb-latency 1500000` 下各跑零注解与 `--device-delay-fs 1500000` 两趟（`--nb` 与
+    `--max-delay-fs` 同时使用是用法错误，所以非阻塞趟的上限来自 `--nb-latency`）。每趟要求 native
+    退出码、逐字节相同的 commit log、与零注解趟相同的退出 turn、输出序列与 console 通道、每 grant 一次的
+    `sc_time_stamp() == committed_end_fs` 检查；阻塞趟的 `transport_delay_fs` 等于精确计费
+    （观测设备事务数 × 1500000 fs），`--nb` 趟比零注解趟多出恰好这笔计费（RAM AT 事务自带延迟），
+    `consumed_fs` 等于零注解趟加上由观测设备事务数计算的向上取整计费（1.5 tick 每次访问取整为
+    2 tick）；`--device-delay-fs 0 --max-delay-fs 1500000` 的 baseline 趟必须逐项重现今天的零延迟
+    宿主事实。两个设备 wait 故障选项在非零注解下再跑一次，仍以 host-elapsed 诊断失败；每个新选项都有
+    用法错误检查
+  - `docs/integration/systemc-tlm.md` 记录选项与限制：`--max-delay-fs`/`--device-delay-fs` 的语义与
+    用法错误、已声明上限同时覆盖设备事务、`--fault-device-delay-above-max` 的规则，以及 smoke 的 delay
+    趟所断言的模拟时间事实
+  - 本单元只改 SystemC 宿主与 smoke：不改 Rust、C ABI、窗口、事件、错误码、turn bound、grant 预留、
+    quantum、direct memory 与非阻塞路径；不加 mutation 控制（`cases.json` 仍 184 个）。U4（#251）负责
+    头文件、`integration/systemc/README.md`、`README.md`、verification 文档与 unit 计数的收尾
+
 - **Device Delay Annotation U2: C ABI 与纯 C smoke（issue #249）**
   - `include/ruscv_sim.h` 的 payload、设备表与声明上限注释命名已接受的注解与它的边界（delay D7）：
     payload 的 device 段落说明 `delay_fs` 是已完成 Hart 响应的建模设备延迟、至多句柄声明的

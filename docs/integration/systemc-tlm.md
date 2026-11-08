@@ -3,12 +3,12 @@
 **Status:** Implemented for the selected blocking-transport mapping, direct
 memory, the quantum selection, the non-blocking AT path, its retirement rules,
 the fault-option controls (U3/U4), the blocking device targets of the UART and
-HTIF windows (device D2–D9) and the host-served HTIF window (htif D1–D10). The
-U4 exit of the [archived host HTIF contract](../archive/milestones/host-htif-service.md)
-added documentation and acceptance mapping, not behavior. The [current
-contract](../dev-plan.md) plans a charged device delay annotation on the two
-host-served windows; this page gains that mapping when its SystemC unit lands
-and makes no runtime claim for it now.
+HTIF windows (device D2–D9), the host-served HTIF window (htif D1–D10) and the
+charged device delay annotation of those two host-served windows (delay D8).
+The U4 exit of the [archived host HTIF contract](../archive/milestones/host-htif-service.md)
+added documentation and acceptance mapping, not behavior. This page records the
+device-delay options and their limits; the remaining normative wording is the
+current contract's U4 exit.
 
 **Authority:** Normative for the selected blocking-transport mapping, FFI
 ownership and threads, error mapping, the time unit, re-entrancy and stop
@@ -34,14 +34,13 @@ and D9 make this page normative for the host HTIF mapping, its event and
 run-stop rules and its fault options; this page's `htif D<n>` citations name
 that contract. The [current contract](../dev-plan.md)'s
 D8 and D10 make this page normative for the device-delay options, the declared
-maximum and the smoke passes once its SystemC unit completes, and this page's
-`delay D<n>` citations name that contract. Until then, this page describes only
-the zero-delay device behavior the archived contract delivered. Bounded by
+maximum and the smoke passes, and this page's `delay D<n>` citations name that
+contract. Bounded by
 ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
 
-**Last reviewed:** 2026-11-08
+**Last reviewed:** 2026-11-09
 
 The repository implements one SystemC/TLM transport integration: a C ABI facade
 ([`src/capi`](../../src/capi), [`include/ruscv_sim.h`](../../include/ruscv_sim.h))
@@ -94,7 +93,7 @@ contract's `HtifTarget` (htif D8). The in-tree targets stay the default and the 
 | Late phase (nb D9) | A phase taking effect after the timeout: ignored and counted |
 | Device window (device D3) | One fixed register range: UART `0x1000_0000`/`0x100` or HTIF `0x4000_8000`/8 |
 | Device target (device D2) | An in-tree `BlockingDeviceTarget`, or a host target attached through `ruscv_machine_attach_device` |
-| Device transaction (device D2) | One `b_transport` call; zero delay and zero host elapsed time today, with the current contract planning a bounded charged delay (delay D8) |
+| Device transaction (device D2) | One `b_transport` call with at most the declared maximum of modeled delay and zero host elapsed time (delay D8) |
 | Device event (device D4) | At most one `PlatformEvent` reported by an accepted access: `UartTransmit` or `HtifWrite` |
 | Host-served UART window (device D9) | `UartTarget` in [`uart_target.h`](../../integration/systemc/uart_target.h), attached as `RUSCV_DEVICE_UART` |
 | Host-served HTIF window (htif D8) | `HtifTarget` in [`htif_target.h`](../../integration/systemc/htif_target.h), attached as `RUSCV_DEVICE_HTIF` |
@@ -224,8 +223,9 @@ mapped onto one `tlm_utils::simple_initiator_socket` bound to the RAM target.
   transaction's local time. On return the callback subtracts that offset and
   reports only `delay - offset` as `delay_fs`, so the offset is never charged as
   a delay and is not an added latency (quantum D11/D13). The declared
-  per-transaction maximum is zero for the blocking model, which adds no delay,
-  and `lambda` under `--nb` (nb D8).
+  per-transaction maximum is `--max-delay-fs` for the blocking model, which is
+  also the bound a device response's `delay_fs` must not exceed, and `lambda`
+  under `--nb` (delay D8, nb D8).
 - A returned `delay` below the offset cannot be represented as an added delay,
   and the target may already have committed the write, so the callback reports
   that transaction through the existing `mark_unknown_completion` path with
@@ -315,21 +315,26 @@ retraction rule.
   target and the native branch share one register helper
   (`Uart16550::write_reg_reporting`).
 - Carrier and annotation. One validated access is one blocking `b_transport`
-  transaction with zero delay and zero host elapsed time. A non-zero
-  `delay_fs`, `local_offset_fs`, `host_elapsed_fs`, `may_suspend` or
-  `dmi_allowed`, a changed address, command or length, more than one event, an
+  transaction with zero host elapsed time. A non-zero
+  `local_offset_fs`, `host_elapsed_fs`, `may_suspend` or `dmi_allowed`, a
+  changed address, command or length, more than one event, an
   event whose tag does not match its window, and an event on a non-`Ok` status
   are protocol failures of that access (device D2/D4; ADR-0002's 2026-11-07
-  device-target amendment). The current contract plans to relax the
-  `delay_fs` item for a Hart access only, bounded by the handle's declared
-  maximum and charged through the turn ledger (delay D3/D4); this page states
-  the zero-delay rule it replaces until that unit lands. The outcome-unknown classification runs first, so
+  device-target amendment). A `delay_fs` is a modeled access delay: a Hart
+  access inside an open guest turn may report at most the declared
+  per-transaction maximum, and the Machine converts it, rounds each access up
+  under the declared tick period and charges it once through the turn's
+  existing delay ledger; a delay above the maximum is the existing overshoot
+  host failure of that access, and a `DebugInbound` access must still report
+  zero (delay D3–D6). The outcome-unknown classification runs first, so
   an unknown completion that carries a valid event publishes nothing. A device
-  transaction adds nothing to `transport_delay_femtoseconds`,
-  `host_elapsed_femtoseconds`, `mcycle`, `minstret`, the turn completion bound
-  or a grant's horizon. A Hart device access still flushes the local offset
-  under the bus lock before the target sees it (quantum F1), so the target
-  observes committed Platform time and can neither read nor move the offset.
+  transaction adds nothing to `host_elapsed_femtoseconds`, `mcycle`,
+  `minstret`, the turn completion bound or a grant's horizon: a charged delay
+  enters the turn's advance and `transport_delay_femtoseconds` only, exactly as
+  a guest-RAM response's delay does. A Hart device access still flushes the
+  local offset under the bus lock before the target sees it (quantum F1), so
+  the target observes committed Platform time and can neither read nor move the
+  offset.
 - Events. Each window has one publication sink, installed once by
   `Platform::build`: the UART sink pushes `PlatformEvent::UartTransmit(byte)` and
   then calls `config.uart_output(byte)`; the HTIF sink pushes
@@ -408,6 +413,41 @@ retraction rule.
   (`src/blocking/device.rs`, proven in `src/machine/tests.rs`), and a
   sink-level console assertion would need a new ABI entry, which htif D7 keeps
   append-only and out of this contract.
+- Delay options and limits (delay D8). `--max-delay-fs <fs>` sets the blocking
+  target table's declared per-transaction maximum, default 0 and at most 10^15
+  fs like `--nb-latency`; it is a usage error with `--nb`, which keeps taking
+  the declared maximum from `--nb-latency`. `--device-delay-fs <fs>` makes a
+  selected host device target annotate that modeled delay on every completed
+  response, default 0; it is a usage error without `--uart-target host` or
+  `--htif-target host`, and above the declared maximum, because that case is
+  the separate `--fault-device-delay-above-max` control. Both targets write
+  only `ruscv_payload.delay_fs`: `host_elapsed_fs` stays zero, `may_suspend`
+  stays clear, and neither target waits or advances host time. The declared
+  maximum bounds every transaction of the route and also raises the turn's
+  conservative completion bound (`18 x maximum` ticks), which a grant's reserve
+  must still fit before it starts, so a maximum too large for a grant's horizon
+  blocks the grant and the host stops without a run result; at the smoke's
+  1500000 fs the reserve fits.
+  A zero annotation at that maximum reproduces the zero-delay host facts
+  exactly, which is the configuration the smoke proves, not every accepted
+  maximum.
+- Delay passes. `scripts/test_systemc_smoke.sh` runs `hello` (UART window) and
+  `htif_u3_console` (HTIF endpoint) at the baseline, under `--quantum 1024` and
+  under `--nb --nb-latency 1500000`, each beside its own
+  `--device-delay-fs 0` pass. Every charged pass annotates 1500000 fs and
+  declares that maximum: `--max-delay-fs 1500000` at the baseline and under
+  `--quantum 1024`, and `--nb-latency 1500000` under `--nb`, which keeps
+  `--max-delay-fs` a usage error.
+  Every pass requires the native exit code and commit log, the same exit turn
+  and output sequence as the zero-annotation pass, one kernel-clock check per
+  grant, and a non-zero device transaction count. A blocking pass's
+  `transport_delay_fs` is the exact charge (the observed transaction count times
+  the annotation), an `--nb` pass's is the zero-annotation pass's plus that
+  charge because the RAM AT transactions contribute their own latency, and
+  `consumed_fs` is the zero-annotation pass's plus two ticks per device
+  transaction, because each 1.5-tick annotation rounds up once. No project
+  guest accesses both windows, so each pass charges one window; the
+  both-targets composition is Rust-level proof.
 
 ## FFI ownership and threads
 
@@ -546,13 +586,14 @@ offset `O`, bounded by the selected quantum (quantum D3–D5). This host's rules
 ### Fault-option controls
 
 `--fault-keep-offset`, `--fault-decrease-delay`, the five non-blocking
-options and the six device options below are the fault-option controls of
+options and the seven device options below are the fault-option controls of
 their contract's §4, in the style of `--stop-after-grants`. The quantum pair
 requires `--quantum`, the non-blocking trio (`--fault-late-response`,
 `--fault-uncounted-elapsed`, `--fault-short-delay`) requires `--nb`, the
 blocking pair (`--fault-wait-blocking`, `--fault-wait-debug`) is a usage error
-with `--nb`, the UART device trio requires `--uart-target host` (device D9) and
-the HTIF trio requires `--htif-target host` (htif D8).
+with `--nb`, the UART device trio requires `--uart-target host` (device D9), the
+HTIF trio requires `--htif-target host` (htif D8) and
+`--fault-device-delay-above-max` requires either host device target (delay D8).
 Exactly one fault option may be selected in a run. They exist because the
 mutation runner builds only Rust, so a C++ fault cannot be a control row there
 (quantum D14, nb D11, device D10). None is a normal host, and a run that passes
@@ -615,13 +656,22 @@ with one set is a smoke failure:
   `HTIF_WRITE` event with `RUSCV_TLM_ADDRESS_ERROR`. The run must report
   `result state=failed` as a protocol failure of that access, and the refused
   write must be absent from the target's accepted sequence.
+- `--fault-device-delay-above-max` makes `UartTarget` or `HtifTarget` annotate
+  `max_delay_fs + 1` fs on its first completed write, before the write is
+  applied or recorded as accepted. With `--max-delay-fs 1500000` the run must
+  report `result state=failed` with `uncertain` 0 and the overshoot diagnostic
+  naming the declared maximum, and the refused write must be absent from the
+  target's accepted sequence. The smoke runs it once per host window (delay
+  D8).
 
 All three UART device options are usage errors without `--uart-target host`, and
 with an explicit `--uart-target in-tree`. The same rule holds for the three HTIF
-options and `--htif-target` (htif D8). The current contract plans one more device
-option, `--fault-device-delay-above-max`, with the declared maximum set by
-`--max-delay-fs` (delay D8); neither is part of this page until its SystemC unit
-lands.
+options and `--htif-target` (htif D8). `--fault-device-delay-above-max` requires
+`--uart-target host` or `--htif-target host`, takes one window per run and is a
+usage error with another fault option (delay D8). The two device wait controls
+run again under a non-zero `--device-delay-fs` together with a declared maximum
+that admits it, and must still report the host-elapsed diagnostic, which proves
+that accepting a delay did not accept host time.
 
 ## Reentrancy and stop behavior
 
@@ -706,10 +756,22 @@ words and exit word as the accepted value sequence, exactly `Hi\n` on the
 facts, and a repeated host pass with identical values, console, transactions,
 facts and commit log. The two existing guests run again under `--htif-target
 host` and must keep their facts with zero HTIF transactions, because neither
-touches the endpoint. It runs the two quantum fault-option controls under
-`--quantum 1024`, the five non-blocking ones, the three UART device ones and the
-three HTIF ones in their stated mode, and requires each to fail with its own
-assertion. It passes the
+touches the endpoint. It runs the device-delay passes (delay D8): `hello` and
+`htif_u3_console` at the baseline, under `--quantum 1024` and under
+`--nb --nb-latency 1500000`, each beside its own `--device-delay-fs 0` pass,
+requiring the native exit code and commit log, the same exit turn and output
+sequence as the zero-annotation pass, one kernel-clock check per grant, a
+blocking `transport_delay_fs` equal to the exact charge and an `--nb` one equal
+to the zero-annotation pass's plus that charge, and a `consumed_fs` equal to the
+zero-annotation pass's plus the per-access rounded charge, computed from the
+observed device transaction count. It also requires the zero annotation with
+`--max-delay-fs 1500000` to reproduce the zero-delay host facts exactly, so the
+larger declared maximum charges nothing by itself, and runs
+`--fault-device-delay-above-max` once per host window. It runs the two quantum
+fault-option controls under
+`--quantum 1024`, the five non-blocking ones, the three UART device ones, the
+three HTIF ones and the delay control in their stated mode, and requires each
+to fail with its own assertion. It passes the
 same turn bound as the CLI's `--max-cycles` and wraps every run in a wall-clock
 `timeout`, so neither a guest loop nor a host defect can hang CI.
 
@@ -718,10 +780,9 @@ same turn bound as the CLI's `--max-cycles` and wraps every run in a wall-clock
 - SystemC-modeled interrupt lines, which need their own contract.
 - Device host time and suspension: a device target that lets host time pass and
   reports it as host elapsed time, which needs a per-window suspension
-  declaration and must compose with the quantum or refuse it. The current
-  contract plans only the modeled delay half (delay D1–D10), and it keeps the
-  turn bound and the grant horizon by charging the delay inside the existing
-  reserve.
+  declaration and must compose with the quantum or refuse it. The modeled delay
+  half is implemented here: the annotation is charged inside the existing
+  reserve, so the turn bound and the grant horizon keep their values (delay D8).
 - HTIF fromhost, console input and syscall proxying: the endpoint has no
   host-to-guest direction, the ABI has no entry that publishes a fromhost word,
   and the crate decodes no HTIF device code (htif D3/D5). These are retained
