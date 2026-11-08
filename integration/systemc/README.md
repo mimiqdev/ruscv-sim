@@ -194,13 +194,16 @@ control that passes is a smoke failure.
 
 `--htif-target in-tree|host` selects the HTIF endpoint's target (htif D8). The
 default `in-tree` keeps the Rust endpoint; `host` creates an `HtifTarget` and
-attaches it through `ruscv_machine_attach_device` after create and before the
-first load, either alone or beside a host UART target. The host target answers a
-dword read with zero, answers an accepted dword write with `RUSCV_TLM_OK` and
-one `RUSCV_DEVICE_EVENT_HTIF_WRITE` whose value is the guest's eight bytes, and
-renders the standard console device's byte as one `htif-console:` line. The
-published value is the response's eight write bytes, so leaving the data
-unchanged reports the guest's own value. Any other selection is a usage error.
+attaches it through `ruscv_machine_attach_device` as `RUSCV_DEVICE_HTIF` 1 after
+create and before the first load, either alone or beside a host UART target. The
+host target answers a dword read with zero, answers an accepted dword write with
+`RUSCV_TLM_OK` and one `RUSCV_DEVICE_EVENT_HTIF_WRITE` whose value is the guest's
+eight bytes, and renders the standard console device's byte as one
+`htif-console:` line. The published value is the response's eight write bytes,
+so leaving the data unchanged reports the guest's own value; it reaches the
+existing `config.htif_write` sink and the existing exit decode, so an exit word
+stops the run on that turn exactly as the in-tree endpoint does and a host that
+omits the event leaves no exit fact. Any other selection is a usage error.
 
 The three HTIF fault options are the HTIF contract's §4 controls. Each requires
 `--htif-target host` and is a usage error with the in-tree selection.

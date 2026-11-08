@@ -220,15 +220,19 @@ TLM-Modeled Devices 合同在同一 ABI 上追加设备表（device D8）：`rus
 结构体从 272 字节增至 280 字节而既有 offset 不变，因此宿主必须按新头文件重新编译。设备事务的
 `delay_fs`、`local_offset_fs`、`host_elapsed_fs`、`may_suspend` 与 `dmi_allowed` 必须为零，事件的值取自
 该次访问自身的写数据；非零注记、改动的 request、与窗口不匹配的 tag、或非 `Ok` 状态上的事件都是该次访问的
-协议失败。`ruscv_machine_attach_device(machine, RUSCV_DEVICE_UART, &device)` 必须在 create 之后、首次
-`ruscv_machine_load_elf` 之前调用：NULL handle、NULL 表、未知窗口与缺回调的表是
+协议失败。`RUSCV_DEVICE_HTIF` 窗口的读不发布事件，接受的写上报一个 `RUSCV_DEVICE_EVENT_HTIF_WRITE`，
+其值必须等于请求的八个数据字节（htif D10）；`Read` 上报事件在两个窗口都是该次访问的协议失败。
+`ruscv_machine_attach_device(machine, window, &device)` 的 `window` 是 `RUSCV_DEVICE_UART` 0
+（`0x1000_0000`/`0x100`）或 `RUSCV_DEVICE_HTIF` 1（`0x4000_8000`/8），必须在 create 之后、首次
+`ruscv_machine_load_elf` 之前调用，一个窗口一张表、每个窗口只 attach 一次：NULL handle、NULL 表、
+未知窗口与缺回调的表是
 `RUSCV_ERROR_INVALID_ARGUMENT`，base／size 不匹配、同一窗口二次 attach、晚 attach 与没有
 `ruscv_target`（无 TLM 路由）的句柄是 `RUSCV_ERROR_CONFIG`。表在 attach 时复制，回调遵守 RAM target
 的规则：创建线程、不再入、不等待、不让 host 时间流逝，且不以异常穿过边界。布局 pin 见
 `include/ruscv_sim.h`、`src/capi/tests.rs` 与 `tests/capi/smoke.c`；`tests/capi/smoke.c` 以纯 C 覆盖
 attach 拒绝码、一次带 transmit 事件的设备事务与设备表布局。
 
-## SystemC 宿主（blocking TLM U6 / non-blocking U3–U5 / device U4）
+## SystemC 宿主（blocking TLM U6 / non-blocking U3–U5 / device U4 / htif U3–U4）
 
 `integration/systemc/` 是 pinned SystemC 宿主：Accellera SystemC 3.0.2（commit
 `70b0fc8e4a74acc677b0fc73cea08f940c2115d5`，[归档的 blocking-transport 合同](docs/archive/milestones/blocking-tlm-systemc-transport.md) D9 的选择）以 C++17 构建为静态库，
@@ -259,6 +263,22 @@ DLAB 清零的已接受 THR 写回 `RUSCV_TLM_OK` 加一个 `RUSCV_DEVICE_EVENT_
 `--uart-target host`（in-tree 或缺失时为用法错误），分别使 LSR 缺 transmit-empty 位（`hello` 耗尽
 cycle 上界）、在 `b_transport` 内等待一个 tick 并报 host elapsed、以及以 `RUSCV_TLM_ADDRESS_ERROR`
 报 transmit 事件；每个都必须以自己的断言失败。
+
+`--htif-target in-tree|host` 选择 HTIF 端点（`0x4000_8000`/8）的 target（htif D8）：默认 `in-tree` 保留
+Rust 端点，`host` 在 create 之后、首次 load 之前用同一窗口索引表 attach `RUSCV_DEVICE_HTIF` 1，可与宿主
+UART target 同时存在。宿主 `HtifTarget`（`integration/systemc/htif_target.{h,cpp}`）也是普通回调对象：一次
+已验证的 dword 访问是一笔 `b_transport`，读应答是它自己的寄存器状态（smoke 固定为零，给 parity 检查一个
+不动点），接受的写回 `RUSCV_TLM_OK` 加恰好一个 `RUSCV_DEVICE_EVENT_HTIF_WRITE`，其值必须等于请求的八个
+字节（htif D10）。发布值就是响应的八个写字节，继续走既有 `config.htif_write` 单一 sink 与既有退出解码：
+guest store 退役、sink 发布一次、运行循环在同一个 turn 上判定 `PlatformExit`（htif D4/D5），宿主不能停
+运行、选择退出码、清除信号或抑制退役的 store；漏报 event 就不存在退出事实，运行走到 turn bound 后失败。
+target 把标准 console 设备（device 1、command 1、payload 字节）的字节渲染成一行 `htif-console:` 作为宿主
+输出，crate 不解析任何 HTIF device code，也不把 HTIF 值送进 `config.uart_output`；`receive` 从不被调用。
+三个故障选项各要求 `--htif-target host`（in-tree 或缺失时是用法错误）：`--fault-htif-drop-event` 只丢退出
+字写的 event（三个 console event 与值仍发布，运行耗尽 turn bound 且不产生结果）、`--fault-htif-wait`
+在回调里等一个 Platform tick 并报 host elapsed（以 HTIF 窗口的 host-elapsed 诊断失败）、
+`--fault-htif-event-on-fault` 用 `RUSCV_TLM_ADDRESS_ERROR` 报退出写的 event（该次访问的协议失败，被拒
+的写不出现在 target 的接受序列里）。
 
 non-blocking（base protocol）AT 路径由 `--nb` 选择：target 声明自己挂起，`may_suspend` 事务经
 `nb_transport_fw`/`nb_transport_bw` 以单笔未完成事务运行；`--nb-latency <fs>` 设定 λ 与声明的单事务
@@ -293,6 +313,13 @@ D10 三项求和、`--dmi` AT 计数严格低于非直接遍，并要求 `--nb -
 非零且等于读加写数、必须恰好发送 `Hello!\n` 且在 `uart-console:` 通道上得到同一字节序列，重复的 host
 遍必须产出相同的字节与 commit log；两个既有 guest 在 `--uart-target host` 下必须保持各自事实且设备事务数为
 零，因为它们不访问 UART。三个设备故障选项各以自己的断言失败，在错误模式下是用法错误。
+`htif_u3_console`（rv64i）另在 `--htif-target in-tree` 与 `--htif-target host` 下各跑 baseline、`--dmi`、
+`--nb` 与 `--quantum 1024`：两种选择都必须保持 native 退出码与逐字节相同的 commit log，in-tree 遍的宿主
+HTIF 事务必须为零，host 遍的事务数必须非零且等于读加写数、接受值序列必须恰是 guest 的三个 console 字与
+退出字、`htif-console:` 通道必须恰为 `Hi\n`，并与 in-tree parity 遍取相同的 grant／consumed／turn 事实；
+重复的 host 遍必须给出相同的值、console、事务、事实与 commit log。两个既有 guest 在 `--htif-target host`
+下必须保持各自事实且 HTIF 事务为零，因为它们不访问端点。三个 HTIF 故障选项各以自己的断言失败，在错误
+模式下是用法错误。
 缺少工具链、缺少 SystemC 或任一比较失败都是失败，不是跳过。
 `cargo build`／`cargo test --all-features` 不需要 C++ 工具链或 SystemC。Linux x86-64 only。
 
@@ -330,11 +357,21 @@ Platform 状态，`mtime`/`mtimecmp` 与四条中断线不由 target 拥有。�
 支持仅限于这些测试展示的范围。规范映射与开放项见 [SystemC/TLM 边界](docs/integration/systemc-tlm.md)。
 该合同于 2026-11-08 在 PR #236 完成，已归档为 [devices 合同](docs/archive/milestones/tlm-modeled-devices.md)。
 
-Host HTIF 服务是 2026-11-08 批准的当前合同（[docs/dev-plan.md](docs/dev-plan.md)），尚未实现：它计划在
-同一 window-indexed 设备表上追加 `RUSCV_DEVICE_HTIF` 窗口索引，让 SystemC 宿主经 C ABI 应答
-`0x4000_8000`/8 端点的 dword 读写，并把接受写上报的 `HtifWrite` 值继续送入现有 `config.htif_write`
-单一 sink 与现有退出判定；`--htif-target in-tree|host`、`HtifTarget`、一个新 guest 与三个 HTIF 故障选项
-都属于 U1–U4 的要求。本段不构成任何运行时支持声明。SystemC 建模中断线、设备延迟、多笔未完成事务与
+Host HTIF 服务已由 2026-11-08 批准的当前合同（[docs/dev-plan.md](docs/dev-plan.md)）实现：U1–U3 交付
+运行时路径，U4 完成文档与验收收尾。同一 window-indexed 设备表追加 `RUSCV_DEVICE_HTIF` 1
+（`0x4000_8000`/8），SystemC 宿主可经 C ABI 应答端点的 dword 读写，接受写上报的 `HtifWrite` 值继续送入
+现有 `config.htif_write` 单一 sink 与现有退出判定。Rust 侧选择是 `MachineConfig.devices` 的私有 HTIF 槽
+（`with_htif`／`with_uart_and_htif`，要求 `Transport::Tlm` 与 `PlatformKind::Native`），C ABI 侧是
+`c_device_window` 的 HTIF 分支与按窗口保存的表，SystemC 侧是 `--htif-target in-tree|host`、`HtifTarget`、
+guest `htif_u3_console` 与三个 HTIF 故障选项。实现证据由 `src/blocking/device_tests.rs`、
+`src/executor_device_tests.rs`、`src/machine/tests.rs`、`src/capi/tests.rs`、`tests/capi/smoke.c`、
+`tests/bare-metal-riscv-test/rv64i/htif_u3_console.S`、`scripts/run_elf_tests.sh`、
+`scripts/test_systemc_smoke.sh` 与 `scripts/debug/stage6-mutations`（四个 `htif-u1-*` 与 `htif-u2-window`
+控制）提供；端到端支持仅限于这些测试展示的范围。已知限制：C ABI 没有 HTIF 写的逐值 sink 入口，所以
+SystemC 只通过运行停止、turn bound 与被拒写在 target 接受序列中的缺席来观察发布，sink 级发布规则由
+Rust 测试证明；`HtifTarget` 的读应答固定为零、只渲染标准 console 设备的 putchar 命令，且不暴露
+fromhost 或 host-to-guest 输入。规范映射、运行停止规则与限制见
+[SystemC/TLM 边界](docs/integration/systemc-tlm.md)。SystemC 建模中断线、设备延迟、多笔未完成事务与
 HTIF fromhost/console 输入仍属后续合同。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
@@ -487,7 +524,7 @@ cargo test --all-features
 cargo test --test test_add_direct
 ```
 
-集成测试里既有纯 Rust 用例，也有 `tests/bare-metal-riscv-test/` 下的汇编程序（包括 RV64I、RV64M 和新增的 RV64A 原子 guest）。A6 的五个陷阱 guest 会在临时目录中 fresh assemble/link，并分别验证 `ruscv-sim run`、`load_and_run` 和 `RiscVSimulator`；缺少交叉编译器时本地用例明确打印 `[SKIP]`，CI 通过 `RISCV_REQUIRE_RISCV_TOOLCHAIN=1` 将缺失视为失败。完整 ELF 脚本会在隔离的 `target/` 输出目录中重建，并检查真实 `_start` 入口；每个 guest 还会以声明的 profile 分别跑 `--transport tlm`、`--transport tlm --dmi`、`--transport tlm --quantum 1` 与 `--transport tlm --quantum 1024`，并对 `hello`、`s5_timer`、`s5_external`、`atomic_tohost_exit`、`fd_fma`、`direct_mem_smc_fence_i`、`direct_mem_sv39_pt_store` 比较每遍的 `--log-commits` 输出与 native 逐字节一致；`cargo test` 成功不能冒充完整 ELF suite。详见 [裸机验证指南](docs/verification/bare-metal-tests.md) 和 [A6 证据矩阵](docs/verification/a6-capability-assessment.md)。
+集成测试里既有纯 Rust 用例，也有 `tests/bare-metal-riscv-test/` 下的汇编程序（包括 RV64I、RV64M 和新增的 RV64A 原子 guest）。A6 的五个陷阱 guest 会在临时目录中 fresh assemble/link，并分别验证 `ruscv-sim run`、`load_and_run` 和 `RiscVSimulator`；缺少交叉编译器时本地用例明确打印 `[SKIP]`，CI 通过 `RISCV_REQUIRE_RISCV_TOOLCHAIN=1` 将缺失视为失败。完整 ELF 脚本会在隔离的 `target/` 输出目录中重建，并检查真实 `_start` 入口；每个 guest 还会以声明的 profile 分别跑 `--transport tlm`、`--transport tlm --dmi`、`--transport tlm --quantum 1` 与 `--transport tlm --quantum 1024`，并对 `hello`、`s5_timer`、`s5_external`、`atomic_tohost_exit`、`fd_fma`、`direct_mem_smc_fence_i`、`direct_mem_sv39_pt_store` 与 `htif_u3_console` 比较每遍的 `--log-commits` 输出与 native 逐字节一致；`cargo test` 成功不能冒充完整 ELF suite。详见 [裸机验证指南](docs/verification/bare-metal-tests.md) 和 [A6 证据矩阵](docs/verification/a6-capability-assessment.md)。
 
 ## 参考
 

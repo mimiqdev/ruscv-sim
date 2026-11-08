@@ -2,10 +2,10 @@
 
 **Status:** Implemented for the selected blocking-transport mapping, direct
 memory, the quantum selection, the non-blocking AT path, its retirement rules,
-the fault-option controls (U3/U4) and the blocking device targets of the UART
-and HTIF windows (device D2–D9). The U5 exit of the archived devices contract
-added documentation and acceptance mapping, not behavior. Host HTIF service is
-the [current contract](../dev-plan.md)'s scope and has no runtime claim here.
+the fault-option controls (U3/U4), the blocking device targets of the UART and
+HTIF windows (device D2–D9) and the host-served HTIF window (htif D1–D10). The
+U4 exit of the [current contract](../dev-plan.md) added documentation and
+acceptance mapping, not behavior.
 
 **Authority:** Normative for the selected blocking-transport mapping, FFI
 ownership and threads, error mapping, the time unit, re-entrancy and stop
@@ -26,10 +26,9 @@ and the AT target mode; this page's `nb D<n>` citations name that contract. The
 D5–D9 make this page normative for the device-target
 mapping, the event rule, host views, reset and the attach entry; this page's
 `device D<n>` citations name that contract. The
-[current contract](../dev-plan.md) will make this page normative for the
-host HTIF mapping, its event and run-stop rules and its fault options when its
-documentation unit completes; this page's `htif D<n>` citations will name that
-contract. Bounded by
+[current contract](../dev-plan.md)'s D8 and D9 make this page normative for the
+host HTIF mapping, its event and run-stop rules and its fault options; this
+page's `htif D<n>` citations name that contract. Bounded by
 ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
@@ -58,10 +57,10 @@ reset acknowledgement (nb D9). For the same contract it records the
 non-blocking fault options. Blocking device targets are implemented on the same
 ABI (device D1–D9): one device window becomes one blocking `b_transport`
 transaction answered by an in-tree target or by a host target attached through
-the C ABI, with at most one platform event per accepted access. The UART window
-may be served by the host; the HTIF window is in-tree in the archived devices
-contract, and host HTIF service is the current contract's scope with no runtime
-claim on this page.
+the C ABI, with at most one platform event per accepted access. Either window
+may be served by the host: the UART window by the archived devices contract's
+`UartTarget` (device D9) and the HTIF endpoint by the current contract's
+`HtifTarget` (htif D8). The in-tree targets stay the default and the reference.
 
 ## Selected mapping
 
@@ -90,6 +89,7 @@ claim on this page.
 | Device transaction (device D2) | One `b_transport` call with zero delay and zero host elapsed time |
 | Device event (device D4) | At most one `PlatformEvent` reported by an accepted access: `UartTransmit` or `HtifWrite` |
 | Host-served UART window (device D9) | `UartTarget` in [`uart_target.h`](../../integration/systemc/uart_target.h), attached as `RUSCV_DEVICE_UART` |
+| Host-served HTIF window (htif D8) | `HtifTarget` in [`htif_target.h`](../../integration/systemc/htif_target.h), attached as `RUSCV_DEVICE_HTIF` |
 | Device reset (device D6) | The selected target's `transport_reset`, once per `Platform::build` and before the image is placed |
 
 `tlm_generic_payload` and `sc_time` stay outside the Rust side and outside ISA
@@ -363,6 +363,39 @@ retraction rule.
   echoes that byte to the host console as one `uart-console:` line, and reports
   its transaction, read, write and transmitted-byte counts at exit.
   `transport_reset` discards every register and FIFO and acknowledges.
+- Host HTIF model. [`htif_target.h`](../../integration/systemc/htif_target.h) is
+  the smoke's host endpoint (`--htif-target host`, htif D8), a plain callback
+  object attached as `RUSCV_DEVICE_HTIF` 1 with the same table, attach entry
+  and callback rules as the UART target. Its read answer is its own register
+  state (htif D3), which this model fixes at zero so the parity checks have a
+  fixed point, and an accepted dword write returns `RUSCV_TLM_OK` and one
+  `RUSCV_DEVICE_EVENT_HTIF_WRITE` whose value is the guest's eight little-endian
+  bytes; the D10 value rule refuses any other value before publication. It
+  renders the standard console device's byte
+  (device 1, command 1, payload byte) as one `htif-console:` line as host
+  output: the crate decodes no HTIF device code and routes no HTIF value to
+  `config.uart_output`. `receive` is never called, because the endpoint has no
+  host-to-guest direction (htif D3), and `transport_reset` discards the window's
+  own state.
+- HTIF run stop. The published value is the response's eight write bytes, the
+  sink is the existing `config.htif_write`, and the run stop is the existing
+  `try_extract_exit_code` decode of that value (htif D4/D5). The guest store
+  retires, the sink publishes once, and the run loop classifies `PlatformExit`
+  on that turn, exactly as for the in-tree endpoint. The host cannot stop the
+  run, choose the exit code, clear the signal or suppress the retired store; a
+  host that omits the event leaves no exit fact, so the run continues to its
+  turn bound and fails. A guest that writes a non-exit value continues and the
+  value is still published once.
+- Sink observation. The C ABI has no per-value sink entry for an HTIF write, so
+  this host observes publication through the run stop (the same exit code, exit
+  turn, grant and consumed facts as the matching in-tree pass, with the exit
+  word as the last accepted value), a dropped event through the run that
+  reaches its turn bound with no exit fact, and a refused write through the
+  protocol failure and its absence from the target's accepted sequence. The
+  sink-level rules for a refused or a non-exit write are Rust-level
+  (`src/blocking/device.rs`, proven in `src/machine/tests.rs`), and a
+  sink-level console assertion would need a new ABI entry, which htif D7 keeps
+  append-only and out of this contract.
 
 ## FFI ownership and threads
 
@@ -501,12 +534,13 @@ offset `O`, bounded by the selected quantum (quantum D3–D5). This host's rules
 ### Fault-option controls
 
 `--fault-keep-offset`, `--fault-decrease-delay`, the five non-blocking
-options and the three device options below are the fault-option controls of
+options and the six device options below are the fault-option controls of
 their contract's §4, in the style of `--stop-after-grants`. The quantum pair
 requires `--quantum`, the non-blocking trio (`--fault-late-response`,
 `--fault-uncounted-elapsed`, `--fault-short-delay`) requires `--nb`, the
 blocking pair (`--fault-wait-blocking`, `--fault-wait-debug`) is a usage error
-with `--nb`, and the device trio requires `--uart-target host` (device D9).
+with `--nb`, the UART device trio requires `--uart-target host` (device D9) and
+the HTIF trio requires `--htif-target host` (htif D8).
 Exactly one fault option may be selected in a run. They exist because the
 mutation runner builds only Rust, so a C++ fault cannot be a control row there
 (quantum D14, nb D11, device D10). None is a normal host, and a run that passes
@@ -554,9 +588,25 @@ with one set is a smoke failure:
 - `--fault-uart-event-on-fault` makes `UartTarget` report a transmit event with
   `RUSCV_TLM_ADDRESS_ERROR`. The run must report `result state=failed` as a
   protocol failure of that access, and no byte may reach the host's console.
+- `--fault-htif-drop-event` makes `HtifTarget` answer the exit word's write with
+  `RUSCV_TLM_OK` and no `HTIF_WRITE` event while the three console writes keep
+  their events and values. No exit fact exists, so the guest's self-loop must
+  exhaust the turn bound and fail with the turn-limit diagnostic, the run must
+  report no run result, and the accepted values must be exactly the three
+  console words.
+- `--fault-htif-wait` makes `HtifTarget::b_transport` wait one Platform tick and
+  report it as host elapsed time, which a device callback may not do (htif D9).
+  The run must report `result state=failed` with a diagnostic naming host
+  elapsed time on the HTIF window and the device-callback rule, and no value may
+  reach the target's accepted sequence.
+- `--fault-htif-event-on-fault` makes `HtifTarget` report the exit write's
+  `HTIF_WRITE` event with `RUSCV_TLM_ADDRESS_ERROR`. The run must report
+  `result state=failed` as a protocol failure of that access, and the refused
+  write must be absent from the target's accepted sequence.
 
-All three device options are usage errors without `--uart-target host`, and
-with an explicit `--uart-target in-tree`.
+All three UART device options are usage errors without `--uart-target host`, and
+with an explicit `--uart-target in-tree`. The same rule holds for the three HTIF
+options and `--htif-target` (htif D8).
 
 ## Reentrancy and stop behavior
 
@@ -631,9 +681,20 @@ count equal to its reads plus writes, exactly `Hello!\n` in the target's bytes
 and on its `uart-console:` channel, and a repeated host pass with identical
 bytes, commit log and exit code. The two existing guests run again under
 `--uart-target host` and must keep their facts with zero device transactions,
-because neither touches the UART. It runs the two fault-option controls under
-`--quantum 1024`, the five non-blocking ones and the three device ones in their
-stated mode, and requires each to fail with its own assertion. It passes the
+because neither touches the UART. It runs `htif_u3_console` under
+`--htif-target in-tree` and `--htif-target host` at the baseline, with `--dmi`,
+with `--nb` and with `--quantum 1024`, requiring the native exit code and commit
+log, zero host HTIF transactions for the in-tree selection, a non-zero host
+transaction count equal to its reads plus writes, the guest's three console
+words and exit word as the accepted value sequence, exactly `Hi\n` on the
+`htif-console:` channel, the matching in-tree pass's grant, consumed and turn
+facts, and a repeated host pass with identical values, console, transactions,
+facts and commit log. The two existing guests run again under `--htif-target
+host` and must keep their facts with zero HTIF transactions, because neither
+touches the endpoint. It runs the two quantum fault-option controls under
+`--quantum 1024`, the five non-blocking ones, the three UART device ones and the
+three HTIF ones in their stated mode, and requires each to fail with its own
+assertion. It passes the
 same turn bound as the CLI's `--max-cycles` and wraps every run in a wall-clock
 `timeout`, so neither a guest loop nor a host defect can hang CI.
 
@@ -642,10 +703,11 @@ same turn bound as the CLI's `--max-cycles` and wraps every run in a wall-clock
 - SystemC-modeled interrupt lines, which need their own contract.
 - Device delay and host time: a device target that annotates either, which needs
   the turn completion bound and the grant horizon extended with it.
-- Host HTIF service is the [current contract](../dev-plan.md)'s scope: the
-  same window-indexed table, the same sink and the same run stop. No HTIF host
-  target, `--htif-target` option or HTIF fault option exists on this page's
-  runtime path until that contract's units land.
+- HTIF fromhost, console input and syscall proxying: the endpoint has no
+  host-to-guest direction, the ABI has no entry that publishes a fromhost word,
+  and the crate decodes no HTIF device code (htif D3/D5). These are retained
+  directions of the [current contract](../dev-plan.md) §5 and need their own
+  contract.
 - More than one outstanding transaction, on the non-blocking path or a device
   window, and pipelining.
 
@@ -746,14 +808,19 @@ contract adds none.)
   the C ABI facade, its header, and the device table with
   `ruscv_machine_attach_device`.
 - [`integration/systemc`](../../integration/systemc): the CMake project, the RAM
-  target, the UART device target, the initiator bridge and the grant loop.
+  target, the UART and HTIF device targets, the initiator bridge and the grant
+  loop.
+- [`tests/bare-metal-riscv-test/rv64i/htif_u3_console.S`](../../tests/bare-metal-riscv-test/rv64i/htif_u3_console.S):
+  the endpoint guest, which reads the window, writes three console bytes and the
+  standard exit word for code 0 and self-loops.
 - [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh): native
   comparison, the `--dmi` and `--dmi-invalidate-every` passes, the `--quantum`
   passes, the five `--nb` return paths at both latencies, the `--dmi` AT
   passes, the `--uart-target` passes with their console and transaction
+  assertions, the `--htif-target` passes with their value, console and parity
   assertions, the `--nb --quantum` refusal, the usage errors, the two quantum
-  and five non-blocking fault-option controls, the three device fault-option
-  controls and the early-`sc_stop` control.
+  and five non-blocking fault-option controls, the three UART and three HTIF
+  device fault-option controls and the early-`sc_stop` control.
 - [`scripts/test_capi_smoke.sh`](../../scripts/test_capi_smoke.sh): the plain-C
   compile-and-link smoke of the same ABI, including its direct-memory and
   device-attach cases.

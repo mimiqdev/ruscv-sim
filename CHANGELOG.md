@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Host HTIF Service U4: 文档与验收收尾（issue #242）**
+  - 文档补全并校正到 U1–U3 的实际行为：`README.md`、`CHANGELOG.md`、
+    `docs/integration/systemc-tlm.md`、`docs/verification/README.md` 与 `integration/systemc/README.md`
+    统一写出 HTIF 窗口码 `RUSCV_DEVICE_HTIF` 1（`0x4000_8000`/8）、`--htif-target in-tree|host`、三个
+    `--fault-htif-*` 选项、运行停止规则（guest store 退役 → 既有 `config.htif_write` sink 发布一次 →
+    同一 turn 上既有退出解码判定 `PlatformExit`；漏报 event 则无退出事实并走到 turn bound）与限制
+  - 删除 U1–U3 之后过期的说法：README 的“Host HTIF 服务……尚未实现”、`docs/integration/systemc-tlm.md`
+    的“no runtime claim here”与“until that contract's units land”、verification 文档的“SystemC host……
+    remain requirements”均改为已实现并引用源与测试；该页的开放项去掉 host HTIF 服务、
+    保留合同 §5 的其余方向
+  - 已知限制如实记录：C ABI 没有 HTIF 写的逐值 sink 入口，所以 SystemC 只通过运行停止、turn bound 与
+    被拒写在 target 接受序列中的缺席来观察发布，sink 级发布规则由 Rust 测试
+    （`src/blocking/device.rs`、`src/machine/tests.rs`）证明；`HtifTarget` 的读应答固定为零、只渲染
+    标准 console 设备的 putchar 命令，且不暴露 fromhost 或 host-to-guest 输入
+  - 验收确认：五个 §4 控制（`htif-u1-route`、`htif-u1-reset`、`htif-u1-read-event`、`htif-u1-value`、
+    `htif-u2-window`）全部注册，`cases.json` 共 181 个控制且全部通过 `patch --fuzz=0 --dry-run`；
+    smoke 以各自断言运行三个 HTIF 故障选项；CI 的 `Quality and tests`、`SystemC transport smoke` 与
+    `Debug mutation controls` 覆盖 D9 列出的检查，未新增作业
+  - 本单元不改运行时行为、不改 `docs/dev-plan.md`、不归档合同，A10 oracle 与认证豁免不变
+
 - **Host HTIF Service U3: SystemC 宿主 HTIF target 与 smoke（issue #241）**
   - `integration/systemc/htif_target.{h,cpp}` 以普通回调对象实现 `ruscv_device` 的 HTIF 窗口
     （htif D8）：一次已验证的 dword 访问就是一次 `b_transport` 调用，读应答零（htif D3），接受的写
