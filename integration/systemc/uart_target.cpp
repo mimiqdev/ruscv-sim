@@ -1,9 +1,9 @@
 // uart_target.cpp - the host-served UART device window for the ruscv-sim smoke.
 //
-// device D9. See uart_target.h for the model and its three fault-option
-// controls. The register answers mirror the in-tree `Uart16550`
-// (`src/peripherals/uart16550.rs`), because the smoke's guest fixes the values
-// the two routes must agree on (device D7).
+// device D9. See uart_target.h for the model, its three fault-option controls
+// and the device-delay annotation of delay D8. The register answers mirror the
+// in-tree `Uart16550` (`src/peripherals/uart16550.rs`), because the smoke's
+// guest fixes the values the two routes must agree on (device D7).
 
 #include "uart_target.h"
 
@@ -85,7 +85,10 @@ std::string escape_byte(unsigned char byte) {
 
 }  // namespace
 
-UartTarget::UartTarget(UartFaults faults) : faults_(faults) { reset_state(); }
+UartTarget::UartTarget(UartFaults faults, DeviceDelay delay)
+    : faults_(faults), delay_(delay) {
+    reset_state();
+}
 
 ruscv_device UartTarget::table() {
     ruscv_device device{};
@@ -139,6 +142,8 @@ void UartTarget::serve(ruscv_payload& payload) {
         ++reads_;
         payload.data[0] = read_reg(offset);
         payload.status = RUSCV_TLM_OK;
+        // delay D8: a completed response annotates this window's modeled delay.
+        payload.delay_fs = delay_.delay_fs;
         return;
     }
     if (payload.command == RUSCV_COMMAND_WRITE) {
@@ -153,6 +158,17 @@ void UartTarget::serve(ruscv_payload& payload) {
             payload.device_event = RUSCV_DEVICE_EVENT_UART_TRANSMIT;
             return;
         }
+        if (delay_.above_max && !above_max_done_) {
+            // delay D8: --fault-device-delay-above-max annotates one femtosecond
+            // above the declared maximum on the first completed write, before
+            // the write is applied or recorded as accepted. The Machine's
+            // declared-maximum check refuses the access, so the byte never
+            // reaches this target's accepted sequence.
+            above_max_done_ = true;
+            payload.status = RUSCV_TLM_OK;
+            payload.delay_fs = delay_.max_delay_fs + 1;
+            return;
+        }
         write_reg(offset, byte);
         if (transmit) {
             // device D7: one accepted THR write transmits exactly one byte, and
@@ -165,6 +181,8 @@ void UartTarget::serve(ruscv_payload& payload) {
             payload.device_event = RUSCV_DEVICE_EVENT_UART_TRANSMIT;
         }
         payload.status = RUSCV_TLM_OK;
+        // delay D8: a completed response annotates this window's modeled delay.
+        payload.delay_fs = delay_.delay_fs;
         return;
     }
     payload.status = RUSCV_TLM_COMMAND_ERROR;

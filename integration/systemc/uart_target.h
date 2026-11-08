@@ -26,6 +26,12 @@
 // * `--fault-uart-event-on-fault` reports a transmit event with
 //   RUSCV_TLM_ADDRESS_ERROR, which device D4 forbids: only an accepted access
 //   publishes an event.
+//
+// delay D8 adds the modeled access delay: `DeviceDelay::delay_fs` is written to
+// `ruscv_payload.delay_fs` on every completed response, and
+// `--fault-device-delay-above-max` annotates one femtosecond above the declared
+// maximum on the first completed write instead, before that write is applied or
+// recorded.
 
 #ifndef RUSCV_SIM_SYSTEMC_UART_TARGET_H
 #define RUSCV_SIM_SYSTEMC_UART_TARGET_H
@@ -35,6 +41,8 @@
 #include <vector>
 
 #include <ruscv_sim.h>
+
+#include "device_delay.h"
 
 namespace ruscv_sim {
 
@@ -67,8 +75,10 @@ public:
     static constexpr size_t kFifoDepth = 16;
 
     /// `faults` carries the smoke's fault-option controls and is empty in every
-    /// normal run.
-    explicit UartTarget(UartFaults faults = {});
+    /// normal run. `delay` carries the modeled access delay this target
+    /// annotates on every completed response (delay D8), zero in every normal
+    /// run that selects no device delay.
+    explicit UartTarget(UartFaults faults = {}, DeviceDelay delay = {});
 
     /// The C ABI device table naming this object as `user`.
     ///
@@ -117,6 +127,10 @@ private:
     void reset_state();
 
     UartFaults faults_;
+    DeviceDelay delay_;
+    /// True once the `--fault-device-delay-above-max` control has annotated its
+    /// overshoot on the first completed write.
+    bool above_max_done_ = false;
     std::vector<uint8_t> rx_fifo_;
     std::vector<uint8_t> tx_fifo_;
     uint8_t ier_ = 0;

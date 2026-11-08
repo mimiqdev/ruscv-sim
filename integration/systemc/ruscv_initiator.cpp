@@ -112,7 +112,7 @@ void mark_unknown_completion(ruscv_payload* payload) {
 RuscvInitiator::RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram,
                                bool direct_mem, uint64_t quantum_ticks,
                                InitiatorFaults faults, bool non_blocking,
-                               uint64_t nb_latency_fs)
+                               uint64_t nb_latency_fs, uint64_t max_delay_fs)
     : sc_core::sc_module(name),
       socket("socket"),
       ram_(ram),
@@ -120,7 +120,8 @@ RuscvInitiator::RuscvInitiator(sc_core::sc_module_name name, RamTarget& ram,
       quantum_ticks_(quantum_ticks),
       faults_(faults),
       non_blocking_(non_blocking),
-      nb_latency_fs_(nb_latency_fs) {
+      nb_latency_fs_(nb_latency_fs),
+      max_delay_fs_(max_delay_fs) {
     socket.register_nb_transport_bw(this, &RuscvInitiator::nb_transport_bw);
     // The target reaches the handle's direct-memory registry through this
     // backward call (direct-memory D13).
@@ -328,8 +329,9 @@ void RuscvInitiator::invalidate_direct_mem_ptr(sc_dt::uint64 start_range,
 ruscv_target RuscvInitiator::target_table() {
     ruscv_target table{};
     // nb D8: under --nb the RAM model declares lambda as its per-transaction
-    // maximum; otherwise it annotates zero delay and declares zero.
-    table.max_delay_fs = non_blocking_ ? nb_latency_fs_ : 0;
+    // maximum; otherwise it declares --max-delay-fs, which bounds every
+    // transaction of the route, a device response's delay included (delay D8).
+    table.max_delay_fs = non_blocking_ ? nb_latency_fs_ : max_delay_fs_;
     table.user = this;
     table.b_transport = &ruscv_systemc_b_transport;
     table.transport_dbg = &ruscv_systemc_transport_dbg;
@@ -362,7 +364,8 @@ void RuscvInitiator::serve_b_transport(ruscv_payload& payload) {
     // quantum D13: the IEEE 1666 delay argument carries the Hart's local offset
     // on entry. The target adds nothing on this blocking path, so the callback
     // reports only what it returned above the offset; the declared maximum is
-    // zero off `--nb` and `lambda` on a suspending table (nb D8).
+    // `--max-delay-fs` off `--nb` and `lambda` on a suspending table (delay D8,
+    // nb D8).
     const uint64_t offset_fs = payload.local_offset_fs;
     sc_core::sc_time delay = sc_core::sc_time::from_value(offset_fs);
     socket->b_transport(transaction, delay);
@@ -382,9 +385,9 @@ void RuscvInitiator::serve_b_transport(ruscv_payload& payload) {
     if (faults_.keep_offset) {
         // The smoke's --fault-keep-offset control (quantum §4): the full delay
         // argument is reported as an added delay, so the offset this target was
-        // given exceeds the declared maximum of zero. This control requires
-        // --quantum, and a suspending table with a quantum is refused, so --nb
-        // is never selected with it.
+        // given exceeds the declared maximum, which is its default zero in the
+        // smoke's run. This control requires --quantum, and a suspending table
+        // with a quantum is refused, so --nb is never selected with it.
         payload.delay_fs = delay.value();
     } else if (delay.value() < offset_fs) {
         // quantum D13: a returned delay below the offset cannot be represented

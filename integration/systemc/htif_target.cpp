@@ -1,8 +1,9 @@
 // htif_target.cpp - the host-served HTIF device window for the ruscv-sim smoke.
 //
-// htif D8. See htif_target.h for the model and its three fault-option controls.
-// The endpoint's read answer is zero on both routes (htif D3), so the in-tree
-// run and this target have the same fixed point.
+// htif D8. See htif_target.h for the model, its three fault-option controls
+// and the device-delay annotation of delay D8. The endpoint's read answer is
+// zero on both routes (htif D3), so the in-tree run and this target have the
+// same fixed point.
 
 #include "htif_target.h"
 
@@ -51,7 +52,10 @@ std::string escape_byte(unsigned char byte) {
 
 }  // namespace
 
-HtifTarget::HtifTarget(HtifFaults faults) : faults_(faults) { discard_state(); }
+HtifTarget::HtifTarget(HtifFaults faults, DeviceDelay delay)
+    : faults_(faults), delay_(delay) {
+    discard_state();
+}
 
 ruscv_device HtifTarget::table() {
     ruscv_device device{};
@@ -108,6 +112,8 @@ void HtifTarget::serve(ruscv_payload& payload) {
         // checks compare equal answers.
         std::memset(payload.data, 0, kWindowSize);
         payload.status = RUSCV_TLM_OK;
+        // delay D8: a completed response annotates this window's modeled delay.
+        payload.delay_fs = delay_.delay_fs;
         return;
     }
     if (payload.command == RUSCV_COMMAND_WRITE) {
@@ -117,6 +123,17 @@ void HtifTarget::serve(ruscv_payload& payload) {
             value |= static_cast<uint64_t>(payload.data[index]) << (8 * index);
         }
         const bool exit_word = is_exit_word(value);
+        if (delay_.above_max && !above_max_done_) {
+            // delay D8: --fault-device-delay-above-max annotates one femtosecond
+            // above the declared maximum on the first completed write, before
+            // the write is applied or recorded as accepted. The Machine's
+            // declared-maximum check refuses the access, so no value reaches
+            // this target's accepted sequence.
+            above_max_done_ = true;
+            payload.status = RUSCV_TLM_OK;
+            payload.delay_fs = delay_.max_delay_fs + 1;
+            return;
+        }
         if (faults_.event_on_fault && exit_word) {
             // htif §4: --fault-htif-event-on-fault reports the exit write's
             // event with a fault status. htif D4 accepts an event only on an
@@ -133,6 +150,8 @@ void HtifTarget::serve(ruscv_payload& payload) {
             // keep their events.
             register_ = value;
             payload.status = RUSCV_TLM_OK;
+            // delay D8: this is still a completed response.
+            payload.delay_fs = delay_.delay_fs;
             return;
         }
         // htif D4: one accepted dword write reports exactly one event whose
@@ -140,6 +159,7 @@ void HtifTarget::serve(ruscv_payload& payload) {
         // the request's own value the response's.
         register_ = value;
         payload.status = RUSCV_TLM_OK;
+        payload.delay_fs = delay_.delay_fs;
         payload.device_event = RUSCV_DEVICE_EVENT_HTIF_WRITE;
         values_.push_back(value);
         std::printf("htif-value: 0x%016" PRIx64 "\n", value);

@@ -53,6 +53,16 @@
 // controls (htif §4), each of which requires the host selection and fails the
 // run in its own named place.
 //
+// `--max-delay-fs` sets the blocking target table's declared per-transaction
+// maximum (delay D8), and `--device-delay-fs` makes a selected host device
+// target annotate that modeled access delay on every completed response, which
+// the Machine charges once to the guest turn. The blocking passes keep the
+// declared maximum at or above the annotation, so a run with
+// `--device-delay-fs 0` is today's zero-delay host run.
+// `--fault-device-delay-above-max` makes the selected host device target
+// annotate one femtosecond above the declared maximum on its first completed
+// write, which the Machine must refuse as the overshoot host failure.
+//
 // At every stop after a retirement the driver first probes the transport reset
 // while the target still holds the transaction, then runs the kernel until the
 // target has no scheduled phase and the initiator holds no drain state, and
@@ -78,6 +88,7 @@
 #include <ruscv_sim.h>
 #include <systemc>
 
+#include "device_delay.h"
 #include "htif_target.h"
 #include "ram_target.h"
 #include "ruscv_initiator.h"
@@ -103,7 +114,8 @@ constexpr uint64_t kMaxGrants = 10000;
 /// budget instead of spinning the kernel.
 constexpr uint64_t kMaxTurns = 100000;
 /// nb D8: the largest accepted AT latency, so no timeout or fault offset can
-/// overflow a femtosecond value.
+/// overflow a femtosecond value. delay D8 applies the same cap to the blocking
+/// table's declared maximum, so `--max-delay-fs` and `--nb-latency` share it.
 constexpr uint64_t kMaxNbLatencyFs = 1000000000000000ULL;
 
 /// One smoke run's configuration.
@@ -164,6 +176,20 @@ struct Options {
     bool fault_htif_drop_event = false;
     bool fault_htif_wait = false;
     bool fault_htif_event_on_fault = false;
+    /// delay D8: the blocking target table's declared per-transaction maximum
+    /// (`--max-delay-fs`), zero unless selected. It bounds every transaction of
+    /// the route, a device response's delay included.
+    uint64_t max_delay_fs = 0;
+    bool max_delay_set = false;
+    /// delay D8: the modeled delay every completed response of a selected host
+    /// device target adds (`--device-delay-fs`), zero unless selected.
+    uint64_t device_delay_fs = 0;
+    bool device_delay_set = false;
+    /// delay D8: `--fault-device-delay-above-max`, which annotates one
+    /// femtosecond above the declared maximum on the first completed write of a
+    /// selected host device target. It requires a host device target, because
+    /// without one there is no device callback to break.
+    bool fault_device_delay_above_max = false;
 };
 
 void print_usage(const char* program) {
@@ -178,6 +204,8 @@ void print_usage(const char* program) {
         "       [--nb] [--nb-latency <femtoseconds>]\n"
         "       [--nb-path accepted|updated|early|annotated|completed]\n"
         "       [--grant-trace <path>]\n"
+        "       [--max-delay-fs <femtoseconds>]\n"
+        "       [--device-delay-fs <femtoseconds>]\n"
         "       [--fault-keep-offset] [--fault-decrease-delay]\n"
         "       [--fault-late-response] [--fault-uncounted-elapsed]\n"
         "       [--fault-short-delay] [--fault-wait-blocking] [--fault-wait-debug]\n"
@@ -185,6 +213,7 @@ void print_usage(const char* program) {
         "       [--fault-uart-event-on-fault]\n"
         "       [--fault-htif-drop-event] [--fault-htif-wait]\n"
         "       [--fault-htif-event-on-fault]\n"
+        "       [--fault-device-delay-above-max]\n"
         "\n"
         "Runs one ruscv-sim Machine under this SystemC kernel. The RAM target is\n"
         "the zero-delay blocking model the initiator socket is bound to. Exit\n"
@@ -232,7 +261,22 @@ void print_usage(const char* program) {
         "console device's byte. --fault-htif-drop-event, --fault-htif-wait and\n"
         "--fault-htif-event-on-fault are the HTIF contract's fault options: each\n"
         "requires --htif-target host and must fail the run with its own\n"
-        "diagnostic.\n",
+        "diagnostic.\n"
+        "\n"
+        "--max-delay-fs <fs> sets the blocking target table's declared\n"
+        "per-transaction maximum, default 0 and at most 1000000000000000 fs; it is\n"
+        "a usage error with --nb, which keeps taking the declared maximum from\n"
+        "--nb-latency. --device-delay-fs <fs> makes a selected host device target\n"
+        "annotate that modeled access delay on every completed response, default 0\n"
+        "and at most the declared maximum; it is a usage error without\n"
+        "--uart-target host or --htif-target host, and above the declared maximum,\n"
+        "because that case is --fault-device-delay-above-max. The Machine charges\n"
+        "the annotation once to the guest turn, in simulated time only.\n"
+        "--fault-device-delay-above-max makes the selected host device target\n"
+        "annotate max_delay_fs + 1 fs on its first completed write, before the\n"
+        "write is applied or recorded: the run must fail with the overshoot\n"
+        "diagnostic. It requires a host device target and is a usage error with\n"
+        "another fault option.\n",
         program);
 }
 
@@ -455,6 +499,23 @@ bool parse_options(int argc, char** argv, Options& options) {
             options.fault_htif_wait = true;
         } else if (std::strcmp(argument, "--fault-htif-event-on-fault") == 0) {
             options.fault_htif_event_on_fault = true;
+        } else if (std::strcmp(argument, "--fault-device-delay-above-max") == 0) {
+            options.fault_device_delay_above_max = true;
+        } else if (std::strcmp(argument, "--max-delay-fs") == 0) {
+            const char* text = value("--max-delay-fs");
+            if (text == nullptr || !parse_u64(text, options.max_delay_fs)) {
+                std::fprintf(stderr, "systemc-smoke: --max-delay-fs needs a femtosecond count\n");
+                return false;
+            }
+            options.max_delay_set = true;
+        } else if (std::strcmp(argument, "--device-delay-fs") == 0) {
+            const char* text = value("--device-delay-fs");
+            if (text == nullptr || !parse_u64(text, options.device_delay_fs)) {
+                std::fprintf(stderr,
+                             "systemc-smoke: --device-delay-fs needs a femtosecond count\n");
+                return false;
+            }
+            options.device_delay_set = true;
         } else if (argument[0] == '-') {
             std::fprintf(stderr, "systemc-smoke: unknown option %s\n", argument);
             return false;
@@ -480,6 +541,47 @@ bool parse_options(int argc, char** argv, Options& options) {
         std::fprintf(stderr,
                      "systemc-smoke: --nb-latency must be at most %" PRIu64 " fs\n",
                      kMaxNbLatencyFs);
+        return false;
+    }
+    if (options.max_delay_set && options.non_blocking) {
+        // delay D8: --nb keeps taking the declared maximum from --nb-latency.
+        std::fprintf(stderr,
+                     "systemc-smoke: --max-delay-fs must not be combined with --nb; "
+                     "--nb-latency sets the declared maximum\n");
+        return false;
+    }
+    if (options.max_delay_fs > kMaxNbLatencyFs) {
+        // delay D8: the same cap as --nb-latency keeps every bound
+        // representable under a femtosecond value.
+        std::fprintf(stderr, "systemc-smoke: --max-delay-fs must be at most %" PRIu64 " fs\n",
+                     kMaxNbLatencyFs);
+        return false;
+    }
+    const uint64_t declared_max_fs =
+        options.non_blocking ? options.nb_latency_fs : options.max_delay_fs;
+    if (options.device_delay_set && !options.uart_host && !options.htif_host) {
+        // delay D8: without a host device target no completed response can
+        // annotate a delay, so this would check nothing.
+        std::fprintf(stderr,
+                     "systemc-smoke: --device-delay-fs requires --uart-target host or "
+                     "--htif-target host\n");
+        return false;
+    }
+    if (options.device_delay_fs > declared_max_fs) {
+        // delay D8: an annotation above the declared maximum is the separate
+        // overshoot control's case, never a normal run.
+        std::fprintf(stderr,
+                     "systemc-smoke: --device-delay-fs must be at most the declared maximum "
+                     "of %" PRIu64 " fs\n",
+                     declared_max_fs);
+        return false;
+    }
+    if (options.fault_device_delay_above_max && !options.uart_host && !options.htif_host) {
+        // delay D8: the control breaks a host device target, so without the
+        // host selection it would check nothing.
+        std::fprintf(stderr,
+                     "systemc-smoke: --fault-device-delay-above-max requires --uart-target "
+                     "host or --htif-target host\n");
         return false;
     }
     if (options.direct_mem_invalidate_every != 0 && !options.direct_mem) {
@@ -515,7 +617,8 @@ bool parse_options(int argc, char** argv, Options& options) {
                               static_cast<int>(options.fault_uart_event_on_fault) +
                               static_cast<int>(options.fault_htif_drop_event) +
                               static_cast<int>(options.fault_htif_wait) +
-                              static_cast<int>(options.fault_htif_event_on_fault);
+                              static_cast<int>(options.fault_htif_event_on_fault) +
+                              static_cast<int>(options.fault_device_delay_above_max);
     if (fault_options > 1) {
         // Every fault option changes one place and produces its own named
         // failure, so one run cannot exercise two of them.
@@ -1061,6 +1164,13 @@ int sc_main(int argc, char** argv) {
     }
     std::printf("systemc-smoke: uart target=%s\n", options.uart_host ? "host" : "in-tree");
     std::printf("systemc-smoke: htif target=%s\n", options.htif_host ? "host" : "in-tree");
+    // delay D8: report the declared maximum and the modeled delay a selected
+    // host device target annotates, so a passing pass proves its selection from
+    // the run itself and the smoke never infers either from the totals alone.
+    const uint64_t declared_max_fs =
+        options.non_blocking ? options.nb_latency_fs : options.max_delay_fs;
+    std::printf("systemc-smoke: delay max_delay_fs=%" PRIu64 " device_delay_fs=%" PRIu64 "\n",
+                declared_max_fs, options.device_delay_fs);
     std::fflush(stdout);
 
     ruscv_sim::RamTarget ram("ram",
@@ -1073,19 +1183,27 @@ int sc_main(int argc, char** argv) {
         "initiator", ram, options.direct_mem, options.quantum,
         ruscv_sim::InitiatorFaults{options.fault_keep_offset, options.fault_uncounted_elapsed,
                                    options.fault_short_delay},
-        options.non_blocking, options.nb_latency_fs);
+        options.non_blocking, options.nb_latency_fs, options.max_delay_fs);
+    // delay D8: both host device windows annotate the same modeled delay. The
+    // control annotates one femtosecond above the declared maximum on its own
+    // first completed write.
+    const ruscv_sim::DeviceDelay device_delay{options.device_delay_fs,
+                                              options.fault_device_delay_above_max,
+                                              declared_max_fs};
     // device D9: the host UART target exists for the whole run, so its counts
     // survive the handle's drain and destroy. The driver attaches it only when
     // `--uart-target host` selected it; the in-tree selection keeps the Rust
     // device and reports zero host device transactions.
     ruscv_sim::UartTarget uart(ruscv_sim::UartFaults{options.fault_uart_no_lsr,
                                                      options.fault_uart_wait,
-                                                     options.fault_uart_event_on_fault});
+                                                     options.fault_uart_event_on_fault},
+                               device_delay);
     // htif D8: the host HTIF target exists for the whole run, so its value and
     // console sequences and its counts survive the handle's drain and destroy.
     ruscv_sim::HtifTarget htif(ruscv_sim::HtifFaults{options.fault_htif_drop_event,
                                                      options.fault_htif_wait,
-                                                     options.fault_htif_event_on_fault});
+                                                     options.fault_htif_event_on_fault},
+                               device_delay);
     MachineDriver driver("driver", options, initiator, ram, options.uart_host ? &uart : nullptr,
                          options.htif_host ? &htif : nullptr, std::this_thread::get_id());
     sc_core::sc_start();
