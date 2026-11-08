@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TLM-Modeled Devices U5: SystemC 宿主设备 target 文档与验收闭环（issue #231）**
+  - SystemC 宿主补记 U4 交付的 UART 设备 target（device D9）：`integration/systemc/uart_target.{h,cpp}`
+    以普通回调对象实现 `ruscv_device`，模拟 RBR/THR、IER、IIR/FCR、LCR、MCR、LSR、MSR、SCR、DLL/DLM
+    与 16 字节收发 FIFO，对 DLAB 清零的已接受 THR 写回 `RUSCV_TLM_OK` 加
+    `RUSCV_DEVICE_EVENT_UART_TRANSMIT`，并以 `uart-console:` 逐字节回显到宿主控制台；退出时报告
+    selection、事务数、读写数与发送字节。`--uart-target in-tree|host` 选择该 target（默认 `in-tree`），
+    其他取值是用法错误，attach 发生在 `ruscv_machine_create` 之后、首次 `ruscv_machine_load_elf` 之前
+  - 三个设备故障选项 `--fault-uart-no-lsr`、`--fault-uart-wait` 与 `--fault-uart-event-on-fault`
+    各要求 `--uart-target host`（in-tree 或缺失时是用法错误），在 `SystemC transport smoke` 中各自以
+    具名断言失败
+  - 文档收尾：README 的 C ABI 段写出 `ruscv_device` 表、`ruscv_machine_attach_device` 与
+    `ruscv_payload.device_event`（272 → 280 字节，宿主须重编译），SystemC 段写出 `--uart-target`、宿主
+    target 模型与三个故障选项；`integration/systemc/README.md` 增加 `uart_target` 模块、用法、退出摘要与
+    限制；`docs/integration/systemc-tlm.md` 把设备 target 从“待实现”改为已实现并新增规范段落（窗口策略、
+    载体与注记、事件规则、host view、direct memory、reset、attach 入口、宿主模型），并更新故障选项、smoke
+    描述、开放项与来源/测试清单；`docs/verification/README.md` 的合同条目改指 U1–U4 的实现测试与 19 条
+    `device-*` 控制
+  - Rust 源码兼容性提示（device D2）：`MachineConfig` 新增公开字段 `devices`，因此外部代码用 struct
+    literal 构造 `MachineConfig` 时会编译失败；这些字面量必须补上 `devices`（通常是
+    `DeviceTargets::none()`），或改用 `MachineConfig::new`。C 宿主侧则须按新头文件重新编译，因为
+    `ruscv_payload` 已从 272 字节增至 280 字节
+  - 本单元不改仿真行为、不改 `docs/dev-plan.md`（轮换由 orchestrator 执行）、不改 A10 oracle 与认证推迟；
+    §4 的 19 条 `device-*` mutation 控制均已注册，三个 SystemC 设备故障选项在 smoke 中各自断言，CI 的
+    `Quality and tests`、`Debug mutation controls`、`SystemC transport smoke` 与 `Debug attach` 继续覆盖
+    完整质量门、guest suite、C ABI、SystemC、工具脚本与 mutation runner
+
 - **TLM-Modeled Devices U3: C ABI 设备表与 attach（issue #229）**
   - 头文件新增 `ruscv_device` 表（device D8）：`window_base`、`window_size`、`user`、`b_transport`、
     `receive`、`transport_reset`。三个回调都必须提供；表在 attach 时复制，`user` 必须活到

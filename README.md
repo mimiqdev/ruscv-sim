@@ -161,7 +161,7 @@ Commit log 在 Hart 完成指令后消费其事实记录，不重新取指或在
 完整客户退出码仍显示在 `Exit Code` 行。`scripts/run_elf_tests.sh` 仅在进程状态为 0
 且输出中唯一的状态行为 `Status:     SUCCESS` 时判定通过。
 
-## C ABI（blocking TLM U5 / non-blocking U2）
+## C ABI（blocking TLM U5 / non-blocking U2 / device U3）
 
 `capi` cargo feature 提供 blocking-transport 宿主的窄 C ABI 与手写头文件
 `include/ruscv_sim.h`。它不改变 crate type，也不给默认或 `--all-features` 构建引入
@@ -213,7 +213,22 @@ consumed_fs` 时不再提交时间而是 host failure（unless already failed）
 既有 offset，因此 ABI 与上一版头文件不二进制兼容，宿主必须针对新头文件重新编译。布局 pin 与上述规则见
 `include/ruscv_sim.h`、`src/capi/tests.rs` 与 `tests/capi/smoke.c`。
 
-## SystemC 宿主（blocking TLM U6 / non-blocking U3–U5）
+TLM-Modeled Devices 合同在同一 ABI 上追加设备表（device D8）：`ruscv_device` 携带
+`window_base`、`window_size`、`user` 与 `b_transport`/`receive`/`transport_reset` 三个必填回调，
+`user` 必须活到 `ruscv_machine_destroy`。`ruscv_payload` 末尾新增 `device_event`
+（`RUSCV_DEVICE_EVENT_NONE`／`RUSCV_DEVICE_EVENT_UART_TRANSMIT`／`RUSCV_DEVICE_EVENT_HTIF_WRITE`），
+结构体从 272 字节增至 280 字节而既有 offset 不变，因此宿主必须按新头文件重新编译。设备事务的
+`delay_fs`、`local_offset_fs`、`host_elapsed_fs`、`may_suspend` 与 `dmi_allowed` 必须为零，事件的值取自
+该次访问自身的写数据；非零注记、改动的 request、与窗口不匹配的 tag、或非 `Ok` 状态上的事件都是该次访问的
+协议失败。`ruscv_machine_attach_device(machine, RUSCV_DEVICE_UART, &device)` 必须在 create 之后、首次
+`ruscv_machine_load_elf` 之前调用：NULL handle、NULL 表、未知窗口与缺回调的表是
+`RUSCV_ERROR_INVALID_ARGUMENT`，base／size 不匹配、同一窗口二次 attach、晚 attach 与没有
+`ruscv_target`（无 TLM 路由）的句柄是 `RUSCV_ERROR_CONFIG`。表在 attach 时复制，回调遵守 RAM target
+的规则：创建线程、不再入、不等待、不让 host 时间流逝，且不以异常穿过边界。布局 pin 见
+`include/ruscv_sim.h`、`src/capi/tests.rs` 与 `tests/capi/smoke.c`；`tests/capi/smoke.c` 以纯 C 覆盖
+attach 拒绝码、一次带 transmit 事件的设备事务与设备表布局。
+
+## SystemC 宿主（blocking TLM U6 / non-blocking U3–U5 / device U4）
 
 `integration/systemc/` 是 pinned SystemC 宿主：Accellera SystemC 3.0.2（commit
 `70b0fc8e4a74acc677b0fc73cea08f940c2115d5`，[归档的 blocking-transport 合同](docs/archive/milestones/blocking-tlm-systemc-transport.md) D9 的选择）以 C++17 构建为静态库，
@@ -233,6 +248,17 @@ consumed_fs` 时不再提交时间而是 host failure（unless already failed）
 initiator 只上报 `delay - offset`；一次被计数的 turn 边界 sync 会结束 grant，且每次 grant 返回先同步，所以
 `wait()` 之后内核时钟仍等于 `committed_end_fs`。合同 §4 的两个故障选项 `--fault-keep-offset` 与
 `--fault-decrease-delay` 要求 `--quantum`，各自必须以具名诊断失败。
+
+`--uart-target in-tree|host` 选择 UART 窗口的 target（device D9）：默认 `in-tree` 保留 Rust
+`Uart16550`，`host` 在 create 之后、首次 load 之前经 `ruscv_machine_attach_device` 挂上宿主
+`UartTarget`（`integration/systemc/uart_target.{h,cpp}`，普通回调对象而非 SystemC module）。
+该 target 模拟 RBR/THR、IER、IIR/FCR、LCR、MCR、LSR、MSR、SCR、DLL/DLM 与 16 字节收发 FIFO，对
+DLAB 清零的已接受 THR 写回 `RUSCV_TLM_OK` 加一个 `RUSCV_DEVICE_EVENT_UART_TRANSMIT`，把该字节以一行
+`uart-console:` 回显到宿主控制台，并在退出时报告 selection、事务数、读写数与发送字节；其他取值是用法错误。
+设备故障选项 `--fault-uart-no-lsr`、`--fault-uart-wait` 与 `--fault-uart-event-on-fault` 各要求
+`--uart-target host`（in-tree 或缺失时为用法错误），分别使 LSR 缺 transmit-empty 位（`hello` 耗尽
+cycle 上界）、在 `b_transport` 内等待一个 tick 并报 host elapsed、以及以 `RUSCV_TLM_ADDRESS_ERROR`
+报 transmit 事件；每个都必须以自己的断言失败。
 
 non-blocking（base protocol）AT 路径由 `--nb` 选择：target 声明自己挂起，`may_suspend` 事务经
 `nb_transport_fw`/`nb_transport_bw` 以单笔未完成事务运行；`--nb-latency <fs>` 设定 λ 与声明的单事务
@@ -261,7 +287,12 @@ invalidate-all 会额外转发一次）。两个 guest 另各跑 `--quantum 1` �
 grant 数须严格低于同一 guest 的 `--quantum 1`；两个故障选项在 `--quantum 1024` 下各须以各自诊断失败。
 non-blocking 遍覆盖五条返回路径在 λ = 0 与 1500000 fs 下的 parity、`--grant-trace` 逐 grant 等式与
 D10 三项求和、`--dmi` AT 计数严格低于非直接遍，并要求 `--nb --quantum` 与非阻塞用法错误被拒绝、正常
-`--nb` 遍的 late phase 数为零；五个 non-blocking 故障选项各以自己的断言失败。
+`--nb` 遍的 late phase 数为零；五个 non-blocking 故障选项各以自己的断言失败。`hello` 另在
+`--uart-target in-tree` 与 `--uart-target host` 下各跑 baseline、`--dmi`、`--nb` 与 `--quantum 1024`：
+两种选择的退出码与 commit log 都必须与 native 一致，in-tree 遍的宿主设备事务数必须为零，host 遍的事务数必须
+非零且等于读加写数、必须恰好发送 `Hello!\n` 且在 `uart-console:` 通道上得到同一字节序列，重复的 host
+遍必须产出相同的字节与 commit log；两个既有 guest 在 `--uart-target host` 下必须保持各自事实且设备事务数为
+零，因为它们不访问 UART。三个设备故障选项各以自己的断言失败，在错误模式下是用法错误。
 缺少工具链、缺少 SystemC 或任一比较失败都是失败，不是跳过。
 `cargo build`／`cargo test --all-features` 不需要 C++ 工具链或 SystemC。Linux x86-64 only。
 
@@ -286,11 +317,17 @@ elapsed 增量，SystemC 的 `--nb` AT 路径、超时退休、late phase 与 dr
 该合同于 2026-11-07 在 PR #225 完成，已归档为
 [non-blocking 合同](docs/archive/milestones/non-blocking-tlm-transport.md)。
 
-TLM 建模设备由当前合同选定，尚未实现：UART 窗口（`0x1000_0000`/`0x100`）与 HTIF 端点（`0x4000_8000`/8）
+TLM 建模设备由当前合同实现到 U4：UART 窗口（`0x1000_0000`/`0x100`）与 HTIF 端点（`0x4000_8000`/8）
 在 TLM 路由上成为 blocking device target，默认由 in-tree Rust 设备应答，SystemC 宿主可经 C ABI 的
-`ruscv_machine_attach_device` 替换 UART；一次设备访问仍是一笔零延迟、零 host elapsed 的 `b_transport`
-事务，被接受的 THR 写至多上报一个 `UartTransmit` 事件。CLINT、PLIC 与 source-1 gateway 仍属 Platform 状态，
-`mtime`/`mtimecmp` 与四条中断线不由 target 拥有；SystemC 建模中断线仍属后续合同。规范映射与开放项见
+`ruscv_machine_attach_device` 替换 UART；一次设备访问是一笔零延迟、零 host elapsed 的 `b_transport`
+事务，被接受的 THR 写至多上报一个 `UartTransmit` 事件，且不加任何时间。Rust 侧选择是
+`MachineConfig.devices`（默认 `DeviceTargets::none()`，要求 `Transport::Tlm` 与 `PlatformKind::Native`），
+SystemC 侧是 `--uart-target in-tree|host` 与三个设备故障选项。CLINT、PLIC 与 source-1 gateway 仍属
+Platform 状态，`mtime`/`mtimecmp` 与四条中断线不由 target 拥有；SystemC 建模中断线、host HTIF 服务、
+设备延迟与多笔未完成事务仍属开放项。实现证据由 `src/blocking/device_tests.rs`、
+`src/executor_device_tests.rs`、`src/machine/tests.rs`、`src/capi/tests.rs`、`tests/capi/smoke.c`、
+`scripts/test_systemc_smoke.sh` 与 `scripts/debug/stage6-mutations`（19 个 `device-u1-*`／`device-u2-*`／
+`device-u3-*` 控制）提供；端到端支持仅限于这些测试展示的范围。规范映射与开放项见
 [SystemC/TLM 边界](docs/integration/systemc-tlm.md)。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
