@@ -67,8 +67,11 @@
  *   ruscv_target.quantum_ticks, ruscv_payload.dmi_allowed,
  *   ruscv_payload.local_offset_fs and ruscv_payload.host_elapsed_fs).  A host
  *   compiled against a previous header therefore keeps working source-level
- *   but must be recompiled against this header before it links this library;
- *   the ABI is not binary-compatible with the previous header.
+ *   but must be recompiled against this header before it links this library
+ *   when a contract appends a field, because the ABI is not binary-compatible
+ *   across that addition.  A contract that appends nothing, as the device
+ *   delay annotation does, changes no layout and needs no recompilation
+ *   (delay D7).
  */
 
 #ifndef RUSCV_SIM_H

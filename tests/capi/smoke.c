@@ -28,9 +28,10 @@
  *
  * The Device Delay Annotation contract's C ABI unit (delay U2, D7) adds the
  * test device's `delay_fs` knob: one accepted run per host window whose two
- * device accesses are charged one tick each and whose grant reports both, and
- * one overshoot run per window whose delay is one femtosecond above the RAM
- * table's declared maximum, which must fail without publishing a value.
+ * device accesses are charged one tick each and whose grant reports both, one
+ * overshoot run per window whose delay is one femtosecond above the RAM table's
+ * declared maximum, and a write-first HTIF run whose refused write reaches the
+ * target but never decodes the exit.
  *
  * The guest is a hand-built ELF fixture (the same shape as
  * `tests/common/public_elf.rs`) so the smoke needs only a host C compiler.
@@ -317,6 +318,21 @@ static int build_htif_guest(const char *path, uint32_t code)
         enc_ld(7, 8, 0),                 /* the endpoint read */
         enc_addi(9, 0, (int)(code * 2 + 1)), /* x9 = HTIF exit payload */
         enc_sd(9, 8, 0),                 /* tohost = payload */
+        0x0000006fu,                     /* j . */
+    };
+
+    return write_guest(path, instructions, sizeof(instructions) / sizeof(instructions[0]));
+}
+
+/* A guest whose first device access is the HTIF endpoint write, so an
+ * overshooting annotation refuses that write's own event (delay D7). */
+static int build_htif_write_first_guest(const char *path, uint32_t code)
+{
+    const uint32_t instructions[] = {
+        0x00010001u,                     /* c.nop; c.nop (profile-sensitive) */
+        enc_lui(8, 0x40008),             /* x8 = 0x40008000 (HTIF endpoint) */
+        enc_addi(9, 0, (int)(code * 2 + 1)), /* x9 = HTIF exit payload */
+        enc_sd(9, 8, 0),                 /* the exit write, first device access */
         0x0000006fu,                     /* j . */
     };
 
@@ -1696,7 +1712,9 @@ static void htif_device_case(const char *guest)
  * the grant reports those two ticks and two more ticks of consumed time while
  * the exit and the published value stay the parity run's.  One more run per
  * window annotates one femtosecond above the declared maximum: the run fails with
- * the overshoot diagnostic and publishes nothing.
+ * the overshoot diagnostic.  A write-first HTIF run adds the suppression proof,
+ * because its refused write reaches the target and must still leave the exit
+ * undecoded.
  */
 struct delay_run {
     test_device *device;
@@ -1746,7 +1764,8 @@ static struct delay_run delayed_device_run(const char *guest, int32_t window,
     return out;
 }
 
-static void device_delay_case(const char *uart_guest, const char *htif_guest)
+static void device_delay_case(const char *uart_guest, const char *htif_guest,
+                              const char *write_first_guest)
 {
     const char *guests[2] = { uart_guest, htif_guest };
     int32_t windows[2] = { RUSCV_DEVICE_UART, RUSCV_DEVICE_HTIF };
@@ -1785,7 +1804,8 @@ static void device_delay_case(const char *uart_guest, const char *htif_guest)
               "the grant's consumed time is the parity amount plus the two charged ticks");
         check(charged.run.turns == parity.run.turns,
               "the device charge keeps the parity exit turn");
-        check(charged.device->transmitted_count == parity.device->transmitted_count &&
+        check(charged.device->transmitted == parity.device->transmitted &&
+                  charged.device->transmitted_count == parity.device->transmitted_count &&
                   charged.device->written_count == parity.device->written_count &&
                   charged.device->written_value == parity.device->written_value,
               "the device charge keeps the published value");
@@ -1798,11 +1818,39 @@ static void device_delay_case(const char *uart_guest, const char *htif_guest)
                   strstr(overshoot.diagnostic, "declared per-transaction maximum") != NULL,
               "the overshoot diagnostic names the device transaction and the declared maximum");
         check(overshoot.device->transmitted_count == 0 && overshoot.device->written_count == 0,
-              "the refused device access published nothing");
+              "the failed run never reached a device write");
 
         free(parity.device);
         free(charged.device);
         free(overshoot.device);
+    }
+
+    /* A write-first fixture: the target receives the endpoint write and the
+     * refused annotation must still suppress its event, which this ABI observes
+     * as a run that never decoded the exit value (delay D7). */
+    {
+        struct delay_run accepted;
+        struct delay_run refused;
+
+        accepted = delayed_device_run(write_first_guest, RUSCV_DEVICE_HTIF,
+                                      HTIF_WINDOW_BASE, HTIF_WINDOW_SIZE,
+                                      RUSCV_DEVICE_EVENT_HTIF_WRITE, TICK_FS, 0);
+        check(accepted.status == RUSCV_OK && accepted.run.state == RUSCV_RUN_EXITED &&
+                  accepted.run.exit_code == 2 && accepted.device->written_count == 1,
+              "the uncharged write-first run decodes the target's own value");
+        refused = delayed_device_run(write_first_guest, RUSCV_DEVICE_HTIF,
+                                     HTIF_WINDOW_BASE, HTIF_WINDOW_SIZE,
+                                     RUSCV_DEVICE_EVENT_HTIF_WRITE, TICK_FS, TICK_FS + 1);
+        check(refused.status == RUSCV_OK && refused.run.state == RUSCV_RUN_FAILED,
+              "an overshooting write-first access fails the run");
+        check(refused.device->written_count == 1,
+              "the refused write reached the target before the refusal");
+        check(refused.run.exit_code == 0,
+              "the refused write's value was never decoded as the exit");
+        check(strstr(refused.diagnostic, "declared per-transaction maximum") != NULL,
+              "the write-first overshoot diagnostic names the declared maximum");
+        free(accepted.device);
+        free(refused.device);
     }
 }
 
@@ -2266,6 +2314,7 @@ int main(int argc, char **argv)
     char device_guest[4096];
     char uart_guest[4096];
     char htif_guest[4096];
+    char write_first_guest[4096];
     char log_path[4096];
     ruscv_machine *handle = NULL;
     int status;
@@ -2282,6 +2331,9 @@ int main(int argc, char **argv)
             (int)sizeof(uart_guest) ||
         snprintf(htif_guest, sizeof(htif_guest), "%s/capi-smoke-htif-guest.elf", work) >=
             (int)sizeof(htif_guest) ||
+        snprintf(write_first_guest, sizeof(write_first_guest),
+                 "%s/capi-smoke-htif-write-guest.elf", work) >=
+            (int)sizeof(write_first_guest) ||
         snprintf(log_path, sizeof(log_path), "%s/capi-smoke-commits.log", work) >=
             (int)sizeof(log_path)) {
         fprintf(stderr, "work path too long\n");
@@ -2291,7 +2343,8 @@ int main(int argc, char **argv)
         build_ram_only_guest(ram_guest, 12, 2) != 0 ||
         build_device_read_guest(device_guest, 2) != 0 ||
         build_uart_guest(uart_guest, 2) != 0 ||
-        build_htif_guest(htif_guest, 2) != 0) {
+        build_htif_guest(htif_guest, 2) != 0 ||
+        build_htif_write_first_guest(write_first_guest, 2) != 0) {
         fprintf(stderr, "cannot write the guest fixture\n");
         return 2;
     }
@@ -2317,7 +2370,7 @@ int main(int argc, char **argv)
     direct_memory_unknown_completion_case(direct_guest);
     device_case(uart_guest);
     htif_device_case(htif_guest);
-    device_delay_case(uart_guest, htif_guest);
+    device_delay_case(uart_guest, htif_guest, write_first_guest);
 
     /* The wrong-thread rejection needs a live handle of its own. */
     handle = create_machine(NULL, RUSCV_ISA_RV64IMA, TICK_FS, &status);

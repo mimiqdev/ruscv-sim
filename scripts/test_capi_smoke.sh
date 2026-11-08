@@ -21,9 +21,10 @@
 # answers one read and one write with the guest's eight-byte value, plus the
 # UART tag on that window that must fail the run.  The Device Delay Annotation
 # contract's C ABI unit (delay U2, D7) adds the test device's `delay_fs` knob:
-# one accepted run per host window whose device accesses are charged, and one
+# one accepted run per host window whose device accesses are charged, one
 # overshoot run per window whose delay is above the RAM table's declared
-# maximum.
+# maximum, and a write-first HTIF run whose refused write never decodes the
+# exit.
 #
 # A missing C compiler is a failure, never a skip: CI installs gcc on the
 # runner, so an absent compiler means the check did not run.

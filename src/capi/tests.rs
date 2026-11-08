@@ -4208,7 +4208,8 @@ fn a_device_payload_carries_zero_annotations_and_no_event_request() {
             "a request outside the window reached the target: {call:?}"
         );
     }
-    // A device transaction never charges the transport totals (device D4).
+    // A device transaction that annotates nothing never charges the transport
+    // totals (delay D4/D7).
     assert_eq!(device.facts().transport_delay_fs, 0);
 }
 
@@ -4646,7 +4647,8 @@ fn a_htif_payload_carries_zero_annotations_and_no_event_request() {
             "a request outside the window reached the target: {call:?}"
         );
     }
-    // A device transaction never charges the transport totals (htif D9).
+    // An HTIF transaction that annotates nothing never charges the transport
+    // totals (delay D4/D7).
     assert_eq!(device.facts().transport_delay_fs, 0);
 }
 
@@ -4745,6 +4747,11 @@ fn a_c_device_response_that_annotates_a_delay_is_charged_once() {
         (device_window::HTIF, htif_guest(2)),
     ] {
         let parity = DeviceHarness::with_max_delay(window, &code, TICK_FS);
+        if window == device_window::UART {
+            // The UART fixture's table starts with no event, so the accepted THR
+            // write must report its one transmit event while the delay is charged.
+            parity.device.set_event(device_event::UART_TRANSMIT);
+        }
         let parity_grant = handle_grant(parity.handle, 0, u64::MAX / 2, super::UNBOUNDED_TURNS)
             .expect("the zero-annotation grant is a valid call");
         let parity_result = handle_result(parity.handle);
@@ -4758,6 +4765,10 @@ fn a_c_device_response_that_annotates_a_delay_is_charged_once() {
             parity_grant.facts.transport_delay_fs, 0,
             "a device response that annotates nothing added transport delay"
         );
+        // The UART window's byte is the target's record of the accepted write,
+        // because this ABI has no UART sink entry; the HTIF value is the
+        // response's eight bytes and the exit code is the Platform's decode of
+        // the event the same sink published.  Both runs must record the same.
         let parity_published = (parity.device.transmitted(), parity.device.written());
         assert_ne!(
             parity_published,
@@ -4766,6 +4777,9 @@ fn a_c_device_response_that_annotates_a_delay_is_charged_once() {
         );
 
         let charged = DeviceHarness::with_max_delay(window, &code, TICK_FS);
+        if window == device_window::UART {
+            charged.device.set_event(device_event::UART_TRANSMIT);
+        }
         charged.device.delay_fs.store(TICK_FS, Ordering::SeqCst);
         let grant = handle_grant(charged.handle, 0, u64::MAX / 2, super::UNBOUNDED_TURNS)
             .expect("the charged grant is a valid call");
@@ -4811,33 +4825,92 @@ fn a_c_device_response_that_annotates_a_delay_is_charged_once() {
 /// overshoot host failure of that access and publishes nothing.
 #[test]
 fn a_c_device_delay_above_the_declared_maximum_fails_without_publishing() {
-    for (window, code) in [
-        (device_window::UART, uart_guest(2)),
-        (device_window::HTIF, htif_guest(2)),
-    ] {
-        let device = DeviceHarness::with_max_delay(window, &code, TICK_FS);
-        device.device.delay_fs.store(TICK_FS + 1, Ordering::SeqCst);
-        let result = device.run_to_result(1_000, 16);
-        assert_eq!(
-            result.state,
-            RunState::Failed.code(),
-            "a device delay above the declared maximum was accepted: {}",
-            device.diagnostic()
-        );
-        let diagnostic = device.diagnostic();
-        assert!(
-            diagnostic.contains("device transaction")
-                && diagnostic.contains("declared per-transaction maximum")
-                && diagnostic.contains(&format!("{TICK_FS} fs")),
-            "the failure does not name the device overshoot and its bound: {diagnostic}"
-        );
-        assert!(
-            device.device.transmitted().is_empty() && device.device.written().is_empty(),
-            "the refused access still published a value: {:?} {:?}",
-            device.device.transmitted(),
-            device.device.written()
-        );
-    }
+    // A read-first fixture: the overshoot fails on the read, so the guest's
+    // write never reaches the target.  The UART window has no sink observable
+    // through this ABI, so this is that window's statement.
+    let uart = DeviceHarness::with_max_delay(device_window::UART, &uart_guest(2), TICK_FS);
+    uart.device.delay_fs.store(TICK_FS + 1, Ordering::SeqCst);
+    let result = uart.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "a device delay above the declared maximum was accepted: {}",
+        uart.diagnostic()
+    );
+    let diagnostic = uart.diagnostic();
+    assert!(
+        diagnostic.contains("device transaction")
+            && diagnostic.contains("declared per-transaction maximum")
+            && diagnostic.contains(&format!("{TICK_FS} fs")),
+        "the failure does not name the device overshoot and its bound: {diagnostic}"
+    );
+    assert!(
+        uart.device.transmitted().is_empty() && uart.device.written().is_empty(),
+        "the failed run still reached a device write: {:?} {:?}",
+        uart.device.transmitted(),
+        uart.device.written()
+    );
+
+    // A write-first fixture: the target receives the endpoint write and the
+    // refused annotation must still suppress its event, which this ABI observes
+    // as a run that never decoded the exit value.
+    let parity =
+        DeviceHarness::with_max_delay(device_window::HTIF, &htif_write_first_guest(2), TICK_FS);
+    let parity_result = parity.run_to_result(1_000, 16);
+    assert_eq!(
+        parity_result.state,
+        RunState::Exited.code(),
+        "the uncharged write-first run did not reach its exit: {}",
+        parity.diagnostic()
+    );
+    assert_eq!(
+        parity_result.exit_code, 2,
+        "the uncharged write-first run's event was not decoded as the exit"
+    );
+    assert_eq!(
+        parity.device.written(),
+        vec![5u64.to_le_bytes().to_vec()],
+        "the uncharged write-first run did not reach the target's write"
+    );
+
+    let htif =
+        DeviceHarness::with_max_delay(device_window::HTIF, &htif_write_first_guest(2), TICK_FS);
+    htif.device.delay_fs.store(TICK_FS + 1, Ordering::SeqCst);
+    let result = htif.run_to_result(1_000, 16);
+    assert_eq!(
+        result.state,
+        RunState::Failed.code(),
+        "an overshooting write-first access was accepted: {}",
+        htif.diagnostic()
+    );
+    let diagnostic = htif.diagnostic();
+    assert!(
+        diagnostic.contains("device transaction")
+            && diagnostic.contains("declared per-transaction maximum")
+            && diagnostic.contains(&format!("{TICK_FS} fs")),
+        "the failure does not name the device overshoot and its bound: {diagnostic}"
+    );
+    assert_eq!(
+        htif.device.written(),
+        vec![5u64.to_le_bytes().to_vec()],
+        "the refused write did not reach the target, so its suppression is untested"
+    );
+    assert_eq!(
+        result.exit_code, 0,
+        "the refused write's value was still published as the exit"
+    );
+}
+
+/// A guest whose first device access is the endpoint write, so an overshooting
+/// annotation refuses that write's own event instead of a preceding read's.
+fn htif_write_first_guest(code: u32) -> Vec<u32> {
+    vec![
+        0x0001_0001,
+        elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::standard_exit(code),
+        elf::sd(5, 8, 0), // the exit write, the first device access
+        0x0000_006f,
+    ]
 }
 
 /// A guest that reads `LSR`, writes `THR` and writes the endpoint, so one run
