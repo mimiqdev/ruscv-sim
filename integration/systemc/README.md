@@ -1,9 +1,10 @@
 # SystemC host integration
 
 This CMake project is the pinned SystemC host for the transport smoke
-(dev-plan D9; nb D7/D8; device D9). It builds one executable, `systemc_smoke`,
-which hosts one ruscv-sim Machine through the C ABI and supplies the guest-RAM
-target and, under `--uart-target host`, the UART device window:
+(dev-plan D9; nb D7/D8; device D9; htif D8). It builds one executable,
+`systemc_smoke`, which hosts one ruscv-sim Machine through the C ABI and
+supplies the guest-RAM target and, under `--uart-target host` and
+`--htif-target host`, the UART and HTIF device windows:
 
 - `ram_target.{h,cpp}`: a zero-delay blocking RAM target behind a
   `simple_target_socket`, with `b_transport`, `transport_dbg`, transport reset
@@ -45,6 +46,14 @@ target and, under `--uart-target host`, the UART device window:
   FIFOs), answers an accepted THR write with `RUSCV_TLM_OK` plus one
   `RUSCV_DEVICE_EVENT_UART_TRANSMIT`, echoes each transmitted byte as one
   `uart-console:` line, and counts transactions, reads, writes and bytes.
+- `htif_target.{h,cpp}`: the host-served HTIF window (`--htif-target host`,
+  htif D8) as the same kind of callback object. It answers a dword read with
+  zero, answers an accepted dword write with `RUSCV_TLM_OK` plus one
+  `RUSCV_DEVICE_EVENT_HTIF_WRITE` whose value is the guest's eight bytes,
+  records each accepted value as one `htif-value:` line, renders the standard
+  console device's byte (device 1, command 1, payload byte) as one
+  `htif-console:` line, and counts transactions, reads, writes, values and
+  `receive` calls.
 - `main.cpp`: the `SC_THREAD` grant loop that starts each grant at
   `sc_time_stamp()`, waits `consumed_fs - host_elapsed_fs`, and stops the kernel
   after a terminal `ruscv_machine_result` or a host-classified failure. It
@@ -56,8 +65,9 @@ target and, under `--uart-target host`, the UART device window:
   The `--stop-after-grants` control stops it deliberately, without a result;
   `--fault-keep-offset` and `--fault-decrease-delay` are the quantum contract's
   two fault-option controls, the five non-blocking options are the same kind of
-  control for the AT path (nb §4), and `--uart-target` with the three device
-  options selects and breaks the host UART (device §4).
+  control for the AT path (nb §4), `--uart-target` with the three device
+  options selects and breaks the host UART (device §4), and `--htif-target`
+  with the three HTIF options does the same for the endpoint (htif §4).
 
 See [`docs/integration/systemc-tlm.md`](../../docs/integration/systemc-tlm.md)
 for the mapping, ownership and time rules.
@@ -96,6 +106,7 @@ usage: systemc_smoke <elf> [--isa rv64ima|rv64imac|rv64imafd|rv64imafdc]
        [--max-grants <grants>] [--max-turns <turns>]
        [--dmi] [--dmi-invalidate-every <grants>] [--quantum <ticks>]
        [--uart-target in-tree|host]
+       [--htif-target in-tree|host]
        [--nb] [--nb-latency <femtoseconds>]
        [--nb-path accepted|updated|early|annotated|completed]
        [--grant-trace <path>]
@@ -104,6 +115,8 @@ usage: systemc_smoke <elf> [--isa rv64ima|rv64imac|rv64imafd|rv64imafdc]
        [--fault-short-delay] [--fault-wait-blocking] [--fault-wait-debug]
        [--fault-uart-no-lsr] [--fault-uart-wait]
        [--fault-uart-event-on-fault]
+       [--fault-htif-drop-event] [--fault-htif-wait]
+       [--fault-htif-event-on-fault]
 ```
 
 The exit status is the guest exit code for a terminal exited run and 1 for a
@@ -179,13 +192,35 @@ fails the access; `--fault-uart-event-on-fault` reports a transmit event with
 `RUSCV_TLM_ADDRESS_ERROR`, which fails as a protocol failure of that access. A
 control that passes is a smoke failure.
 
+`--htif-target in-tree|host` selects the HTIF endpoint's target (htif D8). The
+default `in-tree` keeps the Rust endpoint; `host` creates an `HtifTarget` and
+attaches it through `ruscv_machine_attach_device` after create and before the
+first load, either alone or beside a host UART target. The host target answers a
+dword read with zero, answers an accepted dword write with `RUSCV_TLM_OK` and
+one `RUSCV_DEVICE_EVENT_HTIF_WRITE` whose value is the guest's eight bytes, and
+renders the standard console device's byte as one `htif-console:` line. The
+published value is the response's eight write bytes, so leaving the data
+unchanged reports the guest's own value. Any other selection is a usage error.
+
+The three HTIF fault options are the HTIF contract's §4 controls. Each requires
+`--htif-target host` and is a usage error with the in-tree selection.
+`--fault-htif-drop-event` answers the exit word's write with `RUSCV_TLM_OK` and
+no event while the console writes keep theirs, so no exit fact exists and the
+guest's self-loop exhausts the turn bound; `--fault-htif-wait` waits one
+Platform tick inside `b_transport` and reports it as host elapsed time, which
+fails the access; `--fault-htif-event-on-fault` reports the exit write's event
+with `RUSCV_TLM_ADDRESS_ERROR`, which fails as a protocol failure of that
+access. A control that passes is a smoke failure.
+
 At exit the host reports the initiator's late-phase count, its retirement count,
 the forward `END_RESP` phases its drain sent with the host time of the one it
 sent, and whether the target still holds a transaction. A normal `--nb` pass
-reports zero late phases (nb D9). It also reports the UART target's selection
-(`host` or `in-tree`), its transaction count, its read and write counts and the
-transmitted byte sequence, which the smoke checks against the guest's fixed
-`Hello!\n`.
+reports zero late phases (nb D9). It also reports each device target's selection
+(`host` or `in-tree`): the UART target's transaction count, its read and write
+counts and the transmitted byte sequence, which the smoke checks against the
+guest's fixed `Hello!\n`; and the HTIF target's transaction, read, write, value
+and `receive` counts plus the rendered console sequence, which the smoke checks
+against the endpoint guest's three console words, exit word and `Hi\n`.
 
 The end-to-end comparison with the native run is
 [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh); the
@@ -193,8 +228,13 @@ The end-to-end comparison with the native run is
 smoke requires the direct pass's `b_transport` count strictly below the same
 guest's non-direct pass, an unchanged commit log under the scheduled
 invalidation, `hello` to transmit exactly `Hello!\n` under
-`--uart-target host` with the matching in-tree pass's facts, and each of the
-three device fault options to fail with its own assertion.
+`--uart-target host` with the matching in-tree pass's facts,
+`htif_u3_console` to report the three console words and stop on the exit word
+under `--htif-target host` with the matching in-tree pass's grant, consumed and
+turn facts,
+zero host HTIF transactions for the in-tree selection and for the existing
+guests under the host selection, and each of the six device fault options to
+fail with its own assertion.
 
 ## Limits
 
@@ -206,3 +246,16 @@ transaction is drained at every stop, and one fault option at a time exercises
 the retirement, late-phase, drain and fault paths. The host UART target models
 one guest's register set, not a timed serial line: it transmits on the accepted
 THR write and accepts injected bytes only through the ABI's `receive` callback.
+The host HTIF target answers one endpoint window: its read answer is fixed at
+zero, it renders the standard console device's putchar command and nothing else,
+and it exposes no fromhost register or host-to-guest input. The C ABI exposes
+no per-value sink for an HTIF write: `config.htif_write` has no C entry and only
+the exit decode has a host-visible effect. The smoke proves the exit word's
+publication through the run stop (same turn and exit code as the in-tree pass),
+a dropped exit event through the run that reaches its turn bound without an exit
+fact, and a refused write through the protocol failure and its absence from the
+target's accepted sequence. It does not observe the sink of a refused or
+non-exit write; those publication rules are Rust-level
+(`src/blocking/device.rs`, proven in `src/machine/tests.rs`). A sink-level
+console assertion would need a new ABI entry, which the append-only rule keeps
+out of this unit.

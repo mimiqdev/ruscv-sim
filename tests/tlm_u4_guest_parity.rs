@@ -56,9 +56,9 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The parity set, in contract order: the five guests Blocking TLM U4 names
-/// (D10 of the archived blocking-transport contract) followed by the two
-/// direct-memory U3 guests (direct-memory D14).
-const PARITY_GUESTS: [&str; 7] = [
+/// (D10 of the archived blocking-transport contract), the two direct-memory U3
+/// guests (direct-memory D14) and the HTIF U3 endpoint guest (htif D8).
+const PARITY_GUESTS: [&str; 8] = [
     "hello",
     "s5_timer",
     "s5_external",
@@ -66,11 +66,13 @@ const PARITY_GUESTS: [&str; 7] = [
     "fd_fma",
     "direct_mem_smc_fence_i",
     "direct_mem_sv39_pt_store",
+    "htif_u3_console",
 ];
 
 /// Required `rv64i` suite members from `scripts/run_elf_tests.sh`, plus the
-/// parity guest `hello` and the quantum session guest `quantum_u3_timer`.
-const RV64I_GUESTS: [&str; 39] = [
+/// parity guest `hello`, the quantum session guest `quantum_u3_timer` and the
+/// HTIF U3 parity guest `htif_u3_console`.
+const RV64I_GUESTS: [&str; 40] = [
     "trap_ecall",
     "trap_illegal",
     "trap_ebreak",
@@ -110,6 +112,7 @@ const RV64I_GUESTS: [&str; 39] = [
     "s5_wfi_none",
     "hello",
     "quantum_u3_timer",
+    "htif_u3_console",
 ];
 
 /// Required `rv64a` suite members.
@@ -457,16 +460,16 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
         "the guest suite rejected a faithful fake simulator:\n{text}"
     );
     assert!(
-        text.contains("TLM parity logs compared: 7/7"),
-        "the suite did not report seven byte-identical parity logs:\n{text}"
+        text.contains("TLM parity logs compared: 8/8"),
+        "the suite did not report eight byte-identical parity logs:\n{text}"
     );
     assert!(
-        text.contains("Direct-memory parity logs compared: 7/7"),
-        "the suite did not report seven byte-identical direct-memory logs:\n{text}"
+        text.contains("Direct-memory parity logs compared: 8/8"),
+        "the suite did not report eight byte-identical direct-memory logs:\n{text}"
     );
     assert!(
-        text.contains("Quantum parity logs compared: 14/14"),
-        "the suite did not report fourteen byte-identical quantum logs:\n{text}"
+        text.contains("Quantum parity logs compared: 16/16"),
+        "the suite did not report sixteen byte-identical quantum logs:\n{text}"
     );
 
     let invocations = recorded(&scratch);
@@ -591,10 +594,10 @@ fn the_guest_suite_runs_every_case_under_the_tlm_route() {
         }
     }
 
-    // The contract names exactly these guests: U4's five (dev-plan D10) and
-    // the two direct-memory U3 guests. A rename or an extra member means the
-    // checked comparison no longer matches D10/D14. quantum D14 adds both
-    // quantum passes to the same set.
+    // The contract names exactly these guests: U4's five (dev-plan D10), the
+    // two direct-memory U3 guests and the HTIF U3 endpoint guest. A rename or
+    // an extra member means the checked comparison no longer matches D10/D14
+    // or htif D8. quantum D14 adds both quantum passes to the same set.
     let compared: Vec<&String> = invocations
         .iter()
         .filter(|invocation| !invocation.log.is_empty())
@@ -672,7 +675,7 @@ fn the_guest_suite_fails_when_the_direct_commit_log_diverges() {
         "the suite did not name the diverging direct-memory parity guest:\n{text}"
     );
     assert!(
-        text.contains("Direct-memory parity logs compared: 6/7"),
+        text.contains("Direct-memory parity logs compared: 7/8"),
         "the suite did not count the missing direct-memory comparison:\n{text}"
     );
 
@@ -720,7 +723,7 @@ fn the_guest_suite_fails_when_a_quantum_commit_log_diverges() {
         "the suite did not name the diverging quantum parity guest:\n{text}"
     );
     assert!(
-        text.contains("Quantum parity logs compared: 12/14"),
+        text.contains("Quantum parity logs compared: 14/16"),
         "the suite did not count the two missing quantum comparisons:\n{text}"
     );
 

@@ -45,7 +45,8 @@ add_executable(systemc_smoke
   main.cpp
   ram_target.cpp
   ruscv_initiator.cpp
-  uart_target.cpp)
+  uart_target.cpp
+  htif_target.cpp)
 
 target_include_directories(systemc_smoke PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
