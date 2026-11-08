@@ -24,8 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     编译的宿主无须重新编译
   - 单元级证据（`src/capi/tests.rs`，真实入口 + Rust `extern "C"` 设备表）：RAM 表声明一 tick 时，
     C 设备表注解一 tick 被接受，两个窗口各自的两次设备访问使 grant 的 `transport_delay_fs` 为两 tick、
-    `consumed_fs` 为 parity 数额加两 tick，退出码、turn、PC 与发布值都与零注解 parity 相同；超限一飞秒
-    以 overshoot host failure 失败且不发布值；`DeviceHarness` 新增声明上限的构造，两个拒绝测试保留
+    `consumed_fs` 为 parity 数额加两 tick，退出码、turn、PC 与 target 记录的值都与零注解 parity 相同；
+    超限一飞秒以 overshoot host failure 失败，写优先的 HTIF 用例断言被拒写已到达 target（sink 级抑制由
+    U1 的 Rust 证据覆盖，C ABI 没有逐值 sink 入口）；`DeviceHarness` 新增声明上限的构造，两个拒绝测试保留
     host-elapsed、hint、changed-request 与 event 分支，其延迟分支移入计费测试
   - `tests/capi/smoke.c` 的测试设备新增 `delay_fs` 旋钮，纯 C 跑通两个窗口的接受计费与超限失败；
     `scripts/test_capi_smoke.sh` 的说明同步

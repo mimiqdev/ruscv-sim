@@ -1712,9 +1712,9 @@ static void htif_device_case(const char *guest)
  * the grant reports those two ticks and two more ticks of consumed time while
  * the exit and the published value stay the parity run's.  One more run per
  * window annotates one femtosecond above the declared maximum: the run fails with
- * the overshoot diagnostic.  A write-first HTIF run adds the suppression proof,
- * because its refused write reaches the target and must still leave the exit
- * undecoded.
+ * the overshoot diagnostic.  A write-first HTIF run proves the overshoot is
+ * classified on the write itself, after the target received it; sink-level
+ * suppression is Rust evidence, because this ABI has no per-value sink entry.
  */
 struct delay_run {
     test_device *device;
@@ -1825,9 +1825,9 @@ static void device_delay_case(const char *uart_guest, const char *htif_guest,
         free(overshoot.device);
     }
 
-    /* A write-first fixture: the target receives the endpoint write and the
-     * refused annotation must still suppress its event, which this ABI observes
-     * as a run that never decoded the exit value (delay D7). */
+    /* A write-first fixture: the overshoot is classified on the write itself,
+     * which the target's own record proves, instead of on a preceding read
+     * (delay D7). */
     {
         struct delay_run accepted;
         struct delay_run refused;
@@ -1845,8 +1845,6 @@ static void device_delay_case(const char *uart_guest, const char *htif_guest,
               "an overshooting write-first access fails the run");
         check(refused.device->written_count == 1,
               "the refused write reached the target before the refusal");
-        check(refused.run.exit_code == 0,
-              "the refused write's value was never decoded as the exit");
         check(strstr(refused.diagnostic, "declared per-transaction maximum") != NULL,
               "the write-first overshoot diagnostic names the declared maximum");
         free(accepted.device);

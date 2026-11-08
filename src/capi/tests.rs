@@ -4822,9 +4822,16 @@ fn a_c_device_response_that_annotates_a_delay_is_charged_once() {
 
 /// delay D3/D7: a device delay is bounded by the RAM table's declared
 /// per-transaction maximum, so one femtosecond above it is the existing
-/// overshoot host failure of that access and publishes nothing.
+/// overshoot host failure of that access.
+///
+/// This ABI has no per-value sink entry, so the sink-level suppression rule is
+/// the Rust route's evidence in
+/// `executor::device_tests::an_above_maximum_device_delay_publishes_nothing_and_keeps_the_known_charge`,
+/// which the C device table shares through the same adapter.  What this test
+/// adds is that the overshoot is classified on a device read and on a device
+/// write of this route.
 #[test]
-fn a_c_device_delay_above_the_declared_maximum_fails_without_publishing() {
+fn a_c_device_delay_above_the_declared_maximum_fails_the_run() {
     // A read-first fixture: the overshoot fails on the read, so the guest's
     // write never reaches the target.  The UART window has no sink observable
     // through this ABI, so this is that window's statement.
@@ -4851,9 +4858,8 @@ fn a_c_device_delay_above_the_declared_maximum_fails_without_publishing() {
         uart.device.written()
     );
 
-    // A write-first fixture: the target receives the endpoint write and the
-    // refused annotation must still suppress its event, which this ABI observes
-    // as a run that never decoded the exit value.
+    // A write-first fixture: the overshoot is classified on the write itself,
+    // which the target's own record proves, instead of on a preceding read.
     let parity =
         DeviceHarness::with_max_delay(device_window::HTIF, &htif_write_first_guest(2), TICK_FS);
     let parity_result = parity.run_to_result(1_000, 16);
@@ -4893,11 +4899,7 @@ fn a_c_device_delay_above_the_declared_maximum_fails_without_publishing() {
     assert_eq!(
         htif.device.written(),
         vec![5u64.to_le_bytes().to_vec()],
-        "the refused write did not reach the target, so its suppression is untested"
-    );
-    assert_eq!(
-        result.exit_code, 0,
-        "the refused write's value was still published as the exit"
+        "the refused write did not reach the target, so the overshoot was not classified on it"
     );
 }
 
