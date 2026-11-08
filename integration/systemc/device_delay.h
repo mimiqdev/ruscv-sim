@@ -5,12 +5,13 @@
 // this configuration. `delay_fs` is the modeled delay every completed response
 // of a selected host device target adds; the Machine converts it to Platform
 // ticks, rounds each access up on its own and charges it once through the guest
-// turn's existing delay ledger. A zero here is the zero-delay host run of the
-// previous contracts.
+// turn's existing delay ledger. A zero here annotates no delay, which is the
+// zero-delay host behavior of the previous contracts.
 //
 // A device transaction still never lets host time pass: `host_elapsed_fs` stays
-// zero, the target never waits, and a delay above the declared maximum is a
-// protocol failure of that access rather than a guest fault (delay D4/D6).
+// zero, the target never waits, and a delay above the declared maximum is the
+// existing overshoot host failure of that access rather than a guest fault
+// (delay D3/D4/D6).
 //
 // `above_max` is the smoke's `--fault-device-delay-above-max` control. The
 // first completed write annotates `max_delay_fs + 1` instead, before the target

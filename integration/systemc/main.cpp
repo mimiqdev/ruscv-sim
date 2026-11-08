@@ -56,9 +56,10 @@
 // `--max-delay-fs` sets the blocking target table's declared per-transaction
 // maximum (delay D8), and `--device-delay-fs` makes a selected host device
 // target annotate that modeled access delay on every completed response, which
-// the Machine charges once to the guest turn. The blocking passes keep the
-// declared maximum at or above the annotation, so a run with
-// `--device-delay-fs 0` is today's zero-delay host run.
+// the Machine charges once to the guest turn. The declared maximum also raises
+// the turn's conservative completion bound, so it must still fit a grant's
+// horizon; at the smoke's 1500000 fs a zero annotation is today's zero-delay
+// host pass.
 // `--fault-device-delay-above-max` makes the selected host device target
 // annotate one femtosecond above the declared maximum on its first completed
 // write, which the Machine must refuse as the overshoot host failure.
