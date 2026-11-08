@@ -3640,7 +3640,10 @@ fn the_host_targets_reset_uart_first_and_a_refusal_keeps_the_association() {
     );
     htif.set_reset_panic(false);
 
-    // The surviving association still serves both windows.
+    // The surviving association still serves both windows: the guest's own
+    // accesses are the only new transactions, and its endpoint read observes the
+    // state the refused reset left in the target.
+    let before = (uart.transactions(), htif.transactions());
     for _ in 0..code.len() {
         let turn = owned.step_request(false, false, false).unwrap();
         assert!(
@@ -3649,11 +3652,18 @@ fn the_host_targets_reset_uart_first_and_a_refusal_keeps_the_association() {
             turn.hart().outcome
         );
     }
-    assert!(
-        uart.transactions() >= 2 && htif.transactions() >= 1,
-        "the refused reinstall dropped a host target association: uart {}, htif {}",
-        uart.transactions(),
-        htif.transactions()
+    assert_eq!(
+        (
+            uart.transactions() - before.0,
+            htif.transactions() - before.1
+        ),
+        (2, 2),
+        "the refused reinstall dropped a host target association"
+    );
+    assert_eq!(
+        owned.state().regs[7],
+        0x77,
+        "the surviving association did not retain its endpoint state"
     );
 }
 
