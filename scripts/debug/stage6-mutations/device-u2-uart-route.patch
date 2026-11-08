@@ -1,6 +1,6 @@
 --- a/src/executor.rs
 +++ b/src/executor.rs
-@@ -1031,16 +1031,6 @@
+@@ -1048,16 +1048,6 @@
                  ));
              }
  
@@ -11,7 +11,7 @@
 -                    .expect("checked above")
 -                    .uart()
 -                    .transact(request, initiator);
--                return self.finish_device(outcome);
+-                return self.finish_device(outcome, initiator, descriptor.paddr);
 -            }
 -
              let offset = descriptor.paddr - self.uart_base;

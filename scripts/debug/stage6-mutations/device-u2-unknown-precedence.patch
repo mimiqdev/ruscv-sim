@@ -1,24 +1,27 @@
-diff --git a/src/blocking/device.rs b/src/blocking/device.rs
-index 132e9fe..0ae622c 100644
 --- a/src/blocking/device.rs
 +++ b/src/blocking/device.rs
-@@ -298,14 +298,17 @@ impl TlmDeviceAdapter {
+@@ -312,6 +312,7 @@
              )));
          }
  
 +        let event = transaction.device_events().first().copied();
-         if let Err(error) =
-             self.validate_response(&transaction, descriptor, command, width, requested_value)
-         {
+         if let Err(error) = self.validate_response(
+             &transaction,
+             descriptor,
+@@ -320,11 +321,14 @@
+             requested_value,
+             initiator,
+         ) {
 -            return failed(error);
 +            return DeviceOutcome {
 +                response: Err(error),
 +                event,
++                delay: Femtoseconds::ZERO,
 +            };
          }
  
          let status = transaction.status();
 -        let event = transaction.device_events().first().copied();
-         let response = match status {
-             BlockingResponseStatus::Ok => {
-                 if command == BlockingCommand::Write {
+         // delay D4: only a terminal status that passed validation is charged
+         // its annotation.  An `Incomplete` response's annotation is untrusted,
+         // and no completion was ever vouched for.
