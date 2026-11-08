@@ -59,7 +59,7 @@
 #  16. run the HTIF U3 passes (htif D8): `htif_u3_console` under
 #      `--htif-target in-tree` and `--htif-target host` at the baseline,
 #      `--dmi`, `--nb` and `--quantum 1024` selections, where the in-tree pass
-#      reports zero host HTIF transactions and the host pass publishes the
+#      reports zero host HTIF transactions and the host pass accepts the
 #      guest's three console words and exit word, renders exactly `Hi\n` and
 #      keeps the same grant and consumed facts as its in-tree parity run; a
 #      second host run must report the same facts; the two existing guests
@@ -155,8 +155,8 @@ smoke_grant_count() {
 }
 
 # The completed-turn count of the terminal run, or an empty string. A terminal
-# exit stops on its own turn, so equal counts prove both selections published
-# the exit value at the same instruction (htif D8).
+# exit stops on its own turn, so equal counts prove both selections stopped on
+# the exit word at the same instruction (htif D8).
 smoke_turn_count() {
     printf '%s\n' "$1" \
         | sed -n 's/^systemc-smoke: result state=.* turns=\([0-9][0-9]*\) .*$/\1/p' | head -1
@@ -1564,7 +1564,7 @@ require_htif_pass() {
         [ "${LAST_TX}" -eq 0 ] \
             || fail "${label}: the in-tree selection reported ${LAST_TX} host HTIF transaction(s); it must report zero"
         [ "${LAST_VALUES}" -eq 0 ] \
-            || fail "${label}: the in-tree selection published ${LAST_VALUES} host HTIF value(s); it must report zero"
+            || fail "${label}: the in-tree selection reported ${LAST_VALUES} host HTIF value(s); it must report zero"
         [ "${LAST_CONSOLE}" = '""' ] \
             || fail "${label}: the in-tree selection reported console byte(s) ${LAST_CONSOLE}; the in-tree endpoint renders none"
         [ -z "${LAST_CONSOLE_LINES}" ] \
@@ -1573,14 +1573,14 @@ require_htif_pass() {
         [ "${LAST_TX}" -gt 0 ] \
             || fail "${label}: the host selection served no device transaction"
         [ "${LAST_VALUES}" -eq 4 ] \
-            || fail "${label}: the host selection published ${LAST_VALUES} value(s), not the guest's four"
+            || fail "${label}: the host selection reported ${LAST_VALUES} accepted value(s), not the guest's four"
         [ "${LAST_SEQUENCE}" = "${HTIF_VALUE_SEQUENCE}" ] \
-            || fail "${label}: the host selection published values ${LAST_SEQUENCE}, not the guest's three console words and exit word"
+            || fail "${label}: the host selection reported accepted values ${LAST_SEQUENCE}, not the guest's three console words and exit word"
         # The exit word is the one value whose publication the ABI can observe:
         # the run stopped as an exit on its own turn, so the sequence's last word
         # must be the exit word the terminal code decodes.
         [ "${LAST_SEQUENCE##* }" = "${HTIF_EXIT_VALUE}" ] \
-            || fail "${label}: the host selection's last published value is not the exit word the run stopped on"
+            || fail "${label}: the host selection's last accepted value is not the exit word the run stopped on"
         [ "${LAST_CONSOLE}" = "\"${HTIF_CONSOLE}\"" ] \
             || fail "${label}: the host selection rendered console byte(s) ${LAST_CONSOLE}, not exactly Hi\\n"
         [ "${LAST_CONSOLE_LINES}" = "${HTIF_CONSOLE}" ] \
@@ -1610,7 +1610,7 @@ echo "  native: exit status ${htif_native_status}, guest exit code ${HTIF_NATIVE
 
 # `htif_u3_console` runs under both selections at the same options. The in-tree
 # pass keeps the Rust endpoint and reports zero host HTIF transactions; the host
-# pass serves the same window through the C ABI's device table and must publish
+# pass serves the same window through the C ABI's device table and must accept
 # the guest's three console words and exit word, render exactly `Hi\n`, and keep
 # the matching in-tree pass's grant, consumed and turn facts, so both selections
 # stop on the same instruction (htif D8).
@@ -1670,11 +1670,11 @@ require_htif_pass "${HTIF_GUEST} --htif-target host (repeat)" host \
 [ "${LAST_WRITES}" = "${HTIF_BASELINE_WRITES}" ] \
     || fail "${HTIF_GUEST}: the repeated host pass served ${LAST_WRITES} write(s), not the first pass's ${HTIF_BASELINE_WRITES}"
 [ "${LAST_VALUES}" = "${HTIF_BASELINE_VALUES}" ] \
-    || fail "${HTIF_GUEST}: the repeated host pass published ${LAST_VALUES} value(s), not the first pass's ${HTIF_BASELINE_VALUES}"
+    || fail "${HTIF_GUEST}: the repeated host pass reported ${LAST_VALUES} accepted value(s), not the first pass's ${HTIF_BASELINE_VALUES}"
 [ "${LAST_RECEIVED}" = "${HTIF_BASELINE_RECEIVED}" ] \
     || fail "${HTIF_GUEST}: the repeated host pass received ${LAST_RECEIVED} byte(s), not the first pass's ${HTIF_BASELINE_RECEIVED}"
 [ "${LAST_SEQUENCE}" = "${HTIF_BASELINE_SEQUENCE}" ] \
-    || fail "${HTIF_GUEST}: the repeated host pass published values ${LAST_SEQUENCE}, not the first pass's ${HTIF_BASELINE_SEQUENCE}"
+    || fail "${HTIF_GUEST}: the repeated host pass reported accepted values ${LAST_SEQUENCE}, not the first pass's ${HTIF_BASELINE_SEQUENCE}"
 [ "${LAST_CONSOLE_LINES}" = "${HTIF_BASELINE_CONSOLE_LINES}" ] \
     || fail "${HTIF_GUEST}: the repeated host pass rendered console byte(s) ${LAST_CONSOLE_LINES}, not the first pass's ${HTIF_BASELINE_CONSOLE_LINES}"
 if ! cmp -s "${OUTDIR}/logs/${HTIF_GUEST}.htif-host.baseline.log" \
@@ -1720,7 +1720,7 @@ for entry in "${GUESTS[@]}"; do
     [ -n "${htif_host_values}" ] \
         || fail "${guest}: the --htif-target host run reported no HTIF value count"
     [ "${htif_host_values}" -eq 0 ] \
-        || fail "${guest}: the --htif-target host run published ${htif_host_values} HTIF value(s) although the guest never touches the endpoint"
+        || fail "${guest}: the --htif-target host run reported ${htif_host_values} accepted HTIF value(s) although the guest never touches the endpoint"
     echo -e "  ${GREEN}[PASS]${NC} ${guest}: native exit code and commit log with zero HTIF transactions"
 done
 
@@ -1729,8 +1729,7 @@ done
 # No exit fact exists, so the guest's self-loop exhausts the turn bound.  The
 # run stop is the ABI's observable sink effect, so the exhausted bound proves
 # that no exit fact reached it; the three console values are the target's
-# accepted reports, which its own summary and the byte-identical commit log
-# fix.
+# accepted reports, which its own summary and the normal parity runs fix.
 echo -e "${YELLOW}== --fault-htif-drop-event (must not pass)${NC}"
 capture drop_event_output drop_event_status \
     timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${HTIF_ELF}" --isa "${HTIF_PROFILE}" \
@@ -1753,10 +1752,10 @@ drop_event_values="$(htif_field "${drop_event_output}" values)"
 [ -n "${drop_event_values}" ] \
     || fail "the --fault-htif-drop-event control reported no HTIF value count"
 [ "${drop_event_values}" -eq 3 ] \
-    || fail "the --fault-htif-drop-event control published ${drop_event_values} value(s), not the three console values"
+    || fail "the --fault-htif-drop-event control reported ${drop_event_values} accepted value(s), not the three console values"
 drop_event_sequence="$(htif_value_sequence "${drop_event_output}")"
 [ "${drop_event_sequence}" = "${HTIF_CONSOLE_VALUES}" ] \
-    || fail "the --fault-htif-drop-event control published values ${drop_event_sequence}, not exactly the three console words"
+    || fail "the --fault-htif-drop-event control reported accepted values ${drop_event_sequence}, not exactly the three console words"
 drop_event_console="$(htif_console_sequence "${drop_event_output}")"
 [ "${drop_event_console}" = "${HTIF_CONSOLE}" ] \
     || fail "the --fault-htif-drop-event control rendered console byte(s) ${drop_event_console}, not exactly Hi\\n"
@@ -1793,7 +1792,7 @@ htif_wait_values="$(htif_field "${htif_wait_output}" values)"
 [ -n "${htif_wait_values}" ] \
     || fail "the --fault-htif-wait control reported no HTIF value count"
 [ "${htif_wait_values}" -eq 0 ] \
-    || fail "the --fault-htif-wait control published ${htif_wait_values} value(s); no write runs after the failed first access"
+    || fail "the --fault-htif-wait control reported ${htif_wait_values} accepted value(s); no write runs after the failed first access"
 htif_wait_console="$(htif_console_sequence "${htif_wait_output}")"
 [ -z "${htif_wait_console}" ] \
     || fail "the --fault-htif-wait control rendered console byte(s) ${htif_wait_console}"
@@ -1828,10 +1827,10 @@ htif_event_values="$(htif_field "${htif_event_output}" values)"
 [ -n "${htif_event_values}" ] \
     || fail "the --fault-htif-event-on-fault control reported no HTIF value count"
 [ "${htif_event_values}" -eq 3 ] \
-    || fail "the --fault-htif-event-on-fault control published ${htif_event_values} value(s), not the three console values"
+    || fail "the --fault-htif-event-on-fault control reported ${htif_event_values} accepted value(s), not the three console values"
 htif_event_sequence="$(htif_value_sequence "${htif_event_output}")"
 [ "${htif_event_sequence}" = "${HTIF_CONSOLE_VALUES}" ] \
-    || fail "the --fault-htif-event-on-fault control published values ${htif_event_sequence}, not exactly the three console words"
+    || fail "the --fault-htif-event-on-fault control reported accepted values ${htif_event_sequence}, not exactly the three console words"
 htif_event_console="$(htif_console_sequence "${htif_event_output}")"
 [ "${htif_event_console}" = "${HTIF_CONSOLE}" ] \
     || fail "the --fault-htif-event-on-fault control rendered console byte(s) ${htif_event_console}, not exactly Hi\\n"

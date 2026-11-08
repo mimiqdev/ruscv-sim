@@ -229,8 +229,9 @@ smoke requires the direct pass's `b_transport` count strictly below the same
 guest's non-direct pass, an unchanged commit log under the scheduled
 invalidation, `hello` to transmit exactly `Hello!\n` under
 `--uart-target host` with the matching in-tree pass's facts,
-`htif_u3_console` to publish the three console words and the exit word under
-`--htif-target host` with the matching in-tree pass's grant and consumed facts,
+`htif_u3_console` to report the three console words and stop on the exit word
+under `--htif-target host` with the matching in-tree pass's grant, consumed and
+turn facts,
 zero host HTIF transactions for the in-tree selection and for the existing
 guests under the host selection, and each of the six device fault options to
 fail with its own assertion.
