@@ -1,0 +1,17 @@
+diff --git a/src/machine/platform.rs b/src/machine/platform.rs
+index cb76cfe..04f9b8e 100644
+--- a/src/machine/platform.rs
++++ b/src/machine/platform.rs
+@@ -228,10 +228,8 @@ impl Platform {
+                             Some(target) => target.clone(),
+                             None => Arc::new(InTreeUart::new(uart.clone())),
+                         };
+-                        let htif_target: Arc<dyn BlockingDeviceTarget> = match &host_htif {
+-                            Some(target) => target.clone(),
+-                            None => Arc::new(InTreeHtif::new()),
+-                        };
++                        let htif_target: Arc<dyn BlockingDeviceTarget> =
++                            Arc::new(InTreeHtif::new());
+                         Some(if host_uart.is_some() {
+                             DevicePath::with_host_uart(uart_target, htif_target)
+                         } else {

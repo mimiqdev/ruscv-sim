@@ -1,11 +1,15 @@
+diff --git a/src/blocking/device.rs b/src/blocking/device.rs
+index 132e9fe..0ae622c 100644
 --- a/src/blocking/device.rs
 +++ b/src/blocking/device.rs
-@@ -248,12 +248,15 @@
+@@ -298,14 +298,17 @@ impl TlmDeviceAdapter {
              )));
          }
  
 +        let event = transaction.device_events().first().copied();
-         if let Err(error) = self.validate_response(&transaction, descriptor, command, width) {
+         if let Err(error) =
+             self.validate_response(&transaction, descriptor, command, width, requested_value)
+         {
 -            return failed(error);
 +            return DeviceOutcome {
 +                response: Err(error),

@@ -1,14 +1,17 @@
+diff --git a/src/machine/platform.rs b/src/machine/platform.rs
+index cb76cfe..f2a05ad 100644
 --- a/src/machine/platform.rs
 +++ b/src/machine/platform.rs
-@@ -84,15 +84,6 @@
+@@ -87,16 +87,6 @@ impl Platform {
          if config.platform == PlatformKind::Flat && !config.transport.is_native() {
              return Err(MachineError::UnsupportedTransport);
          }
--        // device D2: a device target is a TLM-route selection on the native
--        // Platform.  A flat Platform has no device window, and the native route
--        // answers each window itself, so either combination is the existing
--        // unsupported-transport error.
--        if config.devices.uart().is_some()
+-        // device D2, htif D2: a device target is a TLM-route selection on the
+-        // native Platform.  A flat Platform has no device window, and the native
+-        // route answers each window itself, so either combination is the
+-        // existing unsupported-transport error.  Either window is enough to make
+-        // the selection a host-target selection.
+-        if (config.devices.uart().is_some() || config.devices.htif().is_some())
 -            && (config.platform != PlatformKind::Native || config.transport.is_native())
 -        {
 -            return Err(MachineError::UnsupportedTransport);

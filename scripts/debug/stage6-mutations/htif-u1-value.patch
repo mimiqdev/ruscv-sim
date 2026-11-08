@@ -1,0 +1,31 @@
+diff --git a/src/blocking/device.rs b/src/blocking/device.rs
+index 132e9fe..6e5deaa 100644
+--- a/src/blocking/device.rs
++++ b/src/blocking/device.rs
+@@ -476,26 +476,6 @@ impl TlmDeviceAdapter {
+                     descriptor.paddr,
+                 )));
+             }
+-            // htif D10 rule (2): the one window whose event carries a value
+-            // reports it only when it is the request's own eight data bytes.
+-            if let (DeviceWindow::Htif, BlockingDeviceEvent::HtifWrite(value)) =
+-                (self.window, event)
+-            {
+-                if Some(*value) != requested_value {
+-                    return Err(PhysicalBackendError::protocol(format!(
+-                        "device target reported the {} value {:#018x} for the write of {:#018x} \
+-                         on the {} window; the value must equal the request's eight data bytes {}",
+-                        event.name(),
+-                        value,
+-                        descriptor.paddr,
+-                        self.window.name(),
+-                        requested_value.map_or_else(
+-                            || "(the request is not one complete eight-byte write)".to_string(),
+-                            |requested| format!("{requested:#018x}"),
+-                        ),
+-                    )));
+-                }
+-            }
+         }
+         Ok(())
+     }

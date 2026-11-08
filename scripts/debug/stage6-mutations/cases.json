@@ -3073,5 +3073,69 @@
         ]
       }
     ]
+  },
+  {
+    "unit": "htif-u1-route",
+    "source": "src/machine/platform.rs",
+    "patch": "htif-u1-route.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::a_host_htif_target_serves_the_htif_window_on_the_tlm_route",
+        "failure": [
+          "did not serve the guest's tohost read and write"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "htif-u1-reset",
+    "source": "src/machine/platform.rs",
+    "patch": "htif-u1-reset.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::the_host_targets_reset_uart_first_and_a_refusal_keeps_the_association",
+        "failure": [
+          "the build did not reset each host target exactly once"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "htif-u1-read-event",
+    "source": "src/blocking/device.rs",
+    "patch": "htif-u1-read-event.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::device_tests::a_device_event_on_a_read_is_a_protocol_failure_on_both_windows",
+        "failure": [
+          "a UART transmit event on a read was accepted"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "htif-u1-value",
+    "source": "src/blocking/device.rs",
+    "patch": "htif-u1-value.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "blocking::device_tests::a_host_htif_value_other_than_the_request_is_a_protocol_failure",
+        "failure": [
+          "a reported HTIF value other than the request's was accepted"
+        ]
+      }
+    ]
   }
 ]
