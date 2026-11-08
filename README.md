@@ -358,7 +358,7 @@ Platform 状态，`mtime`/`mtimecmp` 与四条中断线不由 target 拥有。�
 支持仅限于这些测试展示的范围。规范映射与开放项见 [SystemC/TLM 边界](docs/integration/systemc-tlm.md)。
 该合同于 2026-11-08 在 PR #236 完成，已归档为 [devices 合同](docs/archive/milestones/tlm-modeled-devices.md)。
 
-Host HTIF 服务已由 2026-11-08 批准的当前合同（[docs/dev-plan.md](docs/dev-plan.md)）实现：U1–U3 交付
+Host HTIF 服务已由 2026-11-08 批准的合同（[host-HTIF 合同](docs/archive/milestones/host-htif-service.md)，2026-11-08 在 PR #246 完成并归档）实现：U1–U3 交付
 运行时路径，U4 完成文档与验收收尾。同一 window-indexed 设备表追加 `RUSCV_DEVICE_HTIF` 1
 （`0x4000_8000`/8），SystemC 宿主可经 C ABI 应答端点的 dword 读写，接受写上报的 `HtifWrite` 值继续送入
 现有 `config.htif_write` 单一 sink 与现有退出判定。Rust 侧选择是 `MachineConfig.devices` 的私有 HTIF 槽
@@ -372,8 +372,13 @@ guest `htif_u3_console` 与三个 HTIF 故障选项。实现证据由 `src/block
 SystemC 只通过运行停止、turn bound 与被拒写在 target 接受序列中的缺席来观察发布，sink 级发布规则由
 Rust 测试证明；`HtifTarget` 的读应答固定为零、只渲染标准 console 设备的 putchar 命令，且不暴露
 fromhost 或 host-to-guest 输入。规范映射、运行停止规则与限制见
-[SystemC/TLM 边界](docs/integration/systemc-tlm.md)。SystemC 建模中断线、设备延迟、多笔未完成事务与
-HTIF fromhost/console 输入仍属后续合同。
+[SystemC/TLM 边界](docs/integration/systemc-tlm.md)。
+
+当前合同是 2026-11-08 批准的 [设备延迟标注合同](docs/dev-plan.md)（Device Delay Annotation）：
+它计划让宿主提供的 UART 与 HTIF 窗口上报一个有界的设备访问延迟，按既有 guest-RAM turn 账本在
+guest turn 内对 Hart 访问计费一次；in-tree target 保持零延迟，host elapsed time、挂起与所有 debug
+访问仍不计费，也不改动任何 ABI struct。该合同尚未实现任何单元，因此不构成运行时支持声明。
+SystemC 建模中断线、设备 host 时间与挂起、多笔未完成事务与 HTIF fromhost/console 输入仍属后续合同。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 

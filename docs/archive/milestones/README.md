@@ -2,7 +2,7 @@
 
 This directory preserves approved milestone contracts and explicitly superseded plans, including their scope and limitations. Clearly labeled preparation records do not claim completion.
 
-Archived files are not active plans. Consult the [sole current contract](../../dev-plan.md). The approved Host HTIF Service target succeeds TLM-Modeled Devices on the actual rotation merge. The [entire devices contract](tlm-modeled-devices.md), the [entire non-blocking contract](non-blocking-tlm-transport.md), the [entire quantum contract](quantum-temporal-decoupling.md), the [entire direct-memory contract](tlm-direct-memory-interface.md), the [entire blocking-transport contract](blocking-tlm-systemc-transport.md), the [entire RV64GC default-profile contract](rv64gc-default-profile.md), the [entire F/D contract](selectable-fd-floating-point-profiles.md), the [entire Zca contract](selectable-zca-compressed-profile.md), the [entire System Bus Access Debug contract](system-bus-access-debug.md), the [entire Program-buffer Debug Execution contract](program-buffer-debug-execution.md) and the [entire Stage 6 contract](stage6-riscv-debug-mode.md) are preserved here for historical scope; activation and completion do not claim implementation of the successor. CI and PR history retain execution and review outcomes.
+Archived files are not active plans. Consult the [sole current contract](../../dev-plan.md). The approved Device Delay Annotation target succeeds Host HTIF Service on the actual rotation merge. The [entire host HTIF contract](host-htif-service.md), the [entire devices contract](tlm-modeled-devices.md), the [entire non-blocking contract](non-blocking-tlm-transport.md), the [entire quantum contract](quantum-temporal-decoupling.md), the [entire direct-memory contract](tlm-direct-memory-interface.md), the [entire blocking-transport contract](blocking-tlm-systemc-transport.md), the [entire RV64GC default-profile contract](rv64gc-default-profile.md), the [entire F/D contract](selectable-fd-floating-point-profiles.md), the [entire Zca contract](selectable-zca-compressed-profile.md), the [entire System Bus Access Debug contract](system-bus-access-debug.md), the [entire Program-buffer Debug Execution contract](program-buffer-debug-execution.md) and the [entire Stage 6 contract](stage6-riscv-debug-mode.md) are preserved here for historical scope; activation and completion do not claim implementation of the successor. CI and PR history retain execution and review outcomes.
 
 ## Rolling process
 
@@ -16,6 +16,9 @@ Archived files are not active plans. Consult the [sole current contract](../../d
    technical planning context, not a second current contract.
 
 ## Records
+
+- [Host HTIF Service: Entire approved contract](host-htif-service.md)
+  - Preserves D1–D10 approved under delegated planning authority, with the scope, known limitations and source identifiers. Implementation is PR #243 through PR #246, completed 2026-11-08 at merge head `119d073` (contract activation PR #237, `8a9e350`); issues #239 through #242 are closed. Issue #207 stays open outside the contract. No execution results are copied here.
 
 - [TLM-Modeled Devices: Entire approved contract](tlm-modeled-devices.md)
   - Preserves D1–D10 approved under delegated planning authority, with the scope, known limitations and source identifiers. Implementation is PR #232 through PR #236, completed 2026-11-08 at merge head `47f9d34`; issue #207 stays open outside the contract. No execution results are copied here.

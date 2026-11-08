@@ -1,6 +1,6 @@
 # TLM-Modeled Devices contract
 
-**Status:** Historical. Completed 2026-11-08 at PR #236; the [Host HTIF Service contract](../../dev-plan.md) succeeds it as the sole Current contract on the actual rotation merge.
+**Status:** Historical. Completed 2026-11-08 at PR #236; the [Host HTIF Service contract](host-htif-service.md) succeeded it, completed 2026-11-08 at PR #246.
 
 **Authority:** Preserved approved contract, not an active plan or an execution report. CI and PR history retain check and review outcomes.
 

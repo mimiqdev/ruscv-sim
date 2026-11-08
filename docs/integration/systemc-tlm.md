@@ -4,8 +4,11 @@
 memory, the quantum selection, the non-blocking AT path, its retirement rules,
 the fault-option controls (U3/U4), the blocking device targets of the UART and
 HTIF windows (device D2–D9) and the host-served HTIF window (htif D1–D10). The
-U4 exit of the [current contract](../dev-plan.md) added documentation and
-acceptance mapping, not behavior.
+U4 exit of the [archived host HTIF contract](../archive/milestones/host-htif-service.md)
+added documentation and acceptance mapping, not behavior. The [current
+contract](../dev-plan.md) plans a charged device delay annotation on the two
+host-served windows; this page gains that mapping when its SystemC unit lands
+and makes no runtime claim for it now.
 
 **Authority:** Normative for the selected blocking-transport mapping, FFI
 ownership and threads, error mapping, the time unit, re-entrancy and stop
@@ -26,9 +29,14 @@ and the AT target mode; this page's `nb D<n>` citations name that contract. The
 D5–D9 make this page normative for the device-target
 mapping, the event rule, host views, reset and the attach entry; this page's
 `device D<n>` citations name that contract. The
-[current contract](../dev-plan.md)'s D8 and D9 make this page normative for the
-host HTIF mapping, its event and run-stop rules and its fault options; this
-page's `htif D<n>` citations name that contract. Bounded by
+[archived host HTIF contract](../archive/milestones/host-htif-service.md)'s D8
+and D9 make this page normative for the host HTIF mapping, its event and
+run-stop rules and its fault options; this page's `htif D<n>` citations name
+that contract. The [current contract](../dev-plan.md)'s
+D8 and D10 make this page normative for the device-delay options, the declared
+maximum and the smoke passes once its SystemC unit completes, and this page's
+`delay D<n>` citations name that contract. Until then, this page describes only
+the zero-delay device behavior the archived contract delivered. Bounded by
 ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
@@ -59,8 +67,8 @@ ABI (device D1–D9): one device window becomes one blocking `b_transport`
 transaction answered by an in-tree target or by a host target attached through
 the C ABI, with at most one platform event per accepted access. Either window
 may be served by the host: the UART window by the archived devices contract's
-`UartTarget` (device D9) and the HTIF endpoint by the current contract's
-`HtifTarget` (htif D8). The in-tree targets stay the default and the reference.
+`UartTarget` (device D9) and the HTIF endpoint by the archived host HTIF
+contract's `HtifTarget` (htif D8). The in-tree targets stay the default and the reference.
 
 ## Selected mapping
 
@@ -86,7 +94,7 @@ may be served by the host: the UART window by the archived devices contract's
 | Late phase (nb D9) | A phase taking effect after the timeout: ignored and counted |
 | Device window (device D3) | One fixed register range: UART `0x1000_0000`/`0x100` or HTIF `0x4000_8000`/8 |
 | Device target (device D2) | An in-tree `BlockingDeviceTarget`, or a host target attached through `ruscv_machine_attach_device` |
-| Device transaction (device D2) | One `b_transport` call with zero delay and zero host elapsed time |
+| Device transaction (device D2) | One `b_transport` call; zero delay and zero host elapsed time today, with the current contract planning a bounded charged delay (delay D8) |
 | Device event (device D4) | At most one `PlatformEvent` reported by an accepted access: `UartTransmit` or `HtifWrite` |
 | Host-served UART window (device D9) | `UartTarget` in [`uart_target.h`](../../integration/systemc/uart_target.h), attached as `RUSCV_DEVICE_UART` |
 | Host-served HTIF window (htif D8) | `HtifTarget` in [`htif_target.h`](../../integration/systemc/htif_target.h), attached as `RUSCV_DEVICE_HTIF` |
@@ -312,7 +320,10 @@ retraction rule.
   `dmi_allowed`, a changed address, command or length, more than one event, an
   event whose tag does not match its window, and an event on a non-`Ok` status
   are protocol failures of that access (device D2/D4; ADR-0002's 2026-11-07
-  device-target amendment). The outcome-unknown classification runs first, so
+  device-target amendment). The current contract plans to relax the
+  `delay_fs` item for a Hart access only, bounded by the handle's declared
+  maximum and charged through the turn ledger (delay D3/D4); this page states
+  the zero-delay rule it replaces until that unit lands. The outcome-unknown classification runs first, so
   an unknown completion that carries a valid event publishes nothing. A device
   transaction adds nothing to `transport_delay_femtoseconds`,
   `host_elapsed_femtoseconds`, `mcycle`, `minstret`, the turn completion bound
@@ -607,7 +618,10 @@ with one set is a smoke failure:
 
 All three UART device options are usage errors without `--uart-target host`, and
 with an explicit `--uart-target in-tree`. The same rule holds for the three HTIF
-options and `--htif-target` (htif D8).
+options and `--htif-target` (htif D8). The current contract plans one more device
+option, `--fault-device-delay-above-max`, with the declared maximum set by
+`--max-delay-fs` (delay D8); neither is part of this page until its SystemC unit
+lands.
 
 ## Reentrancy and stop behavior
 
@@ -702,8 +716,12 @@ same turn bound as the CLI's `--max-cycles` and wraps every run in a wall-clock
 ## Open items
 
 - SystemC-modeled interrupt lines, which need their own contract.
-- Device delay and host time: a device target that annotates either, which needs
-  the turn completion bound and the grant horizon extended with it.
+- Device host time and suspension: a device target that lets host time pass and
+  reports it as host elapsed time, which needs a per-window suspension
+  declaration and must compose with the quantum or refuse it. The current
+  contract plans only the modeled delay half (delay D1–D10), and it keeps the
+  turn bound and the grant horizon by charging the delay inside the existing
+  reserve.
 - HTIF fromhost, console input and syscall proxying: the endpoint has no
   host-to-guest direction, the ABI has no entry that publishes a fromhost word,
   and the crate decodes no HTIF device code (htif D3/D5). These are retained
