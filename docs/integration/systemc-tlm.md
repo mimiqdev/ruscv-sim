@@ -379,9 +379,10 @@ retraction rule.
   own state.
 - HTIF run stop. The published value is the response's eight write bytes, the
   sink is the existing `config.htif_write`, and the run stop is the existing
-  `try_extract_exit_code` decode of that value (htif D4/D5). The guest store
-  retires, the sink publishes once, and the run loop classifies `PlatformExit`
-  on that turn, exactly as for the in-tree endpoint. The host cannot stop the
+  `try_extract_exit_code` decode of that value (htif D4/D5). An accepted write
+  publishes through the sink once during the device access, the store then
+  retires, and the run loop classifies `PlatformExit` from the turn's events on
+  that turn, exactly as for the in-tree endpoint. The host cannot stop the
   run, choose the exit code, clear the signal or suppress the retired store; a
   host that omits the event leaves no exit fact, so the run continues to its
   turn bound and fails. A guest that writes a non-exit value continues and the

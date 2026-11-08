@@ -270,8 +270,9 @@ UART target 同时存在。宿主 `HtifTarget`（`integration/systemc/htif_targe
 已验证的 dword 访问是一笔 `b_transport`，读应答是它自己的寄存器状态（smoke 固定为零，给 parity 检查一个
 不动点），接受的写回 `RUSCV_TLM_OK` 加恰好一个 `RUSCV_DEVICE_EVENT_HTIF_WRITE`，其值必须等于请求的八个
 字节（htif D10）。发布值就是响应的八个写字节，继续走既有 `config.htif_write` 单一 sink 与既有退出解码：
-guest store 退役、sink 发布一次、运行循环在同一个 turn 上判定 `PlatformExit`（htif D4/D5），宿主不能停
-运行、选择退出码、清除信号或抑制退役的 store；漏报 event 就不存在退出事实，运行走到 turn bound 后失败。
+接受写在设备访问内让 sink 发布一次、store 随后退役、运行循环在同一个 turn 上判定 `PlatformExit`
+（htif D4/D5），宿主不能停运行、选择退出码、清除信号或抑制退役的 store；漏报 event 就不存在退出事实，
+运行走到 turn bound 后失败。
 target 把标准 console 设备（device 1、command 1、payload 字节）的字节渲染成一行 `htif-console:` 作为宿主
 输出，crate 不解析任何 HTIF device code，也不把 HTIF 值送进 `config.uart_output`；`receive` 从不被调用。
 三个故障选项各要求 `--htif-target host`（in-tree 或缺失时是用法错误）：`--fault-htif-drop-event` 只丢退出

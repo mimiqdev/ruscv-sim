@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 文档补全并校正到 U1–U3 的实际行为：`README.md`、`CHANGELOG.md`、
     `docs/integration/systemc-tlm.md`、`docs/verification/README.md` 与 `integration/systemc/README.md`
     统一写出 HTIF 窗口码 `RUSCV_DEVICE_HTIF` 1（`0x4000_8000`/8）、`--htif-target in-tree|host`、三个
-    `--fault-htif-*` 选项、运行停止规则（guest store 退役 → 既有 `config.htif_write` sink 发布一次 →
-    同一 turn 上既有退出解码判定 `PlatformExit`；漏报 event 则无退出事实并走到 turn bound）与限制
+    `--fault-htif-*` 选项、运行停止规则（接受写在设备访问内经既有 `config.htif_write` sink 发布一次、
+    store 随后退役、同一 turn 上既有退出解码判定 `PlatformExit`；漏报 event 则无退出事实并走到 turn
+    bound）与限制
   - 删除 U1–U3 之后过期的说法：README 的“Host HTIF 服务……尚未实现”、`docs/integration/systemc-tlm.md`
     的“no runtime claim here”与“until that contract's units land”、verification 文档的“SystemC host……
     remain requirements”均改为已实现并引用源与测试；该页的开放项去掉 host HTIF 服务、
