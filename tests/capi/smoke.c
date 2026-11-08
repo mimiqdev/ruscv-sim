@@ -1599,6 +1599,27 @@ static void htif_device_case(const char *guest)
     check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF + 1, &table) ==
               RUSCV_ERROR_INVALID_ARGUMENT,
           "an unknown window is an HTIF attach argument refusal");
+    /* device D8: an incomplete table is an argument refusal, and all three
+     * callbacks stay required for this window even though `receive` is never
+     * called on it. */
+    {
+        ruscv_device incomplete = device_table(device);
+
+        incomplete.b_transport = NULL;
+        check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &incomplete) ==
+                  RUSCV_ERROR_INVALID_ARGUMENT,
+              "a table without b_transport is an HTIF attach argument refusal");
+        incomplete = device_table(device);
+        incomplete.receive = NULL;
+        check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &incomplete) ==
+                  RUSCV_ERROR_INVALID_ARGUMENT,
+              "a table without receive is an HTIF attach argument refusal");
+        incomplete = device_table(device);
+        incomplete.transport_reset = NULL;
+        check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &incomplete) ==
+                  RUSCV_ERROR_INVALID_ARGUMENT,
+              "a table without transport_reset is an HTIF attach argument refusal");
+    }
     table.window_base = HTIF_WINDOW_BASE + 4;
     check(ruscv_machine_attach_device(handle, RUSCV_DEVICE_HTIF, &table) ==
               RUSCV_ERROR_CONFIG,
