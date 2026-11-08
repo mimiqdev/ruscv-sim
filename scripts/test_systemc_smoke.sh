@@ -45,6 +45,17 @@
 #      debug wait with their own named diagnostics. A normal `--nb` pass must
 #      report no late phase, and each option is a usage error in the wrong
 #      mode.
+#  15. run the device U4 passes (device D9): `hello` under `--uart-target
+#      in-tree` and `--uart-target host` at the baseline, `--dmi`, `--nb` and
+#      `--quantum 1024` selections, where the in-tree pass reports zero host
+#      device transactions and the host pass transmits exactly `Hello!\n` with
+#      the same architectural facts as its in-tree parity run; a second host
+#      run must produce the same bytes; the two existing guests under
+#      `--uart-target host` must keep their facts with zero device
+#      transactions; and the three device fault options
+#      (`--fault-uart-no-lsr`, `--fault-uart-wait`,
+#      `--fault-uart-event-on-fault`) must each fail the run with their own
+#      assertion.
 #
 # Linux x86-64 only. Prerequisites are the pinned SystemC installation, CMake,
 # a C++17 compiler and the RISC-V cross toolchain. A missing prerequisite is a
@@ -173,6 +184,13 @@ smoke_totals_field() {
 smoke_at_field() {
     printf '%s\n' "$1" \
         | awk -v key="$2" '/^systemc-smoke: AT / { for (i = 1; i <= NF; i++) { split($i, pair, "="); if (pair[1] == key) { print pair[2]; exit } } }'
+}
+
+# One field of the host UART target's summary line, or an empty string
+# (device D9).
+uart_field() {
+    printf '%s\n' "$1" \
+        | awk -v key="$2" '/^systemc-smoke: uart / { for (i = 1; i <= NF; i++) { split($i, pair, "="); if (pair[1] == key) { print pair[2]; exit } } }'
 }
 
 # The status the host's reset probe received while an AT transaction was still
@@ -407,6 +425,20 @@ for entry in "${GUESTS[@]}"; do
     [ -n "${transactions}" ] || fail "${guest}: the RAM target reported no transaction count"
     if [ "${transactions}" -eq 0 ]; then
         fail "${guest}: the RAM target served no blocking transaction"
+    fi
+    # device D9: with no --uart-target the in-tree Rust device serves the UART
+    # window, so a guest that never selects a host target must report zero host
+    # device transactions.
+    if ! printf '%s\n' "${smoke_output}" | grep -q '^systemc-smoke: uart target=in-tree$'; then
+        printf '%s\n' "${smoke_output}"
+        fail "${guest}: the default UART target is not the in-tree device"
+    fi
+    uart_transactions="$(uart_field "${smoke_output}" b_transport)"
+    [ -n "${uart_transactions}" ] \
+        || fail "${guest}: the run reported no host UART device transaction count"
+    if [ "${uart_transactions}" -ne 0 ]; then
+        printf '%s\n' "${smoke_output}"
+        fail "${guest}: the in-tree selection reported ${uart_transactions} host device transaction(s); it must report zero"
     fi
     echo "  systemc: exit status ${smoke_status}, guest exit code ${smoke_exit}, b_transport ${transactions}"
 
@@ -1059,6 +1091,269 @@ if printf '%s\n' "${nb_quantum_output}" | grep -q '^systemc-smoke: result state=
 fi
 echo -e "  ${GREEN}[PASS]${NC} --nb --quantum ${FAULT_QUANTUM} was refused at create"
 
+# ---- device U4: the SystemC UART target (device D9) ----
+#
+# `hello` is the guest the contract's device parity is stated on (device D7):
+# the suite already requires `Hello!` from it on every route, and the host UART
+# target must transmit exactly `Hello!\n`. The profile is passed explicitly so
+# the comparison does not depend on the CLI's default.
+UART_GUEST=hello
+UART_PROFILE=rv64imafdc
+UART_ELF="${ELF_DIR}/rv64i/${UART_GUEST}.elf"
+[ -f "${UART_ELF}" ] || fail "guest not found: ${UART_ELF}"
+
+echo -e "${YELLOW}== ${UART_GUEST}: the native baseline (device D7)${NC}"
+UART_NATIVE_LOG="${OUTDIR}/logs/${UART_GUEST}.native.log"
+capture uart_native_output uart_native_status \
+    timeout "${RUN_TIMEOUT}" "${RUSCV_BIN}" run "${UART_ELF}" --isa "${UART_PROFILE}" \
+    --max-cycles "${MAX_CYCLES}" --log-commits "${UART_NATIVE_LOG}"
+[ "${uart_native_status}" -ne 124 ] \
+    || fail "${UART_GUEST}: the native run timed out after ${RUN_TIMEOUT}s"
+UART_NATIVE_EXIT="$(cli_exit_code "${uart_native_output}")"
+if [ "${uart_native_status}" -ne 0 ] || [ -z "${UART_NATIVE_EXIT}" ]; then
+    printf '%s\n' "${uart_native_output}"
+    fail "${UART_GUEST}: the native run did not report an exit code"
+fi
+[ -s "${UART_NATIVE_LOG}" ] || fail "${UART_GUEST}: the native commit log is empty"
+if ! printf '%s\n' "${uart_native_output}" | grep -q 'Hello!'; then
+    printf '%s\n' "${uart_native_output}"
+    fail "${UART_GUEST}: the native run did not print Hello!"
+fi
+echo "  native: exit status ${uart_native_status}, guest exit code ${UART_NATIVE_EXIT}"
+
+# require_uart_pass LABEL TARGET LOG [OPTIONS...]
+#   Runs one passing UART-target pass and checks every fact device D9 owes it:
+#   the native exit code, a byte-identical commit log, a terminal result, a
+#   transaction count equal to the read plus write count, and zero host device
+#   transactions for the in-tree selection. Sets LAST_* to the run's facts.
+require_uart_pass() {
+    local label="$1"
+    local target="$2"
+    local log="$3"
+    shift 3
+    local pass_output
+    local pass_status
+    local fact
+    capture pass_output pass_status \
+        timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${UART_ELF}" --isa "${UART_PROFILE}" \
+        --max-turns "${MAX_CYCLES}" --log-commits "${log}" --uart-target "${target}" "$@"
+    [ "${pass_status}" -ne 124 ] || fail "${label}: the run timed out after ${RUN_TIMEOUT}s"
+    if [ "${pass_status}" -ne 0 ]; then
+        printf '%s\n' "${pass_output}"
+        fail "${label}: the run exited with status ${pass_status}"
+    fi
+    if ! printf '%s\n' "${pass_output}" | grep -q "^systemc-smoke: uart target=${target}$"; then
+        printf '%s\n' "${pass_output}"
+        fail "${label}: the run did not report its --uart-target ${target} selection"
+    fi
+    if ! printf '%s\n' "${pass_output}" | grep -q '^systemc-smoke: result state=exited '; then
+        printf '%s\n' "${pass_output}"
+        fail "${label}: the run did not report a terminal ruscv-sim result"
+    fi
+    LAST_EXIT="$(smoke_exit_code "${pass_output}")"
+    [ -n "${LAST_EXIT}" ] || fail "${label}: the run reported no exit code"
+    [ "${LAST_EXIT}" = "${UART_NATIVE_EXIT}" ] \
+        || fail "${label}: exit code ${LAST_EXIT} differs from native ${UART_NATIVE_EXIT}"
+    [ -s "${log}" ] || fail "${label}: the commit log is empty"
+    if ! cmp -s "${UART_NATIVE_LOG}" "${log}"; then
+        diff -u "${UART_NATIVE_LOG}" "${log}" | head -20 || true
+        fail "${label}: the commit log differs from native"
+    fi
+    LAST_GRANTS="$(smoke_grant_count "${pass_output}")"
+    LAST_CONSUMED="$(smoke_totals_field "${pass_output}" consumed_fs)"
+    LAST_TX="$(uart_field "${pass_output}" b_transport)"
+    LAST_READS="$(uart_field "${pass_output}" reads)"
+    LAST_WRITES="$(uart_field "${pass_output}" writes)"
+    LAST_TRANSMITTED="$(uart_field "${pass_output}" transmitted)"
+    LAST_BYTES="$(uart_field "${pass_output}" bytes)"
+    for fact in "grants:${LAST_GRANTS}" "consumed:${LAST_CONSUMED}" \
+        "b_transport:${LAST_TX}" "reads:${LAST_READS}" "writes:${LAST_WRITES}" \
+        "transmitted:${LAST_TRANSMITTED}" "bytes:${LAST_BYTES}"; do
+        [ -n "${fact#*:}" ] || fail "${label}: the run reported no ${fact%%:*} fact"
+    done
+    [ "${LAST_TX}" -eq $((LAST_READS + LAST_WRITES)) ] \
+        || fail "${label}: the host UART served ${LAST_TX} device transaction(s), not its ${LAST_READS} read(s) plus ${LAST_WRITES} write(s)"
+    if [ "${target}" = "in-tree" ]; then
+        [ "${LAST_TX}" -eq 0 ] \
+            || fail "${label}: the in-tree selection reported ${LAST_TX} host device transaction(s); it must report zero"
+    fi
+    LAST_OUTPUT="${pass_output}"
+}
+
+# `hello` runs under both selections at the same options. The in-tree pass keeps
+# the Rust device and reports zero host device transactions; the host pass serves
+# the same window through the C ABI's device table and must transmit exactly
+# `Hello!\n`, with every architectural fact equal to the matching in-tree pass
+# (device D9).
+echo -e "${YELLOW}== ${UART_GUEST}: --uart-target in-tree and host (device D9)${NC}"
+for variant in "baseline:" "dmi:--dmi" "nb:--nb" "quantum:--quantum ${FAULT_QUANTUM}"; do
+    name="${variant%%:*}"
+    flags="${variant#*:}"
+    variant_options=()
+    if [ -n "${flags}" ]; then
+        read -r -a variant_options <<<"${flags}"
+    fi
+    require_uart_pass "${UART_GUEST} --uart-target in-tree (${name})" in-tree \
+        "${OUTDIR}/logs/${UART_GUEST}.uart-in-tree.${name}.log" \
+        ${variant_options[@]+"${variant_options[@]}"}
+    in_tree_grants="${LAST_GRANTS}"
+    in_tree_consumed="${LAST_CONSUMED}"
+    [ "${LAST_TRANSMITTED}" -eq 0 ] \
+        || fail "${UART_GUEST}: the in-tree (${name}) pass transmitted ${LAST_TRANSMITTED} host byte(s); the Rust device reports none here"
+    require_uart_pass "${UART_GUEST} --uart-target host (${name})" host \
+        "${OUTDIR}/logs/${UART_GUEST}.uart-host.${name}.log" \
+        ${variant_options[@]+"${variant_options[@]}"}
+    [ "${LAST_TX}" -gt 0 ] \
+        || fail "${UART_GUEST}: the host (${name}) pass served no device transaction"
+    [ "${LAST_TRANSMITTED}" -eq 7 ] \
+        || fail "${UART_GUEST}: the host (${name}) pass transmitted ${LAST_TRANSMITTED} byte(s), not the guest's seven"
+    [ "${LAST_BYTES}" = '"Hello!\n"' ] \
+        || fail "${UART_GUEST}: the host (${name}) pass transmitted ${LAST_BYTES}, not exactly Hello!\\n"
+    if ! printf '%s\n' "${LAST_OUTPUT}" | grep -qx 'Hello!'; then
+        printf '%s\n' "${LAST_OUTPUT}"
+        fail "${UART_GUEST}: the host (${name}) pass did not print Hello! to this host's console"
+    fi
+    [ "${LAST_GRANTS}" = "${in_tree_grants}" ] \
+        || fail "${UART_GUEST}: the host (${name}) pass took ${LAST_GRANTS} grant(s), not the in-tree pass's ${in_tree_grants}"
+    [ "${LAST_CONSUMED}" = "${in_tree_consumed}" ] \
+        || fail "${UART_GUEST}: the host (${name}) pass consumed ${LAST_CONSUMED} fs, not the in-tree pass's ${in_tree_consumed} fs"
+    echo -e "  ${GREEN}[PASS]${NC} ${name}: host device transactions ${LAST_TX} = ${LAST_READS} read(s) + ${LAST_WRITES} write(s), ${LAST_TRANSMITTED} byte(s)"
+done
+
+# device D7: a second host run of the same guest produces the same bytes, commit
+# log and exit code, so the sequence is the Hart's instruction sequence and not a
+# scheduling accident.
+require_uart_pass "${UART_GUEST} --uart-target host (repeat)" host \
+    "${OUTDIR}/logs/${UART_GUEST}.uart-host.repeat.log"
+[ "${LAST_BYTES}" = '"Hello!\n"' ] \
+    || fail "${UART_GUEST}: the repeated host pass transmitted ${LAST_BYTES}, not exactly Hello!\\n"
+if ! cmp -s "${OUTDIR}/logs/${UART_GUEST}.uart-host.baseline.log" \
+    "${OUTDIR}/logs/${UART_GUEST}.uart-host.repeat.log"; then
+    fail "${UART_GUEST}: the repeated host pass's commit log differs from the first"
+fi
+echo -e "  ${GREEN}[PASS]${NC} a second host run produced identical bytes, commit log and exit code"
+
+# The two existing guests under --uart-target host: neither touches the UART, so
+# both must reproduce their facts with zero device transactions (device D9).
+echo -e "${YELLOW}== the existing guests under --uart-target host (device D9)${NC}"
+for entry in "${GUESTS[@]}"; do
+    read -r guest profile directory <<<"${entry}"
+    elf="${ELF_DIR}/${directory}/${guest}.elf"
+    uart_host_log="${OUTDIR}/logs/${guest}.systemc.uart-host.log"
+    capture uart_host_output uart_host_status \
+        timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${elf}" --isa "${profile}" \
+        --max-turns "${MAX_CYCLES}" --log-commits "${uart_host_log}" --uart-target host
+    [ "${uart_host_status}" -ne 124 ] \
+        || fail "${guest}: the --uart-target host run timed out after ${RUN_TIMEOUT}s"
+    if [ "${uart_host_status}" -ne 0 ]; then
+        printf '%s\n' "${uart_host_output}"
+        fail "${guest}: the --uart-target host run exited with status ${uart_host_status}"
+    fi
+    if ! printf '%s\n' "${uart_host_output}" | grep -q '^systemc-smoke: result state=exited '; then
+        printf '%s\n' "${uart_host_output}"
+        fail "${guest}: the --uart-target host run did not report a terminal ruscv-sim result"
+    fi
+    uart_host_exit="$(smoke_exit_code "${uart_host_output}")"
+    [ "${uart_host_exit}" = "${NATIVE_EXITS[${guest}]}" ] \
+        || fail "${guest}: the --uart-target host exit code ${uart_host_exit} differs from native ${NATIVE_EXITS[${guest}]}"
+    if ! cmp -s "${OUTDIR}/logs/${guest}.native.log" "${uart_host_log}"; then
+        diff -u "${OUTDIR}/logs/${guest}.native.log" "${uart_host_log}" | head -20 || true
+        fail "${guest}: the --uart-target host commit log differs from native"
+    fi
+    uart_host_transactions="$(uart_field "${uart_host_output}" b_transport)"
+    [ -n "${uart_host_transactions}" ] \
+        || fail "${guest}: the --uart-target host run reported no device transaction count"
+    [ "${uart_host_transactions}" -eq 0 ] \
+        || fail "${guest}: the --uart-target host run served ${uart_host_transactions} device transaction(s) although the guest never touches the UART"
+    echo -e "  ${GREEN}[PASS]${NC} ${guest}: native exit code and commit log with zero device transactions"
+done
+
+# device §4: --fault-uart-no-lsr answers LSR without the transmit-empty bit, so
+# `hello` never leaves its wait and exhausts its cycle bound instead of passing.
+echo -e "${YELLOW}== --fault-uart-no-lsr (must not pass)${NC}"
+capture no_lsr_output no_lsr_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${UART_ELF}" --isa "${UART_PROFILE}" \
+    --max-turns "${MAX_CYCLES}" --uart-target host --fault-uart-no-lsr
+[ "${no_lsr_status}" -ne 124 ] || fail "the --fault-uart-no-lsr control timed out"
+if [ "${no_lsr_status}" -eq 0 ]; then
+    printf '%s\n' "${no_lsr_output}"
+    fail "the --fault-uart-no-lsr control passed; an LSR without the transmit-empty bit must fail the run"
+fi
+if ! printf '%s\n' "${no_lsr_output}" \
+    | grep -q "exceeded the ${MAX_CYCLES} turn limit"; then
+    printf '%s\n' "${no_lsr_output}"
+    fail "the --fault-uart-no-lsr control did not exhaust the turn limit"
+fi
+if printf '%s\n' "${no_lsr_output}" | grep -q '^systemc-smoke: result state='; then
+    printf '%s\n' "${no_lsr_output}"
+    fail "the --fault-uart-no-lsr control reported a run result after the exhausted bound"
+fi
+no_lsr_transmitted="$(uart_field "${no_lsr_output}" transmitted)"
+[ -n "${no_lsr_transmitted}" ] \
+    || fail "the --fault-uart-no-lsr control reported no transmitted count"
+[ "${no_lsr_transmitted}" -eq 0 ] \
+    || fail "the --fault-uart-no-lsr control transmitted a byte; the guest never left its wait"
+echo -e "  ${GREEN}[PASS]${NC} the missing transmit-empty bit exhausted the turn limit (status ${no_lsr_status})"
+
+# device §4: --fault-uart-wait reports one Platform tick of host elapsed time on
+# a device transaction, which device D4 forbids: host time may not pass inside a
+# device callback.
+echo -e "${YELLOW}== --fault-uart-wait (must not pass)${NC}"
+capture uart_wait_output uart_wait_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${UART_ELF}" --isa "${UART_PROFILE}" \
+    --max-turns "${MAX_CYCLES}" --uart-target host --fault-uart-wait
+[ "${uart_wait_status}" -ne 124 ] || fail "the --fault-uart-wait control timed out"
+if [ "${uart_wait_status}" -eq 0 ]; then
+    printf '%s\n' "${uart_wait_output}"
+    fail "the --fault-uart-wait control passed; host time inside a device callback must fail"
+fi
+if ! printf '%s\n' "${uart_wait_output}" | grep -q '^systemc-smoke: result state=failed '; then
+    printf '%s\n' "${uart_wait_output}"
+    fail "the --fault-uart-wait control did not report a failed run"
+fi
+if ! printf '%s\n' "${uart_wait_output}" \
+    | grep -q 'host elapsed time for .* on the UART window'; then
+    printf '%s\n' "${uart_wait_output}"
+    fail "the --fault-uart-wait control's diagnostic did not name host elapsed time on a device transaction"
+fi
+if ! printf '%s\n' "${uart_wait_output}" \
+    | grep -q 'host time may not pass inside a device callback'; then
+    printf '%s\n' "${uart_wait_output}"
+    fail "the --fault-uart-wait control's diagnostic did not name the device callback rule"
+fi
+echo -e "  ${GREEN}[PASS]${NC} the device wait failed the run as a protocol failure (status ${uart_wait_status})"
+
+# device §4: --fault-uart-event-on-fault reports a transmit with a fault status,
+# which device D4 forbids, so no byte may reach the host's console.
+echo -e "${YELLOW}== --fault-uart-event-on-fault (must not pass)${NC}"
+capture uart_event_output uart_event_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${UART_ELF}" --isa "${UART_PROFILE}" \
+    --max-turns "${MAX_CYCLES}" --uart-target host --fault-uart-event-on-fault
+[ "${uart_event_status}" -ne 124 ] || fail "the --fault-uart-event-on-fault control timed out"
+if [ "${uart_event_status}" -eq 0 ]; then
+    printf '%s\n' "${uart_event_output}"
+    fail "the --fault-uart-event-on-fault control passed; an event on a fault status must fail"
+fi
+if ! printf '%s\n' "${uart_event_output}" | grep -q '^systemc-smoke: result state=failed '; then
+    printf '%s\n' "${uart_event_output}"
+    fail "the --fault-uart-event-on-fault control did not report a failed run"
+fi
+if ! printf '%s\n' "${uart_event_output}" \
+    | grep -q 'only an accepted access publishes an event'; then
+    printf '%s\n' "${uart_event_output}"
+    fail "the --fault-uart-event-on-fault control did not fail as a protocol failure of that access"
+fi
+uart_event_transmitted="$(uart_field "${uart_event_output}" transmitted)"
+[ -n "${uart_event_transmitted}" ] \
+    || fail "the --fault-uart-event-on-fault control reported no transmitted count"
+[ "${uart_event_transmitted}" -eq 0 ] \
+    || fail "the --fault-uart-event-on-fault control transmitted a byte"
+if printf '%s\n' "${uart_event_output}" | grep -qx 'Hello!'; then
+    printf '%s\n' "${uart_event_output}"
+    fail "the --fault-uart-event-on-fault control let a byte reach the host's console"
+fi
+echo -e "  ${GREEN}[PASS]${NC} the fault-status event failed the access and transmitted nothing (status ${uart_event_status})"
+
 # nb D7/D8: the non-blocking selections are usage errors in the wrong mode,
 # and the fault options keep their existing --quantum requirement.
 echo -e "${YELLOW}== non-blocking usage errors (must not pass)${NC}"
@@ -1102,6 +1397,18 @@ check_usage_error "--fault-wait-debug with --nb" "must not be combined with --nb
     --fault-wait-debug --nb
 check_usage_error "two fault options" "taken one at a time" \
     --fault-wait-blocking --fault-wait-debug
+# device D9: the UART target selection and its three fault options are usage
+# errors in the wrong mode.
+check_usage_error "--uart-target with an unknown value" "must be in-tree or host" \
+    --uart-target native
+check_usage_error "--fault-uart-no-lsr without --uart-target host" \
+    "require --uart-target host" --fault-uart-no-lsr
+check_usage_error "--fault-uart-wait without --uart-target host" \
+    "require --uart-target host" --fault-uart-wait
+check_usage_error "--fault-uart-event-on-fault without --uart-target host" \
+    "require --uart-target host" --fault-uart-event-on-fault
+check_usage_error "a UART fault option with an in-tree selection" \
+    "require --uart-target host" --uart-target in-tree --fault-uart-wait
 
 printf '\n============================================\n'
 printf '  SystemC smoke summary\n'
@@ -1119,5 +1426,9 @@ printf '  AT passes:            five paths at lambda 0 and %s fs, with --dmi par
 printf '  Refusals:             --nb --quantum and the non-blocking usage errors\n'
 printf '  Fault controls:       the exceeded maximum, the unknown completion, the\n'
 printf '                        five non-blocking options and the debug wait\n'
+printf '  UART target:          --uart-target in-tree|host, exactly Hello!\\n per\n'
+printf '                        host pass and zero host device transactions in-tree\n'
+printf '  UART fault controls:  --fault-uart-no-lsr, --fault-uart-wait and\n'
+printf '                        --fault-uart-event-on-fault, each refused\n'
 printf '  Early sc_stop:        refused, as required\n\n'
 echo -e "${GREEN}[PASS]${NC} the pinned SystemC host matched native for every smoke guest"
