@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     载体与注记、事件规则、host view、direct memory、reset、attach 入口、宿主模型），并更新故障选项、smoke
     描述、开放项与来源/测试清单；`docs/verification/README.md` 的合同条目改指 U1–U4 的实现测试与 19 条
     `device-*` 控制
+  - Rust 源码兼容性提示（device D2）：`MachineConfig` 新增公开字段 `devices`，因此外部代码用 struct
+    literal 构造 `MachineConfig` 时会编译失败；这些字面量必须补上 `devices`（通常是
+    `DeviceTargets::none()`），或改用 `MachineConfig::new`。C 宿主侧则须按新头文件重新编译，因为
+    `ruscv_payload` 已从 272 字节增至 280 字节
   - 本单元不改仿真行为、不改 `docs/dev-plan.md`（轮换由 orchestrator 执行）、不改 A10 oracle 与认证推迟；
     §4 的 19 条 `device-*` mutation 控制均已注册，三个 SystemC 设备故障选项在 smoke 中各自断言，CI 的
     `Quality and tests`、`Debug mutation controls`、`SystemC transport smoke` 与 `Debug attach` 继续覆盖
