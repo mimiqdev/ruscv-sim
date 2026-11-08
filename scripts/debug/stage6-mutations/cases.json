@@ -2979,6 +2979,22 @@
     ]
   },
   {
+    "unit": "delay-u2-abi",
+    "source": "src/capi/target.rs",
+    "patch": "delay-u2-abi.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "capi::tests::a_c_device_response_that_annotates_a_delay_is_charged_once",
+        "failure": [
+          "the grant's transport total did not include both device charges"
+        ]
+      }
+    ]
+  },
+  {
     "unit": "device-u2-zero-elapsed",
     "source": "src/blocking/device.rs",
     "patch": "device-u2-zero-elapsed.patch",

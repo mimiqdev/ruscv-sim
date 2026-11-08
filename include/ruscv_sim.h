@@ -67,8 +67,11 @@
  *   ruscv_target.quantum_ticks, ruscv_payload.dmi_allowed,
  *   ruscv_payload.local_offset_fs and ruscv_payload.host_elapsed_fs).  A host
  *   compiled against a previous header therefore keeps working source-level
- *   but must be recompiled against this header before it links this library;
- *   the ABI is not binary-compatible with the previous header.
+ *   but must be recompiled against this header before it links this library
+ *   when a contract appends a field, because the ABI is not binary-compatible
+ *   across that addition.  A contract that appends nothing, as the device
+ *   delay annotation does, changes no layout and needs no recompilation
+ *   (delay D7).
  */
 
 #ifndef RUSCV_SIM_H
@@ -252,19 +255,24 @@ typedef struct ruscv_atomic {
  * terminal response whose host elapsed time exceeds `delay_fs`.  `delay_fs`
  * counts from the transaction's issue, so it includes the host elapsed time.
  *
- * Device transaction (device D8): a request routed to a device window carries
- * `may_suspend` clear and `local_offset_fs` zero, and answers with `delay_fs`,
- * `host_elapsed_fs` and `dmi_allowed` zero.  `device_event` is the response's
- * at-most-one guest-visible effect, one of RUSCV_DEVICE_EVENT_*: NONE means the
- * access has none, UART_TRANSMIT means one byte left the UART's transmit
- * holding register, and HTIF_WRITE means one value was written to the HTIF
- * endpoint.  The event's value is read from the access's own data bytes, so no
- * second field carries it.  A tag that is not its window's, a non-zero delay,
- * host elapsed time or hint, and a changed address, command or length are each
- * a protocol failure of that access; the ABI never guesses what an
- * out-of-contract tag meant, so an unrecognized one makes the response an
- * incomplete one too.  A device target reports no more than one event per
- * access, and only on an accepted one.
+ * Device transaction (device D8, delay D7): a request routed to a device window
+ * carries `may_suspend` clear and `local_offset_fs` zero, and answers with
+ * `host_elapsed_fs` and `dmi_allowed` zero.  A completed Hart response may also
+ * report `delay_fs`, the modeled access delay of its device, at most the
+ * handle's declared maximum `ruscv_target.max_delay_fs` and normally zero: a
+ * Hart access inside a guest turn is charged it once through the turn's delay
+ * ledger, and a `DebugInbound` response must still report zero (delay D3/D4/D6).
+ * `device_event` is the response's at-most-one guest-visible effect, one of
+ * RUSCV_DEVICE_EVENT_*: NONE means the access has none, UART_TRANSMIT means one
+ * byte left the UART's transmit holding register, and HTIF_WRITE means one
+ * value was written to the HTIF endpoint.  The event's value is read from the
+ * access's own data bytes, so no second field carries it.  A tag that is not
+ * its window's, a host elapsed time, a hint, and a changed address, command or
+ * length are each a protocol failure of that access; a delay above the declared
+ * maximum is that run's overshoot host failure, not a guest fault.  The ABI
+ * never guesses what an out-of-contract tag meant, so an unrecognized one makes
+ * the response an incomplete one too.  A device target reports no more than one
+ * event per access, and only on an accepted one.
  *
  * `device_event` is the final field of the struct.
  */
@@ -277,6 +285,9 @@ typedef struct ruscv_payload {
     size_t length;
     int32_t status;
     uint32_t outcome_unknown;
+    /* Response: this access's delay in exact femtoseconds, zero on a request and
+     * on a response that annotates none.  A device response may annotate up to
+     * the handle's declared maximum (delay D3/D7). */
     uint64_t delay_fs;
     ruscv_atomic atomic;
     int32_t dmi_allowed;
@@ -388,6 +399,8 @@ typedef struct ruscv_debug {
  * All three callbacks are required.  `user` and everything it points at must
  * stay valid until ruscv_machine_destroy.  `max_delay_fs` is the declared
  * per-transaction maximum delay used for every conservative completion bound.
+ * It also bounds a device response's `delay_fs`, so it covers every transaction
+ * of the route, device transactions included (delay D3/D7).
  * `transport_dbg` returns the number of bytes transferred; a short transfer is
  * a failed debug transport.  `transport_reset` returns nonzero when the target
  * has quiesced and accepts new accesses.
@@ -452,10 +465,15 @@ typedef struct ruscv_target {
  *
  * `b_transport` services one validated register access.  It must set exactly
  * one status, leave `address`, `command` and `length` as it received them,
- * leave `delay_fs`, `local_offset_fs`, `host_elapsed_fs`, `may_suspend` and
- * `dmi_allowed` zero, and set `device_event` to RUSCV_DEVICE_EVENT_NONE or to
+ * leave `local_offset_fs`, `host_elapsed_fs`, `may_suspend` and `dmi_allowed`
+ * zero, and set `device_event` to RUSCV_DEVICE_EVENT_NONE or to
  * the tag that matches its window: RUSCV_DEVICE_EVENT_UART_TRANSMIT for the
- * UART window and RUSCV_DEVICE_EVENT_HTIF_WRITE for the HTIF window.  The
+ * UART window and RUSCV_DEVICE_EVENT_HTIF_WRITE for the HTIF window.  It may
+ * also set `delay_fs` to the modeled delay of its completed access, at most the
+ * handle's declared maximum and normally zero: a Hart access inside a guest
+ * turn is charged that delay once through the turn's delay ledger, a delay
+ * above the declared maximum is the run's overshoot host failure, and a
+ * `DebugInbound` access must still report zero (delay D3/D4/D6/D7).  The
  * window's width, category and start-address policy run before this callback,
  * so it never sees a request the Platform would reject, and an atomic envelope
  * never reaches it.

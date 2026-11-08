@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Device Delay Annotation U2: C ABI 与纯 C smoke（issue #249）**
+  - `include/ruscv_sim.h` 的 payload、设备表与声明上限注释命名已接受的注解与它的边界（delay D7）：
+    payload 的 device 段落说明 `delay_fs` 是已完成 Hart 响应的建模设备延迟、至多句柄声明的
+    `ruscv_target.max_delay_fs` 且通常为零，在 guest turn 内经 turn 账本计费一次，`DebugInbound`
+    仍须为零；`delay_fs` 字段注释写明它是响应的精确飞秒延时；`max_delay_fs` 注释说明它同时约束设备
+    响应，覆盖该路线的每一次事务，设备事务也包含在内；`ruscv_device.b_transport` 注释允许设置
+    `delay_fs`（超限是运行的 overshoot host failure，不是 guest 故障），其余时序、提示与请求字段仍须
+    保持接收值
+  - `src/capi/target.rs` 的 `CDeviceTarget` 注释不再写“设备 target 不注解延迟”：它仍无自己的声明
+    上限，因为共享的响应路径复制 `delay_fs`、由 guest-RAM slot 的账本按句柄的 `max_delay_fs` 判定
+  - 没有结构体、函数、窗口代码或错误码变化，也没有 layout pin 移动：`ruscv_device` 48、
+    `ruscv_payload` 280、`ruscv_target` 64 与它们的末字段保持原样，所以本单元不改 ABI，已按本头文件
+    编译的宿主无须重新编译
+  - 单元级证据（`src/capi/tests.rs`，真实入口 + Rust `extern "C"` 设备表）：RAM 表声明一 tick 时，
+    C 设备表注解一 tick 被接受，两个窗口各自的两次设备访问使 grant 的 `transport_delay_fs` 为两 tick、
+    `consumed_fs` 为 parity 数额加两 tick，退出码、turn、PC 与 target 记录的值都与零注解 parity 相同；
+    超限一飞秒以 overshoot host failure 失败，写优先的 HTIF 用例断言被拒写已到达 target（sink 级抑制由
+    U1 的 Rust 证据覆盖，C ABI 没有逐值 sink 入口）；`DeviceHarness` 新增声明上限的构造，两个拒绝测试保留
+    host-elapsed、hint、changed-request 与 event 分支，其延迟分支移入计费测试
+  - `tests/capi/smoke.c` 的测试设备新增 `delay_fs` 旋钮，纯 C 跑通两个窗口的接受计费与超限失败；
+    `scripts/test_capi_smoke.sh` 的说明同步
+  - mutation 控制：新增 `delay-u2-abi`（C 响应路径的 `delay_fs` 复制），`cases.json` 共 184 个控制，
+    全部通过 `patch --fuzz=0 --dry-run`
+  - 本单元不改窗口、事件、错误码、turn bound、grant 预留、quantum、direct memory 与非阻塞路径，不做
+    SystemC（U3, #250）与文档收尾（U4, #251）
+
 - **Device Delay Annotation U1: Rust 设备延迟计费（issue #248）**
   - `DeviceOutcome` 携带响应的延迟而不是在适配器拒绝（delay D4）：`TlmDeviceAdapter::transact` 校验
     通过后，终止状态（`Ok`、guest 可见故障、`GenericError`）把响应的 `response_delay` 放进 outcome，

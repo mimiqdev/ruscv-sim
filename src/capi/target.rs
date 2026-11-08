@@ -498,11 +498,13 @@ impl BlockingTarget for CBlockingTarget {
 /// (device D8).
 ///
 /// Unlike the RAM wrapper it holds no direct-memory registry and no declared
-/// maximum: a device target never grants direct memory, never annotates delay
-/// and never lets host time pass, so those fields have nowhere to go.  The
-/// response rules that make such a value a protocol failure stay in the Rust
-/// device adapter, which validates the copied transaction before it maps the
-/// status.
+/// maximum of its own: a device target never grants direct memory and never
+/// lets host time pass, so those fields have nowhere to go.  Its delay
+/// annotation has a bound without a second declaration, because the shared
+/// response path copies `delay_fs` and the guest-RAM slot's ledger enforces the
+/// handle's declared `max_delay_fs` (delay D7).  The response rules that make
+/// such a value a protocol failure stay in the Rust device adapter, which
+/// validates the copied transaction before it maps the status.
 pub(crate) struct CDeviceTarget {
     table: CDevice,
     b_transport: unsafe extern "C" fn(*mut c_void, *mut CPayload),

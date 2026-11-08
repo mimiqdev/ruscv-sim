@@ -1,0 +1,13 @@
+--- a/src/capi/target.rs
++++ b/src/capi/target.rs
+@@ -636,7 +636,9 @@
+     if payload.outcome_unknown != 0 {
+         transaction.extension_mut().mark_outcome_unknown();
+     }
+-    transaction.set_response_delay(Femtoseconds::new(payload.delay_fs));
++    // MUTATION: the copied response's delay never reaches the transaction, so
++    // no C target's annotation is charged.
++    transaction.set_response_delay(Femtoseconds::new(0));
+     // nb D4/D6: `e` is a response field of every callback return, so it is
+     // copied back even when a changed payload makes the response `Incomplete`:
+     // the adapter classifies that failure and charges `e`.

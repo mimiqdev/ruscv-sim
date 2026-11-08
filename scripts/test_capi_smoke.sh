@@ -19,7 +19,12 @@
 # the run.  The Host HTIF Service's C ABI unit (htif U2, D7) adds
 # `RUSCV_DEVICE_HTIF`, its own attach refusals, and a run whose C HTIF target
 # answers one read and one write with the guest's eight-byte value, plus the
-# UART tag on that window that must fail the run.
+# UART tag on that window that must fail the run.  The Device Delay Annotation
+# contract's C ABI unit (delay U2, D7) adds the test device's `delay_fs` knob:
+# one accepted run per host window whose device accesses are charged, one
+# overshoot run per window whose delay is above the RAM table's declared
+# maximum, and a write-first HTIF run whose refused write never decodes the
+# exit.
 #
 # A missing C compiler is a failure, never a skip: CI installs gcc on the
 # runner, so an absent compiler means the check did not run.
