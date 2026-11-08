@@ -3,8 +3,9 @@
 **Status:** Implemented for the selected blocking-transport mapping, direct
 memory, the quantum selection, the non-blocking AT path, its retirement rules,
 the fault-option controls (U3/U4) and the blocking device targets of the UART
-and HTIF windows (device D2–D9). The U5 exit of the Current contract adds
-documentation and acceptance mapping, not behavior.
+and HTIF windows (device D2–D9). The U5 exit of the archived devices contract
+added documentation and acceptance mapping, not behavior. Host HTIF service is
+the [current contract](../dev-plan.md)'s scope and has no runtime claim here.
 
 **Authority:** Normative for the selected blocking-transport mapping, FFI
 ownership and threads, error mapping, the time unit, re-entrancy and stop
@@ -21,9 +22,14 @@ bound rules on this host, and this page's `quantum D<n>` citations name the
 The [archived non-blocking contract](../archive/milestones/non-blocking-tlm-transport.md)'s D7–D10 make this page normative for
 suspension, the non-blocking base-protocol mapping, the commit rule, retirement
 and the AT target mode; this page's `nb D<n>` citations name that contract. The
-Current contract's D5–D9 make this page normative for the device-target
+[archived devices contract](../archive/milestones/tlm-modeled-devices.md)'s
+D5–D9 make this page normative for the device-target
 mapping, the event rule, host views, reset and the attach entry; this page's
-`device D<n>` citations name that contract. Bounded by
+`device D<n>` citations name that contract. The
+[current contract](../dev-plan.md) will make this page normative for the
+host HTIF mapping, its event and run-stop rules and its fault options when its
+documentation unit completes; this page's `htif D<n>` citations will name that
+contract. Bounded by
 ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
@@ -53,7 +59,9 @@ non-blocking fault options. Blocking device targets are implemented on the same
 ABI (device D1–D9): one device window becomes one blocking `b_transport`
 transaction answered by an in-tree target or by a host target attached through
 the C ABI, with at most one platform event per accepted access. The UART window
-may be served by the host; the HTIF window is in-tree in this contract.
+may be served by the host; the HTIF window is in-tree in the archived devices
+contract, and host HTIF service is the current contract's scope with no runtime
+claim on this page.
 
 ## Selected mapping
 
@@ -634,7 +642,10 @@ same turn bound as the CLI's `--max-cycles` and wraps every run in a wall-clock
 - SystemC-modeled interrupt lines, which need their own contract.
 - Device delay and host time: a device target that annotates either, which needs
   the turn completion bound and the grant horizon extended with it.
-- Host HTIF service through the same window-indexed device table.
+- Host HTIF service is the [current contract](../dev-plan.md)'s scope: the
+  same window-indexed table, the same sink and the same run stop. No HTIF host
+  target, `--htif-target` option or HTIF fault option exists on this page's
+  runtime path until that contract's units land.
 - More than one outstanding transaction, on the non-blocking path or a device
   window, and pipelining.
 

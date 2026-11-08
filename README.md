@@ -317,18 +317,25 @@ elapsed 增量，SystemC 的 `--nb` AT 路径、超时退休、late phase 与 dr
 该合同于 2026-11-07 在 PR #225 完成，已归档为
 [non-blocking 合同](docs/archive/milestones/non-blocking-tlm-transport.md)。
 
-TLM 建模设备由当前合同实现到 U4：UART 窗口（`0x1000_0000`/`0x100`）与 HTIF 端点（`0x4000_8000`/8）
-在 TLM 路由上成为 blocking device target，默认由 in-tree Rust 设备应答，SystemC 宿主可经 C ABI 的
-`ruscv_machine_attach_device` 替换 UART；一次设备访问是一笔零延迟、零 host elapsed 的 `b_transport`
-事务，被接受的 THR 写至多上报一个 `UartTransmit` 事件，且不加任何时间。Rust 侧选择是
+TLM 建模设备已由归档的 devices 合同实现到 U5：UART 窗口（`0x1000_0000`/`0x100`）与 HTIF 端点
+（`0x4000_8000`/8）在 TLM 路由上成为 blocking device target，默认由 in-tree Rust 设备应答，SystemC
+宿主可经 C ABI 的 `ruscv_machine_attach_device` 替换 UART；一次设备访问是一笔零延迟、零 host elapsed 的
+`b_transport` 事务，被接受的 THR 写至多上报一个 `UartTransmit` 事件，且不加任何时间。Rust 侧选择是
 `MachineConfig.devices`（默认 `DeviceTargets::none()`，要求 `Transport::Tlm` 与 `PlatformKind::Native`），
 SystemC 侧是 `--uart-target in-tree|host` 与三个设备故障选项。CLINT、PLIC 与 source-1 gateway 仍属
-Platform 状态，`mtime`/`mtimecmp` 与四条中断线不由 target 拥有；SystemC 建模中断线、host HTIF 服务、
-设备延迟与多笔未完成事务仍属开放项。实现证据由 `src/blocking/device_tests.rs`、
-`src/executor_device_tests.rs`、`src/machine/tests.rs`、`src/capi/tests.rs`、`tests/capi/smoke.c`、
-`scripts/test_systemc_smoke.sh` 与 `scripts/debug/stage6-mutations`（19 个 `device-u1-*`／`device-u2-*`／
-`device-u3-*` 控制）提供；端到端支持仅限于这些测试展示的范围。规范映射与开放项见
-[SystemC/TLM 边界](docs/integration/systemc-tlm.md)。
+Platform 状态，`mtime`/`mtimecmp` 与四条中断线不由 target 拥有。实现证据由
+`src/blocking/device_tests.rs`、`src/executor_device_tests.rs`、`src/machine/tests.rs`、
+`src/capi/tests.rs`、`tests/capi/smoke.c`、`scripts/test_systemc_smoke.sh` 与
+`scripts/debug/stage6-mutations`（19 个 `device-u1-*`／`device-u2-*`／`device-u3-*` 控制）提供；端到端
+支持仅限于这些测试展示的范围。规范映射与开放项见 [SystemC/TLM 边界](docs/integration/systemc-tlm.md)。
+该合同于 2026-11-08 在 PR #236 完成，已归档为 [devices 合同](docs/archive/milestones/tlm-modeled-devices.md)。
+
+Host HTIF 服务是 2026-11-08 批准的当前合同（[docs/dev-plan.md](docs/dev-plan.md)），尚未实现：它计划在
+同一 window-indexed 设备表上追加 `RUSCV_DEVICE_HTIF` 窗口索引，让 SystemC 宿主经 C ABI 应答
+`0x4000_8000`/8 端点的 dword 读写，并把接受写上报的 `HtifWrite` 值继续送入现有 `config.htif_write`
+单一 sink 与现有退出判定；`--htif-target in-tree|host`、`HtifTarget`、一个新 guest 与三个 HTIF 故障选项
+都属于 U1–U4 的要求。本段不构成任何运行时支持声明。SystemC 建模中断线、设备延迟、多笔未完成事务与
+HTIF fromhost/console 输入仍属后续合同。
 
 ## N=1 Machine 与公共 facade（A9 T2/T3）
 
