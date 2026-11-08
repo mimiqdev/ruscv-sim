@@ -1,8 +1,9 @@
 # SystemC host integration
 
 This CMake project is the pinned SystemC host for the transport smoke
-(dev-plan D9; nb D7/D8). It builds one executable, `systemc_smoke`, which hosts
-one ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
+(dev-plan D9; nb D7/D8; device D9). It builds one executable, `systemc_smoke`,
+which hosts one ruscv-sim Machine through the C ABI and supplies the guest-RAM
+target and, under `--uart-target host`, the UART device window:
 
 - `ram_target.{h,cpp}`: a zero-delay blocking RAM target behind a
   `simple_target_socket`, with `b_transport`, `transport_dbg`, transport reset
@@ -37,6 +38,13 @@ one ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
   (nb D9).
 - `ruscv_payload_extension.h`: the TLM-2.0 payload extension carrying the access
   category, the initiator and the atomic request and response.
+- `uart_target.{h,cpp}`: the host-served UART window (`--uart-target host`,
+  device D9) as a plain callback object behind `ruscv_device`, not a SystemC
+  module. It models the register set the suite's UART guest uses (RBR/THR, IER,
+  IIR/FCR, LCR, MCR, LSR, MSR, SCR, DLL/DLM and 16-byte receive and transmit
+  FIFOs), answers an accepted THR write with `RUSCV_TLM_OK` plus one
+  `RUSCV_DEVICE_EVENT_UART_TRANSMIT`, echoes each transmitted byte as one
+  `uart-console:` line, and counts transactions, reads, writes and bytes.
 - `main.cpp`: the `SC_THREAD` grant loop that starts each grant at
   `sc_time_stamp()`, waits `consumed_fs - host_elapsed_fs`, and stops the kernel
   after a terminal `ruscv_machine_result` or a host-classified failure. It
@@ -47,8 +55,9 @@ one ruscv-sim Machine through the C ABI and supplies the guest-RAM target:
   probes the transport reset first while the target still holds it (nb D9).
   The `--stop-after-grants` control stops it deliberately, without a result;
   `--fault-keep-offset` and `--fault-decrease-delay` are the quantum contract's
-  two fault-option controls, and the five non-blocking options are the same
-  kind of control for the AT path (nb §4).
+  two fault-option controls, the five non-blocking options are the same kind of
+  control for the AT path (nb §4), and `--uart-target` with the three device
+  options selects and breaks the host UART (device §4).
 
 See [`docs/integration/systemc-tlm.md`](../../docs/integration/systemc-tlm.md)
 for the mapping, ownership and time rules.
@@ -86,12 +95,15 @@ usage: systemc_smoke <elf> [--isa rv64ima|rv64imac|rv64imafd|rv64imafdc]
        [--horizon-fs <femtoseconds>] [--stop-after-grants <grants>]
        [--max-grants <grants>] [--max-turns <turns>]
        [--dmi] [--dmi-invalidate-every <grants>] [--quantum <ticks>]
+       [--uart-target in-tree|host]
        [--nb] [--nb-latency <femtoseconds>]
        [--nb-path accepted|updated|early|annotated|completed]
        [--grant-trace <path>]
        [--fault-keep-offset] [--fault-decrease-delay]
        [--fault-late-response] [--fault-uncounted-elapsed]
        [--fault-short-delay] [--fault-wait-blocking] [--fault-wait-debug]
+       [--fault-uart-no-lsr] [--fault-uart-wait]
+       [--fault-uart-event-on-fault]
 ```
 
 The exit status is the guest exit code for a terminal exited run and 1 for a
@@ -151,17 +163,38 @@ must not be combined with `--nb`: they wait one tick in `b_transport` and in
 `transport_dbg`. Each must fail the run with its own diagnostic, and a control
 that passes is a smoke failure.
 
+`--uart-target in-tree|host` selects the UART window's target (device D9). The
+default `in-tree` keeps the Rust `Uart16550`; `host` creates a `UartTarget` and
+attaches it through `ruscv_machine_attach_device` after create and before the
+first load, so the Machine reads the window through the C ABI's device table.
+The host target serves one device transaction per validated register access with
+zero delay and zero host elapsed time. Any other value is a usage error.
+
+The three device fault options are the device contract's §4 controls. Each
+requires `--uart-target host` and is a usage error with the in-tree selection.
+`--fault-uart-no-lsr` answers LSR without the transmit-holding-empty bit, so
+`hello` exhausts its turn bound instead of passing; `--fault-uart-wait` waits one
+Platform tick inside `b_transport` and reports it as host elapsed time, which
+fails the access; `--fault-uart-event-on-fault` reports a transmit event with
+`RUSCV_TLM_ADDRESS_ERROR`, which fails as a protocol failure of that access. A
+control that passes is a smoke failure.
+
 At exit the host reports the initiator's late-phase count, its retirement count,
 the forward `END_RESP` phases its drain sent with the host time of the one it
 sent, and whether the target still holds a transaction. A normal `--nb` pass
-reports zero late phases (nb D9).
+reports zero late phases (nb D9). It also reports the UART target's selection
+(`host` or `in-tree`), its transaction count, its read and write counts and the
+transmitted byte sequence, which the smoke checks against the guest's fixed
+`Hello!\n`.
 
 The end-to-end comparison with the native run is
 [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh); the
 `SystemC transport smoke` CI job runs it inside the development image. The
 smoke requires the direct pass's `b_transport` count strictly below the same
-guest's non-direct pass and an unchanged commit log under the scheduled
-invalidation.
+guest's non-direct pass, an unchanged commit log under the scheduled
+invalidation, `hello` to transmit exactly `Hello!\n` under
+`--uart-target host` with the matching in-tree pass's facts, and each of the
+three device fault options to fail with its own assertion.
 
 ## Limits
 
@@ -170,4 +203,6 @@ model a timed memory; the quantum defers the Machine's committed time by a
 bounded local offset, but the target still adds no modeled delay of its own. The
 AT mode has one outstanding transaction and a fixed latency lambda; a retired
 transaction is drained at every stop, and one fault option at a time exercises
-the retirement, late-phase, drain and fault paths.
+the retirement, late-phase, drain and fault paths. The host UART target models
+one guest's register set, not a timed serial line: it transmits on the accepted
+THR write and accepts injected bytes only through the ABI's `receive` callback.

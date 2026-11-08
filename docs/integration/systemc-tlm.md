@@ -1,10 +1,10 @@
 # SystemC/TLM Boundary
 
 **Status:** Implemented for the selected blocking-transport mapping, direct
-memory, the quantum selection, the non-blocking AT path, its retirement rules
-and the fault-option controls (U3/U4). The Current contract selects blocking
-device targets for the UART and HTIF windows; its units are implementation
-requirements, not implemented behavior.
+memory, the quantum selection, the non-blocking AT path, its retirement rules,
+the fault-option controls (U3/U4) and the blocking device targets of the UART
+and HTIF windows (device D2–D9). The U5 exit of the Current contract adds
+documentation and acceptance mapping, not behavior.
 
 **Authority:** Normative for the selected blocking-transport mapping, FFI
 ownership and threads, error mapping, the time unit, re-entrancy and stop
@@ -22,13 +22,13 @@ The [archived non-blocking contract](../archive/milestones/non-blocking-tlm-tran
 suspension, the non-blocking base-protocol mapping, the commit rule, retirement
 and the AT target mode; this page's `nb D<n>` citations name that contract. The
 Current contract's D5–D9 make this page normative for the device-target
-mapping, the event rule, host views, reset and the attach entry once its units
-complete; this page's `device D<n>` citations name that contract. Bounded by
+mapping, the event rule, host views, reset and the attach entry; this page's
+`device D<n>` citations name that contract. Bounded by
 ADR-0002, ADR-0003 and ADR-0004 with their amendments, and by
 [`docs/dev-plan.md`](../dev-plan.md), which governs where this page disagrees
 with them.
 
-**Last reviewed:** 2026-11-07
+**Last reviewed:** 2026-11-08
 
 The repository implements one SystemC/TLM transport integration: a C ABI facade
 ([`src/capi`](../../src/capi), [`include/ruscv_sim.h`](../../include/ruscv_sim.h))
@@ -49,11 +49,11 @@ records the AT path that serves a suspending `may_suspend` transaction through
 (nb D7/D8/D10). For the same contract it records the timeout, the retirement of
 a timed-out transaction, the late phases it ignores, the drain and the withheld
 reset acknowledgement (nb D9). For the same contract it records the
-non-blocking fault options. TLM-modeled devices are selected by the Current
-contract: one device window becomes one blocking `b_transport` transaction
-answered by an in-tree target or by a host target attached through the C ABI,
-with at most one platform event per accepted access (device D2–D5). Until that
-contract's units land, this page describes only the RAM mapping.
+non-blocking fault options. Blocking device targets are implemented on the same
+ABI (device D1–D9): one device window becomes one blocking `b_transport`
+transaction answered by an in-tree target or by a host target attached through
+the C ABI, with at most one platform event per accepted access. The UART window
+may be served by the host; the HTIF window is in-tree in this contract.
 
 ## Selected mapping
 
@@ -81,6 +81,8 @@ contract's units land, this page describes only the RAM mapping.
 | Device target (device D2) | An in-tree `BlockingDeviceTarget`, or a host target attached through `ruscv_machine_attach_device` |
 | Device transaction (device D2) | One `b_transport` call with zero delay and zero host elapsed time |
 | Device event (device D4) | At most one `PlatformEvent` reported by an accepted access: `UartTransmit` or `HtifWrite` |
+| Host-served UART window (device D9) | `UartTarget` in [`uart_target.h`](../../integration/systemc/uart_target.h), attached as `RUSCV_DEVICE_UART` |
+| Device reset (device D6) | The selected target's `transport_reset`, once per `Platform::build` and before the image is placed |
 
 `tlm_generic_payload` and `sc_time` stay outside the Rust side and outside ISA
 instruction functions. The only Rust/C++ boundary is the C ABI.
@@ -281,6 +283,79 @@ An unknown completion (the extension's outcome-unknown flag), an adapter panic,
 or a C++ exception stays an unknown completion. No TLM status, callback return,
 or host stop becomes a ruscv-sim terminal result.
 
+## Device targets
+
+device D1–D9 add a second target kind to the same composition. The UART window
+`0x1000_0000`/`0x100` and the HTIF endpoint `0x4000_8000`/8 are device windows.
+CLINT, PLIC and the source-1 gateway stay Platform state on both routes, because
+they own Platform time, the presented interrupt lines and the gateway's
+retraction rule.
+
+- Window policy stays in the Platform. A UART access is byte-only, a fetch is
+  rejected and the window is `0x100` bytes wide; the HTIF endpoint requires its
+  exact start, a full eight-byte dword and no fetch, and its atomic RMW
+  envelope stays Platform-side and never becomes a device transaction. A target
+  therefore never sees a request the Platform would reject, and the in-tree
+  target and the native branch share one register helper
+  (`Uart16550::write_reg_reporting`).
+- Carrier and annotation. One validated access is one blocking `b_transport`
+  transaction with zero delay and zero host elapsed time. A non-zero
+  `delay_fs`, `local_offset_fs`, `host_elapsed_fs`, `may_suspend` or
+  `dmi_allowed`, a changed address, command or length, more than one event, an
+  event whose tag does not match its window, and an event on a non-`Ok` status
+  are protocol failures of that access (device D2/D4; ADR-0002's 2026-11-07
+  device-target amendment). The outcome-unknown classification runs first, so
+  an unknown completion that carries a valid event publishes nothing. A device
+  transaction adds nothing to `transport_delay_femtoseconds`,
+  `host_elapsed_femtoseconds`, `mcycle`, `minstret`, the turn completion bound
+  or a grant's horizon. A Hart device access still flushes the local offset
+  under the bus lock before the target sees it (quantum F1), so the target
+  observes committed Platform time and can neither read nor move the offset.
+- Events. Each window has one publication sink, installed once by
+  `Platform::build`: the UART sink pushes `PlatformEvent::UartTransmit(byte)` and
+  then calls `config.uart_output(byte)`; the HTIF sink pushes
+  `PlatformEvent::HtifWrite(value)` and then calls `config.htif_write(value)`.
+  An accepted THR write, the typed byte write of an in-tree window and a host
+  target's response all publish through that sink before the store retires; a
+  faulted or unknown access publishes nothing.
+- Host views. A host-served UART window has no Rust register state, so
+  `Platform::uart_inspection` returns `None`, `Platform::receive_uart` calls the
+  target's `receive`, and a typed `MemoryInterface` read or write of the window
+  is `MemoryError::InvalidAddress`. An in-tree window keeps today's answers: the
+  typed byte write applies the register write and publishes through the UART
+  sink, and the typed HTIF dword read answers zero on both routes.
+- Direct memory. A device window is never offered direct memory. The rule is
+  dispatch, not coverage: the bus hands the RAM slot only a request whose whole
+  span it matched as RAM, so a device span takes the device path, which never
+  sets `dmi_allowed` and never queries.
+- Reset. `Platform::build` calls the selected target's `transport_reset` once,
+  ahead of the RAM slot's `begin_window` and before the image is placed; a zero
+  return fails the build through the existing placement channel and leaves the
+  current association intact. Every install builds a fresh `Platform`
+  (`fresh_reset`, `reload_for_ndmreset` and `ruscv_machine_reset` alike), so no
+  in-tree register state and no host state crosses a generation, and no device
+  transaction outlives a Platform.
+- Attach entry. `ruscv_machine_attach_device(machine, RUSCV_DEVICE_UART, &table)`
+  runs after `ruscv_machine_create` and before the first
+  `ruscv_machine_load_elf`. A NULL handle, NULL table, missing callback or
+  unknown window is `RUSCV_ERROR_INVALID_ARGUMENT`; a mismatched
+  `window_base`/`window_size`, a second attach for the window, a late attach and
+  a handle without a `ruscv_target` (no TLM route) are `RUSCV_ERROR_CONFIG`. The
+  table is copied at attach, so its callbacks and `user` are fixed for the
+  handle's life and `user` must outlive it. The callbacks obey the RAM target's
+  rules: creating thread only, no re-entry (every ABI entry that reaches the
+  callback check returns `RUSCV_ERROR_REENTRANT`, except
+  `ruscv_machine_invalidate_direct_mem`), no waiting, no host time and no
+  exception across the boundary.
+- Host model. [`uart_target.h`](../../integration/systemc/uart_target.h) is the
+  smoke's host UART: a plain callback object, not a SystemC module. It models
+  RBR/THR, IER, IIR/FCR, LCR, MCR, LSR, MSR, SCR, DLL/DLM and 16-byte receive
+  and transmit FIFOs, answers `RUSCV_TLM_OK` with one
+  `RUSCV_DEVICE_EVENT_UART_TRANSMIT` on an accepted THR write with DLAB clear,
+  echoes that byte to the host console as one `uart-console:` line, and reports
+  its transaction, read, write and transmitted-byte counts at exit.
+  `transport_reset` discards every register and FIFO and acknowledges.
+
 ## FFI ownership and threads
 
 - Every handle belongs to the thread that created it. A call from any other
@@ -417,16 +492,17 @@ offset `O`, bounded by the selected quantum (quantum D3–D5). This host's rules
 
 ### Fault-option controls
 
-`--fault-keep-offset`, `--fault-decrease-delay` and the five non-blocking
-options below are the fault-option controls of the contract's §4, in the style
-of `--stop-after-grants`. The quantum pair requires `--quantum`, the
-non-blocking trio (`--fault-late-response`, `--fault-uncounted-elapsed`,
-`--fault-short-delay`) requires `--nb`, and the blocking pair
-(`--fault-wait-blocking`, `--fault-wait-debug`) is a usage error with `--nb`.
+`--fault-keep-offset`, `--fault-decrease-delay`, the five non-blocking
+options and the three device options below are the fault-option controls of
+their contract's §4, in the style of `--stop-after-grants`. The quantum pair
+requires `--quantum`, the non-blocking trio (`--fault-late-response`,
+`--fault-uncounted-elapsed`, `--fault-short-delay`) requires `--nb`, the
+blocking pair (`--fault-wait-blocking`, `--fault-wait-debug`) is a usage error
+with `--nb`, and the device trio requires `--uart-target host` (device D9).
 Exactly one fault option may be selected in a run. They exist because the
 mutation runner builds only Rust, so a C++ fault cannot be a control row there
-(quantum D14, nb D11). None is a normal host, and a run that passes with one set
-is a smoke failure:
+(quantum D14, nb D11, device D10). None is a normal host, and a run that passes
+with one set is a smoke failure:
 
 - `--fault-keep-offset` reports the full `delay` argument as an added delay. The
   run must report `result state=failed`, the failed boundary's `uncertain` flag
@@ -459,6 +535,20 @@ is a smoke failure:
 - `--fault-wait-debug` makes `RamTarget::transport_dbg` wait one tick. Image
   installation must fail, and the host must report a failure of
   `ruscv_machine_load_elf`.
+- `--fault-uart-no-lsr` makes `UartTarget` answer `LSR` with the
+  transmit-holding-empty bit clear. `hello` never leaves its wait, so the run
+  must exhaust its turn bound and fail without reporting a run result, and the
+  target must transmit no byte.
+- `--fault-uart-wait` makes `UartTarget::b_transport` wait one Platform tick and
+  report it as host elapsed time, which a device callback may not do (device
+  D4). The run must report `result state=failed` with a diagnostic naming host
+  elapsed time on the UART window and the device-callback rule.
+- `--fault-uart-event-on-fault` makes `UartTarget` report a transmit event with
+  `RUSCV_TLM_ADDRESS_ERROR`. The run must report `result state=failed` as a
+  protocol failure of that access, and no byte may reach the host's console.
+
+All three device options are usage errors without `--uart-target host`, and
+with an explicit `--uart-target in-tree`.
 
 ## Reentrancy and stop behavior
 
@@ -525,19 +615,28 @@ D10 sums from the host's exit totals at `lambda` = 1500000. It repeats the
 `--dmi` `lambda` = 0 passes on `accepted` and `completed`, and requires the
 `--dmi` `lambda` = 1500000 `accepted` pass to serve fewer AT transactions than
 the non-direct pass. It also requires the `--nb --quantum` refusal and the
-non-blocking usage errors. It runs the two fault-option controls under
-`--quantum 1024` and the five non-blocking ones in their stated mode, and
-requires each to fail with its own assertion. It passes the same turn bound
-as the CLI's `--max-cycles` and wraps every run in a wall-clock `timeout`, so
-neither a guest loop nor a host defect can hang CI.
+non-blocking usage errors. It runs `hello` under `--uart-target in-tree` and
+`--uart-target host` at the baseline, with `--dmi`, with `--nb` and with
+`--quantum 1024`, requiring the native exit code and commit log, zero host
+device transactions for the in-tree selection, a non-zero host transaction
+count equal to its reads plus writes, exactly `Hello!\n` in the target's bytes
+and on its `uart-console:` channel, and a repeated host pass with identical
+bytes, commit log and exit code. The two existing guests run again under
+`--uart-target host` and must keep their facts with zero device transactions,
+because neither touches the UART. It runs the two fault-option controls under
+`--quantum 1024`, the five non-blocking ones and the three device ones in their
+stated mode, and requires each to fail with its own assertion. It passes the
+same turn bound as the CLI's `--max-cycles` and wraps every run in a wall-clock
+`timeout`, so neither a guest loop nor a host defect can hang CI.
 
 ## Open items
 
 - SystemC-modeled interrupt lines, which need their own contract.
-- Device timing: a device target that annotates delay or host time, which needs
+- Device delay and host time: a device target that annotates either, which needs
   the turn completion bound and the grant horizon extended with it.
 - Host HTIF service through the same window-indexed device table.
-- More than one outstanding non-blocking transaction or pipelining.
+- More than one outstanding transaction, on the non-blocking path or a device
+  window, and pipelining.
 
 ## Direct-memory grant, permission, latency, invalidation, lifetime and FFI
 
@@ -633,16 +732,26 @@ contract adds none.)
 ## Source and test map
 
 - [`src/capi`](../../src/capi) and [`include/ruscv_sim.h`](../../include/ruscv_sim.h):
-  the C ABI facade and its header.
+  the C ABI facade, its header, and the device table with
+  `ruscv_machine_attach_device`.
 - [`integration/systemc`](../../integration/systemc): the CMake project, the RAM
-  target, the initiator bridge and the grant loop.
+  target, the UART device target, the initiator bridge and the grant loop.
 - [`scripts/test_systemc_smoke.sh`](../../scripts/test_systemc_smoke.sh): native
   comparison, the `--dmi` and `--dmi-invalidate-every` passes, the `--quantum`
   passes, the five `--nb` return paths at both latencies, the `--dmi` AT
-  passes, the `--nb --quantum` refusal, the non-blocking usage errors, the two
-  fault-option controls and the early-`sc_stop` control.
+  passes, the `--uart-target` passes with their console and transaction
+  assertions, the `--nb --quantum` refusal, the usage errors, the two quantum
+  and five non-blocking fault-option controls, the three device fault-option
+  controls and the early-`sc_stop` control.
 - [`scripts/test_capi_smoke.sh`](../../scripts/test_capi_smoke.sh): the plain-C
-  compile-and-link smoke of the same ABI, including its direct-memory cases.
+  compile-and-link smoke of the same ABI, including its direct-memory and
+  device-attach cases.
+- [`src/blocking/device.rs`](../../src/blocking/device.rs) and
+  [`src/blocking/in_tree.rs`](../../src/blocking/in_tree.rs): the device target
+  vocabulary, the adapter's validation and the in-tree UART and HTIF targets,
+  with `src/blocking/device_tests.rs`, `src/executor_device_tests.rs` and
+  `src/machine/tests.rs` as their test side and `src/capi/tests.rs` for the ABI
+  table.
 - [`tests/tlm_u4_guest_parity.rs`](../../tests/tlm_u4_guest_parity.rs): guest
   parity on the in-tree Rust TLM route, now three passes per guest.
 - [`tests/direct_mem_cli.rs`](../../tests/direct_mem_cli.rs),
