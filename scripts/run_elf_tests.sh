@@ -58,7 +58,9 @@ fi
 # the native one, so neither the TLM route nor a granted host pointer may
 # change a retired instruction. The five U4 guests come first; the two
 # direct-memory U3 guests that exercise self-modifying code and a page-table
-# walk join them, so their three passes are compared as bytes too.
+# walk join them, so their three passes are compared as bytes too. The HTIF U3
+# endpoint guest joins them (htif D8): it writes the endpoint's console and exit
+# words on both routes, so its logs must stay byte-identical too.
 #
 # quantum U3 (quantum D7/D14): the same TLM route runs every guest two more
 # times, at `Q` = 1 and at `Q` = 1024, still under the guest's declared
@@ -72,7 +74,7 @@ fi
 # passes. One parity guest also runs with `--dmi --quantum 1024` to show the
 # D10 report's sync count below its completed turns.
 PARITY_GUESTS=(hello s5_timer s5_external atomic_tohost_exit fd_fma
-    direct_mem_smc_fence_i direct_mem_sv39_pt_store)
+    direct_mem_smc_fence_i direct_mem_sv39_pt_store htif_u3_console)
 LOG_DIR="${OUTDIR}/commit-logs"
 rm -rf "${LOG_DIR}"
 mkdir -p "${LOG_DIR}"

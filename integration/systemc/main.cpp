@@ -44,6 +44,15 @@
 // are the device contract's three fault-option controls (device §4), each of
 // which requires the host selection and fails the run in its own named place.
 //
+// `--htif-target` selects the HTIF endpoint's target (htif D8) the same way: the
+// in-tree Rust endpoint by default, or the host `HtifTarget` attached through the
+// same device table. The host target answers a dword read with zero and reports
+// the window's one event for an accepted dword write, rendering the standard
+// console device's byte; `--fault-htif-drop-event`, `--fault-htif-wait` and
+// `--fault-htif-event-on-fault` are the HTIF contract's three fault-option
+// controls (htif §4), each of which requires the host selection and fails the
+// run in its own named place.
+//
 // At every stop after a retirement the driver first probes the transport reset
 // while the target still holds the transaction, then runs the kernel until the
 // target has no scheduled phase and the initiator holds no drain state, and
@@ -69,6 +78,7 @@
 #include <ruscv_sim.h>
 #include <systemc>
 
+#include "htif_target.h"
 #include "ram_target.h"
 #include "ruscv_initiator.h"
 #include "uart_target.h"
@@ -118,6 +128,9 @@ struct Options {
     /// device D9: the UART window is served by the host's `UartTarget` rather
     /// than by the in-tree Rust device.
     bool uart_host = false;
+    /// htif D8: the HTIF endpoint is served by the host's `HtifTarget` rather
+    /// than by the in-tree Rust endpoint.
+    bool htif_host = false;
     /// nb D7/D8: the AT selection and its target latency and return path.
     bool non_blocking = false;
     uint64_t nb_latency_fs = 0;
@@ -145,6 +158,12 @@ struct Options {
     bool fault_uart_no_lsr = false;
     bool fault_uart_wait = false;
     bool fault_uart_event_on_fault = false;
+    /// The three HTIF fault-option controls (htif §4). Each requires
+    /// `--htif-target host`, because without a host HTIF target there is no
+    /// device callback to break.
+    bool fault_htif_drop_event = false;
+    bool fault_htif_wait = false;
+    bool fault_htif_event_on_fault = false;
 };
 
 void print_usage(const char* program) {
@@ -155,6 +174,7 @@ void print_usage(const char* program) {
         "       [--max-grants <grants>] [--max-turns <turns>]\n"
         "       [--dmi] [--dmi-invalidate-every <grants>] [--quantum <ticks>]\n"
         "       [--uart-target in-tree|host]\n"
+        "       [--htif-target in-tree|host]\n"
         "       [--nb] [--nb-latency <femtoseconds>]\n"
         "       [--nb-path accepted|updated|early|annotated|completed]\n"
         "       [--grant-trace <path>]\n"
@@ -163,6 +183,8 @@ void print_usage(const char* program) {
         "       [--fault-short-delay] [--fault-wait-blocking] [--fault-wait-debug]\n"
         "       [--fault-uart-no-lsr] [--fault-uart-wait]\n"
         "       [--fault-uart-event-on-fault]\n"
+        "       [--fault-htif-drop-event] [--fault-htif-wait]\n"
+        "       [--fault-htif-event-on-fault]\n"
         "\n"
         "Runs one ruscv-sim Machine under this SystemC kernel. The RAM target is\n"
         "the zero-delay blocking model the initiator socket is bound to. Exit\n"
@@ -201,6 +223,15 @@ void print_usage(const char* program) {
         "an accepted THR write. --fault-uart-no-lsr, --fault-uart-wait and\n"
         "--fault-uart-event-on-fault are the device contract's fault options: each\n"
         "requires --uart-target host and must fail the run with its own\n"
+        "diagnostic.\n"
+        "\n"
+        "--htif-target selects the HTIF endpoint's target (htif D8): the in-tree\n"
+        "Rust endpoint by default, or a host HtifTarget attached through the same\n"
+        "device table. The host target answers a dword read with zero and reports\n"
+        "the window's one event for an accepted dword write, rendering the standard\n"
+        "console device's byte. --fault-htif-drop-event, --fault-htif-wait and\n"
+        "--fault-htif-event-on-fault are the HTIF contract's fault options: each\n"
+        "requires --htif-target host and must fail the run with its own\n"
         "diagnostic.\n",
         program);
 }
@@ -261,6 +292,18 @@ bool parse_nb_path(const char* text, ruscv_sim::AtPath& out) {
 
 /// Resolves one UART target name (device D9).
 bool parse_uart_target(const char* text, bool& host) {
+    if (std::strcmp(text, "in-tree") == 0) {
+        host = false;
+    } else if (std::strcmp(text, "host") == 0) {
+        host = true;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/// Resolves one HTIF target name (htif D8).
+bool parse_htif_target(const char* text, bool& host) {
     if (std::strcmp(text, "in-tree") == 0) {
         host = false;
     } else if (std::strcmp(text, "host") == 0) {
@@ -355,6 +398,12 @@ bool parse_options(int argc, char** argv, Options& options) {
                 std::fprintf(stderr, "systemc-smoke: --uart-target must be in-tree or host\n");
                 return false;
             }
+        } else if (std::strcmp(argument, "--htif-target") == 0) {
+            const char* text = value("--htif-target");
+            if (text == nullptr || !parse_htif_target(text, options.htif_host)) {
+                std::fprintf(stderr, "systemc-smoke: --htif-target must be in-tree or host\n");
+                return false;
+            }
         } else if (std::strcmp(argument, "--nb") == 0) {
             options.non_blocking = true;
         } else if (std::strcmp(argument, "--nb-latency") == 0) {
@@ -400,6 +449,12 @@ bool parse_options(int argc, char** argv, Options& options) {
             options.fault_uart_wait = true;
         } else if (std::strcmp(argument, "--fault-uart-event-on-fault") == 0) {
             options.fault_uart_event_on_fault = true;
+        } else if (std::strcmp(argument, "--fault-htif-drop-event") == 0) {
+            options.fault_htif_drop_event = true;
+        } else if (std::strcmp(argument, "--fault-htif-wait") == 0) {
+            options.fault_htif_wait = true;
+        } else if (std::strcmp(argument, "--fault-htif-event-on-fault") == 0) {
+            options.fault_htif_event_on_fault = true;
         } else if (argument[0] == '-') {
             std::fprintf(stderr, "systemc-smoke: unknown option %s\n", argument);
             return false;
@@ -457,7 +512,10 @@ bool parse_options(int argc, char** argv, Options& options) {
                               static_cast<int>(options.fault_wait_debug) +
                               static_cast<int>(options.fault_uart_no_lsr) +
                               static_cast<int>(options.fault_uart_wait) +
-                              static_cast<int>(options.fault_uart_event_on_fault);
+                              static_cast<int>(options.fault_uart_event_on_fault) +
+                              static_cast<int>(options.fault_htif_drop_event) +
+                              static_cast<int>(options.fault_htif_wait) +
+                              static_cast<int>(options.fault_htif_event_on_fault);
     if (fault_options > 1) {
         // Every fault option changes one place and produces its own named
         // failure, so one run cannot exercise two of them.
@@ -491,6 +549,17 @@ bool parse_options(int argc, char** argv, Options& options) {
         std::fprintf(stderr,
                      "systemc-smoke: --fault-uart-no-lsr, --fault-uart-wait and "
                      "--fault-uart-event-on-fault require --uart-target host\n");
+        return false;
+    }
+    if ((options.fault_htif_drop_event || options.fault_htif_wait ||
+         options.fault_htif_event_on_fault) &&
+        !options.htif_host) {
+        // htif §4: each of these breaks the host HtifTarget, so without
+        // --htif-target host it would check nothing: require the selection it
+        // exercises instead of silently passing.
+        std::fprintf(stderr,
+                     "systemc-smoke: --fault-htif-drop-event, --fault-htif-wait and "
+                     "--fault-htif-event-on-fault require --htif-target host\n");
         return false;
     }
     return true;
@@ -530,7 +599,7 @@ const char* state_name(int32_t state) {
 }
 
 /// Escapes one transmitted byte sequence for a single summary line, so the smoke
-/// can compare the host UART's output exactly (device D7).
+/// can compare the host device targets' output exactly (device D7, htif D8).
 std::string escape_bytes(const std::string& bytes) {
     std::string out;
     for (const unsigned char byte : bytes) {
@@ -560,12 +629,14 @@ class MachineDriver : public sc_core::sc_module {
 public:
     MachineDriver(sc_core::sc_module_name name, Options options,
                   ruscv_sim::RuscvInitiator& initiator, ruscv_sim::RamTarget& ram,
-                  ruscv_sim::UartTarget* uart, std::thread::id creator_thread)
+                  ruscv_sim::UartTarget* uart, ruscv_sim::HtifTarget* htif,
+                  std::thread::id creator_thread)
         : sc_core::sc_module(name),
           options_(std::move(options)),
           initiator_(initiator),
           ram_(ram),
           uart_(uart),
+          htif_(htif),
           creator_thread_(creator_thread) {
         SC_THREAD(run);
     }
@@ -719,6 +790,17 @@ private:
             // copied at attach, so it may be a local here.
             const ruscv_device device = uart_->table();
             status = ruscv_machine_attach_device(machine, RUSCV_DEVICE_UART, &device);
+            if (status != RUSCV_OK) {
+                stop_with_failure("ruscv_machine_attach_device", status, machine);
+                return;
+            }
+        }
+        if (htif_ != nullptr) {
+            // htif D8: the host HTIF endpoint is attached through the same
+            // window-indexed table, with one table per window, after create and
+            // before the first load. A handle may carry both host targets.
+            const ruscv_device device = htif_->table();
+            status = ruscv_machine_attach_device(machine, RUSCV_DEVICE_HTIF, &device);
             if (status != RUSCV_OK) {
                 stop_with_failure("ruscv_machine_attach_device", status, machine);
                 return;
@@ -925,6 +1007,9 @@ private:
     /// device D9: the host UART target, or nullptr when the in-tree Rust device
     /// serves the window.
     ruscv_sim::UartTarget* uart_;
+    /// htif D8: the host HTIF target, or nullptr when the in-tree Rust endpoint
+    /// serves the window.
+    ruscv_sim::HtifTarget* htif_;
     std::thread::id creator_thread_;
     std::ofstream grant_trace_;
     bool terminal_ = false;
@@ -975,6 +1060,7 @@ int sc_main(int argc, char** argv) {
                     nb_path_name(options.nb_path), options.nb_latency_fs);
     }
     std::printf("systemc-smoke: uart target=%s\n", options.uart_host ? "host" : "in-tree");
+    std::printf("systemc-smoke: htif target=%s\n", options.htif_host ? "host" : "in-tree");
     std::fflush(stdout);
 
     ruscv_sim::RamTarget ram("ram",
@@ -995,8 +1081,13 @@ int sc_main(int argc, char** argv) {
     ruscv_sim::UartTarget uart(ruscv_sim::UartFaults{options.fault_uart_no_lsr,
                                                      options.fault_uart_wait,
                                                      options.fault_uart_event_on_fault});
+    // htif D8: the host HTIF target exists for the whole run, so its value and
+    // console sequences and its counts survive the handle's drain and destroy.
+    ruscv_sim::HtifTarget htif(ruscv_sim::HtifFaults{options.fault_htif_drop_event,
+                                                     options.fault_htif_wait,
+                                                     options.fault_htif_event_on_fault});
     MachineDriver driver("driver", options, initiator, ram, options.uart_host ? &uart : nullptr,
-                         std::this_thread::get_id());
+                         options.htif_host ? &htif : nullptr, std::this_thread::get_id());
     sc_core::sc_start();
 
     std::printf(
@@ -1011,6 +1102,12 @@ int sc_main(int argc, char** argv) {
         " writes=%" PRIu64 " transmitted=%" PRIu64 " bytes=\"%s\"\n",
         options.uart_host ? "host" : "in-tree", uart.b_transport_count(), uart.read_count(),
         uart.write_count(), uart.transmitted_count(), escape_bytes(uart.transmitted()).c_str());
+    std::printf(
+        "systemc-smoke: htif target=%s b_transport=%" PRIu64 " reads=%" PRIu64
+        " writes=%" PRIu64 " values=%" PRIu64 " received=%" PRIu64 " console=\"%s\"\n",
+        options.htif_host ? "host" : "in-tree", htif.b_transport_count(), htif.read_count(),
+        htif.write_count(), htif.value_count(), htif.receive_count(),
+        escape_bytes(htif.console()).c_str());
     std::printf(
         "systemc-smoke: AT late_phases=%" PRIu64 " retirements=%" PRIu64
         " drain_end_resp=%" PRIu64 " drain_end_resp_fs=%" PRIu64

@@ -56,6 +56,18 @@
 #      (`--fault-uart-no-lsr`, `--fault-uart-wait`,
 #      `--fault-uart-event-on-fault`) must each fail the run with their own
 #      assertion.
+#  16. run the HTIF U3 passes (htif D8): `htif_u3_console` under
+#      `--htif-target in-tree` and `--htif-target host` at the baseline,
+#      `--dmi`, `--nb` and `--quantum 1024` selections, where the in-tree pass
+#      reports zero host HTIF transactions and the host pass publishes the
+#      guest's three console words and exit word, renders exactly `Hi\n` and
+#      keeps the same grant and consumed facts as its in-tree parity run; a
+#      second host run must report the same facts; the two existing guests
+#      under `--htif-target host` must keep their facts with zero HTIF
+#      transactions; and the three HTIF fault options
+#      (`--fault-htif-drop-event`, `--fault-htif-wait`,
+#      `--fault-htif-event-on-fault`) must each fail the run with their own
+#      assertion.
 #
 # Linux x86-64 only. Prerequisites are the pinned SystemC installation, CMake,
 # a C++17 compiler and the RISC-V cross toolchain. A missing prerequisite is a
@@ -198,6 +210,26 @@ uart_field() {
 # channel, so it observes a transmitted byte without reading its counters.
 uart_console_sequence() {
     printf '%s\n' "$1" | sed -n 's/^uart-console: \(.*\)$/\1/p' | tr -d '\n'
+}
+
+# One field of the host HTIF target's summary line, or an empty string
+# (htif D8).
+htif_field() {
+    printf '%s\n' "$1" \
+        | awk -v key="$2" '/^systemc-smoke: htif / { for (i = 1; i <= NF; i++) { split($i, pair, "="); if (pair[1] == key) { print pair[2]; exit } } }'
+}
+
+# The accepted HTIF value sequence, one hexadecimal word per write, joined by
+# single spaces (htif D8).
+htif_value_sequence() {
+    printf '%s\n' "$1" \
+        | sed -n 's/^htif-value: \(0x[0-9a-f][0-9a-f]*\)$/\1/p' | tr '\n' ' ' | sed 's/ *$//'
+}
+
+# The byte sequence the host HTIF target rendered from the standard console
+# device, in its escaped form (htif D8).
+htif_console_sequence() {
+    printf '%s\n' "$1" | sed -n 's/^htif-console: \(.*\)$/\1/p' | tr -d '\n'
 }
 
 # The status the host's reset probe received while an AT transaction was still
@@ -1418,6 +1450,331 @@ check_usage_error "--fault-uart-event-on-fault without --uart-target host" \
     "require --uart-target host" --fault-uart-event-on-fault
 check_usage_error "a UART fault option with an in-tree selection" \
     "require --uart-target host" --uart-target in-tree --fault-uart-wait
+# htif D8: the HTIF target selection and its three fault options are usage
+# errors in the wrong mode.
+check_usage_error "--htif-target with an unknown value" "must be in-tree or host" \
+    --htif-target endpoint
+check_usage_error "--fault-htif-drop-event without --htif-target host" \
+    "require --htif-target host" --fault-htif-drop-event
+check_usage_error "--fault-htif-wait without --htif-target host" \
+    "require --htif-target host" --fault-htif-wait
+check_usage_error "--fault-htif-event-on-fault without --htif-target host" \
+    "require --htif-target host" --fault-htif-event-on-fault
+check_usage_error "an HTIF fault option with an in-tree selection" \
+    "require --htif-target host" --htif-target in-tree --fault-htif-wait
+
+# ---- HTIF U3: the SystemC HTIF target (htif D8) ----
+#
+# `htif_u3_console` is the contract's guest: it reads the endpoint, exits with
+# code 1 if the answer is not zero, writes three console bytes, writes the
+# standard syscall exit word for code 0 and self-loops. Its value sequence is
+# the three console words and the exit word; the console channel is the host
+# target's own rendering of the standard console device, so it observes the
+# guest's bytes without reading the counters. The profile is passed explicitly
+# so the comparison does not depend on the default.
+HTIF_GUEST=htif_u3_console
+HTIF_PROFILE=rv64imafdc
+HTIF_ELF="${ELF_DIR}/rv64i/${HTIF_GUEST}.elf"
+[ -f "${HTIF_ELF}" ] || fail "guest not found: ${HTIF_ELF}"
+# The guest renders exactly these three bytes.
+HTIF_CONSOLE='Hi\n'
+# device 1, command 1 and the three payload bytes, then the code-0 exit word.
+HTIF_CONSOLE_VALUES='0x0101000000000048 0x0101000000000069 0x010100000000000a'
+HTIF_EXIT_VALUE='0x0000000000000001'
+
+require_htif_pass() {
+    local label="$1"
+    local target="$2"
+    local log="$3"
+    shift 3
+    local pass_output
+    local pass_status
+    local fact
+    capture pass_output pass_status \
+        timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${HTIF_ELF}" --isa "${HTIF_PROFILE}" \
+        --max-turns "${MAX_CYCLES}" --log-commits "${log}" --htif-target "${target}" "$@"
+    [ "${pass_status}" -ne 124 ] || fail "${label}: the run timed out after ${RUN_TIMEOUT}s"
+    if [ "${pass_status}" -ne 0 ]; then
+        printf '%s\n' "${pass_output}"
+        fail "${label}: the run exited with status ${pass_status}"
+    fi
+    if ! printf '%s\n' "${pass_output}" | grep -q "^systemc-smoke: htif target=${target}$"; then
+        printf '%s\n' "${pass_output}"
+        fail "${label}: the run did not report its --htif-target ${target} selection"
+    fi
+    if ! printf '%s\n' "${pass_output}" | grep -q '^systemc-smoke: result state=exited '; then
+        printf '%s\n' "${pass_output}"
+        fail "${label}: the run did not report a terminal ruscv-sim result"
+    fi
+    LAST_EXIT="$(smoke_exit_code "${pass_output}")"
+    [ -n "${LAST_EXIT}" ] || fail "${label}: the run reported no exit code"
+    [ "${LAST_EXIT}" = "${HTIF_NATIVE_EXIT}" ] \
+        || fail "${label}: exit code ${LAST_EXIT} differs from native ${HTIF_NATIVE_EXIT}"
+    [ -s "${log}" ] || fail "${label}: the commit log is empty"
+    if ! cmp -s "${HTIF_NATIVE_LOG}" "${log}"; then
+        diff -u "${HTIF_NATIVE_LOG}" "${log}" | head -20 || true
+        fail "${label}: the commit log differs from native"
+    fi
+    LAST_GRANTS="$(smoke_grant_count "${pass_output}")"
+    LAST_CONSUMED="$(smoke_totals_field "${pass_output}" consumed_fs)"
+    LAST_TX="$(htif_field "${pass_output}" b_transport)"
+    LAST_READS="$(htif_field "${pass_output}" reads)"
+    LAST_WRITES="$(htif_field "${pass_output}" writes)"
+    LAST_VALUES="$(htif_field "${pass_output}" values)"
+    LAST_RECEIVED="$(htif_field "${pass_output}" received)"
+    LAST_CONSOLE="$(htif_field "${pass_output}" console)"
+    LAST_SEQUENCE="$(htif_value_sequence "${pass_output}")"
+    LAST_CONSOLE_LINES="$(htif_console_sequence "${pass_output}")"
+    for fact in "grants:${LAST_GRANTS}" "consumed:${LAST_CONSUMED}" \
+        "b_transport:${LAST_TX}" "reads:${LAST_READS}" "writes:${LAST_WRITES}" \
+        "values:${LAST_VALUES}" "received:${LAST_RECEIVED}" "console:${LAST_CONSOLE}"; do
+        [ -n "${fact#*:}" ] || fail "${label}: the run reported no ${fact%%:*} fact"
+    done
+    [ "${LAST_TX}" -eq $((LAST_READS + LAST_WRITES)) ] \
+        || fail "${label}: the host HTIF served ${LAST_TX} device transaction(s), not its ${LAST_READS} read(s) plus ${LAST_WRITES} write(s)"
+    # htif D3: the endpoint never receives a byte from the host.
+    [ "${LAST_RECEIVED}" -eq 0 ] \
+        || fail "${label}: the host HTIF target received ${LAST_RECEIVED} byte(s); the endpoint has no host-to-guest direction"
+    if [ "${target}" = "in-tree" ]; then
+        [ "${LAST_TX}" -eq 0 ] \
+            || fail "${label}: the in-tree selection reported ${LAST_TX} host HTIF transaction(s); it must report zero"
+        [ "${LAST_VALUES}" -eq 0 ] \
+            || fail "${label}: the in-tree selection published ${LAST_VALUES} host HTIF value(s); it must report zero"
+        [ "${LAST_CONSOLE}" = '""' ] \
+            || fail "${label}: the in-tree selection reported console byte(s) ${LAST_CONSOLE}; the in-tree endpoint renders none"
+        [ -z "${LAST_CONSOLE_LINES}" ] \
+            || fail "${label}: the in-tree selection rendered console byte(s) ${LAST_CONSOLE_LINES}; the in-tree endpoint renders none"
+    fi
+    LAST_OUTPUT="${pass_output}"
+}
+
+echo -e "${YELLOW}== ${HTIF_GUEST}: the native baseline (htif D8)${NC}"
+HTIF_NATIVE_LOG="${OUTDIR}/logs/${HTIF_GUEST}.native.log"
+capture htif_native_output htif_native_status \
+    timeout "${RUN_TIMEOUT}" "${RUSCV_BIN}" run "${HTIF_ELF}" --isa "${HTIF_PROFILE}" \
+    --max-cycles "${MAX_CYCLES}" --log-commits "${HTIF_NATIVE_LOG}"
+[ "${htif_native_status}" -ne 124 ] \
+    || fail "${HTIF_GUEST}: the native run timed out after ${RUN_TIMEOUT}s"
+HTIF_NATIVE_EXIT="$(cli_exit_code "${htif_native_output}")"
+if [ "${htif_native_status}" -ne 0 ] || [ -z "${HTIF_NATIVE_EXIT}" ]; then
+    printf '%s\n' "${htif_native_output}"
+    fail "${HTIF_GUEST}: the native run did not report an exit code"
+fi
+if ! printf '%s\n' "${htif_native_output}" | grep -q '^Status:     SUCCESS$'; then
+    printf '%s\n' "${htif_native_output}"
+    fail "${HTIF_GUEST}: the native run did not succeed"
+fi
+[ -s "${HTIF_NATIVE_LOG}" ] || fail "${HTIF_GUEST}: the native commit log is empty"
+echo "  native: exit status ${htif_native_status}, guest exit code ${HTIF_NATIVE_EXIT}"
+
+# `htif_u3_console` runs under both selections at the same options. The in-tree
+# pass keeps the Rust endpoint and reports zero host HTIF transactions; the host
+# pass serves the same window through the C ABI's device table and must publish
+# the guest's three console words and exit word, render exactly `Hi\n`, and keep
+# the matching in-tree pass's grant and consumed facts (htif D8).
+echo -e "${YELLOW}== ${HTIF_GUEST}: --htif-target in-tree and host (htif D8)${NC}"
+for variant in "baseline:" "dmi:--dmi" "nb:--nb" "quantum:--quantum ${FAULT_QUANTUM}"; do
+    name="${variant%%:*}"
+    flags="${variant#*:}"
+    variant_options=()
+    if [ -n "${flags}" ]; then
+        read -r -a variant_options <<<"${flags}"
+    fi
+    require_htif_pass "${HTIF_GUEST} --htif-target in-tree (${name})" in-tree \
+        "${OUTDIR}/logs/${HTIF_GUEST}.htif-in-tree.${name}.log" \
+        ${variant_options[@]+"${variant_options[@]}"}
+    in_tree_grants="${LAST_GRANTS}"
+    in_tree_consumed="${LAST_CONSUMED}"
+    require_htif_pass "${HTIF_GUEST} --htif-target host (${name})" host \
+        "${OUTDIR}/logs/${HTIF_GUEST}.htif-host.${name}.log" \
+        ${variant_options[@]+"${variant_options[@]}"}
+    [ "${LAST_TX}" -gt 0 ] \
+        || fail "${HTIF_GUEST}: the host (${name}) pass served no device transaction"
+    [ "${LAST_VALUES}" -eq 4 ] \
+        || fail "${HTIF_GUEST}: the host (${name}) pass published ${LAST_VALUES} value(s), not the guest's four"
+    [ "${LAST_SEQUENCE}" = "${HTIF_CONSOLE_VALUES} ${HTIF_EXIT_VALUE}" ] \
+        || fail "${HTIF_GUEST}: the host (${name}) pass published values ${LAST_SEQUENCE}, not the guest's three console words and exit word"
+    [ "${LAST_CONSOLE}" = "\"${HTIF_CONSOLE}\"" ] \
+        || fail "${HTIF_GUEST}: the host (${name}) pass rendered console byte(s) ${LAST_CONSOLE}, not exactly Hi\\n"
+    [ "${LAST_CONSOLE_LINES}" = "${HTIF_CONSOLE}" ] \
+        || fail "${HTIF_GUEST}: the host (${name}) pass rendered console byte(s) ${LAST_CONSOLE_LINES}, not exactly Hi\\n"
+    [ "${LAST_GRANTS}" = "${in_tree_grants}" ] \
+        || fail "${HTIF_GUEST}: the host (${name}) pass took ${LAST_GRANTS} grant(s), not the in-tree pass's ${in_tree_grants}"
+    [ "${LAST_CONSUMED}" = "${in_tree_consumed}" ] \
+        || fail "${HTIF_GUEST}: the host (${name}) pass consumed ${LAST_CONSUMED} fs, not the in-tree pass's ${in_tree_consumed} fs"
+    if [ "${name}" = "baseline" ]; then
+        HTIF_BASELINE_GRANTS="${LAST_GRANTS}"
+        HTIF_BASELINE_CONSUMED="${LAST_CONSUMED}"
+    fi
+    echo -e "  ${GREEN}[PASS]${NC} ${name}: host HTIF transactions ${LAST_TX} = ${LAST_READS} read(s) + ${LAST_WRITES} write(s), values ${LAST_VALUES}, console ${LAST_CONSOLE}"
+done
+
+# htif D8: a second host run reports the same values, console, grants and
+# consumed amount, so the sequence is the Hart's instruction sequence and not a
+# scheduling accident.
+require_htif_pass "${HTIF_GUEST} --htif-target host (repeat)" host \
+    "${OUTDIR}/logs/${HTIF_GUEST}.htif-host.repeat.log"
+[ "${LAST_SEQUENCE}" = "${HTIF_CONSOLE_VALUES} ${HTIF_EXIT_VALUE}" ] \
+    || fail "${HTIF_GUEST}: the repeated host pass published values ${LAST_SEQUENCE}, not the guest's three console words and exit word"
+[ "${LAST_CONSOLE}" = "\"${HTIF_CONSOLE}\"" ] \
+    || fail "${HTIF_GUEST}: the repeated host pass rendered console byte(s) ${LAST_CONSOLE}, not exactly Hi\\n"
+[ "${LAST_GRANTS}" = "${HTIF_BASELINE_GRANTS}" ] \
+    || fail "${HTIF_GUEST}: the repeated host pass took ${LAST_GRANTS} grant(s), not the first pass's ${HTIF_BASELINE_GRANTS}"
+[ "${LAST_CONSUMED}" = "${HTIF_BASELINE_CONSUMED}" ] \
+    || fail "${HTIF_GUEST}: the repeated host pass consumed ${LAST_CONSUMED} fs, not the first pass's ${HTIF_BASELINE_CONSUMED} fs"
+if ! cmp -s "${OUTDIR}/logs/${HTIF_GUEST}.htif-host.baseline.log" \
+    "${OUTDIR}/logs/${HTIF_GUEST}.htif-host.repeat.log"; then
+    fail "${HTIF_GUEST}: the repeated host pass's commit log differs from the first"
+fi
+echo -e "  ${GREEN}[PASS]${NC} a second host run reported identical values, console and facts"
+
+# The two existing guests under --htif-target host: neither touches the
+# endpoint, so both must reproduce their facts with zero HTIF transactions
+# (htif D8).
+echo -e "${YELLOW}== the existing guests under --htif-target host (htif D8)${NC}"
+for entry in "${GUESTS[@]}"; do
+    read -r guest profile directory <<<"${entry}"
+    elf="${ELF_DIR}/${directory}/${guest}.elf"
+    htif_host_log="${OUTDIR}/logs/${guest}.systemc.htif-host.log"
+    capture htif_host_output htif_host_status \
+        timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${elf}" --isa "${profile}" \
+        --max-turns "${MAX_CYCLES}" --log-commits "${htif_host_log}" --htif-target host
+    [ "${htif_host_status}" -ne 124 ] \
+        || fail "${guest}: the --htif-target host run timed out after ${RUN_TIMEOUT}s"
+    if [ "${htif_host_status}" -ne 0 ]; then
+        printf '%s\n' "${htif_host_output}"
+        fail "${guest}: the --htif-target host run exited with status ${htif_host_status}"
+    fi
+    if ! printf '%s\n' "${htif_host_output}" | grep -q '^systemc-smoke: result state=exited '; then
+        printf '%s\n' "${htif_host_output}"
+        fail "${guest}: the --htif-target host run did not report a terminal ruscv-sim result"
+    fi
+    htif_host_exit="$(smoke_exit_code "${htif_host_output}")"
+    [ "${htif_host_exit}" = "${NATIVE_EXITS[${guest}]}" ] \
+        || fail "${guest}: the --htif-target host exit code ${htif_host_exit} differs from native ${NATIVE_EXITS[${guest}]}"
+    if ! cmp -s "${OUTDIR}/logs/${guest}.native.log" "${htif_host_log}"; then
+        diff -u "${OUTDIR}/logs/${guest}.native.log" "${htif_host_log}" | head -20 || true
+        fail "${guest}: the --htif-target host commit log differs from native"
+    fi
+    htif_host_transactions="$(htif_field "${htif_host_output}" b_transport)"
+    [ -n "${htif_host_transactions}" ] \
+        || fail "${guest}: the --htif-target host run reported no HTIF transaction count"
+    [ "${htif_host_transactions}" -eq 0 ] \
+        || fail "${guest}: the --htif-target host run served ${htif_host_transactions} HTIF transaction(s) although the guest never touches the endpoint"
+    htif_host_values="$(htif_field "${htif_host_output}" values)"
+    [ -n "${htif_host_values}" ] \
+        || fail "${guest}: the --htif-target host run reported no HTIF value count"
+    [ "${htif_host_values}" -eq 0 ] \
+        || fail "${guest}: the --htif-target host run published ${htif_host_values} HTIF value(s) although the guest never touches the endpoint"
+    echo -e "  ${GREEN}[PASS]${NC} ${guest}: native exit code and commit log with zero HTIF transactions"
+done
+
+# htif §4: --fault-htif-drop-event answers the exit word's write with
+# RUSCV_TLM_OK and no event, while the three console writes keep their events.
+# No exit fact exists, so the guest's self-loop exhausts the turn bound and no
+# exit value reaches the sink.
+echo -e "${YELLOW}== --fault-htif-drop-event (must not pass)${NC}"
+capture drop_event_output drop_event_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${HTIF_ELF}" --isa "${HTIF_PROFILE}" \
+    --max-turns "${MAX_CYCLES}" --htif-target host --fault-htif-drop-event
+[ "${drop_event_status}" -ne 124 ] || fail "the --fault-htif-drop-event control timed out"
+if [ "${drop_event_status}" -eq 0 ]; then
+    printf '%s\n' "${drop_event_output}"
+    fail "the --fault-htif-drop-event control passed; a dropped exit event must exhaust the turn bound"
+fi
+if ! printf '%s\n' "${drop_event_output}" \
+    | grep -q "exceeded the ${MAX_CYCLES} turn limit"; then
+    printf '%s\n' "${drop_event_output}"
+    fail "the --fault-htif-drop-event control did not exhaust the turn limit"
+fi
+if printf '%s\n' "${drop_event_output}" | grep -q '^systemc-smoke: result state='; then
+    printf '%s\n' "${drop_event_output}"
+    fail "the --fault-htif-drop-event control reported a run result after the exhausted bound"
+fi
+drop_event_values="$(htif_field "${drop_event_output}" values)"
+[ -n "${drop_event_values}" ] \
+    || fail "the --fault-htif-drop-event control reported no HTIF value count"
+[ "${drop_event_values}" -eq 3 ] \
+    || fail "the --fault-htif-drop-event control published ${drop_event_values} value(s), not the three console values"
+drop_event_sequence="$(htif_value_sequence "${drop_event_output}")"
+[ "${drop_event_sequence}" = "${HTIF_CONSOLE_VALUES}" ] \
+    || fail "the --fault-htif-drop-event control published values ${drop_event_sequence}, not exactly the three console words"
+drop_event_console="$(htif_console_sequence "${drop_event_output}")"
+[ "${drop_event_console}" = "${HTIF_CONSOLE}" ] \
+    || fail "the --fault-htif-drop-event control rendered console byte(s) ${drop_event_console}, not exactly Hi\\n"
+echo -e "  ${GREEN}[PASS]${NC} the dropped exit event kept the console sequence and exhausted the turn limit (status ${drop_event_status})"
+
+# htif §4: --fault-htif-wait waits one Platform tick inside `b_transport` and
+# reports the interval as host elapsed time, which htif D9 forbids: host time may
+# not pass inside a device callback. The guest's own read is the first access, so
+# no value reaches the sink.
+echo -e "${YELLOW}== --fault-htif-wait (must not pass)${NC}"
+capture htif_wait_output htif_wait_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${HTIF_ELF}" --isa "${HTIF_PROFILE}" \
+    --max-turns "${MAX_CYCLES}" --htif-target host --fault-htif-wait
+[ "${htif_wait_status}" -ne 124 ] || fail "the --fault-htif-wait control timed out"
+if [ "${htif_wait_status}" -eq 0 ]; then
+    printf '%s\n' "${htif_wait_output}"
+    fail "the --fault-htif-wait control passed; host time inside a device callback must fail"
+fi
+if ! printf '%s\n' "${htif_wait_output}" | grep -q '^systemc-smoke: result state=failed '; then
+    printf '%s\n' "${htif_wait_output}"
+    fail "the --fault-htif-wait control did not report a failed run"
+fi
+if ! printf '%s\n' "${htif_wait_output}" \
+    | grep -q 'host elapsed time for .* on the HTIF window'; then
+    printf '%s\n' "${htif_wait_output}"
+    fail "the --fault-htif-wait control's diagnostic did not name host elapsed time on the HTIF window"
+fi
+if ! printf '%s\n' "${htif_wait_output}" \
+    | grep -q 'host time may not pass inside a device callback'; then
+    printf '%s\n' "${htif_wait_output}"
+    fail "the --fault-htif-wait control's diagnostic did not name the device callback rule"
+fi
+htif_wait_values="$(htif_field "${htif_wait_output}" values)"
+[ -n "${htif_wait_values}" ] \
+    || fail "the --fault-htif-wait control reported no HTIF value count"
+[ "${htif_wait_values}" -eq 0 ] \
+    || fail "the --fault-htif-wait control published ${htif_wait_values} value(s); no write runs after the failed first access"
+htif_wait_console="$(htif_console_sequence "${htif_wait_output}")"
+[ -z "${htif_wait_console}" ] \
+    || fail "the --fault-htif-wait control rendered console byte(s) ${htif_wait_console}"
+echo -e "  ${GREEN}[PASS]${NC} the device wait failed the run as a protocol failure (status ${htif_wait_status})"
+
+# htif §4: --fault-htif-event-on-fault reports the exit write's event with a
+# fault status, which htif D4 forbids: only an accepted access publishes an
+# event, so no exit value reaches the sink while the console writes stay
+# published.
+echo -e "${YELLOW}== --fault-htif-event-on-fault (must not pass)${NC}"
+capture htif_event_output htif_event_status \
+    timeout "${RUN_TIMEOUT}" "${SMOKE_BIN}" "${HTIF_ELF}" --isa "${HTIF_PROFILE}" \
+    --max-turns "${MAX_CYCLES}" --htif-target host --fault-htif-event-on-fault
+[ "${htif_event_status}" -ne 124 ] || fail "the --fault-htif-event-on-fault control timed out"
+if [ "${htif_event_status}" -eq 0 ]; then
+    printf '%s\n' "${htif_event_output}"
+    fail "the --fault-htif-event-on-fault control passed; an event on a fault status must fail"
+fi
+if ! printf '%s\n' "${htif_event_output}" | grep -q '^systemc-smoke: result state=failed '; then
+    printf '%s\n' "${htif_event_output}"
+    fail "the --fault-htif-event-on-fault control did not report a failed run"
+fi
+if ! printf '%s\n' "${htif_event_output}" \
+    | grep -q 'only an accepted access publishes an event'; then
+    printf '%s\n' "${htif_event_output}"
+    fail "the --fault-htif-event-on-fault control did not fail as a protocol failure of that access"
+fi
+htif_event_values="$(htif_field "${htif_event_output}" values)"
+[ -n "${htif_event_values}" ] \
+    || fail "the --fault-htif-event-on-fault control reported no HTIF value count"
+[ "${htif_event_values}" -eq 3 ] \
+    || fail "the --fault-htif-event-on-fault control published ${htif_event_values} value(s), not the three console values"
+htif_event_sequence="$(htif_value_sequence "${htif_event_output}")"
+[ "${htif_event_sequence}" = "${HTIF_CONSOLE_VALUES}" ] \
+    || fail "the --fault-htif-event-on-fault control published values ${htif_event_sequence}, not exactly the three console words"
+htif_event_console="$(htif_console_sequence "${htif_event_output}")"
+[ "${htif_event_console}" = "${HTIF_CONSOLE}" ] \
+    || fail "the --fault-htif-event-on-fault control rendered console byte(s) ${htif_event_console}, not exactly Hi\\n"
+echo -e "  ${GREEN}[PASS]${NC} the fault-status event failed the access and published no exit value (status ${htif_event_status})"
 
 printf '\n============================================\n'
 printf '  SystemC smoke summary\n'
@@ -1439,5 +1796,9 @@ printf '  UART target:          --uart-target in-tree|host, exactly Hello!\\n pe
 printf '                        host pass and zero host device transactions in-tree\n'
 printf '  UART fault controls:  --fault-uart-no-lsr, --fault-uart-wait and\n'
 printf '                        --fault-uart-event-on-fault, each refused\n'
+printf '  HTIF target:          --htif-target in-tree|host, the guest value and\n'
+printf '                        console sequences and the matching in-tree facts\n'
+printf '  HTIF fault controls:  --fault-htif-drop-event, --fault-htif-wait and\n'
+printf '                        --fault-htif-event-on-fault, each refused\n'
 printf '  Early sc_stop:        refused, as required\n\n'
 echo -e "${GREEN}[PASS]${NC} the pinned SystemC host matched native for every smoke guest"

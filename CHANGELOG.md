@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Host HTIF Service U3: SystemC 宿主 HTIF target 与 smoke（issue #241）**
+  - `integration/systemc/htif_target.{h,cpp}` 以普通回调对象实现 `ruscv_device` 的 HTIF 窗口
+    （htif D8）：一次已验证的 dword 访问就是一次 `b_transport` 调用，读应答零（htif D3），接受的写
+    回 `RUSCV_TLM_OK` 加上恰好一个 `RUSCV_DEVICE_EVENT_HTIF_WRITE`，其值就是 guest 的八个
+    小端字节；目标按顺序把每个接受值打印为一行 `htif-value: 0x...`，把标准 console 设备
+    （device 1、command 1、payload 字节）的字节渲染成一行 `htif-console: ...`，退出时报告
+    selection、事务／读／写／值／`receive` 计数与渲染出的 console 序列。`receive` 从不被调用
+    （计数为零），`transport_reset` 丢弃窗口寄存器状态
+  - `--htif-target in-tree|host`（默认 `in-tree`）选择端点目标，其他取值是用法错误；`host` 在
+    `ruscv_machine_create` 之后、首次 `ruscv_machine_load_elf` 之前用同一窗口索引表 attach
+    `RUSCV_DEVICE_HTIF`，可与宿主 UART target 同时存在。三个故障选项各要求 `--htif-target host`，
+    in-tree 或缺失时是用法错误：`--fault-htif-drop-event` 只丢掉退出字写的 event（三个 console
+    event 仍发布，运行走到 turn bound）、`--fault-htif-wait` 在回调里等一个 Platform tick 并上报
+    host elapsed（以 host-elapsed 诊断失败）、`--fault-htif-event-on-fault` 用
+    `RUSCV_TLM_ADDRESS_ERROR` 上报退出写的 event（该次访问的协议失败，退出值不发布）
+  - `tests/bare-metal-riscv-test/rv64i/htif_u3_console.S` 读取端点、非零则以退出码 1 退出，随后写
+    三个 console 字节、标准 syscall 退出字（code 0）并 `j .` 自旋；它加入 guest suite 的 native
+    与 TLM 两趟以及 `PARITY_GUESTS`，因此三份 commit log 必须逐字节一致
+  - `scripts/test_systemc_smoke.sh` 新增 HTIF 段：in-tree 与 host 在 baseline、`--dmi`、`--nb`、
+    `--quantum 1024` 下各跑一趟，host 趟要求 native 退出码、逐字节相同的 commit log、非零 HTIF
+    事务、guest 的三个 console 值与退出值序列、`Hi\n` console 序列、与 in-tree parity 趟相同的
+    grant／consumed 事实，第二次 host 趟事实相同；in-tree 趟的宿主 HTIF 事务为零；既有两个 guest
+    在 `--htif-target host` 下保持原事实且 HTIF 事务为零；三个故障选项各带自己的断言
+  - `integration/systemc/README.md` 与 CHANGELOG 记录该选项、目标与故障选项；本单元不改 C ABI
+    与 U1 Rust 语义，也不做 U4 的文档收尾（#242）
+
 - **Host HTIF Service U2: C ABI HTIF 窗口（issue #240）**
   - 头文件按 append-only 规则追加 `RUSCV_DEVICE_HTIF` 1（htif D7）：`RUSCV_DEVICE_UART` 0 与所有既有值
     不动，也不新增事件 tag（`RUSCV_DEVICE_EVENT_HTIF_WRITE` 2 已存在）。`ruscv_device` 与
