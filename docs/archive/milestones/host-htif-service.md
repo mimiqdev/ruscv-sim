@@ -2,7 +2,7 @@
 
 **Status:** Historical. Completed 2026-11-08 at PR #246; the [Device Delay Annotation contract](../../dev-plan.md) succeeds it as the sole Current contract on the actual rotation merge.
 
-**Authority:** Preserved approved contract, not an active plan or an execution report. CI and PR history retain check and review outcomes.
+**Authority:** Preserved approved contract, not an active plan or an execution report. CI and PR history retain check and review outcomes. The preserved body differs from the activated contract only in relocated reference links and one escaped table delimiter (`\|`) in the D8 row, which keeps that row a single cell.
 
 **Original approval:** 2026-11-08. After the devices contract completed, the owner selected host HTIF service, the first retained direction of the devices contract §5 ("host HTIF service through the same window-indexed table"), and the maintaining agent selected the D1–D10 scope under the owner's delegation of full planning authority. Activated by PR #237 (`8a9e350`). The [proposal entry](../../proposals/post-devices-host-htif.md) is informational.
 
