@@ -17,6 +17,9 @@ Archived files are not active plans. Consult the [sole current contract](../../d
 
 ## Records
 
+- [TLM-Modeled Devices: Entire approved contract](tlm-modeled-devices.md)
+  - Preserves D1–D10 approved under delegated planning authority, with the scope, known limitations and source identifiers. Implementation is PR #232 through PR #236, completed 2026-11-08 at merge head `47f9d34`; issue #207 stays open outside the contract. No execution results are copied here.
+
 - [Non-blocking TLM Transport: Entire approved contract](non-blocking-tlm-transport.md)
   - Preserves D1–D11 approved under delegated planning authority, with the scope, known limitations and source identifiers. Implementation is PR #221 through PR #225, completed 2026-11-07 at merge head `f0120f2`; issue #207 stays open outside the contract. No execution results are copied here.
 

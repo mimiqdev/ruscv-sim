@@ -33,7 +33,7 @@ Target architecture is not implementation status. Component presence is not end-
 
 ## Current contract and proposal history
 
-- [Host HTIF Service contract](dev-plan.md) — D1–D9 approved 2026-11-08 under the owner's delegated planning authority, sole Current on this rotation merge. Serves the HTIF endpoint through the same window-indexed device table as the UART, with the in-tree endpoint as the default target and a host-served endpoint through the C ABI, planned for Rust, the C ABI and the SystemC smoke. Activation is not an implementation claim.
+- [Host HTIF Service contract](dev-plan.md) — D1–D9 approved 2026-11-08 under the owner's delegated planning authority, sole Current on this rotation merge. Plans to serve the HTIF endpoint through the same window-indexed device table as the UART, with the in-tree endpoint as the default target and a host-served endpoint through the C ABI, planned for Rust, the C ABI and the SystemC smoke. Activation is not an implementation claim.
 - [Approved host HTIF service proposal entry](proposals/post-devices-host-htif.md) — informational pointer to the sole normative contract.
 - [Archived TLM-Modeled Devices contract](archive/milestones/tlm-modeled-devices.md) — entire contract, completed 2026-11-08 at PR #236.
 - [Historical TLM-modeled devices proposal entry](proposals/post-nb-tlm-devices.md) — informational pointer to the archived contract.

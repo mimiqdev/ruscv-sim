@@ -1,6 +1,6 @@
 # Non-blocking TLM Transport contract
 
-**Status:** Historical. Completed 2026-11-07 at PR #225; the [TLM-Modeled Devices contract](../../dev-plan.md) succeeds it as the sole Current contract on the actual rotation merge.
+**Status:** Historical. Completed 2026-11-07 at PR #225; the [TLM-Modeled Devices contract](tlm-modeled-devices.md) succeeded it, completed 2026-11-08 at PR #236.
 
 **Authority:** Preserved approved contract, not an active plan or an execution report. CI and PR history retain check and review outcomes.
 
