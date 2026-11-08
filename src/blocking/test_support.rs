@@ -944,8 +944,6 @@ pub(crate) enum HostUartFault {
     WrongWindowEvent,
     /// Complete and change the payload's start address.
     ChangedPayload,
-    /// Complete and annotate this response delay in exact femtoseconds.
-    Delay(u64),
     /// Complete and report this host elapsed time in exact femtoseconds.
     Elapsed(u64),
     /// Complete and set the direct-memory hint.
@@ -984,6 +982,8 @@ pub(crate) struct HostUart {
     reset_panic: AtomicBool,
     /// `LSR`'s answer, so a guest can be made to proceed or to spin.
     lsr: AtomicU64,
+    /// The delay every response of this target annotates (delay D4).
+    delay: AtomicU64,
     fault: Mutex<HostUartFault>,
     log: Mutex<Vec<Call>>,
 }
@@ -1005,6 +1005,7 @@ impl HostUart {
             reset_ack: AtomicBool::new(true),
             reset_panic: AtomicBool::new(false),
             lsr: AtomicU64::new(u64::from(lsr_bits::THRE | lsr_bits::TEMT)),
+            delay: AtomicU64::new(0),
             fault: Mutex::new(HostUartFault::None),
             log: Mutex::new(Vec::new()),
         })
@@ -1013,6 +1014,14 @@ impl HostUart {
     /// Sets the misbehaviour the next responses add.
     pub(crate) fn set_fault(&self, fault: HostUartFault) {
         *self.fault.lock().unwrap() = fault;
+    }
+
+    /// Annotates this delay on every response (delay D4).
+    ///
+    /// It is applied beside the scripted misbehaviour, not instead of it, so
+    /// one fixture proves the delay rule and a fault rule of the same access.
+    pub(crate) fn set_delay(&self, femtoseconds: u64) {
+        self.delay.store(femtoseconds, Ordering::SeqCst);
     }
 
     /// Sets `LSR`'s answer.
@@ -1103,6 +1112,10 @@ impl BlockingDeviceTarget for HostUart {
             may_suspend: transaction.may_suspend(),
             atomic: transaction.atomic_extension().is_some(),
         });
+        let delay = self.delay.load(Ordering::SeqCst);
+        if delay != 0 {
+            transaction.set_response_delay(Femtoseconds::new(delay));
+        }
         let offset = transaction.address().wrapping_sub(self.base);
         let event = match transaction.command() {
             BlockingCommand::Read => {
@@ -1153,10 +1166,6 @@ impl BlockingDeviceTarget for HostUart {
             HostUartFault::ChangedPayload => {
                 report(transaction);
                 transaction.set_address(transaction.address().wrapping_add(1));
-            }
-            HostUartFault::Delay(femtoseconds) => {
-                report(transaction);
-                transaction.set_response_delay(Femtoseconds::new(femtoseconds));
             }
             HostUartFault::Elapsed(femtoseconds) => {
                 report(transaction);
@@ -1236,8 +1245,6 @@ pub(crate) enum HostHtifFault {
     ChangedCommand,
     /// Complete and change the request's data length.
     ChangedLength,
-    /// Complete and annotate this response delay in exact femtoseconds.
-    Delay(u64),
     /// Complete and report this host elapsed time in exact femtoseconds.
     Elapsed(u64),
     /// Complete and set the direct-memory hint.
@@ -1278,6 +1285,8 @@ pub(crate) struct HostHtif {
     reset_ack: AtomicBool,
     /// True while `transport_reset` panics instead of answering.
     reset_panic: AtomicBool,
+    /// The delay every response of this target annotates (delay D4).
+    delay: AtomicU64,
     fault: Mutex<HostHtifFault>,
     log: Mutex<Vec<Call>>,
 }
@@ -1297,6 +1306,7 @@ impl HostHtif {
             receives: AtomicUsize::new(0),
             reset_ack: AtomicBool::new(true),
             reset_panic: AtomicBool::new(false),
+            delay: AtomicU64::new(0),
             fault: Mutex::new(HostHtifFault::None),
             log: Mutex::new(Vec::new()),
         })
@@ -1305,6 +1315,11 @@ impl HostHtif {
     /// Sets the misbehaviour the next responses add.
     pub(crate) fn set_fault(&self, fault: HostHtifFault) {
         *self.fault.lock().unwrap() = fault;
+    }
+
+    /// Annotates this delay on every response (delay D4).
+    pub(crate) fn set_delay(&self, femtoseconds: u64) {
+        self.delay.store(femtoseconds, Ordering::SeqCst);
     }
 
     /// Sets the value a read answers.
@@ -1361,6 +1376,10 @@ impl BlockingDeviceTarget for HostHtif {
             may_suspend: transaction.may_suspend(),
             atomic: transaction.atomic_extension().is_some(),
         });
+        let delay = self.delay.load(Ordering::SeqCst);
+        if delay != 0 {
+            transaction.set_response_delay(Femtoseconds::new(delay));
+        }
         // One endpoint access is the plain read or the plain write; the atomic
         // envelope never reaches a target.
         let event = match transaction.command() {
@@ -1426,10 +1445,6 @@ impl BlockingDeviceTarget for HostHtif {
             HostHtifFault::ChangedLength => {
                 report(transaction, event);
                 transaction.set_data_length(transaction.data_length() - 1);
-            }
-            HostHtifFault::Delay(femtoseconds) => {
-                report(transaction, event);
-                transaction.set_response_delay(Femtoseconds::new(femtoseconds));
             }
             HostHtifFault::Elapsed(femtoseconds) => {
                 report(transaction, event);

@@ -1,0 +1,11 @@
+--- a/src/executor.rs
++++ b/src/executor.rs
+@@ -646,8 +646,6 @@
+             event,
+             delay,
+         } = outcome;
+-        self.ram
+-            .charge_device_delay(address, delay, initiator == BlockingInitiator::Hart)?;
+         match event {
+             Some(BlockingDeviceEvent::UartTransmit(byte)) => self.publish_uart(byte),
+             Some(BlockingDeviceEvent::HtifWrite(value)) => self.publish_htif_write(value),

@@ -282,8 +282,9 @@ pub struct BoundaryFacts {
     /// Total consumed blocking-transport delay in exact femtoseconds.
     ///
     /// This is the guest-turn delay converted and charged to Platform time so
-    /// far under ADR-0004 §5.3.  It is zero on the native route and for a
-    /// zero-delay target, and excludes SBA/Debug Mode delay, which is
+    /// far under ADR-0004 §5.3, including a Hart device access's charged
+    /// annotation (delay D4).  It is zero on the native route and for a run
+    /// that annotates no delay, and excludes SBA/Debug Mode delay, which is
     /// validated but not charged.
     pub transport_delay_femtoseconds: u64,
     /// Total host elapsed time the counted transactions reported, in exact

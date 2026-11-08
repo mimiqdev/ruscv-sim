@@ -1,13 +1,13 @@
 --- a/src/blocking/device.rs
 +++ b/src/blocking/device.rs
-@@ -341,17 +341,6 @@
+@@ -428,17 +428,6 @@
                  width,
              )));
          }
--        if !transaction.response_delay().is_zero() {
+-        if initiator != BlockingInitiator::Hart && !transaction.response_delay().is_zero() {
 -            return Err(PhysicalBackendError::protocol(format!(
 -                "device target annotated {} fs of delay for {} {:?} at {:#018x} on the {} window; \
--                 a device transaction reports zero delay",
+-                 a DebugInbound device transaction reports zero delay",
 -                transaction.response_delay().as_u64(),
 -                command_label(command),
 -                descriptor.category,

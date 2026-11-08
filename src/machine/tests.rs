@@ -2709,8 +2709,22 @@ fn host_uart_machine(
     quantum: u64,
     code: &[u32],
 ) -> (OwnedMachine, Arc<Mutex<Vec<u8>>>) {
+    host_uart_machine_with_ram(Arc::new(ZeroDelayRam::new()), target, quantum, code)
+}
+
+/// The same host UART Machine over an explicit guest-RAM target (delay D3).
+///
+/// The device-delay rows need a RAM target that declares at least the charged
+/// tick: their `ZeroDelayRam` declares zero, so its charge would be an
+/// overshoot instead of a charge.
+fn host_uart_machine_with_ram(
+    ram: Arc<dyn BlockingTarget>,
+    target: &Arc<HostUart>,
+    quantum: u64,
+    code: &[u32],
+) -> (OwnedMachine, Arc<Mutex<Vec<u8>>>) {
     let mut config = MachineConfig::new(PlatformKind::Native);
-    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.transport = Transport::tlm(ram);
     config.devices = DeviceTargets::with_uart(target.clone());
     config.quantum = quantum;
     let output = Arc::new(Mutex::new(Vec::new()));
@@ -2955,33 +2969,626 @@ fn host_uart_quantum_parity(code: &[u32]) -> u64 {
     mtime
 }
 
-/// device D2/D4: any delay annotation is a protocol failure of the access, and
-/// the access adds no Platform time beyond the F1 flush the same device access
-/// performs today.
-#[test]
-fn a_host_uart_that_annotates_a_delay_is_a_protocol_failure_without_charge() {
-    let code = host_uart_quantum_parity_guest();
-    let parity = host_uart_quantum_parity(&code);
-    assert_eq!(parity, 4, "the in-tree parity run did not reach four ticks");
+/// One Platform tick in exact femtoseconds, the declared default period.
+const ONE_TICK_FS: u64 = 1_000_000;
 
-    let target = HostUart::new(HOST_UART_BASE);
-    target.set_fault(HostUartFault::Delay(1_000_000)); // one tick
-    let (mut owned, output) = host_uart_machine(&target, 1024, &code);
-    let (_, failure) = run_host_uart(&mut owned, &output, code.len());
-    let failure = failure.expect("a device delay annotation did not fail the access");
+/// The guest-RAM target every device-delay row uses (delay D3).
+///
+/// It declares one Platform tick per transaction and annotates none, so a host
+/// device target's one-tick annotation is admitted by the same declared maximum
+/// a guest-RAM response faces, and `18 x maximum` still bounds the turn.
+fn device_delay_ram() -> Arc<dyn BlockingTarget> {
+    delay_target(ONE_TICK_FS, 0)
+}
+
+/// The in-tree device run's per-turn `mtime` and final `(minstret, mcycle)`
+/// over `code` turns, with the same declaring RAM and quantum as the host run
+/// it is compared with.
+fn in_tree_run(ram: Arc<dyn BlockingTarget>, quantum: u64, code: &[u32]) -> (Vec<u64>, (u64, u64)) {
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(ram);
+    config.quantum = quantum;
+    let mut owned = OwnedMachine::new(config, code_image(code)).unwrap();
+    let mut times = Vec::new();
+    for _ in 0..code.len() {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the in-tree device parity guest failed: {:?}",
+            turn.hart().outcome
+        );
+        times.push(owned.platform_mtime().unwrap());
+    }
+    (times, guest_counters_now(&owned))
+}
+
+/// One turn's `(mtime, transport delay so far, events)` for a charged device
+/// run.
+type DeviceDelayRecord = (u64, u64, Vec<PlatformEvent>);
+
+/// Runs up to `turns` turns, recording each boundary's committed time, the
+/// generation's charged transport delay and the turn's events.
+fn run_device_delay(
+    owned: &mut OwnedMachine,
+    turns: usize,
+) -> (
+    Vec<DeviceDelayRecord>,
+    Option<crate::core::SimulatorFailure>,
+) {
+    let mut records = Vec::new();
+    let mut failure = None;
+    for _ in 0..turns {
+        let Ok(turn) = owned.step_request(false, false, false) else {
+            break;
+        };
+        records.push((
+            owned.platform_mtime().unwrap(),
+            turn.boundary().transport_delay_femtoseconds,
+            turn.events().to_vec(),
+        ));
+        if let StepOutcome::SimulatorFailure(reason) = &turn.hart().outcome {
+            failure = Some(reason.clone());
+            break;
+        }
+    }
+    (records, failure)
+}
+
+/// delay D4/D5: a host UART access that annotates one tick is charged exactly
+/// once, by the turn that carries it, into `mtime` and the generation's
+/// transport total, and its event, parity time, retired instructions and
+/// `mcycle` are otherwise the in-tree run's.
+#[test]
+fn a_host_uart_that_annotates_a_delay_charges_it_once() {
+    let code = host_uart_quantum_parity_guest();
+    let (parity_times, parity_counters) = in_tree_run(device_delay_ram(), 1024, &code);
+    assert_eq!(
+        parity_times.last().copied(),
+        Some(4),
+        "the in-tree parity run did not reach four ticks"
+    );
+
+    // delay D2: a host target that annotates zero leaves every fact of its
+    // parity run unchanged, including the transport total.
+    let zero = HostUart::new(HOST_UART_BASE);
+    let (mut owned, zero_output) =
+        host_uart_machine_with_ram(device_delay_ram(), &zero, 1024, &code);
+    let (records, failure) = run_device_delay(&mut owned, code.len());
     assert!(
-        failure.message.contains("fs of delay"),
-        "the access was not refused for its delay annotation: {}",
+        failure.is_none(),
+        "the zero-delay host UART guest failed: {failure:?}"
+    );
+    assert_eq!(
+        records.iter().map(|record| record.0).collect::<Vec<_>>(),
+        parity_times,
+        "a host target that annotates zero changed the parity mtime"
+    );
+    assert!(
+        records.iter().all(|record| record.1 == 0),
+        "a host target that annotates zero charged Platform delay"
+    );
+    let zero_events: Vec<PlatformEvent> =
+        records.iter().flat_map(|record| record.2.clone()).collect();
+    assert_eq!(
+        zero_events,
+        [PlatformEvent::UartTransmit(b'H')],
+        "a host target that annotates zero changed the published events"
+    );
+    assert_eq!(
+        *zero_output.lock().unwrap(),
+        b"H".to_vec(),
+        "a host target that annotates zero changed config.uart_output"
+    );
+    assert_eq!(
+        owned.transport_delay_femtoseconds(),
+        0,
+        "a host target that annotates zero entered the transport total"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        parity_counters,
+        "a host target that annotates zero changed the guest counters"
+    );
+
+    // One annotated tick: the F1 flush still commits the three accrued ticks
+    // first, then the charge joins the same turn's advance.
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_delay(ONE_TICK_FS);
+    let (mut owned, output) = host_uart_machine_with_ram(device_delay_ram(), &target, 1024, &code);
+    let (records, failure) = run_device_delay(&mut owned, code.len());
+    assert!(
+        failure.is_none(),
+        "the host UART delay guest failed: {failure:?}"
+    );
+    let events: Vec<PlatformEvent> = records.iter().flat_map(|record| record.2.clone()).collect();
+    assert_eq!(
+        events,
+        [PlatformEvent::UartTransmit(b'H')],
+        "the charged access did not publish exactly its one event"
+    );
+    assert_eq!(
+        *output.lock().unwrap(),
+        b"H".to_vec(),
+        "the charged access did not call config.uart_output exactly once"
+    );
+    let mut expected = parity_times.clone();
+    *expected.last_mut().expect("the parity run had no turns") += 1;
+    assert_eq!(
+        records.iter().map(|record| record.0).collect::<Vec<_>>(),
+        expected,
+        "the device delay did not add exactly one tick to platform_mtime at the access's turn"
+    );
+    assert_eq!(
+        records.last().map(|record| record.1),
+        Some(ONE_TICK_FS),
+        "the device delay did not reach BoundaryFacts.transport_delay_femtoseconds exactly once"
+    );
+    assert_eq!(
+        owned.transport_delay_femtoseconds(),
+        ONE_TICK_FS,
+        "the device delay was charged more than once in the generation total"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        parity_counters,
+        "the device delay charged mcycle or minstret"
+    );
+    assert_eq!(
+        target.transactions(),
+        1,
+        "the guest's LSR read was served by the target too"
+    );
+}
+
+/// delay D4: a terminal status is charged exactly once, so a guest-visible
+/// fault consumes the annotation and publishes nothing while `GenericError`
+/// fails the run as a host failure after the same charge.
+#[test]
+fn a_device_delay_on_a_terminal_status_is_charged_once() {
+    let code = host_uart_quantum_parity_guest();
+    let (parity_times, _) = in_tree_run(device_delay_ram(), 1024, &code);
+    let parity = parity_times
+        .last()
+        .copied()
+        .expect("the parity run had no turns");
+
+    // A guest-visible target fault: the store traps, no event is published, and
+    // the faulted turn still consumes its one charge plus the turn tick.
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_fault(HostUartFault::Status(BlockingResponseStatus::AddressError));
+    target.set_delay(ONE_TICK_FS);
+    let (mut owned, output) = host_uart_machine_with_ram(device_delay_ram(), &target, 1024, &code);
+    let mut trapped = false;
+    let mut failure = None;
+    let mut mtime = 0;
+    let mut transport = 0;
+    for _ in 0..code.len() {
+        let Ok(turn) = owned.step_request(false, false, false) else {
+            break;
+        };
+        mtime = owned.platform_mtime().unwrap();
+        transport = turn.boundary().transport_delay_femtoseconds;
+        if matches!(turn.hart().outcome, StepOutcome::TrapEntered(_)) {
+            trapped = true;
+        }
+        if let StepOutcome::SimulatorFailure(reason) = &turn.hart().outcome {
+            failure = Some(reason.clone());
+            break;
+        }
+    }
+    assert!(
+        failure.is_none(),
+        "a guest-visible device fault became a simulator failure: {failure:?}"
+    );
+    assert!(
+        trapped,
+        "a faulted device access did not reach the guest as a trap"
+    );
+    assert!(
+        output.lock().unwrap().is_empty(),
+        "a faulted device access still called config.uart_output"
+    );
+    assert_eq!(
+        mtime,
+        parity + 1,
+        "the faulted turn did not consume its charge beside its turn tick"
+    );
+    assert_eq!(
+        transport, ONE_TICK_FS,
+        "the faulted access did not charge its annotation exactly once"
+    );
+    assert_eq!(
+        owned.transport_delay_femtoseconds(),
+        ONE_TICK_FS,
+        "the faulted access was charged more than once"
+    );
+
+    // A generic error is a host failure, not a guest trap, and it still charges
+    // the annotation once: the failed turn consumes its delay and no turn tick.
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_fault(HostUartFault::Status(BlockingResponseStatus::GenericError));
+    target.set_delay(ONE_TICK_FS);
+    let (mut owned, output) = host_uart_machine_with_ram(device_delay_ram(), &target, 1024, &code);
+    let (records, failure) = run_device_delay(&mut owned, code.len());
+    let failure = failure.expect("a generic device error did not fail the run");
+    assert!(
+        failure.message.contains("TLM_GENERIC_ERROR_RESPONSE"),
+        "the generic device error lost its diagnostic: {}",
         failure.message
     );
     assert!(
         output.lock().unwrap().is_empty(),
-        "a refused access still called config.uart_output"
+        "a generic device error still called config.uart_output"
     );
     assert_eq!(
         owned.platform_mtime().unwrap(),
-        parity - 1,
-        "the delay annotation charged Platform time beyond the F1 flush"
+        parity,
+        "the failed turn did not consume its one charge and no turn tick"
+    );
+    assert_eq!(
+        records.last().map(|record| record.1),
+        Some(ONE_TICK_FS),
+        "the generic-error access did not charge its annotation exactly once"
+    );
+}
+
+/// delay D4: an `Incomplete` response and an unknown completion charge nothing,
+/// whatever delay they annotate, and neither publishes an event.
+#[test]
+fn a_device_delay_on_a_non_terminal_status_charges_nothing() {
+    let code = host_uart_quantum_parity_guest();
+    let (parity_times, _) = in_tree_run(device_delay_ram(), 1024, &code);
+    let parity = parity_times
+        .last()
+        .copied()
+        .expect("the parity run had no turns");
+
+    for (fault, reason) in [
+        (HostUartFault::Unknown, "could not establish the outcome"),
+        (
+            HostUartFault::Status(BlockingResponseStatus::Incomplete),
+            "TLM_INCOMPLETE_RESPONSE",
+        ),
+    ] {
+        let target = HostUart::new(HOST_UART_BASE);
+        target.set_fault(fault);
+        target.set_delay(ONE_TICK_FS);
+        let (mut owned, output) =
+            host_uart_machine_with_ram(device_delay_ram(), &target, 1024, &code);
+        let (_, failure) = run_device_delay(&mut owned, code.len());
+        assert!(
+            output.lock().unwrap().is_empty(),
+            "{fault:?}: a non-terminal response still called config.uart_output"
+        );
+        let failure = failure.unwrap_or_else(|| panic!("{fault:?}: the response was accepted"));
+        assert!(
+            failure.message.contains(reason),
+            "{fault:?}: the access was not classified by its own rule: {}",
+            failure.message
+        );
+        assert_eq!(
+            owned.platform_mtime().unwrap(),
+            parity - 1,
+            "{fault:?}: a non-terminal response charged its annotation"
+        );
+        assert_eq!(
+            owned.transport_delay_femtoseconds(),
+            0,
+            "{fault:?}: a non-terminal response entered the transport total"
+        );
+    }
+}
+
+/// delay D3/D4: a delay above the declared per-transaction maximum is today's
+/// overshoot host failure.  The charge accumulates before the limit is
+/// classified, so the failed turn keeps the known amount, and no event is
+/// published.
+#[test]
+fn an_above_maximum_device_delay_fails_without_publishing_and_keeps_the_charge() {
+    let code = host_uart_quantum_parity_guest();
+    let (parity_times, _) = in_tree_run(device_delay_ram(), 1024, &code);
+    let parity = parity_times
+        .last()
+        .copied()
+        .expect("the parity run had no turns");
+
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_delay(2 * ONE_TICK_FS);
+    let (mut owned, output) = host_uart_machine_with_ram(device_delay_ram(), &target, 1024, &code);
+    let (records, failure) = run_device_delay(&mut owned, code.len());
+    let failure = failure.expect("an above-maximum device delay was admitted");
+    assert!(
+        failure.message.contains("overshoot")
+            && failure.message.contains("declared per-transaction maximum"),
+        "the above-maximum delay did not fail as the overshoot host failure: {}",
+        failure.message
+    );
+    assert!(
+        output.lock().unwrap().is_empty(),
+        "an overshooting device access still published its event"
+    );
+    assert_eq!(
+        target.transmitted(),
+        b"H".to_vec(),
+        "the target never applied the byte whose delay overshot"
+    );
+    // The F1 flush commits the three accrued ticks; the failed turn then
+    // consumes the two known delay ticks and no turn tick.
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        parity - 1 + 2,
+        "the failed turn did not keep the charge the adapter accepted"
+    );
+    assert_eq!(
+        records.last().map(|record| record.1),
+        Some(2 * ONE_TICK_FS),
+        "the known above-maximum delay did not reach the boundary fact"
+    );
+}
+
+/// delay D2: the in-tree UART and HTIF targets stay the zero-delay reference, so
+/// a TLM run over them reports no transport delay and keeps the native route's
+/// `mtime` and events.
+#[test]
+fn an_in_tree_device_run_charges_no_delay_and_keeps_its_parity_mtime() {
+    let code = device_guest();
+    let native = device_route(false, &code);
+
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(device_delay_ram());
+    let transmitted = Arc::new(Mutex::new(Vec::new()));
+    let sink = transmitted.clone();
+    config.uart_output = Some(Arc::new(move |byte| sink.lock().unwrap().push(byte)));
+    let values = Arc::new(Mutex::new(Vec::new()));
+    let target = values.clone();
+    config.htif_write = Some(Arc::new(move |value| target.lock().unwrap().push(value)));
+    let mut owned = OwnedMachine::new(config, code_image(&code)).unwrap();
+
+    let mut records = Vec::new();
+    for _ in 0..code.len() {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the in-tree device run failed: {:?}",
+            turn.hart().outcome
+        );
+        assert_eq!(
+            turn.boundary().transport_delay_femtoseconds,
+            0,
+            "an in-tree device access charged Platform delay"
+        );
+        records.push((
+            owned.platform_mtime().unwrap(),
+            turn.events().to_vec(),
+            transmitted.lock().unwrap().clone(),
+            values.lock().unwrap().clone(),
+        ));
+    }
+    assert_eq!(
+        owned.transport_delay_femtoseconds(),
+        0,
+        "an in-tree device run entered the transport total"
+    );
+    assert_eq!(
+        records, native,
+        "the in-tree TLM device run diverged from the native route in mtime, events or callbacks"
+    );
+}
+
+/// delay D1/D4: both device windows may annotate in one run, and every Hart
+/// device access is charged once through the same ledger.  No project-authored
+/// guest reaches both windows, so this composition is the in-crate proof D8
+/// names for it; the event sequence and the parity counters stay the in-tree
+/// run's.
+#[test]
+fn a_run_with_both_host_windows_charges_each_device_access_once() {
+    let code = host_device_guest();
+    let (parity_times, parity_counters) = in_tree_run(device_delay_ram(), 0, &code);
+    let native = device_route(false, &code);
+
+    let uart = HostUart::new(HOST_UART_BASE);
+    uart.set_delay(ONE_TICK_FS);
+    let htif = HostHtif::new(HOST_HTIF_BASE);
+    htif.set_delay(ONE_TICK_FS);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(device_delay_ram());
+    config.devices = DeviceTargets::with_uart_and_htif(uart.clone(), htif.clone());
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let sink = output.clone();
+    config.uart_output = Some(Arc::new(move |byte| sink.lock().unwrap().push(byte)));
+    let values = Arc::new(Mutex::new(Vec::new()));
+    let target = values.clone();
+    config.htif_write = Some(Arc::new(move |value| target.lock().unwrap().push(value)));
+    let mut owned = OwnedMachine::new(config, code_image(&code)).unwrap();
+
+    let mut mtimes = Vec::new();
+    let mut transports = Vec::new();
+    let mut events = Vec::new();
+    for _ in 0..code.len() {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)),
+            "the both-window guest failed: {:?}",
+            turn.hart().outcome
+        );
+        mtimes.push(owned.platform_mtime().unwrap());
+        transports.push(turn.boundary().transport_delay_femtoseconds);
+        events.extend(turn.events().iter().cloned());
+    }
+    // Two accesses per window, each charged one tick in its own turn, so the
+    // committed time of every later turn carries the charges before it.
+    let mut expected = parity_times.clone();
+    let mut charges = 0;
+    for (index, time) in expected.iter_mut().enumerate() {
+        if matches!(index, 1 | 3 | 5 | 7) {
+            charges += 1;
+        }
+        *time = parity_times[index] + charges;
+    }
+    assert_eq!(
+        mtimes, expected,
+        "the two host windows did not charge their four accesses once each"
+    );
+    assert_eq!(
+        transports.last().copied(),
+        Some(4 * ONE_TICK_FS),
+        "the generation total is not the four charges"
+    );
+    assert_eq!(
+        events,
+        native
+            .iter()
+            .flat_map(|record| record.1.clone())
+            .collect::<Vec<_>>(),
+        "the two-window run changed the event sequence"
+    );
+    assert_eq!(
+        *output.lock().unwrap(),
+        b"H".to_vec(),
+        "the UART window lost its transmitted byte"
+    );
+    assert_eq!(
+        *values.lock().unwrap(),
+        [0x41],
+        "the HTIF window lost its write value"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        parity_counters,
+        "the two-window run changed the guest counters"
+    );
+    assert_eq!(
+        (uart.transactions(), htif.transactions()),
+        (2, 2),
+        "the host targets did not serve two accesses each"
+    );
+}
+
+/// delay D6: a `DebugInbound` device response must still report zero delay, so
+/// an SBA access that annotates one is a protocol failure of that access and
+/// charges nothing.
+#[test]
+fn an_sba_read_of_a_delayed_device_window_is_a_protocol_failure_without_charge() {
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_lsr(0x61);
+    target.set_delay(ONE_TICK_FS);
+    let (mut owned, _) =
+        host_uart_machine_with_ram(device_delay_ram(), &target, 0, &host_uart_guest());
+    halted_by_dmi(&mut owned);
+    let mtime = owned.platform_mtime().unwrap();
+
+    // One byte system bus read: `sbreadonaddr` triggers the access on the
+    // `sbaddress0` write.
+    owned.dmi_write(DM_SBCS, SBREADONADDR).unwrap();
+    owned.dmi_write(DM_SBADDRESS1, 0).unwrap();
+    owned
+        .dmi_write(DM_SBADDRESS0, (HOST_UART_BASE + HOST_UART_LSR) as u32)
+        .unwrap();
+    assert_eq!(
+        target.transactions(),
+        1,
+        "the SBA read never reached the host target"
+    );
+    let facts = owned.debug_boundary(false).unwrap();
+    let failure = facts
+        .failure
+        .expect("an SBA device delay was not a protocol failure");
+    assert!(
+        failure.message.contains("DebugInbound"),
+        "the failure does not name the DebugInbound zero-delay rule: {}",
+        failure.message
+    );
+    assert!(
+        facts.events.is_empty(),
+        "a refused SBA access still published a device event"
+    );
+    assert_eq!(
+        sberror_of(&mut owned),
+        0,
+        "a host-side protocol failure fabricated an sberror"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        mtime,
+        "a refused SBA device access advanced Platform time"
+    );
+    assert_eq!(
+        owned.transport_delay_femtoseconds(),
+        0,
+        "a refused SBA device access entered the transport total"
+    );
+}
+
+/// delay D6: a Debug Mode Hart-port device access carries `Hart` provenance but
+/// runs outside an open guest turn, so its delay is validated against the
+/// declared maximum and not charged, while an accepted write still publishes
+/// its one event.
+#[test]
+fn a_debug_hart_port_device_delay_is_validated_and_not_charged() {
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_delay(ONE_TICK_FS);
+    let (mut owned, _) = host_uart_machine_with_ram(device_delay_ram(), &target, 0, &[elf::nop()]);
+    halted_by_dmi(&mut owned);
+    write_gpr(&mut owned, 5, HOST_UART_BASE);
+    write_gpr(&mut owned, 6, u64::from(b'A'));
+    postexec_buffer(&mut owned, [elf::sb(6, 5, 0), elf::nop()]);
+
+    let first = owned.debug_boundary(false).unwrap();
+    assert!(
+        first.failure.is_none(),
+        "a debug device delay was refused: {:?}",
+        first.failure
+    );
+    assert_eq!(
+        first.events,
+        [PlatformEvent::UartTransmit(b'A')],
+        "the accepted debug write did not publish its one event"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        0,
+        "a debug device access charged Platform time"
+    );
+    assert_eq!(
+        owned.transport_delay_femtoseconds(),
+        0,
+        "a debug device access entered the transport total"
+    );
+    let rest = run_grants(&mut owned);
+    assert!(rest.events.is_empty(), "the debug write published twice");
+    assert_eq!(
+        cmderr_of(&mut owned),
+        0,
+        "the program buffer command failed"
+    );
+
+    // The same access above the declared maximum is still validated outside the
+    // turn window: it is the overshoot host failure and publishes nothing.
+    let target = HostUart::new(HOST_UART_BASE);
+    target.set_delay(2 * ONE_TICK_FS);
+    let (mut owned, _) = host_uart_machine_with_ram(device_delay_ram(), &target, 0, &[elf::nop()]);
+    halted_by_dmi(&mut owned);
+    write_gpr(&mut owned, 5, HOST_UART_BASE);
+    write_gpr(&mut owned, 6, u64::from(b'A'));
+    postexec_buffer(&mut owned, [elf::sb(6, 5, 0), elf::nop()]);
+    let mut facts = owned.debug_boundary(false).unwrap();
+    facts.merge(run_grants(&mut owned));
+    let failure = facts
+        .failure
+        .expect("an above-maximum debug device delay was admitted");
+    assert!(
+        failure.message.contains("overshoot"),
+        "the debug access was not refused by the declared maximum: {}",
+        failure.message
+    );
+    assert!(
+        facts.events.is_empty(),
+        "an overshooting debug device access still published its event"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        0,
+        "an overshooting debug device access advanced Platform time"
     );
 }
 
@@ -3005,7 +3612,12 @@ fn a_host_uart_bad_response_is_a_protocol_failure_without_charge() {
     ] {
         let target = HostUart::new(HOST_UART_BASE);
         target.set_fault(fault);
-        let (mut owned, output) = host_uart_machine(&target, 1024, &code);
+        // delay D4: the annotation is admissible on this RAM target, so a
+        // refusal that still charged it would show up in the mtime and the
+        // transport total.
+        target.set_delay(ONE_TICK_FS);
+        let (mut owned, output) =
+            host_uart_machine_with_ram(device_delay_ram(), &target, 1024, &code);
         let (_, failure) = run_host_uart(&mut owned, &output, code.len());
         assert!(
             output.lock().unwrap().is_empty(),
@@ -3021,6 +3633,11 @@ fn a_host_uart_bad_response_is_a_protocol_failure_without_charge() {
             owned.platform_mtime().unwrap(),
             parity - 1,
             "{fault:?}: the refused access charged Platform time beyond the F1 flush"
+        );
+        assert_eq!(
+            owned.transport_delay_femtoseconds(),
+            0,
+            "{fault:?}: a validation failure still charged its annotation"
         );
     }
 }
@@ -3393,8 +4010,18 @@ type SelectedHtifMachine = (OwnedMachine, Arc<Mutex<Vec<u64>>>, Arc<Mutex<Vec<u8
 /// One TLM-route Machine with a host HTIF target selected, and the sinks that
 /// record `config.htif_write` values and `config.uart_output` bytes (htif D2).
 fn host_htif_machine(target: &Arc<HostHtif>, quantum: u64, code: &[u32]) -> SelectedHtifMachine {
+    host_htif_machine_with_ram(Arc::new(ZeroDelayRam::new()), target, quantum, code)
+}
+
+/// The same host HTIF Machine over an explicit guest-RAM target (delay D3).
+fn host_htif_machine_with_ram(
+    ram: Arc<dyn BlockingTarget>,
+    target: &Arc<HostHtif>,
+    quantum: u64,
+    code: &[u32],
+) -> SelectedHtifMachine {
     let mut config = MachineConfig::new(PlatformKind::Native);
-    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.transport = Transport::tlm(ram);
     config.devices = DeviceTargets::with_htif(target.clone());
     config.quantum = quantum;
     let values = Arc::new(Mutex::new(Vec::new()));
@@ -3509,6 +4136,96 @@ fn a_host_htif_target_serves_the_htif_window_on_the_tlm_route() {
         owned.state().regs[7],
         0x1234_5678_9abc_def0,
         "the host target's read value did not reach the guest's load"
+    );
+}
+
+/// delay D4/D5: a host HTIF dword write that annotates one tick is charged
+/// exactly once by the turn that carries it, so its exit event, `mtime`, the
+/// boundary fact and the guest counters are otherwise the in-tree run's.
+#[test]
+fn a_host_htif_that_annotates_a_delay_charges_it_once() {
+    let code = host_htif_write_only_guest(0x40);
+    let (parity_times, parity_counters) = in_tree_run(device_delay_ram(), 1024, &code);
+    assert_eq!(
+        parity_times.last().copied(),
+        Some(3),
+        "the in-tree parity run did not reach three ticks"
+    );
+
+    // A host target that annotates zero is the parity run.
+    let zero = HostHtif::new(HOST_HTIF_BASE);
+    let (mut owned, values, output) =
+        host_htif_machine_with_ram(device_delay_ram(), &zero, 1024, &code);
+    let (records, failure) = run_device_selection(&mut owned, &output, &values, code.len());
+    assert!(
+        failure.is_none(),
+        "the zero-delay host HTIF guest failed: {failure:?}"
+    );
+    assert_eq!(
+        records.iter().map(|record| record.0).collect::<Vec<_>>(),
+        parity_times,
+        "a host target that annotates zero changed the parity mtime"
+    );
+    assert_eq!(
+        owned.transport_delay_femtoseconds(),
+        0,
+        "a host target that annotates zero entered the transport total"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        parity_counters,
+        "a host target that annotates zero changed the guest counters"
+    );
+
+    // One annotated tick joins the turn that publishes the write's event.
+    let target = HostHtif::new(HOST_HTIF_BASE);
+    target.set_delay(ONE_TICK_FS);
+    let (mut owned, values, _) =
+        host_htif_machine_with_ram(device_delay_ram(), &target, 1024, &code);
+    let mut mtimes = Vec::new();
+    let mut transports = Vec::new();
+    let mut events = Vec::new();
+    for _ in 0..code.len() {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            matches!(turn.hart().outcome, StepOutcome::InstructionRetired(_)),
+            "the host HTIF delay guest failed: {:?}",
+            turn.hart().outcome
+        );
+        mtimes.push(owned.platform_mtime().unwrap());
+        transports.push(turn.boundary().transport_delay_femtoseconds);
+        events.extend(turn.events().iter().cloned());
+    }
+    assert_eq!(
+        events,
+        [PlatformEvent::HtifWrite(0x40)],
+        "the charged write did not publish exactly its one event"
+    );
+    assert_eq!(
+        *values.lock().unwrap(),
+        [0x40],
+        "the charged write did not reach config.htif_write exactly once"
+    );
+    let mut expected = parity_times.clone();
+    *expected.last_mut().expect("the parity run had no turns") += 1;
+    assert_eq!(
+        mtimes, expected,
+        "the device delay did not add exactly one tick to platform_mtime at the write's turn"
+    );
+    assert_eq!(
+        transports,
+        [0, 0, ONE_TICK_FS],
+        "the charge did not join the write turn's boundary fact exactly once"
+    );
+    assert_eq!(
+        owned.transport_delay_femtoseconds(),
+        ONE_TICK_FS,
+        "the device delay was charged more than once in the generation total"
+    );
+    assert_eq!(
+        guest_counters_now(&owned),
+        parity_counters,
+        "the device delay charged mcycle or minstret"
     );
 }
 
@@ -3692,7 +4409,6 @@ fn a_host_htif_bad_response_is_a_protocol_failure_without_charge() {
         (HostHtifFault::ChangedAddress, "changed the request payload"),
         (HostHtifFault::ChangedCommand, "changed the request payload"),
         (HostHtifFault::ChangedLength, "changed the request payload"),
-        (HostHtifFault::Delay(1_000_000), "fs of delay"),
         (HostHtifFault::Elapsed(1_000_000), "host time may not pass"),
         (HostHtifFault::DmiHint, "never offers direct memory"),
         (
@@ -3702,7 +4418,12 @@ fn a_host_htif_bad_response_is_a_protocol_failure_without_charge() {
     ] {
         let target = HostHtif::new(HOST_HTIF_BASE);
         target.set_fault(fault);
-        let (mut owned, values, output) = host_htif_machine(&target, 1024, &code);
+        // delay D4: the annotation is admissible on this RAM target, so a
+        // refusal that still charged it would show up in the mtime and the
+        // transport total.
+        target.set_delay(ONE_TICK_FS);
+        let (mut owned, values, output) =
+            host_htif_machine_with_ram(device_delay_ram(), &target, 1024, &code);
         let (_, failure) = run_device_selection(&mut owned, &output, &values, code.len());
         assert!(
             values.lock().unwrap().is_empty(),
@@ -3718,6 +4439,11 @@ fn a_host_htif_bad_response_is_a_protocol_failure_without_charge() {
             owned.platform_mtime().unwrap(),
             parity - 1,
             "{fault:?}: the refused access charged Platform time beyond the F1 flush"
+        );
+        assert_eq!(
+            owned.transport_delay_femtoseconds(),
+            0,
+            "{fault:?}: a validation failure still charged its annotation"
         );
     }
 

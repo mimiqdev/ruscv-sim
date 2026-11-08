@@ -366,6 +366,9 @@ impl std::error::Error for DelayConversionError {}
 ///
 /// A `b_transport` response is bounded separately by the target's declared
 /// per-transaction maximum, so this count only sizes the turn-level bound.
+/// delay D3: a Hart device transaction occupies one of these counted
+/// transactions, so the same `18 x maximum` bounds a turn that reaches a device
+/// window and the count needs no device-specific term.
 pub const MAX_GUEST_TRANSACTIONS_PER_TURN: u64 = 18;
 
 /// One guest Hart turn's conservative completion bound (dev-plan D7).

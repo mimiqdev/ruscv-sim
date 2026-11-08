@@ -1,0 +1,10 @@
+--- a/src/blocking/in_tree.rs
++++ b/src/blocking/in_tree.rs
+@@ -61,6 +61,7 @@
+                 }
+             }
+         }
++        transaction.set_response_delay(super::Femtoseconds::new(1_000_000));
+         transaction.set_status(BlockingResponseStatus::Ok);
+     }
+ 

@@ -99,6 +99,8 @@ pub(crate) struct PendingDelay {
 enum DelayAccess {
     Physical(crate::physical::PhysicalAccessKind),
     Atomic(crate::physical::AtomicAccessKind),
+    /// delay D4: one Hart device response charged through this same ledger.
+    Device,
 }
 
 impl DelayAccess {
@@ -106,6 +108,7 @@ impl DelayAccess {
         match self {
             Self::Physical(kind) => format!("{kind:?}"),
             Self::Atomic(kind) => format!("atomic {kind:?}"),
+            Self::Device => "device".to_string(),
         }
     }
 }
@@ -194,6 +197,39 @@ impl TlmRamAdapter {
                 std::mem::take(&mut state.pending)
             }
             Err(_) => PendingDelay::default(),
+        }
+    }
+
+    /// delay D4: charges one device response's annotated delay.
+    ///
+    /// This is the one crate-internal entry the device path uses, so a device
+    /// charge runs the same conversion, debug-window rule, round-up,
+    /// declared-maximum overshoot check, turn bound, pending amount and
+    /// generation total as a guest-RAM response; there is no second ledger and
+    /// no second accounting path.
+    ///
+    /// `counted` is true for a Hart access and false for debug-inbound work,
+    /// exactly as [`Self::account_delay`] takes it.  A Hart access outside an
+    /// open guest turn (Debug Mode Hart-port work) is validated by the same
+    /// call and accumulates nothing, because the turn window is closed.
+    pub(crate) fn charge_device_delay(
+        &self,
+        address: u64,
+        delay: Femtoseconds,
+        counted: bool,
+    ) -> Result<(), PhysicalBackendError> {
+        match self.state.lock() {
+            Ok(mut state) => self.account_delay(
+                &mut state,
+                address,
+                delay,
+                counted,
+                DelayAccess::Device,
+                Femtoseconds::ZERO,
+            ),
+            Err(_) => Err(PhysicalBackendError::host(
+                "TLM adapter state lock is poisoned",
+            )),
         }
     }
 

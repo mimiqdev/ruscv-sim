@@ -105,6 +105,15 @@ impl OwnedMachine {
     pub(crate) fn transport_host_elapsed_femtoseconds(&self) -> u64 {
         self.domain().platform.transport_host_elapsed_femtoseconds()
     }
+    /// delay D4: exact total charged guest-turn delay this generation accepted.
+    ///
+    /// It is the RAM slot's one ledger, so a guest-RAM response and a
+    /// Hart device response enter it through the same accounting.  It is zero
+    /// on the native route and for a run that annotates no delay.
+    #[cfg(test)]
+    pub(crate) fn transport_delay_femtoseconds(&self) -> u64 {
+        self.domain().platform.transport_delay_femtoseconds()
+    }
     pub(crate) fn set_verbose(&mut self, verbose: bool) {
         self.domain_mut().core.set_verbose(verbose);
     }

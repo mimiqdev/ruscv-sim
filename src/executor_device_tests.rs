@@ -465,6 +465,168 @@ fn an_in_tree_uart_window_keeps_the_typed_view() {
     );
 }
 
+// ---- Device Delay Annotation U1: charged device delay (delay D3–D5) ----
+
+/// One Platform tick in exact femtoseconds, the declared default period.
+const ONE_TICK_FS: u64 = 1_000_000;
+
+/// One device-delay bus's shared bus, its RAM slot ledger and the bytes the
+/// window sink published.
+type DeviceDelayBus = (Arc<Mutex<SystemBus>>, RamSlot, Arc<Mutex<Vec<u8>>>);
+
+/// A bus over a TLM RAM slot that declares one Platform tick per transaction,
+/// a selected host UART target and the slot handle its turn ledger is read
+/// through.
+///
+/// The slot declares at least the charged tick, so the host target's annotation
+/// is admitted instead of failing as an overshoot (delay D3).
+fn device_delay_bus(delay: u64) -> DeviceDelayBus {
+    let ram = RamSlot::tlm(
+        crate::blocking::test_support::DelayingRam::new(ONE_TICK_FS, 0),
+        RAM_BASE,
+        RAM_SIZE,
+        crate::blocking::TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .expect("the declaring RAM target was refused");
+    let target = HostUart::new(SYSTEM_BUS_UART_BASE);
+    target.set_delay(delay);
+    let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
+    let mut bus = SystemBus::with_ram_slot(
+        ram.clone(),
+        uart,
+        RAM_BASE,
+        RAM_SIZE,
+        Some(DevicePath::with_host_uart(
+            target,
+            Arc::new(InTreeHtif::new()),
+        )),
+    );
+    let transmitted = Arc::new(Mutex::new(Vec::new()));
+    let sink = transmitted.clone();
+    bus.set_uart_sink(move |byte| sink.lock().unwrap().push(byte));
+    (Arc::new(Mutex::new(bus)), ram, transmitted)
+}
+
+/// delay D4: a Hart device response's delay is charged through the guest-RAM
+/// slot's one turn ledger before the window's event is published, and an
+/// in-tree device access on the same bus charges nothing.
+#[test]
+fn a_hart_device_delay_is_charged_through_the_ram_slots_turn_ledger() {
+    let (bus, ledger, transmitted) = device_delay_bus(ONE_TICK_FS);
+    ledger.begin_transport_turn();
+    let payload = *b"H";
+    let request =
+        PhysicalRequest::data_write(SYSTEM_BUS_UART_BASE, PhysicalWidth::Byte, &payload).unwrap();
+    let response = bus.lock().unwrap().transact(&request);
+    assert!(
+        response.is_ok(),
+        "the Hart device write was refused: {response:?}"
+    );
+    assert_eq!(
+        *transmitted.lock().unwrap(),
+        [b'H'],
+        "the charged access did not publish its one event"
+    );
+    let pending = ledger.take_transport_turn_delay();
+    assert_eq!(
+        pending.ticks, 1,
+        "the device delay did not enter the turn's pending amount"
+    );
+    assert_eq!(
+        pending.femtoseconds.as_u64(),
+        ONE_TICK_FS,
+        "the turn's pending amount is not the response's exact delay"
+    );
+    assert_eq!(
+        ledger.consumed_delay().as_u64(),
+        ONE_TICK_FS,
+        "the device delay did not enter the generation's transport total exactly once"
+    );
+    assert_eq!(
+        ledger.host_elapsed().as_u64(),
+        0,
+        "a device access reported host elapsed time"
+    );
+
+    // The in-tree window on the same slot reports zero, so it charges nothing.
+    let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
+    let in_tree_ledger = RamSlot::tlm(
+        crate::blocking::test_support::DelayingRam::new(ONE_TICK_FS, 0),
+        RAM_BASE,
+        RAM_SIZE,
+        crate::blocking::TickPeriod::DEFAULT,
+        false,
+        false,
+    )
+    .expect("the declaring RAM target was refused");
+    let mut in_tree = SystemBus::with_ram_slot(
+        in_tree_ledger.clone(),
+        uart.clone(),
+        RAM_BASE,
+        RAM_SIZE,
+        Some(DevicePath::new(
+            Arc::new(InTreeUart::new(uart)),
+            Arc::new(InTreeHtif::new()),
+        )),
+    );
+    let published = Arc::new(Mutex::new(Vec::new()));
+    let sink = published.clone();
+    in_tree.set_uart_sink(move |byte| sink.lock().unwrap().push(byte));
+    in_tree_ledger.begin_transport_turn();
+    assert!(
+        in_tree.transact(&request).is_ok(),
+        "the in-tree UART write was refused"
+    );
+    assert_eq!(
+        in_tree_ledger.take_transport_turn_delay().ticks,
+        0,
+        "an in-tree device access charged the turn's pending amount"
+    );
+    assert_eq!(
+        in_tree_ledger.consumed_delay().as_u64(),
+        0,
+        "an in-tree device access entered the transport total"
+    );
+}
+
+/// delay D3/D4: a device delay above the declared maximum is the overshoot host
+/// failure, which is returned before the window publishes its event, and the
+/// known amount is still accumulated.
+#[test]
+fn an_above_maximum_device_delay_publishes_nothing_and_keeps_the_known_charge() {
+    let (bus, ledger, transmitted) = device_delay_bus(2 * ONE_TICK_FS);
+    ledger.begin_transport_turn();
+    let payload = *b"H";
+    let request =
+        PhysicalRequest::data_write(SYSTEM_BUS_UART_BASE, PhysicalWidth::Byte, &payload).unwrap();
+    match bus.lock().unwrap().transact(&request) {
+        Err(crate::physical::PhysicalBackendError::Host { context }) => {
+            assert!(
+                context.contains("overshoot")
+                    && context.contains("declared per-transaction maximum"),
+                "the above-maximum delay did not use the overshoot diagnostic: {context}"
+            );
+        }
+        other => panic!("an above-maximum device delay was admitted: {other:?}"),
+    }
+    assert!(
+        transmitted.lock().unwrap().is_empty(),
+        "an overshooting device access still published its event"
+    );
+    let pending = ledger.take_transport_turn_delay();
+    assert_eq!(
+        pending.ticks, 2,
+        "the failed access did not keep the delay the adapter accumulated"
+    );
+    assert_eq!(
+        ledger.consumed_delay().as_u64(),
+        2 * ONE_TICK_FS,
+        "the failed access did not preserve the known charge"
+    );
+}
+
 // ---- Host HTIF Service U1: typed view and run stop (htif D3–D5) ----
 
 use super::observation_fixture as elf;
@@ -489,8 +651,16 @@ impl std::io::Write for CapturedLog {
 
 /// One TLM-route configuration with the given device selection.
 fn tlm_config(devices: DeviceTargets) -> MachineConfig {
+    tlm_config_with_ram(Arc::new(ZeroDelayRam::new()), devices)
+}
+
+/// The same configuration over an explicit guest-RAM target (delay D3).
+fn tlm_config_with_ram(
+    ram: Arc<dyn crate::blocking::BlockingTarget>,
+    devices: DeviceTargets,
+) -> MachineConfig {
     let mut config = MachineConfig::new(PlatformKind::Native);
-    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.transport = Transport::tlm(ram);
     config.devices = devices;
     config
 }
@@ -708,5 +878,115 @@ fn a_host_htif_that_omits_the_event_reaches_the_turn_bound() {
     assert_eq!(
         dropped.cycles, no_exit.cycles,
         "the omitted-event run ended at a different turn than a guest with no exit"
+    );
+}
+
+/// delay D5: a host UART access that annotates one tick keeps the run's facts:
+/// the same exit code, retired instructions, final PC and a byte-identical
+/// commit log as the in-tree window's run.  A host target that annotates zero
+/// leaves every one of those facts unchanged too (delay D2).
+#[test]
+fn a_host_uart_device_delay_keeps_the_run_facts() {
+    // One THR byte, then the exit word through the in-tree HTIF endpoint.
+    let code = vec![
+        elf::lui(5, 0x10000), // 0x1000_0000, the UART window
+        elf::addi(6, 0, i32::from(b'H')),
+        elf::sb(6, 5, 0),     // THR
+        elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::addi(9, 0, 1),   // (0 << 1) | 1, the exit word for code 0
+        elf::sd(9, 8, 0),
+    ];
+    let bound = 64;
+    let (in_tree, in_tree_log) = run_with_log(
+        tlm_config_with_ram(
+            crate::blocking::test_support::DelayingRam::new(ONE_TICK_FS, 0),
+            DeviceTargets::none(),
+        ),
+        &code,
+        bound,
+    );
+    assert_eq!(
+        in_tree.exit_code, 0,
+        "the in-tree run did not reach the guest's exit: {in_tree:?}"
+    );
+
+    for delay in [0, ONE_TICK_FS] {
+        let target = HostUart::new(SYSTEM_BUS_UART_BASE);
+        target.set_delay(delay);
+        let (host, host_log) = run_with_log(
+            tlm_config_with_ram(
+                crate::blocking::test_support::DelayingRam::new(ONE_TICK_FS, 0),
+                DeviceTargets::with_uart(target.clone()),
+            ),
+            &code,
+            bound,
+        );
+        assert_eq!(
+            (host.exit_code, host.cycles, host.final_pc),
+            (in_tree.exit_code, in_tree.cycles, in_tree.final_pc),
+            "a {delay} fs device annotation moved the run's exit, turns or final PC"
+        );
+        assert_eq!(
+            host_log, in_tree_log,
+            "a {delay} fs device annotation changed the commit log"
+        );
+        assert!(!host.timed_out && host.error.is_none(), "{host:?}");
+        assert_eq!(
+            target.transactions(),
+            1,
+            "the host UART target did not serve exactly the one THR write"
+        );
+        assert_eq!(
+            target.transmitted(),
+            b"H".to_vec(),
+            "the target lost the byte"
+        );
+    }
+}
+
+/// delay D4/D5: a host HTIF exit write that annotates one tick is charged in the
+/// same turn whose event decodes the exit, so the run stops at the same code,
+/// turn, PC and byte-identical commit log.
+#[test]
+fn a_host_htif_device_delay_keeps_the_exit_decoded_from_its_own_turn() {
+    let code = endpoint_exit_guest(1); // (0 << 1) | 1, the exit word for code 0
+    let bound = 64;
+    let (in_tree, in_tree_log) = run_with_log(
+        tlm_config_with_ram(
+            crate::blocking::test_support::DelayingRam::new(ONE_TICK_FS, 0),
+            DeviceTargets::none(),
+        ),
+        &code,
+        bound,
+    );
+
+    let target = HostHtif::new(SYSTEM_BUS_HTIF_BASE);
+    target.set_delay(ONE_TICK_FS);
+    let (host, host_log) = run_with_log(
+        tlm_config_with_ram(
+            crate::blocking::test_support::DelayingRam::new(ONE_TICK_FS, 0),
+            DeviceTargets::with_htif(target.clone()),
+        ),
+        &code,
+        bound,
+    );
+
+    assert_eq!(
+        in_tree.exit_code, 0,
+        "the in-tree endpoint did not stop the run as an exit: {in_tree:?}"
+    );
+    assert_eq!(
+        (host.exit_code, host.cycles, host.final_pc),
+        (in_tree.exit_code, in_tree.cycles, in_tree.final_pc),
+        "the charged exit write stopped at a different code, turn or PC"
+    );
+    assert_eq!(
+        host_log, in_tree_log,
+        "the charged exit write changed the commit log"
+    );
+    assert_eq!(
+        target.reported(),
+        [1],
+        "the host target did not report the guest's exit word"
     );
 }

@@ -352,7 +352,8 @@ impl Platform {
     }
 
     /// Exact total charged blocking-transport delay in this Platform's RAM
-    /// slot.  Zero on native and for a zero-delay target, and unchanged by
+    /// slot, including a Hart device access's charged annotation (delay D4).
+    /// Zero on native and for a run that annotates no delay, and unchanged by
     /// debug work whose delay is validated but not charged.
     pub(super) fn transport_delay_femtoseconds(&self) -> u64 {
         self.ram.consumed_delay().as_u64()

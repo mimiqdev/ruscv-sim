@@ -2931,17 +2931,49 @@
     ]
   },
   {
-    "unit": "device-u2-zero-delay",
-    "source": "src/blocking/device.rs",
-    "patch": "device-u2-zero-delay.patch",
+    "unit": "delay-u1-charge",
+    "source": "src/executor.rs",
+    "patch": "delay-u1-charge.patch",
     "tests": [
       {
         "target": [
           "--lib"
         ],
-        "test": "machine::tests::a_host_uart_that_annotates_a_delay_is_a_protocol_failure_without_charge",
+        "test": "machine::tests::a_host_uart_that_annotates_a_delay_charges_it_once",
         "failure": [
-          "a device delay annotation did not fail the access"
+          "the device delay did not add exactly one tick to platform_mtime at the access's turn"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "delay-u1-in-tree",
+    "source": "src/blocking/in_tree.rs",
+    "patch": "delay-u1-in-tree.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::an_in_tree_device_run_charges_no_delay_and_keeps_its_parity_mtime",
+        "failure": [
+          "an in-tree device access charged Platform delay"
+        ]
+      }
+    ]
+  },
+  {
+    "unit": "delay-u1-debug-zero",
+    "source": "src/blocking/device.rs",
+    "patch": "delay-u1-debug-zero.patch",
+    "tests": [
+      {
+        "target": [
+          "--lib"
+        ],
+        "test": "machine::tests::an_sba_read_of_a_delayed_device_window_is_a_protocol_failure_without_charge",
+        "failure": [
+          "an SBA device delay was not a protocol failure"
         ]
       }
     ]

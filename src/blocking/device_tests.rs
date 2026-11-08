@@ -720,3 +720,72 @@ fn the_value_rule_leaves_the_in_tree_endpoint_and_the_uart_byte_alone() {
         "the UART transmit byte was replaced instead of published"
     );
 }
+
+// ---- Device Delay Annotation U1: the response's delay (delay D4/D6) ----
+
+/// delay D4: a Hart device response may annotate a delay, which the outcome
+/// carries to the Machine's one charge site instead of being refused, and an
+/// in-tree target stays the zero reference.
+#[test]
+fn a_hart_device_response_may_annotate_a_delay_and_the_outcome_carries_it() {
+    let target = HostUart::new(UART_BASE);
+    target.set_delay(1_000_000);
+    let payload = *b"H";
+    let outcome =
+        host_uart_adapter(&target).transact(&thr_write(&payload), BlockingInitiator::Hart);
+    assert!(
+        outcome.response.is_ok(),
+        "a Hart device response that annotates a delay was refused: {:?}",
+        outcome.response
+    );
+    assert_eq!(
+        outcome.event,
+        Some(BlockingDeviceEvent::UartTransmit(b'H')),
+        "the accepted access lost its one event"
+    );
+    assert_eq!(
+        outcome.delay.as_u64(),
+        1_000_000,
+        "the outcome did not carry the response's own delay"
+    );
+
+    // The in-tree target reports zero, so its outcome carries no charge.
+    let (_uart, adapter) = uart_target();
+    let outcome = adapter.transact(&thr_write(&payload), BlockingInitiator::Hart);
+    assert!(outcome.response.is_ok(), "the in-tree write was refused");
+    assert!(
+        outcome.delay.is_zero(),
+        "an in-tree device access carried a delay"
+    );
+}
+
+/// delay D6: a `DebugInbound` device response must still report zero delay, so
+/// an annotated one is a protocol failure of that access and charges nothing.
+#[test]
+fn a_debug_inbound_device_response_that_annotates_a_delay_is_a_protocol_failure() {
+    let target = HostUart::new(UART_BASE);
+    target.set_delay(1_000_000);
+    let payload = *b"H";
+    let outcome =
+        host_uart_adapter(&target).transact(&thr_write(&payload), BlockingInitiator::DebugInbound);
+    assert!(
+        is_protocol(&outcome.response),
+        "a DebugInbound device delay was accepted: {:?}",
+        outcome.response
+    );
+    let PhysicalBackendError::Protocol { context } = outcome.response.unwrap_err() else {
+        unreachable!("checked above");
+    };
+    assert!(
+        context.contains("DebugInbound") && context.contains("zero delay"),
+        "the refusal does not name the DebugInbound zero-delay rule: {context}"
+    );
+    assert!(
+        outcome.event.is_none(),
+        "a refused DebugInbound access still carried an event to publication"
+    );
+    assert!(
+        outcome.delay.is_zero(),
+        "a refused DebugInbound access carried a charge"
+    );
+}

@@ -183,6 +183,26 @@ impl RamSlot {
         }
     }
 
+    /// delay D4: charges one device response's annotated delay through this
+    /// slot's ledger.
+    ///
+    /// The device path has no ledger of its own: a Hart device access inside an
+    /// open guest turn is converted, bounded and accumulated here by the same
+    /// implementation that accounts a guest-RAM response.  A native slot has no
+    /// transport ledger and this call is a no-op; a device selection requires
+    /// the TLM route, so the device path always reaches the adapter.
+    pub(crate) fn charge_device_delay(
+        &self,
+        address: u64,
+        delay: Femtoseconds,
+        counted: bool,
+    ) -> Result<(), PhysicalBackendError> {
+        match &self.inner.kind {
+            RamKind::Native(_) => Ok(()),
+            RamKind::Tlm(adapter) => adapter.charge_device_delay(address, delay, counted),
+        }
+    }
+
     /// Drops debug-work delay after validation without charging Platform time.
     pub(crate) fn discard_transport_turn_delay(&self) {
         if let RamKind::Tlm(adapter) = &self.inner.kind {
