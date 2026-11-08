@@ -1,8 +1,8 @@
 //! Controlled native backend/host-admission seams, not public recovery APIs.
 use super::*;
 use crate::blocking::test_support::{
-    DelayingRam, DirectMemReply, DirectMemTarget, HostUart, HostUartFault, ScriptTarget,
-    SuspendingTarget,
+    DelayingRam, DirectMemReply, DirectMemTarget, HostHtif, HostHtifFault, HostUart, HostUartFault,
+    ScriptTarget, SuspendingTarget,
 };
 use crate::blocking::{
     BlockingCommand, BlockingDeviceTarget, BlockingDirectMemAccess, BlockingInitiator,
@@ -3036,30 +3036,52 @@ fn a_device_selection_requires_the_tlm_route_on_the_native_platform() {
         (PlatformKind::Flat, true),
         (PlatformKind::Flat, false),
     ] {
-        let target = HostUart::new(HOST_UART_BASE);
-        let mut config = MachineConfig::new(kind);
-        if tlm {
-            config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+        let uart = HostUart::new(HOST_UART_BASE);
+        let htif = HostHtif::new(HOST_HTIF_BASE);
+        // htif D2: either window's selection is enough to need the TLM route on
+        // the native Platform, and the combined selection is refused the same
+        // way.
+        for (label, devices) in [
+            ("a UART target", DeviceTargets::with_uart(uart.clone())),
+            ("an HTIF target", DeviceTargets::with_htif(htif.clone())),
+            (
+                "both targets",
+                DeviceTargets::with_uart_and_htif(uart.clone(), htif.clone()),
+            ),
+        ] {
+            let mut config = MachineConfig::new(kind);
+            if tlm {
+                config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+            }
+            config.devices = devices;
+            let owner = Machine::new(config);
+            let error = match owner.install(code_image(&code)) {
+                Ok(_) => {
+                    panic!("{kind:?} with tlm {tlm} and {label}: a device target was admitted")
+                }
+                Err(error) => error,
+            };
+            assert!(
+                matches!(error, MachineError::UnsupportedTransport),
+                "{kind:?} with tlm {tlm} and {label}: the refusal was not the unsupported \
+                 transport: {error:?}"
+            );
+            assert!(
+                error.to_string().contains("device target requires"),
+                "{kind:?} with tlm {tlm} and {label}: the refusal does not name the device \
+                 case: {error}"
+            );
+            assert_eq!(
+                (uart.transactions(), uart.resets()),
+                (0, 0),
+                "{kind:?} with tlm {tlm} and {label}: a refused selection reached the UART target"
+            );
+            assert_eq!(
+                (htif.transactions(), htif.resets()),
+                (0, 0),
+                "{kind:?} with tlm {tlm} and {label}: a refused selection reached the HTIF target"
+            );
         }
-        config.devices = DeviceTargets::with_uart(target.clone());
-        let owner = Machine::new(config);
-        let error = match owner.install(code_image(&code)) {
-            Ok(_) => panic!("{kind:?} with tlm {tlm}: a device target was admitted"),
-            Err(error) => error,
-        };
-        assert!(
-            matches!(error, MachineError::UnsupportedTransport),
-            "{kind:?} with tlm {tlm}: the refusal was not the unsupported transport: {error:?}"
-        );
-        assert!(
-            error.to_string().contains("device target requires"),
-            "{kind:?} with tlm {tlm}: the refusal does not name the device case: {error}"
-        );
-        assert_eq!(
-            (target.transactions(), target.resets()),
-            (0, 0),
-            "{kind:?} with tlm {tlm}: a refused selection reached the target"
-        );
     }
 }
 
@@ -3320,6 +3342,670 @@ fn a_panicking_device_reset_fails_the_build_without_poisoning_the_machine() {
     assert!(
         owner.inspect().unwrap().uart.is_none(),
         "the previous association no longer carries the host UART window"
+    );
+}
+
+// ---- Host HTIF Service U1: the host HTIF target (htif D2–D6, D10) ----
+
+/// The HTIF window's base address.
+const HOST_HTIF_BASE: u64 = crate::executor::SYSTEM_BUS_HTIF_BASE;
+
+/// A guest that reads the endpoint into `x7` and writes one dword, so the
+/// selected target serves exactly one read and one write.
+fn host_htif_guest(value: i32) -> Vec<u32> {
+    vec![
+        elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::ld(7, 8, 0),     // the endpoint's read answer
+        elf::addi(9, 0, value),
+        elf::sd(9, 8, 0), // one tohost write
+    ]
+}
+
+/// A guest whose only device access is one tohost write, so a bad write
+/// response is the third turn's access.
+fn host_htif_write_only_guest(value: i32) -> Vec<u32> {
+    vec![
+        elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::addi(9, 0, value),
+        elf::sd(9, 8, 0),
+    ]
+}
+
+/// A guest that reads `LSR`, writes `THR` and writes the endpoint, so one run
+/// reaches both device windows.
+fn host_device_guest() -> Vec<u32> {
+    vec![
+        elf::lui(5, 0x10000), // 0x1000_0000, the UART window
+        elf::lbu(6, 5, 5),    // LSR
+        elf::addi(7, 0, i32::from(b'H')),
+        elf::sb(7, 5, 0),     // THR
+        elf::lui(8, 0x40008), // 0x4000_8000, the HTIF endpoint
+        elf::ld(7, 8, 0),     // the endpoint's read answer
+        elf::addi(9, 0, 0x41),
+        elf::sd(9, 8, 0),
+    ]
+}
+
+/// A selected host HTIF Machine with its `config.htif_write` and
+/// `config.uart_output` sinks.
+type SelectedHtifMachine = (OwnedMachine, Arc<Mutex<Vec<u64>>>, Arc<Mutex<Vec<u8>>>);
+
+/// One TLM-route Machine with a host HTIF target selected, and the sinks that
+/// record `config.htif_write` values and `config.uart_output` bytes (htif D2).
+fn host_htif_machine(target: &Arc<HostHtif>, quantum: u64, code: &[u32]) -> SelectedHtifMachine {
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.devices = DeviceTargets::with_htif(target.clone());
+    config.quantum = quantum;
+    let values = Arc::new(Mutex::new(Vec::new()));
+    let sink = values.clone();
+    config.htif_write = Some(Arc::new(move |value| sink.lock().unwrap().push(value)));
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let bytes = output.clone();
+    config.uart_output = Some(Arc::new(move |byte| bytes.lock().unwrap().push(byte)));
+    (
+        OwnedMachine::new(config, code_image(code)).unwrap(),
+        values,
+        output,
+    )
+}
+
+/// One turn's `(mtime, events, `config.uart_output` so far,
+/// `config.htif_write` values so far)` for a selected host device target.
+type DeviceSelectionRecord = (u64, Vec<PlatformEvent>, Vec<u8>, Vec<u64>);
+
+/// Runs up to `turns` turns, recording each completed turn and stopping at the
+/// first simulator failure.
+fn run_device_selection(
+    owned: &mut OwnedMachine,
+    output: &Arc<Mutex<Vec<u8>>>,
+    values: &Arc<Mutex<Vec<u64>>>,
+    turns: usize,
+) -> (
+    Vec<DeviceSelectionRecord>,
+    Option<crate::core::SimulatorFailure>,
+) {
+    let mut records = Vec::new();
+    let mut failure = None;
+    for _ in 0..turns {
+        let Ok(turn) = owned.step_request(false, false, false) else {
+            break;
+        };
+        records.push((
+            owned.platform_mtime().unwrap(),
+            turn.events().to_vec(),
+            output.lock().unwrap().clone(),
+            values.lock().unwrap().clone(),
+        ));
+        if let StepOutcome::SimulatorFailure(reason) = &turn.hart().outcome {
+            failure = Some(reason.clone());
+            break;
+        }
+    }
+    (records, failure)
+}
+
+/// htif D2/D3/D4: the selection's host target serves the endpoint on the TLM
+/// route, so its own transaction count is non-zero for a guest that reads and
+/// writes `0x4000_8000`, the read publishes nothing, and the one accepted write
+/// publishes exactly one value with the guest's eight bytes.
+#[test]
+fn a_host_htif_target_serves_the_htif_window_on_the_tlm_route() {
+    let target = HostHtif::new(HOST_HTIF_BASE);
+    let code = host_htif_guest(0x41);
+    let (mut owned, values, output) = host_htif_machine(&target, 0, &code);
+    let (records, failure) = run_device_selection(&mut owned, &output, &values, code.len());
+    assert!(failure.is_none(), "the host HTIF guest failed: {failure:?}");
+    assert_eq!(
+        target.transactions(),
+        2,
+        "the host HTIF target did not serve the guest's tohost read and write"
+    );
+    assert_eq!(
+        target
+            .log()
+            .iter()
+            .map(|call| (call.command, call.address))
+            .collect::<Vec<_>>(),
+        [
+            (BlockingCommand::Read, HOST_HTIF_BASE),
+            (BlockingCommand::Write, HOST_HTIF_BASE),
+        ],
+        "the host HTIF target did not see the endpoint's accesses in request order"
+    );
+    let events: Vec<PlatformEvent> = records.iter().flat_map(|record| record.1.clone()).collect();
+    assert_eq!(
+        events,
+        [PlatformEvent::HtifWrite(0x41)],
+        "the read published an event or the write published more than one"
+    );
+    assert_eq!(
+        *values.lock().unwrap(),
+        [0x41],
+        "config.htif_write did not receive exactly the guest's eight bytes"
+    );
+    assert_eq!(
+        owned.state().regs[7],
+        0,
+        "the tohost read did not answer the target's register state"
+    );
+
+    // htif D3: the host target answers the same guest the in-tree endpoint does.
+    let parity: Vec<DeviceSelectionRecord> = device_route(true, &code);
+    assert_eq!(
+        records, parity,
+        "the host HTIF route diverged from the in-tree route in mtime, events or values"
+    );
+
+    // htif D3: the read answer is the target's own state, not a fixed zero.
+    // The build's transport reset quiesces the state first, so the fixture sets
+    // it after the machine exists.
+    let target = HostHtif::new(HOST_HTIF_BASE);
+    let (mut owned, values, output) = host_htif_machine(&target, 0, &code);
+    target.set_read_value(0x1234_5678_9abc_def0);
+    let (_, failure) = run_device_selection(&mut owned, &output, &values, code.len());
+    assert!(failure.is_none(), "the guest failed: {failure:?}");
+    assert_eq!(
+        owned.state().regs[7],
+        0x1234_5678_9abc_def0,
+        "the host target's read value did not reach the guest's load"
+    );
+}
+
+/// htif D6: the selected targets are reset once per install in a fixed order,
+/// the UART target first and the HTIF target second, and a refused reset leaves
+/// the previous association in place while an earlier target has already been
+/// reset.
+#[test]
+fn the_host_targets_reset_uart_first_and_a_refusal_keeps_the_association() {
+    let uart = HostUart::new(HOST_UART_BASE);
+    let htif = HostHtif::new(HOST_HTIF_BASE);
+    let code = host_device_guest();
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.devices = DeviceTargets::with_uart_and_htif(uart.clone(), htif.clone());
+    let mut owned = OwnedMachine::new(config, code_image(&code)).unwrap();
+    assert_eq!(
+        (uart.resets(), htif.resets()),
+        (1, 1),
+        "the build did not reset each host target exactly once"
+    );
+
+    // Both targets accumulate state, so the reinstall's resets have something
+    // to quiesce.
+    uart.receive(b'Q');
+    htif.set_read_value(0x5a5a_5a5a);
+    for _ in 0..code.len() {
+        owned.step_request(false, false, false).unwrap();
+    }
+    assert_eq!(
+        owned.state().regs[7],
+        0x5a5a_5a5a,
+        "the host HTIF read state did not reach the guest"
+    );
+    assert_eq!(
+        htif.reported(),
+        [0x41],
+        "the guest's endpoint write did not reach the host HTIF target"
+    );
+    assert!(
+        !uart.received().is_empty(),
+        "the target did not receive the byte"
+    );
+
+    owned.fresh_reset().unwrap();
+    assert_eq!(
+        (uart.resets(), htif.resets()),
+        (2, 2),
+        "a reinstall did not take both device reset paths"
+    );
+    assert!(
+        uart.received().is_empty(),
+        "an acknowledged UART reset did not quiesce the target's state"
+    );
+    assert!(
+        htif.reported().is_empty(),
+        "an acknowledged HTIF reset did not quiesce the target's reported values"
+    );
+    assert_eq!(
+        htif.read_value(),
+        0,
+        "an acknowledged HTIF reset did not quiesce the endpoint's read state"
+    );
+
+    // The HTIF target refuses after the UART target has already been reset: the
+    // build fails and the previous association stays installed.
+    uart.receive(b'R');
+    htif.set_read_value(0x77);
+    htif.set_reset_ack(false);
+    let error = owned
+        .fresh_reset()
+        .expect_err("a refused HTIF reset did not fail the build");
+    assert!(
+        matches!(error, MachineError::Placement(_)),
+        "a refused HTIF reset did not use the placement channel: {error:?}"
+    );
+    assert!(
+        error.to_string().contains("the HTIF device target"),
+        "the refusal does not name the HTIF target: {error}"
+    );
+    assert_eq!(
+        (uart.resets(), htif.resets()),
+        (3, 3),
+        "the refused build did not reset the UART target first and then ask the HTIF target"
+    );
+    assert!(
+        uart.received().is_empty(),
+        "the refused build did not reset the UART target before the HTIF refusal"
+    );
+    assert_eq!(
+        htif.read_value(),
+        0x77,
+        "a refused HTIF reset still quiesced the target's state"
+    );
+
+    // The UART target refuses first, so the HTIF target is never asked.
+    uart.set_reset_ack(false);
+    htif.set_reset_ack(true);
+    let error = owned
+        .fresh_reset()
+        .expect_err("a refused UART reset did not fail the build");
+    assert!(
+        error.to_string().contains("the UART device target"),
+        "the refusal does not name the UART target: {error}"
+    );
+    assert_eq!(
+        (uart.resets(), htif.resets()),
+        (4, 3),
+        "a refused UART reset still reached the HTIF target"
+    );
+
+    // A panicking HTIF reset is a refused reset, contained like a transaction's.
+    uart.set_reset_ack(true);
+    htif.set_reset_ack(true);
+    htif.set_reset_panic(true);
+    let error = owned
+        .fresh_reset()
+        .expect_err("a panicking HTIF reset was admitted");
+    assert!(
+        error
+            .to_string()
+            .contains("panicked during its transport reset"),
+        "the refusal does not name the panic: {error}"
+    );
+    assert_eq!(
+        (uart.resets(), htif.resets()),
+        (5, 4),
+        "the panicking build did not reset the UART target first and then call the HTIF target"
+    );
+    htif.set_reset_panic(false);
+
+    // The surviving association still serves both windows: the guest's own
+    // accesses are the only new transactions, and its endpoint read observes the
+    // state the refused reset left in the target.
+    let before = (uart.transactions(), htif.transactions());
+    for _ in 0..code.len() {
+        let turn = owned.step_request(false, false, false).unwrap();
+        assert!(
+            !matches!(turn.hart().outcome, StepOutcome::SimulatorFailure(_)),
+            "the surviving association failed: {:?}",
+            turn.hart().outcome
+        );
+    }
+    assert_eq!(
+        (
+            uart.transactions() - before.0,
+            htif.transactions() - before.1
+        ),
+        (2, 2),
+        "the refused reinstall dropped a host target association"
+    );
+    assert_eq!(
+        owned.state().regs[7],
+        0x77,
+        "the surviving association did not retain its endpoint state"
+    );
+}
+
+/// htif D10 (device D4): every response rule a host target can break is a
+/// protocol failure of that access, publishes nothing, and adds no Platform
+/// time beyond the F1 flush the same access performs today.
+#[test]
+fn a_host_htif_bad_response_is_a_protocol_failure_without_charge() {
+    // Every instruction is one turn, so the endpoint write is the third turn's
+    // access and `Q` = 1024 keeps the threshold out of reach: the flush commits
+    // the two accrued ticks, and a refused access ends one step short of the
+    // turn's own advance.
+    let code = host_htif_write_only_guest(0x40);
+    let parity = host_uart_quantum_parity(&code);
+    assert_eq!(
+        parity, 3,
+        "the in-tree parity run did not reach three ticks"
+    );
+
+    for (fault, reason) in [
+        (HostHtifFault::SecondEvent, "at most one event"),
+        (
+            HostHtifFault::WrongWindowEvent,
+            "an event that is not its window's",
+        ),
+        (HostHtifFault::ChangedAddress, "changed the request payload"),
+        (HostHtifFault::ChangedCommand, "changed the request payload"),
+        (HostHtifFault::ChangedLength, "changed the request payload"),
+        (HostHtifFault::Delay(1_000_000), "fs of delay"),
+        (HostHtifFault::Elapsed(1_000_000), "host time may not pass"),
+        (HostHtifFault::DmiHint, "never offers direct memory"),
+        (
+            HostHtifFault::StatusWithEvent(BlockingResponseStatus::AddressError),
+            "only an accepted access publishes an event",
+        ),
+    ] {
+        let target = HostHtif::new(HOST_HTIF_BASE);
+        target.set_fault(fault);
+        let (mut owned, values, output) = host_htif_machine(&target, 1024, &code);
+        let (_, failure) = run_device_selection(&mut owned, &output, &values, code.len());
+        assert!(
+            values.lock().unwrap().is_empty(),
+            "{fault:?}: a refused access still called config.htif_write"
+        );
+        let failure = failure.unwrap_or_else(|| panic!("{fault:?}: the bad response was accepted"));
+        assert!(
+            failure.message.contains(reason),
+            "{fault:?}: the access was not refused by its own response rule: {}",
+            failure.message
+        );
+        assert_eq!(
+            owned.platform_mtime().unwrap(),
+            parity - 1,
+            "{fault:?}: the refused access charged Platform time beyond the F1 flush"
+        );
+    }
+
+    // The outcome-unknown classification runs first: `Ok` with a valid value and
+    // the unknown flag publishes nothing and poisons the Machine.
+    let target = HostHtif::new(HOST_HTIF_BASE);
+    target.set_fault(HostHtifFault::Unknown);
+    let (mut owned, values, output) = host_htif_machine(&target, 0, &code);
+    let (_, failure) = run_device_selection(&mut owned, &output, &values, code.len());
+    let failure = failure.expect("an unknown device completion did not fail the access");
+    assert!(
+        failure.message.contains("could not establish the outcome"),
+        "the access was not classified as an unknown completion: {}",
+        failure.message
+    );
+    assert!(
+        values.lock().unwrap().is_empty(),
+        "an unknown completion still called config.htif_write"
+    );
+    assert_eq!(
+        target.reported(),
+        [0x40],
+        "the target never reported the value whose outcome it could not vouch for"
+    );
+    assert!(
+        matches!(
+            owned.test_control().inspect(),
+            Err(MachineError::UnknownCompletion)
+        ),
+        "an unknown device completion did not poison the Machine"
+    );
+
+    // A target fault without an event keeps the guest-visible taxonomy: the store
+    // traps and nothing is published.
+    let target = HostHtif::new(HOST_HTIF_BASE);
+    target.set_fault(HostHtifFault::Status(BlockingResponseStatus::AddressError));
+    let (mut owned, values, output) = host_htif_machine(&target, 0, &code);
+    let mut trapped = false;
+    for _ in 0..code.len() {
+        let Ok(turn) = owned.step_request(false, false, false) else {
+            break;
+        };
+        if matches!(turn.hart().outcome, StepOutcome::TrapEntered(_)) {
+            trapped = true;
+            break;
+        }
+    }
+    assert!(
+        trapped,
+        "a device target fault did not reach the guest as a trap"
+    );
+    assert!(
+        values.lock().unwrap().is_empty(),
+        "a trapped tohost write still called config.htif_write"
+    );
+    drop(output);
+}
+
+/// htif D3/D9 (device D7): at a selected quantum a host HTIF access adds no
+/// time to the facts its in-tree parity run reports.  The same endpoint guest
+/// runs under the in-tree and host selections at `Q` = 2 and `Q` = 1024 and
+/// reports the same committed and presented time, the same zero transport and
+/// host-elapsed charge, the same syncs, `mcycle` and `minstret` turn by turn.
+#[test]
+fn a_host_htif_access_adds_no_time_to_the_quantum_facts() {
+    // (committed time, local time, delay fs, host elapsed fs, syncs, minstret,
+    // mcycle)
+    type Record = (u64, u64, u64, u64, u64, u64, u64);
+
+    fn route(devices: DeviceTargets, quantum: u64, code: &[u32]) -> Vec<Record> {
+        let mut config = MachineConfig::new(PlatformKind::Native);
+        config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+        config.devices = devices;
+        config.quantum = quantum;
+        let mut owned = OwnedMachine::new(config, code_image(code)).unwrap();
+        let mut records = Vec::new();
+        for _ in 0..code.len() {
+            let turn = owned.step_request(false, false, false).unwrap();
+            let facts = turn.boundary();
+            let quantum = facts
+                .quantum
+                .expect("a selected quantum reports its boundary facts");
+            let (minstret, mcycle) = guest_counters_now(&owned);
+            records.push((
+                owned.platform_mtime().unwrap(),
+                owned.platform_local_time().unwrap(),
+                facts.transport_delay_femtoseconds,
+                facts.host_elapsed_femtoseconds,
+                quantum.syncs,
+                minstret,
+                mcycle,
+            ));
+        }
+        records
+    }
+
+    let code = host_htif_write_only_guest(0x40);
+    for quantum in [2, 1024] {
+        let target = HostHtif::new(HOST_HTIF_BASE);
+        let host = route(DeviceTargets::with_htif(target.clone()), quantum, &code);
+        let in_tree = route(DeviceTargets::none(), quantum, &code);
+        assert_eq!(
+            host, in_tree,
+            "Q = {quantum}: the host HTIF selection changed a turn's time, charge, syncs or counters"
+        );
+        for (index, record) in host.iter().enumerate() {
+            assert_eq!(
+                (record.2, record.3),
+                (0, 0),
+                "Q = {quantum} turn {index}: a host HTIF transaction charged transport or host \
+                 elapsed time"
+            );
+        }
+        // The endpoint write is the third turn's access.  At `Q` = 1024 the
+        // threshold is out of reach, so its F1 mark is the only sync either
+        // selection takes; at `Q` = 2 the threshold syncs on its own and only
+        // the equality above pins the mark.
+        if quantum == 1024 {
+            assert_eq!(
+                host.iter().map(|record| record.4).sum::<u64>(),
+                1,
+                "Q = 1024: the host HTIF run did not take exactly the endpoint's F1 sync"
+            );
+            assert_eq!(
+                host[2].4, 1,
+                "Q = 1024: the endpoint write's turn was not the one that synced"
+            );
+        }
+        assert_eq!(
+            target.transactions(),
+            1,
+            "Q = {quantum}: the host target did not serve exactly the endpoint write"
+        );
+        assert_eq!(
+            target.reported(),
+            [0x40],
+            "Q = {quantum}: the host target did not report the guest's value"
+        );
+        assert_eq!(
+            host.last().unwrap().0,
+            in_tree.last().unwrap().0,
+            "Q = {quantum}: the two selections ended at different committed times"
+        );
+    }
+}
+
+/// htif D2/D3: the selection keeps the in-tree UART window's view and receive
+/// direction, and the HTIF endpoint never receives a byte because it has no
+/// host-to-guest direction.
+#[test]
+fn a_host_htif_selection_never_receives_a_byte_and_keeps_the_uart_view() {
+    let target = HostHtif::new(HOST_HTIF_BASE);
+    let mut config = MachineConfig::new(PlatformKind::Native);
+    config.transport = Transport::tlm(Arc::new(ZeroDelayRam::new()));
+    config.devices = DeviceTargets::with_htif(target.clone());
+    let owner = Machine::new(config);
+    owner.install(code_image(&host_htif_guest(0x41))).unwrap();
+    owner.resume().unwrap();
+    assert!(
+        owner.inspect().unwrap().uart.is_some(),
+        "a host HTIF selection dropped the in-tree UART window's view"
+    );
+    owner.receive_uart(b'Y').unwrap();
+    assert_eq!(
+        target.receives.load(Ordering::SeqCst),
+        0,
+        "the HTIF target received a byte it has no direction for"
+    );
+}
+
+/// htif D2: a host HTIF target composes with a host UART target, the quantum,
+/// direct memory and a suspending RAM target, and adds no refusal of its own.
+#[test]
+fn a_host_htif_target_composes_with_a_host_uart_the_quantum_direct_memory_and_suspension() {
+    let code = host_device_guest();
+    for (label, dmi, quantum, suspending) in [
+        ("direct memory", true, 0, false),
+        ("a quantum", false, 1024, false),
+        ("a suspending RAM target", false, 0, true),
+    ] {
+        let uart = HostUart::new(HOST_UART_BASE);
+        let htif = HostHtif::new(HOST_HTIF_BASE);
+        let mut config = MachineConfig::new(PlatformKind::Native);
+        config.transport = match suspending {
+            true => Transport::tlm(suspending_target(0, 0, 0)),
+            false => Transport::tlm(Arc::new(ZeroDelayRam::new())),
+        };
+        config.devices = DeviceTargets::with_uart_and_htif(uart.clone(), htif.clone());
+        config.dmi = dmi;
+        config.quantum = quantum;
+        let mut owned = OwnedMachine::new(config, code_image(&code)).unwrap_or_else(|error| {
+            panic!("{label}: a host HTIF target added a refusal: {error:?}")
+        });
+        let (_, failure) = run_host_uart(&mut owned, &Arc::new(Mutex::new(Vec::new())), code.len());
+        assert!(failure.is_none(), "{label}: the guest failed: {failure:?}");
+        assert_eq!(
+            uart.transactions(),
+            2,
+            "{label}: the host UART target did not serve the guest's two accesses"
+        );
+        assert_eq!(
+            htif.transactions(),
+            2,
+            "{label}: the host HTIF target did not serve the guest's read and write"
+        );
+    }
+}
+
+/// htif D5: a `DebugInbound` read of the endpoint is the same device transaction
+/// with debug provenance, and it is not charged.
+#[test]
+fn an_sba_read_of_the_htif_window_reaches_the_host_target_as_debug_inbound() {
+    let target = HostHtif::new(HOST_HTIF_BASE);
+    let (mut owned, _, _) = host_htif_machine(&target, 0, &host_htif_guest(0x41));
+    // A distinctive answer proves the dword the system bus reports is the
+    // target's, not the in-tree endpoint's zero.  The build's transport reset
+    // quiesces the state first, so the fixture sets it after the build.
+    target.set_read_value(0x1122_3344_5566_7788);
+    halted_by_dmi(&mut owned);
+    assert_eq!(
+        target.transactions(),
+        0,
+        "the debug halt reached the HTIF window"
+    );
+    let frozen = guest_counters(&owned);
+    let mtime = owned.platform_mtime().unwrap();
+
+    // One eight-byte system bus read: `sbreadonaddr` triggers the access on the
+    // `sbaddress0` write, so the following `sbdata` reads report its value.
+    owned
+        .dmi_write(DM_SBCS, (3 << SBACCESS_SHIFT) | SBREADONADDR)
+        .unwrap();
+    owned
+        .dmi_write(DM_SBADDRESS1, (HOST_HTIF_BASE >> 32) as u32)
+        .unwrap();
+    owned
+        .dmi_write(DM_SBADDRESS0, HOST_HTIF_BASE as u32)
+        .unwrap();
+    let low = owned.dmi_read(DM_SBDATA0).unwrap();
+    let high = owned.dmi_read(DM_SBDATA1).unwrap();
+
+    assert_eq!(sberror_of(&mut owned), 0, "the SBA read reported an error");
+    assert_eq!(
+        (u64::from(high) << 32) | u64::from(low),
+        0x1122_3344_5566_7788,
+        "the host target's read value did not reach the system bus"
+    );
+    let log = target.log();
+    assert_eq!(
+        log.len(),
+        1,
+        "the SBA read was not exactly one device transaction"
+    );
+    assert_eq!(
+        log[0].initiator,
+        BlockingInitiator::DebugInbound,
+        "the device transaction did not carry DebugInbound provenance"
+    );
+    assert_eq!(
+        log[0].address, HOST_HTIF_BASE,
+        "the device transaction carried the wrong address"
+    );
+    assert_eq!(
+        (log[0].local_offset_fs, log[0].may_suspend),
+        (0, false),
+        "a DebugInbound device transaction carried timing metadata"
+    );
+
+    let facts = owned.debug_boundary(false).unwrap();
+    assert!(facts.failure.is_none(), "the debug boundary failed");
+    assert!(
+        facts.events.is_empty(),
+        "a DebugInbound read of the endpoint published an event"
+    );
+    assert_eq!(
+        owned.platform_mtime().unwrap(),
+        mtime,
+        "a DebugInbound device transaction advanced Platform time"
+    );
+    assert_eq!(
+        guest_counters(&owned),
+        frozen,
+        "the SBA device access charged the guest profile"
+    );
+    assert_eq!(
+        owned.transport_host_elapsed_femtoseconds(),
+        0,
+        "the SBA device access entered the generation's host elapsed total"
     );
 }
 

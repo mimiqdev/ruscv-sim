@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Host HTIF Service U1: Rust 宿主 HTIF target（issue #239）**
+  - `DeviceTargets` 增加私有 HTIF 槽（htif D2）：`with_htif(target)` 只选宿主 HTIF，
+    `with_uart_and_htif(uart, htif)` 同时选两个窗口，`htif()` 返回所选 target。`DeviceTargets::none()`
+    仍让两个窗口都由树内 target 应答，因此没有宿主选择时运行与之前完全一致；两个窗口各自独立，
+    宿主 UART 加树内 HTIF、宿主 HTIF 加树内 UART 与两个宿主 target 都可表示
+  - `Platform::build` 按固定顺序在每个 install 重置所选 target：先 UART、后 HTIF，两者都在
+    `begin_window` 与镜像放置之前（htif D6）。第二个重置被拒时构建走既有 placement 通道失败，
+    已经重置过的第一个 target 不回滚，之前的关联保持不变；`fresh_reset`、`reload_for_ndmreset` 与
+    `ruscv_machine_reset` 都走这条路径，target 在重置中 panic 同样按拒绝处理
+  - `validate_response` 增加 D10 的两条规则（device D4/htif D10）：`Read` 上报设备事件在两个窗口都是
+    该次访问的协议失败；HTIF 窗口上报的 `HtifWrite` 值必须等于请求的八个数据字节，否则同样失败。
+    两条规则都在 outcome-unknown 之后、状态映射之前，失败时不发布任何事件。值比较用的是宿主改写
+    缓冲区之前捕获的请求字节，因此 target 通过 `data_mut` 改写数据不能改变该值。树内 target 从不在读
+    上报事件、其事件值就是请求字节，行为不变；UART 的发送字节仍是寄存器写接受的那个字节，不与请求
+    数据比较
+  - 类型化视图不变（htif D3）：HTIF 窗口的 typed dword 读在两条路由上都答 0，typed dword 写经同一
+    sink 发布一次且不经过 target；HTIF target 的 `receive` 从不被调用（端点没有宿主到 guest 方向），
+    `uart_inspection` 仍只描述 UART 窗口，端点也不会被提供 direct memory
+  - 运行停止沿用既有事件解码（htif D5）：宿主 target 接受写入并上报事件后，运行在同一 turn 停止，
+    退出码、退休指令数与 commit log 与树内运行逐字节一致；宿主接受写入但不上报事件时 Platform 没有
+    退出事实，运行走到 turn bound 并以 turn-limit 诊断失败；SBA 访问端点仍是携带 `DebugInbound`
+    且不计时的一次设备事务，`DebugBoundary` 的读不发布事件
+  - 四条 `htif-u1-*` mutation 控制：`route` 钉住宿主 HTIF 选择，`reset` 钉住每次安装的 transport
+    reset 与顺序，`read-event` 钉住读事件规则，`value` 钉住 HTIF 事件值的比较。`device-u2-native-refused`
+    随拒绝条件覆盖两个窗口而重生成
+  - 本单元不改 C ABI（U2, #240）与 SystemC（U3, #241），不改窗口策略、原子包络、RAM `tohost` 采样、
+    A10 oracle 与认证推迟；新增代码引用 `htif D<n>`，既有 `device D<n>` 注释保持指向已归档的合同
+
 - **TLM-Modeled Devices U5: SystemC 宿主设备 target 文档与验收闭环（issue #231）**
   - SystemC 宿主补记 U4 交付的 UART 设备 target（device D9）：`integration/systemc/uart_target.{h,cpp}`
     以普通回调对象实现 `ruscv_device`，模拟 RBR/THR、IER、IIR/FCR、LCR、MCR、LSR、MSR、SCR、DLL/DLM

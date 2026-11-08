@@ -624,11 +624,12 @@ impl SystemBus {
     }
 
     /// Publishes one device access's at-most-one event through its window's
-    /// sink (device D4).
+    /// sink (device D4, htif D4).
     ///
-    /// The device adapter has already rejected an event beside a non-`Ok`
-    /// status, a second event and another window's event, so a failure never
-    /// reaches this site and an accepted access publishes exactly one.
+    /// The device adapter has already rejected an event on a read, a second
+    /// event, another window's event and, on the HTIF window, a value other than
+    /// the request's eight data bytes (htif D10), so a failure never reaches
+    /// this site and an accepted access publishes exactly one.
     fn finish_device(&mut self, outcome: DeviceOutcome) -> PhysicalBackendResult {
         let DeviceOutcome { response, event } = outcome;
         match event {
@@ -1109,10 +1110,11 @@ impl SystemBus {
                 ));
             }
 
-            // device D1/D3: on the TLM route the endpoint's plain dword read
-            // and write are one blocking transaction to the selected target.
-            // The atomic envelope below stays Platform-side and never reaches
-            // it.
+            // device D1/D3, htif D3: on the TLM route the endpoint's plain dword
+            // read and write are one blocking transaction to the selected
+            // target, which is the in-tree endpoint unless the selection names a
+            // host one.  The atomic envelope below stays Platform-side and never
+            // reaches it.
             if self.devices.is_some() {
                 let outcome = self
                     .devices

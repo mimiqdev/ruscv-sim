@@ -934,6 +934,12 @@ pub(crate) enum HostUartFault {
     Status(BlockingResponseStatus),
     /// Complete and report the window's event twice.
     SecondEvent,
+    /// Answer a read correctly and report the window's transmit event beside it
+    /// (htif D10 rule 1).
+    EventOnRead,
+    /// Complete and report this transmit byte instead of the accepted one; the
+    /// adapter does not compare it with the request (htif D10).
+    WrongTransmitByte(u8),
     /// Complete and report the other window's event instead.
     WrongWindowEvent,
     /// Complete and change the payload's start address.
@@ -1129,6 +1135,18 @@ impl BlockingDeviceTarget for HostUart {
                 report(transaction);
                 report(transaction);
             }
+            HostUartFault::EventOnRead => {
+                // The read answer is already in the buffer; the fault is the
+                // event the window reports beside it.
+                if transaction.command() == BlockingCommand::Read {
+                    transaction.report_device_event(BlockingDeviceEvent::UartTransmit(
+                        transaction.data()[0],
+                    ));
+                }
+            }
+            HostUartFault::WrongTransmitByte(byte) => {
+                transaction.report_device_event(BlockingDeviceEvent::UartTransmit(byte));
+            }
             HostUartFault::WrongWindowEvent => {
                 transaction.report_device_event(BlockingDeviceEvent::HtifWrite(0x5a));
             }
@@ -1188,6 +1206,284 @@ impl fmt::Debug for HostUart {
             .field("transactions", &self.transactions())
             .field("resets", &self.resets())
             .field("transmitted", &self.transmitted())
+            .finish()
+    }
+}
+
+/// The deliberate misbehaviour a [`HostHtif`] adds to an otherwise correct
+/// response (htif D4, D10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum HostHtifFault {
+    /// Answer the access correctly and report the write's own value.
+    #[default]
+    None,
+    /// Answer a read with the register file and report `HtifWrite` beside it
+    /// (htif D10 rule 1).
+    EventOnRead,
+    /// Accept the write and report no event, so the Platform has no exit fact.
+    DropEvent,
+    /// Report this status with the write event still attached.
+    StatusWithEvent(BlockingResponseStatus),
+    /// Report this status with no event at all.
+    Status(BlockingResponseStatus),
+    /// Complete and report the window's event twice.
+    SecondEvent,
+    /// Complete and report the other window's event instead.
+    WrongWindowEvent,
+    /// Complete and change the request's start address.
+    ChangedAddress,
+    /// Complete and change the request's command.
+    ChangedCommand,
+    /// Complete and change the request's data length.
+    ChangedLength,
+    /// Complete and annotate this response delay in exact femtoseconds.
+    Delay(u64),
+    /// Complete and report this host elapsed time in exact femtoseconds.
+    Elapsed(u64),
+    /// Complete and set the direct-memory hint.
+    DmiHint,
+    /// Report the window's event with the outcome-unknown flag.
+    Unknown,
+    /// Complete and report this value instead of the request's eight data
+    /// bytes (htif D10 rule 2).
+    WrongValue(u64),
+    /// Overwrite the request buffer through `data_mut` and report the
+    /// rewritten value: the rule still compares with the request's bytes.
+    RewriteBuffer(u64),
+}
+
+/// A host HTIF target for the device-target rows (htif D2–D4, D10).
+///
+/// It owns one endpoint's register state: a read answers [`Self::read_value`],
+/// and an accepted write reports exactly one
+/// [`BlockingDeviceEvent::HtifWrite`] carrying the request's eight little-endian
+/// bytes.  Every response can be scripted to misbehave on purpose, and a reset
+/// clears the state, so a fixture observes the adapter's protocol-failure rows
+/// and the Platform's reset call through a target that really is outside the
+/// crate's control.  It never receives a byte: the endpoint has no host-to-guest
+/// direction.
+pub(crate) struct HostHtif {
+    base: u64,
+    /// The answer a read gives, which the in-tree endpoint fixes at zero.
+    read_value: Mutex<u64>,
+    /// The values this target reported, in request order.
+    reported: Mutex<Vec<u64>>,
+    /// Blocking transactions issued.
+    pub transactions: AtomicUsize,
+    /// Transport resets issued.
+    pub resets: AtomicUsize,
+    /// Bytes `receive` delivered.
+    pub receives: AtomicUsize,
+    /// The answer `transport_reset` gives.
+    reset_ack: AtomicBool,
+    /// True while `transport_reset` panics instead of answering.
+    reset_panic: AtomicBool,
+    fault: Mutex<HostHtifFault>,
+    log: Mutex<Vec<Call>>,
+}
+
+impl HostHtif {
+    /// Creates a host HTIF target for the window at `base`.
+    ///
+    /// The read answer starts at zero, which is the in-tree endpoint's answer
+    /// and the parity fixed point the contract names.
+    pub(crate) fn new(base: u64) -> Arc<Self> {
+        Arc::new(Self {
+            base,
+            read_value: Mutex::new(0),
+            reported: Mutex::new(Vec::new()),
+            transactions: AtomicUsize::new(0),
+            resets: AtomicUsize::new(0),
+            receives: AtomicUsize::new(0),
+            reset_ack: AtomicBool::new(true),
+            reset_panic: AtomicBool::new(false),
+            fault: Mutex::new(HostHtifFault::None),
+            log: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// Sets the misbehaviour the next responses add.
+    pub(crate) fn set_fault(&self, fault: HostHtifFault) {
+        *self.fault.lock().unwrap() = fault;
+    }
+
+    /// Sets the value a read answers.
+    pub(crate) fn set_read_value(&self, value: u64) {
+        *self.read_value.lock().unwrap() = value;
+    }
+
+    /// The value a read answers.
+    pub(crate) fn read_value(&self) -> u64 {
+        *self.read_value.lock().unwrap()
+    }
+
+    /// Sets whether a transport reset is acknowledged.
+    pub(crate) fn set_reset_ack(&self, ack: bool) {
+        self.reset_ack.store(ack, Ordering::SeqCst);
+    }
+
+    /// Makes the next transport resets panic instead of answering.
+    pub(crate) fn set_reset_panic(&self, panic: bool) {
+        self.reset_panic.store(panic, Ordering::SeqCst);
+    }
+
+    /// Blocking transactions issued.
+    pub(crate) fn transactions(&self) -> usize {
+        self.transactions.load(Ordering::SeqCst)
+    }
+
+    /// Transport resets issued.
+    pub(crate) fn resets(&self) -> usize {
+        self.resets.load(Ordering::SeqCst)
+    }
+
+    /// The values this target reported, whatever the adapter then decided.
+    pub(crate) fn reported(&self) -> Vec<u64> {
+        self.reported.lock().unwrap().clone()
+    }
+
+    /// The logged blocking transactions.
+    pub(crate) fn log(&self) -> Vec<Call> {
+        self.log.lock().unwrap().clone()
+    }
+}
+
+impl BlockingDeviceTarget for HostHtif {
+    fn b_transport(&self, transaction: &mut BlockingTransaction<'_>) {
+        self.transactions.fetch_add(1, Ordering::SeqCst);
+        self.log.lock().unwrap().push(Call {
+            address: transaction.address(),
+            command: transaction.command(),
+            length: transaction.data_length(),
+            access_kind: transaction.extension().access_kind(),
+            initiator: transaction.extension().initiator(),
+            local_offset_fs: transaction.local_offset().as_u64(),
+            may_suspend: transaction.may_suspend(),
+            atomic: transaction.atomic_extension().is_some(),
+        });
+        // One endpoint access is the plain read or the plain write; the atomic
+        // envelope never reaches a target.
+        let event = match transaction.command() {
+            BlockingCommand::Read => {
+                transaction
+                    .data_mut()
+                    .copy_from_slice(&self.read_value.lock().unwrap().to_le_bytes());
+                None
+            }
+            BlockingCommand::Write => {
+                let value = <[u8; 8]>::try_from(transaction.data()).unwrap_or_else(|_| {
+                    panic!("the Platform admits only one complete eight-byte transfer")
+                });
+                Some(u64::from_le_bytes(value))
+            }
+        };
+        let fault = *self.fault.lock().unwrap();
+        let report = |transaction: &mut BlockingTransaction<'_>, value: Option<u64>| {
+            if let Some(value) = value {
+                self.reported.lock().unwrap().push(value);
+                transaction.report_device_event(BlockingDeviceEvent::HtifWrite(value));
+            }
+        };
+        match fault {
+            HostHtifFault::None => report(transaction, event),
+            HostHtifFault::EventOnRead => {
+                if transaction.command() == BlockingCommand::Read {
+                    let bytes: [u8; 8] = transaction.data().try_into().unwrap();
+                    report(transaction, Some(u64::from_le_bytes(bytes)));
+                } else {
+                    report(transaction, event);
+                }
+            }
+            HostHtifFault::DropEvent => {}
+            HostHtifFault::StatusWithEvent(status) => {
+                report(transaction, event);
+                transaction.set_status(status);
+                return;
+            }
+            HostHtifFault::Status(status) => {
+                transaction.set_status(status);
+                return;
+            }
+            HostHtifFault::SecondEvent => {
+                report(transaction, event);
+                report(transaction, event);
+            }
+            HostHtifFault::WrongWindowEvent => {
+                transaction.report_device_event(BlockingDeviceEvent::UartTransmit(b'h'));
+            }
+            HostHtifFault::ChangedAddress => {
+                report(transaction, event);
+                transaction.set_address(transaction.address().wrapping_add(4));
+            }
+            HostHtifFault::ChangedCommand => {
+                report(transaction, event);
+                let command = match transaction.command() {
+                    BlockingCommand::Read => BlockingCommand::Write,
+                    BlockingCommand::Write => BlockingCommand::Read,
+                };
+                transaction.set_command(command);
+            }
+            HostHtifFault::ChangedLength => {
+                report(transaction, event);
+                transaction.set_data_length(transaction.data_length() - 1);
+            }
+            HostHtifFault::Delay(femtoseconds) => {
+                report(transaction, event);
+                transaction.set_response_delay(Femtoseconds::new(femtoseconds));
+            }
+            HostHtifFault::Elapsed(femtoseconds) => {
+                report(transaction, event);
+                transaction.set_host_elapsed(Femtoseconds::new(femtoseconds));
+            }
+            HostHtifFault::DmiHint => {
+                report(transaction, event);
+                transaction.set_dmi_allowed(true);
+            }
+            HostHtifFault::Unknown => {
+                report(transaction, event);
+                transaction.set_status(BlockingResponseStatus::Ok);
+                transaction.extension_mut().mark_outcome_unknown();
+                return;
+            }
+            HostHtifFault::WrongValue(value) => {
+                report(transaction, event.map(|_| value));
+            }
+            HostHtifFault::RewriteBuffer(value) => {
+                transaction.data_mut().copy_from_slice(&value.to_le_bytes());
+                report(transaction, event.map(|_| value));
+            }
+        }
+        transaction.set_status(BlockingResponseStatus::Ok);
+    }
+
+    fn receive(&self, _byte: u8) {
+        self.receives.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn transport_reset(&self) -> bool {
+        self.resets.fetch_add(1, Ordering::SeqCst);
+        if self.reset_panic.load(Ordering::SeqCst) {
+            panic!("scripted host HTIF transport-reset panic");
+        }
+        if !self.reset_ack.load(Ordering::SeqCst) {
+            return false;
+        }
+        // An acknowledged reset quiesces the target: neither the register state
+        // nor the reported values of the previous generation survive.
+        *self.read_value.lock().unwrap() = 0;
+        self.reported.lock().unwrap().clear();
+        true
+    }
+}
+
+impl fmt::Debug for HostHtif {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HostHtif")
+            .field("base", &format_args!("{:#018x}", self.base))
+            .field("transactions", &self.transactions())
+            .field("resets", &self.resets())
+            .field("reported", &self.reported())
             .finish()
     }
 }

@@ -1,4 +1,5 @@
-//! Blocking device targets for the UART and HTIF windows (device D1–D5).
+//! Blocking device targets for the UART and HTIF windows (device D1–D5,
+//! htif D1–D4).
 //!
 //! A device window has one selected [`BlockingDeviceTarget`] per Platform
 //! generation.  One validated register access becomes one
@@ -118,14 +119,13 @@ pub trait BlockingDeviceTarget: Send + Sync {
     fn transport_reset(&self) -> bool;
 }
 
-/// The Machine's device-target selection (device D2).
+/// The Machine's device-target selection (device D2, htif D2).
 ///
 /// The selection names a host-supplied target per window.  No selection, the
 /// [`Self::none`] default, means the in-tree target answers each window, so a
-/// run without a host device target is today's run on either route.  Only the
-/// UART window accepts a host target in this contract; the HTIF window is an
-/// in-tree target and host HTIF service stays deferred, so a later window
-/// extends this shape rather than replacing it.
+/// run without a host device target is today's run on either route.  Each
+/// window is selected independently: a host UART target composes with the
+/// in-tree HTIF endpoint and the reverse.
 ///
 /// [`crate::machine::MachineConfig::devices`] carries the selection, which
 /// requires a [`super::Transport::Tlm`] route on
@@ -135,12 +135,16 @@ pub trait BlockingDeviceTarget: Send + Sync {
 #[derive(Clone, Default)]
 pub struct DeviceTargets {
     uart: Option<Arc<dyn BlockingDeviceTarget>>,
+    htif: Option<Arc<dyn BlockingDeviceTarget>>,
 }
 
 impl DeviceTargets {
     /// No host target: every window is answered by its in-tree target.
     pub const fn none() -> Self {
-        Self { uart: None }
+        Self {
+            uart: None,
+            htif: None,
+        }
     }
 
     /// Selects a host target for the UART window (device D2).
@@ -154,12 +158,51 @@ impl DeviceTargets {
     /// `MemoryInterface` access to the window is
     /// [`crate::memory::MemoryError::InvalidAddress`] (device D5).
     pub fn with_uart(target: Arc<dyn BlockingDeviceTarget>) -> Self {
-        Self { uart: Some(target) }
+        Self {
+            uart: Some(target),
+            htif: None,
+        }
+    }
+
+    /// Selects a host target for the HTIF window (htif D2).
+    ///
+    /// The target owns the endpoint's state in place of the in-tree `InTreeHtif`
+    /// and is reset at each Platform build (htif D6).  It answers the same two
+    /// requests the in-tree target answers, under the same pre-target policy the
+    /// Platform applies: one complete eight-byte dword starting at the window
+    /// base, no fetch, and a read-modify-write envelope that never reaches a
+    /// target.  The typed `MemoryInterface` view is unchanged on this window, so
+    /// a typed dword read still answers zero and a typed dword write still
+    /// publishes without reaching the target (htif D3).
+    pub fn with_htif(target: Arc<dyn BlockingDeviceTarget>) -> Self {
+        Self {
+            uart: None,
+            htif: Some(target),
+        }
+    }
+
+    /// Selects host targets for both device windows (htif D2).
+    ///
+    /// The two windows stay independent; this is the selection that names a
+    /// host target for each of them at once.
+    pub fn with_uart_and_htif(
+        uart: Arc<dyn BlockingDeviceTarget>,
+        htif: Arc<dyn BlockingDeviceTarget>,
+    ) -> Self {
+        Self {
+            uart: Some(uart),
+            htif: Some(htif),
+        }
     }
 
     /// The selected host UART target, when the selection names one.
     pub fn uart(&self) -> Option<&Arc<dyn BlockingDeviceTarget>> {
         self.uart.as_ref()
+    }
+
+    /// The selected host HTIF target, when the selection names one.
+    pub fn htif(&self) -> Option<&Arc<dyn BlockingDeviceTarget>> {
+        self.htif.as_ref()
     }
 }
 
@@ -168,6 +211,7 @@ impl std::fmt::Debug for DeviceTargets {
         formatter
             .debug_struct("DeviceTargets")
             .field("uart", &self.uart.is_some())
+            .field("htif", &self.htif.is_some())
             .finish()
     }
 }
@@ -228,6 +272,12 @@ impl TlmDeviceAdapter {
         if let Some(payload) = request.write_payload() {
             bytes[..width].copy_from_slice(payload);
         }
+        // htif D10 rule (2): a tohost write must report the request's eight
+        // data bytes.  The value is captured before the target runs, because a
+        // target may rewrite its buffer through `data_mut` and the rule
+        // compares the reported value with the request, not with the buffer the
+        // target leaves behind.
+        let requested_value = self.requested_event_value(command, &bytes[..width]);
         let extension = BlockingExtension::new(descriptor.category, initiator);
         let mut transaction =
             BlockingTransaction::new(descriptor.paddr, command, &mut bytes[..width], extension);
@@ -248,7 +298,9 @@ impl TlmDeviceAdapter {
             )));
         }
 
-        if let Err(error) = self.validate_response(&transaction, descriptor, command, width) {
+        if let Err(error) =
+            self.validate_response(&transaction, descriptor, command, width, requested_value)
+        {
             return failed(error);
         }
 
@@ -299,17 +351,20 @@ impl TlmDeviceAdapter {
         DeviceOutcome { response, event }
     }
 
-    /// Validates one device response against device D2/D4 and the 2026-11-07
-    /// ADR-0002 amendment.
+    /// Validates one device response against device D2/D4, htif D10 and the
+    /// 2026-11-07 and 2026-11-08 ADR-0002 amendments.
     ///
     /// Every rule runs before the status mapping; an event that passes them
-    /// never changes the outcome the status selects.
+    /// never changes the outcome the status selects.  `requested_value` is the
+    /// value this request carries for its window's event, captured before the
+    /// target could rewrite the buffer.
     fn validate_response(
         &self,
         transaction: &BlockingTransaction<'_>,
         descriptor: PhysicalRequestDescriptor,
         command: BlockingCommand,
         width: usize,
+        requested_value: Option<u64>,
     ) -> Result<(), PhysicalBackendError> {
         if transaction.extension().is_outcome_unknown() {
             return Err(PhysicalBackendError::unknown(format!(
@@ -386,6 +441,18 @@ impl TlmDeviceAdapter {
             )));
         }
         if let Some(event) = events.first() {
+            // htif D10 rule (1): a read yields neither a UART transmit byte nor
+            // an HTIF write, so an event on one is this window's protocol
+            // failure on both windows.
+            if command == BlockingCommand::Read {
+                return Err(PhysicalBackendError::protocol(format!(
+                    "device target reported {} on the read of {:#018x} on the {} window; a read \
+                     yields no device event",
+                    event.name(),
+                    descriptor.paddr,
+                    self.window.name(),
+                )));
+            }
             if !transaction.status().is_completion() {
                 return Err(PhysicalBackendError::protocol(format!(
                     "device target reported a {} event on a {} response for {} {:?} at {:#018x} \
@@ -409,8 +476,40 @@ impl TlmDeviceAdapter {
                     descriptor.paddr,
                 )));
             }
+            // htif D10 rule (2): the one window whose event carries a value
+            // reports it only when it is the request's own eight data bytes.
+            if let (DeviceWindow::Htif, BlockingDeviceEvent::HtifWrite(value)) =
+                (self.window, event)
+            {
+                if Some(*value) != requested_value {
+                    return Err(PhysicalBackendError::protocol(format!(
+                        "device target reported the {} value {:#018x} for the write of {:#018x} \
+                         on the {} window; the value must equal the request's eight data bytes {}",
+                        event.name(),
+                        value,
+                        descriptor.paddr,
+                        self.window.name(),
+                        requested_value.map_or_else(
+                            || "(the request is not one complete eight-byte write)".to_string(),
+                            |requested| format!("{requested:#018x}"),
+                        ),
+                    )));
+                }
+            }
         }
         Ok(())
+    }
+
+    /// htif D10 rule (2): the value one request carries for its window's event.
+    ///
+    /// Only a tohost write reports a value, and only a complete eight-byte one
+    /// carries a value to compare.  Every other request yields `None`, so a
+    /// reported `HtifWrite` on it cannot equal the request.
+    fn requested_event_value(&self, command: BlockingCommand, payload: &[u8]) -> Option<u64> {
+        if self.window != DeviceWindow::Htif || command != BlockingCommand::Write {
+            return None;
+        }
+        <[u8; 8]>::try_from(payload).ok().map(u64::from_le_bytes)
     }
 }
 
@@ -424,7 +523,11 @@ pub(crate) struct DevicePath {
 }
 
 impl DevicePath {
-    /// Builds the path from each window's in-tree target.
+    /// Builds the path from each window's selected target.
+    ///
+    /// Each argument is the selection's host target where one is named and the
+    /// in-tree target otherwise; `with_host_uart` adds the one rule that
+    /// depends on a window being host-served (device D5).
     pub(crate) fn new(
         uart: Arc<dyn BlockingDeviceTarget>,
         htif: Arc<dyn BlockingDeviceTarget>,

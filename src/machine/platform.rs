@@ -87,11 +87,12 @@ impl Platform {
         if config.platform == PlatformKind::Flat && !config.transport.is_native() {
             return Err(MachineError::UnsupportedTransport);
         }
-        // device D2: a device target is a TLM-route selection on the native
-        // Platform.  A flat Platform has no device window, and the native route
-        // answers each window itself, so either combination is the existing
-        // unsupported-transport error.
-        if config.devices.uart().is_some()
+        // device D2, htif D2: a device target is a TLM-route selection on the
+        // native Platform.  A flat Platform has no device window, and the native
+        // route answers each window itself, so either combination is the
+        // existing unsupported-transport error.  Either window is enough to make
+        // the selection a host-target selection.
+        if (config.devices.uart().is_some() || config.devices.htif().is_some())
             && (config.platform != PlatformKind::Native || config.transport.is_native())
         {
             return Err(MachineError::UnsupportedTransport);
@@ -141,17 +142,25 @@ impl Platform {
                 ))
             })?,
         };
-        // device D6: the selected host target is reset once per build and
-        // before the image is placed, so no device state crosses a generation.
-        // It runs beside the RAM slot's reset and ahead of it: a refusal must
-        // not disturb the running association, and the RAM slot's reset is the
-        // step that already discards the previous window's contents.  Every
-        // install builds a fresh Platform, including `fresh_reset`,
-        // `reload_for_ndmreset` and `ruscv_machine_reset`.  A refused reset
-        // fails the build like a refused RAM reset.
+        // device D6, htif D6: the selected host targets are reset once per build
+        // and before the image is placed, so no device state crosses a
+        // generation.  The order is fixed: the UART target first and the HTIF
+        // target second.  A refusal must not disturb the running association, and
+        // the RAM slot's reset is the step that already discards the previous
+        // window's contents, so both resets run ahead of it.  A refused second
+        // reset leaves the previous association in place even though the first
+        // target has already been reset.  Every install builds a fresh Platform,
+        // including `fresh_reset`, `reload_for_ndmreset` and
+        // `ruscv_machine_reset`.  A refused reset fails the build like a refused
+        // RAM reset.
         if let Some(target) = config.devices.uart() {
             acknowledge_transport_reset(target.as_ref()).map_err(|reason| {
                 MachineError::Placement(format!("the UART device target {reason}"))
+            })?;
+        }
+        if let Some(target) = config.devices.htif() {
+            acknowledge_transport_reset(target.as_ref()).map_err(|reason| {
+                MachineError::Placement(format!("the HTIF device target {reason}"))
             })?;
         }
         // After every transport reset and before installation, zero-fill the
@@ -179,11 +188,14 @@ impl Platform {
         }
         Self::place(&ram, image)?;
         let events = Arc::new(Mutex::new(Vec::new()));
-        // device D2/D5: the selection comes from `MachineConfig.devices`.
-        // Without one, each window keeps its in-tree target; a selected UART
-        // target is host-served and leaves the Platform no register state to
-        // view.
+        // device D2/D5, htif D2/D3: the selection comes from
+        // `MachineConfig.devices`.  Without one, each window keeps its in-tree
+        // target; a selected UART target is host-served and leaves the Platform
+        // no register state to view.  The two windows are selected
+        // independently, so either host target composes with the other window's
+        // in-tree target.
         let host_uart = config.devices.uart().cloned();
+        let host_htif = config.devices.htif().cloned();
         let (typed, fetch, data, uart, bus): (
             SharedMemory,
             SharedPhysicalAccess,
@@ -211,15 +223,21 @@ impl Platform {
                 let uart = Arc::new(Mutex::new(Uart16550::new(SYSTEM_BUS_UART_BASE)));
                 let devices = match &config.transport {
                     Transport::Native => None,
-                    Transport::Tlm(_) => Some(match &host_uart {
-                        Some(target) => {
-                            DevicePath::with_host_uart(target.clone(), Arc::new(InTreeHtif::new()))
-                        }
-                        None => DevicePath::new(
-                            Arc::new(InTreeUart::new(uart.clone())),
-                            Arc::new(InTreeHtif::new()),
-                        ),
-                    }),
+                    Transport::Tlm(_) => {
+                        let uart_target: Arc<dyn BlockingDeviceTarget> = match &host_uart {
+                            Some(target) => target.clone(),
+                            None => Arc::new(InTreeUart::new(uart.clone())),
+                        };
+                        let htif_target: Arc<dyn BlockingDeviceTarget> = match &host_htif {
+                            Some(target) => target.clone(),
+                            None => Arc::new(InTreeHtif::new()),
+                        };
+                        Some(if host_uart.is_some() {
+                            DevicePath::with_host_uart(uart_target, htif_target)
+                        } else {
+                            DevicePath::new(uart_target, htif_target)
+                        })
+                    }
                 };
                 let bus = Arc::new(Mutex::new(SystemBus::with_ram_slot(
                     ram.clone(),

@@ -1,22 +1,16 @@
+diff --git a/src/machine/platform.rs b/src/machine/platform.rs
+index cb76cfe..a5fdde0 100644
 --- a/src/machine/platform.rs
 +++ b/src/machine/platform.rs
-@@ -141,19 +141,6 @@
-                 ))
-             })?,
-         };
--        // device D6: the selected host target is reset once per build and
--        // before the image is placed, so no device state crosses a generation.
--        // It runs beside the RAM slot's reset and ahead of it: a refusal must
--        // not disturb the running association, and the RAM slot's reset is the
--        // step that already discards the previous window's contents.  Every
--        // install builds a fresh Platform, including `fresh_reset`,
--        // `reload_for_ndmreset` and `ruscv_machine_reset`.  A refused reset
--        // fails the build like a refused RAM reset.
+@@ -153,11 +153,6 @@ impl Platform {
+         // including `fresh_reset`, `reload_for_ndmreset` and
+         // `ruscv_machine_reset`.  A refused reset fails the build like a refused
+         // RAM reset.
 -        if let Some(target) = config.devices.uart() {
 -            acknowledge_transport_reset(target.as_ref()).map_err(|reason| {
 -                MachineError::Placement(format!("the UART device target {reason}"))
 -            })?;
 -        }
-         // After every transport reset and before installation, zero-fill the
-         // whole RAM window so no prior run's contents survive (dev-plan D6).
-         ram.begin_window()?;
+         if let Some(target) = config.devices.htif() {
+             acknowledge_transport_reset(target.as_ref()).map_err(|reason| {
+                 MachineError::Placement(format!("the HTIF device target {reason}"))

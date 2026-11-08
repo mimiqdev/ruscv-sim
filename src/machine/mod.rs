@@ -171,12 +171,14 @@ pub struct MachineConfig {
     /// [`MachineError::Placement`] reports a bound that does not fit the
     /// declared tick period.
     pub quantum: u64,
-    /// The Platform's device-target selection (device D2).
+    /// The Platform's device-target selection (device D2, htif D2).
     ///
     /// [`DeviceTargets::none`], the default, answers each device window with
     /// its in-tree target, so a run without a host device target is exactly
-    /// today's run on either route.  A selection requires a [`Transport::Tlm`]
-    /// route on [`PlatformKind::Native`]; [`MachineError::UnsupportedTransport`]
+    /// today's run on either route.  Each window is selected independently, so
+    /// a host UART target composes with the in-tree HTIF endpoint and the
+    /// reverse.  A selection requires a [`Transport::Tlm`] route on
+    /// [`PlatformKind::Native`]; [`MachineError::UnsupportedTransport`]
     /// reports the native route and a flat Platform, exactly as it reports the
     /// other mismatched combinations.  The field is public, so adding it breaks
     /// struct-literal construction by external code.

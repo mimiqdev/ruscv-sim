@@ -1,0 +1,16 @@
+diff --git a/src/machine/platform.rs b/src/machine/platform.rs
+index cb76cfe..0953755 100644
+--- a/src/machine/platform.rs
++++ b/src/machine/platform.rs
+@@ -158,11 +158,6 @@ impl Platform {
+                 MachineError::Placement(format!("the UART device target {reason}"))
+             })?;
+         }
+-        if let Some(target) = config.devices.htif() {
+-            acknowledge_transport_reset(target.as_ref()).map_err(|reason| {
+-                MachineError::Placement(format!("the HTIF device target {reason}"))
+-            })?;
+-        }
+         // After every transport reset and before installation, zero-fill the
+         // whole RAM window so no prior run's contents survive (dev-plan D6).
+         ram.begin_window()?;

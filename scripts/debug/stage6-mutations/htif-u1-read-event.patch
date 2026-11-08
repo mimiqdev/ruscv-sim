@@ -1,0 +1,23 @@
+diff --git a/src/blocking/device.rs b/src/blocking/device.rs
+index 132e9fe..60cb1b1 100644
+--- a/src/blocking/device.rs
++++ b/src/blocking/device.rs
+@@ -441,18 +441,6 @@ impl TlmDeviceAdapter {
+             )));
+         }
+         if let Some(event) = events.first() {
+-            // htif D10 rule (1): a read yields neither a UART transmit byte nor
+-            // an HTIF write, so an event on one is this window's protocol
+-            // failure on both windows.
+-            if command == BlockingCommand::Read {
+-                return Err(PhysicalBackendError::protocol(format!(
+-                    "device target reported {} on the read of {:#018x} on the {} window; a read \
+-                     yields no device event",
+-                    event.name(),
+-                    descriptor.paddr,
+-                    self.window.name(),
+-                )));
+-            }
+             if !transaction.status().is_completion() {
+                 return Err(PhysicalBackendError::protocol(format!(
+                     "device target reported a {} event on a {} response for {} {:?} at {:#018x} \
